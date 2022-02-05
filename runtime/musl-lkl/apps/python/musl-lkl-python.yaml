@@ -1,0 +1,11 @@
+---
+cVMs:
+- name: python
+  disk: disk_python.img
+  runtime: libmusl-lkl.so
+  args: "/ld.so /usr/bin/python3 /app/helloworld.py"
+  isolation:
+  - base: 0x20000000
+    size: 0x10000000
+    begin: 0x20000000
+    end: 0x30000000

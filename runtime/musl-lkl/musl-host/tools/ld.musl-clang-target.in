@@ -1,0 +1,114 @@
+#!/bin/sh
+cc="@CC@"
+libc_lib="@LIBDIR@"
+ldso="@LDSO@"
+cleared=
+shared=
+userlinkdir=
+userlink=
+
+bonusld='@BONUSLD@'
+
+PREFIX="@LIBDIR@/../"
+if [ ! -d "${PREFIX}" ]; then
+	echo "invalid prefix: ${PREFIX}"
+	return 1
+fi
+
+
+for x ; do
+    test "$cleared" || set -- ; cleared=1
+
+    case "$x" in
+        -L-user-start)
+            userlinkdir=1
+            ;;
+        -L-user-end)
+            userlinkdir=
+            ;;
+        -L*)
+            test "$userlinkdir" && set -- "$@" "$x"
+            ;;
+        -l-user-start)
+            userlink=1
+            ;;
+        -l-user-end)
+            userlink=
+            ;;
+        crtbegin*.o|crtend*.o)
+            set -- "$@" $($cc -print-file-name=$x $bonunsld)
+            ;;
+        -lgcc|-lgcc_eh)
+            file=lib${x#-l}.a
+            set -- "$@" $($cc -print-file-name=$file $bonusld)
+            ;;
+        -l*)
+            test "$userlink" && set -- "$@" "$x"
+            ;;
+        -shared)
+            shared=1
+            set -- "$@" -shared
+            ;;
+        -sysroot=*|--sysroot=*)
+            ;;
+        *)
+            set -- "$@" "$x"
+            ;;
+    esac
+done
+
+hasNo() {
+	pat="$1"
+	shift 1
+
+	for e in "$@"; do
+		if [ "$e" = "${pat}" ]; then
+			return 1
+		fi
+	done
+	return 0
+}
+
+
+ARGS="-nostdlib"
+TAIL=""
+
+#if hasNo '-nostdinc' "$@"; then
+#	ARGS="${ARGS} -isystem ${PREFIX}/include"
+#fi
+
+if \
+	hasNo '-shared' "$@" && \
+	hasNo '-S' "$@" && \
+	hasNo '-E' "$@"
+then
+	ARGS="${ARGS} -nostdlib"
+	ARGS="${ARGS} -dynamic-linker=${PREFIX}/lib/libc.so"
+	ARGS="${ARGS} -L${PREFIX}/lib"
+	#ARGS="${ARGS} -Wl,-rpath=${PREFIX}/lib"
+
+	if hasNo '-nostartfiles' "$@" && \
+	   hasNo '-nostdlib' "$@" && \
+	   hasNo '-nodefaultlibs' "$@"
+	then
+		ARGS="${ARGS} ${PREFIX}/lib/crt1.o"
+		ARGS="${ARGS} ${PREFIX}/lib/crti.o"
+
+		TAIL="${TAIL} ${PREFIX}/lib/crtn.o"
+	fi
+
+	if hasNo '-nostdlib' "$@" && \
+	   hasNo '-nodefaultlibs' "$@"
+	then
+		if [ "${CPP}" = "yes" ]; then
+			TAIL="${TAIL} -lc++"
+			TAIL="${TAIL} -lunwind"
+			TAIL="${TAIL} -lm"
+		fi
+		TAIL="${TAIL} -lc"
+		#TAIL="${TAIL} -Wl,-Bstatic -lcompiler_rt"
+	fi
+fi
+
+#echo $($cc -print-prog-name=ld) -nostdlib "$@" -dynamic-linker "$ldso" ${ARGS} ${TAIL}
+exec $($cc -print-prog-name=ld) -nostdlib "$@" -dynamic-linker "$ldso" ${ARGS} ${TAIL}

@@ -1,0 +1,39 @@
+#this is a testing yaml file that includes implemented and non implemented schemes
+
+#---
+#host: 
+#- debug: false
+#  timer: false
+#  mode: hw #or sim, but so far it is defined at compulation
+
+#why not move this into host?
+---
+capfiles:
+- name: test1
+  size: 0x20
+  data: "Hello world\n"
+- name: test2
+  size: 0x1000
+
+---
+cvms:
+- name: hello
+  disk: disk.img #or none
+  runtime: libcarrie.so
+  net: tap0 #or none
+  args: /app/helloworld
+  cf_slots: 100 #todo
+  cf_calls: 100 #todo
+  stack: 1M #todo
+  threads: 23 #todo
+  wait: 10
+  isolation:
+  - base: 0x20000000
+    size: 0x10000000
+    begin: 0x10000000
+    end: 0x30000000
+  callback_out: monitor
+  callback_in: libhello.so
+
+#todo: console? 
+#todo: hostcalls or API version?
