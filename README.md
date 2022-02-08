@@ -43,10 +43,19 @@ make -C runtime/baremetal/hello_world/
 
 ### MUSL-LKL
 
-NB: At the time of writing, the latest version of CHERI-enabled LLVM-13 doesn't compile LKL. We use  LLVM-11 for development and experiments (9c51217b7d41f3124b84b190b6631b90db6d1bf4).
-To use LLVM-11, you need to check it out and build `sdk-riscv64-hybrid` by `cheribuild.py`
-
-
+At the time of writing, the latest version of CHERI-enabled LLVM-13 doesn't compile LKL. We use  LLVM-11 for development and experiments.
+To use LLVM-11, you need (assuming fresh build):
+```
+./cheribuild.py llvm-native --enable-hybrid-targets --configure-only
+./cheribuild.py cheribsd-riscv64-hybrid --enable-hybrid-targets --configure-only
+cd ~/cheri/llvm-project/
+git fetch --unshallow or git fetch --depth=100
+git checkout 9c51217b7d41f3124b84b190b6631b90db6d1bf4
+cd cd ~/cheri/cheribsd/
+git fetch --unshallow or git fetch --depth=100
+git checkout 47aecc899648a1f6fdea1474a967e5e57eb3bcb0
+./cheribuild.py disk-image-riscv64-hybrid -d --enable-hybrid-targets
+```
 
 ### Run in QEMU
 
