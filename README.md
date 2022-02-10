@@ -128,3 +128,9 @@ Hello world
 ## IPC 
 
 Intravisor features fast IPC primitives based on capabilitites. See [examples](runtime/musl-lkl/apps). 
+
+
+# Acknowledgements
+
+This work was partially funded by the UK Government’s Industrial Strategy Challenge Fund (ISCF) under the Digital Security by Design (DSbD) Programme.
+
