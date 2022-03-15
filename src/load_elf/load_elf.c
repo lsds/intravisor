@@ -92,6 +92,30 @@ void load_elf(char* file_to_map, void *base_addr, encl_map_info* result) {
 
 
        for (i = 0; i < hdr->e_shnum; i++) {
+//				printf("type = %x %x %d\n", sections[i].sh_type, SHT_SYMTAB, sections[i].sh_name);
+
+				Elf64_Shdr *shdr = (mapped + hdr->e_shoff);
+				int shnum = hdr->e_shnum;
+
+				Elf64_Shdr *sh_strtab = &shdr[hdr->e_shstrndx];
+				const char *const sh_strtab_p = mapped + sh_strtab->sh_offset;
+
+//				printf("type: %d, name = %s\n", sections[i].sh_type, sh_strtab_p + sections[i].sh_name);
+
+				if(strncmp("__cap_relocs", sh_strtab_p + sections[i].sh_name, strlen("__cap_relocs")) == NULL) {
+					if(result->cap_relocs) {
+						printf("something is wrong, cap_relocs copied already\n");
+					}
+					result->cap_relocs = malloc(sections[i].sh_size);
+					if(result->cap_relocs == NULL) {
+						printf("cannot allocate memory for cap_relocs\n");
+						break;
+					}
+					memcpy(result->cap_relocs, mapped + sections[i].sh_offset, sections[i].sh_size);
+					result->cap_relocs_size = sections[i].sh_size;
+			  }
+
+
                if (sections[i].sh_type == SHT_SYMTAB) {
           				Elf64_Sym *symtab = (Elf64_Sym *)(mapped + sections[i].sh_offset);
   //        			void *symtab_end = (Elf64_Sym *)((char *)symtab + shdr[i].sh_size);
@@ -208,31 +232,15 @@ void load_elf(char* file_to_map, void *base_addr, encl_map_info* result) {
         if (pdr->p_memsz > pdr->p_filesz) {
             size_t brk = (size_t)segment + pdr->p_filesz;
             size_t pgbrk = ROUNDUP(brk, 0x1000);
-            memset((void *)brk, 0, pgbrk - ALIGNDOWN(brk, 0x1000));
-
+#if 0
+//why alighned down? if brk is not paged aligned, then alighdonw corrupts memory
+          memset((void *)brk, 0, pgbrk - ALIGNDOWN(brk, 0x1000));
+#else
+          memset((void *)brk, 0, pgbrk - brk);
+#endif
 ///
 			size_t len2 = (size_t)segment + map_len - pgbrk;
-#if 0
-//remove this later
-			int anon_fd = shm_open(SHM_ANON2, O_RDWR | O_CREAT | O_TRUNC, 0600);
-
-			if (anon_fd == -1) {
-				perror("open");
-				while(1);
-			} 
-			//else
-			//	printf("anon_fd = %d\n", anon_fd);
-
-
-			if (ftruncate(anon_fd, len2) == -1) {
-				perror("ftruncate");
-				while(1);
-			}
-
-			void *mmap_ret1 = mmap((void *)pgbrk             , (size_t)segment + map_len - pgbrk, protflags|PROT_EXEC, MAP_SHARED | MAP_FIXED, anon_fd, 0);
-#else
 			void *mmap_ret1 = mmap((void *)pgbrk             , (size_t)segment + map_len - pgbrk, protflags|PROT_EXEC, MAP_ANON|MAP_PRIVATE|MAP_FIXED, -1, 0);
-#endif
 
             if ((pgbrk - (size_t)segment) < map_len && (mmap_ret1 == MAP_FAILED)) {
                 result->base = (void *)-1;
@@ -247,10 +255,13 @@ void load_elf(char* file_to_map, void *base_addr, encl_map_info* result) {
         {
             text_segment = segment;
             initial_vaddr = pdr->p_vaddr;
-            if (anywhere)
+#if 0
+            if (anywhere) {
                 entry_point = (void *)((unsigned long)entry_point
                         - (unsigned long)pdr->p_vaddr
                         + (unsigned long)text_segment);
+				}
+#endif
         }
     }
 

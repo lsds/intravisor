@@ -1,20 +1,20 @@
 ---
 cVMs:
 - name: outer
-  runtime: libouter.so
+  runtime: libouter_h.so
   isolation:
   - base: 0x20000000
     size: 0x10000000
     begin: 0x10000000
     end: 0x30000000
   callback_out: monitor
-  callback_in: libhello.so
+  callback_in: libinner_h.so
   wait: -1
 - name: inner
-  runtime: libhello.so
+  runtime: libinner_h.so
   isolation:
   - base: 0x10000000
     size: 0x10000000
     begin: 0x10000000
     end: 0x20000000
-  callback_out: libouter.so
+  callback_out: libouter_h.so

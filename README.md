@@ -134,3 +134,10 @@ Intravisor features fast IPC primitives based on capabilitites. See [examples](r
 
 This work was partially funded by the UK Government’s Industrial Strategy Challenge Fund (ISCF) under the Digital Security by Design (DSbD) Programme.
 
+# Paper 
+
+[arxiv](https://arxiv.org/abs/2202.05732)
+
+Sartakov, V. A., Vilanova, L., Eyers, D., Shinagawa, T., & Pietzuch, P. (2022). CAP-VMs: Capability-Based Isolation and Sharing for Microservices. arXiv preprint arXiv:2202.05732.
+
+

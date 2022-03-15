@@ -190,32 +190,6 @@ struct cs_lock {
 	char armed;
 };
 
-struct caps_store {
-	void *ptr;
-	char name[10];
-	int size;
-	
-	struct cs_lock hlock;
-	
-};
-
-#define MAX_STREAM_CAPS	10
-struct stream_caps_store {
-	void *func;
-	void *dev;
-	void *u_buff;
-	void *u_size;
-	char name[10];
-
-
-	struct cs_lock hlock;
-	struct c_thread *ct;
-//
-	struct cs_lock call_lock;
-	struct cs_lock call_lock2;
-
-};
-
 
 struct box_caps_s {
 	size_t sealcap_size;
@@ -260,6 +234,8 @@ struct s_box {
 // OUTPUT
 	int fd;
 //	
+	char pure;
+//
 	struct s_box *inner;
 	struct s_box *outer;
 };
@@ -297,13 +273,16 @@ extern pthread_mutex_t print_lock;
 
 ///// UTILS 
 
-unsigned long mon_to_comp(unsigned long addr, unsigned long begin);
-unsigned long comp_to_mon(unsigned long addr, unsigned long begin);
+unsigned long mon_to_comp(unsigned long addr, struct s_box *sbox);
+unsigned long comp_to_mon(unsigned long addr, struct s_box *sbox);
+unsigned long comp_to_mon_old(unsigned long addr, struct s_box *sbox);
+void st_cap(void *loc, void *__capability);
 
 int create_console(int);
 
 #ifndef SIM
 void * __capability codecap_create(void *sandbox_base, void *sandbox_end);
+void * __capability pure_codecap_create(void *sandbox_base, void *sandbox_end);
 void * __capability datacap_create(void *sandbox_base, void *sandbox_end);
 #endif
 
@@ -318,4 +297,13 @@ static __inline__ void * getTP(void) {
     asm ("" : "=r"(tp));
     return tp;
 }
+
+struct cap_relocs_s {
+	unsigned long dst;
+	unsigned long addr;
+	unsigned long unknown;
+	unsigned long len;
+	unsigned long perms;
+};
+
 

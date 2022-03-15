@@ -1,4 +1,4 @@
-include ../../../../config.mak
+include ../../../config.mak
 
 CFLAGS=-fPIC -fPIE -pie
 
@@ -8,7 +8,7 @@ endif
 DEPS = 
 OBJ = main.o tramps.o hostcalls.o
 
-default: libhello.so
+default: libouter_h.so
 
 %.o: %.c $(DEPS)
 	$(CC_CHERI) $(CC_CHERI_FLAGS) -c -o $@ $< $(CFLAGS)
@@ -16,8 +16,8 @@ default: libhello.so
 tramps.o: tramps.S
 	$(CC_CHERI) $(CC_CHERI_FLAGS) $(CFLAGS) -c -o tramps.o tramps.S
 
-libhello.so: $(OBJ)
-	$(CC_CHERI) $(CC_CHERI_FLAGS) $(CFLAGS) -o $@ -nostdinc -nostdlib -Wl,-ehello_asm -fPIE -fPIC $(OBJ)
+libouter_h.so: $(OBJ)
+	$(CC_CHERI) $(CC_CHERI_FLAGS) $(CFLAGS) -o $@ -nostdinc -nostdlib -Wl,-eouter_asm -fPIE -fPIC $(OBJ)
 
 
 clean:

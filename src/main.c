@@ -41,10 +41,10 @@ void *init_thread(void *arg) {
 	char *cenv = (char *) (sp_read -  4096*3); //originally, here was *2, but networking corrupts this memory
 	volatile unsigned long *sp = (sp_read -  4096*4);//I don't know why, but without volatile sp gets some wrong value after initing CENV in -O2
 
-	printf("target SP = %lx, sp_read = %p, me->stacl = %p, getSP()=%p, me->c_tp = %p\n", sp, sp_read, me->stack,getSP(), me->c_tp);
+	printf("target SP = %lx, old TP = %lx sp_read = %p, me->stacl = %p, getSP()=%p, me->c_tp = %p\n", sp, getTP(), sp_read, me->stack,getSP(), me->c_tp);
 	int cenv_size = 0;
 	sp[0] = me->argc;
-	sp[1] = (unsigned long) (mon_to_comp(argv1, me->sbox->cmp_begin));
+	sp[1] = (unsigned long) (mon_to_comp(argv1, me->sbox));
 	int i;
 	for(i = 1; i < me->argc; i++) {
 		printf("[%d] '%s'\n", i, me->argv[i]);
@@ -53,19 +53,19 @@ void *init_thread(void *arg) {
 		if(cenv_size + tmp_add > 4096) {
 			printf("need more space for args on the stack, die\n"); while(1);
 		}
-		sp[i+1] = (unsigned long) (mon_to_comp(&cenv[cenv_size], me->sbox->cmp_begin));
-		printf("sp[i+1] = '%s'\n", (char *) (comp_to_mon(sp[i+1], me->sbox->cmp_begin)));
+		sp[i+1] = (unsigned long) (mon_to_comp(&cenv[cenv_size], me->sbox));
+		printf("sp[i+1] = '%s'\n", (char *) (comp_to_mon(sp[i+1], me->sbox)));
 		cenv_size += tmp_add + 1;
 	}
 	sp[i+1] = 0; //terminator
 	int ienv = i + 2;
 	printf("&env0 = %p, &env1=%p\n", &sp[ienv], &sp[ienv+1]);
-	sp[ienv++] = mon_to_comp(lc1, me->sbox->cmp_begin);
-	sp[ienv++] = mon_to_comp(env1, me->sbox->cmp_begin);
-	sp[ienv++] = mon_to_comp(env2, me->sbox->cmp_begin);
-	sp[ienv++] = mon_to_comp(env3, me->sbox->cmp_begin);
-	sp[ienv++] = mon_to_comp(env4, me->sbox->cmp_begin);
-	sp[ienv++] = mon_to_comp(env5, me->sbox->cmp_begin);
+	sp[ienv++] = mon_to_comp(lc1, me->sbox);
+	sp[ienv++] = mon_to_comp(env1, me->sbox);
+	sp[ienv++] = mon_to_comp(env2, me->sbox);
+	sp[ienv++] = mon_to_comp(env3, me->sbox);
+	sp[ienv++] = mon_to_comp(env4, me->sbox);
+	sp[ienv++] = mon_to_comp(env5, me->sbox);
 	sp[ienv++] = 0;
 
 	size_t *auxv = &sp[ienv];
@@ -85,7 +85,7 @@ void *init_thread(void *arg) {
 //	printf("LOADER: argv = %s, envp = %s, \n", sp[1], sp[4]);
 	auxv[0] = AT_BASE;		auxv[1] = (unsigned long) me->sbox->base;
 	auxv[2] = AT_ENTRY;		auxv[3] = (unsigned long)  me->func;
-	auxv[4] = AT_PHDR;		auxv[5] = mon_to_comp(me->sbox->base, me->sbox->cmp_begin) + 0x40;
+	auxv[4] = AT_PHDR;		auxv[5] = mon_to_comp(me->sbox->base, me->sbox) + 0x40;
 	auxv[6] = AT_PAGESZ;	auxv[7] = 4096;
 	auxv[8] = AT_IGNORE;	auxv[9] = -1;
 
@@ -143,32 +143,63 @@ extern void __inline__ cinv(void *, void *, void *, void *, void *, void *, void
   void * __capability sealed_datacapt	= me->sbox->box_caps.sealed_datacapt;
   void * __capability sealed_ret_from_mon	= me->sbox->box_caps.sealed_ret_from_mon;
 
+	struct cinv_s {
+		void *__capability caps[10];
+	} cinv_args;
+//
+	cinv_args.caps[0] = sealed_codecap;
 	printf("ca0: sealed COMP PPC\n");
-	CHERI_CAP_PRINT(sealed_codecap);
+	CHERI_CAP_PRINT(cinv_args.caps[0]);
+//
+	cinv_args.caps[1] = sealed_datacap;
 	printf("ca1: sealed COMP DDC\n");
-	CHERI_CAP_PRINT(sealed_datacap);
+	CHERI_CAP_PRINT(cinv_args.caps[1]);
+//
+	cinv_args.caps[2] = dcap;
 	printf("ca2: COMP DDC\n");
-	CHERI_CAP_PRINT(dcap);
+	CHERI_CAP_PRINT(cinv_args.caps[2]);
+//
+	cinv_args.caps[3] = sealed_codecapt;
 	printf("ca3: sealed HC PCC\n");
-	CHERI_CAP_PRINT(sealed_codecapt);
+	CHERI_CAP_PRINT(cinv_args.caps[3]);
+//
+	cinv_args.caps[4] = sealed_datacapt;
 	printf("ca4: sealed HC DDC (mon.DDC)\n");
-	CHERI_CAP_PRINT(sealed_datacapt);
-
+	CHERI_CAP_PRINT(cinv_args.caps[4]);
+//
+	cinv_args.caps[5] = sealed_codecapt2;
 	printf("ca5: sealed OCALL PCC \n");
-	CHERI_CAP_PRINT(sealed_codecapt2);
-
+	CHERI_CAP_PRINT(cinv_args.caps[5]);
+//
+	cinv_args.caps[6] = sealed_ret_from_mon;
 	printf("ca6: sealed ret from mon\n");
-	CHERI_CAP_PRINT(sealed_ret_from_mon);
+	CHERI_CAP_PRINT(cinv_args.caps[6]);
+//
 
-	sp = mon_to_comp(sp, me->sbox->cmp_begin);
-	me->c_tp = mon_to_comp(me->c_tp, me->sbox->cmp_begin);
+	if(me->sbox->pure) {
 
-extern void cinv(void *__capability, void *__capability, void *__capability, void *__capability, void *__capability, void *__capability, void *__capability, void *);
+//TOD: this is very unreliable. we need to use precise bottom of the stack here
+		void * __capability sp_cap = datacap_create((void *) ((unsigned long) sp - STACK_SIZE + 4096*4), (void *) sp);
+		sp_cap = cheri_setaddress(sp_cap, sp);
+
+//
+		cinv_args.caps[7] = sp_cap;
+		printf("ca7: SP cap for purecap cVMs\n");
+		CHERI_CAP_PRINT(cinv_args.caps[7]);
+//
+	}
+
+	sp = mon_to_comp(sp, me->sbox);
+	me->c_tp = mon_to_comp(me->c_tp, me->sbox);
+
+
+extern void cinv(void *, void *);
 	printf("HW: sp = %p, tp = %p\n", sp, me->c_tp);
 	printf("-----------------------------------------------\n");
 	__asm__ __volatile__("mv sp, %0;" :: "r"(sp) : "memory");
 	__asm__ __volatile__("mv tp, %0;" :: "r"(me->c_tp) : "memory");
 	cinv(
+#if 0
 		  sealed_codecap,  	//ca0:	entrance
 		  sealed_datacap,  	//ca1:	entrance
 		  dcap, 			//ca2:	compartment data cap
@@ -176,10 +207,15 @@ extern void cinv(void *__capability, void *__capability, void *__capability, voi
 		  sealed_codecapt,	//ca3:	cap for hostcalls
 		  sealed_datacapt,	//ca4:	cap for hostcall, in fact -- sealed mon.DDC
 ///
-		  sealed_codecapt2,	//ca5:	cap for ret from CINV2 (OCALL)
+		  sp_cap,
+//		  sealed_codecapt2,	//ca5:	cap for ret from CINV2 (OCALL)
 ///
 		  sealed_ret_from_mon, //ca6:	because compartment cannot create CAPS, this cap is created by MON prior calling
 		  auxv[1] /* AT_BASE */ + 0x0e000000 + 0x1000 //local_cap_store
+#else
+		  auxv[1] /* AT_BASE */ + 0x0e000000 + 0x1000, //local_cap_store
+		  &cinv_args
+#endif
 		);
 
 
@@ -287,6 +323,37 @@ int build_cvm(int cid, struct cmp_s *comp, char *libos, char *disk, int argc, ch
 	}else printf("encl_map.ret = %p\n",encl_map.ret_point);
 
 
+	if(encl_map.cap_relocs) {
+		printf("we have __cap_relocs, it is a purecap binary\n");
+		cvms[cid].pure = 1;
+		struct cap_relocs_s *cr = (struct cap_relocs_s *) encl_map.cap_relocs;
+		for(int j = 0; j < encl_map.cap_relocs_size / sizeof(struct cap_relocs_s); j++) {
+			printf("TODO: create cap: %p Base: %p Length: %ld Perms: %lx Unk = %ld\n", comp->base + cr[j].dst, cr[j].addr, cr[j].len, cr[j].perms, cr[j].unknown);
+			void * __capability rel_cap;
+			if(cr[j].perms == 0x8000000000000000ll) {
+#if 0
+//there is a problem when I call an asm function. the caller cap doesn't have a proper size.
+//so I just make all call caps PCC-size (see the else)
+				rel_cap = pure_codecap_create((void *) comp->base,(void *)  comp->base + cr[j].addr + cr[j].len);
+				rel_cap = cheri_setaddress(rel_cap, comp->base + cr[j].addr);
+#else
+				rel_cap = pure_codecap_create((void *) comp->base,(void *)  comp->base + comp->size);
+				rel_cap = cheri_setaddress(rel_cap, comp->base + cr[j].addr);
+#endif
+			} else {
+//TODO: we need something better
+				if (cr[j].len == 0xabba) {
+					printf("replace cap for caps\n");
+					rel_cap = datacap_create((void *) comp->base + 0xe001000, comp->base + 0xe002000);
+				} else
+					rel_cap = datacap_create((void *) comp->base + cr[j].addr,(void *)  comp->base + cr[j].addr + cr[j].len);
+			}
+			printf("store REL_CAP\n");
+			CHERI_CAP_PRINT(rel_cap);
+			st_cap(cr[j].dst + comp->base, rel_cap);
+			}
+	}
+
 	cvms[cid].base = encl_map.base;
 	cvms[cid].top = (void *) ((unsigned long) base + size);
 	cvms[cid].box_size = encl_map.size;
@@ -382,12 +449,16 @@ int build_cvm(int cid, struct cmp_s *comp, char *libos, char *disk, int argc, ch
 		printf("sysctlbyname(security.cheri.sealcap)\n");while(1);
 	}
 
-	void * __capability ccap = codecap_create((void *) ct[0].sbox->cmp_begin, (void *) ct[0].sbox->cmp_end);
+	void * __capability ccap;
+	if(cvms[cid].pure) 
+		ccap = pure_codecap_create((void *) ct[0].sbox->cmp_begin, (void *) ct[0].sbox->cmp_end);
+	else
+		ccap = codecap_create((void *) ct[0].sbox->cmp_begin, (void *) ct[0].sbox->cmp_end);
+
 	void * __capability dcap = datacap_create((void *) ct[0].sbox->cmp_begin, (void *) ct[0].sbox->cmp_end);
 	ct[0].sbox->box_caps.dcap = dcap;
 
-	//NB: ret_from_mon is relative, while func aka entry_point is absolute. should be the same, either first or second
-	ccap = cheri_setaddress(ccap, (unsigned long) ct[0].func);
+	ccap = cheri_setaddress(ccap, (unsigned long) (ct[0].func) + (unsigned long)(ct[0].sbox->base));
 
 	ct[0].sbox->box_caps.sealed_datacap = cheri_seal(dcap, ct[0].sbox->box_caps.sealcap);
 	ct[0].sbox->box_caps.sealed_codecap = cheri_seal(ccap, ct[0].sbox->box_caps.sealcap);
@@ -401,14 +472,14 @@ int build_cvm(int cid, struct cmp_s *comp, char *libos, char *disk, int argc, ch
 	host_syscall_handler_prb(cb_out, &ct[0].sbox->box_caps.sealed_codecapt, &ct[0].sbox->box_caps.sealed_datacapt, &ct[0].sbox->box_caps.sealed_codecapt2);
 
 	//generate capabilitites for ret_from_mon. TODO: we should make them public and our syscall/hostcall should fetch them
-	//NB: ret_from_mon is relative, while func aka entry_point is absolute. 
-	ccap = cheri_setaddress(ccap, comp_to_mon(ct[0].sbox->ret_from_mon, (unsigned long) ct[0].sbox->base) ); //here should be base but not cmp_begin. 
+	//todo: we need something better than comp_to_mon_force
+	ccap = cheri_setaddress(ccap, comp_to_mon_force(ct[0].sbox->ret_from_mon + ct[0].sbox->base - ct[0].sbox->cmp_begin, (unsigned long) ct[0].sbox) ); //here should be base but not cmp_begin. 
 	ct[0].sbox->box_caps.sealed_ret_from_mon = cheri_seal(ccap, ct[0].sbox->box_caps.sealcap);
 
 	//if we have syscall handler, we should publish it. TODO: let's init thread pubs this handler?
 	if(encl_map.syscall_handler != 0) {
 		printf("ACHTUNG: '%s' has syscall handler 'syscall_handler' at %p\n", libos, encl_map.syscall_handler);
-		void * __capability syscall_pcc_cap = cheri_setaddress(ccap, (unsigned long) comp_to_mon(encl_map.syscall_handler, (unsigned long) ct[0].sbox->base));
+		void * __capability syscall_pcc_cap = cheri_setaddress(ccap, (unsigned long) comp_to_mon_force(encl_map.syscall_handler + ct[0].sbox->base - ct[0].sbox->cmp_begin, (unsigned long) ct[0].sbox));
 		void * __capability sealed_syscall_pcc_cap = cheri_seal(syscall_pcc_cap, ct[0].sbox->box_caps.sealcap);
 
 		host_syscall_handler_adv(libos, sealed_syscall_pcc_cap, ct[0].sbox->box_caps.sealed_datacap);
@@ -487,7 +558,8 @@ int main(int argc, char *argv[]) {
 
 /////////////////
 	memset(cvms, 0, sizeof(cvms));
-	init_cap_store();
+	init_cap_files_store();
+	init_cbs();
 /*** 		we generate and seal intravisor caps. cVMs use them later as hostcall/syscall handler ***/
 	extern void tp_write();
 	extern void ret_from_cinv2();
@@ -546,7 +618,7 @@ int main(int argc, char *argv[]) {
 				snprintf(ptr, f->size, "%s", f->data);
 			}
 
-			host_cap_adv(ptr, f->size, f->name);
+			host_cap_file_adv(ptr, f->size, f->name);
 		}
 
 		for (struct cvm *f = state->flist; f; f = f->next) {
@@ -601,8 +673,10 @@ int main(int argc, char *argv[]) {
 		for (struct cvm *f = state->flist; f; f = f->next) {
 			tid = run_cvm(f->isol.base / 0x10000000);
 
-			if(f->wait == -1)
+			if(f->wait == -1) {
 				pthread_join(tid, &cret);
+//				printf("join returned\n");
+			}
 			else
 				sleep(f->wait);
 		}

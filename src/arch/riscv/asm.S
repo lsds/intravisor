@@ -18,6 +18,7 @@
 .type cinv,%function
 cinv:
 #ifdef SIM
+//outdated
 		mv	t0, a7
 		sd	a2, COMP_DDC(t0)
 		sd	a3, HC_PCC(t0)
@@ -29,14 +30,43 @@ cinv:
 		jr a0
 
 #else
-		mv	t0, a7
+
+		mv	t0, a0
+		lc	ca2, (16*2)(a1)
 		sc	ca2, COMP_DDC(t0)	//compartment ddc
+
+		lc	ca3, (16*3)(a1)
 		sc	ca3, HC_PCC(t0)	//hostcalls code
+
+		lc	ca4, (16*4)(a1)
 		sc	ca4, MON_DDC(t0)	//sealed mon ddc
 
+		lc	ca5, (16*5)(a1)
 		sc	ca5, RET_CINV2_PPC(t0)	//ret into mon as OCALL
+
+		lc	ca6, (16*6)(a1)
 		sc	ca6, RET_COMP_PPC(t0)	//ret from mon sealed PPC
-		sc	ca1, RET_COMP_DDC(t0)	//sealed data cap for ret from mon, the same as ca1
+
+		lc	ca0, (16*1)(a1)
+		sc	ca0, RET_COMP_DDC(t0)	//sealed data cap for ret from mon, the same as ca1
+
+		lc	ca0, (16*7)(a1)
+
+		cgettag		s4, ca0
+		bnez     s4, .cinv_run_as_pure
+        j       .cinv_next
+
+.cinv_run_as_pure:
+		cmove	csp, ca0
+.cinv_next:
+
+
+//we need something better
+		cmove	cra, ca0
+
+		lc	ca0, (16*0)(a1)
+		lc	ca2, (16*2)(a1)
+		lc	ca1, (16*1)(a1)
 
 		cspecialw	ddc, ca2
 		CInvoke ca0, ca1
@@ -113,11 +143,24 @@ tp_write:
 #ifndef SIM
 
 //sp here is cap-relative and we need to translate it into absolute. we add the base of the compartment to sp prior updating DDC
+		cgettag		s4, csp
+		bnez     s4, .run_as_pure
+        j       .run_as_hyb
+
+.run_as_hyb:
 		cspecialr	cs6, ddc
 		cgetbase	s4, cs6
         add     sp, sp, s4
-
 		cspecialw	ddc, ct6 //dcc-pcc should be the same 
+
+		j	.next
+
+.run_as_pure:
+		cspecialw	ddc, ct6 //dcc-pcc should be the same 
+		sc	csp, -64(sp)	// lets save cap 
+.next:
+
+
 
 #endif
 
@@ -152,11 +195,27 @@ tp_write:
 
 		addi	sp, sp, 112
 #ifndef SIM
-		cspecialw	ddc, ct2
 
+
+		li			t3, 1
+		cgetflags	t4, ct0
+		and			t4, t4, t3
+
+		bnez     t4, .ret_as_pure
+        j       .ret_as_hyb
+
+.ret_as_hyb:
 //sp is absolute here and we should transle it to compartment-relative
 		cgetbase	s4, ct2
 		sub sp, sp, s4
+
+		j	.ret_next
+
+.ret_as_pure:
+		lc	csp, -64(sp)
+.ret_next:
+
+		cspecialw	ddc, ct2
 
 		CInvoke ct0, ct1
 #else

@@ -1,0 +1,20 @@
+---
+cVMs:
+- name: outer
+  runtime: libouter_p.so
+  isolation:
+  - base: 0x20000000
+    size: 0x10000000
+    begin: 0x20000000
+    end: 0x30000000
+  callback_out: monitor
+  callback_in: libinner_p.so
+  wait: -1
+- name: inner
+  runtime: libinner_p.so
+  isolation:
+  - base: 0x10000000
+    size: 0x10000000
+    begin: 0x10000000
+    end: 0x20000000
+  callback_out: libouter_p.so
