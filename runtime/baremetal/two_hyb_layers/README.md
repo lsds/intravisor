@@ -1,8 +1,8 @@
 # Two nested isolation layers
 
-This example deployes two nested isolation layers with programs, libouter_h.so (O) and libinner_h.so (I) 
+This example deploys two nested isolation layers with programs, libouter_h.so (O) and libinner_h.so (I) 
 The inner layer begines from 0x10000000 and ends at 0x20000000, the outer layer begines from 0x10000000 and ends at 0x30000000.
-In other words, the outer has access to memory of the inner one, while inner has access only to its own memory.
+In other words, the outer has access to the memory of the inner one, while the inner has access only to its own memory.
 Both inner and outer layers have the same base -- this allows to pass pointers from Inner to Outer without their translation.
 
 The Outer layer works as syscall handler for the Inner layer. 
