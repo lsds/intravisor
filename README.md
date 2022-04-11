@@ -2,10 +2,10 @@
 
 
 
-## tl;dr
+## In the nutshell
 
 Intravisor deployes programs, runtimes, LibOSs into its address space and uses CHERI capabilitites for isolation and sharing.
-[More information about motivation and design](https://fosdem.org/2022/schedule/event/tee_intravisor/)
+[More information about motivation and design](https://fosdem.org/2022/schedule/event/tee_intravisor/), [Pre-print on arxiv](https://arxiv.org/abs/2202.05732)
 
 ## Building
 
@@ -127,6 +127,10 @@ MON: probe for key test1, store at 0x2fffbfc0
 Hello world
 ```
 
+### Run and build for FPGA 
+
+Please use the following [instruction](https://github.com/sartakov/CHERI/blob/main/FETT_AWS_F1.md).
+
 ## IPC 
 
 Intravisor features fast IPC primitives based on capabilitites. See [examples](runtime/musl-lkl/apps). 
@@ -138,8 +142,8 @@ This work was partially funded by the UK Government’s Industrial Strategy Chal
 
 # Paper 
 
-[arxiv](https://arxiv.org/abs/2202.05732)
+Accepted to OSDI'22
 
-Sartakov, V. A., Vilanova, L., Eyers, D., Shinagawa, T., & Pietzuch, P. (2022). CAP-VMs: Capability-Based Isolation and Sharing for Microservices. arXiv preprint arXiv:2202.05732.
+Sartakov, V. A., Vilanova, L., Eyers, D., Shinagawa, T., & Pietzuch, P. (2022). CAP-VMs: Capability-Based Isolation and Sharing for Microservices. 15th USENIX Symposium on Operating Systems Design and Implementation (OSDI'22).
 
 
