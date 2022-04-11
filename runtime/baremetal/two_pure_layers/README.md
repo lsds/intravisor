@@ -1,6 +1,6 @@
 # Two pure-cap isolated cVMs
 
-This example deployes two cVMs with programs, libouter_p.so (O) and libinner_p.so (I) 
+This example deploys two cVMs with programs, libouter_p.so (O) and libinner_p.so (I) 
 The inner layer begines from 0x10000000 and ends at 0x20000000, the outer layer begines from 0x20000000 and ends at 0x30000000.
 In other words, cVMs can access memory of each other only via capabilities 
 
