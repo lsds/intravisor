@@ -1,3 +1,10 @@
+# 0.1.0 ORC
+* ARM support
+* ORC support 
+* New services: pure-cap FFMpeg, uros2, redis, sqlite
+* pure-cap LibOS based on Unikraft, CubicleOS, musl-libc
+* LKL is deprecated
+
 # 0.0.2 Pure-cap support 
 
 * Intravisor supports hybrid and pure-cap cVMs at the same time
