@@ -74,7 +74,7 @@ make -C runtime/native/two-pure/second/
 ./intravisor -y two-pure.yaml
 ```
 
-[Expected Output](runtime/native/)
+[Expected Output](runtime/native/two-pure)
 
 
 ## Runtimes
