@@ -91,7 +91,7 @@ The musl-lkl runtime is deprecated due to the lack of resources. You can use the
 
 # Acknowledgements
 
-This work was partially funded by the UK Government’s Industrial Strategy Challenge Fund (ISCF) under the Digital Security by Design (DSbD) Programme.
+This work was funded by the UK Government’s Industrial Strategy Challenge Fund (ISCF) under the Digital Security by Design (DSbD) Programme (UKRI grant EP/V000365 “CloudCAP”), and the Technology Innovation Institute (TII) through its Secure Systems Research Center (SSRC). It was also supported by JSPS KAKENHI grant number 18KK0310.
 
 # Paper 
 
