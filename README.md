@@ -6,6 +6,10 @@
 Intravisor deployes programs, runtimes, LibOSs into its address space and uses CHERI capabilitites for isolation and sharing.
 [More information about motivation and design](https://fosdem.org/2022/schedule/event/tee_intravisor/)
 
+## Pre-built SDK 
+
+You can download pre-built x86_64 vmware image with the SDK from [here](https://disk.yandex.ru/d/Kr6eHel7fE3oow)
+
 ## Building SDK for RISC-V
 
 CHERI toolchains and QEMU 
