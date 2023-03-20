@@ -8,7 +8,7 @@ Intravisor deployes programs, runtimes, LibOSs into its address space and uses C
 
 ## Pre-built SDK 
 
-You can download pre-built x86_64 vmware image with the SDK from [here](https://disk.yandex.ru/d/Kr6eHel7fE3oow)
+You can download pre-built x86_64 vmware image with the SDK from [here](https://disk.yandex.ru/d/Kr6eHel7fE3oow). Credentials: capvm/capvm
 
 ## Building SDK for RISC-V
 
