@@ -1,0 +1,11 @@
+---
+cVMs:
+- name: sqlite
+  disk: disk_sqlite.img
+  runtime: libmusl-lkl.so
+  args: "/ld.so /app/speedtest :memory: --size 50"
+  isolation:
+  - base:  0x400000000
+    size:  0x040000000
+    begin: 0x400000000
+    end:   0x440000000

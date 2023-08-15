@@ -38,8 +38,10 @@ __LKL__SYSCALL(__lkl__NR_io_destroy, sys_io_destroy)
 __LKL__SC_COMP(__lkl__NR_io_submit, sys_io_submit, compat_sys_io_submit)
 #define __lkl__NR_io_cancel 3
 __LKL__SYSCALL(__lkl__NR_io_cancel, sys_io_cancel)
+#if defined(__LKL__ARCH_WANT_TIME32_SYSCALLS) || __LKL__BITS_PER_LONG != 32
 #define __lkl__NR_io_getevents 4
-__LKL__SC_COMP(__lkl__NR_io_getevents, sys_io_getevents, compat_sys_io_getevents)
+__LKL__SC_3264(__lkl__NR_io_getevents, sys_io_getevents_time32, sys_io_getevents)
+#endif
 
 /* fs/xattr.c */
 #define __lkl__NR_setxattr 5
@@ -138,7 +140,7 @@ __LKL__SYSCALL(__lkl__NR_renameat, sys_renameat)
 #define __lkl__NR_umount2 39
 __LKL__SYSCALL(__lkl__NR_umount2, sys_umount)
 #define __lkl__NR_mount 40
-__LKL__SC_COMP(__lkl__NR_mount, sys_mount, compat_sys_mount)
+__LKL__SYSCALL(__lkl__NR_mount, sys_mount)
 #define __lkl__NR_pivot_root 41
 __LKL__SYSCALL(__lkl__NR_pivot_root, sys_pivot_root)
 
@@ -179,7 +181,7 @@ __LKL__SYSCALL(__lkl__NR_fchownat, sys_fchownat)
 #define __lkl__NR_fchown 55
 __LKL__SYSCALL(__lkl__NR_fchown, sys_fchown)
 #define __lkl__NR_openat 56
-__LKL__SC_COMP(__lkl__NR_openat, sys_openat, compat_sys_openat)
+__LKL__SYSCALL(__lkl__NR_openat, sys_openat)
 #define __lkl__NR_close 57
 __LKL__SYSCALL(__lkl__NR_close, sys_close)
 #define __lkl__NR_vhangup 58
@@ -205,9 +207,9 @@ __LKL__SYSCALL(__lkl__NR_read, sys_read)
 #define __lkl__NR_write 64
 __LKL__SYSCALL(__lkl__NR_write, sys_write)
 #define __lkl__NR_readv 65
-__LKL__SC_COMP(__lkl__NR_readv, sys_readv, compat_sys_readv)
+__LKL__SC_COMP(__lkl__NR_readv, sys_readv, sys_readv)
 #define __lkl__NR_writev 66
-__LKL__SC_COMP(__lkl__NR_writev, sys_writev, compat_sys_writev)
+__LKL__SC_COMP(__lkl__NR_writev, sys_writev, sys_writev)
 #define __lkl__NR_pread64 67
 __LKL__SC_COMP(__lkl__NR_pread64, sys_pread64, compat_sys_pread64)
 #define __lkl__NR_pwrite64 68
@@ -222,10 +224,12 @@ __LKL__SC_COMP(__lkl__NR_pwritev, sys_pwritev, compat_sys_pwritev)
 __LKL__SYSCALL(__lkl__NR3264_sendfile, sys_sendfile64)
 
 /* fs/select.c */
+#if defined(__LKL__ARCH_WANT_TIME32_SYSCALLS) || __LKL__BITS_PER_LONG != 32
 #define __lkl__NR_pselect6 72
-__LKL__SC_COMP(__lkl__NR_pselect6, sys_pselect6, compat_sys_pselect6)
+__LKL__SC_COMP_3264(__lkl__NR_pselect6, sys_pselect6_time32, sys_pselect6, compat_sys_pselect6_time32)
 #define __lkl__NR_ppoll 73
-__LKL__SC_COMP(__lkl__NR_ppoll, sys_ppoll, compat_sys_ppoll)
+__LKL__SC_COMP_3264(__lkl__NR_ppoll, sys_ppoll_time32, sys_ppoll, compat_sys_ppoll_time32)
+#endif
 
 /* fs/signalfd.c */
 #define __lkl__NR_signalfd4 74
@@ -233,7 +237,7 @@ __LKL__SC_COMP(__lkl__NR_signalfd4, sys_signalfd4, compat_sys_signalfd4)
 
 /* fs/splice.c */
 #define __lkl__NR_vmsplice 75
-__LKL__SC_COMP(__lkl__NR_vmsplice, sys_vmsplice, compat_sys_vmsplice)
+__LKL__SYSCALL(__lkl__NR_vmsplice, sys_vmsplice)
 #define __lkl__NR_splice 76
 __LKL__SYSCALL(__lkl__NR_splice, sys_splice)
 #define __lkl__NR_tee 77
@@ -242,10 +246,12 @@ __LKL__SYSCALL(__lkl__NR_tee, sys_tee)
 /* fs/stat.c */
 #define __lkl__NR_readlinkat 78
 __LKL__SYSCALL(__lkl__NR_readlinkat, sys_readlinkat)
+#if defined(__LKL__ARCH_WANT_NEW_STAT) || defined(__LKL__ARCH_WANT_STAT64)
 #define __lkl__NR3264_fstatat 79
 __LKL__SC_3264(__lkl__NR3264_fstatat, sys_fstatat64, sys_newfstatat)
 #define __lkl__NR3264_fstat 80
 __LKL__SC_3264(__lkl__NR3264_fstat, sys_fstat64, sys_newfstat)
+#endif
 
 /* fs/sync.c */
 #define __lkl__NR_sync 81
@@ -267,16 +273,20 @@ __LKL__SC_COMP(__lkl__NR_sync_file_range, sys_sync_file_range, \
 /* fs/timerfd.c */
 #define __lkl__NR_timerfd_create 85
 __LKL__SYSCALL(__lkl__NR_timerfd_create, sys_timerfd_create)
+#if defined(__LKL__ARCH_WANT_TIME32_SYSCALLS) || __LKL__BITS_PER_LONG != 32
 #define __lkl__NR_timerfd_settime 86
-__LKL__SC_COMP(__lkl__NR_timerfd_settime, sys_timerfd_settime, \
-	  compat_sys_timerfd_settime)
+__LKL__SC_3264(__lkl__NR_timerfd_settime, sys_timerfd_settime32, \
+	  sys_timerfd_settime)
 #define __lkl__NR_timerfd_gettime 87
-__LKL__SC_COMP(__lkl__NR_timerfd_gettime, sys_timerfd_gettime, \
-	  compat_sys_timerfd_gettime)
+__LKL__SC_3264(__lkl__NR_timerfd_gettime, sys_timerfd_gettime32, \
+	  sys_timerfd_gettime)
+#endif
 
 /* fs/utimes.c */
+#if defined(__LKL__ARCH_WANT_TIME32_SYSCALLS) || __LKL__BITS_PER_LONG != 32
 #define __lkl__NR_utimensat 88
-__LKL__SC_COMP(__lkl__NR_utimensat, sys_utimensat, compat_sys_utimensat)
+__LKL__SC_3264(__lkl__NR_utimensat, sys_utimensat_time32, sys_utimensat)
+#endif
 
 /* kernel/acct.c */
 #define __lkl__NR_acct 89
@@ -307,8 +317,10 @@ __LKL__SYSCALL(__lkl__NR_set_tid_address, sys_set_tid_address)
 __LKL__SYSCALL(__lkl__NR_unshare, sys_unshare)
 
 /* kernel/futex.c */
+#if defined(__LKL__ARCH_WANT_TIME32_SYSCALLS) || __LKL__BITS_PER_LONG != 32
 #define __lkl__NR_futex 98
-__LKL__SC_COMP(__lkl__NR_futex, sys_futex, compat_sys_futex)
+__LKL__SC_3264(__lkl__NR_futex, sys_futex_time32, sys_futex)
+#endif
 #define __lkl__NR_set_robust_list 99
 __LKL__SC_COMP(__lkl__NR_set_robust_list, sys_set_robust_list, \
 	  compat_sys_set_robust_list)
@@ -317,8 +329,10 @@ __LKL__SC_COMP(__lkl__NR_get_robust_list, sys_get_robust_list, \
 	  compat_sys_get_robust_list)
 
 /* kernel/hrtimer.c */
+#if defined(__LKL__ARCH_WANT_TIME32_SYSCALLS) || __LKL__BITS_PER_LONG != 32
 #define __lkl__NR_nanosleep 101
-__LKL__SC_COMP(__lkl__NR_nanosleep, sys_nanosleep, compat_sys_nanosleep)
+__LKL__SC_3264(__lkl__NR_nanosleep, sys_nanosleep_time32, sys_nanosleep)
+#endif
 
 /* kernel/itimer.c */
 #define __lkl__NR_getitimer 102
@@ -339,23 +353,29 @@ __LKL__SYSCALL(__lkl__NR_delete_module, sys_delete_module)
 /* kernel/posix-timers.c */
 #define __lkl__NR_timer_create 107
 __LKL__SC_COMP(__lkl__NR_timer_create, sys_timer_create, compat_sys_timer_create)
+#if defined(__LKL__ARCH_WANT_TIME32_SYSCALLS) || __LKL__BITS_PER_LONG != 32
 #define __lkl__NR_timer_gettime 108
-__LKL__SC_COMP(__lkl__NR_timer_gettime, sys_timer_gettime, compat_sys_timer_gettime)
+__LKL__SC_3264(__lkl__NR_timer_gettime, sys_timer_gettime32, sys_timer_gettime)
+#endif
 #define __lkl__NR_timer_getoverrun 109
 __LKL__SYSCALL(__lkl__NR_timer_getoverrun, sys_timer_getoverrun)
+#if defined(__LKL__ARCH_WANT_TIME32_SYSCALLS) || __LKL__BITS_PER_LONG != 32
 #define __lkl__NR_timer_settime 110
-__LKL__SC_COMP(__lkl__NR_timer_settime, sys_timer_settime, compat_sys_timer_settime)
+__LKL__SC_3264(__lkl__NR_timer_settime, sys_timer_settime32, sys_timer_settime)
+#endif
 #define __lkl__NR_timer_delete 111
 __LKL__SYSCALL(__lkl__NR_timer_delete, sys_timer_delete)
+#if defined(__LKL__ARCH_WANT_TIME32_SYSCALLS) || __LKL__BITS_PER_LONG != 32
 #define __lkl__NR_clock_settime 112
-__LKL__SC_COMP(__lkl__NR_clock_settime, sys_clock_settime, compat_sys_clock_settime)
+__LKL__SC_3264(__lkl__NR_clock_settime, sys_clock_settime32, sys_clock_settime)
 #define __lkl__NR_clock_gettime 113
-__LKL__SC_COMP(__lkl__NR_clock_gettime, sys_clock_gettime, compat_sys_clock_gettime)
+__LKL__SC_3264(__lkl__NR_clock_gettime, sys_clock_gettime32, sys_clock_gettime)
 #define __lkl__NR_clock_getres 114
-__LKL__SC_COMP(__lkl__NR_clock_getres, sys_clock_getres, compat_sys_clock_getres)
+__LKL__SC_3264(__lkl__NR_clock_getres, sys_clock_getres_time32, sys_clock_getres)
 #define __lkl__NR_clock_nanosleep 115
-__LKL__SC_COMP(__lkl__NR_clock_nanosleep, sys_clock_nanosleep, \
-	  compat_sys_clock_nanosleep)
+__LKL__SC_3264(__lkl__NR_clock_nanosleep, sys_clock_nanosleep_time32, \
+	  sys_clock_nanosleep)
+#endif
 
 /* kernel/printk.c */
 #define __lkl__NR_syslog 116
@@ -363,7 +383,7 @@ __LKL__SYSCALL(__lkl__NR_syslog, sys_syslog)
 
 /* kernel/ptrace.c */
 #define __lkl__NR_ptrace 117
-__LKL__SYSCALL(__lkl__NR_ptrace, sys_ptrace)
+__LKL__SC_COMP(__lkl__NR_ptrace, sys_ptrace, compat_sys_ptrace)
 
 /* kernel/sched/core.c */
 #define __lkl__NR_sched_setparam 118
@@ -386,9 +406,11 @@ __LKL__SYSCALL(__lkl__NR_sched_yield, sys_sched_yield)
 __LKL__SYSCALL(__lkl__NR_sched_get_priority_max, sys_sched_get_priority_max)
 #define __lkl__NR_sched_get_priority_min 126
 __LKL__SYSCALL(__lkl__NR_sched_get_priority_min, sys_sched_get_priority_min)
+#if defined(__LKL__ARCH_WANT_TIME32_SYSCALLS) || __LKL__BITS_PER_LONG != 32
 #define __lkl__NR_sched_rr_get_interval 127
-__LKL__SC_COMP(__lkl__NR_sched_rr_get_interval, sys_sched_rr_get_interval, \
-	  compat_sys_sched_rr_get_interval)
+__LKL__SC_3264(__lkl__NR_sched_rr_get_interval, sys_sched_rr_get_interval_time32, \
+	  sys_sched_rr_get_interval)
+#endif
 
 /* kernel/signal.c */
 #define __lkl__NR_restart_syscall 128
@@ -409,9 +431,11 @@ __LKL__SC_COMP(__lkl__NR_rt_sigaction, sys_rt_sigaction, compat_sys_rt_sigaction
 __LKL__SC_COMP(__lkl__NR_rt_sigprocmask, sys_rt_sigprocmask, compat_sys_rt_sigprocmask)
 #define __lkl__NR_rt_sigpending 136
 __LKL__SC_COMP(__lkl__NR_rt_sigpending, sys_rt_sigpending, compat_sys_rt_sigpending)
+#if defined(__LKL__ARCH_WANT_TIME32_SYSCALLS) || __LKL__BITS_PER_LONG != 32
 #define __lkl__NR_rt_sigtimedwait 137
-__LKL__SC_COMP(__lkl__NR_rt_sigtimedwait, sys_rt_sigtimedwait, \
-	  compat_sys_rt_sigtimedwait)
+__LKL__SC_COMP_3264(__lkl__NR_rt_sigtimedwait, sys_rt_sigtimedwait_time32, \
+	  sys_rt_sigtimedwait, compat_sys_rt_sigtimedwait_time32)
+#endif
 #define __lkl__NR_rt_sigqueueinfo 138
 __LKL__SC_COMP(__lkl__NR_rt_sigqueueinfo, sys_rt_sigqueueinfo, \
 	  compat_sys_rt_sigqueueinfo)
@@ -465,10 +489,15 @@ __LKL__SYSCALL(__lkl__NR_uname, sys_newuname)
 __LKL__SYSCALL(__lkl__NR_sethostname, sys_sethostname)
 #define __lkl__NR_setdomainname 162
 __LKL__SYSCALL(__lkl__NR_setdomainname, sys_setdomainname)
+
+#ifdef __LKL__ARCH_WANT_SET_GET_RLIMIT
+/* getrlimit and setrlimit are superseded with prlimit64 */
 #define __lkl__NR_getrlimit 163
 __LKL__SC_COMP(__lkl__NR_getrlimit, sys_getrlimit, compat_sys_getrlimit)
 #define __lkl__NR_setrlimit 164
 __LKL__SC_COMP(__lkl__NR_setrlimit, sys_setrlimit, compat_sys_setrlimit)
+#endif
+
 #define __lkl__NR_getrusage 165
 __LKL__SC_COMP(__lkl__NR_getrusage, sys_getrusage, compat_sys_getrusage)
 #define __lkl__NR_umask 166
@@ -479,14 +508,16 @@ __LKL__SYSCALL(__lkl__NR_prctl, sys_prctl)
 __LKL__SYSCALL(__lkl__NR_getcpu, sys_getcpu)
 
 /* kernel/time.c */
+#if defined(__LKL__ARCH_WANT_TIME32_SYSCALLS) || __LKL__BITS_PER_LONG != 32
 #define __lkl__NR_gettimeofday 169
 __LKL__SC_COMP(__lkl__NR_gettimeofday, sys_gettimeofday, compat_sys_gettimeofday)
 #define __lkl__NR_settimeofday 170
 __LKL__SC_COMP(__lkl__NR_settimeofday, sys_settimeofday, compat_sys_settimeofday)
 #define __lkl__NR_adjtimex 171
-__LKL__SC_COMP(__lkl__NR_adjtimex, sys_adjtimex, compat_sys_adjtimex)
+__LKL__SC_3264(__lkl__NR_adjtimex, sys_adjtimex_time32, sys_adjtimex)
+#endif
 
-/* kernel/timer.c */
+/* kernel/sys.c */
 #define __lkl__NR_getpid 172
 __LKL__SYSCALL(__lkl__NR_getpid, sys_getpid)
 #define __lkl__NR_getppid 173
@@ -509,11 +540,13 @@ __LKL__SC_COMP(__lkl__NR_sysinfo, sys_sysinfo, compat_sys_sysinfo)
 __LKL__SC_COMP(__lkl__NR_mq_open, sys_mq_open, compat_sys_mq_open)
 #define __lkl__NR_mq_unlink 181
 __LKL__SYSCALL(__lkl__NR_mq_unlink, sys_mq_unlink)
+#if defined(__LKL__ARCH_WANT_TIME32_SYSCALLS) || __LKL__BITS_PER_LONG != 32
 #define __lkl__NR_mq_timedsend 182
-__LKL__SC_COMP(__lkl__NR_mq_timedsend, sys_mq_timedsend, compat_sys_mq_timedsend)
+__LKL__SC_3264(__lkl__NR_mq_timedsend, sys_mq_timedsend_time32, sys_mq_timedsend)
 #define __lkl__NR_mq_timedreceive 183
-__LKL__SC_COMP(__lkl__NR_mq_timedreceive, sys_mq_timedreceive, \
-	  compat_sys_mq_timedreceive)
+__LKL__SC_3264(__lkl__NR_mq_timedreceive, sys_mq_timedreceive_time32, \
+	  sys_mq_timedreceive)
+#endif
 #define __lkl__NR_mq_notify 184
 __LKL__SC_COMP(__lkl__NR_mq_notify, sys_mq_notify, compat_sys_mq_notify)
 #define __lkl__NR_mq_getsetattr 185
@@ -534,8 +567,10 @@ __LKL__SC_COMP(__lkl__NR_msgsnd, sys_msgsnd, compat_sys_msgsnd)
 __LKL__SYSCALL(__lkl__NR_semget, sys_semget)
 #define __lkl__NR_semctl 191
 __LKL__SC_COMP(__lkl__NR_semctl, sys_semctl, compat_sys_semctl)
+#if defined(__LKL__ARCH_WANT_TIME32_SYSCALLS) || __LKL__BITS_PER_LONG != 32
 #define __lkl__NR_semtimedop 192
-__LKL__SC_COMP(__lkl__NR_semtimedop, sys_semtimedop, compat_sys_semtimedop)
+__LKL__SC_3264(__lkl__NR_semtimedop, sys_semtimedop_time32, sys_semtimedop)
+#endif
 #define __lkl__NR_semop 193
 __LKL__SYSCALL(__lkl__NR_semop, sys_semop)
 
@@ -571,9 +606,9 @@ __LKL__SYSCALL(__lkl__NR_sendto, sys_sendto)
 #define __lkl__NR_recvfrom 207
 __LKL__SC_COMP(__lkl__NR_recvfrom, sys_recvfrom, compat_sys_recvfrom)
 #define __lkl__NR_setsockopt 208
-__LKL__SC_COMP(__lkl__NR_setsockopt, sys_setsockopt, compat_sys_setsockopt)
+__LKL__SC_COMP(__lkl__NR_setsockopt, sys_setsockopt, sys_setsockopt)
 #define __lkl__NR_getsockopt 209
-__LKL__SC_COMP(__lkl__NR_getsockopt, sys_getsockopt, compat_sys_getsockopt)
+__LKL__SC_COMP(__lkl__NR_getsockopt, sys_getsockopt, sys_getsockopt)
 #define __lkl__NR_shutdown 210
 __LKL__SYSCALL(__lkl__NR_shutdown, sys_shutdown)
 #define __lkl__NR_sendmsg 211
@@ -638,15 +673,15 @@ __LKL__SYSCALL(__lkl__NR_madvise, sys_madvise)
 #define __lkl__NR_remap_file_pages 234
 __LKL__SYSCALL(__lkl__NR_remap_file_pages, sys_remap_file_pages)
 #define __lkl__NR_mbind 235
-__LKL__SC_COMP(__lkl__NR_mbind, sys_mbind, compat_sys_mbind)
+__LKL__SYSCALL(__lkl__NR_mbind, sys_mbind)
 #define __lkl__NR_get_mempolicy 236
-__LKL__SC_COMP(__lkl__NR_get_mempolicy, sys_get_mempolicy, compat_sys_get_mempolicy)
+__LKL__SYSCALL(__lkl__NR_get_mempolicy, sys_get_mempolicy)
 #define __lkl__NR_set_mempolicy 237
-__LKL__SC_COMP(__lkl__NR_set_mempolicy, sys_set_mempolicy, compat_sys_set_mempolicy)
+__LKL__SYSCALL(__lkl__NR_set_mempolicy, sys_set_mempolicy)
 #define __lkl__NR_migrate_pages 238
-__LKL__SC_COMP(__lkl__NR_migrate_pages, sys_migrate_pages, compat_sys_migrate_pages)
+__LKL__SYSCALL(__lkl__NR_migrate_pages, sys_migrate_pages)
 #define __lkl__NR_move_pages 239
-__LKL__SC_COMP(__lkl__NR_move_pages, sys_move_pages, compat_sys_move_pages)
+__LKL__SYSCALL(__lkl__NR_move_pages, sys_move_pages)
 #endif
 
 #define __lkl__NR_rt_tgsigqueueinfo 240
@@ -656,8 +691,10 @@ __LKL__SC_COMP(__lkl__NR_rt_tgsigqueueinfo, sys_rt_tgsigqueueinfo, \
 __LKL__SYSCALL(__lkl__NR_perf_event_open, sys_perf_event_open)
 #define __lkl__NR_accept4 242
 __LKL__SYSCALL(__lkl__NR_accept4, sys_accept4)
+#if defined(__LKL__ARCH_WANT_TIME32_SYSCALLS) || __LKL__BITS_PER_LONG != 32
 #define __lkl__NR_recvmmsg 243
-__LKL__SC_COMP(__lkl__NR_recvmmsg, sys_recvmmsg, compat_sys_recvmmsg)
+__LKL__SC_COMP_3264(__lkl__NR_recvmmsg, sys_recvmmsg_time32, sys_recvmmsg, compat_sys_recvmmsg_time32)
+#endif
 
 /*
  * Architectures may provide up to 16 syscalls of their own
@@ -665,8 +702,10 @@ __LKL__SC_COMP(__lkl__NR_recvmmsg, sys_recvmmsg, compat_sys_recvmmsg)
  */
 #define __lkl__NR_arch_specific_syscall 244
 
+#if defined(__LKL__ARCH_WANT_TIME32_SYSCALLS) || __LKL__BITS_PER_LONG != 32
 #define __lkl__NR_wait4 260
 __LKL__SC_COMP(__lkl__NR_wait4, sys_wait4, compat_sys_wait4)
+#endif
 #define __lkl__NR_prlimit64 261
 __LKL__SYSCALL(__lkl__NR_prlimit64, sys_prlimit64)
 #define __lkl__NR_fanotify_init 262
@@ -676,10 +715,11 @@ __LKL__SYSCALL(__lkl__NR_fanotify_mark, sys_fanotify_mark)
 #define __lkl__NR_name_to_handle_at         264
 __LKL__SYSCALL(__lkl__NR_name_to_handle_at, sys_name_to_handle_at)
 #define __lkl__NR_open_by_handle_at         265
-__LKL__SC_COMP(__lkl__NR_open_by_handle_at, sys_open_by_handle_at, \
-	  compat_sys_open_by_handle_at)
+__LKL__SYSCALL(__lkl__NR_open_by_handle_at, sys_open_by_handle_at)
+#if defined(__LKL__ARCH_WANT_TIME32_SYSCALLS) || __LKL__BITS_PER_LONG != 32
 #define __lkl__NR_clock_adjtime 266
-__LKL__SC_COMP(__lkl__NR_clock_adjtime, sys_clock_adjtime, compat_sys_clock_adjtime)
+__LKL__SC_3264(__lkl__NR_clock_adjtime, sys_clock_adjtime32, sys_clock_adjtime)
+#endif
 #define __lkl__NR_syncfs 267
 __LKL__SYSCALL(__lkl__NR_syncfs, sys_syncfs)
 #define __lkl__NR_setns 268
@@ -687,11 +727,9 @@ __LKL__SYSCALL(__lkl__NR_setns, sys_setns)
 #define __lkl__NR_sendmmsg 269
 __LKL__SC_COMP(__lkl__NR_sendmmsg, sys_sendmmsg, compat_sys_sendmmsg)
 #define __lkl__NR_process_vm_readv 270
-__LKL__SC_COMP(__lkl__NR_process_vm_readv, sys_process_vm_readv, \
-          compat_sys_process_vm_readv)
+__LKL__SYSCALL(__lkl__NR_process_vm_readv, sys_process_vm_readv)
 #define __lkl__NR_process_vm_writev 271
-__LKL__SC_COMP(__lkl__NR_process_vm_writev, sys_process_vm_writev, \
-          compat_sys_process_vm_writev)
+__LKL__SYSCALL(__lkl__NR_process_vm_writev, sys_process_vm_writev)
 #define __lkl__NR_kcmp 272
 __LKL__SYSCALL(__lkl__NR_kcmp, sys_kcmp)
 #define __lkl__NR_finit_module 273
@@ -732,9 +770,124 @@ __LKL__SYSCALL(__lkl__NR_pkey_alloc,    sys_pkey_alloc)
 __LKL__SYSCALL(__lkl__NR_pkey_free,     sys_pkey_free)
 #define __lkl__NR_statx 291
 __LKL__SYSCALL(__lkl__NR_statx,     sys_statx)
+#if defined(__LKL__ARCH_WANT_TIME32_SYSCALLS) || __LKL__BITS_PER_LONG != 32
+#define __lkl__NR_io_pgetevents 292
+__LKL__SC_COMP_3264(__lkl__NR_io_pgetevents, sys_io_pgetevents_time32, sys_io_pgetevents, compat_sys_io_pgetevents)
+#endif
+#define __lkl__NR_rseq 293
+__LKL__SYSCALL(__lkl__NR_rseq, sys_rseq)
+#define __lkl__NR_kexec_file_load 294
+__LKL__SYSCALL(__lkl__NR_kexec_file_load,     sys_kexec_file_load)
+/* 295 through 402 are unassigned to sync up with generic numbers, don't use */
+#if defined(__SYSCALL_COMPAT) || __LKL__BITS_PER_LONG == 32
+#define __lkl__NR_clock_gettime64 403
+__LKL__SYSCALL(__lkl__NR_clock_gettime64, sys_clock_gettime)
+#define __lkl__NR_clock_settime64 404
+__LKL__SYSCALL(__lkl__NR_clock_settime64, sys_clock_settime)
+#define __lkl__NR_clock_adjtime64 405
+__LKL__SYSCALL(__lkl__NR_clock_adjtime64, sys_clock_adjtime)
+#define __lkl__NR_clock_getres_time64 406
+__LKL__SYSCALL(__lkl__NR_clock_getres_time64, sys_clock_getres)
+#define __lkl__NR_clock_nanosleep_time64 407
+__LKL__SYSCALL(__lkl__NR_clock_nanosleep_time64, sys_clock_nanosleep)
+#define __lkl__NR_timer_gettime64 408
+__LKL__SYSCALL(__lkl__NR_timer_gettime64, sys_timer_gettime)
+#define __lkl__NR_timer_settime64 409
+__LKL__SYSCALL(__lkl__NR_timer_settime64, sys_timer_settime)
+#define __lkl__NR_timerfd_gettime64 410
+__LKL__SYSCALL(__lkl__NR_timerfd_gettime64, sys_timerfd_gettime)
+#define __lkl__NR_timerfd_settime64 411
+__LKL__SYSCALL(__lkl__NR_timerfd_settime64, sys_timerfd_settime)
+#define __lkl__NR_utimensat_time64 412
+__LKL__SYSCALL(__lkl__NR_utimensat_time64, sys_utimensat)
+#define __lkl__NR_pselect6_time64 413
+__LKL__SC_COMP(__lkl__NR_pselect6_time64, sys_pselect6, compat_sys_pselect6_time64)
+#define __lkl__NR_ppoll_time64 414
+__LKL__SC_COMP(__lkl__NR_ppoll_time64, sys_ppoll, compat_sys_ppoll_time64)
+#define __lkl__NR_io_pgetevents_time64 416
+__LKL__SYSCALL(__lkl__NR_io_pgetevents_time64, sys_io_pgetevents)
+#define __lkl__NR_recvmmsg_time64 417
+__LKL__SC_COMP(__lkl__NR_recvmmsg_time64, sys_recvmmsg, compat_sys_recvmmsg_time64)
+#define __lkl__NR_mq_timedsend_time64 418
+__LKL__SYSCALL(__lkl__NR_mq_timedsend_time64, sys_mq_timedsend)
+#define __lkl__NR_mq_timedreceive_time64 419
+__LKL__SYSCALL(__lkl__NR_mq_timedreceive_time64, sys_mq_timedreceive)
+#define __lkl__NR_semtimedop_time64 420
+__LKL__SYSCALL(__lkl__NR_semtimedop_time64, sys_semtimedop)
+#define __lkl__NR_rt_sigtimedwait_time64 421
+__LKL__SC_COMP(__lkl__NR_rt_sigtimedwait_time64, sys_rt_sigtimedwait, compat_sys_rt_sigtimedwait_time64)
+#define __lkl__NR_futex_time64 422
+__LKL__SYSCALL(__lkl__NR_futex_time64, sys_futex)
+#define __lkl__NR_sched_rr_get_interval_time64 423
+__LKL__SYSCALL(__lkl__NR_sched_rr_get_interval_time64, sys_sched_rr_get_interval)
+#endif
+
+#define __lkl__NR_pidfd_send_signal 424
+__LKL__SYSCALL(__lkl__NR_pidfd_send_signal, sys_pidfd_send_signal)
+#define __lkl__NR_io_uring_setup 425
+__LKL__SYSCALL(__lkl__NR_io_uring_setup, sys_io_uring_setup)
+#define __lkl__NR_io_uring_enter 426
+__LKL__SYSCALL(__lkl__NR_io_uring_enter, sys_io_uring_enter)
+#define __lkl__NR_io_uring_register 427
+__LKL__SYSCALL(__lkl__NR_io_uring_register, sys_io_uring_register)
+#define __lkl__NR_open_tree 428
+__LKL__SYSCALL(__lkl__NR_open_tree, sys_open_tree)
+#define __lkl__NR_move_mount 429
+__LKL__SYSCALL(__lkl__NR_move_mount, sys_move_mount)
+#define __lkl__NR_fsopen 430
+__LKL__SYSCALL(__lkl__NR_fsopen, sys_fsopen)
+#define __lkl__NR_fsconfig 431
+__LKL__SYSCALL(__lkl__NR_fsconfig, sys_fsconfig)
+#define __lkl__NR_fsmount 432
+__LKL__SYSCALL(__lkl__NR_fsmount, sys_fsmount)
+#define __lkl__NR_fspick 433
+__LKL__SYSCALL(__lkl__NR_fspick, sys_fspick)
+#define __lkl__NR_pidfd_open 434
+__LKL__SYSCALL(__lkl__NR_pidfd_open, sys_pidfd_open)
+#ifdef __ARCH_WANT_SYS_CLONE3
+#define __lkl__NR_clone3 435
+__LKL__SYSCALL(__lkl__NR_clone3, sys_clone3)
+#endif
+#define __lkl__NR_close_range 436
+__LKL__SYSCALL(__lkl__NR_close_range, sys_close_range)
+
+#define __lkl__NR_openat2 437
+__LKL__SYSCALL(__lkl__NR_openat2, sys_openat2)
+#define __lkl__NR_pidfd_getfd 438
+__LKL__SYSCALL(__lkl__NR_pidfd_getfd, sys_pidfd_getfd)
+#define __lkl__NR_faccessat2 439
+__LKL__SYSCALL(__lkl__NR_faccessat2, sys_faccessat2)
+#define __lkl__NR_process_madvise 440
+__LKL__SYSCALL(__lkl__NR_process_madvise, sys_process_madvise)
+#define __lkl__NR_epoll_pwait2 441
+__LKL__SC_COMP(__lkl__NR_epoll_pwait2, sys_epoll_pwait2, compat_sys_epoll_pwait2)
+#define __lkl__NR_mount_setattr 442
+__LKL__SYSCALL(__lkl__NR_mount_setattr, sys_mount_setattr)
+#define __lkl__NR_quotactl_fd 443
+__LKL__SYSCALL(__lkl__NR_quotactl_fd, sys_quotactl_fd)
+
+#define __lkl__NR_landlock_create_ruleset 444
+__LKL__SYSCALL(__lkl__NR_landlock_create_ruleset, sys_landlock_create_ruleset)
+#define __lkl__NR_landlock_add_rule 445
+__LKL__SYSCALL(__lkl__NR_landlock_add_rule, sys_landlock_add_rule)
+#define __lkl__NR_landlock_restrict_self 446
+__LKL__SYSCALL(__lkl__NR_landlock_restrict_self, sys_landlock_restrict_self)
+
+#ifdef __ARCH_WANT_MEMFD_SECRET
+#define __lkl__NR_memfd_secret 447
+__LKL__SYSCALL(__lkl__NR_memfd_secret, sys_memfd_secret)
+#endif
+#define __lkl__NR_process_mrelease 448
+__LKL__SYSCALL(__lkl__NR_process_mrelease, sys_process_mrelease)
+
+#define __lkl__NR_futex_waitv 449
+__LKL__SYSCALL(__lkl__NR_futex_waitv, sys_futex_waitv)
+
+#define __lkl__NR_set_mempolicy_home_node 450
+__LKL__SYSCALL(__lkl__NR_set_mempolicy_home_node, sys_set_mempolicy_home_node)
 
 #undef __lkl__NR_syscalls
-#define __lkl__NR_syscalls 292
+#define __lkl__NR_syscalls 451
 
 /*
  * 32 bit systems traditionally used different
@@ -754,8 +907,10 @@ __LKL__SYSCALL(__lkl__NR_statx,     sys_statx)
 #define __lkl__NR_ftruncate __lkl__NR3264_ftruncate
 #define __lkl__NR_lseek __lkl__NR3264_lseek
 #define __lkl__NR_sendfile __lkl__NR3264_sendfile
+#if defined(__LKL__ARCH_WANT_NEW_STAT) || defined(__LKL__ARCH_WANT_STAT64)
 #define __lkl__NR_newfstatat __lkl__NR3264_fstatat
 #define __lkl__NR_fstat __lkl__NR3264_fstat
+#endif
 #define __lkl__NR_mmap __lkl__NR3264_mmap
 #define __lkl__NR_fadvise64 __lkl__NR3264_fadvise64
 #ifdef __NR3264_stat
@@ -770,8 +925,10 @@ __LKL__SYSCALL(__lkl__NR_statx,     sys_statx)
 #define __lkl__NR_ftruncate64 __lkl__NR3264_ftruncate
 #define __lkl__NR_llseek __lkl__NR3264_lseek
 #define __lkl__NR_sendfile64 __lkl__NR3264_sendfile
+#if defined(__LKL__ARCH_WANT_NEW_STAT) || defined(__LKL__ARCH_WANT_STAT64)
 #define __lkl__NR_fstatat64 __lkl__NR3264_fstatat
 #define __lkl__NR_fstat64 __lkl__NR3264_fstat
+#endif
 #define __lkl__NR_mmap2 __lkl__NR3264_mmap
 #define __lkl__NR_fadvise64_64 __lkl__NR3264_fadvise64
 #ifdef __NR3264_stat

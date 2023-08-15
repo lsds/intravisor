@@ -1,7 +1,7 @@
 #ifndef _LKL_ASM_UAPI_LKL_SYSCALLS_H
 #define _LKL_ASM_UAPI_LKL_SYSCALLS_H
 
-#include <lkl/autoconf.h>
+#include <lkl/asm/config.h>
 #include <lkl/linux/types.h>
 
 typedef __lkl__kernel_uid32_t 	lkl_qid_t;
@@ -21,10 +21,6 @@ typedef __lkl__kernel_gid32_t	lkl_gid_t;
 typedef __lkl__kernel_uid16_t        lkl_uid16_t;
 typedef __lkl__kernel_gid16_t        lkl_gid16_t;
 typedef unsigned long		lkl_uintptr_t;
-#ifdef CONFIG_UID16
-typedef __lkl__kernel_old_uid_t	lkl_old_uid_t;
-typedef __lkl__kernel_old_gid_t	lkl_old_gid_t;
-#endif
 typedef __lkl__kernel_loff_t		lkl_loff_t;
 typedef __lkl__kernel_size_t		lkl_size_t;
 typedef __lkl__kernel_ssize_t	lkl_ssize_t;
@@ -83,7 +79,7 @@ typedef __lkl__s64			lkl_s64;
 #undef __lkl__NR_umount
 #define __lkl__NR_umount __lkl__NR_umount2
 
-#ifdef LKL_CONFIG_64BIT
+#if LKL_CONFIG_64BIT
 #define __lkl__NR_newfstat __lkl__NR3264_fstat
 #define __lkl__NR_newfstatat __lkl__NR3264_fstatat
 #endif
@@ -120,8 +116,6 @@ typedef __lkl__s64			lkl_s64;
 #include <lkl/asm/siginfo.h>
 #include <lkl/linux/utime.h>
 #include <lkl/asm/socket.h>
-#include <lkl/linux/icmp.h>
-#include <lkl/linux/ip.h>
 
 /* Define data structures used in system calls that are not defined in UAPI
  * headers */
@@ -143,6 +137,8 @@ struct lkl_sockaddr {
 #define __LKL__UAPI_DEF_IN_PKTINFO	1
 #define __LKL__UAPI_DEF_SOCKADDR_IN	1
 #define __LKL__UAPI_DEF_IN_CLASS	1
+#include <lkl/linux/icmp.h>
+#include <lkl/linux/ip.h>
 #include <lkl/linux/in.h>
 #include <lkl/linux/in6.h>
 #include <lkl/linux/sockios.h>
@@ -160,6 +156,7 @@ struct lkl_sockaddr {
 #include <lkl/linux/virtio_net.h>
 #include <lkl/linux/virtio_ring.h>
 #include <lkl/linux/pkt_sched.h>
+#include <lkl/linux/io_uring.h>
 
 struct lkl_user_msghdr {
 	void		*msg_name;	/* ptr to socket address structure */
@@ -288,36 +285,36 @@ long lkl_sys_halt(void);
 	}
 
 #if __LKL__BITS_PER_LONG == 32
-#define LKL_SYSCALLx(x, name, ...)				       \
-	static __inline__						       \
-	long lkl_sys##name(__LKL__MAP(x, __LKL__SC_DECL, __VA_ARGS__))	       \
-	{							       \
-		struct {					       \
-			unsigned int size;				       \
-			long long value;			       \
+#define LKL_SYSCALLx(x, name, ...)					\
+	static __inline__							\
+	long lkl_sys##name(__LKL__MAP(x, __LKL__SC_DECL, __VA_ARGS__))		\
+	{								\
+		struct {						\
+			unsigned int size;				\
+			long long value;				\
 		} lkl_params[x] = { __LKL__MAP(x, __LKL__SC_TABLE, __VA_ARGS__) }; \
-		long params[6], i, k;				       \
-		for (i = k = 0;i < x && k < 6;i++, k++) {	       \
-			if (lkl_params[i].size > sizeof(long) &&       \
-			    k + 1 < 6) {     	   		       \
-				params[k] =			       \
-					(long)(lkl_params[i].value & (-1UL));	   \
-				k++;				       \
-				params[k] =			       \
+		long sys_params[6], i, k;				\
+		for (i = k = 0; i < x && k < 6; i++, k++) {		\
+			if (lkl_params[i].size > sizeof(long) &&	\
+			    k + 1 < 6) {				\
+				sys_params[k] =				\
+					(long)(lkl_params[i].value & (-1UL)); \
+				k++;					\
+				sys_params[k] =				\
 					(long)(lkl_params[i].value >> __LKL__BITS_PER_LONG); \
-			} else {				       \
-				params[k] = (long)(lkl_params[i].value); \
-			}					       \
-		}						       \
-		return lkl_syscall(__lkl__NR##name, params);	       \
+			} else {					\
+				sys_params[k] = (long)(lkl_params[i].value); \
+			}						\
+		}							\
+		return lkl_syscall(__lkl__NR##name, sys_params);	\
 	}
 #else
-#define LKL_SYSCALLx(x, name, ...)				       \
-       	static __inline__						       \
-	long lkl_sys##name(__LKL__MAP(x, __LKL__SC_DECL, __VA_ARGS__))	       \
-	{							       \
-		long params[6] = { __LKL__MAP(x, __LKL__SC_LONG, __VA_ARGS__) }; \
-		return lkl_syscall(__lkl__NR##name, params);	       \
+#define LKL_SYSCALLx(x, name, ...)					\
+	static __inline__							\
+	long lkl_sys##name(__LKL__MAP(x, __LKL__SC_DECL, __VA_ARGS__))		\
+	{								\
+		long lkl_params[6] = { __LKL__MAP(x, __LKL__SC_LONG, __VA_ARGS__) }; \
+		return lkl_syscall(__lkl__NR##name, lkl_params);	\
 	}
 #endif
 

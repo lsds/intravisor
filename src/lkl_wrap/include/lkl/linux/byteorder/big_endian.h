@@ -9,6 +9,7 @@
 #define __LKL__BIG_ENDIAN_BITFIELD
 #endif
 
+#include <lkl/linux/stddef.h>
 #include <lkl/linux/types.h>
 #include <lkl/linux/swab.h>
 

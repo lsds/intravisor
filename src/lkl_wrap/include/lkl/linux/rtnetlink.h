@@ -146,9 +146,53 @@ enum {
 #define LKL_RTM_NEWSTATS LKL_RTM_NEWSTATS
 	LKL_RTM_GETSTATS = 94,
 #define LKL_RTM_GETSTATS LKL_RTM_GETSTATS
+	LKL_RTM_SETSTATS,
+#define LKL_RTM_SETSTATS LKL_RTM_SETSTATS
 
 	LKL_RTM_NEWCACHEREPORT = 96,
 #define LKL_RTM_NEWCACHEREPORT LKL_RTM_NEWCACHEREPORT
+
+	LKL_RTM_NEWCHAIN = 100,
+#define LKL_RTM_NEWCHAIN LKL_RTM_NEWCHAIN
+	LKL_RTM_DELCHAIN,
+#define LKL_RTM_DELCHAIN LKL_RTM_DELCHAIN
+	LKL_RTM_GETCHAIN,
+#define LKL_RTM_GETCHAIN LKL_RTM_GETCHAIN
+
+	LKL_RTM_NEWNEXTHOP = 104,
+#define LKL_RTM_NEWNEXTHOP	LKL_RTM_NEWNEXTHOP
+	LKL_RTM_DELNEXTHOP,
+#define LKL_RTM_DELNEXTHOP	LKL_RTM_DELNEXTHOP
+	LKL_RTM_GETNEXTHOP,
+#define LKL_RTM_GETNEXTHOP	LKL_RTM_GETNEXTHOP
+
+	LKL_RTM_NEWLINKPROP = 108,
+#define LKL_RTM_NEWLINKPROP	LKL_RTM_NEWLINKPROP
+	LKL_RTM_DELLINKPROP,
+#define LKL_RTM_DELLINKPROP	LKL_RTM_DELLINKPROP
+	LKL_RTM_GETLINKPROP,
+#define LKL_RTM_GETLINKPROP	LKL_RTM_GETLINKPROP
+
+	LKL_RTM_NEWVLAN = 112,
+#define LKL_RTM_NEWNVLAN	LKL_RTM_NEWVLAN
+	LKL_RTM_DELVLAN,
+#define LKL_RTM_DELVLAN	LKL_RTM_DELVLAN
+	LKL_RTM_GETVLAN,
+#define LKL_RTM_GETVLAN	LKL_RTM_GETVLAN
+
+	LKL_RTM_NEWNEXTHOPBUCKET = 116,
+#define LKL_RTM_NEWNEXTHOPBUCKET	LKL_RTM_NEWNEXTHOPBUCKET
+	LKL_RTM_DELNEXTHOPBUCKET,
+#define LKL_RTM_DELNEXTHOPBUCKET	LKL_RTM_DELNEXTHOPBUCKET
+	LKL_RTM_GETNEXTHOPBUCKET,
+#define LKL_RTM_GETNEXTHOPBUCKET	LKL_RTM_GETNEXTHOPBUCKET
+
+	LKL_RTM_NEWTUNNEL = 120,
+#define LKL_RTM_NEWTUNNEL	LKL_RTM_NEWTUNNEL
+	LKL_RTM_DELTUNNEL,
+#define LKL_RTM_DELTUNNEL	LKL_RTM_DELTUNNEL
+	LKL_RTM_GETTUNNEL,
+#define LKL_RTM_GETTUNNEL	LKL_RTM_GETTUNNEL
 
 	__LKL__RTM_MAX,
 #define LKL_RTM_MAX		(((__LKL__RTM_MAX + 3) & ~3) - 1)
@@ -229,12 +273,12 @@ enum {
 
 /* rtm_protocol */
 
-#define LKL_RTPROT_UNSPEC	0
-#define LKL_RTPROT_REDIRECT	1	/* Route installed by ICMP redirects;
-				   not used by current IPv4 */
-#define LKL_RTPROT_KERNEL	2	/* Route installed by kernel		*/
-#define LKL_RTPROT_BOOT	3	/* Route installed during boot		*/
-#define LKL_RTPROT_STATIC	4	/* Route installed by administrator	*/
+#define LKL_RTPROT_UNSPEC		0
+#define LKL_RTPROT_REDIRECT		1	/* Route installed by ICMP redirects;
+					   not used by current IPv4 */
+#define LKL_RTPROT_KERNEL		2	/* Route installed by kernel		*/
+#define LKL_RTPROT_BOOT		3	/* Route installed during boot		*/
+#define LKL_RTPROT_STATIC		4	/* Route installed by administrator	*/
 
 /* Values of protocol >= LKL_RTPROT_STATIC are not interpreted by kernel;
    they are just passed from user and back as is.
@@ -243,17 +287,24 @@ enum {
    avoid conflicts.
  */
 
-#define LKL_RTPROT_GATED	8	/* Apparently, GateD */
-#define LKL_RTPROT_RA	9	/* RDISC/ND router advertisements */
-#define LKL_RTPROT_MRT	10	/* Merit MRT */
-#define LKL_RTPROT_ZEBRA	11	/* Zebra */
-#define LKL_RTPROT_BIRD	12	/* BIRD */
-#define LKL_RTPROT_DNROUTED	13	/* DECnet routing daemon */
-#define LKL_RTPROT_XORP	14	/* XORP */
-#define LKL_RTPROT_NTK	15	/* Netsukuku */
-#define LKL_RTPROT_DHCP	16      /* DHCP client */
-#define LKL_RTPROT_MROUTED	17      /* Multicast daemon */
-#define LKL_RTPROT_BABEL	42      /* Babel daemon */
+#define LKL_RTPROT_GATED		8	/* Apparently, GateD */
+#define LKL_RTPROT_RA		9	/* RDISC/ND router advertisements */
+#define LKL_RTPROT_MRT		10	/* Merit MRT */
+#define LKL_RTPROT_ZEBRA		11	/* Zebra */
+#define LKL_RTPROT_BIRD		12	/* BIRD */
+#define LKL_RTPROT_DNROUTED		13	/* DECnet routing daemon */
+#define LKL_RTPROT_XORP		14	/* XORP */
+#define LKL_RTPROT_NTK		15	/* Netsukuku */
+#define LKL_RTPROT_DHCP		16	/* DHCP client */
+#define LKL_RTPROT_MROUTED		17	/* Multicast daemon */
+#define LKL_RTPROT_KEEPALIVED	18	/* Keepalived daemon */
+#define LKL_RTPROT_BABEL		42	/* Babel daemon */
+#define LKL_RTPROT_OPENR		99	/* Open Routing (Open/R) Routes */
+#define LKL_RTPROT_BGP		186	/* BGP Routes */
+#define LKL_RTPROT_ISIS		187	/* ISIS Routes */
+#define LKL_RTPROT_OSPF		188	/* OSPF Routes */
+#define LKL_RTPROT_RIP		189	/* RIP Routes */
+#define LKL_RTPROT_EIGRP		192	/* EIGRP Routes */
 
 /* rtm_scope
 
@@ -283,6 +334,13 @@ enum lkl_rt_scope_t {
 #define LKL_RTM_F_PREFIX		0x800	/* Prefix addresses		*/
 #define LKL_RTM_F_LOOKUP_TABLE	0x1000	/* set rtm_table to FIB lookup result */
 #define LKL_RTM_F_FIB_MATCH	        0x2000	/* return full fib lookup match */
+#define LKL_RTM_F_OFFLOAD		0x4000	/* route is offloaded */
+#define LKL_RTM_F_TRAP		0x8000	/* route is trapping packets */
+#define LKL_RTM_F_OFFLOAD_FAILED	0x20000000 /* route offload failed, this value
+					    * is chosen to avoid conflicts with
+					    * other flags defined in
+					    * include/uapi/linux/ipv6_route.h
+					    */
 
 /* Reserved table identifiers */
 
@@ -327,6 +385,10 @@ enum lkl_rtattr_type_t {
 	LKL_RTA_PAD,
 	LKL_RTA_UID,
 	LKL_RTA_TTL_PROPAGATE,
+	LKL_RTA_IP_PROTO,
+	LKL_RTA_SPORT,
+	LKL_RTA_DPORT,
+	LKL_RTA_NH_ID,
 	__LKL__RTA_MAX
 };
 
@@ -356,11 +418,13 @@ struct lkl_rtnexthop {
 #define LKL_RTNH_F_DEAD		1	/* Nexthop is dead (used by multipath)	*/
 #define LKL_RTNH_F_PERVASIVE	2	/* Do recursive gateway lookup	*/
 #define LKL_RTNH_F_ONLINK		4	/* Gateway is forced on link	*/
-#define LKL_RTNH_F_OFFLOAD		8	/* offloaded route */
+#define LKL_RTNH_F_OFFLOAD		8	/* Nexthop is offloaded */
 #define LKL_RTNH_F_LINKDOWN		16	/* carrier-down on nexthop */
 #define LKL_RTNH_F_UNRESOLVED	32	/* The entry is unresolved (ipmr) */
+#define LKL_RTNH_F_TRAP		64	/* Nexthop is trapping packets */
 
-#define LKL_RTNH_COMPARE_MASK	(LKL_RTNH_F_DEAD | LKL_RTNH_F_LINKDOWN | LKL_RTNH_F_OFFLOAD)
+#define LKL_RTNH_COMPARE_MASK	(LKL_RTNH_F_DEAD | LKL_RTNH_F_LINKDOWN | \
+				 LKL_RTNH_F_OFFLOAD | LKL_RTNH_F_TRAP)
 
 /* Macros to handle hexthops */
 
@@ -376,7 +440,7 @@ struct lkl_rtnexthop {
 /* LKL_RTA_VIA */
 struct lkl_rtvia {
 	__lkl__kernel_sa_family_t	rtvia_family;
-	__lkl__u8			rtvia_addr[0];
+	__lkl__u8			rtvia_addr[];
 };
 
 /* RTM_CACHEINFO */
@@ -570,10 +634,16 @@ enum {
 	LKL_TCA_HW_OFFLOAD,
 	LKL_TCA_INGRESS_BLOCK,
 	LKL_TCA_EGRESS_BLOCK,
+	LKL_TCA_DUMP_FLAGS,
 	__LKL__TCA_MAX
 };
 
 #define LKL_TCA_MAX (__LKL__TCA_MAX - 1)
+
+#define LKL_TCA_DUMP_FLAGS_TERSE (1 << 0) /* Means that in dump user gets only basic
+				       * data necessary to identify the objects
+				       * (handle, cookie, etc.) and stats.
+				       */
 
 #define LKL_TCA_RTA(r)  ((struct lkl_rtattr*)(((char*)(r)) + LKL_NLMSG_ALIGN(sizeof(struct lkl_tcmsg))))
 #define LKL_TCA_PAYLOAD(n) LKL_NLMSG_PAYLOAD(n,sizeof(struct lkl_tcmsg))
@@ -687,6 +757,16 @@ enum lkl_rtnetlink_groups {
 #define LKL_RTNLGRP_IPV4_MROUTE_R	LKL_RTNLGRP_IPV4_MROUTE_R
 	LKL_RTNLGRP_IPV6_MROUTE_R,
 #define LKL_RTNLGRP_IPV6_MROUTE_R	LKL_RTNLGRP_IPV6_MROUTE_R
+	LKL_RTNLGRP_NEXTHOP,
+#define LKL_RTNLGRP_NEXTHOP		LKL_RTNLGRP_NEXTHOP
+	LKL_RTNLGRP_BRVLAN,
+#define LKL_RTNLGRP_BRVLAN		LKL_RTNLGRP_BRVLAN
+	LKL_RTNLGRP_MCTP_IFADDR,
+#define LKL_RTNLGRP_MCTP_IFADDR	LKL_RTNLGRP_MCTP_IFADDR
+	LKL_RTNLGRP_TUNNEL,
+#define LKL_RTNLGRP_TUNNEL		LKL_RTNLGRP_TUNNEL
+	LKL_RTNLGRP_STATS,
+#define LKL_RTNLGRP_STATS		LKL_RTNLGRP_STATS
 	__LKL__RTNLGRP_MAX
 };
 #define LKL_RTNLGRP_MAX	(__LKL__RTNLGRP_MAX - 1)
@@ -714,18 +794,28 @@ enum {
 #define LKL_TA_PAYLOAD(n) LKL_NLMSG_PAYLOAD(n,sizeof(struct lkl_tcamsg))
 /* tcamsg flags stored in attribute LKL_TCA_ROOT_FLAGS
  *
- * LKL_TCA_FLAG_LARGE_DUMP_ON user->kernel to request for larger than TCA_ACT_MAX_PRIO
- * actions in a dump. All dump responses will contain the number of actions
- * being dumped stored in for user app's consumption in LKL_TCA_ROOT_COUNT
+ * LKL_TCA_ACT_FLAG_LARGE_DUMP_ON user->kernel to request for larger than
+ * TCA_ACT_MAX_PRIO actions in a dump. All dump responses will contain the
+ * number of actions being dumped stored in for user app's consumption in
+ * LKL_TCA_ROOT_COUNT
+ *
+ * LKL_TCA_ACT_FLAG_TERSE_DUMP user->kernel to request terse (brief) dump that only
+ * includes essential action info (kind, index, etc.)
  *
  */
 #define LKL_TCA_FLAG_LARGE_DUMP_ON		(1 << 0)
+#define LKL_TCA_ACT_FLAG_LARGE_DUMP_ON	LKL_TCA_FLAG_LARGE_DUMP_ON
+#define LKL_TCA_ACT_FLAG_TERSE_DUMP		(1 << 1)
 
 /* New extended info filters for LKL_IFLA_EXT_MASK */
 #define LKL_RTEXT_FILTER_VF		(1 << 0)
 #define LKL_RTEXT_FILTER_BRVLAN	(1 << 1)
 #define LKL_RTEXT_FILTER_BRVLAN_COMPRESSED	(1 << 2)
 #define	LKL_RTEXT_FILTER_SKIP_STATS	(1 << 3)
+#define LKL_RTEXT_FILTER_MRP	(1 << 4)
+#define LKL_RTEXT_FILTER_CFM_CONFIG	(1 << 5)
+#define LKL_RTEXT_FILTER_CFM_STATUS	(1 << 6)
+#define LKL_RTEXT_FILTER_MST	(1 << 7)
 
 /* End of information exported to user level */
 

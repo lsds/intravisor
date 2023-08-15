@@ -21,7 +21,7 @@
 int __clock_gettime(clockid_t, struct timespec *ts);
 /* Let's see if the host has semaphore.h */
 #include <unistd.h>
-#undef _POSIX_SEMAPHORES
+//#undef _POSIX_SEMAPHORES
 
 #ifdef _POSIX_SEMAPHORES
 #include <semaphore.h>
@@ -35,7 +35,6 @@ static void print(const char *str, int len)
 	int ret __attribute__((unused));
 
 	ret = write(STDOUT_FILENO, str, len);
-//	printf("|%s|, str = %p, len = %d\n", str, str, len);
 }
 
 struct lkl_mutex {
@@ -63,13 +62,11 @@ struct lkl_tls_key {
 
 static int _warn_pthread(int ret, char *str_exp)
 {
-	if (ret > 0) {
-		printf("%s: %s\n", str_exp, strerror(ret)); while(1);
-	}
+	if (ret > 0)
+		printf("%s: %s\n", str_exp, strerror(ret));
 
 	return ret;
 }
-
 
 /* pthread_* functions use the reverse convention */
 #define WARN_PTHREAD(exp) _warn_pthread(exp, #exp)
@@ -81,9 +78,7 @@ static struct lkl_sem *sem_alloc(int count)
 	sem = malloc(sizeof(*sem));
 	if (!sem)
 		return NULL;
-
-//	printf("SEM_ALLOC %p, %d\n", sem, count);
-
+	//printf("-> %p: %s %p (%d)\n", __builtin_frame_address(0), __func__, sem, count);
 #ifdef _POSIX_SEMAPHORES
 	if (sem_init(&sem->sem, SHARE_SEM, count) < 0) {
 		printf("sem_init: %s\n", strerror(errno));
@@ -91,51 +86,45 @@ static struct lkl_sem *sem_alloc(int count)
 		return NULL;
 	}
 #else
-#ifdef __linux__ 
 	pthread_mutex_init(&sem->lock, NULL);
 	sem->count = count;
 	WARN_PTHREAD(pthread_cond_init(&sem->cond, NULL));
-//	printf("ALLOC: &sem->lock = %p\n", &sem->lock);
-#else
-	sem->lock = PTHREAD_MUTEX_INITIALIZER;
-	sem->count = count;
-	sem->cond = PTHREAD_COND_INITIALIZER;
-#endif
 #endif /* _POSIX_SEMAPHORES */
+	//printf("<- %p: %s %p\n", __builtin_frame_address(0), __func__, sem);
 	return sem;
 }
 
 static void sem_free(struct lkl_sem *sem)
 {
+	//printf("-> %p: %s %p\n", __builtin_frame_address(0), __func__, sem);
 #ifdef _POSIX_SEMAPHORES
 	WARN_UNLESS(sem_destroy(&sem->sem));
 #else
 	WARN_PTHREAD(pthread_cond_destroy(&sem->cond));
 	WARN_PTHREAD(pthread_mutex_destroy(&sem->lock));
 #endif /* _POSIX_SEMAPHORES */
-//	printf("SEM FREE %p\n", sem);
 	free(sem);
+	//printf("<- %p: %s %p\n", __builtin_frame_address(0), __func__, sem);
 }
 
 static void sem_up(struct lkl_sem *sem)
 {
-//	printf("SEM UP%p\n", sem);
+	//printf("-> %p: %s %p\n", __builtin_frame_address(0), __func__, sem);
 #ifdef _POSIX_SEMAPHORES
 	WARN_UNLESS(sem_post(&sem->sem));
 #else
-//	printf("UP: &sem->lock = %p, sem->count = %d\n", &sem->lock, sem->count);
 	WARN_PTHREAD(pthread_mutex_lock(&sem->lock));
 	sem->count++;
 	if (sem->count > 0)
 		WARN_PTHREAD(pthread_cond_signal(&sem->cond));
 	WARN_PTHREAD(pthread_mutex_unlock(&sem->lock));
 #endif /* _POSIX_SEMAPHORES */
-
+	//printf("<- %p: %s %p\n", __builtin_frame_address(0), __func__, sem);
 }
 
 static void sem_down(struct lkl_sem *sem)
 {
-//	printf("SEM DOWN %p\n", sem);
+	//printf("-> %p: %s %p\n", __builtin_frame_address(0), __func__, sem);
 #ifdef _POSIX_SEMAPHORES
 	int err;
 
@@ -145,14 +134,13 @@ static void sem_down(struct lkl_sem *sem)
 	if (err < 0 && errno != EINTR)
 		printf("sem_wait: %s\n", strerror(errno));
 #else
-//	printf("DOWN: &sem->lock = %p, count=%d\n", &sem->lock, sem->count);
 	WARN_PTHREAD(pthread_mutex_lock(&sem->lock));
-	while (sem->count <= 0) {
+	while (sem->count <= 0)
 		WARN_PTHREAD(pthread_cond_wait(&sem->cond, &sem->lock));
-}
 	sem->count--;
 	WARN_PTHREAD(pthread_mutex_unlock(&sem->lock));
 #endif /* _POSIX_SEMAPHORES */
+	//printf("<- %p: %s %p\n", __builtin_frame_address(0), __func__, sem);
 }
 
 static struct lkl_mutex *mutex_alloc(int recursive)
@@ -478,8 +466,10 @@ static int blk_request(unsigned long cof2mon, struct lkl_disk disk, struct lkl_b
 	return LKL_DEV_BLK_STATUS_OK;
 }
 
+#if 1
 struct lkl_dev_blk_ops lkl_dev_blk_ops = {
 	.get_capacity = fd_get_capacity,
 	.request = blk_request,
 };
 
+#endif

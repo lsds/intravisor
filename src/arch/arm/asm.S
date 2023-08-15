@@ -160,9 +160,9 @@ cinv:
 
 
 
-.global tp_write
-.type tp_write,%function
-tp_write:
+.global hostcall_asm
+.type hostcall_asm,%function
+hostcall_asm:
 //only pure-cap supported
 
 //		cspecialw	ddc, ct6 //dcc-pcc should be the same 
@@ -232,6 +232,10 @@ st_cap:
 	str	CA1, [A0, #0]
 	ret
 
+.global cinv2_sp
+.type cinv2_sp,%function
+cinv2_sp:
+//cinv2 anyway doesn't work
 
 
 .global cinv2

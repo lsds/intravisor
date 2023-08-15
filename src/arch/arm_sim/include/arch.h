@@ -72,18 +72,18 @@ static __inline__ unsigned long cheri_gettype(unsigned long a) {
 }
 
 
-static __inline__ unsigned long codecap_create(unsigned long a, unsigned long b)
+static __inline__ unsigned long codecap_create(unsigned long a, unsigned long b, int c)
 {
 	return a;
 }
 
-static __inline__ unsigned long pure_codecap_create(unsigned long a, unsigned long b)
+static __inline__ unsigned long pure_codecap_create(unsigned long a, unsigned long b, int c)
 {
 	return a;
 }
 
 
-static __inline__ unsigned long datacap_create(unsigned long a, unsigned long b) {
+static __inline__ unsigned long datacap_create(unsigned long a, unsigned long b, int c) {
 	return a;
 }
 
@@ -95,3 +95,4 @@ static __inline__ unsigned long cheri_getdefault() {
 	return 0;
 }
 
+#error "arm_sim is outdated in terms sp and cinv"

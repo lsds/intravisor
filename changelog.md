@@ -1,3 +1,20 @@
+# 0.2.0 gitlab-ci
+* Kconfig
+* Now Intravisor uses gitlab-ci for authomated builds
+* Dockerfile to compile SDK or run Intravisor
+* musl-lkl is back:
+  - Linux kernel version 6.1.0
+  - supports both arm and risc-v architectures
+  - compatible with docker images (proper stat.h for both architectures)
+  - patch for CheriBSD to enable PCC-relative hybrid compartments
+* musl-uni:
+  - centralised build system for arm and riscv for single cVM applications
+* native: minimalistic demos
+  - ORC hello
+  - Hybrid hello_world with CF_FILE
+  - Two pure-cap cVMs, one is the syscall handler for anothe one
+* overall clean up: old bugs removed, new added
+
 # 0.1.0 ORC
 * ARM support
 * ORC support 

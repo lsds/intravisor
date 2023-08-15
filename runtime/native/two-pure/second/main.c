@@ -11,3 +11,6 @@ void outer_c() {
 	host_exit();
 }
 
+long syscall() {
+	return 0;//not used
+}

@@ -29,7 +29,7 @@
 #define LKL_POLLRDHUP       0x2000
 #endif
 
-#define LKL_POLLFREE	(__lkl__poll_t)0x4000	/* currently only for epoll */
+#define LKL_POLLFREE	(__lkl__poll_t)0x4000
 
 #define LKL_POLL_BUSY_LOOP	(__lkl__poll_t)0x8000
 

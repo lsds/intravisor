@@ -1,0 +1,6 @@
+"No module named \'encodings\'","Python is failed due stat/fcntl",False
+"Using yaml.cfg =","Intravisor is failed to start",True
+"EXIT IS CALLED",'Not Finished',True
+'is_dir(/dev/stdin): 0 (LKL) 0 (musl)','Passed S_ISDIR',True
+"ALL cVMs loaded",'Cannot load cVMs',True
+"-----------------------------------------------",'cVMs loaded but not spawned',True

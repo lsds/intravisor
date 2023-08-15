@@ -1,0 +1,12 @@
+diff --git a/sys/arm64/arm64/locore.S b/sys/arm64/arm64/locore.S
+index 5605e12665..6c15f6e65f 100644
+--- a/sys/arm64/arm64/locore.S
++++ b/sys/arm64/arm64/locore.S
+@@ -176,6 +176,7 @@
+ 	 */
+ 	mrs x2, cctlr_el0
+ 	orr x2, x2, #(CCTLR_PERMVCT_MASK | CCTLR_SBL_MASK)
++	orr x2, x2, #(CCTLR_PCCBO_MASK | CCTLR_DDCBO_MASK)
+ 	msr cctlr_el0, x2
+ 
+ #ifdef __CHERI_PURE_CAPABILITY__

@@ -6,7 +6,7 @@ extern "C" {
 #endif
 
 #include <lkl/asm/host_ops.h>
-//#include <lkl.h>
+#include <lkl.h>
 
 extern struct lkl_host_operations lkl_host_ops;
 
@@ -53,10 +53,15 @@ struct lkl_blk_req {
 	int count;
 };
 
+#define LKL_DEV_BLK_STATUS_OK		0
+#define LKL_DEV_BLK_STATUS_IOERR	1
+#define LKL_DEV_BLK_STATUS_UNSUP	2
+
+
 /**
  * struct lkl_dev_blk_ops - block device host operations
  */
-#if 0
+#if 1
 struct lkl_dev_blk_ops {
 	/**
 	 * @get_capacity: returns the disk capacity in bytes
@@ -66,9 +71,6 @@ struct lkl_dev_blk_ops {
 	 * @returns - 0 in case of success, negative value in case of error
 	 */
 	int (*get_capacity)(struct lkl_disk disk, unsigned long long *res);
-#define LKL_DEV_BLK_STATUS_OK		0
-#define LKL_DEV_BLK_STATUS_IOERR	1
-#define LKL_DEV_BLK_STATUS_UNSUP	2
 	/**
 	 * @request: issue a block request
 	 *
@@ -82,7 +84,7 @@ struct lkl_dev_blk_ops {
 struct lkl_netdev {
 	struct lkl_dev_net_ops *ops;
 	int id;
-	uint8_t has_vnet_hdr: 1;
+	unsigned char has_vnet_hdr: 1;
 };
 
 /**

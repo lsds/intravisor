@@ -161,9 +161,9 @@ cinv:
 		br CA0
 
 
-.global tp_write
-.type tp_write,%function
-tp_write:
+.global hostcall_asm
+.type hostcall_asm,%function
+hostcall_asm:
 //only pure-cap supported
 
 //		cspecialw	ddc, ct6 //dcc-pcc should be the same 

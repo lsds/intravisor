@@ -14,6 +14,11 @@
 
 //#define SIM 1
 
+.global cinv_sp
+.type cinv_sp,%function
+cinv_sp:
+	mv sp, a2
+
 .global cinv
 .type cinv,%function
 cinv:
@@ -74,6 +79,10 @@ cinv:
 		CInvoke ca0, ca1
 #endif
 
+.global cinv2_sp
+.type cinv2_sp,%function
+cinv2_sp:
+	mv sp, a4
 
 .global cinv2
 .type cinv2,%function
@@ -143,9 +152,9 @@ ret_from_cinv2:
 #endif
 
 
-.global tp_write
-.type tp_write,%function
-tp_write:
+.global hostcall_asm
+.type hostcall_asm,%function
+hostcall_asm:
 #ifndef SIM
 
 //sp here is cap-relative and we need to translate it into absolute. we add the base of the compartment to sp prior updating DDC

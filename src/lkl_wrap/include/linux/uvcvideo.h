@@ -28,6 +28,8 @@
 #define UVC_CTRL_FLAG_RESTORE		(1 << 6)
 /* Control can be updated by the camera. */
 #define UVC_CTRL_FLAG_AUTO_UPDATE	(1 << 7)
+/* Control supports asynchronous reporting */
+#define UVC_CTRL_FLAG_ASYNCHRONOUS	(1 << 8)
 
 #define UVC_CTRL_FLAG_GET_RANGE \
 	(UVC_CTRL_FLAG_GET_CUR | UVC_CTRL_FLAG_GET_MIN | \
@@ -74,11 +76,11 @@ struct uvc_xu_control_query {
 
 /**
  * struct uvc_meta_buf - metadata buffer building block
- * @ns		- system timestamp of the payload in nanoseconds
- * @sof		- USB Frame Number
- * @length	- length of the payload header
- * @flags	- payload header flags
- * @buf		- optional device-specific header data
+ * @ns: system timestamp of the payload in nanoseconds
+ * @sof: USB Frame Number
+ * @length: length of the payload header
+ * @flags: payload header flags
+ * @buf: optional device-specific header data
  *
  * UVC metadata nodes fill buffers with possibly multiple instances of this
  * struct. The first two fields are added by the driver, they can be used for

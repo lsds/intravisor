@@ -100,8 +100,10 @@ struct lkl_iphdr {
 	__lkl__u8	ttl;
 	__lkl__u8	protocol;
 	__lkl__sum16	check;
-	__lkl__be32	saddr;
-	__lkl__be32	daddr;
+	__lkl__struct_group(/* no tag */, addrs, /* no attrs */,
+		__lkl__be32	saddr;
+		__lkl__be32	daddr;
+	);
 	/*The options start here. */
 };
 
@@ -112,13 +114,13 @@ struct lkl_ip_auth_hdr {
 	__lkl__be16 reserved;
 	__lkl__be32 spi;
 	__lkl__be32 seq_no;		/* Sequence number */
-	__lkl__u8  auth_data[0];	/* Variable len but >=4. Mind the 64 bit alignment! */
+	__lkl__u8  auth_data[];	/* Variable len but >=4. Mind the 64 bit alignment! */
 };
 
 struct lkl_ip_esp_hdr {
 	__lkl__be32 spi;
 	__lkl__be32 seq_no;		/* Sequence number */
-	__lkl__u8  enc_data[0];	/* Variable len but >=8. Mind the 64 bit alignment! */
+	__lkl__u8  enc_data[];	/* Variable len but >=8. Mind the 64 bit alignment! */
 };
 
 struct lkl_ip_comp_hdr {
@@ -168,6 +170,8 @@ enum
 	LKL_IPV4_DEVCONF_IGNORE_ROUTES_WITH_LINKDOWN,
 	LKL_IPV4_DEVCONF_DROP_UNICAST_IN_L2_MULTICAST,
 	LKL_IPV4_DEVCONF_DROP_GRATUITOUS_ARP,
+	LKL_IPV4_DEVCONF_BC_FORWARDING,
+	LKL_IPV4_DEVCONF_ARP_EVICT_NOCARRIER,
 	__LKL__IPV4_DEVCONF_MAX
 };
 

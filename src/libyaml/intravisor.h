@@ -22,6 +22,7 @@ struct cvm {
     char *cb_out;
 	struct isol_s isol;
 	int wait;
+	int cr;
 };
 
 struct capfile {
@@ -56,6 +57,7 @@ enum state {
     STATE_FCALLBACK_IN,   /* cvm end value */
     STATE_FCALLBACK_OUT,   /* cvm end value */
     STATE_FWAIT,    /* cvm net value */
+    STATE_FCR,    /* cvm net value */
 ///
     STATE_ILIST,    /* cvm list */
     STATE_IVALUES,  /* cvm key-value pairs */
@@ -93,7 +95,7 @@ void bail(const char *msg);
 void *bail_alloc(size_t size);
 char *bail_strdup(const char *s);
 
-void add_cvm(struct cvm **cvms, char *name, char *disk, char *runtime, char *net, char *args, long base, long size, long begin, long end, char *cb_out, char *cb_in, int wait);
+void add_cvm(struct cvm **cvms, char *name, char *disk, char *runtime, char *net, char *args, long base, long size, long begin, long end, char *cb_out, char *cb_in, int wait, int cr);
 void add_capfile(struct capfile **capfiles, char *name, char *data, long size, long addr);
 
 void destroy_cvms(struct cvm **cvms);

@@ -10,6 +10,13 @@ static __inline__ void * __capability getTP(void) {
     return ctp;
 }
 
+static __inline__ long getT5(void) {
+    register long t5 asm("t5");
+    asm ("" : "=r"(t5));
+    return t5;
+}
+
+
 #define __asm_syscall(...) \
 	__asm__ __volatile__ ("ecall\n\t" \
 	: "=r"(a0) : __VA_ARGS__ : "memory"); \
@@ -25,11 +32,6 @@ static inline long __syscall3(long n, long a, long b, long c)
 }
 
 
-static __inline__ long getT5(void) {
-    register long t5 asm("t5");
-    asm ("" : "=r"(t5));
-    return t5;
-}
 
 static __inline__ void mv_sp(unsigned long sp) {
     	__asm__ __volatile__("mv sp, %0;" :: "r"(sp) : "memory");

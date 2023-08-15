@@ -1,5 +1,4 @@
-#include ../../../../../config_arm_sim.mak
-MAKEFILE := $(shell git rev-parse --show-toplevel)/config_arm.mak
+MAKEFILE := $(shell git rev-parse --show-toplevel)/cfg.mak
 include $(MAKEFILE)
 
 CFLAGS=-fPIC -fPIE -pie -g -O2  -nostdinc -DCVM_MAX_SIZE=$(CONFIG_CVM_MAX_SIZE)\
@@ -41,3 +40,7 @@ libsecond.so: $(OBJ)
 
 clean:
 	rm -rf ./*.o ./*.so ./*.ll ./1.txt $(OBJDIR)
+
+install:
+	sudo mkdir -p ${INSTALL_PATH}
+	sudo cp ./*.so  ${INSTALL_PATH}

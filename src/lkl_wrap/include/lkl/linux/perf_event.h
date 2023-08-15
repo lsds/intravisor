@@ -38,6 +38,21 @@ enum lkl_perf_type_id {
 };
 
 /*
+ * attr.config layout for type LKL_PERF_TYPE_HARDWARE and LKL_PERF_TYPE_HW_CACHE
+ * LKL_PERF_TYPE_HARDWARE:			0xEEEEEEEE000000AA
+ *					AA: hardware event ID
+ *					EEEEEEEE: PMU type ID
+ * LKL_PERF_TYPE_HW_CACHE:			0xEEEEEEEE00DDCCBB
+ *					BB: hardware cache ID
+ *					CC: hardware cache op ID
+ *					DD: hardware cache op result ID
+ *					EEEEEEEE: PMU type ID
+ * If the PMU type ID is 0, the LKL_PERF_TYPE_RAW will be applied.
+ */
+#define LKL_PERF_PMU_TYPE_SHIFT		32
+#define LKL_PERF_HW_EVENT_MASK		0xffffffff
+
+/*
  * Generalized performance event event_id types, used by the
  * attr.event_id parameter of the sys_perf_event_open()
  * syscall:
@@ -112,6 +127,7 @@ enum lkl_perf_sw_ids {
 	LKL_PERF_COUNT_SW_EMULATION_FAULTS		= 8,
 	LKL_PERF_COUNT_SW_DUMMY			= 9,
 	LKL_PERF_COUNT_SW_BPF_OUTPUT		= 10,
+	LKL_PERF_COUNT_SW_CGROUP_SWITCHES		= 11,
 
 	LKL_PERF_COUNT_SW_MAX,			/* non-ABI */
 };
@@ -141,10 +157,16 @@ enum lkl_perf_event_sample_format {
 	LKL_PERF_SAMPLE_TRANSACTION			= 1U << 17,
 	LKL_PERF_SAMPLE_REGS_INTR			= 1U << 18,
 	LKL_PERF_SAMPLE_PHYS_ADDR			= 1U << 19,
+	LKL_PERF_SAMPLE_AUX				= 1U << 20,
+	LKL_PERF_SAMPLE_CGROUP			= 1U << 21,
+	LKL_PERF_SAMPLE_DATA_PAGE_SIZE		= 1U << 22,
+	LKL_PERF_SAMPLE_CODE_PAGE_SIZE		= 1U << 23,
+	LKL_PERF_SAMPLE_WEIGHT_STRUCT		= 1U << 24,
 
-	LKL_PERF_SAMPLE_MAX = 1U << 20,		/* non-ABI */
+	LKL_PERF_SAMPLE_MAX = 1U << 25,		/* non-ABI */
 };
 
+#define LKL_PERF_SAMPLE_WEIGHT_TYPE	(LKL_PERF_SAMPLE_WEIGHT | LKL_PERF_SAMPLE_WEIGHT_STRUCT)
 /*
  * values to program into branch_sample_type when PERF_SAMPLE_BRANCH is set
  *
@@ -178,6 +200,10 @@ enum lkl_perf_branch_sample_type_shift {
 
 	LKL_PERF_SAMPLE_BRANCH_TYPE_SAVE_SHIFT	= 16, /* save branch type */
 
+	LKL_PERF_SAMPLE_BRANCH_HW_INDEX_SHIFT	= 17, /* save low level index of raw branch records */
+
+	LKL_PERF_SAMPLE_BRANCH_PRIV_SAVE_SHIFT	= 18, /* save privilege mode */
+
 	LKL_PERF_SAMPLE_BRANCH_MAX_SHIFT		/* non-ABI */
 };
 
@@ -205,6 +231,10 @@ enum lkl_perf_branch_sample_type {
 	LKL_PERF_SAMPLE_BRANCH_TYPE_SAVE	=
 		1U << LKL_PERF_SAMPLE_BRANCH_TYPE_SAVE_SHIFT,
 
+	LKL_PERF_SAMPLE_BRANCH_HW_INDEX	= 1U << LKL_PERF_SAMPLE_BRANCH_HW_INDEX_SHIFT,
+
+	LKL_PERF_SAMPLE_BRANCH_PRIV_SAVE	= 1U << LKL_PERF_SAMPLE_BRANCH_PRIV_SAVE_SHIFT,
+
 	LKL_PERF_SAMPLE_BRANCH_MAX		= 1U << LKL_PERF_SAMPLE_BRANCH_MAX_SHIFT,
 };
 
@@ -223,8 +253,49 @@ enum {
 	LKL_PERF_BR_SYSRET		= 8,	/* syscall return */
 	LKL_PERF_BR_COND_CALL	= 9,	/* conditional function call */
 	LKL_PERF_BR_COND_RET	= 10,	/* conditional function return */
+	LKL_PERF_BR_ERET		= 11,	/* exception return */
+	LKL_PERF_BR_IRQ		= 12,	/* irq */
+	LKL_PERF_BR_SERROR		= 13,	/* system error */
+	LKL_PERF_BR_NO_TX		= 14,	/* not in transaction */
+	LKL_PERF_BR_EXTEND_ABI	= 15,	/* extend ABI */
 	LKL_PERF_BR_MAX,
 };
+
+/*
+ * Common branch speculation outcome classification
+ */
+enum {
+	LKL_PERF_BR_SPEC_NA			= 0,	/* Not available */
+	LKL_PERF_BR_SPEC_WRONG_PATH		= 1,	/* Speculative but on wrong path */
+	LKL_PERF_BR_NON_SPEC_CORRECT_PATH	= 2,	/* Non-speculative but on correct path */
+	LKL_PERF_BR_SPEC_CORRECT_PATH	= 3,	/* Speculative and on correct path */
+	LKL_PERF_BR_SPEC_MAX,
+};
+
+enum {
+	LKL_PERF_BR_NEW_FAULT_ALGN		= 0,    /* Alignment fault */
+	LKL_PERF_BR_NEW_FAULT_DATA		= 1,    /* Data fault */
+	LKL_PERF_BR_NEW_FAULT_INST		= 2,    /* Inst fault */
+	LKL_PERF_BR_NEW_ARCH_1		= 3,    /* Architecture specific */
+	LKL_PERF_BR_NEW_ARCH_2		= 4,    /* Architecture specific */
+	LKL_PERF_BR_NEW_ARCH_3		= 5,    /* Architecture specific */
+	LKL_PERF_BR_NEW_ARCH_4		= 6,    /* Architecture specific */
+	LKL_PERF_BR_NEW_ARCH_5		= 7,    /* Architecture specific */
+	LKL_PERF_BR_NEW_MAX,
+};
+
+enum {
+	LKL_PERF_BR_PRIV_UNKNOWN	= 0,
+	LKL_PERF_BR_PRIV_USER	= 1,
+	LKL_PERF_BR_PRIV_KERNEL	= 2,
+	LKL_PERF_BR_PRIV_HV		= 3,
+};
+
+#define LKL_PERF_BR_ARM64_FIQ		LKL_PERF_BR_NEW_ARCH_1
+#define LKL_PERF_BR_ARM64_DEBUG_HALT	LKL_PERF_BR_NEW_ARCH_2
+#define LKL_PERF_BR_ARM64_DEBUG_EXIT	LKL_PERF_BR_NEW_ARCH_3
+#define LKL_PERF_BR_ARM64_DEBUG_INST	LKL_PERF_BR_NEW_ARCH_4
+#define LKL_PERF_BR_ARM64_DEBUG_DATA	LKL_PERF_BR_NEW_ARCH_5
 
 #define LKL_PERF_SAMPLE_BRANCH_PLM_ALL \
 	(LKL_PERF_SAMPLE_BRANCH_USER|\
@@ -271,6 +342,7 @@ enum {
  *	  { lkl_u64		time_enabled; } && LKL_PERF_FORMAT_TOTAL_TIME_ENABLED
  *	  { lkl_u64		time_running; } && LKL_PERF_FORMAT_TOTAL_TIME_RUNNING
  *	  { lkl_u64		id;           } && LKL_PERF_FORMAT_ID
+ *	  { lkl_u64		lost;         } && LKL_PERF_FORMAT_LOST
  *	} && !LKL_PERF_FORMAT_GROUP
  *
  *	{ lkl_u64		nr;
@@ -278,6 +350,7 @@ enum {
  *	  { lkl_u64		time_running; } && LKL_PERF_FORMAT_TOTAL_TIME_RUNNING
  *	  { lkl_u64		value;
  *	    { lkl_u64	id;           } && LKL_PERF_FORMAT_ID
+ *	    { lkl_u64	lost;         } && LKL_PERF_FORMAT_LOST
  *	  }		cntr[nr];
  *	} && LKL_PERF_FORMAT_GROUP
  * };
@@ -287,8 +360,9 @@ enum lkl_perf_event_read_format {
 	LKL_PERF_FORMAT_TOTAL_TIME_RUNNING		= 1U << 1,
 	LKL_PERF_FORMAT_ID				= 1U << 2,
 	LKL_PERF_FORMAT_GROUP			= 1U << 3,
+	LKL_PERF_FORMAT_LOST			= 1U << 4,
 
-	LKL_PERF_FORMAT_MAX = 1U << 4,		/* non-ABI */
+	LKL_PERF_FORMAT_MAX = 1U << 5,		/* non-ABI */
 };
 
 #define LKL_PERF_ATTR_SIZE_VER0	64	/* sizeof first published struct */
@@ -298,6 +372,8 @@ enum lkl_perf_event_read_format {
 					/* add: sample_stack_user */
 #define LKL_PERF_ATTR_SIZE_VER4	104	/* add: sample_regs_intr */
 #define LKL_PERF_ATTR_SIZE_VER5	112	/* add: aux_watermark */
+#define LKL_PERF_ATTR_SIZE_VER6	120	/* add: aux_sample_size */
+#define LKL_PERF_ATTR_SIZE_VER7	128	/* add: sig_data */
 
 /*
  * Hardware event_id to monitor via a performance monitoring event:
@@ -370,7 +446,16 @@ struct lkl_perf_event_attr {
 				context_switch :  1, /* context switch data */
 				write_backward :  1, /* Write ring buffer from end to beginning */
 				namespaces     :  1, /* include namespaces data */
-				__reserved_1   : 35;
+				ksymbol        :  1, /* include ksymbol events */
+				bpf_event      :  1, /* include bpf events */
+				aux_output     :  1, /* generate AUX records instead of events */
+				cgroup         :  1, /* include cgroup events */
+				text_poke      :  1, /* include text poke events */
+				build_id       :  1, /* use build id in mmap2 events */
+				inherit_thread :  1, /* children only inherit if cloned with CLONE_THREAD */
+				remove_on_exec :  1, /* event is removed from task on exec */
+				sigtrap        :  1, /* send synchronous LKL_SIGTRAP on event */
+				__reserved_1   : 26;
 
 	union {
 		__lkl__u32		wakeup_events;	  /* wakeup every n events */
@@ -419,7 +504,17 @@ struct lkl_perf_event_attr {
 	 */
 	__lkl__u32	aux_watermark;
 	__lkl__u16	sample_max_stack;
-	__lkl__u16	__reserved_2;	/* align to __lkl__u64 */
+	__lkl__u16	__reserved_2;
+	__lkl__u32	aux_sample_size;
+	__lkl__u32	__reserved_3;
+
+	/*
+	 * User provided data if sigtrap=1, passed back to user via
+	 * lkl_siginfo_t::lkl_si_perf_data, e.g. to permit user to identify the event.
+	 * Note, lkl_siginfo_t::lkl_si_perf_data is long-sized, and sig_data will be
+	 * truncated accordingly on 32 bit architectures.
+	 */
+	__lkl__u64	sig_data;
 };
 
 /*
@@ -440,10 +535,8 @@ struct lkl_perf_event_query_bpf {
 	/*
 	 * User provided buffer to store program ids
 	 */
-	__lkl__u32	ids[0];
+	__lkl__u32	ids[];
 };
-
-#define lkl_perf_flags(attr)	(*(&(attr)->read_format + 1))
 
 /*
  * Ioctls that can be done on a perf event fd:
@@ -519,9 +612,10 @@ struct lkl_perf_event_mmap_page {
 				cap_bit0_is_deprecated	: 1, /* Always 1, signals that bit 0 is zero */
 
 				cap_user_rdpmc		: 1, /* The RDPMC instruction can be used to read counts */
-				cap_user_time		: 1, /* The time_* fields are used */
+				cap_user_time		: 1, /* The time_{shift,mult,offset} fields are used */
 				cap_user_time_zero	: 1, /* The time_zero field is used */
-				cap_____res		: 59;
+				cap_user_time_short	: 1, /* the time_{cycle,mask} fields are used */
+				cap_____res		: 58;
 		};
 	};
 
@@ -580,13 +674,29 @@ struct lkl_perf_event_mmap_page {
 	 *               ((rem * time_mult) >> time_shift);
 	 */
 	__lkl__u64	time_zero;
+
 	__lkl__u32	size;			/* Header size up to __reserved[] fields. */
+	__lkl__u32	__reserved_1;
+
+	/*
+	 * If cap_usr_time_short, the hardware clock is less than 64bit wide
+	 * and we must compute the 'cyc' value, as used by cap_usr_time, as:
+	 *
+	 *   cyc = time_cycles + ((cyc - time_cycles) & time_mask)
+	 *
+	 * NOTE: this form is explicitly chosen such that cap_usr_time_short
+	 *       is a correction on top of cap_usr_time, and code that doesn't
+	 *       know about cap_usr_time_short still works under the assumption
+	 *       the counter doesn't wrap.
+	 */
+	__lkl__u64	time_cycles;
+	__lkl__u64	time_mask;
 
 		/*
 		 * Hole for extension of the self monitor capabilities
 		 */
 
-	__lkl__u8	__reserved[118*8+4];	/* align to 1k. */
+	__lkl__u8	__reserved[116*8];	/* align to 1k. */
 
 	/*
 	 * Control data for the mmap() data buffer.
@@ -626,6 +736,22 @@ struct lkl_perf_event_mmap_page {
 	__lkl__u64	aux_size;
 };
 
+/*
+ * The current state of perf_event_header::misc bits usage:
+ * ('|' used bit, '-' unused bit)
+ *
+ *  012         CDEF
+ *  |||---------||||
+ *
+ *  Where:
+ *    0-2     CPUMODE_MASK
+ *
+ *    C       PROC_MAP_PARSE_TIMEOUT
+ *    D       MMAP_DATA / COMM_EXEC / FORK_EXEC / SWITCH_OUT
+ *    E       MMAP_BUILD_ID / EXACT_IP / SCHED_OUT_PREEMPT
+ *    F       (reserved)
+ */
+
 #define LKL_PERF_RECORD_MISC_CPUMODE_MASK		(7 << 0)
 #define LKL_PERF_RECORD_MISC_CPUMODE_UNKNOWN	(0 << 0)
 #define LKL_PERF_RECORD_MISC_KERNEL			(1 << 0)
@@ -644,10 +770,12 @@ struct lkl_perf_event_mmap_page {
  *
  *   LKL_PERF_RECORD_MISC_MMAP_DATA  - LKL_PERF_RECORD_MMAP* events
  *   LKL_PERF_RECORD_MISC_COMM_EXEC  - LKL_PERF_RECORD_COMM event
+ *   LKL_PERF_RECORD_MISC_FORK_EXEC  - LKL_PERF_RECORD_FORK event (perf internal)
  *   LKL_PERF_RECORD_MISC_SWITCH_OUT - LKL_PERF_RECORD_SWITCH* events
  */
 #define LKL_PERF_RECORD_MISC_MMAP_DATA		(1 << 13)
 #define LKL_PERF_RECORD_MISC_COMM_EXEC		(1 << 13)
+#define LKL_PERF_RECORD_MISC_FORK_EXEC		(1 << 13)
 #define LKL_PERF_RECORD_MISC_SWITCH_OUT		(1 << 13)
 /*
  * These PERF_RECORD_MISC_* flags below are safely reused
@@ -655,6 +783,7 @@ struct lkl_perf_event_mmap_page {
  *
  *   LKL_PERF_RECORD_MISC_EXACT_IP           - LKL_PERF_RECORD_SAMPLE of precise events
  *   LKL_PERF_RECORD_MISC_SWITCH_OUT_PREEMPT - LKL_PERF_RECORD_SWITCH* events
+ *   LKL_PERF_RECORD_MISC_MMAP_BUILD_ID      - LKL_PERF_RECORD_MMAP2 event
  *
  *
  * LKL_PERF_RECORD_MISC_EXACT_IP:
@@ -664,9 +793,13 @@ struct lkl_perf_event_mmap_page {
  *
  * LKL_PERF_RECORD_MISC_SWITCH_OUT_PREEMPT:
  *   Indicates that thread was preempted in TASK_RUNNING state.
+ *
+ * LKL_PERF_RECORD_MISC_MMAP_BUILD_ID:
+ *   Indicates that mmap2 event carries build id data.
  */
 #define LKL_PERF_RECORD_MISC_EXACT_IP		(1 << 14)
 #define LKL_PERF_RECORD_MISC_SWITCH_OUT_PREEMPT	(1 << 14)
+#define LKL_PERF_RECORD_MISC_MMAP_BUILD_ID		(1 << 14)
 /*
  * Reserve the last bit to indicate some extended misc field
  */
@@ -844,7 +977,9 @@ enum lkl_perf_event_type {
 	 *	  char                  data[size];}&& LKL_PERF_SAMPLE_RAW
 	 *
 	 *	{ lkl_u64                   nr;
-	 *        { lkl_u64 from, to, flags } lbr[nr];} && LKL_PERF_SAMPLE_BRANCH_STACK
+	 *	  { lkl_u64	hw_idx; } && LKL_PERF_SAMPLE_BRANCH_HW_INDEX
+	 *        { lkl_u64 from, to, flags } lbr[nr];
+	 *      } && LKL_PERF_SAMPLE_BRANCH_STACK
 	 *
 	 * 	{ lkl_u64			abi; # enum lkl_perf_sample_regs_abi
 	 * 	  lkl_u64			regs[weight(mask)]; } && LKL_PERF_SAMPLE_REGS_USER
@@ -853,12 +988,33 @@ enum lkl_perf_event_type {
 	 * 	  char			data[size];
 	 * 	  lkl_u64			dyn_size; } && LKL_PERF_SAMPLE_STACK_USER
 	 *
-	 *	{ lkl_u64			weight;   } && LKL_PERF_SAMPLE_WEIGHT
+	 *	{ union lkl_perf_sample_weight
+	 *	 {
+	 *		lkl_u64		full; && LKL_PERF_SAMPLE_WEIGHT
+	 *	#if defined(__LKL__LITTLE_ENDIAN_BITFIELD)
+	 *		struct {
+	 *			lkl_u32	var1_dw;
+	 *			u16	var2_w;
+	 *			u16	var3_w;
+	 *		} && LKL_PERF_SAMPLE_WEIGHT_STRUCT
+	 *	#elif defined(__LKL__BIG_ENDIAN_BITFIELD)
+	 *		struct {
+	 *			u16	var3_w;
+	 *			u16	var2_w;
+	 *			lkl_u32	var1_dw;
+	 *		} && LKL_PERF_SAMPLE_WEIGHT_STRUCT
+	 *	#endif
+	 *	 }
+	 *	}
 	 *	{ lkl_u64			data_src; } && LKL_PERF_SAMPLE_DATA_SRC
 	 *	{ lkl_u64			transaction; } && LKL_PERF_SAMPLE_TRANSACTION
 	 *	{ lkl_u64			abi; # enum lkl_perf_sample_regs_abi
 	 *	  lkl_u64			regs[weight(mask)]; } && LKL_PERF_SAMPLE_REGS_INTR
 	 *	{ lkl_u64			phys_addr;} && LKL_PERF_SAMPLE_PHYS_ADDR
+	 *	{ lkl_u64			size;
+	 *	  char			data[size]; } && LKL_PERF_SAMPLE_AUX
+	 *	{ lkl_u64			data_page_size;} && LKL_PERF_SAMPLE_DATA_PAGE_SIZE
+	 *	{ lkl_u64			code_page_size;} && LKL_PERF_SAMPLE_CODE_PAGE_SIZE
 	 * };
 	 */
 	LKL_PERF_RECORD_SAMPLE			= 9,
@@ -874,10 +1030,20 @@ enum lkl_perf_event_type {
 	 *	lkl_u64				addr;
 	 *	lkl_u64				len;
 	 *	lkl_u64				pgoff;
-	 *	lkl_u32				maj;
-	 *	lkl_u32				min;
-	 *	lkl_u64				ino;
-	 *	lkl_u64				ino_generation;
+	 *	union {
+	 *		struct {
+	 *			lkl_u32		maj;
+	 *			lkl_u32		min;
+	 *			lkl_u64		ino;
+	 *			lkl_u64		ino_generation;
+	 *		};
+	 *		struct {
+	 *			u8		build_id_size;
+	 *			u8		__reserved_1;
+	 *			u16		__reserved_2;
+	 *			u8		build_id[20];
+	 *		};
+	 *	};
 	 *	lkl_u32				prot, flags;
 	 *	char				filename[];
 	 * 	struct lkl_sample_id		sample_id;
@@ -961,7 +1127,104 @@ enum lkl_perf_event_type {
 	 */
 	LKL_PERF_RECORD_NAMESPACES			= 16,
 
+	/*
+	 * Record ksymbol register/unregister events:
+	 *
+	 * struct {
+	 *	struct lkl_perf_event_header	header;
+	 *	lkl_u64				addr;
+	 *	lkl_u32				len;
+	 *	u16				ksym_type;
+	 *	u16				flags;
+	 *	char				name[];
+	 *	struct lkl_sample_id		sample_id;
+	 * };
+	 */
+	LKL_PERF_RECORD_KSYMBOL			= 17,
+
+	/*
+	 * Record bpf events:
+	 *  enum lkl_perf_bpf_event_type {
+	 *	LKL_PERF_BPF_EVENT_UNKNOWN		= 0,
+	 *	LKL_PERF_BPF_EVENT_PROG_LOAD	= 1,
+	 *	LKL_PERF_BPF_EVENT_PROG_UNLOAD	= 2,
+	 *  };
+	 *
+	 * struct {
+	 *	struct lkl_perf_event_header	header;
+	 *	u16				type;
+	 *	u16				flags;
+	 *	lkl_u32				id;
+	 *	u8				tag[LKL_BPF_TAG_SIZE];
+	 *	struct lkl_sample_id		sample_id;
+	 * };
+	 */
+	LKL_PERF_RECORD_BPF_EVENT			= 18,
+
+	/*
+	 * struct {
+	 *	struct lkl_perf_event_header	header;
+	 *	lkl_u64				id;
+	 *	char				path[];
+	 *	struct lkl_sample_id		sample_id;
+	 * };
+	 */
+	LKL_PERF_RECORD_CGROUP			= 19,
+
+	/*
+	 * Records changes to kernel text i.e. self-modified code. 'old_len' is
+	 * the number of old bytes, 'new_len' is the number of new bytes. Either
+	 * 'old_len' or 'new_len' may be zero to indicate, for example, the
+	 * addition or removal of a trampoline. 'bytes' contains the old bytes
+	 * followed immediately by the new bytes.
+	 *
+	 * struct {
+	 *	struct lkl_perf_event_header	header;
+	 *	lkl_u64				addr;
+	 *	u16				old_len;
+	 *	u16				new_len;
+	 *	u8				bytes[];
+	 *	struct lkl_sample_id		sample_id;
+	 * };
+	 */
+	LKL_PERF_RECORD_TEXT_POKE			= 20,
+
+	/*
+	 * Data written to the AUX area by hardware due to aux_output, may need
+	 * to be matched to the event by an architecture-specific hardware ID.
+	 * This records the hardware ID, but requires sample_id to provide the
+	 * event ID. e.g. Intel PT uses this record to disambiguate PEBS-via-PT
+	 * records from multiple events.
+	 *
+	 * struct {
+	 *	struct lkl_perf_event_header	header;
+	 *	lkl_u64				hw_id;
+	 *	struct lkl_sample_id		sample_id;
+	 * };
+	 */
+	LKL_PERF_RECORD_AUX_OUTPUT_HW_ID		= 21,
+
 	LKL_PERF_RECORD_MAX,			/* non-ABI */
+};
+
+enum lkl_perf_record_ksymbol_type {
+	LKL_PERF_RECORD_KSYMBOL_TYPE_UNKNOWN	= 0,
+	LKL_PERF_RECORD_KSYMBOL_TYPE_BPF		= 1,
+	/*
+	 * Out of line code such as kprobe-replaced instructions or optimized
+	 * kprobes or ftrace trampolines.
+	 */
+	LKL_PERF_RECORD_KSYMBOL_TYPE_OOL		= 2,
+	LKL_PERF_RECORD_KSYMBOL_TYPE_MAX		/* non-ABI */
+};
+
+#define LKL_PERF_RECORD_KSYMBOL_FLAGS_UNREGISTER	(1 << 0)
+
+enum lkl_perf_bpf_event_type {
+	LKL_PERF_BPF_EVENT_UNKNOWN		= 0,
+	LKL_PERF_BPF_EVENT_PROG_LOAD	= 1,
+	LKL_PERF_BPF_EVENT_PROG_UNLOAD	= 2,
+	LKL_PERF_BPF_EVENT_MAX,		/* non-ABI */
 };
 
 #define LKL_PERF_MAX_STACK_DEPTH		127
@@ -982,10 +1245,15 @@ enum lkl_perf_callchain_context {
 /**
  * LKL_PERF_RECORD_AUX::flags bits
  */
-#define LKL_PERF_AUX_FLAG_TRUNCATED		0x01	/* record was truncated to fit */
-#define LKL_PERF_AUX_FLAG_OVERWRITE		0x02	/* snapshot from overwrite mode */
-#define LKL_PERF_AUX_FLAG_PARTIAL		0x04	/* record contains gaps */
-#define LKL_PERF_AUX_FLAG_COLLISION		0x08	/* sample collided with another */
+#define LKL_PERF_AUX_FLAG_TRUNCATED			0x01	/* record was truncated to fit */
+#define LKL_PERF_AUX_FLAG_OVERWRITE			0x02	/* snapshot from overwrite mode */
+#define LKL_PERF_AUX_FLAG_PARTIAL			0x04	/* record contains gaps */
+#define LKL_PERF_AUX_FLAG_COLLISION			0x08	/* sample collided with another */
+#define LKL_PERF_AUX_FLAG_PMU_FORMAT_TYPE_MASK	0xff00	/* PMU specific trace format type */
+
+/* CoreSight PMU AUX buffer formats */
+#define LKL_PERF_AUX_FLAG_CORESIGHT_FORMAT_CORESIGHT	0x0000 /* Default for backward compatibility */
+#define LKL_PERF_AUX_FLAG_CORESIGHT_FORMAT_RAW		0x0100 /* Raw format of the source */
 
 #define LKL_PERF_FLAG_FD_NO_GROUP		(1UL << 0)
 #define LKL_PERF_FLAG_FD_OUTPUT		(1UL << 1)
@@ -1004,14 +1272,18 @@ union lkl_perf_mem_data_src {
 			mem_lvl_num:4,	/* memory hierarchy level number */
 			mem_remote:1,   /* remote */
 			mem_snoopx:2,	/* snoop mode, ext */
-			mem_rsvd:24;
+			mem_blk:3,	/* access blocked */
+			mem_hops:3,	/* hop level */
+			mem_rsvd:18;
 	};
 };
 #elif defined(__LKL__BIG_ENDIAN_BITFIELD)
 union lkl_perf_mem_data_src {
 	__lkl__u64 val;
 	struct {
-		__lkl__u64	mem_rsvd:24,
+		__lkl__u64	mem_rsvd:18,
+			mem_hops:3,	/* hop level */
+			mem_blk:3,	/* access blocked */
 			mem_snoopx:2,	/* snoop mode, ext */
 			mem_remote:1,   /* remote */
 			mem_lvl_num:4,	/* memory hierarchy level number */
@@ -1034,7 +1306,13 @@ union lkl_perf_mem_data_src {
 #define LKL_PERF_MEM_OP_EXEC	0x10 /* code (execution) */
 #define LKL_PERF_MEM_OP_SHIFT	0
 
-/* memory hierarchy (memory level, hit or miss) */
+/*
+ * PERF_MEM_LVL_* namespace being depricated to some extent in the
+ * favour of newer composite PERF_MEM_{LVLNUM_,REMOTE_,SNOOPX_} fields.
+ * Supporting this namespace inorder to not break defined ABIs.
+ *
+ * memory hierarchy (memory level, hit or miss)
+ */
 #define LKL_PERF_MEM_LVL_NA		0x01  /* not available */
 #define LKL_PERF_MEM_LVL_HIT	0x02  /* hit level */
 #define LKL_PERF_MEM_LVL_MISS	0x04  /* miss level  */
@@ -1058,7 +1336,9 @@ union lkl_perf_mem_data_src {
 #define LKL_PERF_MEM_LVLNUM_L2	0x02 /* L2 */
 #define LKL_PERF_MEM_LVLNUM_L3	0x03 /* L3 */
 #define LKL_PERF_MEM_LVLNUM_L4	0x04 /* L4 */
-/* 5-0xa available */
+/* 5-0x8 available */
+#define LKL_PERF_MEM_LVLNUM_CXL	0x09 /* CXL */
+#define LKL_PERF_MEM_LVLNUM_IO	0x0a /* I/O */
 #define LKL_PERF_MEM_LVLNUM_ANY_CACHE 0x0b /* Any cache */
 #define LKL_PERF_MEM_LVLNUM_LFB	0x0c /* LFB */
 #define LKL_PERF_MEM_LVLNUM_RAM	0x0d /* RAM */
@@ -1076,8 +1356,8 @@ union lkl_perf_mem_data_src {
 #define LKL_PERF_MEM_SNOOP_SHIFT	19
 
 #define LKL_PERF_MEM_SNOOPX_FWD	0x01 /* forward */
-/* 1 free */
-#define LKL_PERF_MEM_SNOOPX_SHIFT	37
+#define LKL_PERF_MEM_SNOOPX_PEER	0x02 /* xfer from peer */
+#define LKL_PERF_MEM_SNOOPX_SHIFT  38
 
 /* locked instruction */
 #define LKL_PERF_MEM_LOCK_NA	0x01 /* not available */
@@ -1093,6 +1373,20 @@ union lkl_perf_mem_data_src {
 #define LKL_PERF_MEM_TLB_WK		0x20 /* Hardware Walker*/
 #define LKL_PERF_MEM_TLB_OS		0x40 /* OS fault handler */
 #define LKL_PERF_MEM_TLB_SHIFT	26
+
+/* Access blocked */
+#define LKL_PERF_MEM_BLK_NA		0x01 /* not available */
+#define LKL_PERF_MEM_BLK_DATA	0x02 /* data could not be forwarded */
+#define LKL_PERF_MEM_BLK_ADDR	0x04 /* address conflict */
+#define LKL_PERF_MEM_BLK_SHIFT	40
+
+/* hop level */
+#define LKL_PERF_MEM_HOPS_0		0x01 /* remote core, same node */
+#define LKL_PERF_MEM_HOPS_1		0x02 /* remote node, same socket */
+#define LKL_PERF_MEM_HOPS_2		0x03 /* remote socket, same board */
+#define LKL_PERF_MEM_HOPS_3		0x04 /* remote board */
+/* 5-7 available */
+#define LKL_PERF_MEM_HOPS_SHIFT	43
 
 #define LKL_PERF_MEM_S(a, s) \
 	(((__lkl__u64)PERF_MEM_##a##_##s) << PERF_MEM_##a##_SHIFT)
@@ -1112,6 +1406,7 @@ union lkl_perf_mem_data_src {
  *     abort: aborting a hardware transaction
  *    cycles: cycles from last branch (or 0 if not supported)
  *      type: branch type
+ *      spec: branch speculation info (or 0 if not supported)
  */
 struct lkl_perf_branch_entry {
 	__lkl__u64	from;
@@ -1122,7 +1417,29 @@ struct lkl_perf_branch_entry {
 		abort:1,    /* transaction abort */
 		cycles:16,  /* cycle count to last branch */
 		type:4,     /* branch type */
-		reserved:40;
+		spec:2,     /* branch speculation info */
+		new_type:4, /* additional branch type */
+		priv:3,     /* privilege level */
+		reserved:31;
+};
+
+union lkl_perf_sample_weight {
+	__lkl__u64		full;
+#if defined(__LKL__LITTLE_ENDIAN_BITFIELD)
+	struct {
+		__lkl__u32	var1_dw;
+		__lkl__u16	var2_w;
+		__lkl__u16	var3_w;
+	};
+#elif defined(__LKL__BIG_ENDIAN_BITFIELD)
+	struct {
+		__lkl__u16	var3_w;
+		__lkl__u16	var2_w;
+		__lkl__u32	var1_dw;
+	};
+#else
+#error "Unknown endianness"
+#endif
 };
 
 #endif /* _LKL_LINUX_PERF_EVENT_H */

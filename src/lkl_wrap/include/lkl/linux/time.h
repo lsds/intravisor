@@ -3,26 +3,35 @@
 #define _LKL_LINUX_TIME_H
 
 #include <lkl/linux/types.h>
-
+#include <lkl/linux/time_types.h>
 
 #ifndef _LKL_STRUCT_TIMESPEC
 #define _LKL_STRUCT_TIMESPEC
 struct lkl_timespec {
-	__lkl__kernel_time_t	tv_sec;			/* seconds */
-	long		tv_nsec;		/* nanoseconds */
+	__lkl__kernel_old_time_t	tv_sec;		/* seconds */
+	long			tv_nsec;	/* nanoseconds */
 };
 #endif
 
 struct lkl_timeval {
-	__lkl__kernel_time_t		tv_sec;		/* seconds */
+	__lkl__kernel_old_time_t	tv_sec;		/* seconds */
 	__lkl__kernel_suseconds_t	tv_usec;	/* microseconds */
+};
+
+struct lkl_itimerspec {
+	struct lkl_timespec it_interval;/* timer period */
+	struct lkl_timespec it_value;	/* timer expiration */
+};
+
+struct lkl_itimerval {
+	struct lkl_timeval it_interval;/* timer interval */
+	struct lkl_timeval it_value;	/* current value */
 };
 
 struct lkl_timezone {
 	int	tz_minuteswest;	/* minutes west of Greenwich */
 	int	tz_dsttime;	/* type of dst correction */
 };
-
 
 /*
  * Names of the interval timers, and structure
@@ -31,28 +40,6 @@ struct lkl_timezone {
 #define	LKL_ITIMER_REAL		0
 #define	LKL_ITIMER_VIRTUAL		1
 #define	LKL_ITIMER_PROF		2
-
-struct lkl_itimerspec {
-	struct lkl_timespec it_interval;	/* timer period */
-	struct lkl_timespec it_value;	/* timer expiration */
-};
-
-struct lkl_itimerval {
-	struct lkl_timeval it_interval;	/* timer interval */
-	struct lkl_timeval it_value;	/* current value */
-};
-
-/*
- * legacy timeval structure, only embedded in structures that
- * traditionally used 'timeval' to pass time intervals (not absolute
- * times). Do not add new users. If user space fails to compile
- * here, this is probably because it is not y2038 safe and needs to
- * be changed to use another interface.
- */
-struct __lkl__kernel_old_timeval {
-	__lkl__kernel_long_t tv_sec;
-	__lkl__kernel_long_t tv_usec;
-};
 
 /*
  * The IDs of the various system clocks (for POSIX.1b interval timers):

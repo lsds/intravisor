@@ -29,10 +29,14 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
+#include <poll.h>
 //#include <sys/auxv.h>
 
 #include <sys/ioctl.h>
 #include <net/if.h>
+#include <sys/socket.h>
+#include <sys/un.h>
+
 
 #ifdef __linux__
 #include <linux/if.h>
@@ -47,7 +51,7 @@
 
 #if LKL
 #include <lkl/asm/host_ops.h>
-#include "lkl_wrap/lkl_host.h"
+//#include "lkl_wrap/lkl_host.h"
 #endif
 
 #include <stdbool.h>
@@ -108,7 +112,7 @@
 
 //////////////////
 #if 1
-struct lkl_disk {
+struct int_lkl_disk {
 	void *dev;
 	union {
 		int fd;
@@ -129,14 +133,14 @@ struct lkl_dev_blk_ops {
 	 * @res - pointer to receive the capacity, in bytes;
 	 * @returns - 0 in case of success, negative value in case of error
 	 */
-	int (*get_capacity)(unsigned long cof2mon, struct lkl_disk disk, unsigned long long *res);
+	int (*get_capacity)(unsigned long cof2mon, struct int_lkl_disk disk, unsigned long long *res);
 	/**
 	 * @request: issue a block request
 	 *
 	 * @disk - the disk the request is issued to;
 	 * @req - a request described by &struct lkl_blk_req
 	 */
-	int (*request)(unsigned long cof2mon, struct lkl_disk disk, struct lkl_blk_req *req);
+	int (*request)(unsigned long cof2mon, struct int_lkl_disk disk, struct lkl_blk_req *req);
 };
 
 #endif
@@ -248,12 +252,13 @@ struct s_box {
 	void *entry;
 	unsigned long ret_from_mon;
 //  I/O
-	struct lkl_disk lkl_disk;
+	struct int_lkl_disk lkl_disk;
 	char disk_image[100];		//path to the disk
 // OUTPUT
 	int fd;
 //	
 	char pure;
+	char clean_room;
 	char use_scl;
 	struct cap_relocs_s *cr;
 	void *cap_relocs;
@@ -312,9 +317,9 @@ void st_cap(void *loc, void *__capability);
 int create_console(int);
 
 #ifndef SIM
-void * __capability codecap_create(void *sandbox_base, void *sandbox_end);
-void * __capability pure_codecap_create(void *sandbox_base, void *sandbox_end);
-void * __capability datacap_create(void *sandbox_base, void *sandbox_end);
+void * __capability codecap_create(void *sandbox_base, void *sandbox_end, int cr);
+void * __capability pure_codecap_create(void *sandbox_base, void *sandbox_end, int cr);
+void * __capability datacap_create(void *sandbox_base, void *sandbox_end, int cr);
 #endif
 
 struct parser_state *run_yaml_scenario(char *yaml_cfg);
@@ -446,3 +451,6 @@ static __inline__ node *pop_back(queue *q) {
 }
 
 
+// random 
+long get_file_size(char *path);
+long copy_file_into_cvm(char *path, long *where, long size);

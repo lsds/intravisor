@@ -1,0 +1,11 @@
+#include <sys/socket.h>
+#include <sys/ioctl.h>
+
+int sockatmark(int s)
+{
+printf("%s %d\n", __func__, __LINE__);
+	int ret;
+	if (ioctl(s, SIOCATMARK, &ret) < 0)
+		return -1;
+	return ret;
+}

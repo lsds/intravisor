@@ -19,6 +19,7 @@
 #ifndef _LKL_LINUX_SOCKIOS_H
 #define _LKL_LINUX_SOCKIOS_H
 
+#include <lkl/asm/bitsperlong.h>
 #include <lkl/asm/sockios.h>
 
 /* Linux-specific socket ioctls */
@@ -26,6 +27,26 @@
 #define LKL_SIOCOUTQ	TIOCOUTQ        /* output queue size (not sent + not acked) */
 
 #define LKL_SOCK_IOC_TYPE	0x89
+
+/*
+ * the timeval/timespec data structure layout is defined by libc,
+ * so we need to cover both possible versions on 32-bit.
+ */
+/* Get stamp (timeval) */
+#define LKL_SIOCGSTAMP_NEW	 _LKL_IOR(LKL_SOCK_IOC_TYPE, 0x06, long long[2])
+/* Get stamp (timespec) */
+#define LKL_SIOCGSTAMPNS_NEW _LKL_IOR(LKL_SOCK_IOC_TYPE, 0x07, long long[2])
+
+#if __LKL__BITS_PER_LONG == 64 || (defined(__x86_64__) && defined(__ILP32__))
+/* on 64-bit and x32, avoid the ?: operator */
+#define LKL_SIOCGSTAMP	LKL_SIOCGSTAMP_OLD
+#define LKL_SIOCGSTAMPNS	LKL_SIOCGSTAMPNS_OLD
+#else
+#define LKL_SIOCGSTAMP	((sizeof(struct lkl_timeval))  == 8 ? \
+			 LKL_SIOCGSTAMP_OLD   : LKL_SIOCGSTAMP_NEW)
+#define LKL_SIOCGSTAMPNS	((sizeof(struct lkl_timespec)) == 8 ? \
+			 LKL_SIOCGSTAMPNS_OLD : LKL_SIOCGSTAMPNS_NEW)
+#endif
 
 /* Routing table calls. */
 #define LKL_SIOCADDRT	0x890B		/* add routing table entry	*/

@@ -56,7 +56,13 @@
 #define LKL_VIRTIO_NET_F_MQ	22	/* Device supports Receive Flow
 					 * Steering */
 #define LKL_VIRTIO_NET_F_CTRL_MAC_ADDR 23	/* Set MAC address */
-
+#define LKL_VIRTIO_NET_F_NOTF_COAL	53	/* Device supports notifications coalescing */
+#define LKL_VIRTIO_NET_F_HASH_REPORT  57	/* Supports hash report */
+#define LKL_VIRTIO_NET_F_RSS	  60	/* Supports RSS RX steering */
+#define LKL_VIRTIO_NET_F_RSC_EXT	  61	/* extended coalescing info */
+#define LKL_VIRTIO_NET_F_STANDBY	  62	/* Act as standby for another device
+					 * with the same MAC.
+					 */
 #define LKL_VIRTIO_NET_F_SPEED_DUPLEX 63	/* Device set linkspeed and duplex */
 
 #ifndef VIRTIO_NET_NO_LEGACY
@@ -66,29 +72,46 @@
 #define LKL_VIRTIO_NET_S_LINK_UP	1	/* Link is up */
 #define LKL_VIRTIO_NET_S_ANNOUNCE	2	/* Announcement is needed */
 
+/* supported/enabled hash types */
+#define lkl_VIRTIO_NET_RSS_HASH_TYPE_IPv4          (1 << 0)
+#define lkl_VIRTIO_NET_RSS_HASH_TYPE_TCPv4         (1 << 1)
+#define lkl_VIRTIO_NET_RSS_HASH_TYPE_UDPv4         (1 << 2)
+#define lkl_VIRTIO_NET_RSS_HASH_TYPE_IPv6          (1 << 3)
+#define lkl_VIRTIO_NET_RSS_HASH_TYPE_TCPv6         (1 << 4)
+#define lkl_VIRTIO_NET_RSS_HASH_TYPE_UDPv6         (1 << 5)
+#define LKL_VIRTIO_NET_RSS_HASH_TYPE_IP_EX         (1 << 6)
+#define LKL_VIRTIO_NET_RSS_HASH_TYPE_TCP_EX        (1 << 7)
+#define LKL_VIRTIO_NET_RSS_HASH_TYPE_UDP_EX        (1 << 8)
+
 struct lkl_virtio_net_config {
 	/* The config defining mac address (if LKL_VIRTIO_NET_F_MAC) */
 	__lkl__u8 mac[LKL_ETH_ALEN];
 	/* See LKL_VIRTIO_NET_F_STATUS and VIRTIO_NET_S_* above */
-	__lkl__u16 status;
+	__lkl__virtio16 status;
 	/* Maximum number of each of transmit and receive queues;
 	 * see LKL_VIRTIO_NET_F_MQ and LKL_VIRTIO_NET_CTRL_MQ.
 	 * Legal values are between 1 and 0x8000
 	 */
-	__lkl__u16 max_virtqueue_pairs;
+	__lkl__virtio16 max_virtqueue_pairs;
 	/* Default maximum transmit unit advice */
-	__lkl__u16 mtu;
+	__lkl__virtio16 mtu;
 	/*
 	 * speed, in units of 1Mb. All values 0 to INT_MAX are legal.
 	 * Any other value stands for unknown.
 	 */
-	__lkl__u32 speed;
+	__lkl__le32 speed;
 	/*
 	 * 0x00 - half duplex
 	 * 0x01 - full duplex
 	 * Any other value stands for unknown.
 	 */
 	__lkl__u8 duplex;
+	/* maximum size of RSS key */
+	__lkl__u8 rss_max_key_size;
+	/* maximum number of indirection table entries */
+	__lkl__le16 rss_max_indirection_table_length;
+	/* bitmask of supported VIRTIO_NET_RSS_HASH_ types */
+	__lkl__le32 supported_hash_types;
 } __attribute__((packed));
 
 /*
@@ -101,6 +124,7 @@ struct lkl_virtio_net_config {
 struct lkl_virtio_net_hdr_v1 {
 #define LKL_VIRTIO_NET_HDR_F_NEEDS_CSUM	1	/* Use csum_start, csum_offset */
 #define LKL_VIRTIO_NET_HDR_F_DATA_VALID	2	/* Csum is valid */
+#define LKL_VIRTIO_NET_HDR_F_RSC_INFO	4	/* rsc info in csum_ fields */
 	__lkl__u8 flags;
 #define LKL_VIRTIO_NET_HDR_GSO_NONE		0	/* Not a GSO frame */
 #define LKL_VIRTIO_NET_HDR_GSO_TCPV4	1	/* GSO frame, IPv4 TCP (TSO) */
@@ -110,9 +134,44 @@ struct lkl_virtio_net_hdr_v1 {
 	__lkl__u8 gso_type;
 	__lkl__virtio16 hdr_len;	/* Ethernet + IP + tcp/udp hdrs */
 	__lkl__virtio16 gso_size;	/* Bytes to append to hdr_len per frame */
-	__lkl__virtio16 csum_start;	/* Position to start checksumming from */
-	__lkl__virtio16 csum_offset;	/* Offset after that to place checksum */
+	union {
+		struct {
+			__lkl__virtio16 csum_start;
+			__lkl__virtio16 csum_offset;
+		};
+		/* Checksum calculation */
+		struct {
+			/* Position to start checksumming from */
+			__lkl__virtio16 start;
+			/* Offset after that to place checksum */
+			__lkl__virtio16 offset;
+		} csum;
+		/* Receive Segment Coalescing */
+		struct {
+			/* Number of coalesced segments */
+			__lkl__le16 segments;
+			/* Number of duplicated acks */
+			__lkl__le16 dup_acks;
+		} rsc;
+	};
 	__lkl__virtio16 num_buffers;	/* Number of merged rx buffers */
+};
+
+struct lkl_virtio_net_hdr_v1_hash {
+	struct lkl_virtio_net_hdr_v1 hdr;
+	__lkl__le32 hash_value;
+#define LKL_VIRTIO_NET_HASH_REPORT_NONE            0
+#define lkl_VIRTIO_NET_HASH_REPORT_IPv4            1
+#define lkl_VIRTIO_NET_HASH_REPORT_TCPv4           2
+#define lkl_VIRTIO_NET_HASH_REPORT_UDPv4           3
+#define lkl_VIRTIO_NET_HASH_REPORT_IPv6            4
+#define lkl_VIRTIO_NET_HASH_REPORT_TCPv6           5
+#define lkl_VIRTIO_NET_HASH_REPORT_UDPv6           6
+#define lkl_VIRTIO_NET_HASH_REPORT_IPv6_EX         7
+#define lkl_VIRTIO_NET_HASH_REPORT_TCPv6_EX        8
+#define lkl_VIRTIO_NET_HASH_REPORT_UDPv6_EX        9
+	__lkl__le16 hash_report;
+	__lkl__le16 padding;
 };
 
 #ifndef VIRTIO_NET_NO_LEGACY
@@ -225,7 +284,9 @@ struct lkl_virtio_net_ctrl_mac {
 
 /*
  * Control Receive Flow Steering
- *
+ */
+#define LKL_VIRTIO_NET_CTRL_MQ   4
+/*
  * The command LKL_VIRTIO_NET_CTRL_MQ_VQ_PAIRS_SET
  * enables Receive Flow Steering, specifying the number of the transmit and
  * receive queues that will be used. After the command is consumed and acked by
@@ -238,10 +299,46 @@ struct lkl_virtio_net_ctrl_mq {
 	__lkl__virtio16 virtqueue_pairs;
 };
 
-#define LKL_VIRTIO_NET_CTRL_MQ   4
  #define LKL_VIRTIO_NET_CTRL_MQ_VQ_PAIRS_SET        0
  #define LKL_VIRTIO_NET_CTRL_MQ_VQ_PAIRS_MIN        1
  #define LKL_VIRTIO_NET_CTRL_MQ_VQ_PAIRS_MAX        0x8000
+
+/*
+ * The command LKL_VIRTIO_NET_CTRL_MQ_RSS_CONFIG has the same effect as
+ * LKL_VIRTIO_NET_CTRL_MQ_VQ_PAIRS_SET does and additionally configures
+ * the receive steering to use a hash calculated for incoming packet
+ * to decide on receive virtqueue to place the packet. The command
+ * also provides parameters to calculate a hash and receive virtqueue.
+ */
+struct lkl_virtio_net_rss_config {
+	__lkl__le32 hash_types;
+	__lkl__le16 indirection_table_mask;
+	__lkl__le16 unclassified_queue;
+	__lkl__le16 indirection_table[1/* + indirection_table_mask */];
+	__lkl__le16 max_tx_vq;
+	__lkl__u8 hash_key_length;
+	__lkl__u8 hash_key_data[/* hash_key_length */];
+};
+
+ #define LKL_VIRTIO_NET_CTRL_MQ_RSS_CONFIG          1
+
+/*
+ * The command LKL_VIRTIO_NET_CTRL_MQ_HASH_CONFIG requests the device
+ * to include in the virtio header of the packet the value of the
+ * calculated hash and the report type of hash. It also provides
+ * parameters for hash calculation. The command requires feature
+ * LKL_VIRTIO_NET_F_HASH_REPORT to be negotiated to extend the
+ * layout of virtio header as defined in virtio_net_hdr_v1_hash.
+ */
+struct lkl_virtio_net_hash_config {
+	__lkl__le32 hash_types;
+	/* for compatibility with virtio_net_rss_config */
+	__lkl__le16 reserved[4];
+	__lkl__u8 hash_key_length;
+	__lkl__u8 hash_key_data[/* hash_key_length */];
+};
+
+ #define LKL_VIRTIO_NET_CTRL_MQ_HASH_CONFIG         2
 
 /*
  * Control network offloads
@@ -257,5 +354,37 @@ struct lkl_virtio_net_ctrl_mq {
  */
 #define LKL_VIRTIO_NET_CTRL_GUEST_OFFLOADS   5
 #define LKL_VIRTIO_NET_CTRL_GUEST_OFFLOADS_SET        0
+
+/*
+ * Control notifications coalescing.
+ *
+ * Request the device to change the notifications coalescing parameters.
+ *
+ * Available with the LKL_VIRTIO_NET_F_NOTF_COAL feature bit.
+ */
+#define LKL_VIRTIO_NET_CTRL_NOTF_COAL		6
+/*
+ * Set the tx-usecs/tx-max-packets parameters.
+ */
+struct lkl_virtio_net_ctrl_coal_tx {
+	/* Maximum number of packets to send before a TX notification */
+	__lkl__le32 tx_max_packets;
+	/* Maximum number of usecs to delay a TX notification */
+	__lkl__le32 tx_usecs;
+};
+
+#define LKL_VIRTIO_NET_CTRL_NOTF_COAL_TX_SET		0
+
+/*
+ * Set the rx-usecs/rx-max-packets parameters.
+ */
+struct lkl_virtio_net_ctrl_coal_rx {
+	/* Maximum number of packets to receive before a RX notification */
+	__lkl__le32 rx_max_packets;
+	/* Maximum number of usecs to delay a RX notification */
+	__lkl__le32 rx_usecs;
+};
+
+#define LKL_VIRTIO_NET_CTRL_NOTF_COAL_RX_SET		1
 
 #endif /* _LKL_LINUX_VIRTIO_NET_H */

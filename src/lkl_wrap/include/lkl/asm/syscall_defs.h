@@ -4,9 +4,6 @@ LKL_SYSCALL_DEFINE3(_virtio_mmio_device_add,long,base,long,size,unsigned int,irq
 #ifdef __lkl__NR_set_tid_address
 LKL_SYSCALL_DEFINE1(_set_tid_address,int *,tidptr)
 #endif
-#ifdef __lkl__NR_clone
-LKL_SYSCALL_DEFINE5(_clone,unsigned long,clone_flags,unsigned long,newsp,int *,parent_tidptr,int *,child_tidptr,unsigned long,tls)
-#endif
 #ifdef __lkl__NR_unshare
 LKL_SYSCALL_DEFINE1(_unshare,unsigned long,unshare_flags)
 #endif
@@ -24,9 +21,6 @@ LKL_SYSCALL_DEFINE5(_waitid,int,which,lkl_pid_t,upid,struct lkl_siginfo *,infop,
 #endif
 #ifdef __lkl__NR_wait4
 LKL_SYSCALL_DEFINE4(_wait4,lkl_pid_t,upid,int *,stat_addr,int,options,struct lkl_rusage *,ru)
-#endif
-#ifdef __NR_sysctl
-LKL_SYSCALL_DEFINE1(_sysctl,struct __sysctl_args *,args)
 #endif
 #ifdef __lkl__NR_capget
 LKL_SYSCALL_DEFINE2(_capget,lkl_cap_user_header_t,header,lkl_cap_user_data_t,dataptr)
@@ -47,10 +41,16 @@ LKL_SYSCALL_DEFINE4(_rt_sigprocmask,int,how,lkl_sigset_t *,nset,lkl_sigset_t *,o
 LKL_SYSCALL_DEFINE2(_rt_sigpending,lkl_sigset_t *,uset,lkl_size_t,sigsetsize)
 #endif
 #ifdef __lkl__NR_rt_sigtimedwait
-LKL_SYSCALL_DEFINE4(_rt_sigtimedwait,const lkl_sigset_t *,uthese,lkl_siginfo_t *,uinfo,const struct lkl_timespec *,uts,lkl_size_t,sigsetsize)
+LKL_SYSCALL_DEFINE4(_rt_sigtimedwait,const lkl_sigset_t *,uthese,lkl_siginfo_t *,uinfo,const struct __lkl__kernel_timespec *,uts,lkl_size_t,sigsetsize)
+#endif
+#ifdef __NR_rt_sigtimedwait_time32
+LKL_SYSCALL_DEFINE4(_rt_sigtimedwait_time32,const lkl_sigset_t *,uthese,lkl_siginfo_t *,uinfo,const struct old_timespec32 *,uts,lkl_size_t,sigsetsize)
 #endif
 #ifdef __lkl__NR_kill
 LKL_SYSCALL_DEFINE2(_kill,lkl_pid_t,pid,int,sig)
+#endif
+#ifdef __lkl__NR_pidfd_send_signal
+LKL_SYSCALL_DEFINE4(_pidfd_send_signal,int,pidfd,int,sig,lkl_siginfo_t *,info,unsigned int,flags)
 #endif
 #ifdef __lkl__NR_tgkill
 LKL_SYSCALL_DEFINE3(_tgkill,lkl_pid_t,tgid,lkl_pid_t,pid,int,sig)
@@ -178,8 +178,14 @@ LKL_SYSCALL_DEFINE3(_getcpu,unsigned *,cpup,unsigned *,nodep,struct getcpu_cache
 #ifdef __lkl__NR_sysinfo
 LKL_SYSCALL_DEFINE1(_sysinfo,struct lkl_sysinfo *,info)
 #endif
+#ifdef __lkl__NR_pidfd_open
+LKL_SYSCALL_DEFINE2(_pidfd_open,lkl_pid_t,pid,unsigned int,flags)
+#endif
+#ifdef __lkl__NR_pidfd_getfd
+LKL_SYSCALL_DEFINE3(_pidfd_getfd,int,pidfd,int,fd,unsigned int,flags)
+#endif
 #ifdef __lkl__NR_setns
-LKL_SYSCALL_DEFINE2(_setns,int,fd,int,nstype)
+LKL_SYSCALL_DEFINE2(_setns,int,fd,int,flags)
 #endif
 #ifdef __lkl__NR_reboot
 LKL_SYSCALL_DEFINE4(_reboot,int,magic1,int,magic2,unsigned int,cmd,void *,arg)
@@ -206,7 +212,7 @@ LKL_SYSCALL_DEFINE1(_sched_getscheduler,lkl_pid_t,pid)
 LKL_SYSCALL_DEFINE2(_sched_getparam,lkl_pid_t,pid,struct sched_param *,param)
 #endif
 #ifdef __lkl__NR_sched_getattr
-LKL_SYSCALL_DEFINE4(_sched_getattr,lkl_pid_t,pid,struct sched_attr *,uattr,unsigned int,size,unsigned int,flags)
+LKL_SYSCALL_DEFINE4(_sched_getattr,lkl_pid_t,pid,struct sched_attr *,uattr,unsigned int,usize,unsigned int,flags)
 #endif
 #ifdef __lkl__NR_sched_setaffinity
 LKL_SYSCALL_DEFINE3(_sched_setaffinity,lkl_pid_t,pid,unsigned int,len,unsigned long *,user_mask_ptr)
@@ -224,67 +230,103 @@ LKL_SYSCALL_DEFINE1(_sched_get_priority_max,int,policy)
 LKL_SYSCALL_DEFINE1(_sched_get_priority_min,int,policy)
 #endif
 #ifdef __lkl__NR_sched_rr_get_interval
-LKL_SYSCALL_DEFINE2(_sched_rr_get_interval,lkl_pid_t,pid,struct lkl_timespec *,interval)
+LKL_SYSCALL_DEFINE2(_sched_rr_get_interval,lkl_pid_t,pid,struct __lkl__kernel_timespec *,interval)
+#endif
+#ifdef __NR_sched_rr_get_interval_time32
+LKL_SYSCALL_DEFINE2(_sched_rr_get_interval_time32,lkl_pid_t,pid,struct old_timespec32 *,interval)
 #endif
 #ifdef __lkl__NR_membarrier
-LKL_SYSCALL_DEFINE2(_membarrier,int,cmd,int,flags)
+LKL_SYSCALL_DEFINE3(_membarrier,int,cmd,unsigned int,flags,int,cpu_id)
 #endif
 #ifdef __lkl__NR_syslog
 LKL_SYSCALL_DEFINE3(_syslog,int,type,char *,buf,int,len)
-#endif
-#ifdef __lkl__NR_gettimeofday
-LKL_SYSCALL_DEFINE2(_gettimeofday,struct lkl_timeval *,tv,struct lkl_timezone *,tz)
-#endif
-#ifdef __lkl__NR_settimeofday
-LKL_SYSCALL_DEFINE2(_settimeofday,struct lkl_timeval *,tv,struct lkl_timezone *,tz)
-#endif
-#ifdef __lkl__NR_adjtimex
-LKL_SYSCALL_DEFINE1(_adjtimex,struct lkl_timex *,txc_p)
-#endif
-#ifdef __lkl__NR_nanosleep
-LKL_SYSCALL_DEFINE2(_nanosleep,struct lkl_timespec *,rqtp,struct lkl_timespec *,rmtp)
-#endif
-#ifdef __lkl__NR_timer_create
-LKL_SYSCALL_DEFINE3(_timer_create,const lkl_clockid_t,which_clock,struct lkl_sigevent *,timer_event_spec,lkl_timer_t *,created_timer_id)
-#endif
-#ifdef __lkl__NR_timer_gettime
-LKL_SYSCALL_DEFINE2(_timer_gettime,lkl_timer_t,timer_id,struct lkl_itimerspec *,setting)
-#endif
-#ifdef __lkl__NR_timer_getoverrun
-LKL_SYSCALL_DEFINE1(_timer_getoverrun,lkl_timer_t,timer_id)
-#endif
-#ifdef __lkl__NR_timer_settime
-LKL_SYSCALL_DEFINE4(_timer_settime,lkl_timer_t,timer_id,int,flags,const struct lkl_itimerspec *,new_setting,struct lkl_itimerspec *,old_setting)
-#endif
-#ifdef __lkl__NR_timer_delete
-LKL_SYSCALL_DEFINE1(_timer_delete,lkl_timer_t,timer_id)
-#endif
-#ifdef __lkl__NR_clock_settime
-LKL_SYSCALL_DEFINE2(_clock_settime,const lkl_clockid_t,which_clock,const struct lkl_timespec *,tp)
-#endif
-#ifdef __lkl__NR_clock_gettime
-LKL_SYSCALL_DEFINE2(_clock_gettime,const lkl_clockid_t,which_clock,struct lkl_timespec *,tp)
-#endif
-#ifdef __lkl__NR_clock_adjtime
-LKL_SYSCALL_DEFINE2(_clock_adjtime,const lkl_clockid_t,which_clock,struct lkl_timex *,utx)
-#endif
-#ifdef __lkl__NR_clock_getres
-LKL_SYSCALL_DEFINE2(_clock_getres,const lkl_clockid_t,which_clock,struct lkl_timespec *,tp)
-#endif
-#ifdef __lkl__NR_clock_nanosleep
-LKL_SYSCALL_DEFINE4(_clock_nanosleep,const lkl_clockid_t,which_clock,int,flags,const struct lkl_timespec *,rqtp,struct lkl_timespec *,rmtp)
-#endif
-#ifdef __lkl__NR_getitimer
-LKL_SYSCALL_DEFINE2(_getitimer,int,which,struct lkl_itimerval *,value)
-#endif
-#ifdef __lkl__NR_setitimer
-LKL_SYSCALL_DEFINE3(_setitimer,int,which,struct lkl_itimerval *,value,struct lkl_itimerval *,ovalue)
 #endif
 #ifdef __lkl__NR_init_module
 LKL_SYSCALL_DEFINE3(_init_module,void *,umod,unsigned long,len,const char *,uargs)
 #endif
 #ifdef __lkl__NR_finit_module
 LKL_SYSCALL_DEFINE3(_finit_module,int,fd,const char *,uargs,int,flags)
+#endif
+#ifdef __lkl__NR_gettimeofday
+LKL_SYSCALL_DEFINE2(_gettimeofday,struct __lkl__kernel_old_timeval *,tv,struct lkl_timezone *,tz)
+#endif
+#ifdef __lkl__NR_settimeofday
+LKL_SYSCALL_DEFINE2(_settimeofday,struct __lkl__kernel_old_timeval *,tv,struct lkl_timezone *,tz)
+#endif
+#ifdef __lkl__NR_adjtimex
+LKL_SYSCALL_DEFINE1(_adjtimex,struct __lkl__kernel_timex *,txc_p)
+#endif
+#ifdef __NR_adjtimex_time32
+LKL_SYSCALL_DEFINE1(_adjtimex_time32,struct old_timex32 *,utp)
+#endif
+#ifdef __lkl__NR_nanosleep
+LKL_SYSCALL_DEFINE2(_nanosleep,struct __lkl__kernel_timespec *,rqtp,struct __lkl__kernel_timespec *,rmtp)
+#endif
+#ifdef __NR_nanosleep_time32
+LKL_SYSCALL_DEFINE2(_nanosleep_time32,struct old_timespec32 *,rqtp,struct old_timespec32 *,rmtp)
+#endif
+#ifdef __lkl__NR_timer_create
+LKL_SYSCALL_DEFINE3(_timer_create,const lkl_clockid_t,which_clock,struct lkl_sigevent *,timer_event_spec,lkl_timer_t *,created_timer_id)
+#endif
+#ifdef __lkl__NR_timer_gettime
+LKL_SYSCALL_DEFINE2(_timer_gettime,lkl_timer_t,timer_id,struct __lkl__kernel_itimerspec *,setting)
+#endif
+#ifdef __NR_timer_gettime32
+LKL_SYSCALL_DEFINE2(_timer_gettime32,lkl_timer_t,timer_id,struct old_itimerspec32 *,setting)
+#endif
+#ifdef __lkl__NR_timer_getoverrun
+LKL_SYSCALL_DEFINE1(_timer_getoverrun,lkl_timer_t,timer_id)
+#endif
+#ifdef __lkl__NR_timer_settime
+LKL_SYSCALL_DEFINE4(_timer_settime,lkl_timer_t,timer_id,int,flags,const struct __lkl__kernel_itimerspec *,new_setting,struct __lkl__kernel_itimerspec *,old_setting)
+#endif
+#ifdef __NR_timer_settime32
+LKL_SYSCALL_DEFINE4(_timer_settime32,lkl_timer_t,timer_id,int,flags,struct old_itimerspec32 *,new,struct old_itimerspec32 *,old)
+#endif
+#ifdef __lkl__NR_timer_delete
+LKL_SYSCALL_DEFINE1(_timer_delete,lkl_timer_t,timer_id)
+#endif
+#ifdef __lkl__NR_clock_settime
+LKL_SYSCALL_DEFINE2(_clock_settime,const lkl_clockid_t,which_clock,const struct __lkl__kernel_timespec *,tp)
+#endif
+#ifdef __lkl__NR_clock_gettime
+LKL_SYSCALL_DEFINE2(_clock_gettime,const lkl_clockid_t,which_clock,struct __lkl__kernel_timespec *,tp)
+#endif
+#ifdef __lkl__NR_clock_adjtime
+LKL_SYSCALL_DEFINE2(_clock_adjtime,const lkl_clockid_t,which_clock,struct __lkl__kernel_timex *,utx)
+#endif
+#ifdef __lkl__NR_clock_getres
+LKL_SYSCALL_DEFINE2(_clock_getres,const lkl_clockid_t,which_clock,struct __lkl__kernel_timespec *,tp)
+#endif
+#ifdef __NR_clock_settime32
+LKL_SYSCALL_DEFINE2(_clock_settime32,lkl_clockid_t,which_clock,struct old_timespec32 *,tp)
+#endif
+#ifdef __NR_clock_gettime32
+LKL_SYSCALL_DEFINE2(_clock_gettime32,lkl_clockid_t,which_clock,struct old_timespec32 *,tp)
+#endif
+#ifdef __NR_clock_adjtime32
+LKL_SYSCALL_DEFINE2(_clock_adjtime32,lkl_clockid_t,which_clock,struct old_timex32 *,utp)
+#endif
+#ifdef __NR_clock_getres_time32
+LKL_SYSCALL_DEFINE2(_clock_getres_time32,lkl_clockid_t,which_clock,struct old_timespec32 *,tp)
+#endif
+#ifdef __lkl__NR_clock_nanosleep
+LKL_SYSCALL_DEFINE4(_clock_nanosleep,const lkl_clockid_t,which_clock,int,flags,const struct __lkl__kernel_timespec *,rqtp,struct __lkl__kernel_timespec *,rmtp)
+#endif
+#ifdef __NR_clock_nanosleep_time32
+LKL_SYSCALL_DEFINE4(_clock_nanosleep_time32,lkl_clockid_t,which_clock,int,flags,struct old_timespec32 *,rqtp,struct old_timespec32 *,rmtp)
+#endif
+#ifdef __lkl__NR_getitimer
+LKL_SYSCALL_DEFINE2(_getitimer,int,which,struct __lkl__kernel_old_itimerval *,value)
+#endif
+#ifdef __lkl__NR_setitimer
+LKL_SYSCALL_DEFINE3(_setitimer,int,which,struct __lkl__kernel_old_itimerval *,value,struct __lkl__kernel_old_itimerval *,ovalue)
+#endif
+#ifdef __lkl__NR_process_mrelease
+LKL_SYSCALL_DEFINE2(_process_mrelease,int,pidfd,unsigned int,flags)
+#endif
+#ifdef __lkl__NR_fadvise64_64
+LKL_SYSCALL_DEFINE4(_fadvise64_64,int,fd,lkl_loff_t,offset,lkl_loff_t,len,int,advice)
 #endif
 #ifdef __lkl__NR_readahead
 LKL_SYSCALL_DEFINE3(_readahead,int,fd,lkl_loff_t,offset,lkl_size_t,count)
@@ -301,9 +343,6 @@ LKL_SYSCALL_DEFINE2(_munmap,unsigned long,addr,lkl_size_t,len)
 #ifdef __lkl__NR_mremap
 LKL_SYSCALL_DEFINE5(_mremap,unsigned long,addr,unsigned long,old_len,unsigned long,new_len,unsigned long,flags,unsigned long,new_addr)
 #endif
-#ifdef __lkl__NR_fadvise64_64
-LKL_SYSCALL_DEFINE4(_fadvise64_64,int,fd,lkl_loff_t,offset,lkl_loff_t,len,int,advice)
-#endif
 #ifdef __lkl__NR_truncate
 LKL_SYSCALL_DEFINE2(_truncate,const char *,path,long,length)
 #endif
@@ -315,6 +354,9 @@ LKL_SYSCALL_DEFINE4(_fallocate,int,fd,int,mode,lkl_loff_t,offset,lkl_loff_t,len)
 #endif
 #ifdef __lkl__NR_faccessat
 LKL_SYSCALL_DEFINE3(_faccessat,int,dfd,const char *,filename,int,mode)
+#endif
+#ifdef __lkl__NR_faccessat2
+LKL_SYSCALL_DEFINE4(_faccessat2,int,dfd,const char *,filename,int,mode,int,flags)
 #endif
 #ifdef __NR_access
 LKL_SYSCALL_DEFINE2(_access,const char *,filename,int,mode)
@@ -355,11 +397,17 @@ LKL_SYSCALL_DEFINE3(_open,const char *,filename,int,flags,lkl_umode_t,mode)
 #ifdef __lkl__NR_openat
 LKL_SYSCALL_DEFINE4(_openat,int,dfd,const char *,filename,int,flags,lkl_umode_t,mode)
 #endif
+#ifdef __lkl__NR_openat2
+LKL_SYSCALL_DEFINE4(_openat2,int,dfd,const char *,filename,struct lkl_open_how *,how,lkl_size_t,usize)
+#endif
 #ifdef __NR_creat
 LKL_SYSCALL_DEFINE2(_creat,const char *,pathname,lkl_umode_t,mode)
 #endif
 #ifdef __lkl__NR_close
 LKL_SYSCALL_DEFINE1(_close,unsigned int,fd)
+#endif
+#ifdef __lkl__NR_close_range
+LKL_SYSCALL_DEFINE3(_close_range,unsigned int,fd,unsigned int,max_fd,unsigned int,flags)
 #endif
 #ifdef __lkl__NR_vhangup
 LKL_SYSCALL_DEFINE0(_vhangup,)
@@ -506,16 +554,16 @@ LKL_SYSCALL_DEFINE3(_getdents,unsigned int,fd,struct lkl_linux_dirent *,dirent,u
 LKL_SYSCALL_DEFINE3(_getdents64,unsigned int,fd,struct lkl_linux_dirent64 *,dirent,unsigned int,count)
 #endif
 #ifdef __NR_select
-LKL_SYSCALL_DEFINE5(_select,int,n,lkl_fd_set *,inp,lkl_fd_set *,outp,lkl_fd_set *,exp,struct lkl_timeval *,tvp)
+LKL_SYSCALL_DEFINE5(_select,int,n,lkl_fd_set *,inp,lkl_fd_set *,outp,lkl_fd_set *,exp,struct __lkl__kernel_old_timeval *,tvp)
 #endif
 #ifdef __lkl__NR_pselect6
-LKL_SYSCALL_DEFINE6(_pselect6,int,n,lkl_fd_set *,inp,lkl_fd_set *,outp,lkl_fd_set *,exp,struct lkl_timespec *,tsp,void *,sig)
+LKL_SYSCALL_DEFINE6(_pselect6,int,n,lkl_fd_set *,inp,lkl_fd_set *,outp,lkl_fd_set *,exp,struct __lkl__kernel_timespec *,tsp,void *,sig)
 #endif
 #ifdef __NR_poll
 LKL_SYSCALL_DEFINE3(_poll,struct lkl_pollfd *,ufds,unsigned int,nfds,int,timeout_msecs)
 #endif
 #ifdef __lkl__NR_ppoll
-LKL_SYSCALL_DEFINE5(_ppoll,struct lkl_pollfd *,ufds,unsigned int,nfds,struct lkl_timespec *,tsp,const lkl_sigset_t *,sigmask,lkl_size_t,sigsetsize)
+LKL_SYSCALL_DEFINE5(_ppoll,struct lkl_pollfd *,ufds,unsigned int,nfds,struct __lkl__kernel_timespec *,tsp,const lkl_sigset_t *,sigmask,lkl_size_t,sigsetsize)
 #endif
 #ifdef __lkl__NR_dup3
 LKL_SYSCALL_DEFINE3(_dup3,unsigned int,oldfd,unsigned int,newfd,int,flags)
@@ -529,11 +577,23 @@ LKL_SYSCALL_DEFINE1(_dup,unsigned int,fildes)
 #ifdef __lkl__NR_umount
 LKL_SYSCALL_DEFINE2(_umount,char *,name,int,flags)
 #endif
+#ifdef __lkl__NR_open_tree
+LKL_SYSCALL_DEFINE3(_open_tree,int,dfd,const char *,filename,unsigned,flags)
+#endif
 #ifdef __lkl__NR_mount
 LKL_SYSCALL_DEFINE5(_mount,char *,dev_name,char *,dir_name,char *,type,unsigned long,flags,void *,data)
 #endif
+#ifdef __lkl__NR_fsmount
+LKL_SYSCALL_DEFINE3(_fsmount,int,fs_fd,unsigned int,flags,unsigned int,attr_flags)
+#endif
+#ifdef __lkl__NR_move_mount
+LKL_SYSCALL_DEFINE5(_move_mount,int,from_dfd,const char *,from_pathname,int,to_dfd,const char *,to_pathname,unsigned int,flags)
+#endif
 #ifdef __lkl__NR_pivot_root
 LKL_SYSCALL_DEFINE2(_pivot_root,const char *,new_root,const char *,put_old)
+#endif
+#ifdef __lkl__NR_mount_setattr
+LKL_SYSCALL_DEFINE5(_mount_setattr,int,dfd,const char *,path,unsigned int,flags,struct lkl_mount_attr *,uattr,lkl_size_t,usize)
 #endif
 #ifdef __lkl__NR_setxattr
 LKL_SYSCALL_DEFINE5(_setxattr,const char *,pathname,const char *,name,const void *,value,lkl_size_t,size,int,flags)
@@ -572,7 +632,7 @@ LKL_SYSCALL_DEFINE2(_lremovexattr,const char *,pathname,const char *,name)
 LKL_SYSCALL_DEFINE2(_fremovexattr,int,fd,const char *,name)
 #endif
 #ifdef __lkl__NR_vmsplice
-LKL_SYSCALL_DEFINE4(_vmsplice,int,fd,const struct lkl_iovec *,iov,unsigned long,nr_segs,unsigned int,flags)
+LKL_SYSCALL_DEFINE4(_vmsplice,int,fd,const struct lkl_iovec *,uiov,unsigned long,nr_segs,unsigned int,flags)
 #endif
 #ifdef __lkl__NR_splice
 LKL_SYSCALL_DEFINE6(_splice,int,fd_in,lkl_loff_t *,off_in,int,fd_out,lkl_loff_t *,off_out,lkl_size_t,len,unsigned int,flags)
@@ -599,13 +659,10 @@ LKL_SYSCALL_DEFINE4(_sync_file_range,int,fd,lkl_loff_t,offset,lkl_loff_t,nbytes,
 LKL_SYSCALL_DEFINE4(_sync_file_range2,int,fd,unsigned int,flags,lkl_loff_t,offset,lkl_loff_t,nbytes)
 #endif
 #ifdef __lkl__NR_utimensat
-LKL_SYSCALL_DEFINE4(_utimensat,int,dfd,const char *,filename,struct lkl_timespec *,utimes,int,flags)
+LKL_SYSCALL_DEFINE4(_utimensat,int,dfd,const char *,filename,struct __lkl__kernel_timespec *,utimes,int,flags)
 #endif
-#ifdef __NR_futimesat
-LKL_SYSCALL_DEFINE3(_futimesat,int,dfd,const char *,filename,struct lkl_timeval *,utimes)
-#endif
-#ifdef __NR_utimes
-LKL_SYSCALL_DEFINE2(_utimes,char *,filename,struct lkl_timeval *,utimes)
+#ifdef __NR_utimensat_time32
+LKL_SYSCALL_DEFINE4(_utimensat_time32,unsigned int,dfd,const char *,filename,struct old_timespec32 *,t,int,flags)
 #endif
 #ifdef __lkl__NR_getcwd
 LKL_SYSCALL_DEFINE2(_getcwd,char *,buf,unsigned long,size)
@@ -625,8 +682,14 @@ LKL_SYSCALL_DEFINE3(_fstatfs64,unsigned int,fd,lkl_size_t,sz,struct lkl_statfs64
 #ifdef __NR_ustat
 LKL_SYSCALL_DEFINE2(_ustat,unsigned,dev,struct lkl_ustat *,ubuf)
 #endif
-#ifdef __NR_bdflush
-LKL_SYSCALL_DEFINE2(_bdflush,int,func,long,data)
+#ifdef __lkl__NR_fsopen
+LKL_SYSCALL_DEFINE2(_fsopen,const char *,_fs_name,unsigned int,flags)
+#endif
+#ifdef __lkl__NR_fspick
+LKL_SYSCALL_DEFINE3(_fspick,int,dfd,const char *,path,unsigned int,flags)
+#endif
+#ifdef __lkl__NR_fsconfig
+LKL_SYSCALL_DEFINE5(_fsconfig,int,fd,unsigned int,cmd,const char *,_key,const void *,_value,int,aux)
 #endif
 #ifdef __lkl__NR_epoll_create1
 LKL_SYSCALL_DEFINE1(_epoll_create1,int,flags)
@@ -642,6 +705,9 @@ LKL_SYSCALL_DEFINE4(_epoll_wait,int,epfd,struct lkl_epoll_event *,events,int,max
 #endif
 #ifdef __lkl__NR_epoll_pwait
 LKL_SYSCALL_DEFINE6(_epoll_pwait,int,epfd,struct lkl_epoll_event *,events,int,maxevents,int,timeout,const lkl_sigset_t *,sigmask,lkl_size_t,sigsetsize)
+#endif
+#ifdef __lkl__NR_epoll_pwait2
+LKL_SYSCALL_DEFINE6(_epoll_pwait2,int,epfd,struct lkl_epoll_event *,events,int,maxevents,const struct __lkl__kernel_timespec *,timeout,const lkl_sigset_t *,sigmask,lkl_size_t,sigsetsize)
 #endif
 #ifdef __lkl__NR_eventfd2
 LKL_SYSCALL_DEFINE2(_eventfd2,unsigned int,count,int,flags)
@@ -664,8 +730,17 @@ LKL_SYSCALL_DEFINE3(_ioprio_set,int,which,int,who,int,ioprio)
 #ifdef __lkl__NR_ioprio_get
 LKL_SYSCALL_DEFINE2(_ioprio_get,int,which,int,who)
 #endif
+#ifdef __lkl__NR_io_uring_enter
+LKL_SYSCALL_DEFINE6(_io_uring_enter,unsigned int,fd,lkl_u32,to_submit,lkl_u32,min_complete,lkl_u32,flags,const void *,argp,lkl_size_t,argsz)
+#endif
+#ifdef __lkl__NR_io_uring_setup
+LKL_SYSCALL_DEFINE2(_io_uring_setup,lkl_u32,entries,struct lkl_io_uring_params *,params)
+#endif
+#ifdef __lkl__NR_io_uring_register
+LKL_SYSCALL_DEFINE4(_io_uring_register,unsigned int,fd,unsigned int,opcode,void *,arg,unsigned int,nr_args)
+#endif
 #ifdef __lkl__NR_getrandom
-LKL_SYSCALL_DEFINE3(_getrandom,char *,buf,lkl_size_t,count,unsigned int,flags)
+LKL_SYSCALL_DEFINE3(_getrandom,char *,ubuf,lkl_size_t,len,unsigned int,flags)
 #endif
 #ifdef __lkl__NR_socket
 LKL_SYSCALL_DEFINE3(_socket,int,family,int,type,int,protocol)
@@ -725,5 +800,8 @@ LKL_SYSCALL_DEFINE4(_sendmmsg,int,fd,struct lkl_mmsghdr *,mmsg,unsigned int,vlen
 LKL_SYSCALL_DEFINE3(_recvmsg,int,fd,struct lkl_user_msghdr *,msg,unsigned int,flags)
 #endif
 #ifdef __lkl__NR_recvmmsg
-LKL_SYSCALL_DEFINE5(_recvmmsg,int,fd,struct lkl_mmsghdr *,mmsg,unsigned int,vlen,unsigned int,flags,struct lkl_timespec *,timeout)
+LKL_SYSCALL_DEFINE5(_recvmmsg,int,fd,struct lkl_mmsghdr *,mmsg,unsigned int,vlen,unsigned int,flags,struct __lkl__kernel_timespec *,timeout)
+#endif
+#ifdef __NR_recvmmsg_time32
+LKL_SYSCALL_DEFINE5(_recvmmsg_time32,int,fd,struct lkl_mmsghdr *,mmsg,unsigned int,vlen,unsigned int,flags,struct old_timespec32 *,timeout)
 #endif

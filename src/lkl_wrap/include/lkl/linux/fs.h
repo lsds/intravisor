@@ -13,6 +13,10 @@
 #include <lkl/linux/limits.h>
 #include <lkl/linux/ioctl.h>
 #include <lkl/linux/types.h>
+#include <lkl/linux/fscrypt.h>
+
+/* Use of MS_* flags within the kernel is restricted to core mount(2) code. */
+#include <lkl/linux/mount.h>
 
 /*
  * It's silly to have LKL_NR_OPEN bigger than LKL_NR_FILE, but you can change
@@ -82,7 +86,7 @@ struct lkl_file_dedupe_range {
 	__lkl__u16 dest_count;	/* in - total elements in info array */
 	__lkl__u16 reserved1;	/* must be zero */
 	__lkl__u32 reserved2;	/* must be zero */
-	struct lkl_file_dedupe_range_info info[0];
+	struct lkl_file_dedupe_range_info info[];
 };
 
 /* And dynamically-tunable limits and defaults: */
@@ -100,57 +104,6 @@ struct lkl_inodes_stat_t {
 
 
 #define LKL_NR_FILE  8192	/* this can well be larger on a larger system */
-
-
-/*
- * These are the fs-independent mount-flags: up to 32 flags are supported
- */
-#define LKL_MS_RDONLY	 1	/* Mount read-only */
-#define LKL_MS_NOSUID	 2	/* Ignore suid and sgid bits */
-#define LKL_MS_NODEV	 4	/* Disallow access to device special files */
-#define LKL_MS_NOEXEC	 8	/* Disallow program execution */
-#define LKL_MS_SYNCHRONOUS	16	/* Writes are synced at once */
-#define LKL_MS_REMOUNT	32	/* Alter flags of a mounted FS */
-#define LKL_MS_MANDLOCK	64	/* Allow mandatory locks on an FS */
-#define LKL_MS_DIRSYNC	128	/* Directory modifications are synchronous */
-#define LKL_MS_NOATIME	1024	/* Do not update access times. */
-#define LKL_MS_NODIRATIME	2048	/* Do not update directory access times */
-#define LKL_MS_BIND		4096
-#define LKL_MS_MOVE		8192
-#define LKL_MS_REC		16384
-#define LKL_MS_VERBOSE	32768	/* War is peace. Verbosity is silence.
-				   LKL_MS_VERBOSE is deprecated. */
-#define LKL_MS_SILENT	32768
-#define LKL_MS_POSIXACL	(1<<16)	/* VFS does not apply the umask */
-#define LKL_MS_UNBINDABLE	(1<<17)	/* change to unbindable */
-#define LKL_MS_PRIVATE	(1<<18)	/* change to private */
-#define LKL_MS_SLAVE	(1<<19)	/* change to slave */
-#define LKL_MS_SHARED	(1<<20)	/* change to shared */
-#define LKL_MS_RELATIME	(1<<21)	/* Update atime relative to mtime/ctime. */
-#define LKL_MS_KERNMOUNT	(1<<22) /* this is a kern_mount call */
-#define LKL_MS_I_VERSION	(1<<23) /* Update inode I_version field */
-#define LKL_MS_STRICTATIME	(1<<24) /* Always perform atime updates */
-#define LKL_MS_LAZYTIME	(1<<25) /* Update the on-disk [acm]times lazily */
-
-/* These sb flags are internal to the kernel */
-#define LKL_MS_SUBMOUNT     (1<<26)
-#define LKL_MS_NOREMOTELOCK	(1<<27)
-#define LKL_MS_NOSEC	(1<<28)
-#define LKL_MS_BORN		(1<<29)
-#define LKL_MS_ACTIVE	(1<<30)
-#define LKL_MS_NOUSER	(1<<31)
-
-/*
- * Superblock flags that can be altered by LKL_MS_REMOUNT
- */
-#define LKL_MS_RMT_MASK	(LKL_MS_RDONLY|LKL_MS_SYNCHRONOUS|LKL_MS_MANDLOCK|LKL_MS_I_VERSION|\
-			 LKL_MS_LAZYTIME)
-
-/*
- * Old magic mount flag and mask
- */
-#define LKL_MS_MGC_VAL 0xC0ED0000
-#define LKL_MS_MGC_MSK 0xffff0000
 
 /*
  * Structure for LKL_FS_IOC_FSGETXATTR[A] and LKL_FS_IOC_FSSETXATTR.
@@ -227,8 +180,9 @@ struct lkl_fsxattr {
 #define LKL_BLKSECDISCARD _LKL_IO(0x12,125)
 #define LKL_BLKROTATIONAL _LKL_IO(0x12,126)
 #define LKL_BLKZEROOUT _LKL_IO(0x12,127)
+#define LKL_BLKGETDISKSEQ _LKL_IOR(0x12,128,__lkl__u64)
 /*
- * A jump here: 130-131 are reserved for zoned block devices
+ * A jump here: 130-136 are reserved for zoned block devices
  * (see uapi/linux/blkzoned.h)
  */
 
@@ -242,6 +196,8 @@ struct lkl_fsxattr {
 #define LKL_FICLONERANGE	_LKL_IOW(0x94, 13, struct lkl_file_clone_range)
 #define LKL_FIDEDUPERANGE	_LKL_IOWR(0x94, 54, struct lkl_file_dedupe_range)
 
+#define LKL_FSLABEL_MAX 256	/* Max chars for the interface; each fs may differ */
+
 #define	LKL_FS_IOC_GETFLAGS			_LKL_IOR('f', 1, long)
 #define	LKL_FS_IOC_SETFLAGS			_LKL_IOW('f', 2, long)
 #define	LKL_FS_IOC_GETVERSION		_LKL_IOR('v', 1, long)
@@ -251,55 +207,10 @@ struct lkl_fsxattr {
 #define LKL_FS_IOC32_SETFLAGS		_LKL_IOW('f', 2, int)
 #define LKL_FS_IOC32_GETVERSION		_LKL_IOR('v', 1, int)
 #define LKL_FS_IOC32_SETVERSION		_LKL_IOW('v', 2, int)
-#define LKL_FS_IOC_FSGETXATTR		_LKL_IOR ('X', 31, struct lkl_fsxattr)
-#define LKL_FS_IOC_FSSETXATTR		_LKL_IOW ('X', 32, struct lkl_fsxattr)
-
-/*
- * File system encryption support
- */
-/* Policy provided via an ioctl on the topmost directory */
-#define LKL_FS_KEY_DESCRIPTOR_SIZE	8
-
-#define LKL_FS_POLICY_FLAGS_PAD_4		0x00
-#define LKL_FS_POLICY_FLAGS_PAD_8		0x01
-#define LKL_FS_POLICY_FLAGS_PAD_16		0x02
-#define LKL_FS_POLICY_FLAGS_PAD_32		0x03
-#define LKL_FS_POLICY_FLAGS_PAD_MASK	0x03
-#define LKL_FS_POLICY_FLAGS_VALID		0x03
-
-/* Encryption algorithms */
-#define LKL_FS_ENCRYPTION_MODE_INVALID		0
-#define LKL_FS_ENCRYPTION_MODE_AES_256_XTS		1
-#define LKL_FS_ENCRYPTION_MODE_AES_256_GCM		2
-#define LKL_FS_ENCRYPTION_MODE_AES_256_CBC		3
-#define LKL_FS_ENCRYPTION_MODE_AES_256_CTS		4
-#define LKL_FS_ENCRYPTION_MODE_AES_128_CBC		5
-#define LKL_FS_ENCRYPTION_MODE_AES_128_CTS		6
-
-struct lkl_fscrypt_policy {
-	__lkl__u8 version;
-	__lkl__u8 contents_encryption_mode;
-	__lkl__u8 filenames_encryption_mode;
-	__lkl__u8 flags;
-	__lkl__u8 master_key_descriptor[LKL_FS_KEY_DESCRIPTOR_SIZE];
-};
-
-#define LKL_FS_IOC_SET_ENCRYPTION_POLICY	_LKL_IOR('f', 19, struct lkl_fscrypt_policy)
-#define LKL_FS_IOC_GET_ENCRYPTION_PWSALT	_LKL_IOW('f', 20, __lkl__u8[16])
-#define LKL_FS_IOC_GET_ENCRYPTION_POLICY	_LKL_IOW('f', 21, struct lkl_fscrypt_policy)
-
-/* Parameters for passing an encryption key into the kernel keyring */
-#define LKL_FS_KEY_DESC_PREFIX		"fscrypt:"
-#define LKL_FS_KEY_DESC_PREFIX_SIZE		8
-
-/* Structure that userspace passes to the kernel keyring */
-#define LKL_FS_MAX_KEY_SIZE			64
-
-struct lkl_fscrypt_key {
-	__lkl__u32 mode;
-	__lkl__u8 raw[LKL_FS_MAX_KEY_SIZE];
-	__lkl__u32 size;
-};
+#define LKL_FS_IOC_FSGETXATTR		_LKL_IOR('X', 31, struct lkl_fsxattr)
+#define LKL_FS_IOC_FSSETXATTR		_LKL_IOW('X', 32, struct lkl_fsxattr)
+#define LKL_FS_IOC_GETFSLABEL		_LKL_IOR(0x94, 49, char[LKL_FSLABEL_MAX])
+#define LKL_FS_IOC_SETFSLABEL		_LKL_IOW(0x94, 50, char[LKL_FSLABEL_MAX])
 
 /*
  * Inode flags (LKL_FS_IOC_GETFLAGS / LKL_FS_IOC_SETFLAGS)
@@ -344,11 +255,14 @@ struct lkl_fscrypt_key {
 #define LKL_FS_TOPDIR_FL			0x00020000 /* Top of directory hierarchies*/
 #define LKL_FS_HUGE_FILE_FL			0x00040000 /* Reserved for ext4 */
 #define LKL_FS_EXTENT_FL			0x00080000 /* Extents */
+#define LKL_FS_VERITY_FL			0x00100000 /* Verity protected inode */
 #define LKL_FS_EA_INODE_FL			0x00200000 /* Inode used for large EA */
 #define LKL_FS_EOFBLOCKS_FL			0x00400000 /* Reserved for ext4 */
 #define LKL_FS_NOCOW_FL			0x00800000 /* Do not cow file */
+#define LKL_FS_DAX_FL			0x02000000 /* Inode is DAX */
 #define LKL_FS_INLINE_DATA_FL		0x10000000 /* Reserved for ext4 */
 #define LKL_FS_PROJINHERIT_FL		0x20000000 /* Create with parents projid */
+#define LKL_FS_CASEFOLD_FL			0x40000000 /* Folder is case insensitive */
 #define LKL_FS_RESERVED_FL			0x80000000 /* reserved for ext2 lib */
 
 #define LKL_FS_FL_USER_VISIBLE		0x0003DFFF /* User visible flags */
@@ -358,6 +272,9 @@ struct lkl_fscrypt_key {
 #define LKL_SYNC_FILE_RANGE_WAIT_BEFORE	1
 #define LKL_SYNC_FILE_RANGE_WRITE		2
 #define LKL_SYNC_FILE_RANGE_WAIT_AFTER	4
+#define LKL_SYNC_FILE_RANGE_WRITE_AND_WAIT	(LKL_SYNC_FILE_RANGE_WRITE | \
+					 LKL_SYNC_FILE_RANGE_WAIT_BEFORE | \
+					 LKL_SYNC_FILE_RANGE_WAIT_AFTER)
 
 /*
  * Flags for preadv2/pwritev2:

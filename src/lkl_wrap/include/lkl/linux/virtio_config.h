@@ -45,11 +45,14 @@
 /* We've given up on this device. */
 #define LKL_VIRTIO_CONFIG_S_FAILED		0x80
 
-/* Some virtio feature bits (currently bits 28 through 32) are reserved for the
- * transport being used (eg. virtio_ring), the rest are per-device feature
- * bits. */
+/*
+ * Virtio feature bits LKL_VIRTIO_TRANSPORT_F_START through
+ * LKL_VIRTIO_TRANSPORT_F_END are reserved for the transport
+ * being used (e.g. virtio_ring, virtio_pci etc.), the
+ * rest are per-device feature bits.
+ */
 #define LKL_VIRTIO_TRANSPORT_F_START	28
-#define LKL_VIRTIO_TRANSPORT_F_END		34
+#define LKL_VIRTIO_TRANSPORT_F_END		41
 
 #ifndef VIRTIO_CONFIG_NO_LEGACY
 /* Do we get callbacks when the ring is completely used, even if we've
@@ -64,11 +67,38 @@
 #define LKL_VIRTIO_F_VERSION_1		32
 
 /*
- * If clear - device has the IOMMU bypass quirk feature.
- * If set - use platform tools to detect the IOMMU.
+ * If clear - device has the platform DMA (e.g. IOMMU) bypass quirk feature.
+ * If set - use platform DMA tools to access the memory.
  *
  * Note the reverse polarity (compared to most other features),
  * this is for compatibility with legacy systems.
  */
-#define LKL_VIRTIO_F_IOMMU_PLATFORM		33
+#define LKL_VIRTIO_F_ACCESS_PLATFORM	33
+/* Legacy name for LKL_VIRTIO_F_ACCESS_PLATFORM (for compatibility with old userspace) */
+#define LKL_VIRTIO_F_IOMMU_PLATFORM		LKL_VIRTIO_F_ACCESS_PLATFORM
+
+/* This feature indicates support for the packed virtqueue layout. */
+#define LKL_VIRTIO_F_RING_PACKED		34
+
+/*
+ * Inorder feature indicates that all buffers are used by the device
+ * in the same order in which they have been made available.
+ */
+#define LKL_VIRTIO_F_IN_ORDER		35
+
+/*
+ * This feature indicates that memory accesses by the driver and the
+ * device are ordered in a way described by the platform.
+ */
+#define LKL_VIRTIO_F_ORDER_PLATFORM		36
+
+/*
+ * Does the device support Single Root I/O Virtualization?
+ */
+#define LKL_VIRTIO_F_SR_IOV			37
+
+/*
+ * This feature indicates that the driver can reset a queue individually.
+ */
+#define LKL_VIRTIO_F_RING_RESET		40
 #endif /* _LKL_LINUX_VIRTIO_CONFIG_H */

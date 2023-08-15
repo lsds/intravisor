@@ -4,19 +4,19 @@ cVMs:
   runtime: libfirst.so
   args: /ld.so /app/sc_main #aligment problem with pure cap aux in intravisor
   isolation:
-  - base: 0x20000000
-    size: 0x10000000
-    begin: 0x20000000
-    end: 0x30000000
+  - base:  0x400000000
+    size:  0x040000000
+    begin: 0x400000000
+    end:   0x440000000
   callback_out: monitor
   wait: -1
 - name: second
   runtime: libsecond.so
   args: /ld.so /app/sc_main #aligment problem with pure cap aux in intravisor
   isolation:
-  - base: 0x10000000
-    size: 0x10000000
-    begin: 0x10000000
-    end: 0x20000000
+  - base:  0x440000000
+    size:  0x040000000
+    begin: 0x440000000
+    end:   0x480000000
   callback_out: libfirst.so
   wait: -1

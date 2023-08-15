@@ -8,7 +8,7 @@
 
 //#define DEBUG
 
-#define NO_ACTION
+//#define NO_ACTION
 
 using namespace llvm;
 

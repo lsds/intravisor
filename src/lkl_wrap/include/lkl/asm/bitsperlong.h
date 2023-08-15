@@ -1,7 +1,9 @@
 #ifndef _LKL_ASM_UAPI_LKL_BITSPERLONG_H
 #define _LKL_ASM_UAPI_LKL_BITSPERLONG_H
 
-#ifdef LKL_CONFIG_64BIT
+#include <lkl/asm/config.h>
+
+#if defined(LKL_CONFIG_64BIT)
 #define __LKL__BITS_PER_LONG 64
 #else
 #define __LKL__BITS_PER_LONG 32

@@ -7,7 +7,48 @@ struct lkl_sem;
 struct lkl_tls_key;
 typedef unsigned long lkl_thread_t;
 struct lkl_jmp_buf {
-	unsigned long buf[32];
+	unsigned long buf[128];
+};
+struct lkl_pci_dev;
+
+/**
+ * lkl_dev_pci_ops - PCI host operations
+ *
+ * These operations would be a wrapper of userspace PCI drvier and
+ * must be provided by a host library or by the application.
+ *
+ * @add - add a new PCI device; returns a handler or NULL if fails
+ * @remove - release resources
+ * @init_irq - allocate resources for interrupts
+ * @read - read the PCI Configuration Space
+ * @write - write the PCI Configuration Space
+ * @resource_alloc - map BARx and return the mapped address. x is resource_index
+ *
+ * @map_page - return the DMA address of pages; vaddr might not be page-aligned
+ * @unmap_page - cleanup DMA region if needed
+ *
+ */
+struct lkl_dev_pci_ops {
+	struct lkl_pci_dev *(*add)(const char *name, void *kernel_ram,
+				   unsigned long ram_size);
+	void (*remove)(struct lkl_pci_dev *dev);
+	int (*irq_init)(struct lkl_pci_dev *dev, int irq);
+	int (*read)(struct lkl_pci_dev *dev, int where, int size, void *val);
+	int (*write)(struct lkl_pci_dev *dev, int where, int size, void *val);
+	void *(*resource_alloc)(struct lkl_pci_dev *dev,
+				unsigned long resource_size,
+				int resource_index);
+	unsigned long long (*map_page)(struct lkl_pci_dev *dev, void *vaddr,
+				       unsigned long size);
+	void (*unmap_page)(struct lkl_pci_dev *dev,
+			   unsigned long long dma_handle, unsigned long size);
+};
+
+enum lkl_prot {
+	LKL_PROT_NONE = 0,
+	LKL_PROT_READ = 1,
+	LKL_PROT_WRITE = 2,
+	LKL_PROT_EXEC = 4,
 };
 
 /**
@@ -42,6 +83,7 @@ struct lkl_jmp_buf {
  * @thread_exit - terminates the current thread
  * @thread_join - wait for the given thread to terminate. Returns 0
  * for success, -1 otherwise
+ * @thread_stack - get the thread stack base and size of the current thread
  *
  * @tls_alloc - allocate a thread local storage key; returns 0 if successful; if
  * destructor is not NULL it will be called when a thread terminates with its
@@ -54,13 +96,13 @@ struct lkl_jmp_buf {
  *
  * @mem_alloc - allocate memory
  * @mem_free - free memory
+ * @page_alloc - allocate page aligned memory
+ * @page_free - free memory allocated by page_alloc
  *
  * @timer_create - allocate a host timer that runs fn(arg) when the timer
  * fires.
  * @timer_free - disarms and free the timer
  * @timer_set_oneshot - arm the timer to fire once, after delta ns.
- * @timer_set_periodic - arm the timer to fire periodically, with a period of
- * delta ns.
  *
  * @ioremap - searches for an I/O memory region identified by addr and size and
  * returns a pointer to the start of the address range that can be used by
@@ -81,6 +123,15 @@ struct lkl_jmp_buf {
  * the function that will eventually call longjmp here
  *
  * @jmp_buf_longjmp - perform a jump back to the saved jump buffer
+ *
+ * @memcpy - copy memory
+ * @memset - set memory
+ *
+ * @mmap - map anonymous memory at the given address with the given size and
+ * protection
+ * @munmap - unmap previously mapped memory
+ *
+ * @pci_ops - pointer to PCI host operations
  */
 struct lkl_host_operations {
 	const char *virtio_devices;
@@ -104,6 +155,7 @@ struct lkl_host_operations {
 	int (*thread_join)(lkl_thread_t tid);
 	lkl_thread_t (*thread_self)(void);
 	int (*thread_equal)(lkl_thread_t a, lkl_thread_t b);
+	void *(*thread_stack)(unsigned long *size);
 
 	struct lkl_tls_key *(*tls_alloc)(void (*destructor)(void *));
 	void (*tls_free)(struct lkl_tls_key *key);
@@ -112,9 +164,8 @@ struct lkl_host_operations {
 
 	void* (*mem_alloc)(unsigned long);
 	void (*mem_free)(void *);
-
-	void* (*mem_executable_alloc)(unsigned long);
-	void (*mem_executable_free)(void *, unsigned long size);
+	void* (*page_alloc)(unsigned long size);
+	void (*page_free)(void *addr, unsigned long size);
 
 	unsigned long long (*time)(void);
 
@@ -130,29 +181,41 @@ struct lkl_host_operations {
 
 	void (*jmp_buf_set)(struct lkl_jmp_buf *jmpb, void (*f)(void));
 	void (*jmp_buf_longjmp)(struct lkl_jmp_buf *jmpb, int val);
+
+	void* (*memcpy)(void *dest, const void *src, unsigned long count);
+	void* (*memset)(void *s, int c, unsigned long count);
+
+	void* (*mmap)(void *addr, unsigned long size, enum lkl_prot prot);
+	int (*munmap)(void *addr, unsigned long size);
+
+	struct lkl_dev_pci_ops *pci_ops;
 };
 
 /**
- * Sets up x86 CPU info needed for checks when enabling hardware acceleration
- * of e.g. crypto primitives.
- */
-int lkl_setup_x86_cpu(char *vendor_id,
-		       unsigned int model,
-		       unsigned int family,
-		       char *capabilities,
-		       unsigned long long xfeature_mask);
-
-/**
- * lkl_start_kernel - registers the host operations and starts the kernel
+ * lkl_init - initializes LKL
  *
- * The function returns only after the kernel is shutdown with lkl_sys_halt.
+ * This function needs to be called this before any other LKL function.
  *
  * @lkl_ops - pointer to host operations
+ */
+int lkl_init(struct lkl_host_operations *lkl_ops);
+
+/**
+ * lkl_start_kernel - starts the kernel
+ *
  * @cmd_line - format for command line string that is going to be used to
  * generate the Linux kernel command line
  */
-int lkl_start_kernel(struct lkl_host_operations *lkl_ops,
-		    const char *cmd_line, ...);
+int lkl_start_kernel(struct lkl_host_operations *,const char *, ...);
+
+
+/**
+ * lkl_cleanup - cleanup LKL
+ *
+ * To be called after lkl_sys_shutdown. Once this function is called no more LKL
+ * calls can be made unless @lkl_init is called again.
+ */
+void lkl_cleanup(void);
 
 /**
  * lkl_is_running - returns 1 if the kernel is currently running

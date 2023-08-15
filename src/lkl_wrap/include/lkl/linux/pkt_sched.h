@@ -2,6 +2,7 @@
 #ifndef __LKL__LINUX_PKT_SCHED_H
 #define __LKL__LINUX_PKT_SCHED_H
 
+#include <lkl/linux/const.h>
 #include <lkl/linux/types.h>
 
 /* Logical priority bands not depending on specific packet scheduler.
@@ -124,6 +125,21 @@ struct lkl_tc_fifo_qopt {
 	__lkl__u32	limit;	/* Queue length: bytes for bfifo, packets for pfifo */
 };
 
+/* SKBPRIO section */
+
+/*
+ * Priorities go from zero to (LKL_SKBPRIO_MAX_PRIORITY - 1).
+ * LKL_SKBPRIO_MAX_PRIORITY should be at least 64 in order for skbprio to be able
+ * to map one to one the DS field of IPV4 and IPV6 headers.
+ * Memory allocation grows linearly with LKL_SKBPRIO_MAX_PRIORITY.
+ */
+
+#define LKL_SKBPRIO_MAX_PRIORITY 64
+
+struct lkl_tc_skbprio_qopt {
+	__lkl__u32	limit;		/* Queue length in packets. */
+};
+
 /* PRIO section */
 
 #define LKL_TCQ_PRIO_BANDS	16
@@ -240,6 +256,9 @@ enum {
 	LKL_TCA_RED_PARMS,
 	LKL_TCA_RED_STAB,
 	LKL_TCA_RED_MAX_P,
+	LKL_TCA_RED_FLAGS,		/* bitfield32 */
+	LKL_TCA_RED_EARLY_DROP_BLOCK, /* lkl_u32 */
+	LKL_TCA_RED_MARK_BLOCK,	/* lkl_u32 */
 	__LKL__TCA_RED_MAX,
 };
 
@@ -252,11 +271,27 @@ struct lkl_tc_red_qopt {
 	unsigned char   Wlog;		/* log(W)		*/
 	unsigned char   Plog;		/* log(P_max/(qth_max-qth_min))	*/
 	unsigned char   Scell_log;	/* cell size for idle damping */
+
+	/* This field can be used for flags that a RED-like qdisc has
+	 * historically supported. E.g. when configuring RED, it can be used for
+	 * ECN, HARDDROP and ADAPTATIVE. For SFQ it can be used for ECN,
+	 * HARDDROP. Etc. Because this field has not been validated, and is
+	 * copied back on dump, any bits besides those to which a given qdisc
+	 * has assigned a historical meaning need to be considered for free use
+	 * by userspace tools.
+	 *
+	 * Any further flags need to be passed differently, e.g. through an
+	 * attribute (such as LKL_TCA_RED_FLAGS above). Such attribute should allow
+	 * passing both recent and historic flags in one value.
+	 */
 	unsigned char	flags;
 #define LKL_TC_RED_ECN		1
 #define LKL_TC_RED_HARDDROP		2
 #define LKL_TC_RED_ADAPTATIVE	4
+#define LKL_TC_RED_NODROP		8
 };
+
+#define LKL_TC_RED_HISTORIC_FLAGS (LKL_TC_RED_ECN | LKL_TC_RED_HARDDROP | LKL_TC_RED_ADAPTATIVE)
 
 struct lkl_tc_red_xstats {
 	__lkl__u32           early;          /* Early drops */
@@ -276,10 +311,37 @@ enum {
        LKL_TCA_GRED_DPS,
        LKL_TCA_GRED_MAX_P,
        LKL_TCA_GRED_LIMIT,
+       LKL_TCA_GRED_VQ_LIST,	/* nested LKL_TCA_GRED_VQ_ENTRY */
        __LKL__TCA_GRED_MAX,
 };
 
 #define LKL_TCA_GRED_MAX (__LKL__TCA_GRED_MAX - 1)
+
+enum {
+	LKL_TCA_GRED_VQ_ENTRY_UNSPEC,
+	LKL_TCA_GRED_VQ_ENTRY,	/* nested TCA_GRED_VQ_* */
+	__LKL__TCA_GRED_VQ_ENTRY_MAX,
+};
+#define LKL_TCA_GRED_VQ_ENTRY_MAX (__LKL__TCA_GRED_VQ_ENTRY_MAX - 1)
+
+enum {
+	LKL_TCA_GRED_VQ_UNSPEC,
+	LKL_TCA_GRED_VQ_PAD,
+	LKL_TCA_GRED_VQ_DP,			/* lkl_u32 */
+	LKL_TCA_GRED_VQ_STAT_BYTES,		/* lkl_u64 */
+	LKL_TCA_GRED_VQ_STAT_PACKETS,	/* lkl_u32 */
+	LKL_TCA_GRED_VQ_STAT_BACKLOG,	/* lkl_u32 */
+	LKL_TCA_GRED_VQ_STAT_PROB_DROP,	/* lkl_u32 */
+	LKL_TCA_GRED_VQ_STAT_PROB_MARK,	/* lkl_u32 */
+	LKL_TCA_GRED_VQ_STAT_FORCED_DROP,	/* lkl_u32 */
+	LKL_TCA_GRED_VQ_STAT_FORCED_MARK,	/* lkl_u32 */
+	LKL_TCA_GRED_VQ_STAT_PDROP,		/* lkl_u32 */
+	LKL_TCA_GRED_VQ_STAT_OTHER,		/* lkl_u32 */
+	LKL_TCA_GRED_VQ_FLAGS,		/* lkl_u32 */
+	__LKL__TCA_GRED_VQ_MAX
+};
+
+#define LKL_TCA_GRED_VQ_MAX (__LKL__TCA_GRED_VQ_MAX - 1)
 
 struct lkl_tc_gred_qopt {
 	__lkl__u32		limit;        /* HARD maximal queue length (bytes)    */
@@ -372,6 +434,7 @@ enum {
 	LKL_TCA_HTB_RATE64,
 	LKL_TCA_HTB_CEIL64,
 	LKL_TCA_HTB_PAD,
+	LKL_TCA_HTB_OFFLOAD,
 	__LKL__TCA_HTB_MAX,
 };
 
@@ -380,9 +443,9 @@ enum {
 struct lkl_tc_htb_xstats {
 	__lkl__u32 lends;
 	__lkl__u32 borrows;
-	__lkl__u32 giants;	/* too big packets (rate will not be accurate) */
-	__lkl__u32 tokens;
-	__lkl__u32 ctokens;
+	__lkl__u32 giants;	/* unused since 'Make HTB scheduler work with TSO.' */
+	__lkl__s32 tokens;
+	__lkl__s32 ctokens;
 };
 
 /* HFSC section */
@@ -539,6 +602,7 @@ enum {
 	LKL_TCA_NETEM_LATENCY64,
 	LKL_TCA_NETEM_JITTER64,
 	LKL_TCA_NETEM_SLOT,
+	LKL_TCA_NETEM_SLOT_DIST,
 	__LKL__TCA_NETEM_MAX,
 };
 
@@ -581,6 +645,8 @@ struct lkl_tc_netem_slot {
 	__lkl__s64   max_delay;
 	__lkl__s32   max_packets;
 	__lkl__s32   max_bytes;
+	__lkl__s64	dist_delay; /* nsec */
+	__lkl__s64	dist_jitter; /* nsec */
 };
 
 enum {
@@ -761,6 +827,8 @@ struct lkl_tc_codel_xstats {
 
 /* FQ_CODEL */
 
+#define LKL_FQ_CODEL_QUANTUM_MAX (1 << 20)
+
 enum {
 	LKL_TCA_FQ_CODEL_UNSPEC,
 	LKL_TCA_FQ_CODEL_TARGET,
@@ -772,6 +840,8 @@ enum {
 	LKL_TCA_FQ_CODEL_CE_THRESHOLD,
 	LKL_TCA_FQ_CODEL_DROP_BATCH_SIZE,
 	LKL_TCA_FQ_CODEL_MEMORY_LIMIT,
+	LKL_TCA_FQ_CODEL_CE_THRESHOLD_SELECTOR,
+	LKL_TCA_FQ_CODEL_CE_THRESHOLD_MASK,
 	__LKL__TCA_FQ_CODEL_MAX
 };
 
@@ -846,6 +916,14 @@ enum {
 
 	LKL_TCA_FQ_LOW_RATE_THRESHOLD, /* per packet delay under this rate */
 
+	LKL_TCA_FQ_CE_THRESHOLD,	/* DCTCP-like CE-marking threshold */
+
+	LKL_TCA_FQ_TIMER_SLACK,	/* timer slack */
+
+	LKL_TCA_FQ_HORIZON,		/* time horizon in us */
+
+	LKL_TCA_FQ_HORIZON_DROP,	/* drop packets beyond horizon, or cap their EDT */
+
 	__LKL__TCA_FQ_MAX
 };
 
@@ -864,6 +942,9 @@ struct lkl_tc_fq_qd_stats {
 	__lkl__u32	inactive_flows;
 	__lkl__u32	throttled_flows;
 	__lkl__u32	unthrottle_latency_ns;
+	__lkl__u64	ce_mark;		/* packets above ce_threshold */
+	__lkl__u64	horizon_drops;
+	__lkl__u64	horizon_caps;
 };
 
 /* Heavy-Hitter Filter */
@@ -901,19 +982,56 @@ enum {
 	LKL_TCA_PIE_BETA,
 	LKL_TCA_PIE_ECN,
 	LKL_TCA_PIE_BYTEMODE,
+	LKL_TCA_PIE_DQ_RATE_ESTIMATOR,
 	__LKL__TCA_PIE_MAX
 };
 #define LKL_TCA_PIE_MAX   (__LKL__TCA_PIE_MAX - 1)
 
 struct lkl_tc_pie_xstats {
-	__lkl__u32 prob;             /* current probability */
-	__lkl__u32 delay;            /* current delay in ms */
-	__lkl__u32 avg_dq_rate;      /* current average dq_rate in bits/pie_time */
-	__lkl__u32 packets_in;       /* total number of packets enqueued */
-	__lkl__u32 dropped;          /* packets dropped due to pie_action */
-	__lkl__u32 overlimit;        /* dropped due to lack of space in queue */
-	__lkl__u32 maxq;             /* maximum queue size */
-	__lkl__u32 ecn_mark;         /* packets marked with ecn*/
+	__lkl__u64 prob;			/* current probability */
+	__lkl__u32 delay;			/* current delay in ms */
+	__lkl__u32 avg_dq_rate;		/* current average dq_rate in
+					 * bits/pie_time
+					 */
+	__lkl__u32 dq_rate_estimating;	/* is avg_dq_rate being calculated? */
+	__lkl__u32 packets_in;		/* total number of packets enqueued */
+	__lkl__u32 dropped;			/* packets dropped due to pie_action */
+	__lkl__u32 overlimit;		/* dropped due to lack of space
+					 * in queue
+					 */
+	__lkl__u32 maxq;			/* maximum queue size */
+	__lkl__u32 ecn_mark;			/* packets marked with ecn*/
+};
+
+/* FQ PIE */
+enum {
+	LKL_TCA_FQ_PIE_UNSPEC,
+	LKL_TCA_FQ_PIE_LIMIT,
+	LKL_TCA_FQ_PIE_FLOWS,
+	LKL_TCA_FQ_PIE_TARGET,
+	LKL_TCA_FQ_PIE_TUPDATE,
+	LKL_TCA_FQ_PIE_ALPHA,
+	LKL_TCA_FQ_PIE_BETA,
+	LKL_TCA_FQ_PIE_QUANTUM,
+	LKL_TCA_FQ_PIE_MEMORY_LIMIT,
+	LKL_TCA_FQ_PIE_ECN_PROB,
+	LKL_TCA_FQ_PIE_ECN,
+	LKL_TCA_FQ_PIE_BYTEMODE,
+	LKL_TCA_FQ_PIE_DQ_RATE_ESTIMATOR,
+	__LKL__TCA_FQ_PIE_MAX
+};
+#define LKL_TCA_FQ_PIE_MAX   (__LKL__TCA_FQ_PIE_MAX - 1)
+
+struct lkl_tc_fq_pie_xstats {
+	__lkl__u32 packets_in;	/* total number of packets enqueued */
+	__lkl__u32 dropped;		/* packets dropped due to fq_pie_action */
+	__lkl__u32 overlimit;	/* dropped due to lack of space in queue */
+	__lkl__u32 overmemory;	/* dropped due to lack of memory in queue */
+	__lkl__u32 ecn_mark;		/* packets marked with ecn */
+	__lkl__u32 new_flow_count;	/* count of new flows created by packets */
+	__lkl__u32 new_flows_len;	/* count of flows in new list */
+	__lkl__u32 old_flows_len;	/* count of flows in old list */
+	__lkl__u32 memory_usage;	/* total memory across all queues */
 };
 
 /* CBS */
@@ -933,5 +1051,231 @@ enum {
 };
 
 #define LKL_TCA_CBS_MAX (__LKL__TCA_CBS_MAX - 1)
+
+
+/* ETF */
+struct lkl_tc_etf_qopt {
+	__lkl__s32 delta;
+	__lkl__s32 clockid;
+	__lkl__u32 flags;
+#define LKL_TC_ETF_DEADLINE_MODE_ON	_LKL_BITUL(0)
+#define LKL_TC_ETF_OFFLOAD_ON	_LKL_BITUL(1)
+#define LKL_TC_ETF_SKIP_SOCK_CHECK	_LKL_BITUL(2)
+};
+
+enum {
+	LKL_TCA_ETF_UNSPEC,
+	LKL_TCA_ETF_PARMS,
+	__LKL__TCA_ETF_MAX,
+};
+
+#define LKL_TCA_ETF_MAX (__LKL__TCA_ETF_MAX - 1)
+
+
+/* CAKE */
+enum {
+	LKL_TCA_CAKE_UNSPEC,
+	LKL_TCA_CAKE_PAD,
+	LKL_TCA_CAKE_BASE_RATE64,
+	LKL_TCA_CAKE_DIFFSERV_MODE,
+	LKL_TCA_CAKE_ATM,
+	LKL_TCA_CAKE_FLOW_MODE,
+	LKL_TCA_CAKE_OVERHEAD,
+	LKL_TCA_CAKE_RTT,
+	LKL_TCA_CAKE_TARGET,
+	LKL_TCA_CAKE_AUTORATE,
+	LKL_TCA_CAKE_MEMORY,
+	LKL_TCA_CAKE_NAT,
+	LKL_TCA_CAKE_RAW,
+	LKL_TCA_CAKE_WASH,
+	LKL_TCA_CAKE_MPU,
+	LKL_TCA_CAKE_INGRESS,
+	LKL_TCA_CAKE_ACK_FILTER,
+	LKL_TCA_CAKE_SPLIT_GSO,
+	LKL_TCA_CAKE_FWMARK,
+	__LKL__TCA_CAKE_MAX
+};
+#define LKL_TCA_CAKE_MAX	(__LKL__TCA_CAKE_MAX - 1)
+
+enum {
+	__LKL__TCA_CAKE_STATS_INVALID,
+	LKL_TCA_CAKE_STATS_PAD,
+	LKL_TCA_CAKE_STATS_CAPACITY_ESTIMATE64,
+	LKL_TCA_CAKE_STATS_MEMORY_LIMIT,
+	LKL_TCA_CAKE_STATS_MEMORY_USED,
+	LKL_TCA_CAKE_STATS_AVG_NETOFF,
+	LKL_TCA_CAKE_STATS_MIN_NETLEN,
+	LKL_TCA_CAKE_STATS_MAX_NETLEN,
+	LKL_TCA_CAKE_STATS_MIN_ADJLEN,
+	LKL_TCA_CAKE_STATS_MAX_ADJLEN,
+	LKL_TCA_CAKE_STATS_TIN_STATS,
+	LKL_TCA_CAKE_STATS_DEFICIT,
+	LKL_TCA_CAKE_STATS_COBALT_COUNT,
+	LKL_TCA_CAKE_STATS_DROPPING,
+	LKL_TCA_CAKE_STATS_DROP_NEXT_US,
+	LKL_TCA_CAKE_STATS_P_DROP,
+	LKL_TCA_CAKE_STATS_BLUE_TIMER_US,
+	__LKL__TCA_CAKE_STATS_MAX
+};
+#define LKL_TCA_CAKE_STATS_MAX (__LKL__TCA_CAKE_STATS_MAX - 1)
+
+enum {
+	__LKL__TCA_CAKE_TIN_STATS_INVALID,
+	LKL_TCA_CAKE_TIN_STATS_PAD,
+	LKL_TCA_CAKE_TIN_STATS_SENT_PACKETS,
+	LKL_TCA_CAKE_TIN_STATS_SENT_BYTES64,
+	LKL_TCA_CAKE_TIN_STATS_DROPPED_PACKETS,
+	LKL_TCA_CAKE_TIN_STATS_DROPPED_BYTES64,
+	LKL_TCA_CAKE_TIN_STATS_ACKS_DROPPED_PACKETS,
+	LKL_TCA_CAKE_TIN_STATS_ACKS_DROPPED_BYTES64,
+	LKL_TCA_CAKE_TIN_STATS_ECN_MARKED_PACKETS,
+	LKL_TCA_CAKE_TIN_STATS_ECN_MARKED_BYTES64,
+	LKL_TCA_CAKE_TIN_STATS_BACKLOG_PACKETS,
+	LKL_TCA_CAKE_TIN_STATS_BACKLOG_BYTES,
+	LKL_TCA_CAKE_TIN_STATS_THRESHOLD_RATE64,
+	LKL_TCA_CAKE_TIN_STATS_TARGET_US,
+	LKL_TCA_CAKE_TIN_STATS_INTERVAL_US,
+	LKL_TCA_CAKE_TIN_STATS_WAY_INDIRECT_HITS,
+	LKL_TCA_CAKE_TIN_STATS_WAY_MISSES,
+	LKL_TCA_CAKE_TIN_STATS_WAY_COLLISIONS,
+	LKL_TCA_CAKE_TIN_STATS_PEAK_DELAY_US,
+	LKL_TCA_CAKE_TIN_STATS_AVG_DELAY_US,
+	LKL_TCA_CAKE_TIN_STATS_BASE_DELAY_US,
+	LKL_TCA_CAKE_TIN_STATS_SPARSE_FLOWS,
+	LKL_TCA_CAKE_TIN_STATS_BULK_FLOWS,
+	LKL_TCA_CAKE_TIN_STATS_UNRESPONSIVE_FLOWS,
+	LKL_TCA_CAKE_TIN_STATS_MAX_SKBLEN,
+	LKL_TCA_CAKE_TIN_STATS_FLOW_QUANTUM,
+	__LKL__TCA_CAKE_TIN_STATS_MAX
+};
+#define LKL_TCA_CAKE_TIN_STATS_MAX (__LKL__TCA_CAKE_TIN_STATS_MAX - 1)
+#define LKL_TC_CAKE_MAX_TINS (8)
+
+enum {
+	LKL_CAKE_FLOW_NONE = 0,
+	LKL_CAKE_FLOW_SRC_IP,
+	LKL_CAKE_FLOW_DST_IP,
+	LKL_CAKE_FLOW_HOSTS,    /* = LKL_CAKE_FLOW_SRC_IP | LKL_CAKE_FLOW_DST_IP */
+	LKL_CAKE_FLOW_FLOWS,
+	LKL_CAKE_FLOW_DUAL_SRC, /* = LKL_CAKE_FLOW_SRC_IP | LKL_CAKE_FLOW_FLOWS */
+	LKL_CAKE_FLOW_DUAL_DST, /* = LKL_CAKE_FLOW_DST_IP | LKL_CAKE_FLOW_FLOWS */
+	LKL_CAKE_FLOW_TRIPLE,   /* = LKL_CAKE_FLOW_HOSTS  | LKL_CAKE_FLOW_FLOWS */
+	LKL_CAKE_FLOW_MAX,
+};
+
+enum {
+	LKL_CAKE_DIFFSERV_DIFFSERV3 = 0,
+	LKL_CAKE_DIFFSERV_DIFFSERV4,
+	LKL_CAKE_DIFFSERV_DIFFSERV8,
+	LKL_CAKE_DIFFSERV_BESTEFFORT,
+	LKL_CAKE_DIFFSERV_PRECEDENCE,
+	LKL_CAKE_DIFFSERV_MAX
+};
+
+enum {
+	LKL_CAKE_ACK_NONE = 0,
+	LKL_CAKE_ACK_FILTER,
+	LKL_CAKE_ACK_AGGRESSIVE,
+	LKL_CAKE_ACK_MAX
+};
+
+enum {
+	LKL_CAKE_ATM_NONE = 0,
+	LKL_CAKE_ATM_ATM,
+	LKL_CAKE_ATM_PTM,
+	LKL_CAKE_ATM_MAX
+};
+
+
+/* TAPRIO */
+enum {
+	LKL_TC_TAPRIO_CMD_SET_GATES = 0x00,
+	LKL_TC_TAPRIO_CMD_SET_AND_HOLD = 0x01,
+	LKL_TC_TAPRIO_CMD_SET_AND_RELEASE = 0x02,
+};
+
+enum {
+	LKL_TCA_TAPRIO_SCHED_ENTRY_UNSPEC,
+	LKL_TCA_TAPRIO_SCHED_ENTRY_INDEX, /* lkl_u32 */
+	LKL_TCA_TAPRIO_SCHED_ENTRY_CMD, /* u8 */
+	LKL_TCA_TAPRIO_SCHED_ENTRY_GATE_MASK, /* lkl_u32 */
+	LKL_TCA_TAPRIO_SCHED_ENTRY_INTERVAL, /* lkl_u32 */
+	__LKL__TCA_TAPRIO_SCHED_ENTRY_MAX,
+};
+#define LKL_TCA_TAPRIO_SCHED_ENTRY_MAX (__LKL__TCA_TAPRIO_SCHED_ENTRY_MAX - 1)
+
+/* The format for schedule entry list is:
+ * [TCA_TAPRIO_SCHED_ENTRY_LIST]
+ *   [LKL_TCA_TAPRIO_SCHED_ENTRY]
+ *     [LKL_TCA_TAPRIO_SCHED_ENTRY_CMD]
+ *     [TCA_TAPRIO_SCHED_ENTRY_GATES]
+ *     [LKL_TCA_TAPRIO_SCHED_ENTRY_INTERVAL]
+ */
+enum {
+	LKL_TCA_TAPRIO_SCHED_UNSPEC,
+	LKL_TCA_TAPRIO_SCHED_ENTRY,
+	__LKL__TCA_TAPRIO_SCHED_MAX,
+};
+
+#define LKL_TCA_TAPRIO_SCHED_MAX (__LKL__TCA_TAPRIO_SCHED_MAX - 1)
+
+/* The format for the admin sched (dump only):
+ * [TCA_TAPRIO_SCHED_ADMIN_SCHED]
+ *   [LKL_TCA_TAPRIO_ATTR_SCHED_BASE_TIME]
+ *   [LKL_TCA_TAPRIO_ATTR_SCHED_ENTRY_LIST]
+ *     [TCA_TAPRIO_ATTR_SCHED_ENTRY]
+ *       [TCA_TAPRIO_ATTR_SCHED_ENTRY_CMD]
+ *       [TCA_TAPRIO_ATTR_SCHED_ENTRY_GATES]
+ *       [TCA_TAPRIO_ATTR_SCHED_ENTRY_INTERVAL]
+ */
+
+#define LKL_TCA_TAPRIO_ATTR_FLAG_TXTIME_ASSIST	_LKL_BITUL(0)
+#define LKL_TCA_TAPRIO_ATTR_FLAG_FULL_OFFLOAD	_LKL_BITUL(1)
+
+enum {
+	LKL_TCA_TAPRIO_TC_ENTRY_UNSPEC,
+	LKL_TCA_TAPRIO_TC_ENTRY_INDEX,		/* lkl_u32 */
+	LKL_TCA_TAPRIO_TC_ENTRY_MAX_SDU,		/* lkl_u32 */
+
+	/* add new constants above here */
+	__LKL__TCA_TAPRIO_TC_ENTRY_CNT,
+	LKL_TCA_TAPRIO_TC_ENTRY_MAX = (__LKL__TCA_TAPRIO_TC_ENTRY_CNT - 1)
+};
+
+enum {
+	LKL_TCA_TAPRIO_ATTR_UNSPEC,
+	LKL_TCA_TAPRIO_ATTR_PRIOMAP, /* struct lkl_tc_mqprio_qopt */
+	LKL_TCA_TAPRIO_ATTR_SCHED_ENTRY_LIST, /* nested of entry */
+	LKL_TCA_TAPRIO_ATTR_SCHED_BASE_TIME, /* lkl_s64 */
+	LKL_TCA_TAPRIO_ATTR_SCHED_SINGLE_ENTRY, /* single entry */
+	LKL_TCA_TAPRIO_ATTR_SCHED_CLOCKID, /* lkl_s32 */
+	LKL_TCA_TAPRIO_PAD,
+	LKL_TCA_TAPRIO_ATTR_ADMIN_SCHED, /* The admin sched, only used in dump */
+	LKL_TCA_TAPRIO_ATTR_SCHED_CYCLE_TIME, /* lkl_s64 */
+	LKL_TCA_TAPRIO_ATTR_SCHED_CYCLE_TIME_EXTENSION, /* lkl_s64 */
+	LKL_TCA_TAPRIO_ATTR_FLAGS, /* lkl_u32 */
+	LKL_TCA_TAPRIO_ATTR_TXTIME_DELAY, /* lkl_u32 */
+	LKL_TCA_TAPRIO_ATTR_TC_ENTRY, /* nest */
+	__LKL__TCA_TAPRIO_ATTR_MAX,
+};
+
+#define LKL_TCA_TAPRIO_ATTR_MAX (__LKL__TCA_TAPRIO_ATTR_MAX - 1)
+
+/* ETS */
+
+#define LKL_TCQ_ETS_MAX_BANDS 16
+
+enum {
+	LKL_TCA_ETS_UNSPEC,
+	LKL_TCA_ETS_NBANDS,		/* u8 */
+	LKL_TCA_ETS_NSTRICT,	/* u8 */
+	LKL_TCA_ETS_QUANTA,		/* nested LKL_TCA_ETS_QUANTA_BAND */
+	LKL_TCA_ETS_QUANTA_BAND,	/* lkl_u32 */
+	LKL_TCA_ETS_PRIOMAP,	/* nested LKL_TCA_ETS_PRIOMAP_BAND */
+	LKL_TCA_ETS_PRIOMAP_BAND,	/* u8 */
+	__LKL__TCA_ETS_MAX,
+};
+
+#define LKL_TCA_ETS_MAX (__LKL__TCA_ETS_MAX - 1)
 
 #endif

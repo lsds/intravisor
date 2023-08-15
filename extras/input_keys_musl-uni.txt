@@ -1,0 +1,4 @@
+"Using yaml.cfg =","Intravisor is failed to start",True
+"ALL cVMs loaded",'Cannot load cVMs',True
+"LibOS is ok",'Cannot init LibOS',True
+"-----------------------------------------------",'cVMs loaded but not spawned',True

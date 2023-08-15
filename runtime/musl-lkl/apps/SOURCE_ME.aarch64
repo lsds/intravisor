@@ -1,0 +1,3 @@
+export REALGCC=aarch64-linux-gnu-gcc
+export LKL_MUSL_HOST=aarch64-linux-gnu
+export LKL_MUSL_BUILD=aarch64

@@ -1,13 +1,18 @@
-#include ../../../../../config_arm_sim.mak
-MAKEFILE := $(shell git rev-parse --show-toplevel)/config_arm.mak
+MAKEFILE := $(shell git rev-parse --show-toplevel)/cfg.mak
 include $(MAKEFILE)
 
 
 CFLAGS=-fPIC -fPIE -pie -g -O2  -nostdinc -DCVM_MAX_SIZE=$(CONFIG_CVM_MAX_SIZE)\
 	$(TARGET_FLAGS_LINUX) $(SYSROOT_FLAGS_PURE) -B$(CROSS_COMPILE) $(ARCH_PURE) -Iarch/$(TARGET_ARCH)/include\
 
-ifneq ($(MODE),sim)
+ifndef CONFIG_ORC
+$(error ORC is not enabled in Intravisor)
 endif
+
+ifdef CONFIG_KERNEL_CONFIGURED_DDC_RELATIVE
+$(error ORC was not tested on a CheriBSD with enabled DDC/PCC-relative compartments)
+endif
+
 
 DEPS = 
 OBJDIR = obj
@@ -65,7 +70,11 @@ libshared.sco: $(OBJ)
 	$(CC_CHERI_PURE) $(CC_CHERI_PURE_FLAGS) $(CFLAGS) -o $@ -nostdlib -Wl,-eouter_c -fPIE -fPIC $(OBJ) $(LD_FLAGS)
 
 clean:
-	rm -rf ./*.o ./*.so ./*.ll ./1.txt $(OBJDIR)
+	rm -rf ./*.o ./*.so ./*.sco ./*.ll ./1.txt $(OBJDIR)
 
 mrproper:
-	rm -rf ./*.o ./*.so ./*.ll ./1.txt $(OBJDIR) $(PASS_DIR1) $(PASS_DIR2)
+	rm -rf ./*.o ./*.so ./*.sco ./*.ll ./1.txt $(OBJDIR) $(PASS_DIR1) $(PASS_DIR2)
+
+install:
+	sudo mkdir -p ${INSTALL_PATH}
+	sudo cp ./*.yaml ./*.sco  ${INSTALL_PATH}

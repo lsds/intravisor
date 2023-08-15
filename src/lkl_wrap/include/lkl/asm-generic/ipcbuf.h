@@ -2,6 +2,8 @@
 #ifndef __LKL__ASM_GENERIC_IPCBUF_H
 #define __LKL__ASM_GENERIC_IPCBUF_H
 
+#include <lkl/linux/posix_types.h>
+
 /*
  * The generic ipc64_perm structure:
  * Note extra padding because this structure is passed back and forth

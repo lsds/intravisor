@@ -2,6 +2,7 @@
 #ifndef __LKL__ASM_GENERIC_SOCKET_H
 #define __LKL__ASM_GENERIC_SOCKET_H
 
+#include <lkl/linux/posix_types.h>
 #include <lkl/asm/sockios.h>
 
 /* For setsockopt(2) */
@@ -29,8 +30,8 @@
 #define LKL_SO_PEERCRED	17
 #define LKL_SO_RCVLOWAT	18
 #define LKL_SO_SNDLOWAT	19
-#define LKL_SO_RCVTIMEO	20
-#define LKL_SO_SNDTIMEO	21
+#define LKL_SO_RCVTIMEO_OLD	20
+#define LKL_SO_SNDTIMEO_OLD	21
 #endif
 
 /* Security levels - as per NRL IPv6 - don't actually do anything */
@@ -46,20 +47,13 @@
 #define LKL_SO_GET_FILTER		LKL_SO_ATTACH_FILTER
 
 #define LKL_SO_PEERNAME		28
-#define LKL_SO_TIMESTAMP		29
-#define LKL_SCM_TIMESTAMP		LKL_SO_TIMESTAMP
 
 #define LKL_SO_ACCEPTCONN		30
 
 #define LKL_SO_PEERSEC		31
 #define LKL_SO_PASSSEC		34
-#define LKL_SO_TIMESTAMPNS		35
-#define LKL_SCM_TIMESTAMPNS		LKL_SO_TIMESTAMPNS
 
 #define LKL_SO_MARK			36
-
-#define LKL_SO_TIMESTAMPING		37
-#define LKL_SCM_TIMESTAMPING	LKL_SO_TIMESTAMPING
 
 #define LKL_SO_PROTOCOL		38
 #define LKL_SO_DOMAIN		39
@@ -106,5 +100,59 @@
 #define LKL_SO_PEERGROUPS		59
 
 #define LKL_SO_ZEROCOPY		60
+
+#define LKL_SO_TXTIME		61
+#define LKL_SCM_TXTIME		LKL_SO_TXTIME
+
+#define LKL_SO_BINDTOIFINDEX	62
+
+#define LKL_SO_TIMESTAMP_OLD        29
+#define LKL_SO_TIMESTAMPNS_OLD      35
+#define LKL_SO_TIMESTAMPING_OLD     37
+
+#define LKL_SO_TIMESTAMP_NEW        63
+#define LKL_SO_TIMESTAMPNS_NEW      64
+#define LKL_SO_TIMESTAMPING_NEW     65
+
+#define LKL_SO_RCVTIMEO_NEW         66
+#define LKL_SO_SNDTIMEO_NEW         67
+
+#define LKL_SO_DETACH_REUSEPORT_BPF 68
+
+#define LKL_SO_PREFER_BUSY_POLL	69
+#define LKL_SO_BUSY_POLL_BUDGET	70
+
+#define LKL_SO_NETNS_COOKIE		71
+
+#define LKL_SO_BUF_LOCK		72
+
+#define LKL_SO_RESERVE_MEM		73
+
+#define LKL_SO_TXREHASH		74
+
+#define LKL_SO_RCVMARK		75
+
+
+#if __LKL__BITS_PER_LONG == 64 || (defined(__x86_64__) && defined(__ILP32__))
+/* on 64-bit and x32, avoid the ?: operator */
+#define LKL_SO_TIMESTAMP		LKL_SO_TIMESTAMP_OLD
+#define LKL_SO_TIMESTAMPNS		LKL_SO_TIMESTAMPNS_OLD
+#define LKL_SO_TIMESTAMPING		LKL_SO_TIMESTAMPING_OLD
+
+#define LKL_SO_RCVTIMEO		LKL_SO_RCVTIMEO_OLD
+#define LKL_SO_SNDTIMEO		LKL_SO_SNDTIMEO_OLD
+#else
+#define LKL_SO_TIMESTAMP (sizeof(lkl_time_t) == sizeof(__lkl__kernel_long_t) ? LKL_SO_TIMESTAMP_OLD : LKL_SO_TIMESTAMP_NEW)
+#define LKL_SO_TIMESTAMPNS (sizeof(lkl_time_t) == sizeof(__lkl__kernel_long_t) ? LKL_SO_TIMESTAMPNS_OLD : LKL_SO_TIMESTAMPNS_NEW)
+#define LKL_SO_TIMESTAMPING (sizeof(lkl_time_t) == sizeof(__lkl__kernel_long_t) ? LKL_SO_TIMESTAMPING_OLD : LKL_SO_TIMESTAMPING_NEW)
+
+#define LKL_SO_RCVTIMEO (sizeof(lkl_time_t) == sizeof(__lkl__kernel_long_t) ? LKL_SO_RCVTIMEO_OLD : LKL_SO_RCVTIMEO_NEW)
+#define LKL_SO_SNDTIMEO (sizeof(lkl_time_t) == sizeof(__lkl__kernel_long_t) ? LKL_SO_SNDTIMEO_OLD : LKL_SO_SNDTIMEO_NEW)
+#endif
+
+#define LKL_SCM_TIMESTAMP           LKL_SO_TIMESTAMP
+#define LKL_SCM_TIMESTAMPNS         LKL_SO_TIMESTAMPNS
+#define LKL_SCM_TIMESTAMPING        LKL_SO_TIMESTAMPING
+
 
 #endif /* __LKL__ASM_GENERIC_SOCKET_H */

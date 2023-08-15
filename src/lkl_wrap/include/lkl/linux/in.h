@@ -20,6 +20,7 @@
 #define _LKL_LINUX_IN_H
 
 #include <lkl/linux/types.h>
+#include <lkl/linux/stddef.h>
 #include <lkl/linux/libc-compat.h>
 #include <lkl/linux/socket.h>
 
@@ -68,14 +69,20 @@ enum {
 #define LKL_IPPROTO_PIM		LKL_IPPROTO_PIM
   LKL_IPPROTO_COMP = 108,		/* Compression Header Protocol		*/
 #define LKL_IPPROTO_COMP		LKL_IPPROTO_COMP
+  LKL_IPPROTO_L2TP = 115,		/* Layer 2 Tunnelling Protocol		*/
+#define LKL_IPPROTO_L2TP		LKL_IPPROTO_L2TP
   LKL_IPPROTO_SCTP = 132,		/* Stream Control Transport Protocol	*/
 #define LKL_IPPROTO_SCTP		LKL_IPPROTO_SCTP
   LKL_IPPROTO_UDPLITE = 136,	/* UDP-Lite (RFC 3828)			*/
 #define LKL_IPPROTO_UDPLITE		LKL_IPPROTO_UDPLITE
   LKL_IPPROTO_MPLS = 137,		/* MPLS in IP (RFC 4023)		*/
 #define LKL_IPPROTO_MPLS		LKL_IPPROTO_MPLS
+  LKL_IPPROTO_ETHERNET = 143,	/* Ethernet-within-IPv6 Encapsulation	*/
+#define LKL_IPPROTO_ETHERNET	LKL_IPPROTO_ETHERNET
   LKL_IPPROTO_RAW = 255,		/* Raw IP packets			*/
 #define LKL_IPPROTO_RAW		LKL_IPPROTO_RAW
+  LKL_IPPROTO_MPTCP = 262,		/* Multipath TCP connection		*/
+#define LKL_IPPROTO_MPTCP		LKL_IPPROTO_MPTCP
   LKL_IPPROTO_MAX
 };
 #endif
@@ -119,6 +126,7 @@ struct lkl_in_addr {
 #define LKL_IP_CHECKSUM	23
 #define LKL_IP_BIND_ADDRESS_NO_PORT	24
 #define LKL_IP_RECVFRAGSIZE	25
+#define LKL_IP_RECVERR_RFC4884	26
 
 /* LKL_IP_MTU_DISCOVER values */
 #define LKL_IP_PMTUDISC_DONT		0	/* Never send DF frames */
@@ -130,7 +138,7 @@ struct lkl_in_addr {
  * this socket to prevent accepting spoofed ones.
  */
 #define LKL_IP_PMTUDISC_INTERFACE		4
-/* weaker version of LKL_IP_PMTUDISC_INTERFACE, which allos packets to get
+/* weaker version of LKL_IP_PMTUDISC_INTERFACE, which allows packets to get
  * fragmented if they exeed the interface mtu
  */
 #define LKL_IP_PMTUDISC_OMIT		5
@@ -187,7 +195,10 @@ struct lkl_ip_msfilter {
 	__lkl__be32		imsf_interface;
 	__lkl__u32		imsf_fmode;
 	__lkl__u32		imsf_numsrc;
-	__lkl__be32		imsf_slist[1];
+	union {
+		__lkl__be32		imsf_slist[1];
+		__LKL__DECLARE_FLEX_ARRAY(__lkl__be32, imsf_slist_flex);
+	};
 };
 
 #define LKL_IP_MSFILTER_SIZE(numsrc) \
@@ -206,11 +217,22 @@ struct lkl_group_source_req {
 };
 
 struct lkl_group_filter {
-	__lkl__u32				 gf_interface;	/* interface index */
-	struct __lkl__kernel_sockaddr_storage gf_group;	/* multicast address */
-	__lkl__u32				 gf_fmode;	/* filter mode */
-	__lkl__u32				 gf_numsrc;	/* number of sources */
-	struct __lkl__kernel_sockaddr_storage gf_slist[1];	/* interface index */
+	union {
+		struct {
+			__lkl__u32				 gf_interface_aux; /* interface index */
+			struct __lkl__kernel_sockaddr_storage gf_group_aux;	   /* multicast address */
+			__lkl__u32				 gf_fmode_aux;	   /* filter mode */
+			__lkl__u32				 gf_numsrc_aux;	   /* number of sources */
+			struct __lkl__kernel_sockaddr_storage gf_slist[1];	   /* interface index */
+		};
+		struct {
+			__lkl__u32				 gf_interface;	  /* interface index */
+			struct __lkl__kernel_sockaddr_storage gf_group;	  /* multicast address */
+			__lkl__u32				 gf_fmode;	  /* filter mode */
+			__lkl__u32				 gf_numsrc;	  /* number of sources */
+			struct __lkl__kernel_sockaddr_storage gf_slist_flex[]; /* interface index */
+		};
+	};
 };
 
 #define LKL_GROUP_FILTER_SIZE(numsrc) \
@@ -266,10 +288,14 @@ struct lkl_sockaddr_in {
 
 #define	LKL_IN_CLASSD(a)		((((long int) (a)) & 0xf0000000) == 0xe0000000)
 #define	LKL_IN_MULTICAST(a)		LKL_IN_CLASSD(a)
-#define LKL_IN_MULTICAST_NET	0xF0000000
+#define	LKL_IN_MULTICAST_NET	0xe0000000
 
-#define	LKL_IN_EXPERIMENTAL(a)	((((long int) (a)) & 0xf0000000) == 0xf0000000)
-#define	LKL_IN_BADCLASS(a)		LKL_IN_EXPERIMENTAL((a))
+#define	LKL_IN_BADCLASS(a)		(((long int) (a) ) == (long int)0xffffffff)
+#define	LKL_IN_EXPERIMENTAL(a)	LKL_IN_BADCLASS((a))
+
+#define	LKL_IN_CLASSE(a)		((((long int) (a)) & 0xf0000000) == 0xf0000000)
+#define	LKL_IN_CLASSE_NET		0xffffffff
+#define	LKL_IN_CLASSE_NSHIFT	0
 
 /* Address to accept any incoming messages. */
 #define	LKL_INADDR_ANY		((unsigned long int) 0x00000000)
@@ -280,6 +306,9 @@ struct lkl_sockaddr_in {
 /* Address indicating an error return. */
 #define	LKL_INADDR_NONE		((unsigned long int) 0xffffffff)
 
+/* Dummy address for src of ICMP replies if no real address is set (RFC7600). */
+#define	LKL_INADDR_DUMMY		((unsigned long int) 0xc0000008)
+
 /* Network number for local host loopback. */
 #define	LKL_IN_LOOPBACKNET		127
 
@@ -288,10 +317,11 @@ struct lkl_sockaddr_in {
 #define	LKL_IN_LOOPBACK(a)		((((long int) (a)) & 0xff000000) == 0x7f000000)
 
 /* Defines for Multicast INADDR */
-#define LKL_INADDR_UNSPEC_GROUP   	0xe0000000U	/* 224.0.0.0   */
-#define LKL_INADDR_ALLHOSTS_GROUP 	0xe0000001U	/* 224.0.0.1   */
-#define LKL_INADDR_ALLRTRS_GROUP    0xe0000002U	/* 224.0.0.2 */
-#define LKL_INADDR_MAX_LOCAL_GROUP  0xe00000ffU	/* 224.0.0.255 */
+#define LKL_INADDR_UNSPEC_GROUP		0xe0000000U	/* 224.0.0.0   */
+#define LKL_INADDR_ALLHOSTS_GROUP		0xe0000001U	/* 224.0.0.1   */
+#define LKL_INADDR_ALLRTRS_GROUP		0xe0000002U	/* 224.0.0.2 */
+#define LKL_INADDR_ALLSNOOPERS_GROUP	0xe000006aU	/* 224.0.0.106 */
+#define LKL_INADDR_MAX_LOCAL_GROUP		0xe00000ffU	/* 224.0.0.255 */
 #endif
 
 /* <asm/byteorder.h> contains the htonl type stuff.. */

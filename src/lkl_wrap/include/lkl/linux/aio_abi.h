@@ -38,10 +38,8 @@ enum {
 	LKL_IOCB_CMD_PWRITE = 1,
 	LKL_IOCB_CMD_FSYNC = 2,
 	LKL_IOCB_CMD_FDSYNC = 3,
-	/* These two are experimental.
-	 * IOCB_CMD_PREADX = 4,
-	 * IOCB_CMD_POLL = 5,
-	 */
+	/* 4 was the experimental IOCB_CMD_PREADX */
+	LKL_IOCB_CMD_POLL = 5,
 	LKL_IOCB_CMD_NOOP = 6,
 	LKL_IOCB_CMD_PREADV = 7,
 	LKL_IOCB_CMD_PWRITEV = 8,
@@ -52,8 +50,11 @@ enum {
  *
  * LKL_IOCB_FLAG_RESFD - Set if the "aio_resfd" member of the "struct lkl_iocb"
  *                   is valid.
+ * LKL_IOCB_FLAG_IOPRIO - Set if the "aio_reqprio" member of the "struct lkl_iocb"
+ *                    is valid.
  */
 #define LKL_IOCB_FLAG_RESFD		(1 << 0)
+#define LKL_IOCB_FLAG_IOPRIO	(1 << 1)
 
 /* read() from /dev/aio returns these structures. */
 struct lkl_io_event {

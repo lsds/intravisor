@@ -8,7 +8,7 @@
 #define LKL_FIOGETOWN	0x8903
 #define LKL_SIOCGPGRP	0x8904
 #define LKL_SIOCATMARK	0x8905
-#define LKL_SIOCGSTAMP	0x8906		/* Get stamp (timeval) */
-#define LKL_SIOCGSTAMPNS	0x8907		/* Get stamp (timespec) */
+#define LKL_SIOCGSTAMP_OLD	0x8906		/* Get stamp (timeval) */
+#define LKL_SIOCGSTAMPNS_OLD 0x8907		/* Get stamp (timespec) */
 
 #endif /* __LKL__ASM_GENERIC_SOCKIOS_H */

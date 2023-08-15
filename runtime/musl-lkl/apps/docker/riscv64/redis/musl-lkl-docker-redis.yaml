@@ -1,0 +1,11 @@
+---
+cVMs:
+- name: hello
+  disk: disk_docker_redis.img
+  runtime: libmusl-lkl.so
+  args: "/ld.so /usr/bin/redis-server /redis.conf"
+  isolation:
+  - base:  0x400000000
+    size:  0x040000000
+    begin: 0x400000000
+    end:   0x440000000

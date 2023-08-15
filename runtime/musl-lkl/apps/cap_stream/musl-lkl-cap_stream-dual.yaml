@@ -1,0 +1,25 @@
+---
+cVMs:
+- name: recv
+  disk: disk_cap_stream.img
+  runtime: libmusl-lkl.so
+  args: /ld.so /app/cap_stream 3
+  callback_out: monitor
+  wait: 10
+  isolation:
+  - base:  0x400000000
+    size:  0x040000000
+    begin: 0x400000000
+    end:   0x440000000
+
+
+- name: send
+  disk: disk_cap_stream.img
+  runtime: libmusl-lkl.so
+  args: /ld.so /app/cap_stream 4
+  callback_out: monitor
+  isolation:
+  - base:  0x440000000
+    size:  0x040000000
+    begin: 0x440000000
+    end:   0x480000000

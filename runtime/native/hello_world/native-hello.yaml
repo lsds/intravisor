@@ -1,0 +1,20 @@
+---
+capfiles:
+- name: test1
+  size: 0x20
+  data: "Hello world\n"
+- name: test2
+  size: 0x1000
+
+---
+cVMs:
+- name: hello
+  runtime: libnative-hello.so
+  args: /ld.so /app/main #aligment problem with pure cap aux in intravisor
+  isolation:
+  - base:  0x440000000
+    size:  0x040000000
+    begin: 0x440000000
+    end:   0x480000000
+  callback_out: monitor
+

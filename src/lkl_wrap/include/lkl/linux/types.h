@@ -14,12 +14,15 @@
  * any application/library that wants linux/types.h.
  */
 
+/* sparse defines __CHECKER__; see Documentation/dev-tools/sparse.rst */
 #ifdef __CHECKER__
-#define __lkl__bitwise__ __attribute__((bitwise))
+#define __lkl__bitwise	__attribute__((bitwise))
 #else
-#define __lkl__bitwise__
+#define __lkl__bitwise
 #endif
-#define __lkl__bitwise __lkl__bitwise__
+
+/* The kernel doesn't use this legacy form, but user space does */
+#define __lkl__bitwise__ __lkl__bitwise
 
 typedef __lkl__u16 __lkl__bitwise __lkl__le16;
 typedef __lkl__u16 __lkl__bitwise __lkl__be16;
@@ -44,11 +47,7 @@ typedef __lkl__u32 __lkl__bitwise __lkl__wsum;
 #define __lkl__aligned_be64 __lkl__be64 __attribute__((aligned(8)))
 #define __lkl__aligned_le64 __lkl__le64 __attribute__((aligned(8)))
 
-#ifdef __CHECK_POLL
 typedef unsigned __lkl__bitwise __lkl__poll_t;
-#else
-typedef unsigned __lkl__poll_t;
-#endif
 
 #endif /*  __ASSEMBLY__ */
 #endif /* _LKL_LINUX_TYPES_H */

@@ -1,0 +1,3 @@
+export REALGCC=riscv64-linux-gnu-gcc
+export LKL_MUSL_HOST=riscv64-linux-gnu
+export LKL_MUSL_BUILD=riscv64

@@ -2,7 +2,7 @@
 #ifndef __LKL__LINUX_NETLINK_H
 #define __LKL__LINUX_NETLINK_H
 
-#include <lkl/linux/kernel.h>
+#include <lkl/linux/const.h>
 #include <lkl/linux/socket.h> /* for __lkl__kernel_sa_family_t */
 #include <lkl/linux/types.h>
 
@@ -20,7 +20,7 @@
 #define LKL_NETLINK_CONNECTOR	11
 #define LKL_NETLINK_NETFILTER	12	/* netfilter subsystem */
 #define LKL_NETLINK_IP6_FW		13
-#define LKL_NETLINK_DNRTMSG		14	/* DECnet routing messages */
+#define LKL_NETLINK_DNRTMSG		14	/* DECnet routing messages (obsolete) */
 #define LKL_NETLINK_KOBJECT_UEVENT	15	/* Kernel messages to userspace */
 #define LKL_NETLINK_GENERIC		16
 /* leave room for NETLINK_DM (DM Events) */
@@ -41,12 +41,20 @@ struct lkl_sockaddr_nl {
        	__lkl__u32		nl_groups;	/* multicast groups mask */
 };
 
+/**
+ * struct lkl_nlmsghdr - fixed format metadata header of Netlink messages
+ * @nlmsg_len:   Length of message including header
+ * @nlmsg_type:  Message content type
+ * @nlmsg_flags: Additional flags
+ * @nlmsg_seq:   Sequence number
+ * @nlmsg_pid:   Sending process port ID
+ */
 struct lkl_nlmsghdr {
-	__lkl__u32		nlmsg_len;	/* Length of message including header */
-	__lkl__u16		nlmsg_type;	/* Message content */
-	__lkl__u16		nlmsg_flags;	/* Additional flags */
-	__lkl__u32		nlmsg_seq;	/* Sequence number */
-	__lkl__u32		nlmsg_pid;	/* Sending process port ID */
+	__lkl__u32		nlmsg_len;
+	__lkl__u16		nlmsg_type;
+	__lkl__u16		nlmsg_flags;
+	__lkl__u32		nlmsg_seq;
+	__lkl__u32		nlmsg_pid;
 };
 
 /* Flags values */
@@ -54,7 +62,7 @@ struct lkl_nlmsghdr {
 #define LKL_NLM_F_REQUEST		0x01	/* It is request message. 	*/
 #define LKL_NLM_F_MULTI		0x02	/* Multipart message, terminated by LKL_NLMSG_DONE */
 #define LKL_NLM_F_ACK		0x04	/* Reply with ack, with zero or error code */
-#define LKL_NLM_F_ECHO		0x08	/* Echo this request 		*/
+#define LKL_NLM_F_ECHO		0x08	/* Receive resulting notifications */
 #define LKL_NLM_F_DUMP_INTR		0x10	/* Dump was inconsistent due to sequence change */
 #define LKL_NLM_F_DUMP_FILTERED	0x20	/* Dump was filtered as requested */
 
@@ -72,6 +80,7 @@ struct lkl_nlmsghdr {
 
 /* Modifiers to DELETE request */
 #define LKL_NLM_F_NONREC	0x100	/* Do not delete recursively	*/
+#define LKL_NLM_F_BULK	0x200	/* Delete multiple objects	*/
 
 /* Flags for ACK message */
 #define LKL_NLM_F_CAPPED	0x100	/* request was capped */
@@ -91,9 +100,10 @@ struct lkl_nlmsghdr {
 #define LKL_NLMSG_HDRLEN	 ((int) LKL_NLMSG_ALIGN(sizeof(struct lkl_nlmsghdr)))
 #define LKL_NLMSG_LENGTH(len) ((len) + LKL_NLMSG_HDRLEN)
 #define LKL_NLMSG_SPACE(len) LKL_NLMSG_ALIGN(LKL_NLMSG_LENGTH(len))
-#define LKL_NLMSG_DATA(nlh)  ((void*)(((char*)nlh) + LKL_NLMSG_LENGTH(0)))
+#define LKL_NLMSG_DATA(nlh)  ((void *)(((char *)nlh) + LKL_NLMSG_HDRLEN))
 #define LKL_NLMSG_NEXT(nlh,len)	 ((len) -= LKL_NLMSG_ALIGN((nlh)->nlmsg_len), \
-				  (struct lkl_nlmsghdr*)(((char*)(nlh)) + LKL_NLMSG_ALIGN((nlh)->nlmsg_len)))
+				  (struct lkl_nlmsghdr *)(((char *)(nlh)) + \
+				  LKL_NLMSG_ALIGN((nlh)->nlmsg_len)))
 #define LKL_NLMSG_OK(nlh,len) ((len) >= (int)sizeof(struct lkl_nlmsghdr) && \
 			   (nlh)->nlmsg_len >= sizeof(struct lkl_nlmsghdr) && \
 			   (nlh)->nlmsg_len <= (len))
@@ -129,6 +139,11 @@ struct lkl_nlmsgerr {
  * @LKL_NLMSGERR_ATTR_COOKIE: arbitrary subsystem specific cookie to
  *	be used - in the success case - to identify a created
  *	object or operation or similar (binary)
+ * @LKL_NLMSGERR_ATTR_POLICY: policy for a rejected attribute
+ * @LKL_NLMSGERR_ATTR_MISS_TYPE: type of a missing required attribute,
+ *	%LKL_NLMSGERR_ATTR_MISS_NEST will not be present if the attribute was
+ *	missing at the message level
+ * @LKL_NLMSGERR_ATTR_MISS_NEST: offset of the nest where attribute was missing
  * @__LKL__NLMSGERR_ATTR_MAX: number of attributes
  * @LKL_NLMSGERR_ATTR_MAX: highest attribute number
  */
@@ -137,6 +152,9 @@ enum lkl_nlmsgerr_attrs {
 	LKL_NLMSGERR_ATTR_MSG,
 	LKL_NLMSGERR_ATTR_OFFS,
 	LKL_NLMSGERR_ATTR_COOKIE,
+	LKL_NLMSGERR_ATTR_POLICY,
+	LKL_NLMSGERR_ATTR_MISS_TYPE,
+	LKL_NLMSGERR_ATTR_MISS_NEST,
 
 	__LKL__NLMSGERR_ATTR_MAX,
 	LKL_NLMSGERR_ATTR_MAX = __LKL__NLMSGERR_ATTR_MAX - 1
@@ -153,6 +171,7 @@ enum lkl_nlmsgerr_attrs {
 #define LKL_NETLINK_LIST_MEMBERSHIPS	9
 #define LKL_NETLINK_CAP_ACK			10
 #define LKL_NETLINK_EXT_ACK			11
+#define LKL_NETLINK_GET_STRICT_CHK		12
 
 struct lkl_nl_pktinfo {
 	__lkl__u32	group;
@@ -242,6 +261,114 @@ struct lkl_nlattr {
 struct lkl_nla_bitfield32 {
 	__lkl__u32 value;
 	__lkl__u32 selector;
+};
+
+/*
+ * policy descriptions - it's specific to each family how this is used
+ * Normally, it should be retrieved via a dump inside another attribute
+ * specifying where it applies.
+ */
+
+/**
+ * enum lkl_netlink_attribute_type - type of an attribute
+ * @LKL_NL_ATTR_TYPE_INVALID: unused
+ * @LKL_NL_ATTR_TYPE_FLAG: flag attribute (present/not present)
+ * @LKL_NL_ATTR_TYPE_U8: 8-bit unsigned attribute
+ * @LKL_NL_ATTR_TYPE_U16: 16-bit unsigned attribute
+ * @LKL_NL_ATTR_TYPE_U32: 32-bit unsigned attribute
+ * @LKL_NL_ATTR_TYPE_U64: 64-bit unsigned attribute
+ * @LKL_NL_ATTR_TYPE_S8: 8-bit signed attribute
+ * @LKL_NL_ATTR_TYPE_S16: 16-bit signed attribute
+ * @LKL_NL_ATTR_TYPE_S32: 32-bit signed attribute
+ * @LKL_NL_ATTR_TYPE_S64: 64-bit signed attribute
+ * @LKL_NL_ATTR_TYPE_BINARY: binary data, min/max length may be specified
+ * @LKL_NL_ATTR_TYPE_STRING: string, min/max length may be specified
+ * @LKL_NL_ATTR_TYPE_NUL_STRING: NUL-terminated string,
+ *	min/max length may be specified
+ * @LKL_NL_ATTR_TYPE_NESTED: nested, i.e. the content of this attribute
+ *	consists of sub-attributes. The nested policy and maxtype
+ *	inside may be specified.
+ * @LKL_NL_ATTR_TYPE_NESTED_ARRAY: nested array, i.e. the content of this
+ *	attribute contains sub-attributes whose type is irrelevant
+ *	(just used to separate the array entries) and each such array
+ *	entry has attributes again, the policy for those inner ones
+ *	and the corresponding maxtype may be specified.
+ * @LKL_NL_ATTR_TYPE_BITFIELD32: &struct lkl_nla_bitfield32 attribute
+ */
+enum lkl_netlink_attribute_type {
+	LKL_NL_ATTR_TYPE_INVALID,
+
+	LKL_NL_ATTR_TYPE_FLAG,
+
+	LKL_NL_ATTR_TYPE_U8,
+	LKL_NL_ATTR_TYPE_U16,
+	LKL_NL_ATTR_TYPE_U32,
+	LKL_NL_ATTR_TYPE_U64,
+
+	LKL_NL_ATTR_TYPE_S8,
+	LKL_NL_ATTR_TYPE_S16,
+	LKL_NL_ATTR_TYPE_S32,
+	LKL_NL_ATTR_TYPE_S64,
+
+	LKL_NL_ATTR_TYPE_BINARY,
+	LKL_NL_ATTR_TYPE_STRING,
+	LKL_NL_ATTR_TYPE_NUL_STRING,
+
+	LKL_NL_ATTR_TYPE_NESTED,
+	LKL_NL_ATTR_TYPE_NESTED_ARRAY,
+
+	LKL_NL_ATTR_TYPE_BITFIELD32,
+};
+
+/**
+ * enum lkl_netlink_policy_type_attr - policy type attributes
+ * @LKL_NL_POLICY_TYPE_ATTR_UNSPEC: unused
+ * @LKL_NL_POLICY_TYPE_ATTR_TYPE: type of the attribute,
+ *	&enum lkl_netlink_attribute_type (U32)
+ * @LKL_NL_POLICY_TYPE_ATTR_MIN_VALUE_S: minimum value for signed
+ *	integers (S64)
+ * @LKL_NL_POLICY_TYPE_ATTR_MAX_VALUE_S: maximum value for signed
+ *	integers (S64)
+ * @LKL_NL_POLICY_TYPE_ATTR_MIN_VALUE_U: minimum value for unsigned
+ *	integers (U64)
+ * @LKL_NL_POLICY_TYPE_ATTR_MAX_VALUE_U: maximum value for unsigned
+ *	integers (U64)
+ * @LKL_NL_POLICY_TYPE_ATTR_MIN_LENGTH: minimum length for binary
+ *	attributes, no minimum if not given (U32)
+ * @LKL_NL_POLICY_TYPE_ATTR_MAX_LENGTH: maximum length for binary
+ *	attributes, no maximum if not given (U32)
+ * @LKL_NL_POLICY_TYPE_ATTR_POLICY_IDX: sub policy for nested and
+ *	nested array types (U32)
+ * @LKL_NL_POLICY_TYPE_ATTR_POLICY_MAXTYPE: maximum sub policy
+ *	attribute for nested and nested array types, this can
+ *	in theory be < the size of the policy pointed to by
+ *	the index, if limited inside the nesting (U32)
+ * @LKL_NL_POLICY_TYPE_ATTR_BITFIELD32_MASK: valid mask for the
+ *	bitfield32 type (U32)
+ * @LKL_NL_POLICY_TYPE_ATTR_MASK: mask of valid bits for unsigned integers (U64)
+ * @LKL_NL_POLICY_TYPE_ATTR_PAD: pad attribute for 64-bit alignment
+ *
+ * @__LKL__NL_POLICY_TYPE_ATTR_MAX: number of attributes
+ * @LKL_NL_POLICY_TYPE_ATTR_MAX: highest attribute number
+ */
+enum lkl_netlink_policy_type_attr {
+	LKL_NL_POLICY_TYPE_ATTR_UNSPEC,
+	LKL_NL_POLICY_TYPE_ATTR_TYPE,
+	LKL_NL_POLICY_TYPE_ATTR_MIN_VALUE_S,
+	LKL_NL_POLICY_TYPE_ATTR_MAX_VALUE_S,
+	LKL_NL_POLICY_TYPE_ATTR_MIN_VALUE_U,
+	LKL_NL_POLICY_TYPE_ATTR_MAX_VALUE_U,
+	LKL_NL_POLICY_TYPE_ATTR_MIN_LENGTH,
+	LKL_NL_POLICY_TYPE_ATTR_MAX_LENGTH,
+	LKL_NL_POLICY_TYPE_ATTR_POLICY_IDX,
+	LKL_NL_POLICY_TYPE_ATTR_POLICY_MAXTYPE,
+	LKL_NL_POLICY_TYPE_ATTR_BITFIELD32_MASK,
+	LKL_NL_POLICY_TYPE_ATTR_PAD,
+	LKL_NL_POLICY_TYPE_ATTR_MASK,
+
+	/* keep last */
+	__LKL__NL_POLICY_TYPE_ATTR_MAX,
+	LKL_NL_POLICY_TYPE_ATTR_MAX = __LKL__NL_POLICY_TYPE_ATTR_MAX - 1
 };
 
 #endif /* __LKL__LINUX_NETLINK_H */

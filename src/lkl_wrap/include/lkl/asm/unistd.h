@@ -2,12 +2,11 @@
 #define __LKL__ARCH_WANT_SYSCALL_DEPRECATED
 #define __LKL__ARCH_WANT_SYSCALL_NO_FLAGS
 #define __LKL__ARCH_WANT_RENAMEAT
-
+#define __LKL__ARCH_WANT_NEW_STAT
 #define __LKL__ARCH_WANT_SET_GET_RLIMIT
 #define __LKL__ARCH_WANT_TIME32_SYSCALLS
-#define __LKL__ARCH_WANT_SYS_CLONE
 
-
+#include <lkl/asm/bitsperlong.h>
 
 #if __LKL__BITS_PER_LONG == 64
 #define __LKL__ARCH_WANT_SYS_NEWFSTATAT

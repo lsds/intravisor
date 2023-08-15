@@ -1,0 +1,4 @@
+*.so
+obj
+1.txt
+*.cpio

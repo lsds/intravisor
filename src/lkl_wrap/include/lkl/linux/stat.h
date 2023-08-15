@@ -123,7 +123,11 @@ struct lkl_statx {
 	__lkl__u32	stx_dev_major;	/* ID of device containing file [uncond] */
 	__lkl__u32	stx_dev_minor;
 	/* 0x90 */
-	__lkl__u64	__spare2[14];	/* Spare space for future expansion */
+	__lkl__u64	stx_mnt_id;
+	__lkl__u32	stx_dio_mem_align;	/* Memory buffer alignment for direct I/O */
+	__lkl__u32	stx_dio_offset_align;	/* File offset alignment for direct I/O */
+	/* 0xa0 */
+	__lkl__u64	__spare3[12];	/* Spare space for future expansion */
 	/* 0x100 */
 };
 
@@ -148,8 +152,17 @@ struct lkl_statx {
 #define LKL_STATX_BLOCKS		0x00000400U	/* Want/got stx_blocks */
 #define LKL_STATX_BASIC_STATS	0x000007ffU	/* The stuff in the normal stat struct */
 #define LKL_STATX_BTIME		0x00000800U	/* Want/got stx_btime */
-#define LKL_STATX_ALL		0x00000fffU	/* All currently supported flags */
+#define LKL_STATX_MNT_ID		0x00001000U	/* Got stx_mnt_id */
+#define LKL_STATX_DIOALIGN		0x00002000U	/* Want/got direct I/O alignment info */
+
 #define LKL_STATX__RESERVED		0x80000000U	/* Reserved for future struct lkl_statx expansion */
+
+/*
+ * This is deprecated, and shall remain the same value in the future.  To avoid
+ * confusion please use the equivalent (LKL_STATX_BASIC_STATS | LKL_STATX_BTIME)
+ * instead.
+ */
+#define LKL_STATX_ALL		0x00000fffU
 
 /*
  * Attributes to be found in stx_attributes and masked in stx_attributes_mask.
@@ -158,17 +171,22 @@ struct lkl_statx {
  * be of use to ordinary userspace programs such as GUIs or ls rather than
  * specialised tools.
  *
- * Note that the flags marked [I] correspond to generic FS_IOC_FLAGS
+ * Note that the flags marked [I] correspond to the LKL_FS_IOC_SETFLAGS flags
  * semantically.  Where possible, the numerical value is picked to correspond
- * also.
+ * also.  Note that the DAX attribute indicates that the file is in the CPU
+ * direct access state.  It does not correspond to the per-inode flag that
+ * some filesystems support.
+ *
  */
 #define LKL_STATX_ATTR_COMPRESSED		0x00000004 /* [I] File is compressed by the fs */
 #define LKL_STATX_ATTR_IMMUTABLE		0x00000010 /* [I] File is marked immutable */
 #define LKL_STATX_ATTR_APPEND		0x00000020 /* [I] File is append-only */
 #define LKL_STATX_ATTR_NODUMP		0x00000040 /* [I] File is not to be dumped */
 #define LKL_STATX_ATTR_ENCRYPTED		0x00000800 /* [I] File requires key to decrypt in fs */
-
 #define LKL_STATX_ATTR_AUTOMOUNT		0x00001000 /* Dir: Automount trigger */
+#define LKL_STATX_ATTR_MOUNT_ROOT		0x00002000 /* Root of a mount */
+#define LKL_STATX_ATTR_VERITY		0x00100000 /* [I] Verity protected file */
+#define LKL_STATX_ATTR_DAX			0x00200000 /* File is currently in DAX state */
 
 
 #endif /* _LKL_LINUX_STAT_H */

@@ -7,24 +7,23 @@
 
 /* This struct should be in sync with struct lkl_rtnl_link_stats64 */
 struct lkl_rtnl_link_stats {
-	__lkl__u32	rx_packets;		/* total packets received	*/
-	__lkl__u32	tx_packets;		/* total packets transmitted	*/
-	__lkl__u32	rx_bytes;		/* total bytes received 	*/
-	__lkl__u32	tx_bytes;		/* total bytes transmitted	*/
-	__lkl__u32	rx_errors;		/* bad packets received		*/
-	__lkl__u32	tx_errors;		/* packet transmit problems	*/
-	__lkl__u32	rx_dropped;		/* no space in linux buffers	*/
-	__lkl__u32	tx_dropped;		/* no space available in linux	*/
-	__lkl__u32	multicast;		/* multicast packets received	*/
+	__lkl__u32	rx_packets;
+	__lkl__u32	tx_packets;
+	__lkl__u32	rx_bytes;
+	__lkl__u32	tx_bytes;
+	__lkl__u32	rx_errors;
+	__lkl__u32	tx_errors;
+	__lkl__u32	rx_dropped;
+	__lkl__u32	tx_dropped;
+	__lkl__u32	multicast;
 	__lkl__u32	collisions;
-
 	/* detailed rx_errors: */
 	__lkl__u32	rx_length_errors;
-	__lkl__u32	rx_over_errors;		/* receiver ring buff overflow	*/
-	__lkl__u32	rx_crc_errors;		/* recved pkt with crc error	*/
-	__lkl__u32	rx_frame_errors;	/* recv'd frame alignment error */
-	__lkl__u32	rx_fifo_errors;		/* recv'r fifo overrun		*/
-	__lkl__u32	rx_missed_errors;	/* receiver missed packet	*/
+	__lkl__u32	rx_over_errors;
+	__lkl__u32	rx_crc_errors;
+	__lkl__u32	rx_frame_errors;
+	__lkl__u32	rx_fifo_errors;
+	__lkl__u32	rx_missed_errors;
 
 	/* detailed tx_errors */
 	__lkl__u32	tx_aborted_errors;
@@ -37,29 +36,204 @@ struct lkl_rtnl_link_stats {
 	__lkl__u32	rx_compressed;
 	__lkl__u32	tx_compressed;
 
-	__lkl__u32	rx_nohandler;		/* dropped, no handler found	*/
+	__lkl__u32	rx_nohandler;
 };
 
-/* The main device statistics structure */
+/**
+ * struct lkl_rtnl_link_stats64 - The main device statistics structure.
+ *
+ * @rx_packets: Number of good packets received by the interface.
+ *   For hardware interfaces counts all good packets received from the device
+ *   by the host, including packets which host had to drop at various stages
+ *   of processing (even in the driver).
+ *
+ * @tx_packets: Number of packets successfully transmitted.
+ *   For hardware interfaces counts packets which host was able to successfully
+ *   hand over to the device, which does not necessarily mean that packets
+ *   had been successfully transmitted out of the device, only that device
+ *   acknowledged it copied them out of host memory.
+ *
+ * @rx_bytes: Number of good received bytes, corresponding to @rx_packets.
+ *
+ *   For IEEE 802.3 devices should count the length of Ethernet Frames
+ *   excluding the FCS.
+ *
+ * @tx_bytes: Number of good transmitted bytes, corresponding to @tx_packets.
+ *
+ *   For IEEE 802.3 devices should count the length of Ethernet Frames
+ *   excluding the FCS.
+ *
+ * @rx_errors: Total number of bad packets received on this network device.
+ *   This counter must include events counted by @rx_length_errors,
+ *   @rx_crc_errors, @rx_frame_errors and other errors not otherwise
+ *   counted.
+ *
+ * @tx_errors: Total number of transmit problems.
+ *   This counter must include events counter by @tx_aborted_errors,
+ *   @tx_carrier_errors, @tx_fifo_errors, @tx_heartbeat_errors,
+ *   @tx_window_errors and other errors not otherwise counted.
+ *
+ * @rx_dropped: Number of packets received but not processed,
+ *   e.g. due to lack of resources or unsupported protocol.
+ *   For hardware interfaces this counter may include packets discarded
+ *   due to L2 address filtering but should not include packets dropped
+ *   by the device due to buffer exhaustion which are counted separately in
+ *   @rx_missed_errors (since procfs folds those two counters together).
+ *
+ * @tx_dropped: Number of packets dropped on their way to transmission,
+ *   e.g. due to lack of resources.
+ *
+ * @multicast: Multicast packets received.
+ *   For hardware interfaces this statistic is commonly calculated
+ *   at the device level (unlike @rx_packets) and therefore may include
+ *   packets which did not reach the host.
+ *
+ *   For IEEE 802.3 devices this counter may be equivalent to:
+ *
+ *    - 30.3.1.1.21 aMulticastFramesReceivedOK
+ *
+ * @collisions: Number of collisions during packet transmissions.
+ *
+ * @rx_length_errors: Number of packets dropped due to invalid length.
+ *   Part of aggregate "frame" errors in `/proc/net/dev`.
+ *
+ *   For IEEE 802.3 devices this counter should be equivalent to a sum
+ *   of the following attributes:
+ *
+ *    - 30.3.1.1.23 aInRangeLengthErrors
+ *    - 30.3.1.1.24 aOutOfRangeLengthField
+ *    - 30.3.1.1.25 aFrameTooLongErrors
+ *
+ * @rx_over_errors: Receiver FIFO overflow event counter.
+ *
+ *   Historically the count of overflow events. Such events may be
+ *   reported in the receive descriptors or via interrupts, and may
+ *   not correspond one-to-one with dropped packets.
+ *
+ *   The recommended interpretation for high speed interfaces is -
+ *   number of packets dropped because they did not fit into buffers
+ *   provided by the host, e.g. packets larger than MTU or next buffer
+ *   in the ring was not available for a scatter transfer.
+ *
+ *   Part of aggregate "frame" errors in `/proc/net/dev`.
+ *
+ *   This statistics was historically used interchangeably with
+ *   @rx_fifo_errors.
+ *
+ *   This statistic corresponds to hardware events and is not commonly used
+ *   on software devices.
+ *
+ * @rx_crc_errors: Number of packets received with a CRC error.
+ *   Part of aggregate "frame" errors in `/proc/net/dev`.
+ *
+ *   For IEEE 802.3 devices this counter must be equivalent to:
+ *
+ *    - 30.3.1.1.6 aFrameCheckSequenceErrors
+ *
+ * @rx_frame_errors: Receiver frame alignment errors.
+ *   Part of aggregate "frame" errors in `/proc/net/dev`.
+ *
+ *   For IEEE 802.3 devices this counter should be equivalent to:
+ *
+ *    - 30.3.1.1.7 aAlignmentErrors
+ *
+ * @rx_fifo_errors: Receiver FIFO error counter.
+ *
+ *   Historically the count of overflow events. Those events may be
+ *   reported in the receive descriptors or via interrupts, and may
+ *   not correspond one-to-one with dropped packets.
+ *
+ *   This statistics was used interchangeably with @rx_over_errors.
+ *   Not recommended for use in drivers for high speed interfaces.
+ *
+ *   This statistic is used on software devices, e.g. to count software
+ *   packet queue overflow (can) or sequencing errors (GRE).
+ *
+ * @rx_missed_errors: Count of packets missed by the host.
+ *   Folded into the "drop" counter in `/proc/net/dev`.
+ *
+ *   Counts number of packets dropped by the device due to lack
+ *   of buffer space. This usually indicates that the host interface
+ *   is slower than the network interface, or host is not keeping up
+ *   with the receive packet rate.
+ *
+ *   This statistic corresponds to hardware events and is not used
+ *   on software devices.
+ *
+ * @tx_aborted_errors:
+ *   Part of aggregate "carrier" errors in `/proc/net/dev`.
+ *   For IEEE 802.3 devices capable of half-duplex operation this counter
+ *   must be equivalent to:
+ *
+ *    - 30.3.1.1.11 aFramesAbortedDueToXSColls
+ *
+ *   High speed interfaces may use this counter as a general device
+ *   discard counter.
+ *
+ * @tx_carrier_errors: Number of frame transmission errors due to loss
+ *   of carrier during transmission.
+ *   Part of aggregate "carrier" errors in `/proc/net/dev`.
+ *
+ *   For IEEE 802.3 devices this counter must be equivalent to:
+ *
+ *    - 30.3.1.1.13 aCarrierSenseErrors
+ *
+ * @tx_fifo_errors: Number of frame transmission errors due to device
+ *   FIFO underrun / underflow. This condition occurs when the device
+ *   begins transmission of a frame but is unable to deliver the
+ *   entire frame to the transmitter in time for transmission.
+ *   Part of aggregate "carrier" errors in `/proc/net/dev`.
+ *
+ * @tx_heartbeat_errors: Number of Heartbeat / SQE Test errors for
+ *   old half-duplex Ethernet.
+ *   Part of aggregate "carrier" errors in `/proc/net/dev`.
+ *
+ *   For IEEE 802.3 devices possibly equivalent to:
+ *
+ *    - 30.3.2.1.4 aSQETestErrors
+ *
+ * @tx_window_errors: Number of frame transmission errors due
+ *   to late collisions (for Ethernet - after the first 64B of transmission).
+ *   Part of aggregate "carrier" errors in `/proc/net/dev`.
+ *
+ *   For IEEE 802.3 devices this counter must be equivalent to:
+ *
+ *    - 30.3.1.1.10 aLateCollisions
+ *
+ * @rx_compressed: Number of correctly received compressed packets.
+ *   This counters is only meaningful for interfaces which support
+ *   packet compression (e.g. CSLIP, PPP).
+ *
+ * @tx_compressed: Number of transmitted compressed packets.
+ *   This counters is only meaningful for interfaces which support
+ *   packet compression (e.g. CSLIP, PPP).
+ *
+ * @rx_nohandler: Number of packets received on the interface
+ *   but dropped by the networking stack because the device is
+ *   not designated to receive packets (e.g. backup link in a bond).
+ *
+ * @rx_otherhost_dropped: Number of packets dropped due to mismatch
+ *   in destination MAC address.
+ */
 struct lkl_rtnl_link_stats64 {
-	__lkl__u64	rx_packets;		/* total packets received	*/
-	__lkl__u64	tx_packets;		/* total packets transmitted	*/
-	__lkl__u64	rx_bytes;		/* total bytes received 	*/
-	__lkl__u64	tx_bytes;		/* total bytes transmitted	*/
-	__lkl__u64	rx_errors;		/* bad packets received		*/
-	__lkl__u64	tx_errors;		/* packet transmit problems	*/
-	__lkl__u64	rx_dropped;		/* no space in linux buffers	*/
-	__lkl__u64	tx_dropped;		/* no space available in linux	*/
-	__lkl__u64	multicast;		/* multicast packets received	*/
+	__lkl__u64	rx_packets;
+	__lkl__u64	tx_packets;
+	__lkl__u64	rx_bytes;
+	__lkl__u64	tx_bytes;
+	__lkl__u64	rx_errors;
+	__lkl__u64	tx_errors;
+	__lkl__u64	rx_dropped;
+	__lkl__u64	tx_dropped;
+	__lkl__u64	multicast;
 	__lkl__u64	collisions;
 
 	/* detailed rx_errors: */
 	__lkl__u64	rx_length_errors;
-	__lkl__u64	rx_over_errors;		/* receiver ring buff overflow	*/
-	__lkl__u64	rx_crc_errors;		/* recved pkt with crc error	*/
-	__lkl__u64	rx_frame_errors;	/* recv'd frame alignment error */
-	__lkl__u64	rx_fifo_errors;		/* recv'r fifo overrun		*/
-	__lkl__u64	rx_missed_errors;	/* receiver missed packet	*/
+	__lkl__u64	rx_over_errors;
+	__lkl__u64	rx_crc_errors;
+	__lkl__u64	rx_frame_errors;
+	__lkl__u64	rx_fifo_errors;
+	__lkl__u64	rx_missed_errors;
 
 	/* detailed tx_errors */
 	__lkl__u64	tx_aborted_errors;
@@ -71,8 +245,24 @@ struct lkl_rtnl_link_stats64 {
 	/* for cslip etc */
 	__lkl__u64	rx_compressed;
 	__lkl__u64	tx_compressed;
+	__lkl__u64	rx_nohandler;
 
-	__lkl__u64	rx_nohandler;		/* dropped, no handler found	*/
+	__lkl__u64	rx_otherhost_dropped;
+};
+
+/* Subset of link stats useful for in-HW collection. Meaning of the fields is as
+ * for struct lkl_rtnl_link_stats64.
+ */
+struct lkl_rtnl_hw_stats64 {
+	__lkl__u64	rx_packets;
+	__lkl__u64	tx_packets;
+	__lkl__u64	rx_bytes;
+	__lkl__u64	tx_bytes;
+	__lkl__u64	rx_errors;
+	__lkl__u64	tx_errors;
+	__lkl__u64	rx_dropped;
+	__lkl__u64	tx_dropped;
+	__lkl__u64	multicast;
 };
 
 /* The struct should be in sync with struct lkl_ifmap */
@@ -161,14 +351,41 @@ enum {
 	LKL_IFLA_EVENT,
 	LKL_IFLA_NEW_NETNSID,
 	LKL_IFLA_IF_NETNSID,
+	LKL_IFLA_TARGET_NETNSID = LKL_IFLA_IF_NETNSID, /* new alias */
 	LKL_IFLA_CARRIER_UP_COUNT,
 	LKL_IFLA_CARRIER_DOWN_COUNT,
 	LKL_IFLA_NEW_IFINDEX,
+	LKL_IFLA_MIN_MTU,
+	LKL_IFLA_MAX_MTU,
+	LKL_IFLA_PROP_LIST,
+	LKL_IFLA_ALT_IFNAME, /* Alternative ifname */
+	LKL_IFLA_PERM_ADDRESS,
+	LKL_IFLA_PROTO_DOWN_REASON,
+
+	/* device (sysfs) name as parent, used instead
+	 * of LKL_IFLA_LINK where there's no parent netdev
+	 */
+	LKL_IFLA_PARENT_DEV_NAME,
+	LKL_IFLA_PARENT_DEV_BUS_NAME,
+	LKL_IFLA_GRO_MAX_SIZE,
+	LKL_IFLA_TSO_MAX_SIZE,
+	LKL_IFLA_TSO_MAX_SEGS,
+	LKL_IFLA_ALLMULTI,		/* Allmulti count: > 0 means acts ALLMULTI */
+
 	__LKL__IFLA_MAX
 };
 
 
 #define LKL_IFLA_MAX (__LKL__IFLA_MAX - 1)
+
+enum {
+	LKL_IFLA_PROTO_DOWN_REASON_UNSPEC,
+	LKL_IFLA_PROTO_DOWN_REASON_MASK,	/* lkl_u32, mask for reason bits */
+	LKL_IFLA_PROTO_DOWN_REASON_VALUE,   /* lkl_u32, reason bit value */
+
+	__LKL__IFLA_PROTO_DOWN_REASON_CNT,
+	LKL_IFLA_PROTO_DOWN_REASON_MAX = __LKL__IFLA_PROTO_DOWN_REASON_CNT - 1
+};
 
 /* backwards compatibility for userspace */
 #define LKL_IFLA_RTA(r)  ((struct lkl_rtattr*)(((char*)(r)) + LKL_NLMSG_ALIGN(sizeof(struct lkl_ifinfomsg))))
@@ -222,6 +439,7 @@ enum {
 	LKL_IFLA_INET6_ICMP6STATS,	/* statistics (icmpv6)		*/
 	LKL_IFLA_INET6_TOKEN,	/* device token			*/
 	LKL_IFLA_INET6_ADDR_GEN_MODE, /* implicit address generator mode */
+	LKL_IFLA_INET6_RA_MTU,	/* mtu carried in the RA message */
 	__LKL__IFLA_INET6_MAX
 };
 
@@ -282,6 +500,9 @@ enum {
 	LKL_IFLA_BR_MCAST_STATS_ENABLED,
 	LKL_IFLA_BR_MCAST_IGMP_VERSION,
 	LKL_IFLA_BR_MCAST_MLD_VERSION,
+	LKL_IFLA_BR_VLAN_STATS_PER_PORT,
+	LKL_IFLA_BR_MULTI_BOOLOPT,
+	LKL_IFLA_BR_MCAST_QUERIER_STATE,
 	__LKL__IFLA_BR_MAX,
 };
 
@@ -331,6 +552,13 @@ enum {
 	LKL_IFLA_BRPORT_BCAST_FLOOD,
 	LKL_IFLA_BRPORT_GROUP_FWD_MASK,
 	LKL_IFLA_BRPORT_NEIGH_SUPPRESS,
+	LKL_IFLA_BRPORT_ISOLATED,
+	LKL_IFLA_BRPORT_BACKUP_PORT,
+	LKL_IFLA_BRPORT_MRP_RING_OPEN,
+	LKL_IFLA_BRPORT_MRP_IN_OPEN,
+	LKL_IFLA_BRPORT_MCAST_EHT_HOSTS_LIMIT,
+	LKL_IFLA_BRPORT_MCAST_EHT_HOSTS_CNT,
+	LKL_IFLA_BRPORT_LOCKED,
 	__LKL__IFLA_BRPORT_MAX
 };
 #define LKL_IFLA_BRPORT_MAX (__LKL__IFLA_BRPORT_MAX - 1)
@@ -395,6 +623,8 @@ enum {
 	LKL_IFLA_MACVLAN_MACADDR,
 	LKL_IFLA_MACVLAN_MACADDR_DATA,
 	LKL_IFLA_MACVLAN_MACADDR_COUNT,
+	LKL_IFLA_MACVLAN_BC_QUEUE_LEN,
+	LKL_IFLA_MACVLAN_BC_QUEUE_LEN_USED,
 	__LKL__IFLA_MACVLAN_MAX,
 };
 
@@ -416,6 +646,7 @@ enum lkl_macvlan_macaddr_mode {
 };
 
 #define LKL_MACVLAN_FLAG_NOPROMISC	1
+#define LKL_MACVLAN_FLAG_NODST	2 /* skip dst macvlan if matching src macvlan */
 
 /* VRF section */
 enum {
@@ -451,10 +682,22 @@ enum {
 	LKL_IFLA_MACSEC_REPLAY_PROTECT,
 	LKL_IFLA_MACSEC_VALIDATION,
 	LKL_IFLA_MACSEC_PAD,
+	LKL_IFLA_MACSEC_OFFLOAD,
 	__LKL__IFLA_MACSEC_MAX,
 };
 
 #define LKL_IFLA_MACSEC_MAX (__LKL__IFLA_MACSEC_MAX - 1)
+
+/* XFRM section */
+enum {
+	LKL_IFLA_XFRM_UNSPEC,
+	LKL_IFLA_XFRM_LINK,
+	LKL_IFLA_XFRM_IF_ID,
+	LKL_IFLA_XFRM_COLLECT_METADATA,
+	__LKL__IFLA_XFRM_MAX
+};
+
+#define LKL_IFLA_XFRM_MAX (__LKL__IFLA_XFRM_MAX - 1)
 
 enum lkl_macsec_validation_type {
 	LKL_MACSEC_VALIDATE_DISABLED = 0,
@@ -462,6 +705,14 @@ enum lkl_macsec_validation_type {
 	LKL_MACSEC_VALIDATE_STRICT = 2,
 	__LKL__MACSEC_VALIDATE_END,
 	LKL_MACSEC_VALIDATE_MAX = __LKL__MACSEC_VALIDATE_END - 1,
+};
+
+enum lkl_macsec_offload {
+	LKL_MACSEC_OFFLOAD_OFF = 0,
+	LKL_MACSEC_OFFLOAD_PHY = 1,
+	LKL_MACSEC_OFFLOAD_MAC = 2,
+	__LKL__MACSEC_OFFLOAD_END,
+	LKL_MACSEC_OFFLOAD_MAX = __LKL__MACSEC_OFFLOAD_END - 1,
 };
 
 /* IPVLAN section */
@@ -484,7 +735,55 @@ enum lkl_ipvlan_mode {
 #define LKL_IPVLAN_F_PRIVATE	0x01
 #define LKL_IPVLAN_F_VEPA		0x02
 
+/* Tunnel RTM header */
+struct lkl_tunnel_msg {
+	__lkl__u8 family;
+	__lkl__u8 flags;
+	__lkl__u16 reserved2;
+	__lkl__u32 ifindex;
+};
+
 /* VXLAN section */
+
+/* include statistics in the dump */
+#define LKL_TUNNEL_MSG_FLAG_STATS	0x01
+
+#define LKL_TUNNEL_MSG_VALID_USER_FLAGS LKL_TUNNEL_MSG_FLAG_STATS
+
+/* Embedded inside LKL_VXLAN_VNIFILTER_ENTRY_STATS */
+enum {
+	LKL_VNIFILTER_ENTRY_STATS_UNSPEC,
+	LKL_VNIFILTER_ENTRY_STATS_RX_BYTES,
+	LKL_VNIFILTER_ENTRY_STATS_RX_PKTS,
+	LKL_VNIFILTER_ENTRY_STATS_RX_DROPS,
+	LKL_VNIFILTER_ENTRY_STATS_RX_ERRORS,
+	LKL_VNIFILTER_ENTRY_STATS_TX_BYTES,
+	LKL_VNIFILTER_ENTRY_STATS_TX_PKTS,
+	LKL_VNIFILTER_ENTRY_STATS_TX_DROPS,
+	LKL_VNIFILTER_ENTRY_STATS_TX_ERRORS,
+	LKL_VNIFILTER_ENTRY_STATS_PAD,
+	__LKL__VNIFILTER_ENTRY_STATS_MAX
+};
+#define LKL_VNIFILTER_ENTRY_STATS_MAX (__LKL__VNIFILTER_ENTRY_STATS_MAX - 1)
+
+enum {
+	LKL_VXLAN_VNIFILTER_ENTRY_UNSPEC,
+	LKL_VXLAN_VNIFILTER_ENTRY_START,
+	LKL_VXLAN_VNIFILTER_ENTRY_END,
+	LKL_VXLAN_VNIFILTER_ENTRY_GROUP,
+	LKL_VXLAN_VNIFILTER_ENTRY_GROUP6,
+	LKL_VXLAN_VNIFILTER_ENTRY_STATS,
+	__LKL__VXLAN_VNIFILTER_ENTRY_MAX
+};
+#define LKL_VXLAN_VNIFILTER_ENTRY_MAX	(__LKL__VXLAN_VNIFILTER_ENTRY_MAX - 1)
+
+enum {
+	LKL_VXLAN_VNIFILTER_UNSPEC,
+	LKL_VXLAN_VNIFILTER_ENTRY,
+	__LKL__VXLAN_VNIFILTER_MAX
+};
+#define LKL_VXLAN_VNIFILTER_MAX	(__LKL__VXLAN_VNIFILTER_MAX - 1)
+
 enum {
 	LKL_IFLA_VXLAN_UNSPEC,
 	LKL_IFLA_VXLAN_ID,
@@ -514,6 +813,9 @@ enum {
 	LKL_IFLA_VXLAN_COLLECT_METADATA,
 	LKL_IFLA_VXLAN_LABEL,
 	LKL_IFLA_VXLAN_GPE,
+	LKL_IFLA_VXLAN_TTL_INHERIT,
+	LKL_IFLA_VXLAN_DF,
+	LKL_IFLA_VXLAN_VNIFILTER, /* only applicable with COLLECT_METADATA mode */
 	__LKL__IFLA_VXLAN_MAX
 };
 #define LKL_IFLA_VXLAN_MAX	(__LKL__IFLA_VXLAN_MAX - 1)
@@ -521,6 +823,14 @@ enum {
 struct lkl_ifla_vxlan_port_range {
 	__lkl__be16	low;
 	__lkl__be16	high;
+};
+
+enum lkl_ifla_vxlan_df {
+	LKL_VXLAN_DF_UNSET = 0,
+	LKL_VXLAN_DF_SET,
+	LKL_VXLAN_DF_INHERIT,
+	__LKL__VXLAN_DF_END,
+	LKL_VXLAN_DF_MAX = __LKL__VXLAN_DF_END - 1,
 };
 
 /* GENEVE section */
@@ -537,9 +847,32 @@ enum {
 	LKL_IFLA_GENEVE_UDP_ZERO_CSUM6_TX,
 	LKL_IFLA_GENEVE_UDP_ZERO_CSUM6_RX,
 	LKL_IFLA_GENEVE_LABEL,
+	LKL_IFLA_GENEVE_TTL_INHERIT,
+	LKL_IFLA_GENEVE_DF,
+	LKL_IFLA_GENEVE_INNER_PROTO_INHERIT,
 	__LKL__IFLA_GENEVE_MAX
 };
 #define LKL_IFLA_GENEVE_MAX	(__LKL__IFLA_GENEVE_MAX - 1)
+
+enum lkl_ifla_geneve_df {
+	LKL_GENEVE_DF_UNSET = 0,
+	LKL_GENEVE_DF_SET,
+	LKL_GENEVE_DF_INHERIT,
+	__LKL__GENEVE_DF_END,
+	LKL_GENEVE_DF_MAX = __LKL__GENEVE_DF_END - 1,
+};
+
+/* Bareudp section  */
+enum {
+	LKL_IFLA_BAREUDP_UNSPEC,
+	LKL_IFLA_BAREUDP_PORT,
+	LKL_IFLA_BAREUDP_ETHERTYPE,
+	LKL_IFLA_BAREUDP_SRCPORT_MIN,
+	LKL_IFLA_BAREUDP_MULTIPROTO_MODE,
+	__LKL__IFLA_BAREUDP_MAX
+};
+
+#define LKL_IFLA_BAREUDP_MAX (__LKL__IFLA_BAREUDP_MAX - 1)
 
 /* PPP section */
 enum {
@@ -562,6 +895,8 @@ enum {
 	LKL_IFLA_GTP_FD1,
 	LKL_IFLA_GTP_PDP_HASHSIZE,
 	LKL_IFLA_GTP_ROLE,
+	LKL_IFLA_GTP_CREATE_SOCKETS,
+	LKL_IFLA_GTP_RESTART_COUNT,
 	__LKL__IFLA_GTP_MAX,
 };
 #define LKL_IFLA_GTP_MAX (__LKL__IFLA_GTP_MAX - 1)
@@ -597,6 +932,10 @@ enum {
 	LKL_IFLA_BOND_AD_USER_PORT_KEY,
 	LKL_IFLA_BOND_AD_ACTOR_SYSTEM,
 	LKL_IFLA_BOND_TLB_DYNAMIC_LB,
+	LKL_IFLA_BOND_PEER_NOTIF_DELAY,
+	LKL_IFLA_BOND_AD_LACP_ACTIVE,
+	LKL_IFLA_BOND_MISSED_MAX,
+	LKL_IFLA_BOND_NS_IP6_TARGET,
 	__LKL__IFLA_BOND_MAX,
 };
 
@@ -624,6 +963,7 @@ enum {
 	LKL_IFLA_BOND_SLAVE_AD_AGGREGATOR_ID,
 	LKL_IFLA_BOND_SLAVE_AD_ACTOR_OPER_PORT_STATE,
 	LKL_IFLA_BOND_SLAVE_AD_PARTNER_OPER_PORT_STATE,
+	LKL_IFLA_BOND_SLAVE_PRIO,
 	__LKL__IFLA_BOND_SLAVE_MAX,
 };
 
@@ -655,6 +995,7 @@ enum {
 	LKL_IFLA_VF_IB_NODE_GUID,	/* VF Infiniband node GUID */
 	LKL_IFLA_VF_IB_PORT_GUID,	/* VF Infiniband port GUID */
 	LKL_IFLA_VF_VLAN_LIST,	/* nested list of vlans, option for QinQ */
+	LKL_IFLA_VF_BROADCAST,	/* VF broadcast */
 	__LKL__IFLA_VF_MAX,
 };
 
@@ -663,6 +1004,10 @@ enum {
 struct lkl_ifla_vf_mac {
 	__lkl__u32 vf;
 	__lkl__u8 mac[32]; /* MAX_ADDR_LEN */
+};
+
+struct lkl_ifla_vf_broadcast {
+	__lkl__u8 broadcast[32];
 };
 
 struct lkl_ifla_vf_vlan {
@@ -836,7 +1181,14 @@ enum {
 #define LKL_IFLA_IPOIB_MAX (__LKL__IFLA_IPOIB_MAX - 1)
 
 
-/* HSR section */
+/* HSR/PRP section, both uses same interface */
+
+/* Different redundancy protocols for hsr device */
+enum {
+	LKL_HSR_PROTOCOL_HSR,
+	LKL_HSR_PROTOCOL_PRP,
+	LKL_HSR_PROTOCOL_MAX,
+};
 
 enum {
 	LKL_IFLA_HSR_UNSPEC,
@@ -846,6 +1198,9 @@ enum {
 	LKL_IFLA_HSR_SUPERVISION_ADDR,	/* Supervision frame multicast addr */
 	LKL_IFLA_HSR_SEQ_NR,
 	LKL_IFLA_HSR_VERSION,		/* HSR version */
+	LKL_IFLA_HSR_PROTOCOL,		/* Indicate different protocol than
+					 * HSR. For example PRP.
+					 */
 	__LKL__IFLA_HSR_MAX,
 };
 
@@ -878,6 +1233,17 @@ enum {
 
 #define LKL_IFLA_STATS_FILTER_BIT(ATTR)	(1 << (ATTR - 1))
 
+enum {
+	LKL_IFLA_STATS_GETSET_UNSPEC,
+	LKL_IFLA_STATS_GET_FILTERS, /* Nest of IFLA_STATS_LINK_xxx, each a lkl_u32 with
+				 * a filter mask for the corresponding group.
+				 */
+	LKL_IFLA_STATS_SET_OFFLOAD_XSTATS_L3_STATS, /* 0 or 1 as u8 */
+	__LKL__IFLA_STATS_GETSET_MAX,
+};
+
+#define LKL_IFLA_STATS_GETSET_MAX (__LKL__IFLA_STATS_GETSET_MAX - 1)
+
 /* These are embedded into LKL_IFLA_STATS_LINK_XSTATS:
  * [LKL_IFLA_STATS_LINK_XSTATS]
  * -> [LINK_XSTATS_TYPE_xxx]
@@ -886,6 +1252,7 @@ enum {
 enum {
 	LKL_LINK_XSTATS_TYPE_UNSPEC,
 	LKL_LINK_XSTATS_TYPE_BRIDGE,
+	LKL_LINK_XSTATS_TYPE_BOND,
 	__LKL__LINK_XSTATS_TYPE_MAX
 };
 #define LKL_LINK_XSTATS_TYPE_MAX (__LKL__LINK_XSTATS_TYPE_MAX - 1)
@@ -894,9 +1261,20 @@ enum {
 enum {
 	LKL_IFLA_OFFLOAD_XSTATS_UNSPEC,
 	LKL_IFLA_OFFLOAD_XSTATS_CPU_HIT, /* struct lkl_rtnl_link_stats64 */
+	LKL_IFLA_OFFLOAD_XSTATS_HW_S_INFO,	/* HW stats info. A nest */
+	LKL_IFLA_OFFLOAD_XSTATS_L3_STATS,	/* struct lkl_rtnl_hw_stats64 */
 	__LKL__IFLA_OFFLOAD_XSTATS_MAX
 };
 #define LKL_IFLA_OFFLOAD_XSTATS_MAX (__LKL__IFLA_OFFLOAD_XSTATS_MAX - 1)
+
+enum {
+	LKL_IFLA_OFFLOAD_XSTATS_HW_S_INFO_UNSPEC,
+	LKL_IFLA_OFFLOAD_XSTATS_HW_S_INFO_REQUEST,		/* u8 */
+	LKL_IFLA_OFFLOAD_XSTATS_HW_S_INFO_USED,		/* u8 */
+	__LKL__IFLA_OFFLOAD_XSTATS_HW_S_INFO_MAX,
+};
+#define LKL_IFLA_OFFLOAD_XSTATS_HW_S_INFO_MAX \
+	(__LKL__IFLA_OFFLOAD_XSTATS_HW_S_INFO_MAX - 1)
 
 /* XDP section */
 
@@ -904,11 +1282,12 @@ enum {
 #define LKL_XDP_FLAGS_SKB_MODE		(1U << 1)
 #define LKL_XDP_FLAGS_DRV_MODE		(1U << 2)
 #define LKL_XDP_FLAGS_HW_MODE		(1U << 3)
+#define LKL_XDP_FLAGS_REPLACE		(1U << 4)
 #define LKL_XDP_FLAGS_MODES			(LKL_XDP_FLAGS_SKB_MODE | \
 					 LKL_XDP_FLAGS_DRV_MODE | \
 					 LKL_XDP_FLAGS_HW_MODE)
 #define LKL_XDP_FLAGS_MASK			(LKL_XDP_FLAGS_UPDATE_IF_NOEXIST | \
-					 LKL_XDP_FLAGS_MODES)
+					 LKL_XDP_FLAGS_MODES | LKL_XDP_FLAGS_REPLACE)
 
 /* These are stored into LKL_IFLA_XDP_ATTACHED on dump. */
 enum {
@@ -916,6 +1295,7 @@ enum {
 	LKL_XDP_ATTACHED_DRV,
 	LKL_XDP_ATTACHED_SKB,
 	LKL_XDP_ATTACHED_HW,
+	LKL_XDP_ATTACHED_MULTI,
 };
 
 enum {
@@ -924,6 +1304,10 @@ enum {
 	LKL_IFLA_XDP_ATTACHED,
 	LKL_IFLA_XDP_FLAGS,
 	LKL_IFLA_XDP_PROG_ID,
+	LKL_IFLA_XDP_DRV_PROG_ID,
+	LKL_IFLA_XDP_SKB_PROG_ID,
+	LKL_IFLA_XDP_HW_PROG_ID,
+	LKL_IFLA_XDP_EXPECTED_FD,
 	__LKL__IFLA_XDP_MAX,
 };
 
@@ -963,6 +1347,8 @@ enum {
 #define LKL_RMNET_FLAGS_INGRESS_MAP_COMMANDS          (1U << 1)
 #define LKL_RMNET_FLAGS_INGRESS_MAP_CKSUMV4           (1U << 2)
 #define LKL_RMNET_FLAGS_EGRESS_MAP_CKSUMV4            (1U << 3)
+#define LKL_RMNET_FLAGS_INGRESS_MAP_CKSUMV5           (1U << 4)
+#define LKL_RMNET_FLAGS_EGRESS_MAP_CKSUMV5            (1U << 5)
 
 enum {
 	LKL_IFLA_RMNET_UNSPEC,
@@ -977,5 +1363,25 @@ struct lkl_ifla_rmnet_flags {
 	__lkl__u32	flags;
 	__lkl__u32	mask;
 };
+
+/* MCTP section */
+
+enum {
+	LKL_IFLA_MCTP_UNSPEC,
+	LKL_IFLA_MCTP_NET,
+	__LKL__IFLA_MCTP_MAX,
+};
+
+#define LKL_IFLA_MCTP_MAX (__LKL__IFLA_MCTP_MAX - 1)
+
+/* DSA section */
+
+enum {
+	LKL_IFLA_DSA_UNSPEC,
+	LKL_IFLA_DSA_MASTER,
+	__LKL__IFLA_DSA_MAX,
+};
+
+#define LKL_IFLA_DSA_MAX	(__LKL__IFLA_DSA_MAX - 1)
 
 #endif /* _LKL_LINUX_IF_LINK_H */

@@ -21,6 +21,7 @@
 #define LKL_FUTEX_WAKE_BITSET	10
 #define LKL_FUTEX_WAIT_REQUEUE_PI	11
 #define LKL_FUTEX_CMP_REQUEUE_PI	12
+#define LKL_FUTEX_LOCK_PI2		13
 
 #define LKL_FUTEX_PRIVATE_FLAG	128
 #define LKL_FUTEX_CLOCK_REALTIME	256
@@ -32,6 +33,7 @@
 #define LKL_FUTEX_CMP_REQUEUE_PRIVATE (LKL_FUTEX_CMP_REQUEUE | LKL_FUTEX_PRIVATE_FLAG)
 #define LKL_FUTEX_WAKE_OP_PRIVATE	(LKL_FUTEX_WAKE_OP | LKL_FUTEX_PRIVATE_FLAG)
 #define LKL_FUTEX_LOCK_PI_PRIVATE	(LKL_FUTEX_LOCK_PI | LKL_FUTEX_PRIVATE_FLAG)
+#define LKL_FUTEX_LOCK_PI2_PRIVATE	(LKL_FUTEX_LOCK_PI2 | LKL_FUTEX_PRIVATE_FLAG)
 #define LKL_FUTEX_UNLOCK_PI_PRIVATE	(LKL_FUTEX_UNLOCK_PI | LKL_FUTEX_PRIVATE_FLAG)
 #define LKL_FUTEX_TRYLOCK_PI_PRIVATE (LKL_FUTEX_TRYLOCK_PI | LKL_FUTEX_PRIVATE_FLAG)
 #define LKL_FUTEX_WAIT_BITSET_PRIVATE	(LKL_FUTEX_WAIT_BITSET | LKL_FUTEX_PRIVATE_FLAG)
@@ -40,6 +42,31 @@
 					 LKL_FUTEX_PRIVATE_FLAG)
 #define LKL_FUTEX_CMP_REQUEUE_PI_PRIVATE	(LKL_FUTEX_CMP_REQUEUE_PI | \
 					 LKL_FUTEX_PRIVATE_FLAG)
+
+/*
+ * Flags to specify the bit length of the futex word for futex2 syscalls.
+ * Currently, only 32 is supported.
+ */
+#define LKL_FUTEX_32		2
+
+/*
+ * Max numbers of elements in a futex_waitv array
+ */
+#define LKL_FUTEX_WAITV_MAX		128
+
+/**
+ * struct lkl_futex_waitv - A waiter for vectorized wait
+ * @val:	Expected value at uaddr
+ * @uaddr:	User address to wait on
+ * @flags:	Flags for this waiter
+ * @__reserved:	Reserved member to preserve data alignment. Should be 0.
+ */
+struct lkl_futex_waitv {
+	__lkl__u64 val;
+	__lkl__u64 uaddr;
+	__lkl__u32 flags;
+	__lkl__u32 __reserved;
+};
 
 /*
  * Support for robust futexes: the kernel cleans up held futexes at

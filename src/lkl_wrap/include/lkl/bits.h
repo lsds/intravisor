@@ -946,7 +946,7 @@
 #define  SYS_syncfs __NR_syncfs
 #undef  __NR_syscalls
 #undef   SYS_syscalls
-#define __NR_syscalls 292
+#define __NR_syscalls 451
 #define  SYS_syscalls __NR_syscalls
 #undef  __NR_sysinfo
 #undef   SYS_sysinfo

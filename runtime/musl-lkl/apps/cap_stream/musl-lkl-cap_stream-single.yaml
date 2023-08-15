@@ -1,0 +1,12 @@
+---
+cVMs:
+- name: cap_stream_test
+  disk: disk_cap_stream.img
+  runtime: libmusl-lkl.so
+  args: /ld.so /app/cap_stream 1
+  callback_out: monitor
+  isolation:
+  - base:  0x400000000
+    size:  0x040000000
+    begin: 0x400000000
+    end:   0x440000000

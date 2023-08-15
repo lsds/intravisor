@@ -241,7 +241,6 @@ struct lkl_vfs_ns_cap_data {
 /* Allow examination and configuration of disk quotas */
 /* Allow setting the domainname */
 /* Allow setting the hostname */
-/* Allow calling bdflush() */
 /* Allow mount() and umount(), setting up new smb connection */
 /* Allow some autofs root ioctls */
 /* Allow nfsservctl */
@@ -272,6 +271,7 @@ struct lkl_vfs_ns_cap_data {
    arbitrary SCSI commands */
 /* Allow setting encryption key on loopback filesystem */
 /* Allow setting zone reclaim policy */
+/* Allow everything under LKL_CAP_BPF and LKL_CAP_PERFMON for backward compatibility */
 
 #define LKL_CAP_SYS_ADMIN        21
 
@@ -285,6 +285,8 @@ struct lkl_vfs_ns_cap_data {
    processes and setting the scheduling algorithm used by another
    process. */
 /* Allow setting cpu affinity on other processes */
+/* Allow setting realtime ioprio class */
+/* Allow setting ioprio class on other processes */
 
 #define LKL_CAP_SYS_NICE         23
 
@@ -299,6 +301,7 @@ struct lkl_vfs_ns_cap_data {
 /* Allow more than 64hz interrupts from the real-time clock */
 /* Override max number of consoles on console allocation */
 /* Override max number of keymaps */
+/* Control memory reclaim behavior */
 
 #define LKL_CAP_SYS_RESOURCE     24
 
@@ -328,6 +331,9 @@ struct lkl_vfs_ns_cap_data {
 /* Allow configuration of audit via unicast netlink socket */
 
 #define LKL_CAP_AUDIT_CONTROL    30
+
+/* Set or remove capabilities on files.
+   Map uid=0 into a child user namespace. */
 
 #define LKL_CAP_SETFCAP	     31
 
@@ -364,8 +370,52 @@ struct lkl_vfs_ns_cap_data {
 
 #define LKL_CAP_AUDIT_READ		37
 
+/*
+ * Allow system performance and observability privileged operations
+ * using perf_events, i915_perf and other kernel subsystems
+ */
 
-#define LKL_CAP_LAST_CAP         LKL_CAP_AUDIT_READ
+#define LKL_CAP_PERFMON		38
+
+/*
+ * LKL_CAP_BPF allows the following BPF operations:
+ * - Creating all types of BPF maps
+ * - Advanced verifier features
+ *   - Indirect variable access
+ *   - Bounded loops
+ *   - BPF to BPF function calls
+ *   - Scalar precision tracking
+ *   - Larger complexity limits
+ *   - Dead code elimination
+ *   - And potentially other features
+ * - Loading BPF Type Format (BTF) data
+ * - Retrieve xlated and JITed code of BPF programs
+ * - Use bpf_spin_lock() helper
+ *
+ * LKL_CAP_PERFMON relaxes the verifier checks further:
+ * - BPF progs can use of pointer-to-integer conversions
+ * - speculation attack hardening measures are bypassed
+ * - bpf_probe_read to read arbitrary kernel memory is allowed
+ * - bpf_trace_printk to print kernel memory is allowed
+ *
+ * LKL_CAP_SYS_ADMIN is required to use bpf_probe_write_user.
+ *
+ * LKL_CAP_SYS_ADMIN is required to iterate system wide loaded
+ * programs, maps, links, BTFs and convert their IDs to file descriptors.
+ *
+ * LKL_CAP_PERFMON and LKL_CAP_BPF are required to load tracing programs.
+ * LKL_CAP_NET_ADMIN and LKL_CAP_BPF are required to load networking programs.
+ */
+#define LKL_CAP_BPF			39
+
+
+/* Allow checkpoint/restore related operations */
+/* Allow PID selection during clone3() */
+/* Allow writing to ns_last_pid */
+
+#define LKL_CAP_CHECKPOINT_RESTORE	40
+
+#define LKL_CAP_LAST_CAP         LKL_CAP_CHECKPOINT_RESTORE
 
 #define lkl_cap_valid(x) ((x) >= 0 && (x) <= LKL_CAP_LAST_CAP)
 
@@ -374,7 +424,7 @@ struct lkl_vfs_ns_cap_data {
  */
 
 #define LKL_CAP_TO_INDEX(x)     ((x) >> 5)        /* 1 << 5 == bits in __lkl__u32 */
-#define LKL_CAP_TO_MASK(x)      (1 << ((x) & 31)) /* mask for indexed __lkl__u32 */
+#define LKL_CAP_TO_MASK(x)      (1U << ((x) & 31)) /* mask for indexed __lkl__u32 */
 
 
 #endif /* _LKL_LINUX_CAPABILITY_H */

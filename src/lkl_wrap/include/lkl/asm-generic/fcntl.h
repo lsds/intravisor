@@ -116,13 +116,13 @@
 #define LKL_F_GETSIG	11	/* for sockets. */
 #endif
 
-#ifndef LKL_CONFIG_64BIT
+#if __LKL__BITS_PER_LONG == 32 || defined(__LKL__KERNEL__)
 #ifndef LKL_F_GETLK64
 #define LKL_F_GETLK64	12	/*  using 'struct lkl_flock64' */
 #define LKL_F_SETLK64	13
 #define LKL_F_SETLKW64	14
 #endif
-#endif
+#endif /* __LKL__BITS_PER_LONG == 32 || defined(__LKL__KERNEL__) */
 
 #ifndef LKL_F_SETOWN_EX
 #define LKL_F_SETOWN_EX	15
@@ -181,6 +181,10 @@ struct lkl_f_owner_ex {
 				   blocking */
 #define LKL_LOCK_UN		8	/* remove lock */
 
+/*
+ * LKL_LOCK_MAND support has been removed from the kernel. We leave the symbols
+ * here to not break legacy builds, but these should not be used in new code.
+ */
 #define LKL_LOCK_MAND	32	/* This is a mandatory flock ... */
 #define LKL_LOCK_READ	64	/* which allows concurrent read operations */
 #define LKL_LOCK_WRITE	128	/* which allows concurrent write operations */
@@ -189,24 +193,19 @@ struct lkl_f_owner_ex {
 #define LKL_F_LINUX_SPECIFIC_BASE	1024
 
 #ifndef HAVE_ARCH_STRUCT_FLOCK
-#ifndef __LKL__ARCH_FLOCK_PAD
-#define __LKL__ARCH_FLOCK_PAD
-#endif
-
 struct lkl_flock {
 	short	l_type;
 	short	l_whence;
 	__lkl__kernel_off_t	l_start;
 	__lkl__kernel_off_t	l_len;
 	__lkl__kernel_pid_t	l_pid;
-	__LKL__ARCH_FLOCK_PAD
+#ifdef	__ARCH_FLOCK_EXTRA_SYSID
+	__ARCH_FLOCK_EXTRA_SYSID
+#endif
+#ifdef	__ARCH_FLOCK_PAD
+	__ARCH_FLOCK_PAD
+#endif
 };
-#endif
-
-#ifndef HAVE_ARCH_STRUCT_FLOCK64
-#ifndef __LKL__ARCH_FLOCK64_PAD
-#define __LKL__ARCH_FLOCK64_PAD
-#endif
 
 struct lkl_flock64 {
 	short  l_type;
@@ -214,8 +213,10 @@ struct lkl_flock64 {
 	__lkl__kernel_loff_t l_start;
 	__lkl__kernel_loff_t l_len;
 	__lkl__kernel_pid_t  l_pid;
-	__LKL__ARCH_FLOCK64_PAD
-};
+#ifdef	__ARCH_FLOCK64_PAD
+	__ARCH_FLOCK64_PAD
 #endif
+};
+#endif /* HAVE_ARCH_STRUCT_FLOCK */
 
 #endif /* _LKL_ASM_GENERIC_FCNTL_H */

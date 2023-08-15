@@ -31,6 +31,7 @@
 #define	LKL_IFNAMSIZ	16
 #endif /* __LKL__UAPI_DEF_IF_IFNAMSIZ */
 #define	LKL_IFALIASZ	256
+#define	LKL_ALTIFNAMSIZ	128
 #include <lkl/linux/hdlc/ioctl.h>
 
 /* For glibc compatibility. An empty enum does not compile. */
@@ -175,6 +176,7 @@ enum {
 enum {
 	LKL_IF_LINK_MODE_DEFAULT,
 	LKL_IF_LINK_MODE_DORMANT,	/* limit upward transition to dormant */
+	LKL_IF_LINK_MODE_TESTING,	/* limit upward transition to testing */
 };
 
 /*
@@ -210,6 +212,7 @@ struct lkl_if_settings {
 		lkl_fr_proto		*fr;
 		lkl_fr_proto_pvc		*fr_pvc;
 		lkl_fr_proto_pvc_info	*fr_pvc_info;
+		lkl_x25_hdlc_proto		*x25;
 
 		/* interface settings */
 		lkl_sync_serial_settings	*sync;

@@ -26,9 +26,9 @@
 struct lkl_shmid_ds {
 	struct ipc_perm		shm_perm;	/* operation perms */
 	int			shm_segsz;	/* size of segment (bytes) */
-	__lkl__kernel_time_t		shm_atime;	/* last attach time */
-	__lkl__kernel_time_t		shm_dtime;	/* last detach time */
-	__lkl__kernel_time_t		shm_ctime;	/* last change time */
+	__lkl__kernel_old_time_t	shm_atime;	/* last attach time */
+	__lkl__kernel_old_time_t	shm_dtime;	/* last detach time */
+	__lkl__kernel_old_time_t	shm_ctime;	/* last change time */
 	__lkl__kernel_ipc_pid_t	shm_cpid;	/* pid of creator */
 	__lkl__kernel_ipc_pid_t	shm_lpid;	/* pid of last operator */
 	unsigned short		shm_nattch;	/* no. of current attaches */
@@ -63,7 +63,9 @@ struct lkl_shmid_ds {
 #define LKL_SHM_HUGE_2MB	LKL_HUGETLB_FLAG_ENCODE_2MB
 #define LKL_SHM_HUGE_8MB	LKL_HUGETLB_FLAG_ENCODE_8MB
 #define LKL_SHM_HUGE_16MB	LKL_HUGETLB_FLAG_ENCODE_16MB
+#define LKL_SHM_HUGE_32MB	LKL_HUGETLB_FLAG_ENCODE_32MB
 #define LKL_SHM_HUGE_256MB	LKL_HUGETLB_FLAG_ENCODE_256MB
+#define LKL_SHM_HUGE_512MB	LKL_HUGETLB_FLAG_ENCODE_512MB
 #define LKL_SHM_HUGE_1GB	LKL_HUGETLB_FLAG_ENCODE_1GB
 #define LKL_SHM_HUGE_2GB	LKL_HUGETLB_FLAG_ENCODE_2GB
 #define LKL_SHM_HUGE_16GB	LKL_HUGETLB_FLAG_ENCODE_16GB

@@ -1,0 +1,10 @@
+  [runners.custom_build_dir]
+  [runners.docker]
+    tls_verify = false
+    image = "docker:20.10.16"
+    privileged = true
+    disable_entrypoint_overwrite = false
+    oom_kill_disable = false
+    disable_cache = false
+    volumes = ["/cache", "/certs/client", "/opt/share:/opt/share:rw", "/var/run/docker.sock:/var/run/docker.sock"]
+    shm_size = 0

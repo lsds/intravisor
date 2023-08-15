@@ -1,5 +1,4 @@
-#include ../../../../../config_arm_sim.mak
-MAKEFILE := $(shell git rev-parse --show-toplevel)/config_arm.mak
+MAKEFILE := $(shell git rev-parse --show-toplevel)/cfg.mak
 include $(MAKEFILE)
 
 
@@ -44,3 +43,6 @@ libfirst.so: $(OBJ)
 clean:
 	rm -rf ./*.o ./*.so ./*.ll ./1.txt $(OBJDIR)
 
+install:
+	sudo mkdir -p ${INSTALL_PATH}
+	sudo cp ./*.yaml ./*.so  ${INSTALL_PATH}

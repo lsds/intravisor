@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: GPL-2.0-only
+mktables
+mktables.exe
+altivec*.c
+int*.c
+tables.c
+neon?.c
+s390vx?.c
+vpermxor*.c

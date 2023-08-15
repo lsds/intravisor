@@ -145,6 +145,7 @@ struct lkl_in6_flowlabel_req {
 #define LKL_IPV6_TLV_PADN		1
 #define LKL_IPV6_TLV_ROUTERALERT	5
 #define LKL_IPV6_TLV_CALIPSO	7	/* RFC 5570 */
+#define LKL_IPV6_TLV_IOAM		49	/* TEMPORARY IANA allocation for IOAM */
 #define LKL_IPV6_TLV_JUMBO		194
 #define LKL_IPV6_TLV_HAO		201	/* home address option */
 
@@ -177,6 +178,9 @@ struct lkl_in6_flowlabel_req {
 #define LKL_IPV6_V6ONLY		26
 #define LKL_IPV6_JOIN_ANYCAST	27
 #define LKL_IPV6_LEAVE_ANYCAST	28
+#define LKL_IPV6_MULTICAST_ALL	29
+#define LKL_IPV6_ROUTER_ALERT_ISOLATE	30
+#define LKL_IPV6_RECVERR_RFC4884	31
 
 /* LKL_IPV6_MTU_DISCOVER values */
 #define LKL_IPV6_PMTUDISC_DONT		0

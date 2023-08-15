@@ -4,6 +4,7 @@
 
 #include <lkl/linux/types.h>
 
+#include <lkl/asm/bitsperlong.h>
 #include <lkl/asm/swab.h>
 
 /*
@@ -101,7 +102,7 @@ static __inline__  __lkl__u32 __lkl__fswahb32(__lkl__u32 val)
 #define __lkl__swab16(x) (__lkl__u16)__builtin_bswap16((__lkl__u16)(x))
 #else
 #define __lkl__swab16(x)				\
-	(__builtin_constant_p((__lkl__u16)(x)) ?	\
+	(__lkl__u16)(__builtin_constant_p(x) ?	\
 	__lkl___constant_swab16(x) :			\
 	__lkl__fswab16(x))
 #endif
@@ -114,7 +115,7 @@ static __inline__  __lkl__u32 __lkl__fswahb32(__lkl__u32 val)
 #define __lkl__swab32(x) (__lkl__u32)__builtin_bswap32((__lkl__u32)(x))
 #else
 #define __lkl__swab32(x)				\
-	(__builtin_constant_p((__lkl__u32)(x)) ?	\
+	(__lkl__u32)(__builtin_constant_p(x) ?	\
 	__lkl___constant_swab32(x) :			\
 	__lkl__fswab32(x))
 #endif
@@ -127,10 +128,19 @@ static __inline__  __lkl__u32 __lkl__fswahb32(__lkl__u32 val)
 #define __lkl__swab64(x) (__lkl__u64)__builtin_bswap64((__lkl__u64)(x))
 #else
 #define __lkl__swab64(x)				\
-	(__builtin_constant_p((__lkl__u64)(x)) ?	\
+	(__lkl__u64)(__builtin_constant_p(x) ?	\
 	__lkl___constant_swab64(x) :			\
 	__lkl__fswab64(x))
 #endif
+
+static __lkl__always_inline unsigned long __lkl__swab(const unsigned long y)
+{
+#if __LKL__BITS_PER_LONG == 64
+	return __lkl__swab64(y);
+#else /* __LKL__BITS_PER_LONG == 32 */
+	return __lkl__swab32(y);
+#endif
+}
 
 /**
  * __lkl__swahw32 - return a word-swapped 32-bit value

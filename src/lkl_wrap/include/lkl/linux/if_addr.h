@@ -33,6 +33,9 @@ enum {
 	LKL_IFA_CACHEINFO,
 	LKL_IFA_MULTICAST,
 	LKL_IFA_FLAGS,
+	LKL_IFA_RT_PRIORITY,	/* lkl_u32, priority/metric for prefix route */
+	LKL_IFA_TARGET_NETNSID,
+	LKL_IFA_PROTO,		/* u8, address protocol */
 	__LKL__IFA_MAX,
 };
 
@@ -64,5 +67,11 @@ struct lkl_ifa_cacheinfo {
 /* backwards compatibility for userspace */
 #define LKL_IFA_RTA(r)  ((struct lkl_rtattr*)(((char*)(r)) + LKL_NLMSG_ALIGN(sizeof(struct lkl_ifaddrmsg))))
 #define LKL_IFA_PAYLOAD(n) LKL_NLMSG_PAYLOAD(n,sizeof(struct lkl_ifaddrmsg))
+
+/* ifa_proto */
+#define LKL_IFAPROT_UNSPEC		0
+#define LKL_IFAPROT_KERNEL_LO	1	/* loopback */
+#define LKL_IFAPROT_KERNEL_RA	2	/* set by kernel from router announcement */
+#define LKL_IFAPROT_KERNEL_LL	3	/* link-local set by kernel */
 
 #endif

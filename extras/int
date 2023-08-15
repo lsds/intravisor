@@ -1,0 +1,20 @@
+#!/bin/sh
+#
+# $FreeBSD$
+#!/bin/sh
+#
+# $FreeBSD$
+#
+
+# PROVIDE: int
+# REQUIRE: DAEMON FILESYSTEMS LOGIN
+# KEYWORD: shutdown
+
+. /etc/rc.subr
+
+name="intravisor"
+desc="Manage cVMS"
+start_cmd="cd /intravisor && /intravisor/intravisor -y /intravisor/cvm.yaml"
+
+load_rc_config $name
+run_rc_command "$1"

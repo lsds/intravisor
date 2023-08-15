@@ -1,0 +1,86 @@
+choice ARCH
+    prompt "Arch"
+    default ARCH_RV
+    config ARCH_RV
+	bool "RISC-V"
+    config ARCH_ARM
+	bool "Arm"
+    config ARCH_X86
+	bool "X86"
+    endchoice
+
+choice BIT
+    prompt "Bit size"
+    default BIT_64
+    config BIT_64
+	bool "64"
+    endchoice
+
+choice SELECT_ARCH_MODE
+    prompt "Execution Mode"
+    default MODE_PURE
+    config MODE_PURE
+	bool "pure-cap"
+
+    config MODE_HYB
+	bool "hybrid-cap"
+
+    config MODE_SIM
+	bool "simulation"
+
+    endchoice
+
+choice SELECT_TARGET_OS
+    prompt "Select Target OS"
+    default OS_CHERIBSD
+    config OS_CHERIBSD
+	bool "CheriBSD"
+
+    config OS_LINUX
+	bool "Linux"
+
+    endchoice
+
+
+config KERNEL_CONFIGURED_DDC_RELATIVE
+	bool "Kernel is configured to support PCC/DDC-relative addressing in cVMs"
+	depends on ARCH_ARM
+       def_bool y
+
+
+config DEBUG
+	bool "Enable extra debug"
+       def_bool n
+
+config ORC
+	bool "ORC support"
+       def_bool n
+
+config LIBVIRT
+	bool "Libvirt support in Intravisor"
+       def_bool n
+
+config LKL
+	bool "LKL support in Intravisor"
+       def_bool n
+
+
+menu	"LKL Config"
+	depends on LKL
+
+config LKL_HEAP_SIZE_MB
+	int "Heap size in MB"
+	default	200
+
+
+endmenu
+
+config CHERI_SDK
+	string "CHERI SDK"
+	default "${HOME}/cheri/output/sdk" if ARCH_RV
+	default "${HOME}/cheri/output/morello-sdk" if ARCH_ARM
+	default "/usr" if ARCH_X86
+
+config CVM_MAX_SIZE
+	hex "max cVM size"
+	default	0x10000000

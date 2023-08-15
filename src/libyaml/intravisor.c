@@ -11,7 +11,7 @@ void bail(const char *msg) {
 
 void *bail_alloc(size_t size) {
 	void *p = calloc(1, size);
-	if (!p) {
+	if(!p) {
 		bail("out of memory");
 	}
 
@@ -20,17 +20,17 @@ void *bail_alloc(size_t size) {
 
 char *bail_strdup(const char *s) {
 	char *c = strdup(s ? s : "");
-	if (!c) {
+	if(!c) {
 		bail("out of memory");
 	}
 
 	return c;
 }
 
-void add_cvm(struct cvm **cvms, char *name, char *disk, char *runtime, char *net, char *args, long base, long size, long begin, long end, char *cb_out, char *cb_in, int wait) {
+void add_cvm(struct cvm **cvms, char *name, char *disk, char *runtime, char *net, char *args, long base, long size, long begin, long end, char *cb_out, char *cb_in, int wait, int cr) {
 	struct cvm *f = bail_alloc(sizeof(*f));
 	memset(f, 0, sizeof(struct cvm));
-	if(name) 
+	if(name)
 		f->name = bail_strdup(name);
 	if(disk)
 		f->disk = bail_strdup(disk);
@@ -50,21 +50,21 @@ void add_cvm(struct cvm **cvms, char *name, char *disk, char *runtime, char *net
 	f->isol.begin = begin;
 	f->isol.end = end;
 	f->wait = wait;
+	f->cr = cr;
 
-	if (!*cvms) {
+	if(!*cvms) {
 		*cvms = f;
 	} else {
 		struct cvm *tail = *cvms;
-		while (tail->next) {
+		while(tail->next) {
 			tail = tail->next;
 		}
 		tail->next = f;
-    }
+	}
 }
 
-
 void destroy_cvms(struct cvm **cvms) {
-	for (struct cvm *f = *cvms; f; f = *cvms) {
+	for(struct cvm * f = *cvms; f; f = *cvms) {
 		*cvms = f->next;
 		free(f->name);
 		free(f->disk);
@@ -74,7 +74,7 @@ void destroy_cvms(struct cvm **cvms) {
 		free(f->cb_out);
 		free(f->args);
 		free(f);
-    }
+	}
 }
 
 void add_capfile(struct capfile **capfiles, char *name, char *data, long size, long addr) {
@@ -84,24 +84,22 @@ void add_capfile(struct capfile **capfiles, char *name, char *data, long size, l
 	f->size = size;
 	f->addr = addr;
 
-	if (!*capfiles) {
+	if(!*capfiles) {
 		*capfiles = f;
 	} else {
 		struct capfile *tail = *capfiles;
-		while (tail->next) {
+		while(tail->next) {
 			tail = tail->next;
 		}
 		tail->next = f;
 	}
 }
 
-
 void destroy_capfiles(struct capfile **capfiles) {
-	for (struct capfile *f = *capfiles; f; f = *capfiles) {
+	for(struct capfile * f = *capfiles; f; f = *capfiles) {
 		*capfiles = f->next;
 		free(f->name);
 		free(f->data);
 		free(f);
-    }
+	}
 }
-

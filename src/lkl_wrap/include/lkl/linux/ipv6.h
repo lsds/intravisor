@@ -40,6 +40,7 @@ struct lkl_in6_ifreq {
 #define LKL_IPV6_SRCRT_STRICT	0x01	/* Deprecated; will be removed */
 #define LKL_IPV6_SRCRT_TYPE_0	0	/* Deprecated; will be removed */
 #define LKL_IPV6_SRCRT_TYPE_2	2	/* IPv6 type 2 Routing Header	*/
+#define LKL_IPV6_SRCRT_TYPE_3	3	/* RPL Segment Routing with IPv6 */
 #define LKL_IPV6_SRCRT_TYPE_4	4	/* Segment Routing with IPv6 */
 
 /*
@@ -129,8 +130,10 @@ struct lkl_ipv6hdr {
 	__lkl__u8			nexthdr;
 	__lkl__u8			hop_limit;
 
-	struct	lkl_in6_addr	saddr;
-	struct	lkl_in6_addr	daddr;
+	__lkl__struct_group(/* no tag */, addrs, /* no attrs */,
+		struct	lkl_in6_addr	saddr;
+		struct	lkl_in6_addr	daddr;
+	);
 };
 
 
@@ -187,6 +190,13 @@ enum {
 	LKL_DEVCONF_DISABLE_POLICY,
 	LKL_DEVCONF_ACCEPT_RA_RT_INFO_MIN_PLEN,
 	LKL_DEVCONF_NDISC_TCLASS,
+	LKL_DEVCONF_RPL_SEG_ENABLED,
+	LKL_DEVCONF_RA_DEFRTR_METRIC,
+	LKL_DEVCONF_IOAM6_ENABLED,
+	LKL_DEVCONF_IOAM6_ID,
+	LKL_DEVCONF_IOAM6_ID_WIDE,
+	LKL_DEVCONF_NDISC_EVICT_NOCARRIER,
+	LKL_DEVCONF_ACCEPT_UNTRACKED_NA,
 	LKL_DEVCONF_MAX
 };
 

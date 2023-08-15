@@ -1,23 +1,13 @@
 
 
+##
 
-
-### 
-
-|                 				| ARM | ARM SIM | ARM HYB | ARM ORC | RISC-V | RISC-V HYB | RISC-V SIM | RISC-V ORC |
-|:---------------:				|:---:|:-------:|:-------:|:-------:|:------:|:----------:|:----------:|:----------:|
-| Intravisor 					| Y   |         |         | Y       | Y      |            |            |            |
-| [two pure](two-pure/) 			| Y   |         | N       | N       |        |            |            | N          |
-| [ffmpeg 1x1](orc-ffmpeg/4.ffmpeg_x1)       	| Y   |         |         |         |        |            |            |            |
-| [ffmpeg 2x1-4](orc-ffmpeg/5.ffmpeg_x2)       	| Y   |         |         | Y       |        |            |            |            |
-| [SCO/ORC example](orc-hello/)		       	| P   |         |         | Y       |        |            |            |            |
-| SQLite 1x-5x               			|     |         |         |         |        |            |            |            |
-| [SQLite RISC-V](sqlite_riscv/)               	|     |         |         |         | Y      |            |            |            |
-| [Redis](redis/4.redis_x1)         		| Y   |         |         |         |        |            |            |            |
-| [micro ROS](uros2/4.uros2_x1/uros2)           | Y   |         |         |         |        |            |            |            |
-|                 				|     |         |         |         |        |            |            |            |
-|                 				|     |         |         |         |        |            |            |            |
-|                 				|     |         |         |         |        |            |            |            |
+|                 				| ARM-H | RISC-V-H | ARM-P | RISC-V-P | ARM-O | RISC-V-O |
+|:---------------:				|:-----:|:--------:|:-----:|:--------:|:-----:|:--------:|
+| Intravisor 					|   Y   |    Y     |   Y   |    Y     |   Y   |          |
+| [hello world](./hello_world)       		|   Y   |    Y     |       |          |       |          |
+| [Two Pure](./two-pure)       			|       |          |   Y   |    Y     |       |          |
+| [ORC hello](./orc-hello)       		|       |          |   Y   |          |   Y   |     O    |
 
 #### Legend
 Y: supported and tested
@@ -26,6 +16,16 @@ N: cannot be supported by design
 
 P: partially supported (or supported but pointless)
 
-ARM: Arm pure-cap
+O: outdated and needs an update
 
-RISC-V: RISC-V64 pure-cap
+ARM-H: Arm hybrid/native
+
+RISC-V-H: RISC-V64 hybrid/native
+
+ARM-P: Arm pure-cap
+
+RISC-V-P: RISC-V64 pure-cap
+
+ARM-O: Arm pure-cap with ORC support
+
+RISC-V-O: RISC-V64 pure-cap with ORC support

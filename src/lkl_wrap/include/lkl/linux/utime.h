@@ -5,8 +5,8 @@
 #include <lkl/linux/types.h>
 
 struct lkl_utimbuf {
-	__lkl__kernel_time_t actime;
-	__lkl__kernel_time_t modtime;
+	__lkl__kernel_old_time_t actime;
+	__lkl__kernel_old_time_t modtime;
 };
 
 #endif

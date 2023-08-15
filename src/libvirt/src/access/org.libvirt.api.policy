@@ -1,0 +1,880 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC "-//freedesktop//DTD polkit Policy Configuration 1.0//EN"
+    "http://www.freedesktop.org/software/polkit/policyconfig-1.dtd">
+<policyconfig>
+  <vendor>Libvirt Project</vendor>
+  <vendor_url>https://libvirt.org</vendor_url>
+  <action id="org.libvirt.api.connect.detect-storage-pools">
+    <description>Detect storage pools</description>
+    <message>Detecting storage pools requires authorization</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>no</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.connect.getattr">
+    <description>Access connection</description>
+    <message>Accessing the connection requires authorization</message>
+    <defaults>
+      <allow_any>yes</allow_any>
+      <allow_inactive>yes</allow_inactive>
+      <allow_active>yes</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.connect.interface-transaction">
+    <description>Interface transactions</description>
+    <message>Using interface transactions requires authorization</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>no</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.connect.pm-control">
+    <description>Use host power management</description>
+    <message>Using host power management requires authorization</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>no</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.connect.read">
+    <description>Read host</description>
+    <message>Reading the host configuration requires authorization</message>
+    <defaults>
+      <allow_any>yes</allow_any>
+      <allow_inactive>yes</allow_inactive>
+      <allow_active>yes</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.connect.search-domains">
+    <description>List domains</description>
+    <message>Listing domains or using domain events requires authorization</message>
+    <defaults>
+      <allow_any>yes</allow_any>
+      <allow_inactive>yes</allow_inactive>
+      <allow_active>yes</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.connect.search-interfaces">
+    <description>List interfaces</description>
+    <message>Listing interfaces requires authorization</message>
+    <defaults>
+      <allow_any>yes</allow_any>
+      <allow_inactive>yes</allow_inactive>
+      <allow_active>yes</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.connect.search-networks">
+    <description>List networks</description>
+    <message>Listing networks or using network events requires authorization</message>
+    <defaults>
+      <allow_any>yes</allow_any>
+      <allow_inactive>yes</allow_inactive>
+      <allow_active>yes</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.connect.search-node-devices">
+    <description>List node devices</description>
+    <message>Listing node devices requires authorization</message>
+    <defaults>
+      <allow_any>yes</allow_any>
+      <allow_inactive>yes</allow_inactive>
+      <allow_active>yes</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.connect.search-nwfilter-bindings">
+    <description>List network filter bindings</description>
+    <message>Listing network filter bindings requires authorization</message>
+    <defaults>
+      <allow_any>yes</allow_any>
+      <allow_inactive>yes</allow_inactive>
+      <allow_active>yes</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.connect.search-nwfilters">
+    <description>List network filters</description>
+    <message>Listing network filters requires authorization</message>
+    <defaults>
+      <allow_any>yes</allow_any>
+      <allow_inactive>yes</allow_inactive>
+      <allow_active>yes</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.connect.search-secrets">
+    <description>List secrets</description>
+    <message>Listing secrets requires authorization</message>
+    <defaults>
+      <allow_any>yes</allow_any>
+      <allow_inactive>yes</allow_inactive>
+      <allow_active>yes</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.connect.search-storage-pools">
+    <description>List storage pools</description>
+    <message>Listing storage pools requires authorization</message>
+    <defaults>
+      <allow_any>yes</allow_any>
+      <allow_inactive>yes</allow_inactive>
+      <allow_active>yes</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.connect.write">
+    <description>Write host</description>
+    <message>Writing the host configuration requires authorization</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>no</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.domain.block-read">
+    <description>Read domain block</description>
+    <message>Reading domain block devices requires authorization</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>no</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.domain.block-write">
+    <description>Write domain block</description>
+    <message>Writing domain block devices requires authorization</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>no</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.domain.core-dump">
+    <description>Dump domain</description>
+    <message>Dumping domain corefile requires authorization</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>no</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.domain.delete">
+    <description>Delete domain</description>
+    <message>Deleting domain configuration requires authorization</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>no</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.domain.fs-freeze">
+    <description>Freeze and thaw domain filesystems</description>
+    <message>Freezing and thawing domain filesystems requires authorization</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>no</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.domain.fs-trim">
+    <description>Trim domain filesystems</description>
+    <message>Trimming domain filesystems requires authorization</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>no</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.domain.getattr">
+    <description>Access domain</description>
+    <message>Accessing the domain requires authorization</message>
+    <defaults>
+      <allow_any>yes</allow_any>
+      <allow_inactive>yes</allow_inactive>
+      <allow_active>yes</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.domain.hibernate">
+    <description>Hibernate domain</description>
+    <message>Saving domain state requires authorization</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>no</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.domain.init-control">
+    <description>Domain init control</description>
+    <message>Controlling domain init process requires authorization</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>no</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.domain.inject-nmi">
+    <description>Inject domain NMI</description>
+    <message>Injecting interrupt requires authorization</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>no</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.domain.mem-read">
+    <description>Read domain memory</description>
+    <message>Reading domain memory requires authorization</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>no</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.domain.migrate">
+    <description>Migrate domain</description>
+    <message>Migrating domain requires authorization</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>no</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.domain.open-device">
+    <description>Open domain device</description>
+    <message>Opening domain devices requires authorization</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>no</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.domain.open-graphics">
+    <description>Open domain graphics</description>
+    <message>Opening domain graphics console requires authorization</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>no</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.domain.open-namespace">
+    <description>Open domain namespace</description>
+    <message>Opening domain namespaces requires authorization</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>no</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.domain.pm-control">
+    <description>Use domain power management</description>
+    <message>Using domain power management requires authorization</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>no</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.domain.read">
+    <description>Read domain</description>
+    <message>Reading domain configuration requires authorization</message>
+    <defaults>
+      <allow_any>yes</allow_any>
+      <allow_inactive>yes</allow_inactive>
+      <allow_active>yes</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.domain.read-secure">
+    <description>Read secure domain</description>
+    <message>Reading secure domain configuration requires authorization</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>no</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.domain.reset">
+    <description>Reset domain</description>
+    <message>Resetting the domain requires authorization</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>no</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.domain.save">
+    <description>Save domain</description>
+    <message>Saving domain configuration requires authorization</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>no</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.domain.screenshot">
+    <description>Take domain screenshot</description>
+    <message>Taking domain screenshots requires authorization</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>no</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.domain.send-input">
+    <description>Send domain input</description>
+    <message>Sending input events to domain requires authorization</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>no</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.domain.send-signal">
+    <description>Send domain signal</description>
+    <message>Sending signals to processes in domain requires authorization</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>no</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.domain.set-password">
+    <description>Set password of the domain's account</description>
+    <message>Setting the domain accounts' password requires authorization</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>no</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.domain.set-time">
+    <description>Write domain time</description>
+    <message>Setting the domain time requires authorization</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>no</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.domain.snapshot">
+    <description>Snapshot domain</description>
+    <message>Snapshotting domain requires authorization</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>no</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.domain.start">
+    <description>Start domain</description>
+    <message>Starting the domain requires authorization</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>no</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.domain.stop">
+    <description>Stop domain</description>
+    <message>Stopping the domain requires authorization</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>no</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.domain.suspend">
+    <description>Suspend domain</description>
+    <message>Suspending domain CPUs requires authorization</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>no</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.domain.write">
+    <description>Write domain</description>
+    <message>Writing domain configuration requires authorization</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>no</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.interface.delete">
+    <description>Delete interface</description>
+    <message>Deleting interface configuration requires authorization</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>no</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.interface.getattr">
+    <description>Access interface</description>
+    <message>Accessing interface requires authorization</message>
+    <defaults>
+      <allow_any>yes</allow_any>
+      <allow_inactive>yes</allow_inactive>
+      <allow_active>yes</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.interface.read">
+    <description>Read interface</description>
+    <message>Reading interface configuration requires authorization</message>
+    <defaults>
+      <allow_any>yes</allow_any>
+      <allow_inactive>yes</allow_inactive>
+      <allow_active>yes</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.interface.save">
+    <description>Save interface</description>
+    <message>Saving interface configuration requires authorization</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>no</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.interface.start">
+    <description>Start interface</description>
+    <message>Starting interface requires authorization</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>no</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.interface.stop">
+    <description>Stop interface</description>
+    <message>Stopping interface requires authorization</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>no</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.interface.write">
+    <description>Write interface</description>
+    <message>Writing interface configuration requires authorization</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>no</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.network.delete">
+    <description>Delete network</description>
+    <message>Deleting network configuration requires authorization</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>no</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.network.getattr">
+    <description>Access network</description>
+    <message>Accessing network requires authorization</message>
+    <defaults>
+      <allow_any>yes</allow_any>
+      <allow_inactive>yes</allow_inactive>
+      <allow_active>yes</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.network.read">
+    <description>Read network</description>
+    <message>Reading network configuration requires authorization</message>
+    <defaults>
+      <allow_any>yes</allow_any>
+      <allow_inactive>yes</allow_inactive>
+      <allow_active>yes</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.network.save">
+    <description>Save network</description>
+    <message>Saving network configuration requires authorization</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>no</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.network.start">
+    <description>Start network</description>
+    <message>Starting network requires authorization</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>no</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.network.stop">
+    <description>Stop network</description>
+    <message>Stopping network requires authorization</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>no</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.network.write">
+    <description>Write network</description>
+    <message>Writing network configuration requires authorization</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>no</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.node-device.detach">
+    <description>Detach node device</description>
+    <message>Detaching node device driver requires authorization</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>no</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.node-device.getattr">
+    <description>Access node device</description>
+    <message>Accesing node device requires authorization</message>
+    <defaults>
+      <allow_any>yes</allow_any>
+      <allow_inactive>yes</allow_inactive>
+      <allow_active>yes</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.node-device.read">
+    <description>Read node device</description>
+    <message>Reading node device configuration requires authorization</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>no</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.node-device.start">
+    <description>Start node device</description>
+    <message>Starting node device requires authorization</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>no</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.node-device.stop">
+    <description>Stop node device</description>
+    <message>Stopping node device requires authorization</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>no</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.node-device.write">
+    <description>Write node device</description>
+    <message>Writing node device configuration requires authorization</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>no</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.nwfilter.delete">
+    <description>Delete network filter</description>
+    <message>Deleting network filter configuration requires authorization</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>no</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.nwfilter.getattr">
+    <description>Access network filter</description>
+    <message>Accessing network filter requires authorization</message>
+    <defaults>
+      <allow_any>yes</allow_any>
+      <allow_inactive>yes</allow_inactive>
+      <allow_active>yes</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.nwfilter.read">
+    <description>Read network filter</description>
+    <message>Reading network filter configuration requires authorization</message>
+    <defaults>
+      <allow_any>yes</allow_any>
+      <allow_inactive>yes</allow_inactive>
+      <allow_active>yes</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.nwfilter.save">
+    <description>Save network filter</description>
+    <message>Saving network filter configuration requires authorization</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>no</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.nwfilter.write">
+    <description>Write network filter</description>
+    <message>Writing network filter configuration requires authorization</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>no</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.nwfilter-binding.create">
+    <description>Create network filter binding</description>
+    <message>Creating network filter binding requires authorization</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>no</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.nwfilter-binding.delete">
+    <description>Delete network filter binding</description>
+    <message>Deleting network filter binding requires authorization</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>no</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.nwfilter-binding.getattr">
+    <description>Access network filter</description>
+    <message>Accessing network filter requires authorization</message>
+    <defaults>
+      <allow_any>yes</allow_any>
+      <allow_inactive>yes</allow_inactive>
+      <allow_active>yes</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.nwfilter-binding.read">
+    <description>Read network filter binding</description>
+    <message>Reading network filter configuration requires authorization</message>
+    <defaults>
+      <allow_any>yes</allow_any>
+      <allow_inactive>yes</allow_inactive>
+      <allow_active>yes</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.secret.delete">
+    <description>Delete secret</description>
+    <message>Deleting secret configuration requires authorization</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>no</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.secret.getattr">
+    <description>Access secret</description>
+    <message>Accessing secret requires authorization</message>
+    <defaults>
+      <allow_any>yes</allow_any>
+      <allow_inactive>yes</allow_inactive>
+      <allow_active>yes</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.secret.read">
+    <description>Read secret</description>
+    <message>Reading secret configuration requires authorization</message>
+    <defaults>
+      <allow_any>yes</allow_any>
+      <allow_inactive>yes</allow_inactive>
+      <allow_active>yes</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.secret.read-secure">
+    <description>Read secure secret</description>
+    <message>Reading secure secret configuration requires authorization</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>no</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.secret.save">
+    <description>Save secret</description>
+    <message>Saving secret configuration requires authorization</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>no</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.secret.write">
+    <description>Write secret</description>
+    <message>Writing secret configuration requires authorization</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>no</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.storage-pool.delete">
+    <description>Delete storage pool</description>
+    <message>Deleting storage pool configuration requires authorization</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>no</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.storage-pool.format">
+    <description>Format storage pool</description>
+    <message>Formatting storage pool data requires authorization</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>no</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.storage-pool.getattr">
+    <description>Access storage pool</description>
+    <message>Accessing storage pool requires authorization</message>
+    <defaults>
+      <allow_any>yes</allow_any>
+      <allow_inactive>yes</allow_inactive>
+      <allow_active>yes</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.storage-pool.read">
+    <description>Read storage pool</description>
+    <message>Reading storage pool configuration requires authorization</message>
+    <defaults>
+      <allow_any>yes</allow_any>
+      <allow_inactive>yes</allow_inactive>
+      <allow_active>yes</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.storage-pool.refresh">
+    <description>Refresh storage pool</description>
+    <message>Refreshing storage pool volumes requires authorization</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>no</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.storage-pool.save">
+    <description>Save storage pool</description>
+    <message>Saving storage pool configuration requires authorization</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>no</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.storage-pool.search-storage-vols">
+    <description>List storage pool volumes</description>
+    <message>Listing storage pool volumes requires authorization</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>no</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.storage-pool.start">
+    <description>Start storage pool</description>
+    <message>Starting storage pool configuration requires authorization</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>no</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.storage-pool.stop">
+    <description>Stop storage pool</description>
+    <message>Stopping storage pool configuration requires authorization</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>no</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.storage-pool.write">
+    <description>Write storage pool</description>
+    <message>Writing storage pool configuration requires authorization</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>no</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.storage-vol.create">
+    <description>Create storage volume</description>
+    <message>Creating storage volume requires authorization</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>no</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.storage-vol.data-read">
+    <description>Read storage volume data</description>
+    <message>Reading storage volume data requires authorization</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>no</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.storage-vol.data-write">
+    <description>Write storage volume data</description>
+    <message>Writing storage volume data requires authorization</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>no</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.storage-vol.delete">
+    <description>Delete storage volume</description>
+    <message>Deleting storage volume requires authorization</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>no</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.storage-vol.format">
+    <description>Format storage volume</description>
+    <message>Formatting storage volume data requires authorization</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>no</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.storage-vol.getattr">
+    <description>Access storage volume</description>
+    <message>Acceessing storage volume requires authorization</message>
+    <defaults>
+      <allow_any>yes</allow_any>
+      <allow_inactive>yes</allow_inactive>
+      <allow_active>yes</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.storage-vol.read">
+    <description>Read storage volume</description>
+    <message>Reading storage volume configuration requires authorization</message>
+    <defaults>
+      <allow_any>yes</allow_any>
+      <allow_inactive>yes</allow_inactive>
+      <allow_active>yes</allow_active>
+    </defaults>
+  </action>
+  <action id="org.libvirt.api.storage-vol.resize">
+    <description>Resize storage volume</description>
+    <message>Resizing  storage volume requires authorization</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>no</allow_active>
+    </defaults>
+  </action>
+</policyconfig>

@@ -13,13 +13,12 @@ struct cap_files_store_s {
 static struct cap_files_store_s cap_files[MAX_CF_FILES];
 static pthread_mutex_t cf_store_lock;
 
-
 void init_cap_files_store() {
-	memset(cap_files, 0, MAX_CF_FILES*sizeof(struct cap_files_store_s));
+	memset(cap_files, 0, MAX_CF_FILES * sizeof(struct cap_files_store_s));
 
-	if (pthread_mutex_init(&cf_store_lock, NULL) != 0) {
+	if(pthread_mutex_init(&cf_store_lock, NULL) != 0) {
 		printf("\n mutex init failed\n");
-		while(1);
+		while(1) ;
 	}
 
 }
@@ -41,10 +40,10 @@ int host_cap_file_adv(void *ptr, long size, char *key) {
 		if(cap_files[i].ptr == 0)
 			break;
 	}
-	
+
 	if(i == MAX_CF_FILES) {
 		printf("need more cap streams/files, die\n");
-		while(1);
+		while(1) ;
 	}
 
 	cap_files[i].ptr = ptr;
@@ -77,14 +76,15 @@ int host_cap_file_prb(char *key, void *location, long *size) {
 		if(strncmp(cap_files[i].name, key, CF_NAME_LEN) == NULL)
 			break;
 	}
-	
+
 	if(i == MAX_CF_FILES) {
-		printf("wrong cap key %s ", key); while(1);
-		
+		printf("wrong cap key %s ", key);
+		while(1) ;
+
 	}
 
 	host_reg_cap(cap_files[i].ptr, cap_files[i].size, location);
-	if(size) 
+	if(size)
 		*size = cap_files[i].size;
 	cap_files[i].loc = location;
 
@@ -107,9 +107,10 @@ int host_cap_file_revoke(char *key) {
 		if(strncmp(cap_files[i].name, key, CF_NAME_LEN) == NULL)
 			break;
 	}
-	
+
 	if(i == MAX_CF_FILES) {
-		printf("wrong cap key %s ", key); while(1);
+		printf("wrong cap key %s ", key);
+		while(1) ;
 	}
 
 	host_purge_cap(cap_files[i].loc);
@@ -124,4 +125,3 @@ int host_cap_file_revoke(char *key) {
 //todo: remove the original cap from the CPU contextes of threads inside cVM
 	return 0;
 }
-
