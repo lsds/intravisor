@@ -9,7 +9,6 @@
 |                 				| ARM | RISC-V |
 |:---------------:				|:---:|:------:|
 | Intravisor 					|  Y  |   Y    |
-| [darknet](single/apps/darknet)       		|  Y  |   Y    |
 | [ffmpeg](single/apps/ffmpeg)               	|  Y  |   Y    |
 | [hellow_world](single/apps/hello_world)       |  Y  |   Y    |
 | [libvirt](single/apps/libvirt)           	|  Y  |   Y    |
