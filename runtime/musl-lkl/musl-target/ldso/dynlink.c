@@ -1479,7 +1479,6 @@ static struct dso **queue_ctors(struct dso *dso)
 
 static void do_init_fini(struct dso **queue)
 {
-	return;//FIXME
 	struct dso *p;
 	size_t dyn[DYN_CNT], i;
 	int self = __pthread_self()->tid;
