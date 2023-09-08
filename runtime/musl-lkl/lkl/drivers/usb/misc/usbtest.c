@@ -182,7 +182,7 @@ get_endpoints(struct usbtest_dev *dev, struct usb_interface *intf)
 			case USB_ENDPOINT_XFER_ISOC:
 				if (dev->info->iso)
 					endpoint_update(edi, &iso_in, &iso_out, e);
-				fallthrough;
+				/* FALLTHROUGH */
 			default:
 				continue;
 			}
@@ -347,14 +347,6 @@ static unsigned get_maxpacket(struct usb_device *udev, int pipe)
 	return le16_to_cpup(&ep->desc.wMaxPacketSize);
 }
 
-static int ss_isoc_get_packet_num(struct usb_device *udev, int pipe)
-{
-	struct usb_host_endpoint *ep = usb_pipe_endpoint(udev, pipe);
-
-	return USB_SS_MULT(ep->ss_ep_comp.bmAttributes)
-		* (1 + ep->ss_ep_comp.bMaxBurst);
-}
-
 static void simple_fill_buf(struct urb *urb)
 {
 	unsigned	i;
@@ -364,7 +356,7 @@ static void simple_fill_buf(struct urb *urb)
 
 	switch (pattern) {
 	default:
-		fallthrough;
+		/* FALLTHROUGH */
 	case 0:
 		memset(buf, 0, len);
 		break;
@@ -681,7 +673,7 @@ static int get_altsetting(struct usbtest_dev *dev)
 		return dev->buf[0];
 	case 0:
 		retval = -ERANGE;
-		fallthrough;
+		/* FALLTHROUGH */
 	default:
 		return retval;
 	}
@@ -1090,12 +1082,11 @@ static void ctrl_complete(struct urb *urb)
 	struct usb_ctrlrequest	*reqp;
 	struct subcase		*subcase;
 	int			status = urb->status;
-	unsigned long		flags;
 
 	reqp = (struct usb_ctrlrequest *)urb->setup_packet;
 	subcase = container_of(reqp, struct subcase, setup);
 
-	spin_lock_irqsave(&ctx->lock, flags);
+	spin_lock(&ctx->lock);
 	ctx->count--;
 	ctx->pending--;
 
@@ -1194,7 +1185,7 @@ error:
 	/* signal completion when nothing's queued */
 	if (ctx->pending == 0)
 		complete(&ctx->complete);
-	spin_unlock_irqrestore(&ctx->lock, flags);
+	spin_unlock(&ctx->lock);
 }
 
 static int
@@ -1926,9 +1917,8 @@ struct transfer_context {
 static void complicated_callback(struct urb *urb)
 {
 	struct transfer_context	*ctx = urb->context;
-	unsigned long flags;
 
-	spin_lock_irqsave(&ctx->lock, flags);
+	spin_lock(&ctx->lock);
 	ctx->count--;
 
 	ctx->packet_count += urb->number_of_packets;
@@ -1951,7 +1941,7 @@ static void complicated_callback(struct urb *urb)
 			dev_err(&ctx->dev->intf->dev,
 					"resubmit err %d\n",
 					status);
-			fallthrough;
+			/* FALLTHROUGH */
 		case -ENODEV:			/* disconnected */
 		case -ESHUTDOWN:		/* endpoint disabled */
 			ctx->submit_error = 1;
@@ -1968,7 +1958,7 @@ static void complicated_callback(struct urb *urb)
 		complete(&ctx->done);
 	}
 done:
-	spin_unlock_irqrestore(&ctx->lock, flags);
+	spin_unlock(&ctx->lock);
 }
 
 static struct urb *iso_alloc_urb(
@@ -1984,13 +1974,8 @@ static struct urb *iso_alloc_urb(
 
 	if (bytes < 0 || !desc)
 		return NULL;
-
 	maxp = usb_endpoint_maxp(desc);
-	if (udev->speed >= USB_SPEED_SUPER)
-		maxp *= ss_isoc_get_packet_num(udev, pipe);
-	else
-		maxp *= usb_endpoint_maxp_mult(desc);
-
+	maxp *= usb_endpoint_maxp_mult(desc);
 	packets = DIV_ROUND_UP(bytes, maxp);
 
 	urb = usb_alloc_urb(packets, GFP_KERNEL);
@@ -2043,17 +2028,13 @@ test_queue(struct usbtest_dev *dev, struct usbtest_param_32 *param,
 	unsigned		i;
 	unsigned long		packets = 0;
 	int			status = 0;
-	struct urb		**urbs;
+	struct urb		*urbs[MAX_SGLEN];
 
 	if (!param->sglen || param->iterations > UINT_MAX / param->sglen)
 		return -EINVAL;
 
 	if (param->sglen > MAX_SGLEN)
 		return -EINVAL;
-
-	urbs = kcalloc(param->sglen, sizeof(*urbs), GFP_KERNEL);
-	if (!urbs)
-		return -ENOMEM;
 
 	memset(&context, 0, sizeof(context));
 	context.count = param->iterations * param->sglen;
@@ -2082,24 +2063,17 @@ test_queue(struct usbtest_dev *dev, struct usbtest_param_32 *param,
 	packets *= param->iterations;
 
 	if (context.is_iso) {
-		int transaction_num;
-
-		if (udev->speed >= USB_SPEED_SUPER)
-			transaction_num = ss_isoc_get_packet_num(udev, pipe);
-		else
-			transaction_num = usb_endpoint_maxp_mult(desc);
-
 		dev_info(&dev->intf->dev,
 			"iso period %d %sframes, wMaxPacket %d, transactions: %d\n",
 			1 << (desc->bInterval - 1),
-			(udev->speed >= USB_SPEED_HIGH) ? "micro" : "",
+			(udev->speed == USB_SPEED_HIGH) ? "micro" : "",
 			usb_endpoint_maxp(desc),
-			transaction_num);
+			usb_endpoint_maxp_mult(desc));
 
 		dev_info(&dev->intf->dev,
 			"total %lu msec (%lu packets)\n",
 			(packets * (1 << (desc->bInterval - 1)))
-				/ ((udev->speed >= USB_SPEED_HIGH) ? 8 : 1),
+				/ ((udev->speed == USB_SPEED_HIGH) ? 8 : 1),
 			packets);
 	}
 
@@ -2141,8 +2115,6 @@ test_queue(struct usbtest_dev *dev, struct usbtest_param_32 *param,
 	else if (context.errors >
 			(context.is_iso ? context.packet_count / 10 : 0))
 		status = -EIO;
-
-	kfree(urbs);
 	return status;
 
 fail:
@@ -2150,8 +2122,6 @@ fail:
 		if (urbs[i])
 			simple_free_urb(urbs[i]);
 	}
-
-	kfree(urbs);
 	return status;
 }
 
@@ -2638,7 +2608,7 @@ usbtest_do_ioctl(struct usb_interface *intf, struct usbtest_param_32 *param)
  * different busses) to use when testing, and allocate one thread per
  * test.  So discovery is simplified, and we have no device naming issues.
  *
- * Don't use these only as stress/load tests.  Use them along with
+ * Don't use these only as stress/load tests.  Use them along with with
  * other USB bus activity:  plugging, unplugging, mousing, mp3 playback,
  * video capture, and so on.  Run different tests at different times, in
  * different sequences.  Nothing here should interact with other devices,
@@ -2881,7 +2851,6 @@ static void usbtest_disconnect(struct usb_interface *intf)
 
 	usb_set_intfdata(intf, NULL);
 	dev_dbg(&intf->dev, "disconnect\n");
-	kfree(dev->buf);
 	kfree(dev);
 }
 

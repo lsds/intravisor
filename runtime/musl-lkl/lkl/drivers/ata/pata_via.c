@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * pata_via.c 	- VIA PATA for new ATA layer
  *			  (C) 2005-2006 Red Hat Inc
@@ -248,9 +247,9 @@ static void via_do_set_mode(struct ata_port *ap, struct ata_device *adev,
 	struct pci_dev *pdev = to_pci_dev(ap->host->dev);
 	struct ata_device *peer = ata_dev_pair(adev);
 	struct ata_timing t, p;
-	const int via_clock = 33333;	/* Bus clock in kHz */
-	const int T = 1000000000 / via_clock;
-	int UT = T;
+	static int via_clock = 33333;	/* Bus clock in kHZ */
+	unsigned long T =  1000000000 / via_clock;
+	unsigned long UT = T;
 	int ut;
 	int offset = 3 - (2*ap->port_no) - adev->devno;
 
@@ -352,7 +351,7 @@ static void via_set_dmamode(struct ata_port *ap, struct ata_device *adev)
  *	one breed of Transcend SSD. Return the updated mask.
  */
 
-static unsigned int via_mode_filter(struct ata_device *dev, unsigned int mask)
+static unsigned long via_mode_filter(struct ata_device *dev, unsigned long mask)
 {
 	struct ata_host *host = dev->link->ap->host;
 	const struct via_isa_bridge *config = host->private_data;
@@ -414,6 +413,12 @@ static void via_tf_load(struct ata_port *ap, const struct ata_taskfile *tf)
 		iowrite8(tf->hob_lbal, ioaddr->lbal_addr);
 		iowrite8(tf->hob_lbam, ioaddr->lbam_addr);
 		iowrite8(tf->hob_lbah, ioaddr->lbah_addr);
+		VPRINTK("hob: feat 0x%X nsect 0x%X, lba 0x%X 0x%X 0x%X\n",
+			tf->hob_feature,
+			tf->hob_nsect,
+			tf->hob_lbal,
+			tf->hob_lbam,
+			tf->hob_lbah);
 	}
 
 	if (is_addr) {
@@ -422,6 +427,12 @@ static void via_tf_load(struct ata_port *ap, const struct ata_taskfile *tf)
 		iowrite8(tf->lbal, ioaddr->lbal_addr);
 		iowrite8(tf->lbam, ioaddr->lbam_addr);
 		iowrite8(tf->lbah, ioaddr->lbah_addr);
+		VPRINTK("feat 0x%X nsect 0x%X lba 0x%X 0x%X 0x%X\n",
+			tf->feature,
+			tf->nsect,
+			tf->lbal,
+			tf->lbam,
+			tf->lbah);
 	}
 
 	ata_wait_idle(ap);
@@ -460,7 +471,7 @@ static struct ata_port_operations via_port_ops = {
 
 static struct ata_port_operations via_port_ops_noirq = {
 	.inherits	= &via_port_ops,
-	.sff_data_xfer	= ata_sff_data_xfer32,
+	.sff_data_xfer	= ata_sff_data_xfer_noirq,
 };
 
 /**
@@ -651,7 +662,7 @@ static int via_init_one(struct pci_dev *pdev, const struct pci_device_id *id)
 #ifdef CONFIG_PM_SLEEP
 /**
  *	via_reinit_one		-	reinit after resume
- *	@pdev: PCI device
+ *	@pdev; PCI device
  *
  *	Called when the VIA PATA device is resumed. We must then
  *	reconfigure the fifo and other setup we may have altered. In

@@ -211,7 +211,7 @@ void musb_root_disconnect(struct musb *musb)
 			musb->g.is_a_peripheral = 1;
 			break;
 		}
-		fallthrough;
+		/* FALLTHROUGH */
 	case OTG_STATE_A_HOST:
 		musb->xceiv->otg->state = OTG_STATE_A_WAIT_BCON;
 		musb->is_active = 0;
@@ -254,7 +254,7 @@ static int musb_has_gadget(struct musb *musb)
 #ifdef CONFIG_USB_MUSB_HOST
 	return 1;
 #else
-	return musb->port_mode == MUSB_HOST;
+	return musb->port_mode == MUSB_PORT_MODE_HOST;
 #endif
 }
 
@@ -385,25 +385,25 @@ int musb_hub_control(
 
 			wIndex >>= 8;
 			switch (wIndex) {
-			case USB_TEST_J:
-				pr_debug("USB_TEST_J\n");
+			case 1:
+				pr_debug("TEST_J\n");
 				temp = MUSB_TEST_J;
 				break;
-			case USB_TEST_K:
-				pr_debug("USB_TEST_K\n");
+			case 2:
+				pr_debug("TEST_K\n");
 				temp = MUSB_TEST_K;
 				break;
-			case USB_TEST_SE0_NAK:
-				pr_debug("USB_TEST_SE0_NAK\n");
+			case 3:
+				pr_debug("TEST_SE0_NAK\n");
 				temp = MUSB_TEST_SE0_NAK;
 				break;
-			case USB_TEST_PACKET:
-				pr_debug("USB_TEST_PACKET\n");
+			case 4:
+				pr_debug("TEST_PACKET\n");
 				temp = MUSB_TEST_PACKET;
 				musb_load_testpacket(musb);
 				break;
-			case USB_TEST_FORCE_ENABLE:
-				pr_debug("USB_TEST_FORCE_ENABLE\n");
+			case 5:
+				pr_debug("TEST_FORCE_ENABLE\n");
 				temp = MUSB_TEST_FORCE_HOST
 					| MUSB_TEST_FORCE_HS;
 

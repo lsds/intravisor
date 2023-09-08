@@ -1,6 +1,16 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  *  Copyright (C) 2014, Samsung Electronics Co. Ltd. All Rights Reserved.
+ *
+ *  This program is free software; you can redistribute it and/or modify
+ *  it under the terms of the GNU General Public License as published by
+ *  the Free Software Foundation; either version 2 of the License, or
+ *  (at your option) any later version.
+ *
+ *  This program is distributed in the hope that it will be useful,
+ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *  GNU General Public License for more details.
+ *
  */
 
 #include "ssp.h"
@@ -137,7 +147,7 @@ static int ssp_print_mcu_debug(char *data_frame, int *data_index,
 	if (length > received_len - *data_index || length <= 0) {
 		ssp_dbg("[SSP]: MSG From MCU-invalid debug length(%d/%d)\n",
 			length, received_len);
-		return -EPROTO;
+		return length ? length : -EPROTO;
 	}
 
 	ssp_dbg("[SSP]: MSG From MCU - %s\n", &data_frame[*data_index]);
@@ -155,9 +165,9 @@ static int ssp_check_lines(struct ssp_data *data, bool state)
 {
 	int delay_cnt = 0;
 
-	gpiod_set_value_cansleep(data->ap_mcu_gpiod, state);
+	gpio_set_value_cansleep(data->ap_mcu_gpio, state);
 
-	while (gpiod_get_value_cansleep(data->mcu_ap_gpiod) != state) {
+	while (gpio_get_value_cansleep(data->mcu_ap_gpio) != state) {
 		usleep_range(3000, 3500);
 
 		if (data->shut_down || delay_cnt++ > 500) {
@@ -165,7 +175,7 @@ static int ssp_check_lines(struct ssp_data *data, bool state)
 				__func__, state);
 
 			if (!state)
-				gpiod_set_value_cansleep(data->ap_mcu_gpiod, 1);
+				gpio_set_value_cansleep(data->ap_mcu_gpio, 1);
 
 			return -ETIMEDOUT;
 		}
@@ -197,7 +207,7 @@ static int ssp_do_transfer(struct ssp_data *data, struct ssp_msg *msg,
 
 	status = spi_write(data->spi, msg->buffer, SSP_HEADER_SIZE);
 	if (status < 0) {
-		gpiod_set_value_cansleep(data->ap_mcu_gpiod, 1);
+		gpio_set_value_cansleep(data->ap_mcu_gpio, 1);
 		dev_err(SSP_DEV, "%s spi_write fail\n", __func__);
 		goto _error_locked;
 	}
@@ -273,8 +283,6 @@ static int ssp_parse_dataframe(struct ssp_data *data, char *dataframe, int len)
 	for (idx = 0; idx < len;) {
 		switch (dataframe[idx++]) {
 		case SSP_MSG2AP_INST_BYPASS_DATA:
-			if (idx >= len)
-				return -EPROTO;
 			sd = dataframe[idx++];
 			if (sd < 0 || sd >= SSP_SENSOR_MAX) {
 				dev_err(SSP_DEV,
@@ -284,13 +292,10 @@ static int ssp_parse_dataframe(struct ssp_data *data, char *dataframe, int len)
 
 			if (indio_devs[sd]) {
 				spd = iio_priv(indio_devs[sd]);
-				if (spd->process_data) {
-					if (idx >= len)
-						return -EPROTO;
+				if (spd->process_data)
 					spd->process_data(indio_devs[sd],
 							  &dataframe[idx],
 							  data->timestamp);
-				}
 			} else {
 				dev_err(SSP_DEV, "no client for frame\n");
 			}
@@ -298,8 +303,6 @@ static int ssp_parse_dataframe(struct ssp_data *data, char *dataframe, int len)
 			idx += ssp_offset_map[sd];
 			break;
 		case SSP_MSG2AP_INST_DEBUG_DATA:
-			if (idx >= len)
-				return -EPROTO;
 			sd = ssp_print_mcu_debug(dataframe, &idx, len);
 			if (sd) {
 				dev_err(SSP_DEV,
@@ -331,11 +334,12 @@ static int ssp_parse_dataframe(struct ssp_data *data, char *dataframe, int len)
 /* threaded irq */
 int ssp_irq_msg(struct ssp_data *data)
 {
+	bool found = false;
 	char *buffer;
 	u8 msg_type;
 	int ret;
 	u16 length, msg_options;
-	struct ssp_msg *msg = NULL, *iter, *n;
+	struct ssp_msg *msg, *n;
 
 	ret = spi_read(data->spi, data->header_buffer, SSP_HEADER_BUFFER_SIZE);
 	if (ret < 0) {
@@ -361,15 +365,15 @@ int ssp_irq_msg(struct ssp_data *data)
 		 * received with no order
 		 */
 		mutex_lock(&data->pending_lock);
-		list_for_each_entry_safe(iter, n, &data->pending_list, list) {
-			if (iter->options == msg_options) {
-				list_del(&iter->list);
-				msg = iter;
+		list_for_each_entry_safe(msg, n, &data->pending_list, list) {
+			if (msg->options == msg_options) {
+				list_del(&msg->list);
+				found = true;
 				break;
 			}
 		}
 
-		if (!msg) {
+		if (!found) {
 			/*
 			 * here can be implemented dead messages handling
 			 * but the slave should not send such ones - it is to

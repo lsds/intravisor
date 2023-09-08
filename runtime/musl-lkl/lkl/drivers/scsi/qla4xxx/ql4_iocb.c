@@ -1,7 +1,8 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * QLogic iSCSI HBA Driver
  * Copyright (c)  2003-2013 QLogic Corporation
+ *
+ * See LICENSE.qla4xxx for copyright and licensing details.
  */
 
 #include "ql4_def.h"
@@ -77,7 +78,7 @@ static int qla4xxx_get_req_pkt(struct scsi_qla_host *ha,
  * @ha: Pointer to host adapter structure.
  * @ddb_entry: Pointer to device database entry
  * @lun: SCSI LUN
- * @mrkr_mod: marker identifier
+ * @marker_type: marker identifier
  *
  * This routine issues a marker IOCB.
  **/
@@ -160,7 +161,7 @@ static void qla4xxx_build_scsi_iocbs(struct srb *srb,
 
 	if (!scsi_bufflen(cmd) || cmd->sc_data_direction == DMA_NONE) {
 		/* No data being transferred */
-		cmd_entry->ttlByteCnt = cpu_to_le32(0);
+		cmd_entry->ttlByteCnt = __constant_cpu_to_le32(0);
 		return;
 	}
 
@@ -288,7 +289,7 @@ int qla4xxx_send_command_to_isp(struct scsi_qla_host *ha, struct srb * srb)
 	/* Acquire hardware specific lock */
 	spin_lock_irqsave(&ha->hardware_lock, flags);
 
-	index = scsi_cmd_to_rq(cmd)->tag;
+	index = (uint32_t)cmd->request->tag;
 
 	/*
 	 * Check to see if adapter is online before placing request on

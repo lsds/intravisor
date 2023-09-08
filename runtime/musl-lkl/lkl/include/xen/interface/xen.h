@@ -1,8 +1,25 @@
-/* SPDX-License-Identifier: MIT */
 /******************************************************************************
  * xen.h
  *
  * Guest OS interface to Xen.
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to
+ * deal in the Software without restriction, including without limitation the
+ * rights to use, copy, modify, merge, publish, distribute, sublicense, and/or
+ * sell copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+ * DEALINGS IN THE SOFTWARE.
  *
  * Copyright (c) 2004, K A Fraser
  */
@@ -248,10 +265,9 @@
  *
  * PAT (bit 7 on) --> PWT (bit 3 on) and clear bit 7.
  */
-#define MMU_NORMAL_PT_UPDATE       0 /* checked '*ptr = val'. ptr is MA.      */
-#define MMU_MACHPHYS_UPDATE        1 /* ptr = MA of frame to modify entry for */
-#define MMU_PT_UPDATE_PRESERVE_AD  2 /* atomically: *ptr = val | (*ptr&(A|D)) */
-#define MMU_PT_UPDATE_NO_TRANSLATE 3 /* checked '*ptr = val'. ptr is MA.      */
+#define MMU_NORMAL_PT_UPDATE      0 /* checked '*ptr = val'. ptr is MA.       */
+#define MMU_MACHPHYS_UPDATE       1 /* ptr = MA of frame to modify entry for  */
+#define MMU_PT_UPDATE_PRESERVE_AD 2 /* atomically: *ptr = val | (*ptr&(A|D)) */
 
 /*
  * MMU EXTENDED OPERATIONS
@@ -581,9 +597,7 @@ struct shared_info {
 	 * their gettimeofday() syscall on this wallclock-base value.
 	 */
 	struct pvclock_wall_clock wc;
-#ifndef CONFIG_X86_32
-	uint32_t wc_sec_hi;
-#endif
+
 	struct arch_shared_info arch;
 
 };
@@ -722,9 +736,6 @@ struct dom0_vga_console_info {
 			uint32_t gbl_caps;
 			/* Mode attributes (offset 0x0, VESA command 0x4f01). */
 			uint16_t mode_attrs;
-			uint16_t pad;
-			/* high 32 bits of lfb_base */
-			uint32_t ext_lfb_base;
 		} vesa_lfb;
 	} u;
 };

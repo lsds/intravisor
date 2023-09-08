@@ -11,10 +11,10 @@
 #include <linux/module.h>
 #include <linux/delay.h>
 #include <linux/fs.h>
-#include <linux/of.h>
 
 #include <linux/uaccess.h>
 #include <asm/sections.h>
+#include <asm/prom.h>
 #include <asm/io.h>
 
 #include "ans-lcd.h"
@@ -64,7 +64,7 @@ anslcd_write( struct file * file, const char __user * buf,
 	printk(KERN_DEBUG "LCD: write\n");
 #endif
 
-	if (!access_ok(buf, count))
+	if (!access_ok(VERIFY_READ, buf, count))
 		return -EFAULT;
 
 	mutex_lock(&anslcd_mutex);
@@ -142,13 +142,12 @@ const struct file_operations anslcd_fops = {
 };
 
 static struct miscdevice anslcd_dev = {
-	LCD_MINOR,
+	ANSLCD_MINOR,
 	"anslcd",
 	&anslcd_fops
 };
 
-static const char anslcd_logo[] __initconst =
-				"********************"  /* Line #1 */
+const char anslcd_logo[] =	"********************"  /* Line #1 */
 				"*      LINUX!      *"  /* Line #3 */
 				"*    Welcome to    *"  /* Line #2 */
 				"********************"; /* Line #4 */
@@ -161,7 +160,7 @@ anslcd_init(void)
 	struct device_node* node;
 
 	node = of_find_node_by_name(NULL, "lcd");
-	if (!node || !of_node_name_eq(node->parent, "gc")) {
+	if (!node || !node->parent || strcmp(node->parent->name, "gc")) {
 		of_node_put(node);
 		return -ENODEV;
 	}

@@ -23,30 +23,34 @@ The platform DMA driver optionally supports the following ALSA operations:-
   };
 
 The platform driver exports its DMA functionality via struct
-snd_soc_component_driver:-
+snd_soc_platform_driver:-
 ::
 
-  struct snd_soc_component_driver {
-	const char *name;
+  struct snd_soc_platform_driver {
+	char *name;
 
-	...
-	int (*probe)(struct snd_soc_component *);
-	void (*remove)(struct snd_soc_component *);
-	int (*suspend)(struct snd_soc_component *);
-	int (*resume)(struct snd_soc_component *);
+	int (*probe)(struct platform_device *pdev);
+	int (*remove)(struct platform_device *pdev);
+	int (*suspend)(struct platform_device *pdev, struct snd_soc_cpu_dai *cpu_dai);
+	int (*resume)(struct platform_device *pdev, struct snd_soc_cpu_dai *cpu_dai);
 
 	/* pcm creation and destruction */
-	int (*pcm_new)(struct snd_soc_pcm_runtime *);
+	int (*pcm_new)(struct snd_card *, struct snd_soc_codec_dai *, struct snd_pcm *);
 	void (*pcm_free)(struct snd_pcm *);
 
-	...
-	const struct snd_pcm_ops *ops;
-	const struct snd_compr_ops *compr_ops;
-	...
+	/*
+	 * For platform caused delay reporting.
+	 * Optional.
+	 */
+	snd_pcm_sframes_t (*delay)(struct snd_pcm_substream *,
+		struct snd_soc_dai *);
+
+	/* platform stream ops */
+	struct snd_pcm_ops *pcm_ops;
   };
 
 Please refer to the ALSA driver documentation for details of audio DMA.
-https://www.kernel.org/doc/html/latest/sound/kernel-api/writing-an-alsa-driver.html
+http://www.alsa-project.org/~iwai/writing-an-alsa-driver/
 
 An example DMA driver is soc/pxa/pxa2xx-pcm.c
 
@@ -62,7 +66,7 @@ Each SoC DAI driver must provide the following features:-
 4. SYSCLK configuration
 5. Suspend and resume (optional)
 
-Please see codec.rst for a description of items 1 - 4.
+Please see codec.txt for a description of items 1 - 4.
 
 
 SoC DSP Drivers

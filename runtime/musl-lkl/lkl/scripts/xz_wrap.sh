@@ -20,4 +20,4 @@ case $SRCARCH in
 	sparc)          BCJ=--sparc ;;
 esac
 
-exec $XZ --check=crc32 $BCJ --lzma2=$LZMA2OPTS,dict=32MiB
+exec xz --check=crc32 $BCJ --lzma2=$LZMA2OPTS,dict=32MiB

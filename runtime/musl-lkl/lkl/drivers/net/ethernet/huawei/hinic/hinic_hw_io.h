@@ -1,7 +1,16 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Huawei HiNIC PCI Express Linux driver
  * Copyright(c) 2017 Huawei Technologies Co., Ltd
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms and conditions of the GNU General Public License,
+ * version 2, as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
+ * for more details.
+ *
  */
 
 #ifndef HINIC_HW_IO_H
@@ -20,8 +29,6 @@
 
 #define HINIC_DB_PAGE_SIZE      SZ_4K
 #define HINIC_DB_SIZE           SZ_4M
-#define HINIC_HW_WQ_PAGE_SIZE	SZ_4K
-#define HINIC_DEFAULT_WQ_PAGE_SIZE SZ_256K
 
 #define HINIC_DB_MAX_AREAS      (HINIC_DB_SIZE / HINIC_DB_PAGE_SIZE)
 
@@ -47,19 +54,9 @@ struct hinic_free_db_area {
 	struct semaphore        idx_lock;
 };
 
-struct hinic_nic_cfg {
-	/* lock for getting nic cfg */
-	struct mutex		cfg_mutex;
-	bool			pause_set;
-	u32			auto_neg;
-	u32			rx_pause;
-	u32			tx_pause;
-};
-
 struct hinic_func_to_io {
 	struct hinic_hwif       *hwif;
-	struct hinic_hwdev      *hwdev;
-	u16			global_qpn;
+
 	struct hinic_ceqs       ceqs;
 
 	struct hinic_wqs        wqs;
@@ -69,9 +66,6 @@ struct hinic_func_to_io {
 
 	struct hinic_qp         *qps;
 	u16                     max_qps;
-
-	u16			sq_depth;
-	u16			rq_depth;
 
 	void __iomem            **sq_db;
 	void __iomem            *db_base;
@@ -84,27 +78,7 @@ struct hinic_func_to_io {
 	void __iomem                    *cmdq_db_area[HINIC_MAX_CMDQ_TYPES];
 
 	struct hinic_cmdqs              cmdqs;
-
-	u16			max_vfs;
-	struct vf_data_storage	*vf_infos;
-	u8			link_status;
-	struct hinic_nic_cfg	nic_cfg;
 };
-
-struct hinic_wq_page_size {
-	u8	status;
-	u8	version;
-	u8	rsvd0[6];
-
-	u16	func_idx;
-	u8	ppf_idx;
-	u8	page_size;
-
-	u32	rsvd1;
-};
-
-int hinic_set_wq_page_size(struct hinic_hwdev *hwdev, u16 func_idx,
-			   u32 page_size);
 
 int hinic_io_create_qps(struct hinic_func_to_io *func_to_io,
 			u16 base_qpn, int num_qps,

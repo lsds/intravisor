@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0 */
 /*
  * remote processor messaging bus internals
  *
@@ -7,6 +6,15 @@
  *
  * Ohad Ben-Cohen <ohad@wizery.com>
  * Brian Swetland <swetland@google.com>
+ *
+ * This software is licensed under the terms of the GNU General Public
+ * License version 2, as published by the Free Software Foundation, and
+ * may be copied, distributed, and modified under those terms.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
  */
 
 #ifndef __RPMSG_INTERNAL_H__
@@ -18,13 +26,9 @@
 #define to_rpmsg_device(d) container_of(d, struct rpmsg_device, dev)
 #define to_rpmsg_driver(d) container_of(d, struct rpmsg_driver, drv)
 
-extern struct class *rpmsg_class;
-
 /**
  * struct rpmsg_device_ops - indirection table for the rpmsg_device operations
- * @create_channel:	create backend-specific channel, optional
- * @release_channel:	release backend-specific channel, optional
- * @create_ept:		create backend-specific endpoint, required
+ * @create_ept:		create backend-specific endpoint, requried
  * @announce_create:	announce presence of new channel, optional
  * @announce_destroy:	announce destruction of channel, optional
  *
@@ -33,29 +37,23 @@ extern struct class *rpmsg_class;
  * advertise new channels implicitly by creating the endpoints.
  */
 struct rpmsg_device_ops {
-	struct rpmsg_device *(*create_channel)(struct rpmsg_device *rpdev,
-					       struct rpmsg_channel_info *chinfo);
-	int (*release_channel)(struct rpmsg_device *rpdev,
-			       struct rpmsg_channel_info *chinfo);
 	struct rpmsg_endpoint *(*create_ept)(struct rpmsg_device *rpdev,
 					    rpmsg_rx_cb_t cb, void *priv,
 					    struct rpmsg_channel_info chinfo);
 
-	int (*announce_create)(struct rpmsg_device *rpdev);
-	int (*announce_destroy)(struct rpmsg_device *rpdev);
+	int (*announce_create)(struct rpmsg_device *ept);
+	int (*announce_destroy)(struct rpmsg_device *ept);
 };
 
 /**
  * struct rpmsg_endpoint_ops - indirection table for rpmsg_endpoint operations
- * @destroy_ept:	see @rpmsg_destroy_ept(), required
+ * @destroy_ept:	destroy the given endpoint, required
  * @send:		see @rpmsg_send(), required
  * @sendto:		see @rpmsg_sendto(), optional
  * @send_offchannel:	see @rpmsg_send_offchannel(), optional
  * @trysend:		see @rpmsg_trysend(), required
  * @trysendto:		see @rpmsg_trysendto(), optional
  * @trysend_offchannel:	see @rpmsg_trysend_offchannel(), optional
- * @poll:		see @rpmsg_poll(), optional
- * @get_mtu:		see @rpmsg_get_mtu(), optional
  *
  * Indirection table for the operations that a rpmsg backend should implement.
  * In addition to @destroy_ept, the backend must at least implement @send and
@@ -75,26 +73,28 @@ struct rpmsg_endpoint_ops {
 			     void *data, int len);
 	__poll_t (*poll)(struct rpmsg_endpoint *ept, struct file *filp,
 			     poll_table *wait);
-	ssize_t (*get_mtu)(struct rpmsg_endpoint *ept);
 };
+
+int rpmsg_register_device(struct rpmsg_device *rpdev);
+int rpmsg_unregister_device(struct device *parent,
+			    struct rpmsg_channel_info *chinfo);
 
 struct device *rpmsg_find_device(struct device *parent,
 				 struct rpmsg_channel_info *chinfo);
 
-struct rpmsg_device *rpmsg_create_channel(struct rpmsg_device *rpdev,
-					  struct rpmsg_channel_info *chinfo);
-int rpmsg_release_channel(struct rpmsg_device *rpdev,
-			  struct rpmsg_channel_info *chinfo);
 /**
- * rpmsg_ctrldev_register_device() - register a char device for control based on rpdev
+ * rpmsg_chrdev_register_device() - register chrdev device based on rpdev
  * @rpdev:	prepared rpdev to be used for creating endpoints
  *
  * This function wraps rpmsg_register_device() preparing the rpdev for use as
  * basis for the rpmsg chrdev.
  */
-static inline int rpmsg_ctrldev_register_device(struct rpmsg_device *rpdev)
+static inline int rpmsg_chrdev_register_device(struct rpmsg_device *rpdev)
 {
-	return rpmsg_register_device_override(rpdev, "rpmsg_ctrl");
+	strcpy(rpdev->id.name, "rpmsg_chrdev");
+	rpdev->driver_override = "rpmsg_chrdev";
+
+	return rpmsg_register_device(rpdev);
 }
 
 #endif

@@ -1,5 +1,6 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
-/*
+/* -*- mode: c; c-basic-offset: 8; -*-
+ * vim: noexpandtab sw=8 ts=8 sts=0:
+ *
  * dir.c
  *
  * Creates, reads, walks and deletes directory-nodes
@@ -18,6 +19,21 @@
  *   linux/fs/minix/dir.c
  *
  *   Copyright (C) 1991, 1992 Linus Torvalds
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public
+ * License as published by the Free Software Foundation; either
+ * version 2 of the License, or (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public
+ * License along with this program; if not, write to the
+ * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+ * Boston, MA 021110-1307, USA.
  */
 
 #include <linux/fs.h>
@@ -52,6 +68,10 @@
 #define NAMEI_RA_CHUNKS  2
 #define NAMEI_RA_BLOCKS  4
 #define NAMEI_RA_SIZE        (NAMEI_RA_CHUNKS * NAMEI_RA_BLOCKS)
+
+static unsigned char ocfs2_filetype_table[] = {
+	DT_UNKNOWN, DT_REG, DT_DIR, DT_CHR, DT_BLK, DT_FIFO, DT_SOCK, DT_LNK
+};
 
 static int ocfs2_do_extend_dir(struct super_block *sb,
 			       handle_t *handle,
@@ -674,7 +694,7 @@ static struct buffer_head *ocfs2_find_entry_el(const char *name, int namelen,
 	int ra_ptr = 0;		/* Current index into readahead
 				   buffer */
 	int num = 0;
-	int nblocks, i;
+	int nblocks, i, err;
 
 	sb = dir->i_sb;
 
@@ -706,7 +726,7 @@ restart:
 				num++;
 
 				bh = NULL;
-				ocfs2_read_dir_block(dir, b++, &bh,
+				err = ocfs2_read_dir_block(dir, b++, &bh,
 							   OCFS2_BH_READAHEAD);
 				bh_use[ra_max] = bh;
 			}
@@ -846,9 +866,9 @@ static int ocfs2_dx_dir_lookup(struct inode *inode,
 			       u64 *ret_phys_blkno)
 {
 	int ret = 0;
-	unsigned int cend, clen;
-	u32 cpos;
-	u64 blkno;
+	unsigned int cend, uninitialized_var(clen);
+	u32 uninitialized_var(cpos);
+	u64 uninitialized_var(blkno);
 	u32 name_hash = hinfo->major_hash;
 
 	ret = ocfs2_dx_dir_lookup_rec(inode, el, name_hash, &cpos, &blkno,
@@ -892,7 +912,7 @@ static int ocfs2_dx_dir_search(const char *name, int namelen,
 			       struct ocfs2_dir_lookup_result *res)
 {
 	int ret, i, found;
-	u64 phys;
+	u64 uninitialized_var(phys);
 	struct buffer_head *dx_leaf_bh = NULL;
 	struct ocfs2_dx_leaf *dx_leaf;
 	struct ocfs2_dx_entry *dx_entry = NULL;
@@ -1698,7 +1718,7 @@ int __ocfs2_add_entry(handle_t *handle,
 				de->rec_len = cpu_to_le16(OCFS2_DIR_REC_LEN(de->name_len));
 				de = de1;
 			}
-			de->file_type = FT_UNKNOWN;
+			de->file_type = OCFS2_FT_UNKNOWN;
 			if (blkno) {
 				de->inode = cpu_to_le64(blkno);
 				ocfs2_set_de_type(de, inode->i_mode);
@@ -1783,9 +1803,13 @@ static int ocfs2_dir_foreach_blk_id(struct inode *inode,
 		}
 		offset += le16_to_cpu(de->rec_len);
 		if (le64_to_cpu(de->inode)) {
+			unsigned char d_type = DT_UNKNOWN;
+
+			if (de->file_type < OCFS2_FT_MAX)
+				d_type = ocfs2_filetype_table[de->file_type];
+
 			if (!dir_emit(ctx, de->name, de->name_len,
-				      le64_to_cpu(de->inode),
-				      fs_ftype_to_dtype(de->file_type)))
+				      le64_to_cpu(de->inode), d_type))
 				goto out;
 		}
 		ctx->pos += le16_to_cpu(de->rec_len);
@@ -1873,13 +1897,18 @@ static int ocfs2_dir_foreach_blk_el(struct inode *inode,
 				/* On error, skip the f_pos to the
 				   next block. */
 				ctx->pos = (ctx->pos | (sb->s_blocksize - 1)) + 1;
-				break;
+				brelse(bh);
+				continue;
 			}
 			if (le64_to_cpu(de->inode)) {
+				unsigned char d_type = DT_UNKNOWN;
+
+				if (de->file_type < OCFS2_FT_MAX)
+					d_type = ocfs2_filetype_table[de->file_type];
 				if (!dir_emit(ctx, de->name,
 						de->name_len,
 						le64_to_cpu(de->inode),
-					fs_ftype_to_dtype(de->file_type))) {
+						d_type)) {
 					brelse(bh);
 					return 0;
 				}
@@ -1957,7 +1986,7 @@ bail_nolock:
 }
 
 /*
- * NOTE: this should always be called with parent dir i_rwsem taken.
+ * NOTE: this should always be called with parent dir i_mutex taken.
  */
 int ocfs2_find_files_on_disk(const char *name,
 			     int namelen,
@@ -2003,7 +2032,7 @@ int ocfs2_lookup_ino_from_name(struct inode *dir, const char *name,
  * Return 0 if the name does not exist
  * Return -EEXIST if the directory contains the name
  *
- * Callers should have i_rwsem + a cluster lock on dir
+ * Callers should have i_mutex + a cluster lock on dir
  */
 int ocfs2_check_dir_for_entry(struct inode *dir,
 			      const char *name,
@@ -2032,7 +2061,7 @@ struct ocfs2_empty_dir_priv {
 	unsigned seen_other;
 	unsigned dx_dir;
 };
-static bool ocfs2_empty_dir_filldir(struct dir_context *ctx, const char *name,
+static int ocfs2_empty_dir_filldir(struct dir_context *ctx, const char *name,
 				   int name_len, loff_t pos, u64 ino,
 				   unsigned type)
 {
@@ -2052,7 +2081,7 @@ static bool ocfs2_empty_dir_filldir(struct dir_context *ctx, const char *name,
 	 */
 	if (name_len == 1 && !strncmp(".", name, 1) && pos == 0) {
 		p->seen_dot = 1;
-		return true;
+		return 0;
 	}
 
 	if (name_len == 2 && !strncmp("..", name, 2) &&
@@ -2060,13 +2089,13 @@ static bool ocfs2_empty_dir_filldir(struct dir_context *ctx, const char *name,
 		p->seen_dot_dot = 1;
 
 		if (p->dx_dir && p->seen_dot)
-			return false;
+			return 1;
 
-		return true;
+		return 0;
 	}
 
 	p->seen_other = 1;
-	return false;
+	return 1;
 }
 
 static int ocfs2_empty_dir_dx(struct inode *inode,
@@ -3343,7 +3372,7 @@ static int ocfs2_find_dir_space_id(struct inode *dir, struct buffer_head *di_bh,
 	struct ocfs2_dir_entry *de, *last_de = NULL;
 	char *de_buf, *limit;
 	unsigned long offset = 0;
-	unsigned int rec_len, new_rec_len, free_space;
+	unsigned int rec_len, new_rec_len, free_space = dir->i_sb->s_blocksize;
 
 	/*
 	 * This calculates how many free bytes we'd have in block zero, should
@@ -3634,7 +3663,7 @@ static void ocfs2_dx_dir_transfer_leaf(struct inode *dir, u32 split_hash,
 	int i, j, num_used;
 	u32 major_hash;
 	struct ocfs2_dx_leaf *orig_dx_leaf, *new_dx_leaf;
-	struct ocfs2_dx_entry_list *orig_list, *tmp_list;
+	struct ocfs2_dx_entry_list *orig_list, *new_list, *tmp_list;
 	struct ocfs2_dx_entry *dx_entry;
 
 	tmp_list = &tmp_dx_leaf->dl_list;
@@ -3643,6 +3672,7 @@ static void ocfs2_dx_dir_transfer_leaf(struct inode *dir, u32 split_hash,
 		orig_dx_leaf = (struct ocfs2_dx_leaf *) orig_dx_leaves[i]->b_data;
 		orig_list = &orig_dx_leaf->dl_list;
 		new_dx_leaf = (struct ocfs2_dx_leaf *) new_dx_leaves[i]->b_data;
+		new_list = &new_dx_leaf->dl_list;
 
 		num_used = le16_to_cpu(orig_list->de_num_used);
 
@@ -4391,9 +4421,9 @@ out:
 int ocfs2_dx_dir_truncate(struct inode *dir, struct buffer_head *di_bh)
 {
 	int ret;
-	unsigned int clen;
-	u32 major_hash = UINT_MAX, p_cpos, cpos;
-	u64 blkno;
+	unsigned int uninitialized_var(clen);
+	u32 major_hash = UINT_MAX, p_cpos, uninitialized_var(cpos);
+	u64 uninitialized_var(blkno);
 	struct ocfs2_super *osb = OCFS2_SB(dir->i_sb);
 	struct buffer_head *dx_root_bh = NULL;
 	struct ocfs2_dx_root_block *dx_root;

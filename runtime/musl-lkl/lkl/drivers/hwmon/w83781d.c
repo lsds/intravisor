@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * w83781d.c - Part of lm_sensors, Linux kernel modules for hardware
  *	       monitoring
@@ -6,6 +5,20 @@
  *			      Philip Edelbrock <phil@netroedge.com>,
  *			      and Mark Studebaker <mdsxyz123@yahoo.com>
  * Copyright (c) 2007 - 2008  Jean Delvare <jdelvare@suse.de>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
 /*
@@ -203,7 +216,7 @@ struct w83781d_data {
 	int isa_addr;
 
 	struct mutex update_lock;
-	bool valid;		/* true if following fields are valid */
+	char valid;		/* !=0 if following fields are valid */
 	unsigned long last_updated;	/* In jiffies */
 
 	struct i2c_client *lm75[2];	/* for secondary I2C addresses */
@@ -814,7 +827,7 @@ store_sensor(struct device *dev, struct device_attribute *da,
 		dev_warn(dev,
 			 "Sensor type %d is deprecated, please use 4 instead\n",
 			 W83781D_DEFAULT_BETA);
-		fallthrough;
+		/* fall through */
 	case 4:		/* thermistor */
 		tmp = w83781d_read_value(data, W83781D_REG_SCFG1);
 		w83781d_write_value(data, W83781D_REG_SCFG1,
@@ -894,12 +907,12 @@ w83781d_detect_subclients(struct i2c_client *new_client)
 	}
 
 	for (i = 0; i < num_sc; i++) {
-		data->lm75[i] = i2c_new_dummy_device(adapter, sc_addr[i]);
-		if (IS_ERR(data->lm75[i])) {
+		data->lm75[i] = i2c_new_dummy(adapter, sc_addr[i]);
+		if (!data->lm75[i]) {
 			dev_err(&new_client->dev,
 				"Subclient %d registration at address 0x%x failed.\n",
 				i, sc_addr[i]);
-			err = PTR_ERR(data->lm75[i]);
+			err = -ENOMEM;
 			if (i == 1)
 				goto ERROR_SC_3;
 			goto ERROR_SC_2;
@@ -1171,7 +1184,7 @@ w83781d_detect(struct i2c_client *client, struct i2c_board_info *info)
 	if (isa)
 		mutex_unlock(&isa->update_lock);
 
-	strscpy(info->type, client_name, I2C_NAME_SIZE);
+	strlcpy(info->type, client_name, I2C_NAME_SIZE);
 
 	return 0;
 
@@ -1192,9 +1205,8 @@ static void w83781d_remove_files(struct device *dev)
 	sysfs_remove_group(&dev->kobj, &w83781d_group_other);
 }
 
-static const struct i2c_device_id w83781d_ids[];
-
-static int w83781d_probe(struct i2c_client *client)
+static int
+w83781d_probe(struct i2c_client *client, const struct i2c_device_id *id)
 {
 	struct device *dev = &client->dev;
 	struct w83781d_data *data;
@@ -1208,7 +1220,7 @@ static int w83781d_probe(struct i2c_client *client)
 	mutex_init(&data->lock);
 	mutex_init(&data->update_lock);
 
-	data->type = i2c_match_id(w83781d_ids, client)->driver_data;
+	data->type = id->driver_data;
 	data->client = client;
 
 	/* attach secondary i2c lm75-like clients */
@@ -1239,7 +1251,7 @@ static int w83781d_probe(struct i2c_client *client)
 	return err;
 }
 
-static void
+static int
 w83781d_remove(struct i2c_client *client)
 {
 	struct w83781d_data *data = i2c_get_clientdata(client);
@@ -1250,6 +1262,8 @@ w83781d_remove(struct i2c_client *client)
 
 	i2c_unregister_device(data->lm75[0]);
 	i2c_unregister_device(data->lm75[1]);
+
+	return 0;
 }
 
 static int
@@ -1552,7 +1566,7 @@ static struct w83781d_data *w83781d_update_device(struct device *dev)
 					       W83781D_REG_BEEP_INTS3) << 16;
 		}
 		data->last_updated = jiffies;
-		data->valid = true;
+		data->valid = 1;
 	}
 
 	mutex_unlock(&data->update_lock);
@@ -1569,23 +1583,12 @@ static const struct i2c_device_id w83781d_ids[] = {
 };
 MODULE_DEVICE_TABLE(i2c, w83781d_ids);
 
-static const struct of_device_id w83781d_of_match[] = {
-	{ .compatible = "winbond,w83781d" },
-	{ .compatible = "winbond,w83781g" },
-	{ .compatible = "winbond,w83782d" },
-	{ .compatible = "winbond,w83783s" },
-	{ .compatible = "asus,as99127f" },
-	{ },
-};
-MODULE_DEVICE_TABLE(of, w83781d_of_match);
-
 static struct i2c_driver w83781d_driver = {
 	.class		= I2C_CLASS_HWMON,
 	.driver = {
 		.name = "w83781d",
-		.of_match_table = w83781d_of_match,
 	},
-	.probe_new	= w83781d_probe,
+	.probe		= w83781d_probe,
 	.remove		= w83781d_remove,
 	.id_table	= w83781d_ids,
 	.detect		= w83781d_detect,

@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0+
 /*
  * Access to GPIOs on TWL4030/TPS659x0 chips
  *
@@ -10,6 +9,20 @@
  *
  * Initial Code:
  *	Andy Lowe / Nishanth Menon
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307 USA
  */
 
 #include <linux/module.h>
@@ -17,7 +30,7 @@
 #include <linux/interrupt.h>
 #include <linux/kthread.h>
 #include <linux/irq.h>
-#include <linux/gpio/driver.h>
+#include <linux/gpio.h>
 #include <linux/platform_device.h>
 #include <linux/of.h>
 #include <linux/irqdomain.h>
@@ -152,23 +165,6 @@ static int twl4030_set_gpio_direction(int gpio, int is_input)
 		ret = gpio_twl4030_write(base, reg);
 	}
 	return ret;
-}
-
-static int twl4030_get_gpio_direction(int gpio)
-{
-	u8 d_bnk = gpio >> 3;
-	u8 d_msk = BIT(gpio & 0x7);
-	u8 base = REG_GPIODATADIR1 + d_bnk;
-	int ret = 0;
-
-	ret = gpio_twl4030_read(base);
-	if (ret < 0)
-		return ret;
-
-	if (ret & d_msk)
-		return GPIO_LINE_DIRECTION_OUT;
-
-	return GPIO_LINE_DIRECTION_IN;
 }
 
 static int twl4030_set_gpio_dataout(int gpio, int enable)
@@ -376,28 +372,6 @@ static int twl_direction_out(struct gpio_chip *chip, unsigned offset, int value)
 	return ret;
 }
 
-static int twl_get_direction(struct gpio_chip *chip, unsigned offset)
-{
-	struct gpio_twl4030_priv *priv = gpiochip_get_data(chip);
-	/*
-	 * Default GPIO_LINE_DIRECTION_OUT
-	 * LED GPIOs >= TWL4030_GPIO_MAX are always output
-	 */
-	int ret = GPIO_LINE_DIRECTION_OUT;
-
-	mutex_lock(&priv->mutex);
-	if (offset < TWL4030_GPIO_MAX) {
-		ret = twl4030_get_gpio_direction(offset);
-		if (ret) {
-			mutex_unlock(&priv->mutex);
-			return ret;
-		}
-	}
-	mutex_unlock(&priv->mutex);
-
-	return ret;
-}
-
 static int twl_to_irq(struct gpio_chip *chip, unsigned offset)
 {
 	struct gpio_twl4030_priv *priv = gpiochip_get_data(chip);
@@ -413,9 +387,8 @@ static const struct gpio_chip template_chip = {
 	.request		= twl_request,
 	.free			= twl_free,
 	.direction_input	= twl_direction_in,
-	.direction_output	= twl_direction_out,
-	.get_direction		= twl_get_direction,
 	.get			= twl_get,
+	.direction_output	= twl_direction_out,
 	.set			= twl_set,
 	.to_irq			= twl_to_irq,
 	.can_sleep		= true,
@@ -465,6 +438,8 @@ static int gpio_twl4030_debounce(u32 debounce, u8 mmc_cd)
 				REG_GPIO_DEBEN1, 3);
 }
 
+static int gpio_twl4030_remove(struct platform_device *pdev);
+
 static struct twl4030_gpio_platform_data *of_gpio_twl4030(struct device *dev,
 				struct twl4030_gpio_platform_data *pdata)
 {
@@ -490,18 +465,6 @@ static struct twl4030_gpio_platform_data *of_gpio_twl4030(struct device *dev,
 			     &omap_twl_info->pulldowns);
 
 	return omap_twl_info;
-}
-
-/* Cannot use as gpio_twl4030_probe() calls us */
-static int gpio_twl4030_remove(struct platform_device *pdev)
-{
-	struct gpio_twl4030_priv *priv = platform_get_drvdata(pdev);
-
-	gpiochip_remove(&priv->gpio_chip);
-
-	/* REVISIT no support yet for deregistering all the IRQs */
-	WARN_ON(!is_module());
-	return 0;
 }
 
 static int gpio_twl4030_probe(struct platform_device *pdev)
@@ -598,6 +561,32 @@ no_irqs:
 
 out:
 	return ret;
+}
+
+/* Cannot use as gpio_twl4030_probe() calls us */
+static int gpio_twl4030_remove(struct platform_device *pdev)
+{
+	struct twl4030_gpio_platform_data *pdata = dev_get_platdata(&pdev->dev);
+	struct gpio_twl4030_priv *priv = platform_get_drvdata(pdev);
+	int status;
+
+	if (pdata && pdata->teardown) {
+		status = pdata->teardown(&pdev->dev, priv->gpio_chip.base,
+					 TWL4030_GPIO_MAX);
+		if (status) {
+			dev_dbg(&pdev->dev, "teardown --> %d\n", status);
+			return status;
+		}
+	}
+
+	gpiochip_remove(&priv->gpio_chip);
+
+	if (is_module())
+		return 0;
+
+	/* REVISIT no support yet for deregistering all the IRQs */
+	WARN_ON(1);
+	return -EIO;
 }
 
 static const struct of_device_id twl_gpio_match[] = {

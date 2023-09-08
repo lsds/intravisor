@@ -41,7 +41,7 @@ static const int BIN_DELTA_MAX		= 10;
 
 /* we need at least 3 deltas / 4 samples for a reliable chirp detection */
 #define NUM_DIFFS 3
-#define FFT_NUM_SAMPLES		(NUM_DIFFS + 1)
+static const int FFT_NUM_SAMPLES	= (NUM_DIFFS + 1);
 
 /* Threshold for difference of delta peaks */
 static const int MAX_DIFF		= 2;
@@ -114,7 +114,7 @@ static bool ath9k_check_chirping(struct ath_softc *sc, u8 *data,
 
 		ath_dbg(common, DFS, "HT40: datalen=%d, num_fft_packets=%d\n",
 			datalen, num_fft_packets);
-		if (num_fft_packets < FFT_NUM_SAMPLES) {
+		if (num_fft_packets < (FFT_NUM_SAMPLES)) {
 			ath_dbg(common, DFS, "not enough packets for chirp\n");
 			return false;
 		}
@@ -136,7 +136,7 @@ static bool ath9k_check_chirping(struct ath_softc *sc, u8 *data,
 			return false;
 		ath_dbg(common, DFS, "HT20: datalen=%d, num_fft_packets=%d\n",
 			datalen, num_fft_packets);
-		if (num_fft_packets < FFT_NUM_SAMPLES) {
+		if (num_fft_packets < (FFT_NUM_SAMPLES)) {
 			ath_dbg(common, DFS, "not enough packets for chirp\n");
 			return false;
 		}
@@ -246,7 +246,7 @@ ath9k_postprocess_radar_event(struct ath_softc *sc,
 		DFS_STAT_INC(sc, dc_phy_errors);
 
 		/* when both are present use stronger one */
-		rssi = max(ard->rssi, ard->ext_rssi);
+		rssi = (ard->rssi < ard->ext_rssi) ? ard->ext_rssi : ard->rssi;
 		break;
 	default:
 		/*
@@ -277,7 +277,7 @@ ath9k_dfs_process_radar_pulse(struct ath_softc *sc, struct pulse_event *pe)
 	DFS_STAT_INC(sc, pulses_processed);
 	if (pd == NULL)
 		return;
-	if (!pd->add_pulse(pd, pe, NULL))
+	if (!pd->add_pulse(pd, pe))
 		return;
 	DFS_STAT_INC(sc, radar_detected);
 	ieee80211_radar_detected(sc->hw);

@@ -1,9 +1,10 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * at91sam9n12ek.dts - Device Tree file for AT91SAM9N12-EK board
  *
  *  Copyright (C) 2012 Atmel,
  *                2012 Hong Xu <hong.xu@atmel.com>
+ *
+ * Licensed under GPLv2 or later.
  */
 /dts-v1/;
 #include "at91sam9n12.dtsi"
@@ -17,7 +18,7 @@
 		stdout-path = "serial0:115200n8";
 	};
 
-	memory@20000000 {
+	memory {
 		reg = <0x20000000 0x8000000>;
 	};
 
@@ -59,7 +60,7 @@
 				wm8904: codec@1a {
 					compatible = "wlf,wm8904";
 					reg = <0x1a>;
-					clocks = <&pmc PMC_TYPE_SYSTEM 8>;
+					clocks = <&pck0>;
 					clock-names = "mclk";
 				};
 
@@ -119,7 +120,7 @@
 			spi0: spi@f0000000 {
 				status = "okay";
 				cs-gpios = <&pioA 14 0>, <0>, <0>, <0>;
-				flash@0 {
+				m25p80@0 {
 					compatible = "atmel,at25df321a";
 					spi-max-frequency = <50000000>;
 					reg = <0>;
@@ -226,10 +227,10 @@
 		};
 	};
 
-	gpio-keys {
+	gpio_keys {
 		compatible = "gpio-keys";
 
-		button-enter {
+		enter {
 			label = "Enter";
 			gpios = <&pioB 3 GPIO_ACTIVE_LOW>;
 			linux,code = <28>;
@@ -238,7 +239,7 @@
 	};
 
 	panel: panel {
-		compatible = "qiaodian,qd43003c0-40";
+		compatible = "qiaodian,qd43003c0-40", "simple-panel";
 		backlight = <&backlight>;
 		power-supply = <&panel_reg>;
 		#address-cells = <1>;

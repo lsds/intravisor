@@ -1,10 +1,21 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * Marvell berlin4ct pinctrl driver
  *
  * Copyright (C) 2015 Marvell Technology Group Ltd.
  *
  * Author: Jisheng Zhang <jszhang@marvell.com>
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms and conditions of the GNU General Public License,
+ * version 2, as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+ * more details.
+ *
+ * You should have received a copy of the GNU General Public License along with
+ * this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
 #include <linux/init.h>
@@ -460,7 +471,8 @@ static int berlin4ct_pinctrl_probe(struct platform_device *pdev)
 	if (!rmconfig)
 		return -ENOMEM;
 
-	base = devm_platform_get_and_ioremap_resource(pdev, 0, &res);
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	base = devm_ioremap_resource(&pdev->dev, res);
 	if (IS_ERR(base))
 		return PTR_ERR(base);
 

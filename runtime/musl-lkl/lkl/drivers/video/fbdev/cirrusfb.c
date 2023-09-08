@@ -34,7 +34,6 @@
  *
  */
 
-#include <linux/aperture.h>
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/errno.h>
@@ -43,6 +42,7 @@
 #include <linux/delay.h>
 #include <linux/fb.h>
 #include <linux/init.h>
+#include <asm/pgtable.h>
 
 #ifdef CONFIG_ZORRO
 #include <linux/zorro.h>
@@ -470,7 +470,7 @@ static int cirrusfb_check_mclk(struct fb_info *info, long freq)
 	return 0;
 }
 
-static int cirrusfb_check_pixclock(struct fb_var_screeninfo *var,
+static int cirrusfb_check_pixclock(const struct fb_var_screeninfo *var,
 				   struct fb_info *info)
 {
 	long freq;
@@ -479,7 +479,9 @@ static int cirrusfb_check_pixclock(struct fb_var_screeninfo *var,
 	unsigned maxclockidx = var->bits_per_pixel >> 3;
 
 	/* convert from ps to kHz */
-	freq = PICOS2KHZ(var->pixclock ? : 1);
+	freq = PICOS2KHZ(var->pixclock);
+
+	dev_dbg(info->device, "desired pixclock: %ld kHz\n", freq);
 
 	maxclock = cirrusfb_board_info[cinfo->btype].maxclock[maxclockidx];
 	cinfo->multiplexing = 0;
@@ -487,13 +489,11 @@ static int cirrusfb_check_pixclock(struct fb_var_screeninfo *var,
 	/* If the frequency is greater than we can support, we might be able
 	 * to use multiplexing for the video mode */
 	if (freq > maxclock) {
-		var->pixclock = KHZ2PICOS(maxclock);
-
-		while ((freq = PICOS2KHZ(var->pixclock)) > maxclock)
-			var->pixclock++;
+		dev_err(info->device,
+			"Frequency greater than maxclock (%ld kHz)\n",
+			maxclock);
+		return -EINVAL;
 	}
-	dev_dbg(info->device, "desired pixclock: %ld kHz\n", freq);
-
 	/*
 	 * Additional constraint: 8bpp uses DAC clock doubling to allow maximum
 	 * pixel clock
@@ -532,7 +532,7 @@ static int cirrusfb_check_var(struct fb_var_screeninfo *var,
 {
 	int yres;
 	/* memory size in pixels */
-	unsigned int pixels;
+	unsigned pixels = info->screen_size * 8 / var->bits_per_pixel;
 	struct cirrusfb_info *cinfo = info->par;
 
 	switch (var->bits_per_pixel) {
@@ -574,7 +574,6 @@ static int cirrusfb_check_var(struct fb_var_screeninfo *var,
 		return -EINVAL;
 	}
 
-	pixels = info->screen_size * 8 / var->bits_per_pixel;
 	if (var->xres_virtual < var->xres)
 		var->xres_virtual = var->xres;
 	/* use highest possible virtual resolution */
@@ -1478,11 +1477,11 @@ static void init_vgachip(struct fb_info *info)
 		mdelay(100);
 		/* mode */
 		vga_wgfx(cinfo->regbase, CL_GR31, 0x00);
-		fallthrough;
+		/* fall through */
 	case BT_GD5480:
 		/* from Klaus' NetBSD driver: */
 		vga_wgfx(cinfo->regbase, CL_GR2F, 0x00);
-		fallthrough;
+		/* fall through */
 	case BT_ALPINE:
 		/* put blitter into 542x compat */
 		vga_wgfx(cinfo->regbase, CL_GR33, 0x00);
@@ -1957,7 +1956,7 @@ static void cirrusfb_zorro_unmap(struct fb_info *info)
 #endif /* CONFIG_ZORRO */
 
 /* function table of the above functions */
-static const struct fb_ops cirrusfb_ops = {
+static struct fb_ops cirrusfb_ops = {
 	.owner		= THIS_MODULE,
 	.fb_open	= cirrusfb_open,
 	.fb_release	= cirrusfb_release,
@@ -2000,7 +1999,7 @@ static int cirrusfb_set_fbinfo(struct fb_info *info)
 	}
 
 	/* Fill fix common fields */
-	strscpy(info->fix.id, cirrusfb_board_info[cinfo->btype].name,
+	strlcpy(info->fix.id, cirrusfb_board_info[cinfo->btype].name,
 		sizeof(info->fix.id));
 
 	/* monochrome: only 1 memory plane */
@@ -2086,10 +2085,6 @@ static int cirrusfb_pci_register(struct pci_dev *pdev,
 	unsigned long board_addr, board_size;
 	int ret;
 
-	ret = aperture_remove_conflicting_pci_devices(pdev, "cirrusfb");
-	if (ret)
-		return ret;
-
 	ret = pci_enable_device(pdev);
 	if (ret < 0) {
 		printk(KERN_ERR "cirrusfb: Cannot enable PCI device\n");
@@ -2098,6 +2093,7 @@ static int cirrusfb_pci_register(struct pci_dev *pdev,
 
 	info = framebuffer_alloc(sizeof(struct cirrusfb_info), &pdev->dev);
 	if (!info) {
+		printk(KERN_ERR "cirrusfb: could not allocate memory\n");
 		ret = -ENOMEM;
 		goto err_out;
 	}
@@ -2189,6 +2185,12 @@ static struct pci_driver cirrusfb_pci_driver = {
 	.id_table	= cirrusfb_pci_table,
 	.probe		= cirrusfb_pci_register,
 	.remove		= cirrusfb_pci_unregister,
+#ifdef CONFIG_PM
+#if 0
+	.suspend	= cirrusfb_pci_suspend,
+	.resume		= cirrusfb_pci_resume,
+#endif
+#endif
 };
 #endif /* CONFIG_PCI */
 
@@ -2204,8 +2206,10 @@ static int cirrusfb_zorro_register(struct zorro_dev *z,
 	struct cirrusfb_info *cinfo;
 
 	info = framebuffer_alloc(sizeof(struct cirrusfb_info), &z->dev);
-	if (!info)
+	if (!info) {
+		printk(KERN_ERR "cirrusfb: could not allocate memory\n");
 		return -ENOMEM;
+	}
 
 	zcl = (const struct zorrocl *)ent->driver_data;
 	btype = zcl->type;
@@ -2306,7 +2310,7 @@ err_release_fb:
 	return error;
 }
 
-static void cirrusfb_zorro_unregister(struct zorro_dev *z)
+void cirrusfb_zorro_unregister(struct zorro_dev *z)
 {
 	struct fb_info *info = zorro_get_drvdata(z);
 
@@ -2462,6 +2466,8 @@ static void AttrOn(const struct cirrusfb_info *cinfo)
  */
 static void WHDR(const struct cirrusfb_info *cinfo, unsigned char val)
 {
+	unsigned char dummy;
+
 	if (is_laguna(cinfo))
 		return;
 	if (cinfo->btype == BT_PICASSO) {
@@ -2470,18 +2476,18 @@ static void WHDR(const struct cirrusfb_info *cinfo, unsigned char val)
 		WGen(cinfo, VGA_PEL_MSK, 0x00);
 		udelay(200);
 		/* next read dummy from pixel address (3c8) */
-		RGen(cinfo, VGA_PEL_IW);
+		dummy = RGen(cinfo, VGA_PEL_IW);
 		udelay(200);
 	}
 	/* now do the usual stuff to access the HDR */
 
-	RGen(cinfo, VGA_PEL_MSK);
+	dummy = RGen(cinfo, VGA_PEL_MSK);
 	udelay(200);
-	RGen(cinfo, VGA_PEL_MSK);
+	dummy = RGen(cinfo, VGA_PEL_MSK);
 	udelay(200);
-	RGen(cinfo, VGA_PEL_MSK);
+	dummy = RGen(cinfo, VGA_PEL_MSK);
 	udelay(200);
-	RGen(cinfo, VGA_PEL_MSK);
+	dummy = RGen(cinfo, VGA_PEL_MSK);
 	udelay(200);
 
 	WGen(cinfo, VGA_PEL_MSK, val);
@@ -2489,7 +2495,7 @@ static void WHDR(const struct cirrusfb_info *cinfo, unsigned char val)
 
 	if (cinfo->btype == BT_PICASSO) {
 		/* now first reset HDR access counter */
-		RGen(cinfo, VGA_PEL_IW);
+		dummy = RGen(cinfo, VGA_PEL_IW);
 		udelay(200);
 
 		/* and at the end, restore the mask value */
@@ -2797,9 +2803,9 @@ static void bestclock(long freq, int *nom, int *den, int *div)
 
 #ifdef CIRRUSFB_DEBUG
 
-/*
+/**
  * cirrusfb_dbg_print_regs
- * @regbase: If using newmmio, the newmmio base address, otherwise %NULL
+ * @base: If using newmmio, the newmmio base address, otherwise %NULL
  * @reg_class: type of registers to read: %CRT, or %SEQ
  *
  * DESCRIPTION:
@@ -2844,7 +2850,7 @@ static void cirrusfb_dbg_print_regs(struct fb_info *info,
 	va_end(list);
 }
 
-/*
+/**
  * cirrusfb_dbg_reg_dump
  * @base: If using newmmio, the newmmio base address, otherwise %NULL
  *

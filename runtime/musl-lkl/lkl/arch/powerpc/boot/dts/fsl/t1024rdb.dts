@@ -161,6 +161,7 @@
 			rtc@68 {
 				compatible = "dallas,ds1339";
 				reg = <0x68>;
+				interrupts = <0x1 0x1 0 0>;
 			};
 		};
 

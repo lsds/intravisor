@@ -43,7 +43,9 @@
  * in srcu_notifier_call_chain(): no cache bounces and no memory barriers.
  * As compensation, srcu_notifier_chain_unregister() is rather expensive.
  * SRCU notifier chains should be used when the chain will be called very
- * often but notifier_blocks will seldom be removed.
+ * often but notifier_blocks will seldom be removed.  Also, SRCU notifier
+ * chains are slightly more difficult to use because they require special
+ * runtime initialization.
  */
 
 struct notifier_block;
@@ -89,7 +91,7 @@ struct srcu_notifier_head {
 		(name)->head = NULL;		\
 	} while (0)
 
-/* srcu_notifier_heads must be cleaned up dynamically */
+/* srcu_notifier_heads must be initialized and cleaned up dynamically */
 extern void srcu_init_notifier_head(struct srcu_notifier_head *nh);
 #define srcu_cleanup_notifier_head(name)	\
 		cleanup_srcu_struct(&(name)->srcu);
@@ -102,13 +104,7 @@ extern void srcu_init_notifier_head(struct srcu_notifier_head *nh);
 		.head = NULL }
 #define RAW_NOTIFIER_INIT(name)	{				\
 		.head = NULL }
-
-#define SRCU_NOTIFIER_INIT(name, pcpu)				\
-	{							\
-		.mutex = __MUTEX_INITIALIZER(name.mutex),	\
-		.head = NULL,					\
-		.srcu = __SRCU_STRUCT_INIT(name.srcu, pcpu),	\
-	}
+/* srcu_notifier_heads cannot be initialized statically */
 
 #define ATOMIC_NOTIFIER_HEAD(name)				\
 	struct atomic_notifier_head name =			\
@@ -119,25 +115,6 @@ extern void srcu_init_notifier_head(struct srcu_notifier_head *nh);
 #define RAW_NOTIFIER_HEAD(name)					\
 	struct raw_notifier_head name =				\
 		RAW_NOTIFIER_INIT(name)
-
-#ifdef CONFIG_TREE_SRCU
-#define _SRCU_NOTIFIER_HEAD(name, mod)				\
-	static DEFINE_PER_CPU(struct srcu_data, name##_head_srcu_data); \
-	mod struct srcu_notifier_head name =			\
-			SRCU_NOTIFIER_INIT(name, name##_head_srcu_data)
-
-#else
-#define _SRCU_NOTIFIER_HEAD(name, mod)				\
-	mod struct srcu_notifier_head name =			\
-			SRCU_NOTIFIER_INIT(name, name)
-
-#endif
-
-#define SRCU_NOTIFIER_HEAD(name)				\
-	_SRCU_NOTIFIER_HEAD(name, /* not static */)
-
-#define SRCU_NOTIFIER_HEAD_STATIC(name)				\
-	_SRCU_NOTIFIER_HEAD(name, static)
 
 #ifdef __KERNEL__
 
@@ -150,10 +127,9 @@ extern int raw_notifier_chain_register(struct raw_notifier_head *nh,
 extern int srcu_notifier_chain_register(struct srcu_notifier_head *nh,
 		struct notifier_block *nb);
 
-extern int atomic_notifier_chain_register_unique_prio(
-		struct atomic_notifier_head *nh, struct notifier_block *nb);
-extern int blocking_notifier_chain_register_unique_prio(
-		struct blocking_notifier_head *nh, struct notifier_block *nb);
+extern int blocking_notifier_chain_cond_register(
+		struct blocking_notifier_head *nh,
+		struct notifier_block *nb);
 
 extern int atomic_notifier_chain_unregister(struct atomic_notifier_head *nh,
 		struct notifier_block *nb);
@@ -166,19 +142,20 @@ extern int srcu_notifier_chain_unregister(struct srcu_notifier_head *nh,
 
 extern int atomic_notifier_call_chain(struct atomic_notifier_head *nh,
 		unsigned long val, void *v);
+extern int __atomic_notifier_call_chain(struct atomic_notifier_head *nh,
+	unsigned long val, void *v, int nr_to_call, int *nr_calls);
 extern int blocking_notifier_call_chain(struct blocking_notifier_head *nh,
 		unsigned long val, void *v);
+extern int __blocking_notifier_call_chain(struct blocking_notifier_head *nh,
+	unsigned long val, void *v, int nr_to_call, int *nr_calls);
 extern int raw_notifier_call_chain(struct raw_notifier_head *nh,
 		unsigned long val, void *v);
+extern int __raw_notifier_call_chain(struct raw_notifier_head *nh,
+	unsigned long val, void *v, int nr_to_call, int *nr_calls);
 extern int srcu_notifier_call_chain(struct srcu_notifier_head *nh,
 		unsigned long val, void *v);
-
-extern int blocking_notifier_call_chain_robust(struct blocking_notifier_head *nh,
-		unsigned long val_up, unsigned long val_down, void *v);
-extern int raw_notifier_call_chain_robust(struct raw_notifier_head *nh,
-		unsigned long val_up, unsigned long val_down, void *v);
-
-extern bool atomic_notifier_call_chain_is_empty(struct atomic_notifier_head *nh);
+extern int __srcu_notifier_call_chain(struct srcu_notifier_head *nh,
+	unsigned long val, void *v, int nr_to_call, int *nr_calls);
 
 #define NOTIFY_DONE		0x0000		/* Don't care */
 #define NOTIFY_OK		0x0001		/* Suits me */

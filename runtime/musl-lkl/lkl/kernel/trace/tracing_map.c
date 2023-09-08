@@ -1,6 +1,15 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * tracing_map - lock-free map for tracing
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
  *
  * Copyright (C) 2015 Tom Zanussi <tom.zanussi@linux.intel.com>
  *
@@ -15,7 +24,6 @@
 #include <linux/jhash.h>
 #include <linux/slab.h>
 #include <linux/sort.h>
-#include <linux/kmemleak.h>
 
 #include "tracing_map.h"
 #include "trace.h"
@@ -149,8 +157,8 @@ static int tracing_map_cmp_atomic64(void *val_a, void *val_b)
 #define DEFINE_TRACING_MAP_CMP_FN(type)					\
 static int tracing_map_cmp_##type(void *val_a, void *val_b)		\
 {									\
-	type a = (type)(*(u64 *)val_a);					\
-	type b = (type)(*(u64 *)val_b);					\
+	type a = *(type *)val_a;					\
+	type b = *(type *)val_b;					\
 									\
 	return (a > b) ? 1 : ((a < b) ? -1 : 0);			\
 }
@@ -261,7 +269,7 @@ int tracing_map_add_var(struct tracing_map *map)
  * to use cmp_fn.
  *
  * A key can be a subset of a compound key; for that purpose, the
- * offset param is used to describe where within the compound key
+ * offset param is used to describe where within the the compound key
  * the key referenced by this key field resides.
  *
  * Return: The index identifying the field in the map and associated
@@ -284,7 +292,7 @@ int tracing_map_add_key_field(struct tracing_map *map,
 	return idx;
 }
 
-static void tracing_map_array_clear(struct tracing_map_array *a)
+void tracing_map_array_clear(struct tracing_map_array *a)
 {
 	unsigned int i;
 
@@ -295,7 +303,7 @@ static void tracing_map_array_clear(struct tracing_map_array *a)
 		memset(a->pages[i], 0, PAGE_SIZE);
 }
 
-static void tracing_map_array_free(struct tracing_map_array *a)
+void tracing_map_array_free(struct tracing_map_array *a)
 {
 	unsigned int i;
 
@@ -308,7 +316,6 @@ static void tracing_map_array_free(struct tracing_map_array *a)
 	for (i = 0; i < a->n_pages; i++) {
 		if (!a->pages[i])
 			break;
-		kmemleak_free(a->pages[i]);
 		free_page((unsigned long)a->pages[i]);
 	}
 
@@ -318,7 +325,7 @@ static void tracing_map_array_free(struct tracing_map_array *a)
 	kfree(a);
 }
 
-static struct tracing_map_array *tracing_map_array_alloc(unsigned int n_elts,
+struct tracing_map_array *tracing_map_array_alloc(unsigned int n_elts,
 						  unsigned int entry_size)
 {
 	struct tracing_map_array *a;
@@ -344,7 +351,6 @@ static struct tracing_map_array *tracing_map_array_alloc(unsigned int n_elts,
 		a->pages[i] = (void *)get_zeroed_page(GFP_KERNEL);
 		if (!a->pages[i])
 			goto free;
-		kmemleak_alloc(a->pages[i], PAGE_SIZE, 1, GFP_KERNEL);
 	}
  out:
 	return a;
@@ -612,7 +618,7 @@ __tracing_map_insert(struct tracing_map *map, void *key, bool lookup_only)
  * signal that state.  There are two user-visible tracing_map
  * variables, 'hits' and 'drops', which are updated by this function.
  * Every time an element is either successfully inserted or retrieved,
- * the 'hits' value is incremented.  Every time an element insertion
+ * the 'hits' value is incrememented.  Every time an element insertion
  * fails, the 'drops' value is incremented.
  *
  * This is a lock-free tracing map insertion function implementing a
@@ -645,9 +651,9 @@ struct tracing_map_elt *tracing_map_insert(struct tracing_map *map, void *key)
  * tracing_map_elt.  This is a lock-free lookup; see
  * tracing_map_insert() for details on tracing_map and how it works.
  * Every time an element is retrieved, the 'hits' value is
- * incremented.  There is one user-visible tracing_map variable,
+ * incrememented.  There is one user-visible tracing_map variable,
  * 'hits', which is updated by this function.  Every time an element
- * is successfully retrieved, the 'hits' value is incremented.  The
+ * is successfully retrieved, the 'hits' value is incrememented.  The
  * 'drops' value is never updated by this function.
  *
  * Return: the tracing_map_elt pointer val associated with the key.
@@ -837,35 +843,29 @@ int tracing_map_init(struct tracing_map *map)
 	return err;
 }
 
-static int cmp_entries_dup(const void *A, const void *B)
+static int cmp_entries_dup(const struct tracing_map_sort_entry **a,
+			   const struct tracing_map_sort_entry **b)
 {
-	const struct tracing_map_sort_entry *a, *b;
 	int ret = 0;
 
-	a = *(const struct tracing_map_sort_entry **)A;
-	b = *(const struct tracing_map_sort_entry **)B;
-
-	if (memcmp(a->key, b->key, a->elt->map->key_size))
+	if (memcmp((*a)->key, (*b)->key, (*a)->elt->map->key_size))
 		ret = 1;
 
 	return ret;
 }
 
-static int cmp_entries_sum(const void *A, const void *B)
+static int cmp_entries_sum(const struct tracing_map_sort_entry **a,
+			   const struct tracing_map_sort_entry **b)
 {
 	const struct tracing_map_elt *elt_a, *elt_b;
-	const struct tracing_map_sort_entry *a, *b;
 	struct tracing_map_sort_key *sort_key;
 	struct tracing_map_field *field;
 	tracing_map_cmp_fn_t cmp_fn;
 	void *val_a, *val_b;
 	int ret = 0;
 
-	a = *(const struct tracing_map_sort_entry **)A;
-	b = *(const struct tracing_map_sort_entry **)B;
-
-	elt_a = a->elt;
-	elt_b = b->elt;
+	elt_a = (*a)->elt;
+	elt_b = (*b)->elt;
 
 	sort_key = &elt_a->map->sort_key;
 
@@ -882,21 +882,18 @@ static int cmp_entries_sum(const void *A, const void *B)
 	return ret;
 }
 
-static int cmp_entries_key(const void *A, const void *B)
+static int cmp_entries_key(const struct tracing_map_sort_entry **a,
+			   const struct tracing_map_sort_entry **b)
 {
 	const struct tracing_map_elt *elt_a, *elt_b;
-	const struct tracing_map_sort_entry *a, *b;
 	struct tracing_map_sort_key *sort_key;
 	struct tracing_map_field *field;
 	tracing_map_cmp_fn_t cmp_fn;
 	void *val_a, *val_b;
 	int ret = 0;
 
-	a = *(const struct tracing_map_sort_entry **)A;
-	b = *(const struct tracing_map_sort_entry **)B;
-
-	elt_a = a->elt;
-	elt_b = b->elt;
+	elt_a = (*a)->elt;
+	elt_b = (*b)->elt;
 
 	sort_key = &elt_a->map->sort_key;
 
@@ -961,7 +958,7 @@ create_sort_entry(void *key, struct tracing_map_elt *elt)
 static void detect_dups(struct tracing_map_sort_entry **sort_entries,
 		      int n_entries, unsigned int key_size)
 {
-	unsigned int total_dups = 0;
+	unsigned int dups = 0, total_dups = 0;
 	int i;
 	void *key;
 
@@ -974,10 +971,11 @@ static void detect_dups(struct tracing_map_sort_entry **sort_entries,
 	key = sort_entries[0]->key;
 	for (i = 1; i < n_entries; i++) {
 		if (!memcmp(sort_entries[i]->key, key, key_size)) {
-			total_dups++;
+			dups++; total_dups++;
 			continue;
 		}
 		key = sort_entries[i]->key;
+		dups = 0;
 	}
 
 	WARN_ONCE(total_dups > 0,
@@ -1000,8 +998,10 @@ static void sort_secondary(struct tracing_map *map,
 			   struct tracing_map_sort_key *primary_key,
 			   struct tracing_map_sort_key *secondary_key)
 {
-	int (*primary_fn)(const void *, const void *);
-	int (*secondary_fn)(const void *, const void *);
+	int (*primary_fn)(const struct tracing_map_sort_entry **,
+			  const struct tracing_map_sort_entry **);
+	int (*secondary_fn)(const struct tracing_map_sort_entry **,
+			    const struct tracing_map_sort_entry **);
 	unsigned i, start = 0, n_sub = 1;
 
 	if (is_key(map, primary_key->field_idx))
@@ -1044,8 +1044,7 @@ static void sort_secondary(struct tracing_map *map,
 /**
  * tracing_map_sort_entries - Sort the current set of tracing_map_elts in a map
  * @map: The tracing_map
- * @sort_keys: The sort key to use for sorting
- * @n_sort_keys: hitcount, always have at least one
+ * @sort_key: The sort key to use for sorting
  * @sort_entries: outval: pointer to allocated and sorted array of entries
  *
  * tracing_map_sort_entries() sorts the current set of entries in the
@@ -1071,11 +1070,12 @@ int tracing_map_sort_entries(struct tracing_map *map,
 			     unsigned int n_sort_keys,
 			     struct tracing_map_sort_entry ***sort_entries)
 {
-	int (*cmp_entries_fn)(const void *, const void *);
+	int (*cmp_entries_fn)(const struct tracing_map_sort_entry **,
+			      const struct tracing_map_sort_entry **);
 	struct tracing_map_sort_entry *sort_entry, **entries;
 	int i, n_entries, ret;
 
-	entries = vmalloc(array_size(sizeof(sort_entry), map->max_elts));
+	entries = vmalloc(map->max_elts * sizeof(sort_entry));
 	if (!entries)
 		return -ENOMEM;
 

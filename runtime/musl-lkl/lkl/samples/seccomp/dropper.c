@@ -25,7 +25,7 @@
 #include <sys/prctl.h>
 #include <unistd.h>
 
-static int install_filter(int arch, int nr, int error)
+static int install_filter(int nr, int arch, int error)
 {
 	struct sock_filter filter[] = {
 		BPF_STMT(BPF_LD+BPF_W+BPF_ABS,
@@ -42,10 +42,6 @@ static int install_filter(int arch, int nr, int error)
 		.len = (unsigned short)(sizeof(filter)/sizeof(filter[0])),
 		.filter = filter,
 	};
-	if (error == -1) {
-		struct sock_filter kill = BPF_STMT(BPF_RET+BPF_K, SECCOMP_RET_KILL);
-		filter[4] = kill;
-	}
 	if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0)) {
 		perror("prctl(NO_NEW_PRIVS)");
 		return 1;
@@ -61,10 +57,9 @@ int main(int argc, char **argv)
 {
 	if (argc < 5) {
 		fprintf(stderr, "Usage:\n"
-			"dropper <arch> <syscall_nr> <errno> <prog> [<args>]\n"
+			"dropper <syscall_nr> <arch> <errno> <prog> [<args>]\n"
 			"Hint:	AUDIT_ARCH_I386: 0x%X\n"
 			"	AUDIT_ARCH_X86_64: 0x%X\n"
-			"	errno == -1 means SECCOMP_RET_KILL\n"
 			"\n", AUDIT_ARCH_I386, AUDIT_ARCH_X86_64);
 		return 1;
 	}

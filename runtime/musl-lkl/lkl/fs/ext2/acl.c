@@ -141,15 +141,12 @@ fail:
  * inode->i_mutex: don't care
  */
 struct posix_acl *
-ext2_get_acl(struct inode *inode, int type, bool rcu)
+ext2_get_acl(struct inode *inode, int type)
 {
 	int name_index;
 	char *value = NULL;
 	struct posix_acl *acl;
 	int retval;
-
-	if (rcu)
-		return ERR_PTR(-ECHILD);
 
 	switch (type) {
 	case ACL_TYPE_ACCESS:
@@ -219,16 +216,14 @@ __ext2_set_acl(struct inode *inode, struct posix_acl *acl, int type)
  * inode->i_mutex: down
  */
 int
-ext2_set_acl(struct user_namespace *mnt_userns, struct inode *inode,
-	     struct posix_acl *acl, int type)
+ext2_set_acl(struct inode *inode, struct posix_acl *acl, int type)
 {
 	int error;
 	int update_mode = 0;
 	umode_t mode = inode->i_mode;
 
 	if (type == ACL_TYPE_ACCESS && acl) {
-		error = posix_acl_update_mode(&init_user_ns, inode, &mode,
-					      &acl);
+		error = posix_acl_update_mode(inode, &mode, &acl);
 		if (error)
 			return error;
 		update_mode = 1;
@@ -261,15 +256,11 @@ ext2_init_acl(struct inode *inode, struct inode *dir)
 	if (default_acl) {
 		error = __ext2_set_acl(inode, default_acl, ACL_TYPE_DEFAULT);
 		posix_acl_release(default_acl);
-	} else {
-		inode->i_default_acl = NULL;
 	}
 	if (acl) {
 		if (!error)
 			error = __ext2_set_acl(inode, acl, ACL_TYPE_ACCESS);
 		posix_acl_release(acl);
-	} else {
-		inode->i_acl = NULL;
 	}
 	return error;
 }

@@ -1,19 +1,18 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Broadcom BCM7xxx System Port Ethernet MAC driver
  *
  * Copyright (C) 2014 Broadcom Corporation
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 
 #ifndef __BCM_SYSPORT_H
 #define __BCM_SYSPORT_H
 
-#include <linux/bitmap.h>
-#include <linux/ethtool.h>
 #include <linux/if_vlan.h>
-#include <linux/dim.h>
-
-#include "unimac.h"
+#include <linux/net_dim.h>
 
 /* Receive/transmit descriptor format */
 #define DESC_ADDR_HI_STATUS_LEN	0x00
@@ -156,17 +155,13 @@ struct bcm_rsb {
 #define  RXCHK_PARSE_AUTH		(1 << 22)
 
 #define RXCHK_BRCM_TAG0			0x04
-#define RXCHK_BRCM_TAG(i)		((i) * 0x4 + RXCHK_BRCM_TAG0)
+#define RXCHK_BRCM_TAG(i)		((i) * RXCHK_BRCM_TAG0)
 #define RXCHK_BRCM_TAG0_MASK		0x24
-#define RXCHK_BRCM_TAG_MASK(i)		((i) * 0x4 + RXCHK_BRCM_TAG0_MASK)
+#define RXCHK_BRCM_TAG_MASK(i)		((i) * RXCHK_BRCM_TAG0_MASK)
 #define RXCHK_BRCM_TAG_MATCH_STATUS	0x44
 #define RXCHK_ETHERTYPE			0x48
 #define RXCHK_BAD_CSUM_CNTR		0x4C
 #define RXCHK_OTHER_DISC_CNTR		0x50
-
-#define RXCHK_BRCM_TAG_MAX		8
-#define RXCHK_BRCM_TAG_CID_SHIFT	16
-#define RXCHK_BRCM_TAG_CID_MASK		0xff
 
 /* TXCHCK offsets and defines */
 #define SYS_PORT_TXCHK_OFFSET		0x380
@@ -190,7 +185,6 @@ struct bcm_rsb {
 #define  RBUF_RSB_SWAP0			(1 << 22)
 #define  RBUF_RSB_SWAP1			(1 << 23)
 #define  RBUF_ACPI_EN			(1 << 23)
-#define  RBUF_ACPI_EN_LITE		(1 << 24)
 
 #define RBUF_PKT_RDY_THRESH		0x04
 
@@ -214,6 +208,39 @@ struct bcm_rsb {
 
 /* UniMAC offset and defines */
 #define SYS_PORT_UMAC_OFFSET		0x800
+
+#define UMAC_CMD			0x008
+#define  CMD_TX_EN			(1 << 0)
+#define  CMD_RX_EN			(1 << 1)
+#define  CMD_SPEED_SHIFT		2
+#define  CMD_SPEED_10			0
+#define  CMD_SPEED_100			1
+#define  CMD_SPEED_1000			2
+#define  CMD_SPEED_2500			3
+#define  CMD_SPEED_MASK			3
+#define  CMD_PROMISC			(1 << 4)
+#define  CMD_PAD_EN			(1 << 5)
+#define  CMD_CRC_FWD			(1 << 6)
+#define  CMD_PAUSE_FWD			(1 << 7)
+#define  CMD_RX_PAUSE_IGNORE		(1 << 8)
+#define  CMD_TX_ADDR_INS		(1 << 9)
+#define  CMD_HD_EN			(1 << 10)
+#define  CMD_SW_RESET			(1 << 13)
+#define  CMD_LCL_LOOP_EN		(1 << 15)
+#define  CMD_AUTO_CONFIG		(1 << 22)
+#define  CMD_CNTL_FRM_EN		(1 << 23)
+#define  CMD_NO_LEN_CHK			(1 << 24)
+#define  CMD_RMT_LOOP_EN		(1 << 25)
+#define  CMD_PRBL_EN			(1 << 27)
+#define  CMD_TX_PAUSE_IGNORE		(1 << 28)
+#define  CMD_TX_RX_EN			(1 << 29)
+#define  CMD_RUNT_FILTER_DIS		(1 << 30)
+
+#define UMAC_MAC0			0x00c
+#define UMAC_MAC1			0x010
+#define UMAC_MAX_FRAME_LEN		0x014
+
+#define UMAC_TX_FLUSH			0x334
 
 #define UMAC_MIB_START			0x400
 
@@ -251,8 +278,7 @@ struct bcm_rsb {
 #define  GIB_GTX_CLK_EXT_CLK		(0 << GIB_GTX_CLK_SEL_SHIFT)
 #define  GIB_GTX_CLK_125MHZ		(1 << GIB_GTX_CLK_SEL_SHIFT)
 #define  GIB_GTX_CLK_250MHZ		(2 << GIB_GTX_CLK_SEL_SHIFT)
-#define  GIB_FCS_STRIP_SHIFT		6
-#define  GIB_FCS_STRIP			(1 << GIB_FCS_STRIP_SHIFT)
+#define  GIB_FCS_STRIP			(1 << 6)
 #define  GIB_LCL_LOOP_EN		(1 << 7)
 #define  GIB_LCL_LOOP_TXEN		(1 << 8)
 #define  GIB_RMT_LOOP_EN		(1 << 9)
@@ -482,15 +508,21 @@ struct bcm_rsb {
 
 #define TDMA_DEBUG			0x64c
 
+/* Transmit/Receive descriptor */
+struct dma_desc {
+	u32	addr_status_len;
+	u32	addr_lo;
+};
+
 /* Number of Receive hardware descriptor words */
 #define SP_NUM_HW_RX_DESC_WORDS		1024
-#define SP_LT_NUM_HW_RX_DESC_WORDS	512
+#define SP_LT_NUM_HW_RX_DESC_WORDS	256
 
 /* Internal linked-list RAM size */
 #define SP_NUM_TX_DESC			1536
 #define SP_LT_NUM_TX_DESC		256
 
-#define WORDS_PER_DESC			2
+#define WORDS_PER_DESC			(sizeof(struct dma_desc) / sizeof(u32))
 
 /* Rx/Tx common counter group.*/
 struct bcm_sysport_pkt_counters {
@@ -568,8 +600,6 @@ struct bcm_sysport_mib {
 	u32 alloc_rx_buff_failed;
 	u32 rx_dma_failed;
 	u32 tx_dma_failed;
-	u32 tx_realloc_tsb;
-	u32 tx_realloc_tsb_failed;
 };
 
 /* HW maintains a large list of counters */
@@ -671,13 +701,14 @@ struct bcm_sysport_net_dim {
 	u16			event_ctr;
 	unsigned long		packets;
 	unsigned long		bytes;
-	struct dim		dim;
+	struct net_dim		dim;
 };
 
 /* Software view of the TX ring */
 struct bcm_sysport_tx_ring {
 	spinlock_t	lock;		/* Ring lock for tx reclaim/xmit */
 	struct napi_struct napi;	/* NAPI per tx queue */
+	dma_addr_t	desc_dma;	/* DMA cookie */
 	unsigned int	index;		/* Ring index */
 	unsigned int	size;		/* Ring current size */
 	unsigned int	alloc_size;	/* Ring one-time allocated size */
@@ -686,6 +717,7 @@ struct bcm_sysport_tx_ring {
 	unsigned int	c_index;	/* Last consumer index */
 	unsigned int	clean_index;	/* Current clean index */
 	struct bcm_sysport_cb *cbs;	/* Transmit control blocks */
+	struct dma_desc	*desc_cpu;	/* CPU view of the descriptor */
 	struct bcm_sysport_priv *priv;	/* private context backpointer */
 	unsigned long	packets;	/* packets statistics */
 	unsigned long	bytes;		/* bytes statistics */
@@ -711,7 +743,6 @@ struct bcm_sysport_priv {
 	int			wol_irq;
 
 	/* Transmit rings */
-	spinlock_t		desc_lock;
 	struct bcm_sysport_tx_ring *tx_rings;
 
 	/* Receive queue */
@@ -738,18 +769,13 @@ struct bcm_sysport_priv {
 	unsigned int		crc_fwd:1;
 	u16			rev;
 	u32			wolopts;
-	u8			sopass[SOPASS_MAX];
 	unsigned int		wol_irq_disabled:1;
-	struct clk		*clk;
-	struct clk		*wol_clk;
 
 	/* MIB related fields */
 	struct bcm_sysport_mib	mib;
 
 	/* Ethtool */
 	u32			msg_enable;
-	DECLARE_BITMAP(filters, RXCHK_BRCM_TAG_MAX);
-	u32			filters_loc[RXCHK_BRCM_TAG_MAX];
 
 	struct bcm_sysport_stats64	stats64;
 
@@ -757,8 +783,9 @@ struct bcm_sysport_priv {
 	struct u64_stats_sync	syncp;
 
 	/* map information between switch port queues and local queues */
-	struct notifier_block	netdev_notifier;
+	struct notifier_block	dsa_notifier;
 	unsigned int		per_port_num_tx_queues;
+	unsigned long		queue_bitmap;
 	struct bcm_sysport_tx_ring *ring_map[DSA_MAX_PORTS * 8];
 
 };

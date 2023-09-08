@@ -1,10 +1,13 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * wm8776.c  --  WM8776 ALSA SoC Audio driver
  *
  * Copyright 2009-12 Wolfson Microelectronics plc
  *
  * Author: Mark Brown <broonie@opensource.wolfsonmicro.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  *
  * TODO: Input ALC/limiter support
  */
@@ -282,7 +285,7 @@ static int wm8776_hw_params(struct snd_pcm_substream *substream,
 	}
 
 	/* Only need to set MCLK/LRCLK ratio if we're master */
-	if (snd_soc_component_read(component, WM8776_MSTRCTRL) & master) {
+	if (snd_soc_component_read32(component, WM8776_MSTRCTRL) & master) {
 		for (i = 0; i < ARRAY_SIZE(mclk_ratios); i++) {
 			if (wm8776->sysclk[dai->driver->id] / params_rate(params)
 			    == mclk_ratios[i])
@@ -309,7 +312,7 @@ static int wm8776_hw_params(struct snd_pcm_substream *substream,
 	return 0;
 }
 
-static int wm8776_mute(struct snd_soc_dai *dai, int mute, int direction)
+static int wm8776_mute(struct snd_soc_dai *dai, int mute)
 {
 	struct snd_soc_component *component = dai->component;
 
@@ -361,11 +364,10 @@ static int wm8776_set_bias_level(struct snd_soc_component *component,
 			SNDRV_PCM_FMTBIT_S24_LE | SNDRV_PCM_FMTBIT_S32_LE)
 
 static const struct snd_soc_dai_ops wm8776_dac_ops = {
-	.mute_stream	= wm8776_mute,
+	.digital_mute	= wm8776_mute,
 	.hw_params      = wm8776_hw_params,
 	.set_fmt        = wm8776_set_fmt,
 	.set_sysclk     = wm8776_set_sysclk,
-	.no_capture_mute = 1,
 };
 
 static const struct snd_soc_dai_ops wm8776_adc_ops = {
@@ -436,6 +438,7 @@ static const struct snd_soc_component_driver soc_component_dev_wm8776 = {
 	.idle_bias_on		= 1,
 	.use_pmdown_time	= 1,
 	.endianness		= 1,
+	.non_legacy_dai_naming	= 1,
 };
 
 static const struct of_device_id wm8776_of_match[] = {
@@ -489,7 +492,8 @@ static struct spi_driver wm8776_spi_driver = {
 #endif /* CONFIG_SPI_MASTER */
 
 #if IS_ENABLED(CONFIG_I2C)
-static int wm8776_i2c_probe(struct i2c_client *i2c)
+static int wm8776_i2c_probe(struct i2c_client *i2c,
+			    const struct i2c_device_id *id)
 {
 	struct wm8776_priv *wm8776;
 	int ret;
@@ -523,7 +527,7 @@ static struct i2c_driver wm8776_i2c_driver = {
 		.name = "wm8776",
 		.of_match_table = wm8776_of_match,
 	},
-	.probe_new = wm8776_i2c_probe,
+	.probe =    wm8776_i2c_probe,
 	.id_table = wm8776_i2c_id,
 };
 #endif

@@ -22,7 +22,7 @@ struct ceph_x_ticket_handler {
 	u64 secret_id;
 	struct ceph_buffer *ticket_blob;
 
-	time64_t renew_after, expires;
+	unsigned long renew_after, expires;
 };
 
 #define CEPHX_AU_ENC_BUF_LEN	128  /* big enough for encrypted blob */
@@ -52,3 +52,4 @@ struct ceph_x_info {
 int ceph_x_init(struct ceph_auth_client *ac);
 
 #endif
+

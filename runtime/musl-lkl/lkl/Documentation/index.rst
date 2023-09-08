@@ -1,6 +1,7 @@
-.. SPDX-License-Identifier: GPL-2.0
-
-.. _linux_doc:
+.. The Linux Kernel documentation master file, created by
+   sphinx-quickstart on Fri Feb 12 13:51:46 2016.
+   You can adapt this file completely to your liking, but it should at least
+   contain the root `toctree` directive.
 
 The Linux Kernel documentation
 ==============================
@@ -12,115 +13,117 @@ documents into a coherent whole.  Please note that improvements to the
 documentation are welcome; join the linux-doc list at vger.kernel.org if
 you want to help out.
 
-Working with the development community
---------------------------------------
+Licensing documentation
+-----------------------
 
-The essential guides for interacting with the kernel's development
-community and getting your work upstream.
-
-.. toctree::
-   :maxdepth: 1
-
-   process/development-process
-   process/submitting-patches
-   Code of conduct <process/code-of-conduct>
-   maintainer/index
-   All development-process docs <process/index>
-
-
-Internal API manuals
---------------------
-
-Manuals for use by developers working to interface with the rest of the
-kernel.
+The following describes the license of the Linux kernel source code
+(GPLv2), how to properly mark the license of individual files in the source
+tree, as well as links to the full license text.
 
 .. toctree::
-   :maxdepth: 1
+   :maxdepth: 2
 
-   core-api/index
-   driver-api/index
-   subsystem-apis
-   Locking in the kernel <locking/index>
-
-Development tools and processes
--------------------------------
-
-Various other manuals with useful information for all kernel developers.
-
-.. toctree::
-   :maxdepth: 1
-
-   process/license-rules
-   doc-guide/index
-   dev-tools/index
-   dev-tools/testing-overview
-   kernel-hacking/index
-   trace/index
-   fault-injection/index
-   livepatch/index
-   rust/index
-
+   process/license-rules.rst
 
 User-oriented documentation
 ---------------------------
 
 The following manuals are written for *users* of the kernel — those who are
-trying to get it to work optimally on a given system and application
-developers seeking information on the kernel's user-space APIs.
+trying to get it to work optimally on a given system.
 
 .. toctree::
-   :maxdepth: 1
+   :maxdepth: 2
 
    admin-guide/index
-   The kernel build system <kbuild/index>
-   admin-guide/reporting-issues.rst
-   User-space tools <tools/index>
-   userspace-api/index
 
-See also: the `Linux man pages <https://www.kernel.org/doc/man-pages/>`_,
-which are kept separately from the kernel's own documentation.
+Application-developer documentation
+-----------------------------------
 
-Firmware-related documentation
-------------------------------
-The following holds information on the kernel's expectations regarding the
-platform firmwares.
+The user-space API manual gathers together documents describing aspects of
+the kernel interface as seen by application developers.
 
 .. toctree::
-   :maxdepth: 1
+   :maxdepth: 2
 
-   firmware-guide/index
-   devicetree/index
+   userspace-api/index	      
 
+
+Introduction to kernel development
+----------------------------------
+
+These manuals contain overall information about how to develop the kernel.
+The kernel community is quite large, with thousands of developers
+contributing over the course of a year.  As with any large community,
+knowing how things are done will make the process of getting your changes
+merged much easier.
+
+.. toctree::
+   :maxdepth: 2
+
+   process/index
+   dev-tools/index
+   doc-guide/index
+   kernel-hacking/index
+   trace/index
+   maintainer/index
+
+Kernel API documentation
+------------------------
+
+These books get into the details of how specific kernel subsystems work
+from the point of view of a kernel developer.  Much of the information here
+is taken directly from the kernel source, with supplemental material added
+as needed (or at least as we managed to add it — probably *not* all that is
+needed).
+
+.. toctree::
+   :maxdepth: 2
+
+   driver-api/index
+   core-api/index
+   media/index
+   networking/index
+   input/index
+   gpu/index
+   security/index
+   sound/index
+   crypto/index
+   filesystems/index
 
 Architecture-specific documentation
 -----------------------------------
 
+These books provide programming details about architecture-specific
+implementation.
+
 .. toctree::
    :maxdepth: 2
 
-   arch
+   sh/index
 
-
-Other documentation
+Korean translations
 -------------------
-
-There are several unsorted documents that don't seem to fit on other parts
-of the documentation body, or may require some adjustments and/or conversion
-to ReStructured Text format, or are simply too old.
 
 .. toctree::
    :maxdepth: 1
 
-   staging/index
+   translations/ko_KR/index
 
-
-Translations
-------------
+Chinese translations
+--------------------
 
 .. toctree::
-   :maxdepth: 2
+   :maxdepth: 1
 
-   translations/index
+   translations/zh_CN/index
+
+Japanese translations
+---------------------
+
+.. toctree::
+   :maxdepth: 1
+
+   translations/ja_JP/index
 
 Indices and tables
 ==================

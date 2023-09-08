@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * wm97xx-core.c  --  Touch screen driver core for Wolfson WM9705, WM9712
  *                    and WM9713 AC97 Codecs.
@@ -8,6 +7,11 @@
  * Parts Copyright : Ian Molton <spyro@f2s.com>
  *                   Andrew Zabolotny <zap@homelink.ru>
  *                   Russell King <rmk@arm.linux.org.uk>
+ *
+ *  This program is free software; you can redistribute  it and/or modify it
+ *  under  the terms of  the GNU General  Public License as published by the
+ *  Free Software Foundation;  either version 2 of the  License, or (at your
+ *  option) any later version.
  *
  * Notes:
  *
@@ -27,6 +31,7 @@
  *       - codec event notification
  * Todo
  *       - Support for async sampling control for noisy LCDs.
+ *
  */
 
 #include <linux/module.h>
@@ -63,7 +68,7 @@
  * The default values correspond to Mainstone II in QVGA mode
  *
  * Please read
- * Documentation/input/input-programming.rst for more details.
+ * Documentation/input/input-programming.txt for more details.
  */
 
 static int abs_x[3] = {150, 4000, 5};
@@ -194,7 +199,7 @@ EXPORT_SYMBOL_GPL(wm97xx_get_gpio);
  * wm97xx_set_gpio - Set the status of a codec GPIO.
  * @wm: wm97xx device.
  * @gpio: gpio
- * @status: status
+ *
  *
  * Set the status of a codec GPIO pin
  */
@@ -285,12 +290,11 @@ void wm97xx_set_suspend_mode(struct wm97xx *wm, u16 mode)
 EXPORT_SYMBOL_GPL(wm97xx_set_suspend_mode);
 
 /*
- * Codec PENDOWN irq handler
- *
+ * Handle a pen down interrupt.
  */
-static irqreturn_t wm97xx_pen_interrupt(int irq, void *dev_id)
+static void wm97xx_pen_irq_worker(struct work_struct *work)
 {
-	struct wm97xx *wm = dev_id;
+	struct wm97xx *wm = container_of(work, struct wm97xx, pen_event_work);
 	int pen_was_down = wm->pen_is_down;
 
 	/* do we need to enable the touch panel reader */
@@ -344,6 +348,27 @@ static irqreturn_t wm97xx_pen_interrupt(int irq, void *dev_id)
 	if (!wm->pen_is_down && wm->mach_ops->acc_enabled)
 		wm->mach_ops->acc_pen_up(wm);
 
+	wm->mach_ops->irq_enable(wm, 1);
+}
+
+/*
+ * Codec PENDOWN irq handler
+ *
+ * We have to disable the codec interrupt in the handler because it
+ * can take up to 1ms to clear the interrupt source. We schedule a task
+ * in a work queue to do the actual interaction with the chip.  The
+ * interrupt is then enabled again in the slow handler when the source
+ * has been cleared.
+ */
+static irqreturn_t wm97xx_pen_interrupt(int irq, void *dev_id)
+{
+	struct wm97xx *wm = dev_id;
+
+	if (!work_pending(&wm->pen_event_work)) {
+		wm->mach_ops->irq_enable(wm, 0);
+		queue_work(wm->ts_workq, &wm->pen_event_work);
+	}
+
 	return IRQ_HANDLED;
 }
 
@@ -354,9 +379,12 @@ static int wm97xx_init_pen_irq(struct wm97xx *wm)
 {
 	u16 reg;
 
-	if (request_threaded_irq(wm->pen_irq, NULL, wm97xx_pen_interrupt,
-				 IRQF_SHARED | IRQF_ONESHOT,
-				 "wm97xx-pen", wm)) {
+	/* If an interrupt is supplied an IRQ enable operation must also be
+	 * provided. */
+	BUG_ON(!wm->mach_ops->irq_enable);
+
+	if (request_irq(wm->pen_irq, wm97xx_pen_interrupt, IRQF_SHARED,
+			"wm97xx-pen", wm)) {
 		dev_err(wm->dev,
 			"Failed to register pen down interrupt, polling");
 		wm->pen_irq = 0;
@@ -486,6 +514,7 @@ static int wm97xx_ts_input_open(struct input_dev *idev)
 	wm->codec->dig_enable(wm, 1);
 
 	INIT_DELAYED_WORK(&wm->ts_reader, wm97xx_ts_reader);
+	INIT_WORK(&wm->pen_event_work, wm97xx_pen_irq_worker);
 
 	wm->ts_reader_min_interval = HZ >= 100 ? HZ / 100 : 1;
 	if (wm->ts_reader_min_interval < 1)
@@ -535,6 +564,10 @@ static void wm97xx_ts_input_close(struct input_dev *idev)
 	}
 
 	wm->pen_is_down = 0;
+
+	/* Balance out interrupt disables/enables */
+	if (cancel_work_sync(&wm->pen_event_work))
+		wm->mach_ops->irq_enable(wm, 1);
 
 	/* ts_reader rearms itself so we need to explicitly stop it
 	 * before we destroy the workqueue.
@@ -587,9 +620,10 @@ static int wm97xx_register_touch(struct wm97xx *wm)
 	 * extensions)
 	 */
 	wm->touch_dev = platform_device_alloc("wm97xx-touch", -1);
-	if (!wm->touch_dev)
-		return -ENOMEM;
-
+	if (!wm->touch_dev) {
+		ret = -ENOMEM;
+		goto touch_err;
+	}
 	platform_set_drvdata(wm->touch_dev, wm);
 	wm->touch_dev->dev.parent = wm->dev;
 	wm->touch_dev->dev.platform_data = pdata;
@@ -600,6 +634,9 @@ static int wm97xx_register_touch(struct wm97xx *wm)
 	return 0;
 touch_reg_err:
 	platform_device_put(wm->touch_dev);
+touch_err:
+	input_unregister_device(wm->input_dev);
+	wm->input_dev = NULL;
 
 	return ret;
 }
@@ -607,6 +644,8 @@ touch_reg_err:
 static void wm97xx_unregister_touch(struct wm97xx *wm)
 {
 	platform_device_unregister(wm->touch_dev);
+	input_unregister_device(wm->input_dev);
+	wm->input_dev = NULL;
 }
 
 static int _wm97xx_probe(struct wm97xx *wm)
@@ -758,9 +797,7 @@ batt_err:
 
 static int wm97xx_mfd_remove(struct platform_device *pdev)
 {
-	wm97xx_remove(&pdev->dev);
-
-	return 0;
+	return wm97xx_remove(&pdev->dev);
 }
 
 static int __maybe_unused wm97xx_suspend(struct device *dev)
@@ -774,25 +811,23 @@ static int __maybe_unused wm97xx_suspend(struct device *dev)
 	else
 		suspend_mode = 0;
 
-	mutex_lock(&wm->input_dev->mutex);
-	if (input_device_enabled(wm->input_dev))
+	if (wm->input_dev->users)
 		cancel_delayed_work_sync(&wm->ts_reader);
 
 	/* Power down the digitiser (bypassing the cache for resume) */
 	reg = wm97xx_reg_read(wm, AC97_WM97XX_DIGITISER2);
 	reg &= ~WM97XX_PRP_DET_DIG;
-	if (input_device_enabled(wm->input_dev))
+	if (wm->input_dev->users)
 		reg |= suspend_mode;
 	wm->ac97->bus->ops->write(wm->ac97, AC97_WM97XX_DIGITISER2, reg);
 
 	/* WM9713 has an additional power bit - turn it off if there
 	 * are no users or if suspend mode is zero. */
 	if (wm->id == WM9713_ID2 &&
-	    (!input_device_enabled(wm->input_dev) || !suspend_mode)) {
+	    (!wm->input_dev->users || !suspend_mode)) {
 		reg = wm97xx_reg_read(wm, AC97_EXTENDED_MID) | 0x8000;
 		wm97xx_reg_write(wm, AC97_EXTENDED_MID, reg);
 	}
-	mutex_unlock(&wm->input_dev->mutex);
 
 	return 0;
 }
@@ -801,12 +836,11 @@ static int __maybe_unused wm97xx_resume(struct device *dev)
 {
 	struct wm97xx *wm = dev_get_drvdata(dev);
 
-	mutex_lock(&wm->input_dev->mutex);
 	/* restore digitiser and gpios */
 	if (wm->id == WM9713_ID2) {
 		wm97xx_reg_write(wm, AC97_WM9713_DIG1, wm->dig[0]);
 		wm97xx_reg_write(wm, 0x5a, wm->misc);
-		if (input_device_enabled(wm->input_dev)) {
+		if (wm->input_dev->users) {
 			u16 reg;
 			reg = wm97xx_reg_read(wm, AC97_EXTENDED_MID) & 0x7fff;
 			wm97xx_reg_write(wm, AC97_EXTENDED_MID, reg);
@@ -823,12 +857,11 @@ static int __maybe_unused wm97xx_resume(struct device *dev)
 	wm97xx_reg_write(wm, AC97_GPIO_STATUS, wm->gpio[4]);
 	wm97xx_reg_write(wm, AC97_MISC_AFE, wm->gpio[5]);
 
-	if (input_device_enabled(wm->input_dev) && !wm->pen_irq) {
+	if (wm->input_dev->users && !wm->pen_irq) {
 		wm->ts_reader_interval = wm->ts_reader_min_interval;
 		queue_delayed_work(wm->ts_workq, &wm->ts_reader,
 				   wm->ts_reader_interval);
 	}
-	mutex_unlock(&wm->input_dev->mutex);
 
 	return 0;
 }
@@ -896,8 +929,7 @@ static int __init wm97xx_init(void)
 
 static void __exit wm97xx_exit(void)
 {
-	if (IS_BUILTIN(CONFIG_AC97_BUS))
-		driver_unregister(&wm97xx_driver);
+	driver_unregister(&wm97xx_driver);
 	platform_driver_unregister(&wm97xx_mfd_driver);
 }
 

@@ -33,11 +33,14 @@ DECLARE_PER_CPU(unsigned long, nmi_count);
 
 asmlinkage void do_IRQ(int hwirq, struct pt_regs *regs)
 {
+	int irq = irq_find_mapping(NULL, hwirq);
+
 #ifdef CONFIG_DEBUG_STACKOVERFLOW
 	/* Debugging check for stack overflow: is there less than 1KB free? */
 	{
-		unsigned long sp = current_stack_pointer;
+		unsigned long sp;
 
+		__asm__ __volatile__ ("mov %0, a1\n" : "=a" (sp));
 		sp &= THREAD_SIZE - 1;
 
 		if (unlikely(sp < (sizeof(thread_info) + 1024)))
@@ -45,7 +48,7 @@ asmlinkage void do_IRQ(int hwirq, struct pt_regs *regs)
 			       sp - sizeof(struct thread_info));
 	}
 #endif
-	generic_handle_domain_irq(NULL, hwirq);
+	generic_handle_irq(irq);
 }
 
 int arch_show_interrupts(struct seq_file *p, int prec)
@@ -142,7 +145,7 @@ unsigned xtensa_get_ext_irq_no(unsigned irq)
 
 void __init init_IRQ(void)
 {
-#ifdef CONFIG_USE_OF
+#ifdef CONFIG_OF
 	irqchip_init();
 #else
 #ifdef CONFIG_HAVE_SMP
@@ -155,6 +158,7 @@ void __init init_IRQ(void)
 #ifdef CONFIG_SMP
 	ipi_init();
 #endif
+	variant_init_irq();
 }
 
 #ifdef CONFIG_HOTPLUG_CPU
@@ -169,7 +173,7 @@ void migrate_irqs(void)
 
 	for_each_active_irq(i) {
 		struct irq_data *data = irq_get_irq_data(i);
-		const struct cpumask *mask;
+		struct cpumask *mask;
 		unsigned int newcpu;
 
 		if (irqd_is_per_cpu(data))
@@ -185,10 +189,9 @@ void migrate_irqs(void)
 			pr_info_ratelimited("IRQ%u no longer affine to CPU%u\n",
 					    i, cpu);
 
-			irq_set_affinity(i, cpu_all_mask);
-		} else {
-			irq_set_affinity(i, mask);
+			cpumask_setall(mask);
 		}
+		irq_set_affinity(i, mask);
 	}
 }
 #endif /* CONFIG_HOTPLUG_CPU */

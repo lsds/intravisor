@@ -1,10 +1,11 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Analog Devices ADF7242 Low-Power IEEE 802.15.4 Transceiver
  *
  * Copyright 2009-2017 Analog Devices Inc.
  *
- * https://www.analog.com/ADF7242
+ * Licensed under the GPL-2 or later.
+ *
+ * http://www.analog.com/ADF7242
  */
 
 #include <linux/kernel.h>
@@ -274,8 +275,6 @@ struct adf7242_local {
 	struct spi_message stat_msg;
 	struct spi_transfer stat_xfer;
 	struct dentry *debugfs_root;
-	struct delayed_work work;
-	struct workqueue_struct *wqueue;
 	unsigned long flags;
 	int tx_stat;
 	bool promiscuous;
@@ -576,24 +575,8 @@ static int adf7242_cmd_rx(struct adf7242_local *lp)
 	/* Wait until the ACK is sent */
 	adf7242_wait_status(lp, RC_STATUS_PHY_RDY, RC_STATUS_MASK, __LINE__);
 	adf7242_clear_irqstat(lp);
-	mod_delayed_work(lp->wqueue, &lp->work, msecs_to_jiffies(400));
 
 	return adf7242_cmd(lp, CMD_RC_RX);
-}
-
-static void adf7242_rx_cal_work(struct work_struct *work)
-{
-	struct adf7242_local *lp =
-	container_of(work, struct adf7242_local, work.work);
-
-	/* Reissuing RC_RX every 400ms - to adjust for offset
-	 * drift in receiver (datasheet page 61, OCL section)
-	 */
-
-	if (!test_bit(FLAG_XMIT, &lp->flags)) {
-		adf7242_cmd(lp, CMD_RC_PHY_RDY);
-		adf7242_cmd_rx(lp);
-	}
 }
 
 static int adf7242_set_txpower(struct ieee802154_hw *hw, int mbm)
@@ -703,7 +686,7 @@ static int adf7242_start(struct ieee802154_hw *hw)
 	enable_irq(lp->spi->irq);
 	set_bit(FLAG_START, &lp->flags);
 
-	return adf7242_cmd_rx(lp);
+	return adf7242_cmd(lp, CMD_RC_RX);
 }
 
 static void adf7242_stop(struct ieee802154_hw *hw)
@@ -711,7 +694,6 @@ static void adf7242_stop(struct ieee802154_hw *hw)
 	struct adf7242_local *lp = hw->priv;
 
 	disable_irq(lp->spi->irq);
-	cancel_delayed_work_sync(&lp->work);
 	adf7242_cmd(lp, CMD_RC_IDLE);
 	clear_bit(FLAG_START, &lp->flags);
 	adf7242_clear_irqstat(lp);
@@ -737,10 +719,7 @@ static int adf7242_channel(struct ieee802154_hw *hw, u8 page, u8 channel)
 	adf7242_write_reg(lp, REG_CH_FREQ1, freq >> 8);
 	adf7242_write_reg(lp, REG_CH_FREQ2, freq >> 16);
 
-	if (test_bit(FLAG_START, &lp->flags))
-		return adf7242_cmd_rx(lp);
-	else
-		return adf7242_cmd(lp, CMD_RC_PHY_RDY);
+	return adf7242_cmd(lp, CMD_RC_RX);
 }
 
 static int adf7242_set_hw_addr_filt(struct ieee802154_hw *hw,
@@ -835,7 +814,6 @@ static int adf7242_xmit(struct ieee802154_hw *hw, struct sk_buff *skb)
 	/* ensure existing instances of the IRQ handler have completed */
 	disable_irq(lp->spi->irq);
 	set_bit(FLAG_XMIT, &lp->flags);
-	cancel_delayed_work_sync(&lp->work);
 	reinit_completion(&lp->tx_complete);
 	adf7242_cmd(lp, CMD_RC_PHY_RDY);
 	adf7242_clear_irqstat(lp);
@@ -882,9 +860,7 @@ static int adf7242_rx(struct adf7242_local *lp)
 	int ret;
 	u8 lqi, len_u8, *data;
 
-	ret = adf7242_read_reg(lp, 0, &len_u8);
-	if (ret)
-		return ret;
+	adf7242_read_reg(lp, 0, &len_u8);
 
 	len = len_u8;
 
@@ -976,7 +952,6 @@ static irqreturn_t adf7242_isr(int irq, void *data)
 	unsigned int xmit;
 	u8 irq1;
 
-	mod_delayed_work(lp->wqueue, &lp->work, msecs_to_jiffies(400));
 	adf7242_read_reg(lp, REG_IRQ1_SRC1, &irq1);
 
 	if (!(irq1 & (IRQ_RX_PKT_RCVD | IRQ_CSMA_CA)))
@@ -1160,16 +1135,23 @@ static int adf7242_stats_show(struct seq_file *file, void *offset)
 	return 0;
 }
 
-static void adf7242_debugfs_init(struct adf7242_local *lp)
+static int adf7242_debugfs_init(struct adf7242_local *lp)
 {
 	char debugfs_dir_name[DNAME_INLINE_LEN + 1] = "adf7242-";
+	struct dentry *stats;
 
 	strncat(debugfs_dir_name, dev_name(&lp->spi->dev), DNAME_INLINE_LEN);
 
 	lp->debugfs_root = debugfs_create_dir(debugfs_dir_name, NULL);
+	if (IS_ERR_OR_NULL(lp->debugfs_root))
+		return PTR_ERR_OR_ZERO(lp->debugfs_root);
 
-	debugfs_create_devm_seqfile(&lp->spi->dev, "status", lp->debugfs_root,
-				    adf7242_stats_show);
+	stats = debugfs_create_devm_seqfile(&lp->spi->dev, "status",
+					    lp->debugfs_root,
+					    adf7242_stats_show);
+	return PTR_ERR_OR_ZERO(stats);
+
+	return 0;
 }
 
 static const s32 adf7242_powers[] = {
@@ -1259,13 +1241,6 @@ static int adf7242_probe(struct spi_device *spi)
 	spi_message_add_tail(&lp->stat_xfer, &lp->stat_msg);
 
 	spi_set_drvdata(spi, lp);
-	INIT_DELAYED_WORK(&lp->work, adf7242_rx_cal_work);
-	lp->wqueue = alloc_ordered_workqueue(dev_name(&spi->dev),
-					     WQ_MEM_RECLAIM);
-	if (unlikely(!lp->wqueue)) {
-		ret = -ENOMEM;
-		goto err_alloc_wq;
-	}
 
 	ret = adf7242_hw_init(lp);
 	if (ret)
@@ -1296,27 +1271,24 @@ static int adf7242_probe(struct spi_device *spi)
 	return ret;
 
 err_hw_init:
-	destroy_workqueue(lp->wqueue);
-err_alloc_wq:
 	mutex_destroy(&lp->bmux);
 	ieee802154_free_hw(lp->hw);
 
 	return ret;
 }
 
-static void adf7242_remove(struct spi_device *spi)
+static int adf7242_remove(struct spi_device *spi)
 {
 	struct adf7242_local *lp = spi_get_drvdata(spi);
 
-	debugfs_remove_recursive(lp->debugfs_root);
+	if (!IS_ERR_OR_NULL(lp->debugfs_root))
+		debugfs_remove_recursive(lp->debugfs_root);
 
 	ieee802154_unregister_hw(lp->hw);
-
-	cancel_delayed_work_sync(&lp->work);
-	destroy_workqueue(lp->wqueue);
-
 	mutex_destroy(&lp->bmux);
 	ieee802154_free_hw(lp->hw);
+
+	return 0;
 }
 
 static const struct of_device_id adf7242_of_match[] = {

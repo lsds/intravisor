@@ -952,8 +952,7 @@ static int cyapa_gen3_set_power_mode(struct cyapa *cyapa, u8 power_mode,
 	 * doing so before issuing the next command may result in errors
 	 * depending on the command's content.
 	 */
-	if (cyapa->operational &&
-	    input && input_device_enabled(input) &&
+	if (cyapa->operational && input && input->users &&
 	    (pm_stage == CYAPA_PM_RUNTIME_SUSPEND ||
 	     pm_stage == CYAPA_PM_RUNTIME_RESUME)) {
 		/* Try to polling in 120Hz, read may fail, just ignore it. */
@@ -1068,7 +1067,7 @@ static int cyapa_gen3_do_operational_check(struct cyapa *cyapa)
 			return error;
 		}
 
-		fallthrough;
+	/* Fallthrough state */
 	case CYAPA_STATE_BL_IDLE:
 		/* Try to get firmware version in bootloader mode. */
 		cyapa_gen3_bl_query_data(cyapa);
@@ -1079,7 +1078,7 @@ static int cyapa_gen3_do_operational_check(struct cyapa *cyapa)
 			return error;
 		}
 
-		fallthrough;
+	/* Fallthrough state */
 	case CYAPA_STATE_OP:
 		/*
 		 * Reading query data before going back to the full mode

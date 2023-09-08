@@ -1,8 +1,19 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * FPGA to SDRAM Bridge Driver for Altera SoCFPGA Devices
  *
  *  Copyright (C) 2013-2016 Altera Corporation, All Rights Reserved.
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms and conditions of the GNU General Public License,
+ * version 2, as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+ * more details.
+ *
+ * You should have received a copy of the GNU General Public License along with
+ * this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
 /*
@@ -95,7 +106,6 @@ static int alt_fpga_bridge_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
 	struct alt_fpga2sdram_data *priv;
-	struct fpga_bridge *br;
 	u32 enable;
 	struct regmap *sysmgr;
 	int ret = 0;
@@ -121,12 +131,10 @@ static int alt_fpga_bridge_probe(struct platform_device *pdev)
 	/* Get f2s bridge configuration saved in handoff register */
 	regmap_read(sysmgr, SYSMGR_ISWGRP_HANDOFF3, &priv->mask);
 
-	br = fpga_bridge_register(dev, F2S_BRIDGE_NAME,
-				  &altera_fpga2sdram_br_ops, priv);
-	if (IS_ERR(br))
-		return PTR_ERR(br);
-
-	platform_set_drvdata(pdev, br);
+	ret = fpga_bridge_register(dev, F2S_BRIDGE_NAME,
+				   &altera_fpga2sdram_br_ops, priv);
+	if (ret)
+		return ret;
 
 	dev_info(dev, "driver initialized with handoff %08x\n", priv->mask);
 
@@ -138,7 +146,7 @@ static int alt_fpga_bridge_probe(struct platform_device *pdev)
 				 (enable ? "enabling" : "disabling"));
 			ret = _alt_fpga2sdram_enable_set(priv, enable);
 			if (ret) {
-				fpga_bridge_unregister(br);
+				fpga_bridge_unregister(&pdev->dev);
 				return ret;
 			}
 		}
@@ -149,9 +157,7 @@ static int alt_fpga_bridge_probe(struct platform_device *pdev)
 
 static int alt_fpga_bridge_remove(struct platform_device *pdev)
 {
-	struct fpga_bridge *br = platform_get_drvdata(pdev);
-
-	fpga_bridge_unregister(br);
+	fpga_bridge_unregister(&pdev->dev);
 
 	return 0;
 }

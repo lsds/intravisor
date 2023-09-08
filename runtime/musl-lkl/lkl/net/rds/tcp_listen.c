@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2006, 2018 Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2006, 2018 Oracle.  All rights reserved.
  *
  * This software is available to you under a choice of one of two
  * licenses.  You may choose to be licensed under the terms of the GNU
@@ -38,19 +38,36 @@
 #include "rds.h"
 #include "tcp.h"
 
-void rds_tcp_keepalive(struct socket *sock)
+int rds_tcp_keepalive(struct socket *sock)
 {
 	/* values below based on xs_udp_default_timeout */
 	int keepidle = 5; /* send a probe 'keepidle' secs after last data */
 	int keepcnt = 5; /* number of unack'ed probes before declaring dead */
+	int keepalive = 1;
+	int ret = 0;
 
-	sock_set_keepalive(sock->sk);
-	tcp_sock_set_keepcnt(sock->sk, keepcnt);
-	tcp_sock_set_keepidle(sock->sk, keepidle);
+	ret = kernel_setsockopt(sock, SOL_SOCKET, SO_KEEPALIVE,
+				(char *)&keepalive, sizeof(keepalive));
+	if (ret < 0)
+		goto bail;
+
+	ret = kernel_setsockopt(sock, IPPROTO_TCP, TCP_KEEPCNT,
+				(char *)&keepcnt, sizeof(keepcnt));
+	if (ret < 0)
+		goto bail;
+
+	ret = kernel_setsockopt(sock, IPPROTO_TCP, TCP_KEEPIDLE,
+				(char *)&keepidle, sizeof(keepidle));
+	if (ret < 0)
+		goto bail;
+
 	/* KEEPINTVL is the interval between successive probes. We follow
 	 * the model in xs_tcp_finish_connecting() and re-use keepidle.
 	 */
-	tcp_sock_set_keepintvl(sock->sk, keepidle);
+	ret = kernel_setsockopt(sock, IPPROTO_TCP, TCP_KEEPINTVL,
+				(char *)&keepidle, sizeof(keepidle));
+bail:
+	return ret;
 }
 
 /* rds_tcp_accept_one_path(): if accepting on cp_index > 0, make sure the
@@ -66,12 +83,13 @@ static
 struct rds_tcp_connection *rds_tcp_accept_one_path(struct rds_connection *conn)
 {
 	int i;
+	bool peer_is_smaller = IS_CANONICAL(conn->c_faddr, conn->c_laddr);
 	int npaths = max_t(int, 1, conn->c_npaths);
 
 	/* for mprds, all paths MUST be initiated by the peer
 	 * with the smaller address.
 	 */
-	if (rds_addr_cmp(&conn->c_faddr, &conn->c_laddr) >= 0) {
+	if (!peer_is_smaller) {
 		/* Make sure we initiate at least one path if this
 		 * has not already been done; rds_start_mprds() will
 		 * take care of additional paths, if necessary.
@@ -94,6 +112,17 @@ struct rds_tcp_connection *rds_tcp_accept_one_path(struct rds_connection *conn)
 	return NULL;
 }
 
+void rds_tcp_set_linger(struct socket *sock)
+{
+	struct linger no_linger = {
+		.l_onoff = 1,
+		.l_linger = 0,
+	};
+
+	kernel_setsockopt(sock, SOL_SOCKET, SO_LINGER,
+			  (char *)&no_linger, sizeof(no_linger));
+}
+
 int rds_tcp_accept_one(struct socket *sock)
 {
 	struct socket *new_sock = NULL;
@@ -103,11 +132,6 @@ int rds_tcp_accept_one(struct socket *sock)
 	struct rds_tcp_connection *rs_tcp = NULL;
 	int conn_state;
 	struct rds_conn_path *cp;
-	struct in6_addr *my_addr, *peer_addr;
-#if !IS_ENABLED(CONFIG_IPV6)
-	struct in6_addr saddr, daddr;
-#endif
-	int dev_if = 0;
 
 	if (!sock) /* module unload or netns delete in progress */
 		return -ENETUNREACH;
@@ -132,54 +156,21 @@ int rds_tcp_accept_one(struct socket *sock)
 	new_sock->ops = sock->ops;
 	__module_get(new_sock->ops->owner);
 
-	rds_tcp_keepalive(new_sock);
-	if (!rds_tcp_tune(new_sock)) {
-		ret = -EINVAL;
+	ret = rds_tcp_keepalive(new_sock);
+	if (ret < 0)
 		goto out;
-	}
+
+	rds_tcp_tune(new_sock);
 
 	inet = inet_sk(new_sock->sk);
 
-#if IS_ENABLED(CONFIG_IPV6)
-	my_addr = &new_sock->sk->sk_v6_rcv_saddr;
-	peer_addr = &new_sock->sk->sk_v6_daddr;
-#else
-	ipv6_addr_set_v4mapped(inet->inet_saddr, &saddr);
-	ipv6_addr_set_v4mapped(inet->inet_daddr, &daddr);
-	my_addr = &saddr;
-	peer_addr = &daddr;
-#endif
-	rdsdebug("accepted family %d tcp %pI6c:%u -> %pI6c:%u\n",
-		 sock->sk->sk_family,
-		 my_addr, ntohs(inet->inet_sport),
-		 peer_addr, ntohs(inet->inet_dport));
-
-#if IS_ENABLED(CONFIG_IPV6)
-	/* sk_bound_dev_if is not set if the peer address is not link local
-	 * address.  In this case, it happens that mcast_oif is set.  So
-	 * just use it.
-	 */
-	if ((ipv6_addr_type(my_addr) & IPV6_ADDR_LINKLOCAL) &&
-	    !(ipv6_addr_type(peer_addr) & IPV6_ADDR_LINKLOCAL)) {
-		struct ipv6_pinfo *inet6;
-
-		inet6 = inet6_sk(new_sock->sk);
-		dev_if = inet6->mcast_oif;
-	} else {
-		dev_if = new_sock->sk->sk_bound_dev_if;
-	}
-#endif
-
-	if (!rds_tcp_laddr_check(sock_net(sock->sk), peer_addr, dev_if)) {
-		/* local address connection is only allowed via loopback */
-		ret = -EOPNOTSUPP;
-		goto out;
-	}
+	rdsdebug("accepted tcp %pI4:%u -> %pI4:%u\n",
+		 &inet->inet_saddr, ntohs(inet->inet_sport),
+		 &inet->inet_daddr, ntohs(inet->inet_dport));
 
 	conn = rds_conn_create(sock_net(sock->sk),
-			       my_addr, peer_addr,
-			       &rds_tcp_transport, 0, GFP_KERNEL, dev_if);
-
+			       inet->inet_saddr, inet->inet_daddr,
+			       &rds_tcp_transport, GFP_KERNEL);
 	if (IS_ERR(conn)) {
 		ret = PTR_ERR(conn);
 		goto out;
@@ -219,7 +210,7 @@ rst_nsk:
 	 * be pending on it. By setting linger, we achieve the side-effect
 	 * of avoiding TIME_WAIT state on new_sock.
 	 */
-	sock_no_linger(new_sock->sk);
+	rds_tcp_set_linger(new_sock);
 	kernel_sock_shutdown(new_sock, SHUT_RDWR);
 	ret = 0;
 out:
@@ -263,53 +254,31 @@ out:
 		ready(sk);
 }
 
-struct socket *rds_tcp_listen_init(struct net *net, bool isv6)
+struct socket *rds_tcp_listen_init(struct net *net)
 {
+	struct sockaddr_in sin;
 	struct socket *sock = NULL;
-	struct sockaddr_storage ss;
-	struct sockaddr_in6 *sin6;
-	struct sockaddr_in *sin;
-	int addr_len;
 	int ret;
 
-	ret = sock_create_kern(net, isv6 ? PF_INET6 : PF_INET, SOCK_STREAM,
-			       IPPROTO_TCP, &sock);
-	if (ret < 0) {
-		rdsdebug("could not create %s listener socket: %d\n",
-			 isv6 ? "IPv6" : "IPv4", ret);
+	ret = sock_create_kern(net, PF_INET, SOCK_STREAM, IPPROTO_TCP, &sock);
+	if (ret < 0)
 		goto out;
-	}
 
 	sock->sk->sk_reuse = SK_CAN_REUSE;
-	tcp_sock_set_nodelay(sock->sk);
+	rds_tcp_nonagle(sock);
 
 	write_lock_bh(&sock->sk->sk_callback_lock);
 	sock->sk->sk_user_data = sock->sk->sk_data_ready;
 	sock->sk->sk_data_ready = rds_tcp_listen_data_ready;
 	write_unlock_bh(&sock->sk->sk_callback_lock);
 
-	if (isv6) {
-		sin6 = (struct sockaddr_in6 *)&ss;
-		sin6->sin6_family = PF_INET6;
-		sin6->sin6_addr = in6addr_any;
-		sin6->sin6_port = (__force u16)htons(RDS_TCP_PORT);
-		sin6->sin6_scope_id = 0;
-		sin6->sin6_flowinfo = 0;
-		addr_len = sizeof(*sin6);
-	} else {
-		sin = (struct sockaddr_in *)&ss;
-		sin->sin_family = PF_INET;
-		sin->sin_addr.s_addr = INADDR_ANY;
-		sin->sin_port = (__force u16)htons(RDS_TCP_PORT);
-		addr_len = sizeof(*sin);
-	}
+	sin.sin_family = PF_INET;
+	sin.sin_addr.s_addr = (__force u32)htonl(INADDR_ANY);
+	sin.sin_port = (__force u16)htons(RDS_TCP_PORT);
 
-	ret = sock->ops->bind(sock, (struct sockaddr *)&ss, addr_len);
-	if (ret < 0) {
-		rdsdebug("could not bind %s listener socket: %d\n",
-			 isv6 ? "IPv6" : "IPv4", ret);
+	ret = sock->ops->bind(sock, (struct sockaddr *)&sin, sizeof(sin));
+	if (ret < 0)
 		goto out;
-	}
 
 	ret = sock->ops->listen(sock, 64);
 	if (ret < 0)

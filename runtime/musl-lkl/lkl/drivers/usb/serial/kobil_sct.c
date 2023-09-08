@@ -48,12 +48,12 @@
 
 /* Function prototypes */
 static int kobil_port_probe(struct usb_serial_port *probe);
-static void kobil_port_remove(struct usb_serial_port *probe);
+static int kobil_port_remove(struct usb_serial_port *probe);
 static int  kobil_open(struct tty_struct *tty, struct usb_serial_port *port);
 static void kobil_close(struct usb_serial_port *port);
 static int  kobil_write(struct tty_struct *tty, struct usb_serial_port *port,
 			 const unsigned char *buf, int count);
-static unsigned int kobil_write_room(struct tty_struct *tty);
+static int  kobil_write_room(struct tty_struct *tty);
 static int  kobil_ioctl(struct tty_struct *tty,
 			unsigned int cmd, unsigned long arg);
 static int  kobil_tiocmget(struct tty_struct *tty);
@@ -62,8 +62,7 @@ static int  kobil_tiocmset(struct tty_struct *tty,
 static void kobil_read_int_callback(struct urb *urb);
 static void kobil_write_int_callback(struct urb *urb);
 static void kobil_set_termios(struct tty_struct *tty,
-			      struct usb_serial_port *port,
-			      const struct ktermios *old);
+			struct usb_serial_port *port, struct ktermios *old);
 static void kobil_init_termios(struct tty_struct *tty);
 
 static const struct usb_device_id id_table[] = {
@@ -144,12 +143,14 @@ static int kobil_port_probe(struct usb_serial_port *port)
 }
 
 
-static void kobil_port_remove(struct usb_serial_port *port)
+static int kobil_port_remove(struct usb_serial_port *port)
 {
 	struct kobil_private *priv;
 
 	priv = usb_get_serial_port_data(port);
 	kfree(priv);
+
+	return 0;
 }
 
 static void kobil_init_termios(struct tty_struct *tty)
@@ -189,10 +190,8 @@ static int kobil_open(struct tty_struct *tty, struct usb_serial_port *port)
 			  KOBIL_TIMEOUT
 	);
 	dev_dbg(dev, "%s - Send get_HW_version URB returns: %i\n", __func__, result);
-	if (result >= 3) {
-		dev_dbg(dev, "Hardware version: %i.%i.%i\n", transfer_buffer[0],
-				transfer_buffer[1], transfer_buffer[2]);
-	}
+	dev_dbg(dev, "Hardware version: %i.%i.%i\n", transfer_buffer[0],
+		transfer_buffer[1], transfer_buffer[2]);
 
 	/* get firmware version */
 	result = usb_control_msg(port->serial->dev,
@@ -206,10 +205,8 @@ static int kobil_open(struct tty_struct *tty, struct usb_serial_port *port)
 			  KOBIL_TIMEOUT
 	);
 	dev_dbg(dev, "%s - Send get_FW_version URB returns: %i\n", __func__, result);
-	if (result >= 3) {
-		dev_dbg(dev, "Firmware version: %i.%i.%i\n", transfer_buffer[0],
-				transfer_buffer[1], transfer_buffer[2]);
-	}
+	dev_dbg(dev, "Firmware version: %i.%i.%i\n", transfer_buffer[0],
+		transfer_buffer[1], transfer_buffer[2]);
 
 	if (priv->device_type == KOBIL_ADAPTER_B_PRODUCT_ID ||
 			priv->device_type == KOBIL_ADAPTER_K_PRODUCT_ID) {
@@ -359,7 +356,7 @@ static int kobil_write(struct tty_struct *tty, struct usb_serial_port *port,
 }
 
 
-static unsigned int kobil_write_room(struct tty_struct *tty)
+static int kobil_write_room(struct tty_struct *tty)
 {
 	/* FIXME */
 	return 8;
@@ -396,20 +393,12 @@ static int kobil_tiocmget(struct tty_struct *tty)
 			  transfer_buffer_length,
 			  KOBIL_TIMEOUT);
 
-	dev_dbg(&port->dev, "Send get_status_line_state URB returns: %i\n",
-			result);
-	if (result < 1) {
-		if (result >= 0)
-			result = -EIO;
-		goto out_free;
-	}
-
-	dev_dbg(&port->dev, "Statusline: %02x\n", transfer_buffer[0]);
+	dev_dbg(&port->dev, "%s - Send get_status_line_state URB returns: %i. Statusline: %02x\n",
+		__func__, result, transfer_buffer[0]);
 
 	result = 0;
 	if ((transfer_buffer[0] & SUSBCR_GSL_DSR) != 0)
 		result = TIOCM_DSR;
-out_free:
 	kfree(transfer_buffer);
 	return result;
 }
@@ -475,8 +464,7 @@ static int kobil_tiocmset(struct tty_struct *tty,
 }
 
 static void kobil_set_termios(struct tty_struct *tty,
-			      struct usb_serial_port *port,
-			      const struct ktermios *old)
+			struct usb_serial_port *port, struct ktermios *old)
 {
 	struct kobil_private *priv;
 	int result;
@@ -499,7 +487,7 @@ static void kobil_set_termios(struct tty_struct *tty,
 		break;
 	default:
 		speed = 9600;
-		fallthrough;
+		/* fall through */
 	case 9600:
 		urb_val = SUSBCR_SBR_9600;
 		break;
@@ -526,10 +514,6 @@ static void kobil_set_termios(struct tty_struct *tty,
 		  0,
 		  KOBIL_TIMEOUT
 		);
-	if (result) {
-		dev_err(&port->dev, "failed to update line settings: %d\n",
-				result);
-	}
 }
 
 static int kobil_ioctl(struct tty_struct *tty,

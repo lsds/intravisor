@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-2.0-only
-/fixdep
-/fixdep.exe
-/randstruct.seed
+fixdep
+fixdep.exe
+bin2c
+bin2c.exe

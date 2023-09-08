@@ -45,13 +45,13 @@
 
 struct virtio_console_config {
 	/* colums of the screens */
-	__virtio16 cols;
+	__u16 cols;
 	/* rows of the screens */
-	__virtio16 rows;
+	__u16 rows;
 	/* max. number of ports this device can hold */
-	__virtio32 max_nr_ports;
+	__u32 max_nr_ports;
 	/* emergency write register */
-	__virtio32 emerg_wr;
+	__u32 emerg_wr;
 } __attribute__((packed));
 
 /*

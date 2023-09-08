@@ -16,38 +16,41 @@
 #define PAGEMAP_MAPPEDDISK	0x0020u
 #define PAGEMAP_BUFFERS		0x0040u
 
-#define trace_pagemap_flags(folio) ( \
-	(folio_test_anon(folio)		? PAGEMAP_ANONYMOUS  : PAGEMAP_FILE) | \
-	(folio_mapped(folio)		? PAGEMAP_MAPPED     : 0) | \
-	(folio_test_swapcache(folio)	? PAGEMAP_SWAPCACHE  : 0) | \
-	(folio_test_swapbacked(folio)	? PAGEMAP_SWAPBACKED : 0) | \
-	(folio_test_mappedtodisk(folio)	? PAGEMAP_MAPPEDDISK : 0) | \
-	(folio_test_private(folio)	? PAGEMAP_BUFFERS    : 0) \
+#define trace_pagemap_flags(page) ( \
+	(PageAnon(page)		? PAGEMAP_ANONYMOUS  : PAGEMAP_FILE) | \
+	(page_mapped(page)	? PAGEMAP_MAPPED     : 0) | \
+	(PageSwapCache(page)	? PAGEMAP_SWAPCACHE  : 0) | \
+	(PageSwapBacked(page)	? PAGEMAP_SWAPBACKED : 0) | \
+	(PageMappedToDisk(page)	? PAGEMAP_MAPPEDDISK : 0) | \
+	(page_has_private(page) ? PAGEMAP_BUFFERS    : 0) \
 	)
 
 TRACE_EVENT(mm_lru_insertion,
 
-	TP_PROTO(struct folio *folio),
+	TP_PROTO(
+		struct page *page,
+		int lru
+	),
 
-	TP_ARGS(folio),
+	TP_ARGS(page, lru),
 
 	TP_STRUCT__entry(
-		__field(struct folio *,	folio	)
+		__field(struct page *,	page	)
 		__field(unsigned long,	pfn	)
-		__field(enum lru_list,	lru	)
+		__field(int,		lru	)
 		__field(unsigned long,	flags	)
 	),
 
 	TP_fast_assign(
-		__entry->folio	= folio;
-		__entry->pfn	= folio_pfn(folio);
-		__entry->lru	= folio_lru_list(folio);
-		__entry->flags	= trace_pagemap_flags(folio);
+		__entry->page	= page;
+		__entry->pfn	= page_to_pfn(page);
+		__entry->lru	= lru;
+		__entry->flags	= trace_pagemap_flags(page);
 	),
 
 	/* Flag format is based on page-types.c formatting for pagemap */
-	TP_printk("folio=%p pfn=0x%lx lru=%d flags=%s%s%s%s%s%s",
-			__entry->folio,
+	TP_printk("page=%p pfn=%lu lru=%d flags=%s%s%s%s%s%s",
+			__entry->page,
 			__entry->pfn,
 			__entry->lru,
 			__entry->flags & PAGEMAP_MAPPED		? "M" : " ",
@@ -60,21 +63,23 @@ TRACE_EVENT(mm_lru_insertion,
 
 TRACE_EVENT(mm_lru_activate,
 
-	TP_PROTO(struct folio *folio),
+	TP_PROTO(struct page *page),
 
-	TP_ARGS(folio),
+	TP_ARGS(page),
 
 	TP_STRUCT__entry(
-		__field(struct folio *,	folio	)
+		__field(struct page *,	page	)
 		__field(unsigned long,	pfn	)
 	),
 
 	TP_fast_assign(
-		__entry->folio	= folio;
-		__entry->pfn	= folio_pfn(folio);
+		__entry->page	= page;
+		__entry->pfn	= page_to_pfn(page);
 	),
 
-	TP_printk("folio=%p pfn=0x%lx", __entry->folio, __entry->pfn)
+	/* Flag format is based on page-types.c formatting for pagemap */
+	TP_printk("page=%p pfn=%lu", __entry->page, __entry->pfn)
+
 );
 
 #endif /* _TRACE_PAGEMAP_H */

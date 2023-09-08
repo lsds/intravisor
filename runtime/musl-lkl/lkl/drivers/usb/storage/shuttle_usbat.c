@@ -48,7 +48,6 @@
 MODULE_DESCRIPTION("Driver for SCM Microsystems (a.k.a. Shuttle) USB-ATAPI cable");
 MODULE_AUTHOR("Daniel Drake <dsd@gentoo.org>, Robert Baruch <autophile@starband.net>");
 MODULE_LICENSE("GPL");
-MODULE_IMPORT_NS(USB_STORAGE);
 
 /* Supported device types */
 #define USBAT_DEV_HP8200	0x01
@@ -1456,7 +1455,7 @@ static int init_usbat(struct us_data *us, int devicetype)
 
 	us->extra = kzalloc(sizeof(struct usbat_info), GFP_NOIO);
 	if (!us->extra)
-		return -ENOMEM;
+		return 1;
 
 	info = (struct usbat_info *) (us->extra);
 
@@ -1465,7 +1464,7 @@ static int init_usbat(struct us_data *us, int devicetype)
 				 USBAT_UIO_OE1 | USBAT_UIO_OE0,
 				 USBAT_UIO_EPAD | USBAT_UIO_1);
 	if (rc != USB_STOR_XFER_GOOD)
-		return -EIO;
+		return USB_STOR_TRANSPORT_ERROR;
 
 	usb_stor_dbg(us, "INIT 1\n");
 
@@ -1473,42 +1472,42 @@ static int init_usbat(struct us_data *us, int devicetype)
 
 	rc = usbat_read_user_io(us, status);
 	if (rc != USB_STOR_TRANSPORT_GOOD)
-		return -EIO;
+		return rc;
 
 	usb_stor_dbg(us, "INIT 2\n");
 
 	rc = usbat_read_user_io(us, status);
 	if (rc != USB_STOR_XFER_GOOD)
-		return -EIO;
+		return USB_STOR_TRANSPORT_ERROR;
 
 	rc = usbat_read_user_io(us, status);
 	if (rc != USB_STOR_XFER_GOOD)
-		return -EIO;
+		return USB_STOR_TRANSPORT_ERROR;
 
 	usb_stor_dbg(us, "INIT 3\n");
 
 	rc = usbat_select_and_test_registers(us);
 	if (rc != USB_STOR_TRANSPORT_GOOD)
-		return -EIO;
+		return rc;
 
 	usb_stor_dbg(us, "INIT 4\n");
 
 	rc = usbat_read_user_io(us, status);
 	if (rc != USB_STOR_XFER_GOOD)
-		return -EIO;
+		return USB_STOR_TRANSPORT_ERROR;
 
 	usb_stor_dbg(us, "INIT 5\n");
 
 	/* Enable peripheral control signals and card detect */
 	rc = usbat_device_enable_cdt(us);
 	if (rc != USB_STOR_TRANSPORT_GOOD)
-		return -EIO;
+		return rc;
 
 	usb_stor_dbg(us, "INIT 6\n");
 
 	rc = usbat_read_user_io(us, status);
 	if (rc != USB_STOR_XFER_GOOD)
-		return -EIO;
+		return USB_STOR_TRANSPORT_ERROR;
 
 	usb_stor_dbg(us, "INIT 7\n");
 
@@ -1516,19 +1515,19 @@ static int init_usbat(struct us_data *us, int devicetype)
 
 	rc = usbat_read_user_io(us, status);
 	if (rc != USB_STOR_XFER_GOOD)
-		return -EIO;
+		return USB_STOR_TRANSPORT_ERROR;
 
 	usb_stor_dbg(us, "INIT 8\n");
 
 	rc = usbat_select_and_test_registers(us);
 	if (rc != USB_STOR_TRANSPORT_GOOD)
-		return -EIO;
+		return rc;
 
 	usb_stor_dbg(us, "INIT 9\n");
 
 	/* At this point, we need to detect which device we are using */
 	if (usbat_set_transport(us, info, devicetype))
-		return -EIO;
+		return USB_STOR_TRANSPORT_ERROR;
 
 	usb_stor_dbg(us, "INIT 10\n");
 
@@ -1539,11 +1538,11 @@ static int init_usbat(struct us_data *us, int devicetype)
 	rc = usbat_set_shuttle_features(us, (USBAT_FEAT_ETEN | USBAT_FEAT_ET2 | USBAT_FEAT_ET1),
 									0x00, 0x88, 0x08, subcountH, subcountL);
 	if (rc != USB_STOR_XFER_GOOD)
-		return -EIO;
+		return USB_STOR_TRANSPORT_ERROR;
 
 	usb_stor_dbg(us, "INIT 11\n");
 
-	return 0;
+	return USB_STOR_TRANSPORT_GOOD;
 }
 
 /*

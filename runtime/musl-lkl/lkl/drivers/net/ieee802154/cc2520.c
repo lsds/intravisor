@@ -1,9 +1,14 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /* Driver for TI CC2520 802.15.4 Wireless-PAN Networking controller
  *
  * Copyright (C) 2014 Varka Bhadram <varkab@cdac.in>
  *		      Md.Jamal Mohiuddin <mjmohiuddin@cdac.in>
  *		      P Sowjanya <sowjanyap@cdac.in>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
  */
 #include <linux/kernel.h>
 #include <linux/module.h>
@@ -218,6 +223,7 @@ static int
 cc2520_cmd_strobe(struct cc2520_private *priv, u8 cmd)
 {
 	int ret;
+	u8 status = 0xff;
 	struct spi_message msg;
 	struct spi_transfer xfer = {
 		.len = 0,
@@ -235,6 +241,8 @@ cc2520_cmd_strobe(struct cc2520_private *priv, u8 cmd)
 		 priv->buf[0]);
 
 	ret = spi_sync(priv->spi, &msg);
+	if (!ret)
+		status = priv->buf[0];
 	dev_vdbg(&priv->spi->dev,
 		 "buf[0] = %02x\n", priv->buf[0]);
 	mutex_unlock(&priv->buffer_mutex);
@@ -504,7 +512,6 @@ cc2520_tx(struct ieee802154_hw *hw, struct sk_buff *skb)
 		goto err_tx;
 
 	if (status & CC2520_STATUS_TX_UNDERFLOW) {
-		rc = -EINVAL;
 		dev_err(&priv->spi->dev, "cc2520 tx underflow exception\n");
 		goto err_tx;
 	}
@@ -970,7 +977,7 @@ static int cc2520_hw_init(struct cc2520_private *priv)
 
 		if (timeout-- <= 0) {
 			dev_err(&priv->spi->dev, "oscillator start failed!\n");
-			return -ETIMEDOUT;
+			return ret;
 		}
 		udelay(1);
 	} while (!(status & CC2520_STATUS_XOSC32M_STABLE));
@@ -1214,7 +1221,7 @@ err_hw_init:
 	return ret;
 }
 
-static void cc2520_remove(struct spi_device *spi)
+static int cc2520_remove(struct spi_device *spi)
 {
 	struct cc2520_private *priv = spi_get_drvdata(spi);
 
@@ -1223,6 +1230,8 @@ static void cc2520_remove(struct spi_device *spi)
 
 	ieee802154_unregister_hw(priv->hw);
 	ieee802154_free_hw(priv->hw);
+
+	return 0;
 }
 
 static const struct spi_device_id cc2520_ids[] = {

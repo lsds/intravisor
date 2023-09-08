@@ -1,7 +1,19 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Copyright (C) 2011 matt mooney <mfm@muteddisk.com>
  *               2005-2007 Takahiro Hirofuchi
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
 #include <sys/socket.h>
@@ -50,39 +62,39 @@ void usbip_setup_port_number(char *arg)
 	info("using port %d (\"%s\")", usbip_port, usbip_port_string);
 }
 
-uint32_t usbip_net_pack_uint32_t(int pack, uint32_t num)
+void usbip_net_pack_uint32_t(int pack, uint32_t *num)
 {
 	uint32_t i;
 
 	if (pack)
-		i = htonl(num);
+		i = htonl(*num);
 	else
-		i = ntohl(num);
+		i = ntohl(*num);
 
-	return i;
+	*num = i;
 }
 
-uint16_t usbip_net_pack_uint16_t(int pack, uint16_t num)
+void usbip_net_pack_uint16_t(int pack, uint16_t *num)
 {
 	uint16_t i;
 
 	if (pack)
-		i = htons(num);
+		i = htons(*num);
 	else
-		i = ntohs(num);
+		i = ntohs(*num);
 
-	return i;
+	*num = i;
 }
 
 void usbip_net_pack_usb_device(int pack, struct usbip_usb_device *udev)
 {
-	udev->busnum = usbip_net_pack_uint32_t(pack, udev->busnum);
-	udev->devnum = usbip_net_pack_uint32_t(pack, udev->devnum);
-	udev->speed = usbip_net_pack_uint32_t(pack, udev->speed);
+	usbip_net_pack_uint32_t(pack, &udev->busnum);
+	usbip_net_pack_uint32_t(pack, &udev->devnum);
+	usbip_net_pack_uint32_t(pack, &udev->speed);
 
-	udev->idVendor = usbip_net_pack_uint16_t(pack, udev->idVendor);
-	udev->idProduct = usbip_net_pack_uint16_t(pack, udev->idProduct);
-	udev->bcdDevice = usbip_net_pack_uint16_t(pack, udev->bcdDevice);
+	usbip_net_pack_uint16_t(pack, &udev->idVendor);
+	usbip_net_pack_uint16_t(pack, &udev->idProduct);
+	usbip_net_pack_uint16_t(pack, &udev->bcdDevice);
 }
 
 void usbip_net_pack_usb_interface(int pack __attribute__((unused)),
@@ -129,14 +141,6 @@ ssize_t usbip_net_send(int sockfd, void *buff, size_t bufflen)
 	return usbip_net_xmit(sockfd, buff, bufflen, 1);
 }
 
-static inline void usbip_net_pack_op_common(int pack,
-					    struct op_common *op_common)
-{
-	op_common->version = usbip_net_pack_uint16_t(pack, op_common->version);
-	op_common->code = usbip_net_pack_uint16_t(pack, op_common->code);
-	op_common->status = usbip_net_pack_uint32_t(pack, op_common->status);
-}
-
 int usbip_net_send_op_common(int sockfd, uint32_t code, uint32_t status)
 {
 	struct op_common op_common;
@@ -148,7 +152,7 @@ int usbip_net_send_op_common(int sockfd, uint32_t code, uint32_t status)
 	op_common.code    = code;
 	op_common.status  = status;
 
-	usbip_net_pack_op_common(1, &op_common);
+	PACK_OP_COMMON(1, &op_common);
 
 	rc = usbip_net_send(sockfd, &op_common, sizeof(op_common));
 	if (rc < 0) {
@@ -172,7 +176,7 @@ int usbip_net_recv_op_common(int sockfd, uint16_t *code, int *status)
 		goto err;
 	}
 
-	usbip_net_pack_op_common(0, &op_common);
+	PACK_OP_COMMON(0, &op_common);
 
 	if (op_common.version != USBIP_VERSION) {
 		err("USBIP Kernel and tool version mismatch: %d %d:",

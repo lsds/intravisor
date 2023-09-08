@@ -1,10 +1,14 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /******************************************************************************
  *
  *	(C)Copyright 1998,1999 SysKonnect,
  *	a business unit of Schneider & Koch & Co. Datensysteme GmbH.
  *
  *	See the file "skfddi.c" for further information.
+ *
+ *	This program is free software; you can redistribute it and/or modify
+ *	it under the terms of the GNU General Public License as published by
+ *	the Free Software Foundation; either version 2 of the License, or
+ *	(at your option) any later version.
  *
  *	The information in this file is provided "AS IS" without warranty.
  *
@@ -20,6 +24,10 @@
 #include "h/supern_2.h"
 #include <linux/bitrev.h>
 #include <linux/etherdevice.h>
+
+#ifndef	lint
+static const char ID_sccs[] = "@(#)fplustm.c	1.32 99/02/23 (C) SK " ;
+#endif
 
 #ifndef UNUSED
 #ifdef  lint
@@ -1314,7 +1322,7 @@ void mac_set_rx_mode(struct s_smc *smc, int mode)
 	o Connect a UPPS ISA or EISA station to the network.
 	o Give the FORMAC of UPPS station the command to send
 	  restricted tokens until the ring becomes instable.
-	o Now connect your test client.
+	o Now connect your test test client.
 	o The restricted token monitor should detect the restricted token,
 	  and your break point will be reached.
 	o You can ovserve how the station will clean the ring.

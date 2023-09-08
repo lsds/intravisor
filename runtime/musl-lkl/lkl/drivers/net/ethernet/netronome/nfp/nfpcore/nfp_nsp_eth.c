@@ -1,5 +1,35 @@
-// SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
-/* Copyright (C) 2015-2017 Netronome Systems, Inc. */
+/*
+ * Copyright (C) 2015-2017 Netronome Systems, Inc.
+ *
+ * This software is dual licensed under the GNU General License Version 2,
+ * June 1991 as shown in the file COPYING in the top-level directory of this
+ * source tree or the BSD 2-Clause License provided below.  You have the
+ * option to license this software under the complete terms of either license.
+ *
+ * The BSD 2-Clause License:
+ *
+ *     Redistribution and use in source and binary forms, with or
+ *     without modification, are permitted provided that the following
+ *     conditions are met:
+ *
+ *      1. Redistributions of source code must retain the above
+ *         copyright notice, this list of conditions and the following
+ *         disclaimer.
+ *
+ *      2. Redistributions in binary form must reproduce the above
+ *         copyright notice, this list of conditions and the following
+ *         disclaimer in the documentation and/or other materials
+ *         provided with the distribution.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+ * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+ * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS
+ * BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
+ * ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+ * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ */
 
 /* Authors: David Brunecz <david.brunecz@netronome.com>
  *          Jakub Kicinski <jakub.kicinski@netronome.com>
@@ -27,7 +57,6 @@
 #define NSP_ETH_PORT_PHYLABEL		GENMASK_ULL(59, 54)
 #define NSP_ETH_PORT_FEC_SUPP_BASER	BIT_ULL(60)
 #define NSP_ETH_PORT_FEC_SUPP_RS	BIT_ULL(61)
-#define NSP_ETH_PORT_SUPP_ANEG		BIT_ULL(63)
 
 #define NSP_ETH_PORT_LANES_MASK		cpu_to_le64(NSP_ETH_PORT_LANES)
 
@@ -41,7 +70,6 @@
 #define NSP_ETH_STATE_OVRD_CHNG		BIT_ULL(22)
 #define NSP_ETH_STATE_ANEG		GENMASK_ULL(25, 23)
 #define NSP_ETH_STATE_FEC		GENMASK_ULL(27, 26)
-#define NSP_ETH_STATE_ACT_FEC		GENMASK_ULL(29, 28)
 
 #define NSP_ETH_CTRL_CONFIGURED		BIT_ULL(0)
 #define NSP_ETH_CTRL_ENABLED		BIT_ULL(1)
@@ -51,7 +79,6 @@
 #define NSP_ETH_CTRL_SET_LANES		BIT_ULL(5)
 #define NSP_ETH_CTRL_SET_ANEG		BIT_ULL(6)
 #define NSP_ETH_CTRL_SET_FEC		BIT_ULL(7)
-#define NSP_ETH_CTRL_SET_IDMODE		BIT_ULL(8)
 
 enum nfp_eth_raw {
 	NSP_ETH_RAW_PORT = 0,
@@ -172,14 +199,7 @@ nfp_eth_port_translate(struct nfp_nsp *nsp, const union eth_table_entry *src,
 	if (dst->fec_modes_supported)
 		dst->fec_modes_supported |= NFP_FEC_AUTO | NFP_FEC_DISABLED;
 
-	dst->fec = FIELD_GET(NSP_ETH_STATE_FEC, state);
-	dst->act_fec = dst->fec;
-
-	if (nfp_nsp_get_abi_ver_minor(nsp) < 33)
-		return;
-
-	dst->act_fec = FIELD_GET(NSP_ETH_STATE_ACT_FEC, state);
-	dst->supp_aneg = FIELD_GET(NSP_ETH_PORT_SUPP_ANEG, port);
+	dst->fec = 1 << FIELD_GET(NSP_ETH_STATE_FEC, state);
 }
 
 static void
@@ -215,9 +235,6 @@ nfp_eth_calc_port_type(struct nfp_cpp *cpp, struct nfp_eth_table_port *entry)
 {
 	if (entry->interface == NFP_INTERFACE_NONE) {
 		entry->port_type = PORT_NONE;
-		return;
-	} else if (entry->interface == NFP_INTERFACE_RJ45) {
-		entry->port_type = PORT_TP;
 		return;
 	}
 
@@ -282,7 +299,8 @@ __nfp_eth_read_ports(struct nfp_cpp *cpp, struct nfp_nsp *nsp)
 		goto err;
 	}
 
-	table = kzalloc(struct_size(table, ports, cnt), GFP_KERNEL);
+	table = kzalloc(sizeof(*table) +
+			sizeof(struct nfp_eth_table_port) * cnt, GFP_KERNEL);
 	if (!table)
 		goto err;
 
@@ -500,36 +518,6 @@ nfp_eth_set_bit_config(struct nfp_nsp *nsp, unsigned int raw_idx,
 	nfp_nsp_config_set_modified(nsp, true);
 
 	return 0;
-}
-
-int nfp_eth_set_idmode(struct nfp_cpp *cpp, unsigned int idx, bool state)
-{
-	union eth_table_entry *entries;
-	struct nfp_nsp *nsp;
-	u64 reg;
-
-	nsp = nfp_eth_config_start(cpp, idx);
-	if (IS_ERR(nsp))
-		return PTR_ERR(nsp);
-
-	/* Set this features were added in ABI 0.32 */
-	if (nfp_nsp_get_abi_ver_minor(nsp) < 32) {
-		nfp_err(nfp_nsp_cpp(nsp),
-			"set id mode operation not supported, please update flash\n");
-		nfp_eth_config_cleanup_end(nsp);
-		return -EOPNOTSUPP;
-	}
-
-	entries = nfp_nsp_config_entries(nsp);
-
-	reg = le64_to_cpu(entries[idx].control);
-	reg &= ~NSP_ETH_CTRL_SET_IDMODE;
-	reg |= FIELD_PREP(NSP_ETH_CTRL_SET_IDMODE, state);
-	entries[idx].control = cpu_to_le64(reg);
-
-	nfp_nsp_config_set_modified(nsp, true);
-
-	return nfp_eth_config_commit_end(nsp);
 }
 
 #define NFP_ETH_SET_BIT_CONFIG(nsp, raw_idx, mask, val, ctrl_bit)	\

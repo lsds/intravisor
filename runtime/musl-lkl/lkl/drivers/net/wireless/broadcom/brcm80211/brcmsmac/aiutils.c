@@ -531,6 +531,9 @@ void ai_detach(struct si_pub *sih)
 
 	sii = container_of(sih, struct si_info, pub);
 
+	if (sii == NULL)
+		return;
+
 	kfree(sii);
 }
 

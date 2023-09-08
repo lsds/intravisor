@@ -93,8 +93,7 @@ static int dm_write_reg(struct usbnet *dev, u8 reg, u8 value)
 				value, reg, NULL, 0);
 }
 
-static void dm_write_async(struct usbnet *dev, u8 reg, u16 length,
-			   const void *data)
+static void dm_write_async(struct usbnet *dev, u8 reg, u16 length, void *data)
 {
 	usbnet_write_cmd_async(dev, DM_WRITE_REGS,
 			       USB_DIR_OUT | USB_TYPE_VENDOR | USB_RECIP_DEVICE,
@@ -283,8 +282,8 @@ static const struct ethtool_ops dm9601_ethtool_ops = {
 	.get_eeprom_len	= dm9601_get_eeprom_len,
 	.get_eeprom	= dm9601_get_eeprom,
 	.nway_reset	= usbnet_nway_reset,
-	.get_link_ksettings	= usbnet_get_link_ksettings_mii,
-	.set_link_ksettings	= usbnet_set_link_ksettings_mii,
+	.get_link_ksettings	= usbnet_get_link_ksettings,
+	.set_link_ksettings	= usbnet_set_link_ksettings,
 };
 
 static void dm9601_set_multicast(struct net_device *net)
@@ -332,7 +331,7 @@ static int dm9601_set_mac_address(struct net_device *net, void *p)
 		return -EINVAL;
 	}
 
-	eth_hw_addr_set(net, addr->sa_data);
+	memcpy(net->dev_addr, addr->sa_data, net->addr_len);
 	__dm9601_set_mac_address(dev);
 
 	return 0;
@@ -344,9 +343,9 @@ static const struct net_device_ops dm9601_netdev_ops = {
 	.ndo_start_xmit		= usbnet_start_xmit,
 	.ndo_tx_timeout		= usbnet_tx_timeout,
 	.ndo_change_mtu		= usbnet_change_mtu,
-	.ndo_get_stats64	= dev_get_tstats64,
+	.ndo_get_stats64	= usbnet_get_stats64,
 	.ndo_validate_addr	= eth_validate_addr,
-	.ndo_eth_ioctl		= dm9601_ioctl,
+	.ndo_do_ioctl 		= dm9601_ioctl,
 	.ndo_set_rx_mode	= dm9601_set_multicast,
 	.ndo_set_mac_address	= dm9601_set_mac_address,
 };
@@ -392,7 +391,7 @@ static int dm9601_bind(struct usbnet *dev, struct usb_interface *intf)
 	 * Overwrite the auto-generated address only with good ones.
 	 */
 	if (is_valid_ether_addr(mac))
-		eth_hw_addr_set(dev->net, mac);
+		memcpy(dev->net->dev_addr, mac, ETH_ALEN);
 	else {
 		printk(KERN_WARNING
 			"dm9601: No valid MAC address in EEPROM, using %pM\n",
@@ -624,10 +623,6 @@ static const struct usb_device_id products[] = {
 	},
 	{
 	 USB_DEVICE(0x0a46, 0x1269),	/* DM9621A USB to Fast Ethernet Adapter */
-	 .driver_info = (unsigned long)&dm9601_info,
-	},
-	{
-	 USB_DEVICE(0x0586, 0x3427),	/* ZyXEL Keenetic Plus DSL xDSL modem */
 	 .driver_info = (unsigned long)&dm9601_info,
 	},
 	{},			// END

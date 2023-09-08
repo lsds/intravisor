@@ -1,5 +1,29 @@
 /* SPDX-License-Identifier: GPL-2.0 */
-/* Copyright(c) 2009 - 2018 Intel Corporation. */
+/*******************************************************************************
+
+  Intel(R) 82576 Virtual Function Linux driver
+  Copyright(c) 2009 - 2012 Intel Corporation.
+
+  This program is free software; you can redistribute it and/or modify it
+  under the terms and conditions of the GNU General Public License,
+  version 2, as published by the Free Software Foundation.
+
+  This program is distributed in the hope it will be useful, but WITHOUT
+  ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+  FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+  more details.
+
+  You should have received a copy of the GNU General Public License along with
+  this program; if not, see <http://www.gnu.org/licenses/>.
+
+  The full GNU General Public License is included in this distribution in
+  the file called "COPYING".
+
+  Contact Information:
+  e1000-devel Mailing List <e1000-devel@lists.sourceforge.net>
+  Intel Corporation, 5200 N.E. Elam Young Parkway, Hillsboro, OR 97124-6497
+
+*******************************************************************************/
 
 #ifndef _E1000_VF_H_
 #define _E1000_VF_H_
@@ -35,31 +59,31 @@ struct e1000_hw;
 /* Receive Descriptor - Advanced */
 union e1000_adv_rx_desc {
 	struct {
-		__le64 pkt_addr; /* Packet buffer address */
-		__le64 hdr_addr; /* Header buffer address */
+		u64 pkt_addr; /* Packet buffer address */
+		u64 hdr_addr; /* Header buffer address */
 	} read;
 	struct {
 		struct {
 			union {
-				__le32 data;
+				u32 data;
 				struct {
-					__le16 pkt_info; /* RSS/Packet type */
+					u16 pkt_info; /* RSS/Packet type */
 					/* Split Header, hdr buffer length */
-					__le16 hdr_info;
+					u16 hdr_info;
 				} hs_rss;
 			} lo_dword;
 			union {
-				__le32 rss; /* RSS Hash */
+				u32 rss; /* RSS Hash */
 				struct {
-					__le16 ip_id; /* IP id */
-					__le16 csum;  /* Packet Checksum */
+					u16 ip_id; /* IP id */
+					u16 csum;  /* Packet Checksum */
 				} csum_ip;
 			} hi_dword;
 		} lower;
 		struct {
-			__le32 status_error; /* ext status/error */
-			__le16 length; /* Packet length */
-			__le16 vlan; /* VLAN tag */
+			u32 status_error; /* ext status/error */
+			u16 length; /* Packet length */
+			u16 vlan;   /* VLAN tag */
 		} upper;
 	} wb;  /* writeback */
 };
@@ -70,14 +94,14 @@ union e1000_adv_rx_desc {
 /* Transmit Descriptor - Advanced */
 union e1000_adv_tx_desc {
 	struct {
-		__le64 buffer_addr; /* Address of descriptor's data buf */
-		__le32 cmd_type_len;
-		__le32 olinfo_status;
+		u64 buffer_addr; /* Address of descriptor's data buf */
+		u32 cmd_type_len;
+		u32 olinfo_status;
 	} read;
 	struct {
-		__le64 rsvd; /* Reserved */
-		__le32 nxtseq_seed;
-		__le32 status;
+		u64 rsvd; /* Reserved */
+		u32 nxtseq_seed;
+		u32 status;
 	} wb;
 };
 
@@ -94,10 +118,10 @@ union e1000_adv_tx_desc {
 
 /* Context descriptors */
 struct e1000_adv_tx_context_desc {
-	__le32 vlan_macip_lens;
-	__le32 seqnum_seed;
-	__le32 type_tucmd_mlhl;
-	__le32 mss_l4len_idx;
+	u32 vlan_macip_lens;
+	u32 seqnum_seed;
+	u32 type_tucmd_mlhl;
+	u32 mss_l4len_idx;
 };
 
 #define E1000_ADVTXD_MACLEN_SHIFT	9  /* Adv ctxt desc mac len shift */

@@ -1,5 +1,15 @@
-// SPDX-License-Identifier: GPL-2.0-only
-// Copyright (C) 2017 Broadcom
+/*
+ * Copyright (C) 2017 Broadcom
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License as
+ * published by the Free Software Foundation version 2.
+ *
+ * This program is distributed "as is" WITHOUT ANY WARRANTY of any
+ * kind, whether express or implied; without even the implied warranty
+ * of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ */
 
 #include <linux/delay.h>
 #include <linux/extcon-provider.h>
@@ -8,7 +18,6 @@
 #include <linux/init.h>
 #include <linux/interrupt.h>
 #include <linux/io.h>
-#include <linux/iopoll.h>
 #include <linux/irq.h>
 #include <linux/mfd/syscon.h>
 #include <linux/module.h>
@@ -78,11 +87,17 @@ static const unsigned int usb_extcon_cable[] = {
 static inline int pll_lock_stat(u32 usb_reg, int reg_mask,
 				struct ns2_phy_driver *driver)
 {
+	int retry = PLL_LOCK_RETRY;
 	u32 val;
 
-	return readl_poll_timeout_atomic(driver->icfgdrd_regs + usb_reg,
-					 val, (val & reg_mask), 1,
-					 PLL_LOCK_RETRY);
+	do {
+		udelay(1);
+		val = readl(driver->icfgdrd_regs + usb_reg);
+		if (val & reg_mask)
+			return 0;
+	} while (--retry > 0);
+
+	return -EBUSY;
 }
 
 static int ns2_drd_phy_init(struct phy *phy)
@@ -264,7 +279,7 @@ static irqreturn_t gpio_irq_handler(int irq, void *dev_id)
 	return IRQ_HANDLED;
 }
 
-static const struct phy_ops ops = {
+static struct phy_ops ops = {
 	.init		= ns2_drd_phy_init,
 	.power_on	= ns2_drd_phy_poweron,
 	.power_off	= ns2_drd_phy_poweroff,
@@ -283,6 +298,7 @@ static int ns2_drd_phy_probe(struct platform_device *pdev)
 	struct device *dev = &pdev->dev;
 	struct ns2_phy_driver *driver;
 	struct ns2_phy_data *data;
+	struct resource *res;
 	int ret;
 	u32 val;
 
@@ -296,19 +312,23 @@ static int ns2_drd_phy_probe(struct platform_device *pdev)
 	if (!driver->data)
 		return -ENOMEM;
 
-	driver->icfgdrd_regs = devm_platform_ioremap_resource_byname(pdev, "icfg");
+	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "icfg");
+	driver->icfgdrd_regs = devm_ioremap_resource(dev, res);
 	if (IS_ERR(driver->icfgdrd_regs))
 		return PTR_ERR(driver->icfgdrd_regs);
 
-	driver->idmdrd_rst_ctrl = devm_platform_ioremap_resource_byname(pdev, "rst-ctrl");
+	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "rst-ctrl");
+	driver->idmdrd_rst_ctrl = devm_ioremap_resource(dev, res);
 	if (IS_ERR(driver->idmdrd_rst_ctrl))
 		return PTR_ERR(driver->idmdrd_rst_ctrl);
 
-	driver->crmu_usb2_ctrl = devm_platform_ioremap_resource_byname(pdev, "crmu-ctrl");
+	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "crmu-ctrl");
+	driver->crmu_usb2_ctrl = devm_ioremap_resource(dev, res);
 	if (IS_ERR(driver->crmu_usb2_ctrl))
 		return PTR_ERR(driver->crmu_usb2_ctrl);
 
-	driver->usb2h_strap_reg = devm_platform_ioremap_resource_byname(pdev, "usb2-strap");
+	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "usb2-strap");
+	driver->usb2h_strap_reg = devm_ioremap_resource(dev, res);
 	if (IS_ERR(driver->usb2h_strap_reg))
 		return PTR_ERR(driver->usb2h_strap_reg);
 

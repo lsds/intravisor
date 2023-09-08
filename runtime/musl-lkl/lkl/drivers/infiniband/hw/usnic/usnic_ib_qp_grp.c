@@ -32,6 +32,7 @@
  */
 #include <linux/bug.h>
 #include <linux/errno.h>
+#include <linux/module.h>
 #include <linux/spinlock.h>
 
 #include "usnic_log.h"
@@ -542,7 +543,7 @@ alloc_res_chunk_list(struct usnic_vnic *vnic,
 		/* Do Nothing */
 	}
 
-	res_chunk_list = kcalloc(res_lst_sz + 1, sizeof(*res_chunk_list),
+	res_chunk_list = kzalloc(sizeof(*res_chunk_list)*(res_lst_sz+1),
 					GFP_ATOMIC);
 	if (!res_chunk_list)
 		return ERR_PTR(-ENOMEM);
@@ -664,12 +665,13 @@ static int qp_grp_id_from_flow(struct usnic_ib_qp_grp_flow *qp_flow,
 	return 0;
 }
 
-int usnic_ib_qp_grp_create(struct usnic_ib_qp_grp *qp_grp,
-			   struct usnic_fwd_dev *ufdev, struct usnic_ib_vf *vf,
-			   struct usnic_ib_pd *pd,
-			   struct usnic_vnic_res_spec *res_spec,
-			   struct usnic_transport_spec *transport_spec)
+struct usnic_ib_qp_grp *
+usnic_ib_qp_grp_create(struct usnic_fwd_dev *ufdev, struct usnic_ib_vf *vf,
+			struct usnic_ib_pd *pd,
+			struct usnic_vnic_res_spec *res_spec,
+			struct usnic_transport_spec *transport_spec)
 {
+	struct usnic_ib_qp_grp *qp_grp;
 	int err;
 	enum usnic_transport_type transport = transport_spec->trans_type;
 	struct usnic_ib_qp_grp_flow *qp_flow;
@@ -679,18 +681,23 @@ int usnic_ib_qp_grp_create(struct usnic_ib_qp_grp *qp_grp,
 	err = usnic_vnic_res_spec_satisfied(&min_transport_spec[transport],
 						res_spec);
 	if (err) {
-		usnic_err("Spec does not meet minimum req for transport %d\n",
+		usnic_err("Spec does not meet miniumum req for transport %d\n",
 				transport);
 		log_spec(res_spec);
-		return err;
+		return ERR_PTR(err);
 	}
+
+	qp_grp = kzalloc(sizeof(*qp_grp), GFP_ATOMIC);
+	if (!qp_grp)
+		return NULL;
 
 	qp_grp->res_chunk_list = alloc_res_chunk_list(vf->vnic, res_spec,
 							qp_grp);
-	if (IS_ERR_OR_NULL(qp_grp->res_chunk_list))
-		return qp_grp->res_chunk_list ?
-				     PTR_ERR(qp_grp->res_chunk_list) :
-				     -ENOMEM;
+	if (IS_ERR_OR_NULL(qp_grp->res_chunk_list)) {
+		err = qp_grp->res_chunk_list ?
+				PTR_ERR(qp_grp->res_chunk_list) : -ENOMEM;
+		goto out_free_qp_grp;
+	}
 
 	err = qp_grp_and_vf_bind(vf, pd, qp_grp);
 	if (err)
@@ -717,7 +724,7 @@ int usnic_ib_qp_grp_create(struct usnic_ib_qp_grp *qp_grp,
 
 	usnic_ib_sysfs_qpn_add(qp_grp);
 
-	return 0;
+	return qp_grp;
 
 out_release_flow:
 	release_and_remove_flow(qp_flow);
@@ -725,7 +732,10 @@ out_qp_grp_vf_unbind:
 	qp_grp_and_vf_unbind(qp_grp);
 out_free_res:
 	free_qp_grp_res(qp_grp->res_chunk_list);
-	return err;
+out_free_qp_grp:
+	kfree(qp_grp);
+
+	return ERR_PTR(err);
 }
 
 void usnic_ib_qp_grp_destroy(struct usnic_ib_qp_grp *qp_grp)
@@ -738,6 +748,7 @@ void usnic_ib_qp_grp_destroy(struct usnic_ib_qp_grp *qp_grp)
 	usnic_ib_sysfs_qpn_remove(qp_grp);
 	qp_grp_and_vf_unbind(qp_grp);
 	free_qp_grp_res(qp_grp->res_chunk_list);
+	kfree(qp_grp);
 }
 
 struct usnic_vnic_res_chunk*

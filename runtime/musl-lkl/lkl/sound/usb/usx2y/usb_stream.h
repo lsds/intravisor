@@ -12,7 +12,7 @@ struct usb_stream_kernel {
 
 	void *write_page;
 
-	unsigned int n_o_ps;
+	unsigned n_o_ps;
 
 	struct urb *inurb[USB_STREAM_NURBS];
 	struct urb *idle_inurb;
@@ -26,21 +26,18 @@ struct usb_stream_kernel {
 
 	wait_queue_head_t sleep;
 
-	unsigned int out_phase;
-	unsigned int out_phase_peeked;
-	unsigned int freqn;
+	unsigned out_phase;
+	unsigned out_phase_peeked;
+	unsigned freqn;
 };
 
 struct usb_stream *usb_stream_new(struct usb_stream_kernel *sk,
 				  struct usb_device *dev,
-				  unsigned int in_endpoint,
-				  unsigned int out_endpoint,
-				  unsigned int sample_rate,
-				  unsigned int use_packsize,
-				  unsigned int period_frames,
-				  unsigned int frame_size);
-void usb_stream_free(struct usb_stream_kernel *sk);
-int usb_stream_start(struct usb_stream_kernel *sk);
-void usb_stream_stop(struct usb_stream_kernel *sk);
+				  unsigned in_endpoint, unsigned out_endpoint,
+				  unsigned sample_rate, unsigned use_packsize,
+				  unsigned period_frames, unsigned frame_size);
+void usb_stream_free(struct usb_stream_kernel *);
+int usb_stream_start(struct usb_stream_kernel *);
+void usb_stream_stop(struct usb_stream_kernel *);
 
 #endif /* __USB_STREAM_H */

@@ -48,8 +48,14 @@ The following are the mandatory properties:
 			bindings for the reset argument specifier as per SoC,
 			Documentation/devicetree/bindings/reset/ti-syscon-reset.txt
 			    for 66AK2HK/66AK2L/66AK2E SoCs or,
-			Documentation/devicetree/bindings/reset/ti,sci-reset.yaml
+			Documentation/devicetree/bindings/reset/ti,sci-reset.txt
 			    for 66AK2G SoCs
+
+- interrupt-parent:	Should contain a phandle to the Keystone 2 IRQ controller
+			IP node that is used by the ARM CorePac processor to
+			receive interrupts from the DSP remote processors. See
+			Documentation/devicetree/bindings/interrupt-controller/ti,keystone-irq.txt
+			for details.
 
 - interrupts: 		Should contain an entry for each value in 'interrupt-names'.
 			Each entry should have the interrupt source number used by
@@ -82,7 +88,7 @@ The following are mandatory properties for Keystone 2 66AK2G SoCs only:
 - power-domains:	Should contain a phandle to a PM domain provider node
 			and an args specifier containing the DSP device id
 			value. This property is as per the binding,
-			Documentation/devicetree/bindings/soc/ti/sci-pm-domain.yaml
+			Documentation/devicetree/bindings/soc/ti/sci-pm-domain.txt
 
 Optional properties:
 --------------------

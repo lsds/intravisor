@@ -1,8 +1,17 @@
-/* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
  * des3_ede-asm_64.S  -  x86-64 assembly implementation of 3DES cipher
  *
  * Copyright © 2014 Jussi Kivilinna <jussi.kivilinna@iki.fi>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
  */
 
 #include <linux/linkage.h>
@@ -162,7 +171,7 @@
 	movl   left##d,   (io); \
 	movl   right##d, 4(io);
 
-SYM_FUNC_START(des3_ede_x86_64_crypt_blk)
+ENTRY(des3_ede_x86_64_crypt_blk)
 	/* input:
 	 *	%rdi: round keys, CTX
 	 *	%rsi: dst
@@ -243,8 +252,8 @@ SYM_FUNC_START(des3_ede_x86_64_crypt_blk)
 	popq %r12;
 	popq %rbx;
 
-	RET;
-SYM_FUNC_END(des3_ede_x86_64_crypt_blk)
+	ret;
+ENDPROC(des3_ede_x86_64_crypt_blk)
 
 /***********************************************************************
  * 3-way 3DES
@@ -418,7 +427,7 @@ SYM_FUNC_END(des3_ede_x86_64_crypt_blk)
 #define __movq(src, dst) \
 	movq src, dst;
 
-SYM_FUNC_START(des3_ede_x86_64_crypt_blk_3way)
+ENTRY(des3_ede_x86_64_crypt_blk_3way)
 	/* input:
 	 *	%rdi: ctx, round keys
 	 *	%rsi: dst (3 blocks)
@@ -528,8 +537,8 @@ SYM_FUNC_START(des3_ede_x86_64_crypt_blk_3way)
 	popq %r12;
 	popq %rbx;
 
-	RET;
-SYM_FUNC_END(des3_ede_x86_64_crypt_blk_3way)
+	ret;
+ENDPROC(des3_ede_x86_64_crypt_blk_3way)
 
 .section	.rodata, "a", @progbits
 .align 16

@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0 */
 /*
  * Support for OmniVision OV5693 5M camera sensor.
  *
@@ -31,11 +30,6 @@
 #include <media/media-entity.h>
 
 #include "../../include/linux/atomisp_platform.h"
-
-/*
- * FIXME: non-preview resolutions are currently broken
- */
-#define ENABLE_NON_PREVIEW	0
 
 #define OV5693_POWER_UP_RETRY_NUM 5
 
@@ -174,7 +168,7 @@
 #define OV5693_OTP_START_ADDR		0x3D00
 #define OV5693_OTP_END_ADDR		0x3D0F
 #define OV5693_OTP_DATA_SIZE		320
-#define OV5693_OTP_PROGRAM_REG		0x3D80
+#define OV5693_OTP_PROGRAM_REG      	0x3D80
 #define OV5693_OTP_READ_REG		0x3D81	// 1:Enable 0:disable
 #define OV5693_OTP_BANK_REG		0x3D84	//otp bank and mode
 #define OV5693_OTP_READY_REG_DONE	1
@@ -509,7 +503,6 @@ static struct ov5693_reg const ov5693_global_setting[] = {
 	{OV5693_TOK_TERM, 0, 0}
 };
 
-#if ENABLE_NON_PREVIEW
 /*
  * 654x496 30fps 17ms VBlanking 2lane 10Bit (Scaling)
  */
@@ -585,6 +578,7 @@ static struct ov5693_reg const ov5693_1296x976[] = {
 	{OV5693_TOK_TERM, 0, 0}
 
 };
+
 
 /*
  * 336x256 30fps 17ms VBlanking 2lane 10Bit (Scaling)
@@ -674,6 +668,7 @@ static struct ov5693_reg const ov5693_192x160[] = {
 	{OV5693_TOK_TERM, 0, 0}
 };
 
+
 static struct ov5693_reg const ov5693_736x496[] = {
 	{OV5693_8BIT, 0x3501, 0x3d},
 	{OV5693_8BIT, 0x3502, 0x00},
@@ -700,7 +695,6 @@ static struct ov5693_reg const ov5693_736x496[] = {
 	{OV5693_8BIT, 0x0100, 0x01},
 	{OV5693_TOK_TERM, 0, 0}
 };
-#endif
 
 /*
 static struct ov5693_reg const ov5693_736x496[] = {
@@ -733,7 +727,6 @@ static struct ov5693_reg const ov5693_736x496[] = {
 /*
  * 976x556 30fps 8.8ms VBlanking 2lane 10Bit (Scaling)
  */
-#if ENABLE_NON_PREVIEW
 static struct ov5693_reg const ov5693_976x556[] = {
 	{OV5693_8BIT, 0x3501, 0x7b},
 	{OV5693_8BIT, 0x3502, 0x00},
@@ -826,7 +819,6 @@ static struct ov5693_reg const ov5693_1636p_30fps[] = {
 	{OV5693_8BIT, 0x0100, 0x01},
 	{OV5693_TOK_TERM, 0, 0}
 };
-#endif
 
 static struct ov5693_reg const ov5693_1616x1216_30fps[] = {
 	{OV5693_8BIT, 0x3501, 0x7b},
@@ -855,7 +847,7 @@ static struct ov5693_reg const ov5693_1616x1216_30fps[] = {
 	{OV5693_8BIT, 0x3813, 0x06},	/*{3812,3813} windowing Y offset*/
 	{OV5693_8BIT, 0x3814, 0x11},	/*X subsample control*/
 	{OV5693_8BIT, 0x3815, 0x11},	/*Y subsample control*/
-	{OV5693_8BIT, 0x3820, 0x00},	/*FLIP/Binning control*/
+	{OV5693_8BIT, 0x3820, 0x00},	/*FLIP/Binnning control*/
 	{OV5693_8BIT, 0x3821, 0x1e},	/*MIRROR control*/
 	{OV5693_8BIT, 0x5002, 0x00},
 	{OV5693_8BIT, 0x5041, 0x84},
@@ -863,10 +855,10 @@ static struct ov5693_reg const ov5693_1616x1216_30fps[] = {
 	{OV5693_TOK_TERM, 0, 0}
 };
 
+
 /*
  * 1940x1096 30fps 8.8ms VBlanking 2lane 10bit (Scaling)
  */
-#if ENABLE_NON_PREVIEW
 static struct ov5693_reg const ov5693_1940x1096[] = {
 	{OV5693_8BIT, 0x3501, 0x7b},
 	{OV5693_8BIT, 0x3502, 0x00},
@@ -924,7 +916,6 @@ static struct ov5693_reg const ov5693_2592x1456_30fps[] = {
 	{OV5693_8BIT, 0x5002, 0x00},
 	{OV5693_TOK_TERM, 0, 0}
 };
-#endif
 
 static struct ov5693_reg const ov5693_2576x1456_30fps[] = {
 	{OV5693_8BIT, 0x3501, 0x7b},
@@ -960,7 +951,6 @@ static struct ov5693_reg const ov5693_2576x1456_30fps[] = {
 /*
  * 2592x1944 30fps 0.6ms VBlanking 2lane 10Bit
  */
-#if ENABLE_NON_PREVIEW
 static struct ov5693_reg const ov5693_2592x1944_30fps[] = {
 	{OV5693_8BIT, 0x3501, 0x7b},
 	{OV5693_8BIT, 0x3502, 0x00},
@@ -987,7 +977,6 @@ static struct ov5693_reg const ov5693_2592x1944_30fps[] = {
 	{OV5693_8BIT, 0x0100, 0x01},
 	{OV5693_TOK_TERM, 0, 0}
 };
-#endif
 
 /*
  * 11:9 Full FOV Output, expected FOV Res: 2346x1920
@@ -996,7 +985,6 @@ static struct ov5693_reg const ov5693_2592x1944_30fps[] = {
  *
  * WA: Left Offset: 8, Hor scal: 64
  */
-#if ENABLE_NON_PREVIEW
 static struct ov5693_reg const ov5693_1424x1168_30fps[] = {
 	{OV5693_8BIT, 0x3501, 0x3b}, /* long exposure[15:8] */
 	{OV5693_8BIT, 0x3502, 0x80}, /* long exposure[7:0] */
@@ -1031,7 +1019,6 @@ static struct ov5693_reg const ov5693_1424x1168_30fps[] = {
 	{OV5693_8BIT, 0x0100, 0x01},
 	{OV5693_TOK_TERM, 0, 0}
 };
-#endif
 
 /*
  * 3:2 Full FOV Output, expected FOV Res: 2560x1706
@@ -1158,14 +1145,13 @@ static struct ov5693_resolution ov5693_res_preview[] = {
 		.regs = ov5693_2576x1936_30fps,
 	},
 };
-
 #define N_RES_PREVIEW (ARRAY_SIZE(ov5693_res_preview))
 
 /*
  * Disable non-preview configurations until the configuration selection is
  * improved.
  */
-#if ENABLE_NON_PREVIEW
+#if 0
 struct ov5693_resolution ov5693_res_still[] = {
 	{
 		.desc = "ov5693_736x496_30fps",
@@ -1238,7 +1224,6 @@ struct ov5693_resolution ov5693_res_still[] = {
 		.regs = ov5693_2592x1944_30fps,
 	},
 };
-
 #define N_RES_STILL (ARRAY_SIZE(ov5693_res_still))
 
 struct ov5693_resolution ov5693_res_video[] = {
@@ -1383,7 +1368,6 @@ struct ov5693_resolution ov5693_res_video[] = {
 		.regs = ov5693_2592x1944_30fps,
 	},
 };
-
 #define N_RES_VIDEO (ARRAY_SIZE(ov5693_res_video))
 #endif
 

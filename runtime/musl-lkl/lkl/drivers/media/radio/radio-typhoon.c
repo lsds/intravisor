@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /* Typhoon Radio Card driver for radio support
  * (c) 1999 Dr. Henrik Seidel <Henrik.Seidel@gmx.de>
  *

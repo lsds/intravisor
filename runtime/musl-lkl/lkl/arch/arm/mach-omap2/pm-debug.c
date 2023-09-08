@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * OMAP Power Management debug routines
  *
@@ -14,6 +13,10 @@
  * Jouni Hogander
  *
  * Based on pm.c for omap2
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 
 #include <linux/kernel.h>
@@ -28,11 +31,14 @@
 #include "clock.h"
 #include "powerdomain.h"
 #include "clockdomain.h"
+#include "omap-pm.h"
 
 #include "soc.h"
 #include "cm2xxx_3xxx.h"
 #include "prm2xxx_3xxx.h"
 #include "pm.h"
+
+u32 enable_off_mode;
 
 #ifdef CONFIG_DEBUG_FS
 #include <linux/debugfs.h>
@@ -41,6 +47,11 @@
 static int pm_dbg_init_done;
 
 static int pm_dbg_init(void);
+
+enum {
+	DEBUG_FILE_COUNTERS = 0,
+	DEBUG_FILE_TIMERS,
+};
 
 static const char pwrdm_state_names[][PWRDM_MAX_PWRSTS] = {
 	"OFF",
@@ -131,21 +142,39 @@ static int pwrdm_dbg_show_timer(struct powerdomain *pwrdm, void *user)
 	return 0;
 }
 
-static int pm_dbg_counters_show(struct seq_file *s, void *unused)
+static int pm_dbg_show_counters(struct seq_file *s, void *unused)
 {
 	pwrdm_for_each(pwrdm_dbg_show_counter, s);
 	clkdm_for_each(clkdm_dbg_show_counter, s);
 
 	return 0;
 }
-DEFINE_SHOW_ATTRIBUTE(pm_dbg_counters);
 
-static int pm_dbg_timers_show(struct seq_file *s, void *unused)
+static int pm_dbg_show_timers(struct seq_file *s, void *unused)
 {
 	pwrdm_for_each(pwrdm_dbg_show_timer, s);
 	return 0;
 }
-DEFINE_SHOW_ATTRIBUTE(pm_dbg_timers);
+
+static int pm_dbg_open(struct inode *inode, struct file *file)
+{
+	switch ((int)inode->i_private) {
+	case DEBUG_FILE_COUNTERS:
+		return single_open(file, pm_dbg_show_counters,
+			&inode->i_private);
+	case DEBUG_FILE_TIMERS:
+	default:
+		return single_open(file, pm_dbg_show_timers,
+			&inode->i_private);
+	}
+}
+
+static const struct file_operations debug_fops = {
+	.open           = pm_dbg_open,
+	.read           = seq_read,
+	.llseek         = seq_lseek,
+	.release        = single_release,
+};
 
 static int pwrdm_suspend_get(void *data, u64 *val)
 {
@@ -168,8 +197,8 @@ static int pwrdm_suspend_set(void *data, u64 val)
 	return -EINVAL;
 }
 
-DEFINE_DEBUGFS_ATTRIBUTE(pwrdm_suspend_fops, pwrdm_suspend_get,
-			  pwrdm_suspend_set, "%llu\n");
+DEFINE_SIMPLE_ATTRIBUTE(pwrdm_suspend_fops, pwrdm_suspend_get,
+			pwrdm_suspend_set, "%llu\n");
 
 static int __init pwrdms_setup(struct powerdomain *pwrdm, void *dir)
 {
@@ -188,8 +217,9 @@ static int __init pwrdms_setup(struct powerdomain *pwrdm, void *dir)
 		return 0;
 
 	d = debugfs_create_dir(pwrdm->name, (struct dentry *)dir);
-	debugfs_create_file("suspend", S_IRUGO|S_IWUSR, d, pwrdm,
-			    &pwrdm_suspend_fops);
+	if (d)
+		(void) debugfs_create_file("suspend", S_IRUGO|S_IWUSR, d,
+			(void *)pwrdm, &pwrdm_suspend_fops);
 
 	return 0;
 }
@@ -210,6 +240,10 @@ static int option_set(void *data, u64 val)
 	*option = val;
 
 	if (option == &enable_off_mode) {
+		if (val)
+			omap_pm_enable_off_mode();
+		else
+			omap_pm_disable_off_mode();
 		if (cpu_is_omap34xx())
 			omap3_pm_off_mode_enable(val);
 	}
@@ -227,14 +261,18 @@ static int __init pm_dbg_init(void)
 		return 0;
 
 	d = debugfs_create_dir("pm_debug", NULL);
+	if (!d)
+		return -EINVAL;
 
-	debugfs_create_file("count", 0444, d, NULL, &pm_dbg_counters_fops);
-	debugfs_create_file("time", 0444, d, NULL, &pm_dbg_timers_fops);
+	(void) debugfs_create_file("count", S_IRUGO,
+		d, (void *)DEBUG_FILE_COUNTERS, &debug_fops);
+	(void) debugfs_create_file("time", S_IRUGO,
+		d, (void *)DEBUG_FILE_TIMERS, &debug_fops);
 
 	pwrdm_for_each(pwrdms_setup, (void *)d);
 
-	debugfs_create_file("enable_off_mode", S_IRUGO | S_IWUSR, d,
-			    &enable_off_mode, &pm_dbg_option_fops);
+	(void) debugfs_create_file("enable_off_mode", S_IRUGO | S_IWUSR, d,
+				   &enable_off_mode, &pm_dbg_option_fops);
 	pm_dbg_init_done = 1;
 
 	return 0;

@@ -1,10 +1,13 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Samsung SATA SerDes(PHY) driver
  *
  * Copyright (C) 2013 Samsung Electronics Co., Ltd.
  * Authors: Girish K S <ks.giri@samsung.com>
  *         Yuvaraj Kumar C D <yuvaraj.cd@samsung.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 
 #include <linux/clk.h>
@@ -162,6 +165,7 @@ static int exynos_sata_phy_probe(struct platform_device *pdev)
 {
 	struct exynos_sata_phy *sata_phy;
 	struct device *dev = &pdev->dev;
+	struct resource *res;
 	struct phy_provider *phy_provider;
 	struct device_node *node;
 	int ret = 0;
@@ -170,7 +174,9 @@ static int exynos_sata_phy_probe(struct platform_device *pdev)
 	if (!sata_phy)
 		return -ENOMEM;
 
-	sata_phy->regs = devm_platform_ioremap_resource(pdev, 0);
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+
+	sata_phy->regs = devm_ioremap_resource(dev, res);
 	if (IS_ERR(sata_phy->regs))
 		return PTR_ERR(sata_phy->regs);
 
@@ -187,7 +193,6 @@ static int exynos_sata_phy_probe(struct platform_device *pdev)
 		return -EINVAL;
 
 	sata_phy->client = of_find_i2c_device_by_node(node);
-	of_node_put(node);
 	if (!sata_phy->client)
 		return -EPROBE_DEFER;
 
@@ -196,21 +201,20 @@ static int exynos_sata_phy_probe(struct platform_device *pdev)
 	sata_phy->phyclk = devm_clk_get(dev, "sata_phyctrl");
 	if (IS_ERR(sata_phy->phyclk)) {
 		dev_err(dev, "failed to get clk for PHY\n");
-		ret = PTR_ERR(sata_phy->phyclk);
-		goto put_dev;
+		return PTR_ERR(sata_phy->phyclk);
 	}
 
 	ret = clk_prepare_enable(sata_phy->phyclk);
 	if (ret < 0) {
 		dev_err(dev, "failed to enable source clk\n");
-		goto put_dev;
+		return ret;
 	}
 
 	sata_phy->phy = devm_phy_create(dev, NULL, &exynos_sata_phy_ops);
 	if (IS_ERR(sata_phy->phy)) {
+		clk_disable_unprepare(sata_phy->phyclk);
 		dev_err(dev, "failed to create PHY\n");
-		ret = PTR_ERR(sata_phy->phy);
-		goto clk_disable;
+		return PTR_ERR(sata_phy->phy);
 	}
 
 	phy_set_drvdata(sata_phy->phy, sata_phy);
@@ -218,18 +222,11 @@ static int exynos_sata_phy_probe(struct platform_device *pdev)
 	phy_provider = devm_of_phy_provider_register(dev,
 					of_phy_simple_xlate);
 	if (IS_ERR(phy_provider)) {
-		ret = PTR_ERR(phy_provider);
-		goto clk_disable;
+		clk_disable_unprepare(sata_phy->phyclk);
+		return PTR_ERR(phy_provider);
 	}
 
 	return 0;
-
-clk_disable:
-	clk_disable_unprepare(sata_phy->phyclk);
-put_dev:
-	put_device(&sata_phy->client->dev);
-
-	return ret;
 }
 
 static const struct of_device_id exynos_sata_phy_of_match[] = {
@@ -243,7 +240,6 @@ static struct platform_driver exynos_sata_phy_driver = {
 	.driver = {
 		.of_match_table	= exynos_sata_phy_of_match,
 		.name  = "samsung,sata-phy",
-		.suppress_bind_attrs = true,
 	}
 };
 module_platform_driver(exynos_sata_phy_driver);

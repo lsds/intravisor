@@ -1,9 +1,17 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Microchip PIC32 SPI controller driver.
  *
  * Purna Chandra Mandal <purna.mandal@microchip.com>
  * Copyright (c) 2016, Microchip Technology Inc.
+ *
+ * This program is free software; you can distribute it and/or modify it
+ * under the terms of the GNU General Public License (Version 2) as
+ * published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
+ * for more details.
  */
 
 #include <linux/clk.h>
@@ -312,7 +320,7 @@ static int pic32_spi_dma_transfer(struct pic32_spi *pic32s,
 	desc_rx = dmaengine_prep_slave_sg(master->dma_rx,
 					  xfer->rx_sg.sgl,
 					  xfer->rx_sg.nents,
-					  DMA_DEV_TO_MEM,
+					  DMA_FROM_DEVICE,
 					  DMA_PREP_INTERRUPT | DMA_CTRL_ACK);
 	if (!desc_rx) {
 		ret = -EINVAL;
@@ -322,7 +330,7 @@ static int pic32_spi_dma_transfer(struct pic32_spi *pic32s,
 	desc_tx = dmaengine_prep_slave_sg(master->dma_tx,
 					  xfer->tx_sg.sgl,
 					  xfer->tx_sg.nents,
-					  DMA_MEM_TO_DEV,
+					  DMA_TO_DEVICE,
 					  DMA_PREP_INTERRUPT | DMA_CTRL_ACK);
 	if (!desc_tx) {
 		ret = -EINVAL;
@@ -361,7 +369,6 @@ static int pic32_spi_dma_config(struct pic32_spi *pic32s, u32 dma_width)
 	struct dma_slave_config cfg;
 	int ret;
 
-	memset(&cfg, 0, sizeof(cfg));
 	cfg.device_fc = true;
 	cfg.src_addr = pic32s->dma_base + buf_offset;
 	cfg.dst_addr = pic32s->dma_base + buf_offset;
@@ -370,6 +377,7 @@ static int pic32_spi_dma_config(struct pic32_spi *pic32s, u32 dma_width)
 	cfg.src_addr_width = dma_width;
 	cfg.dst_addr_width = dma_width;
 	/* tx channel */
+	cfg.slave_id = pic32s->tx_irq;
 	cfg.direction = DMA_MEM_TO_DEV;
 	ret = dmaengine_slave_config(master->dma_tx, &cfg);
 	if (ret) {
@@ -377,6 +385,7 @@ static int pic32_spi_dma_config(struct pic32_spi *pic32s, u32 dma_width)
 		return ret;
 	}
 	/* rx channel */
+	cfg.slave_id = pic32s->rx_irq;
 	cfg.direction = DMA_DEV_TO_MEM;
 	ret = dmaengine_slave_config(master->dma_rx, &cfg);
 	if (ret)
@@ -550,7 +559,7 @@ static int pic32_spi_one_transfer(struct spi_master *master,
 		dev_err(&spi->dev, "wait error/timedout\n");
 		if (dma_issued) {
 			dmaengine_terminate_all(master->dma_rx);
-			dmaengine_terminate_all(master->dma_tx);
+			dmaengine_terminate_all(master->dma_rx);
 		}
 		ret = -ETIMEDOUT;
 	} else {
@@ -591,42 +600,39 @@ static int pic32_spi_setup(struct spi_device *spi)
 	 * unreliable/erroneous SPI transactions.
 	 * To avoid that we will always handle /CS by toggling GPIO.
 	 */
-	if (!spi->cs_gpiod)
+	if (!gpio_is_valid(spi->cs_gpio))
 		return -EINVAL;
+
+	gpio_direction_output(spi->cs_gpio, !(spi->mode & SPI_CS_HIGH));
 
 	return 0;
 }
 
 static void pic32_spi_cleanup(struct spi_device *spi)
 {
-	/* de-activate cs-gpio, gpiolib will handle inversion */
-	gpiod_direction_output(spi->cs_gpiod, 0);
+	/* de-activate cs-gpio */
+	gpio_direction_output(spi->cs_gpio, !(spi->mode & SPI_CS_HIGH));
 }
 
-static int pic32_spi_dma_prep(struct pic32_spi *pic32s, struct device *dev)
+static void pic32_spi_dma_prep(struct pic32_spi *pic32s, struct device *dev)
 {
 	struct spi_master *master = pic32s->master;
-	int ret = 0;
+	dma_cap_mask_t mask;
 
-	master->dma_rx = dma_request_chan(dev, "spi-rx");
-	if (IS_ERR(master->dma_rx)) {
-		if (PTR_ERR(master->dma_rx) == -EPROBE_DEFER)
-			ret = -EPROBE_DEFER;
-		else
-			dev_warn(dev, "RX channel not found.\n");
+	dma_cap_zero(mask);
+	dma_cap_set(DMA_SLAVE, mask);
 
-		master->dma_rx = NULL;
+	master->dma_rx = dma_request_slave_channel_compat(mask, NULL, NULL,
+							  dev, "spi-rx");
+	if (!master->dma_rx) {
+		dev_warn(dev, "RX channel not found.\n");
 		goto out_err;
 	}
 
-	master->dma_tx = dma_request_chan(dev, "spi-tx");
-	if (IS_ERR(master->dma_tx)) {
-		if (PTR_ERR(master->dma_tx) == -EPROBE_DEFER)
-			ret = -EPROBE_DEFER;
-		else
-			dev_warn(dev, "TX channel not found.\n");
-
-		master->dma_tx = NULL;
+	master->dma_tx = dma_request_slave_channel_compat(mask, NULL, NULL,
+							  dev, "spi-tx");
+	if (!master->dma_tx) {
+		dev_warn(dev, "TX channel not found.\n");
 		goto out_err;
 	}
 
@@ -636,20 +642,14 @@ static int pic32_spi_dma_prep(struct pic32_spi *pic32s, struct device *dev)
 	/* DMA chnls allocated and prepared */
 	set_bit(PIC32F_DMA_PREP, &pic32s->flags);
 
-	return 0;
+	return;
 
 out_err:
-	if (master->dma_rx) {
+	if (master->dma_rx)
 		dma_release_channel(master->dma_rx);
-		master->dma_rx = NULL;
-	}
 
-	if (master->dma_tx) {
+	if (master->dma_tx)
 		dma_release_channel(master->dma_tx);
-		master->dma_tx = NULL;
-	}
-
-	return ret;
 }
 
 static void pic32_spi_dma_unprep(struct pic32_spi *pic32s)
@@ -719,16 +719,22 @@ static int pic32_spi_hw_probe(struct platform_device *pdev,
 
 	/* get irq resources: err-irq, rx-irq, tx-irq */
 	pic32s->fault_irq = platform_get_irq_byname(pdev, "fault");
-	if (pic32s->fault_irq < 0)
+	if (pic32s->fault_irq < 0) {
+		dev_err(&pdev->dev, "fault-irq not found\n");
 		return pic32s->fault_irq;
+	}
 
 	pic32s->rx_irq = platform_get_irq_byname(pdev, "rx");
-	if (pic32s->rx_irq < 0)
+	if (pic32s->rx_irq < 0) {
+		dev_err(&pdev->dev, "rx-irq not found\n");
 		return pic32s->rx_irq;
+	}
 
 	pic32s->tx_irq = platform_get_irq_byname(pdev, "tx");
-	if (pic32s->tx_irq < 0)
+	if (pic32s->tx_irq < 0) {
+		dev_err(&pdev->dev, "tx-irq not found\n");
 		return pic32s->tx_irq;
+	}
 
 	/* get clock */
 	pic32s->clk = devm_clk_get(&pdev->dev, "mck0");
@@ -768,7 +774,7 @@ static int pic32_spi_probe(struct platform_device *pdev)
 	if (ret)
 		goto err_master;
 
-	master->dev.of_node	= pdev->dev.of_node;
+	master->dev.of_node	= of_node_get(pdev->dev.of_node);
 	master->mode_bits	= SPI_MODE_3 | SPI_MODE_0 | SPI_CS_HIGH;
 	master->num_chipselect	= 1; /* single chip-select */
 	master->max_speed_hz	= clk_get_rate(pic32s->clk);
@@ -782,13 +788,9 @@ static int pic32_spi_probe(struct platform_device *pdev)
 	master->unprepare_message	= pic32_spi_unprepare_message;
 	master->prepare_transfer_hardware	= pic32_spi_prepare_hardware;
 	master->unprepare_transfer_hardware	= pic32_spi_unprepare_hardware;
-	master->use_gpio_descriptors = true;
 
 	/* optional DMA support */
-	ret = pic32_spi_dma_prep(pic32s, &pdev->dev);
-	if (ret)
-		goto err_bailout;
-
+	pic32_spi_dma_prep(pic32s, &pdev->dev);
 	if (test_bit(PIC32F_DMA_PREP, &pic32s->flags))
 		master->can_dma	= pic32_spi_can_dma;
 
@@ -837,7 +839,6 @@ static int pic32_spi_probe(struct platform_device *pdev)
 	return 0;
 
 err_bailout:
-	pic32_spi_dma_unprep(pic32s);
 	clk_disable_unprepare(pic32s->clk);
 err_master:
 	spi_master_put(master);

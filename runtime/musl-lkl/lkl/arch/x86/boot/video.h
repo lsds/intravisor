@@ -1,8 +1,10 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
 /* -*- linux-c -*- ------------------------------------------------------- *
  *
  *   Copyright (C) 1991, 1992 Linus Torvalds
  *   Copyright 2007 rPath, Inc. - All Rights Reserved
+ *
+ *   This file is part of the Linux kernel, and is made available under
+ *   the terms of the GNU General Public License version 2.
  *
  * ----------------------------------------------------------------------- */
 
@@ -78,7 +80,7 @@ struct card_info {
 	u16 xmode_n;		/* Size of unprobed mode range */
 };
 
-#define __videocard struct card_info __section(".videocards") __attribute__((used))
+#define __videocard struct card_info __attribute__((used,section(".videocards")))
 extern struct card_info video_cards[], video_cards_end[];
 
 int mode_defined(u16 mode);	/* video.c */

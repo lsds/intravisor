@@ -1,6 +1,19 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Copyright (C) 2007, 2008 Karsten Wiese <fzu@wemgehoertderstaat.de>
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License as published by the
+ * Free Software Foundation; either version 2 of the License, or (at your
+ * option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
+ * or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
+ * for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software Foundation,
+ * Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
 #include <linux/slab.h>
@@ -40,16 +53,16 @@ static int snd_us122l_card_used[SNDRV_CARDS];
 
 static int us122l_create_usbmidi(struct snd_card *card)
 {
-	static const struct snd_usb_midi_endpoint_info quirk_data = {
+	static struct snd_usb_midi_endpoint_info quirk_data = {
 		.out_ep = 4,
 		.in_ep = 3,
 		.out_cables =	0x001,
 		.in_cables =	0x001
 	};
-	static const struct snd_usb_audio_quirk quirk = {
+	static struct snd_usb_audio_quirk quirk = {
 		.vendor_name =	"US122L",
 		.product_name =	NAME_ALLCAPS,
-		.ifnum =	1,
+		.ifnum = 	1,
 		.type = QUIRK_MIDI_US122L,
 		.data = &quirk_data
 	};
@@ -62,16 +75,16 @@ static int us122l_create_usbmidi(struct snd_card *card)
 
 static int us144_create_usbmidi(struct snd_card *card)
 {
-	static const struct snd_usb_midi_endpoint_info quirk_data = {
+	static struct snd_usb_midi_endpoint_info quirk_data = {
 		.out_ep = 4,
 		.in_ep = 3,
 		.out_cables =	0x001,
 		.in_cables =	0x001
 	};
-	static const struct snd_usb_audio_quirk quirk = {
+	static struct snd_usb_audio_quirk quirk = {
 		.vendor_name =	"US144",
 		.product_name =	NAME_ALLCAPS,
-		.ifnum =	0,
+		.ifnum = 	0,
 		.type = QUIRK_MIDI_US122L,
 		.data = &quirk_data
 	};
@@ -82,20 +95,46 @@ static int us144_create_usbmidi(struct snd_card *card)
 				  &US122L(card)->midi_list, &quirk);
 }
 
+/*
+ * Wrapper for usb_control_msg().
+ * Allocates a temp buffer to prevent dmaing from/to the stack.
+ */
+static int us122l_ctl_msg(struct usb_device *dev, unsigned int pipe,
+			  __u8 request, __u8 requesttype,
+			  __u16 value, __u16 index, void *data,
+			  __u16 size, int timeout)
+{
+	int err;
+	void *buf = NULL;
+
+	if (size > 0) {
+		buf = kmemdup(data, size, GFP_KERNEL);
+		if (!buf)
+			return -ENOMEM;
+	}
+	err = usb_control_msg(dev, pipe, request, requesttype,
+			      value, index, buf, size, timeout);
+	if (size > 0) {
+		memcpy(data, buf, size);
+		kfree(buf);
+	}
+	return err;
+}
+
 static void pt_info_set(struct usb_device *dev, u8 v)
 {
 	int ret;
 
-	ret = usb_control_msg_send(dev, 0, 'I',
-				   USB_DIR_OUT | USB_TYPE_VENDOR | USB_RECIP_DEVICE,
-				   v, 0, NULL, 0, 1000, GFP_NOIO);
+	ret = usb_control_msg(dev, usb_sndctrlpipe(dev, 0),
+			      'I',
+			      USB_DIR_OUT | USB_TYPE_VENDOR | USB_RECIP_DEVICE,
+			      v, 0, NULL, 0, 1000);
 	snd_printdd(KERN_DEBUG "%i\n", ret);
 }
 
 static void usb_stream_hwdep_vm_open(struct vm_area_struct *area)
 {
 	struct us122l *us122l = area->vm_private_data;
-
 	atomic_inc(&us122l->mmap_count);
 	snd_printdd(KERN_DEBUG "%i\n", atomic_read(&us122l->mmap_count));
 }
@@ -114,9 +153,9 @@ static vm_fault_t usb_stream_hwdep_vm_fault(struct vm_fault *vmf)
 		goto unlock;
 
 	offset = vmf->pgoff << PAGE_SHIFT;
-	if (offset < PAGE_ALIGN(s->read_size)) {
+	if (offset < PAGE_ALIGN(s->read_size))
 		vaddr = (char *)s + offset;
-	} else {
+	else {
 		offset -= PAGE_ALIGN(s->read_size);
 		if (offset >= PAGE_ALIGN(s->write_size))
 			goto unlock;
@@ -139,7 +178,6 @@ unlock:
 static void usb_stream_hwdep_vm_close(struct vm_area_struct *area)
 {
 	struct us122l *us122l = area->vm_private_data;
-
 	atomic_dec(&us122l->mmap_count);
 	snd_printdd(KERN_DEBUG "%i\n", atomic_read(&us122l->mmap_count));
 }
@@ -150,11 +188,11 @@ static const struct vm_operations_struct usb_stream_hwdep_vm_ops = {
 	.close = usb_stream_hwdep_vm_close,
 };
 
+
 static int usb_stream_hwdep_open(struct snd_hwdep *hw, struct file *file)
 {
 	struct us122l	*us122l = hw->private_data;
 	struct usb_interface *iface;
-
 	snd_printdd(KERN_DEBUG "%p %p\n", hw, file);
 	if (hw->used >= 2)
 		return -EBUSY;
@@ -175,7 +213,6 @@ static int usb_stream_hwdep_release(struct snd_hwdep *hw, struct file *file)
 {
 	struct us122l	*us122l = hw->private_data;
 	struct usb_interface *iface;
-
 	snd_printdd(KERN_DEBUG "%p %p\n", hw, file);
 
 	if (us122l->is_us144) {
@@ -238,7 +275,7 @@ static __poll_t usb_stream_hwdep_poll(struct snd_hwdep *hw,
 					  struct file *file, poll_table *wait)
 {
 	struct us122l	*us122l = hw->private_data;
-	unsigned int	*polled;
+	unsigned	*polled;
 	__poll_t	mask;
 
 	poll_wait(file, &us122l->sk.sleep, wait);
@@ -246,7 +283,6 @@ static __poll_t usb_stream_hwdep_poll(struct snd_hwdep *hw,
 	mask = EPOLLIN | EPOLLOUT | EPOLLWRNORM | EPOLLERR;
 	if (mutex_trylock(&us122l->mutex)) {
 		struct usb_stream *s = us122l->sk.s;
-
 		if (s && s->state == usb_stream_ready) {
 			if (us122l->first == file)
 				polled = &s->periods_polled;
@@ -255,9 +291,8 @@ static __poll_t usb_stream_hwdep_poll(struct snd_hwdep *hw,
 			if (*polled != s->periods_done) {
 				*polled = s->periods_done;
 				mask = EPOLLIN | EPOLLOUT | EPOLLWRNORM;
-			} else {
+			} else
 				mask = 0;
-			}
 		}
 		mutex_unlock(&us122l->mutex);
 	}
@@ -267,7 +302,6 @@ static __poll_t usb_stream_hwdep_poll(struct snd_hwdep *hw,
 static void us122l_stop(struct us122l *us122l)
 {
 	struct list_head *p;
-
 	list_for_each(p, &us122l->midi_list)
 		snd_usbmidi_input_stop(p);
 
@@ -284,22 +318,21 @@ static int us122l_set_sample_rate(struct usb_device *dev, int rate)
 	data[0] = rate;
 	data[1] = rate >> 8;
 	data[2] = rate >> 16;
-	err = usb_control_msg_send(dev, 0, UAC_SET_CUR,
-				   USB_TYPE_CLASS | USB_RECIP_ENDPOINT | USB_DIR_OUT,
-				   UAC_EP_CS_ATTR_SAMPLE_RATE << 8, ep, data, 3,
-				   1000, GFP_NOIO);
-	if (err)
+	err = us122l_ctl_msg(dev, usb_sndctrlpipe(dev, 0), UAC_SET_CUR,
+			     USB_TYPE_CLASS|USB_RECIP_ENDPOINT|USB_DIR_OUT,
+			     UAC_EP_CS_ATTR_SAMPLE_RATE << 8, ep, data, 3, 1000);
+	if (err < 0)
 		snd_printk(KERN_ERR "%d: cannot set freq %d to ep 0x%x\n",
 			   dev->devnum, rate, ep);
 	return err;
 }
 
 static bool us122l_start(struct us122l *us122l,
-			 unsigned int rate, unsigned int period_frames)
+			 unsigned rate, unsigned period_frames)
 {
 	struct list_head *p;
 	int err;
-	unsigned int use_packsize = 0;
+	unsigned use_packsize = 0;
 	bool success = false;
 
 	if (us122l->dev->speed == USB_SPEED_HIGH) {
@@ -326,13 +359,13 @@ static bool us122l_start(struct us122l *us122l,
 	err = us122l_set_sample_rate(us122l->dev, rate);
 	if (err < 0) {
 		us122l_stop(us122l);
-		snd_printk(KERN_ERR "us122l_set_sample_rate error\n");
+		snd_printk(KERN_ERR "us122l_set_sample_rate error \n");
 		goto out;
 	}
 	err = usb_stream_start(&us122l->sk);
 	if (err < 0) {
 		us122l_stop(us122l);
-		snd_printk(KERN_ERR "%s error %i\n", __func__, err);
+		snd_printk(KERN_ERR "us122l_start error %i \n", err);
 		goto out;
 	}
 	list_for_each(p, &us122l->midi_list)
@@ -343,12 +376,12 @@ out:
 }
 
 static int usb_stream_hwdep_ioctl(struct snd_hwdep *hw, struct file *file,
-				  unsigned int cmd, unsigned long arg)
+				  unsigned cmd, unsigned long arg)
 {
 	struct usb_stream_config cfg;
 	struct us122l *us122l = hw->private_data;
 	struct usb_stream *s;
-	unsigned int min_period_frames;
+	unsigned min_period_frames;
 	int err = 0;
 	bool high_speed;
 
@@ -385,13 +418,13 @@ static int usb_stream_hwdep_ioctl(struct snd_hwdep *hw, struct file *file,
 	if (cfg.period_frames < min_period_frames)
 		return -EINVAL;
 
-	snd_power_wait(hw->card);
+	snd_power_wait(hw->card, SNDRV_CTL_POWER_D0);
 
 	mutex_lock(&us122l->mutex);
 	s = us122l->sk.s;
-	if (!us122l->master) {
+	if (!us122l->master)
 		us122l->master = file;
-	} else if (us122l->master != file) {
+	else if (us122l->master != file) {
 		if (!s || memcmp(&cfg, &s->cfg, sizeof(cfg))) {
 			err = -EIO;
 			goto unlock;
@@ -437,6 +470,7 @@ static int usb_stream_hwdep_new(struct snd_card *card)
 	return 0;
 }
 
+
 static bool us122l_create_card(struct snd_card *card)
 {
 	int err;
@@ -445,13 +479,13 @@ static bool us122l_create_card(struct snd_card *card)
 	if (us122l->is_us144) {
 		err = usb_set_interface(us122l->dev, 0, 1);
 		if (err) {
-			snd_printk(KERN_ERR "usb_set_interface error\n");
+			snd_printk(KERN_ERR "usb_set_interface error \n");
 			return false;
 		}
 	}
 	err = usb_set_interface(us122l->dev, 1, 1);
 	if (err) {
-		snd_printk(KERN_ERR "usb_set_interface error\n");
+		snd_printk(KERN_ERR "usb_set_interface error \n");
 		return false;
 	}
 
@@ -466,14 +500,13 @@ static bool us122l_create_card(struct snd_card *card)
 	else
 		err = us122l_create_usbmidi(card);
 	if (err < 0) {
-		snd_printk(KERN_ERR "us122l_create_usbmidi error %i\n", err);
+		snd_printk(KERN_ERR "us122l_create_usbmidi error %i \n", err);
 		goto stop;
 	}
 	err = usb_stream_hwdep_new(card);
 	if (err < 0) {
-		/* release the midi resources */
+/* release the midi resources */
 		struct list_head *p;
-
 		list_for_each(p, &us122l->midi_list)
 			snd_usbmidi_disconnect(p);
 
@@ -490,8 +523,7 @@ static void snd_us122l_free(struct snd_card *card)
 {
 	struct us122l	*us122l = US122L(card);
 	int		index = us122l->card_index;
-
-	if (index >= 0 && index < SNDRV_CARDS)
+	if (index >= 0  &&  index < SNDRV_CARDS)
 		snd_us122l_card_used[index] = 0;
 }
 
@@ -572,7 +604,7 @@ static int snd_us122l_probe(struct usb_interface *intf,
 
 	if (id->driver_info & US122L_FLAG_US144 &&
 			device->speed == USB_SPEED_HIGH) {
-		snd_printk(KERN_ERR "disable ehci-hcd to run US-144\n");
+		snd_printk(KERN_ERR "disable ehci-hcd to run US-144 \n");
 		return -ENODEV;
 	}
 
@@ -608,7 +640,7 @@ static void snd_us122l_disconnect(struct usb_interface *intf)
 	us122l_stop(us122l);
 	mutex_unlock(&us122l->mutex);
 
-	/* release the midi resources */
+/* release the midi resources */
 	list_for_each(p, &us122l->midi_list) {
 		snd_usbmidi_disconnect(p);
 	}
@@ -668,13 +700,13 @@ static int snd_us122l_resume(struct usb_interface *intf)
 	if (us122l->is_us144) {
 		err = usb_set_interface(us122l->dev, 0, 1);
 		if (err) {
-			snd_printk(KERN_ERR "usb_set_interface error\n");
+			snd_printk(KERN_ERR "usb_set_interface error \n");
 			goto unlock;
 		}
 	}
 	err = usb_set_interface(us122l->dev, 1, 1);
 	if (err) {
-		snd_printk(KERN_ERR "usb_set_interface error\n");
+		snd_printk(KERN_ERR "usb_set_interface error \n");
 		goto unlock;
 	}
 
@@ -684,7 +716,7 @@ static int snd_us122l_resume(struct usb_interface *intf)
 	err = us122l_set_sample_rate(us122l->dev,
 				     us122l->sk.s->cfg.sample_rate);
 	if (err < 0) {
-		snd_printk(KERN_ERR "us122l_set_sample_rate error\n");
+		snd_printk(KERN_ERR "us122l_set_sample_rate error \n");
 		goto unlock;
 	}
 	err = usb_stream_start(&us122l->sk);
@@ -724,8 +756,8 @@ static const struct usb_device_id snd_us122l_usb_id_table[] = {
 	},
 	{ /* terminator */ }
 };
-MODULE_DEVICE_TABLE(usb, snd_us122l_usb_id_table);
 
+MODULE_DEVICE_TABLE(usb, snd_us122l_usb_id_table);
 static struct usb_driver snd_us122l_usb_driver = {
 	.name =		"snd-usb-us122l",
 	.probe =	snd_us122l_probe,

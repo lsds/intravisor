@@ -1,8 +1,13 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * lwtunnel	Infrastructure for light weight tunnels like mpls
  *
  * Authors:	Roopa Prabhu, <roopa@cumulusnetworks.com>
+ *
+ *		This program is free software; you can redistribute it and/or
+ *		modify it under the terms of the GNU General Public License
+ *		as published by the Free Software Foundation; either version
+ *		2 of the License, or (at your option) any later version.
+ *
  */
 
 #include <linux/capability.h>
@@ -21,10 +26,7 @@
 #include <net/lwtunnel.h>
 #include <net/rtnetlink.h>
 #include <net/ip6_fib.h>
-#include <net/rtnh.h>
-
-DEFINE_STATIC_KEY_FALSE(nf_hooks_lwtunnel_enabled);
-EXPORT_SYMBOL_GPL(nf_hooks_lwtunnel_enabled);
+#include <net/nexthop.h>
 
 #ifdef CONFIG_MODULES
 
@@ -44,13 +46,6 @@ static const char *lwtunnel_encap_str(enum lwtunnel_encap_types encap_type)
 		return "BPF";
 	case LWTUNNEL_ENCAP_SEG6_LOCAL:
 		return "SEG6LOCAL";
-	case LWTUNNEL_ENCAP_RPL:
-		return "RPL";
-	case LWTUNNEL_ENCAP_IOAM6:
-		return "IOAM6";
-	case LWTUNNEL_ENCAP_XFRM:
-		/* module autoload not supported for encap type */
-		return NULL;
 	case LWTUNNEL_ENCAP_IP6:
 	case LWTUNNEL_ENCAP_IP:
 	case LWTUNNEL_ENCAP_NONE:
@@ -108,7 +103,7 @@ int lwtunnel_encap_del_ops(const struct lwtunnel_encap_ops *ops,
 }
 EXPORT_SYMBOL_GPL(lwtunnel_encap_del_ops);
 
-int lwtunnel_build_state(struct net *net, u16 encap_type,
+int lwtunnel_build_state(u16 encap_type,
 			 struct nlattr *encap, unsigned int family,
 			 const void *cfg, struct lwtunnel_state **lws,
 			 struct netlink_ext_ack *extack)
@@ -127,18 +122,18 @@ int lwtunnel_build_state(struct net *net, u16 encap_type,
 	ret = -EOPNOTSUPP;
 	rcu_read_lock();
 	ops = rcu_dereference(lwtun_encaps[encap_type]);
-	if (likely(ops && ops->build_state && try_module_get(ops->owner)))
+	if (likely(ops && ops->build_state && try_module_get(ops->owner))) {
 		found = true;
-	rcu_read_unlock();
-
-	if (found) {
-		ret = ops->build_state(net, encap, family, cfg, lws, extack);
+		ret = ops->build_state(encap, family, cfg, lws, extack);
 		if (ret)
 			module_put(ops->owner);
-	} else {
-		/* don't rely on -EOPNOTSUPP to detect match as build_state
-		 * handlers could return it
-		 */
+	}
+	rcu_read_unlock();
+
+	/* don't rely on -EOPNOTSUPP to detect match as build_state
+	 * handlers could return it
+	 */
+	if (!found) {
 		NL_SET_ERR_MSG_ATTR(extack, encap,
 				    "LWT encapsulation type not supported");
 	}
@@ -200,10 +195,6 @@ int lwtunnel_valid_encap_type_attr(struct nlattr *attr, int remaining,
 			nla_entype = nla_find(attrs, attrlen, RTA_ENCAP_TYPE);
 
 			if (nla_entype) {
-				if (nla_len(nla_entype) < sizeof(u16)) {
-					NL_SET_ERR_MSG(extack, "Invalid RTA_ENCAP_TYPE");
-					return -EINVAL;
-				}
 				encap_type = nla_get_u16(nla_entype);
 
 				if (lwtunnel_valid_encap_type(encap_type,
@@ -232,8 +223,7 @@ void lwtstate_free(struct lwtunnel_state *lws)
 }
 EXPORT_SYMBOL_GPL(lwtstate_free);
 
-int lwtunnel_fill_encap(struct sk_buff *skb, struct lwtunnel_state *lwtstate,
-			int encap_attr, int encap_type_attr)
+int lwtunnel_fill_encap(struct sk_buff *skb, struct lwtunnel_state *lwtstate)
 {
 	const struct lwtunnel_encap_ops *ops;
 	struct nlattr *nest;
@@ -246,7 +236,7 @@ int lwtunnel_fill_encap(struct sk_buff *skb, struct lwtunnel_state *lwtstate,
 	    lwtstate->type > LWTUNNEL_ENCAP_MAX)
 		return 0;
 
-	nest = nla_nest_start_noflag(skb, encap_attr);
+	nest = nla_nest_start(skb, RTA_ENCAP);
 	if (!nest)
 		return -EMSGSIZE;
 
@@ -260,7 +250,7 @@ int lwtunnel_fill_encap(struct sk_buff *skb, struct lwtunnel_state *lwtstate,
 	if (ret)
 		goto nla_put_failure;
 	nla_nest_end(skb, nest);
-	ret = nla_put_u16(skb, encap_type_attr, lwtstate->type);
+	ret = nla_put_u16(skb, RTA_ENCAP_TYPE, lwtstate->type);
 	if (ret)
 		goto nla_put_failure;
 

@@ -1,10 +1,27 @@
 // SPDX-License-Identifier: GPL-2.0
-/* Copyright(c) 2013 - 2019 Intel Corporation. */
+/* Intel(R) Ethernet Switch Host Interface Driver
+ * Copyright(c) 2013 - 2018 Intel Corporation.
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms and conditions of the GNU General Public License,
+ * version 2, as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+ * more details.
+ *
+ * The full GNU General Public License is included in this distribution in
+ * the file called "COPYING".
+ *
+ * Contact Information:
+ * e1000-devel Mailing List <e1000-devel@lists.sourceforge.net>
+ * Intel Corporation, 5200 N.E. Elam Young Parkway, Hillsboro, OR 97124-6497
+ */
 
 #include "fm10k.h"
 #include <linux/vmalloc.h>
 #include <net/udp_tunnel.h>
-#include <linux/if_macvlan.h>
 
 /**
  * fm10k_setup_tx_resources - allocate Tx resources (Descriptors)
@@ -54,7 +71,7 @@ err:
  **/
 static int fm10k_setup_all_tx_resources(struct fm10k_intfc *interface)
 {
-	int i, err;
+	int i, err = 0;
 
 	for (i = 0; i < interface->num_tx_queues; i++) {
 		err = fm10k_setup_tx_resources(interface->tx_ring[i]);
@@ -121,7 +138,7 @@ err:
  **/
 static int fm10k_setup_all_rx_resources(struct fm10k_intfc *interface)
 {
-	int i, err;
+	int i, err = 0;
 
 	for (i = 0; i < interface->num_rx_queues; i++) {
 		err = fm10k_setup_rx_resources(interface->rx_ring[i]);
@@ -169,6 +186,7 @@ void fm10k_unmap_and_free_tx_resource(struct fm10k_ring *ring,
  **/
 static void fm10k_clean_tx_ring(struct fm10k_ring *tx_ring)
 {
+	struct fm10k_tx_buffer *tx_buffer;
 	unsigned long size;
 	u16 i;
 
@@ -178,8 +196,7 @@ static void fm10k_clean_tx_ring(struct fm10k_ring *tx_ring)
 
 	/* Free all the Tx ring sk_buffs */
 	for (i = 0; i < tx_ring->count; i++) {
-		struct fm10k_tx_buffer *tx_buffer = &tx_ring->tx_buffer[i];
-
+		tx_buffer = &tx_ring->tx_buffer[i];
 		fm10k_unmap_and_free_tx_resource(tx_ring, tx_buffer);
 	}
 
@@ -253,7 +270,8 @@ static void fm10k_clean_rx_ring(struct fm10k_ring *rx_ring)
 	if (!rx_ring->rx_buffer)
 		return;
 
-	dev_kfree_skb(rx_ring->skb);
+	if (rx_ring->skb)
+		dev_kfree_skb(rx_ring->skb);
 	rx_ring->skb = NULL;
 
 	/* Free all the Rx ring sk_buffs */
@@ -367,6 +385,39 @@ static void fm10k_request_glort_range(struct fm10k_intfc *interface)
 }
 
 /**
+ * fm10k_free_udp_port_info
+ * @interface: board private structure
+ *
+ * This function frees both geneve_port and vxlan_port structures
+ **/
+static void fm10k_free_udp_port_info(struct fm10k_intfc *interface)
+{
+	struct fm10k_udp_port *port;
+
+	/* flush all entries from vxlan list */
+	port = list_first_entry_or_null(&interface->vxlan_port,
+					struct fm10k_udp_port, list);
+	while (port) {
+		list_del(&port->list);
+		kfree(port);
+		port = list_first_entry_or_null(&interface->vxlan_port,
+						struct fm10k_udp_port,
+						list);
+	}
+
+	/* flush all entries from geneve list */
+	port = list_first_entry_or_null(&interface->geneve_port,
+					struct fm10k_udp_port, list);
+	while (port) {
+		list_del(&port->list);
+		kfree(port);
+		port = list_first_entry_or_null(&interface->vxlan_port,
+						struct fm10k_udp_port,
+						list);
+	}
+}
+
+/**
  * fm10k_restore_udp_port_info
  * @interface: board private structure
  *
@@ -375,52 +426,131 @@ static void fm10k_request_glort_range(struct fm10k_intfc *interface)
 static void fm10k_restore_udp_port_info(struct fm10k_intfc *interface)
 {
 	struct fm10k_hw *hw = &interface->hw;
+	struct fm10k_udp_port *port;
 
 	/* only the PF supports configuring tunnels */
 	if (hw->mac.type != fm10k_mac_pf)
 		return;
 
+	port = list_first_entry_or_null(&interface->vxlan_port,
+					struct fm10k_udp_port, list);
+
 	/* restore tunnel configuration register */
 	fm10k_write_reg(hw, FM10K_TUNNEL_CFG,
-			ntohs(interface->vxlan_port) |
+			(port ? ntohs(port->port) : 0) |
 			(ETH_P_TEB << FM10K_TUNNEL_CFG_NVGRE_SHIFT));
+
+	port = list_first_entry_or_null(&interface->geneve_port,
+					struct fm10k_udp_port, list);
 
 	/* restore Geneve tunnel configuration register */
 	fm10k_write_reg(hw, FM10K_TUNNEL_CFG_GENEVE,
-			ntohs(interface->geneve_port));
+			(port ? ntohs(port->port) : 0));
+}
+
+static struct fm10k_udp_port *
+fm10k_remove_tunnel_port(struct list_head *ports,
+			 struct udp_tunnel_info *ti)
+{
+	struct fm10k_udp_port *port;
+
+	list_for_each_entry(port, ports, list) {
+		if ((port->port == ti->port) &&
+		    (port->sa_family == ti->sa_family)) {
+			list_del(&port->list);
+			return port;
+		}
+	}
+
+	return NULL;
+}
+
+static void fm10k_insert_tunnel_port(struct list_head *ports,
+				     struct udp_tunnel_info *ti)
+{
+	struct fm10k_udp_port *port;
+
+	/* remove existing port entry from the list so that the newest items
+	 * are always at the tail of the list.
+	 */
+	port = fm10k_remove_tunnel_port(ports, ti);
+	if (!port) {
+		port = kmalloc(sizeof(*port), GFP_ATOMIC);
+		if  (!port)
+			return;
+		port->port = ti->port;
+		port->sa_family = ti->sa_family;
+	}
+
+	list_add_tail(&port->list, ports);
 }
 
 /**
- * fm10k_udp_tunnel_sync - Called when UDP tunnel ports change
+ * fm10k_udp_tunnel_add
  * @dev: network interface device structure
- * @table: Tunnel table (according to tables of @fm10k_udp_tunnels)
+ * @ti: Tunnel endpoint information
  *
- * This function is called when a new UDP tunnel port is added or deleted.
+ * This function is called when a new UDP tunnel port has been added.
  * Due to hardware restrictions, only one port per type can be offloaded at
- * once. Core will send to the driver a port of its choice.
+ * once.
  **/
-static int fm10k_udp_tunnel_sync(struct net_device *dev, unsigned int table)
+static void fm10k_udp_tunnel_add(struct net_device *dev,
+				 struct udp_tunnel_info *ti)
 {
 	struct fm10k_intfc *interface = netdev_priv(dev);
-	struct udp_tunnel_info ti;
 
-	udp_tunnel_nic_get_port(dev, table, 0, &ti);
-	if (!table)
-		interface->vxlan_port = ti.port;
-	else
-		interface->geneve_port = ti.port;
+	/* only the PF supports configuring tunnels */
+	if (interface->hw.mac.type != fm10k_mac_pf)
+		return;
+
+	switch (ti->type) {
+	case UDP_TUNNEL_TYPE_VXLAN:
+		fm10k_insert_tunnel_port(&interface->vxlan_port, ti);
+		break;
+	case UDP_TUNNEL_TYPE_GENEVE:
+		fm10k_insert_tunnel_port(&interface->geneve_port, ti);
+		break;
+	default:
+		return;
+	}
 
 	fm10k_restore_udp_port_info(interface);
-	return 0;
 }
 
-static const struct udp_tunnel_nic_info fm10k_udp_tunnels = {
-	.sync_table	= fm10k_udp_tunnel_sync,
-	.tables		= {
-		{ .n_entries = 1, .tunnel_types = UDP_TUNNEL_TYPE_VXLAN,  },
-		{ .n_entries = 1, .tunnel_types = UDP_TUNNEL_TYPE_GENEVE, },
-	},
-};
+/**
+ * fm10k_udp_tunnel_del
+ * @dev: network interface device structure
+ * @ti: Tunnel end point information
+ *
+ * This function is called when a new UDP tunnel port is deleted. The freed
+ * port will be removed from the list, then we reprogram the offloaded port
+ * based on the head of the list.
+ **/
+static void fm10k_udp_tunnel_del(struct net_device *dev,
+				 struct udp_tunnel_info *ti)
+{
+	struct fm10k_intfc *interface = netdev_priv(dev);
+	struct fm10k_udp_port *port = NULL;
+
+	if (interface->hw.mac.type != fm10k_mac_pf)
+		return;
+
+	switch (ti->type) {
+	case UDP_TUNNEL_TYPE_VXLAN:
+		port = fm10k_remove_tunnel_port(&interface->vxlan_port, ti);
+		break;
+	case UDP_TUNNEL_TYPE_GENEVE:
+		port = fm10k_remove_tunnel_port(&interface->geneve_port, ti);
+		break;
+	default:
+		return;
+	}
+
+	/* if we did remove a port we need to free its memory */
+	kfree(port);
+
+	fm10k_restore_udp_port_info(interface);
+}
 
 /**
  * fm10k_open - Called when a network interface is made active
@@ -468,6 +598,8 @@ int fm10k_open(struct net_device *netdev)
 	if (err)
 		goto err_set_queues;
 
+	udp_tunnel_get_rx_info(netdev);
+
 	fm10k_up(interface);
 
 	return 0;
@@ -500,6 +632,8 @@ int fm10k_close(struct net_device *netdev)
 	fm10k_down(interface);
 
 	fm10k_qv_free_irq(interface);
+
+	fm10k_free_udp_port_info(interface);
 
 	fm10k_free_all_tx_resources(interface);
 	fm10k_free_all_rx_resources(interface);
@@ -580,24 +714,21 @@ static netdev_tx_t fm10k_xmit_frame(struct sk_buff *skb, struct net_device *dev)
 /**
  * fm10k_tx_timeout - Respond to a Tx Hang
  * @netdev: network interface device structure
- * @txqueue: the index of the Tx queue that timed out
  **/
-static void fm10k_tx_timeout(struct net_device *netdev, unsigned int txqueue)
+static void fm10k_tx_timeout(struct net_device *netdev)
 {
 	struct fm10k_intfc *interface = netdev_priv(netdev);
-	struct fm10k_ring *tx_ring;
 	bool real_tx_hang = false;
-
-	if (txqueue >= interface->num_tx_queues) {
-		WARN(1, "invalid Tx queue index %d", txqueue);
-		return;
-	}
-
-	tx_ring = interface->tx_ring[txqueue];
-	if (check_for_tx_hang(tx_ring) && fm10k_check_tx_hang(tx_ring))
-		real_tx_hang = true;
+	int i;
 
 #define TX_TIMEO_LIMIT 16000
+	for (i = 0; i < interface->num_tx_queues; i++) {
+		struct fm10k_ring *tx_ring = interface->tx_ring[i];
+
+		if (check_for_tx_hang(tx_ring) && fm10k_check_tx_hang(tx_ring))
+			real_tx_hang = true;
+	}
+
 	if (real_tx_hang) {
 		fm10k_tx_timeout_reset(interface);
 	} else {
@@ -737,7 +868,7 @@ void fm10k_clear_macvlan_queue(struct fm10k_intfc *interface,
 			/* Don't free requests for other interfaces */
 			if (r->mac.glort != glort)
 				break;
-			fallthrough;
+			/* fall through */
 		case FM10K_VLAN_REQUEST:
 			if (vlans) {
 				list_del(&r->list);
@@ -757,7 +888,7 @@ static int fm10k_uc_vlan_unsync(struct net_device *netdev,
 	u16 glort = interface->glort;
 	u16 vid = interface->vid;
 	bool set = !!(vid / VLAN_N_VID);
-	int err;
+	int err = -EHOSTDOWN;
 
 	/* drop any leading bits on the VLAN ID */
 	vid &= VLAN_N_VID - 1;
@@ -777,7 +908,7 @@ static int fm10k_mc_vlan_unsync(struct net_device *netdev,
 	u16 glort = interface->glort;
 	u16 vid = interface->vid;
 	bool set = !!(vid / VLAN_N_VID);
-	int err;
+	int err = -EHOSTDOWN;
 
 	/* drop any leading bits on the VLAN ID */
 	vid &= VLAN_N_VID - 1;
@@ -793,9 +924,7 @@ static int fm10k_mc_vlan_unsync(struct net_device *netdev,
 static int fm10k_update_vid(struct net_device *netdev, u16 vid, bool set)
 {
 	struct fm10k_intfc *interface = netdev_priv(netdev);
-	struct fm10k_l2_accel *l2_accel = interface->l2_accel;
 	struct fm10k_hw *hw = &interface->hw;
-	u16 glort;
 	s32 err;
 	int i;
 
@@ -862,22 +991,6 @@ static int fm10k_update_vid(struct net_device *netdev, u16 vid, bool set)
 				      hw->mac.addr, vid, set);
 	if (err)
 		goto err_out;
-
-	/* Update L2 accelerated macvlan addresses */
-	if (l2_accel) {
-		for (i = 0; i < l2_accel->size; i++) {
-			struct net_device *sdev = l2_accel->macvlan[i];
-
-			if (!sdev)
-				continue;
-
-			glort = l2_accel->dglort + 1 + i;
-
-			fm10k_queue_mac_request(interface, glort,
-						sdev->dev_addr,
-						vid, set);
-		}
-	}
 
 	/* set VLAN ID prior to syncing/unsyncing the VLAN */
 	interface->vid = vid + (set ? VLAN_N_VID : 0);
@@ -990,7 +1103,7 @@ static int fm10k_set_mac(struct net_device *dev, void *p)
 	}
 
 	if (!err) {
-		eth_hw_addr_set(dev, addr->sa_data);
+		ether_addr_copy(dev->dev_addr, addr->sa_data);
 		ether_addr_copy(hw->mac.addr, addr->sa_data);
 		dev->addr_assign_type &= ~NET_ADDR_RANDOM;
 	}
@@ -1118,22 +1231,6 @@ void fm10k_restore_rx_state(struct fm10k_intfc *interface)
 
 		fm10k_queue_mac_request(interface, glort,
 					hw->mac.addr, vid, true);
-
-		/* synchronize macvlan addresses */
-		if (l2_accel) {
-			for (i = 0; i < l2_accel->size; i++) {
-				struct net_device *sdev = l2_accel->macvlan[i];
-
-				if (!sdev)
-					continue;
-
-				glort = l2_accel->dglort + 1 + i;
-
-				fm10k_queue_mac_request(interface, glort,
-							sdev->dev_addr,
-							vid, true);
-			}
-		}
 	}
 
 	/* update xcast mode before synchronizing addresses if host's mailbox
@@ -1157,7 +1254,7 @@ void fm10k_restore_rx_state(struct fm10k_intfc *interface)
 			glort = l2_accel->dglort + 1 + i;
 
 			hw->mac.ops.update_xcast_mode(hw, glort,
-						      FM10K_XCAST_MODE_NONE);
+						      FM10K_XCAST_MODE_MULTI);
 			fm10k_queue_mac_request(interface, glort,
 						sdev->dev_addr,
 						hw->mac.default_vid, true);
@@ -1330,11 +1427,11 @@ static int __fm10k_setup_tc(struct net_device *dev, enum tc_setup_type type,
 static void fm10k_assign_l2_accel(struct fm10k_intfc *interface,
 				  struct fm10k_l2_accel *l2_accel)
 {
+	struct fm10k_ring *ring;
 	int i;
 
 	for (i = 0; i < interface->num_rx_queues; i++) {
-		struct fm10k_ring *ring = interface->rx_ring[i];
-
+		ring = interface->rx_ring[i];
 		rcu_assign_pointer(ring->l2_accel, l2_accel);
 	}
 
@@ -1349,15 +1446,8 @@ static void *fm10k_dfwd_add_station(struct net_device *dev,
 	struct fm10k_l2_accel *old_l2_accel = NULL;
 	struct fm10k_dglort_cfg dglort = { 0 };
 	struct fm10k_hw *hw = &interface->hw;
-	int size, i;
-	u16 vid, glort;
-
-	/* The hardware supported by fm10k only filters on the destination MAC
-	 * address. In order to avoid issues we only support offloading modes
-	 * where the hardware can actually provide the functionality.
-	 */
-	if (!macvlan_supports_dest_filter(sdev))
-		return ERR_PTR(-EMEDIUMTYPE);
+	int size = 0, i;
+	u16 glort;
 
 	/* allocate l2 accel structure if it is not available */
 	if (!l2_accel) {
@@ -1423,18 +1513,12 @@ static void *fm10k_dfwd_add_station(struct net_device *dev,
 
 	glort = l2_accel->dglort + 1 + i;
 
-	if (fm10k_host_mbx_ready(interface))
+	if (fm10k_host_mbx_ready(interface)) {
 		hw->mac.ops.update_xcast_mode(hw, glort,
-					      FM10K_XCAST_MODE_NONE);
-
-	fm10k_queue_mac_request(interface, glort, sdev->dev_addr,
-				hw->mac.default_vid, true);
-
-	for (vid = fm10k_find_next_vlan(interface, 0);
-	     vid < VLAN_N_VID;
-	     vid = fm10k_find_next_vlan(interface, vid))
+					      FM10K_XCAST_MODE_MULTI);
 		fm10k_queue_mac_request(interface, glort, sdev->dev_addr,
-					vid, true);
+					hw->mac.default_vid, true);
+	}
 
 	fm10k_mbx_unlock(interface);
 
@@ -1448,8 +1532,8 @@ static void fm10k_dfwd_del_station(struct net_device *dev, void *priv)
 	struct fm10k_dglort_cfg dglort = { 0 };
 	struct fm10k_hw *hw = &interface->hw;
 	struct net_device *sdev = priv;
-	u16 vid, glort;
 	int i;
+	u16 glort;
 
 	if (!l2_accel)
 		return;
@@ -1469,18 +1553,12 @@ static void fm10k_dfwd_del_station(struct net_device *dev, void *priv)
 
 	glort = l2_accel->dglort + 1 + i;
 
-	if (fm10k_host_mbx_ready(interface))
+	if (fm10k_host_mbx_ready(interface)) {
 		hw->mac.ops.update_xcast_mode(hw, glort,
 					      FM10K_XCAST_MODE_NONE);
-
-	fm10k_queue_mac_request(interface, glort, sdev->dev_addr,
-				hw->mac.default_vid, false);
-
-	for (vid = fm10k_find_next_vlan(interface, 0);
-	     vid < VLAN_N_VID;
-	     vid = fm10k_find_next_vlan(interface, vid))
 		fm10k_queue_mac_request(interface, glort, sdev->dev_addr,
-					vid, false);
+					hw->mac.default_vid, false);
+	}
 
 	fm10k_mbx_unlock(interface);
 
@@ -1530,9 +1608,13 @@ static const struct net_device_ops fm10k_netdev_ops = {
 	.ndo_set_vf_vlan	= fm10k_ndo_set_vf_vlan,
 	.ndo_set_vf_rate	= fm10k_ndo_set_vf_bw,
 	.ndo_get_vf_config	= fm10k_ndo_get_vf_config,
-	.ndo_get_vf_stats	= fm10k_ndo_get_vf_stats,
+	.ndo_udp_tunnel_add	= fm10k_udp_tunnel_add,
+	.ndo_udp_tunnel_del	= fm10k_udp_tunnel_del,
 	.ndo_dfwd_add_station	= fm10k_dfwd_add_station,
 	.ndo_dfwd_del_station	= fm10k_dfwd_del_station,
+#ifdef CONFIG_NET_POLL_CONTROLLER
+	.ndo_poll_controller	= fm10k_netpoll,
+#endif
 	.ndo_features_check	= fm10k_features_check,
 };
 
@@ -1577,8 +1659,6 @@ struct net_device *fm10k_alloc_netdev(const struct fm10k_info *info)
 				       NETIF_F_SG;
 
 		dev->features |= NETIF_F_GSO_UDP_TUNNEL;
-
-		dev->udp_tunnel_nic_info = &fm10k_udp_tunnels;
 	}
 
 	/* all features defined to this point should be changeable */

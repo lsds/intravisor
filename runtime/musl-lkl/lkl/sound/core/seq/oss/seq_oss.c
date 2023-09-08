@@ -1,10 +1,23 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * OSS compatible sequencer driver
  *
  * registration of device and proc
  *
  * Copyright (C) 1998,99 Takashi Iwai <tiwai@suse.de>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307 USA
  */
 
 #include <linux/init.h>
@@ -67,16 +80,13 @@ static int __init alsa_seq_oss_init(void)
 {
 	int rc;
 
-	rc = register_device();
-	if (rc < 0)
+	if ((rc = register_device()) < 0)
 		goto error;
-	rc = register_proc();
-	if (rc < 0) {
+	if ((rc = register_proc()) < 0) {
 		unregister_device();
 		goto error;
 	}
-	rc = snd_seq_oss_create_client();
-	if (rc < 0) {
+	if ((rc = snd_seq_oss_create_client()) < 0) {
 		unregister_proc();
 		unregister_device();
 		goto error;
@@ -136,8 +146,7 @@ odev_release(struct inode *inode, struct file *file)
 {
 	struct seq_oss_devinfo *dp;
 
-	dp = file->private_data;
-	if (!dp)
+	if ((dp = file->private_data) == NULL)
 		return 0;
 
 	mutex_lock(&register_mutex);
@@ -172,19 +181,10 @@ static long
 odev_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
 	struct seq_oss_devinfo *dp;
-	long rc;
-
 	dp = file->private_data;
 	if (snd_BUG_ON(!dp))
 		return -ENXIO;
-
-	if (cmd != SNDCTL_SEQ_SYNC &&
-	    mutex_lock_interruptible(&register_mutex))
-		return -ERESTARTSYS;
-	rc = snd_seq_oss_ioctl(dp, cmd, arg);
-	if (cmd != SNDCTL_SEQ_SYNC)
-		mutex_unlock(&register_mutex);
-	return rc;
+	return snd_seq_oss_ioctl(dp, cmd, arg);
 }
 
 #ifdef CONFIG_COMPAT
@@ -203,7 +203,7 @@ odev_poll(struct file *file, poll_table * wait)
 	struct seq_oss_devinfo *dp;
 	dp = file->private_data;
 	if (snd_BUG_ON(!dp))
-		return EPOLLERR;
+		return -ENXIO;
 	return snd_seq_oss_poll(dp, file, wait);
 }
 
@@ -230,18 +230,16 @@ register_device(void)
 	int rc;
 
 	mutex_lock(&register_mutex);
-	rc = snd_register_oss_device(SNDRV_OSS_DEVICE_TYPE_SEQUENCER,
-				     NULL, 0,
-				     &seq_oss_f_ops, NULL);
-	if (rc < 0) {
+	if ((rc = snd_register_oss_device(SNDRV_OSS_DEVICE_TYPE_SEQUENCER,
+					  NULL, 0,
+					  &seq_oss_f_ops, NULL)) < 0) {
 		pr_err("ALSA: seq_oss: can't register device seq\n");
 		mutex_unlock(&register_mutex);
 		return rc;
 	}
-	rc = snd_register_oss_device(SNDRV_OSS_DEVICE_TYPE_MUSIC,
-				     NULL, 0,
-				     &seq_oss_f_ops, NULL);
-	if (rc < 0) {
+	if ((rc = snd_register_oss_device(SNDRV_OSS_DEVICE_TYPE_MUSIC,
+					  NULL, 0,
+					  &seq_oss_f_ops, NULL)) < 0) {
 		pr_err("ALSA: seq_oss: can't register device music\n");
 		snd_unregister_oss_device(SNDRV_OSS_DEVICE_TYPE_SEQUENCER, NULL, 0);
 		mutex_unlock(&register_mutex);

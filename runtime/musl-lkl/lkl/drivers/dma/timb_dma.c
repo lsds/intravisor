@@ -1,7 +1,15 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * timb_dma.c timberdale FPGA DMA driver
  * Copyright (c) 2010 Intel Corporation
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
  */
 
 /* Supports:
@@ -88,7 +96,7 @@ struct timb_dma {
 	struct dma_device	dma;
 	void __iomem		*membase;
 	struct tasklet_struct	tasklet;
-	struct timb_dma_chan	channels[];
+	struct timb_dma_chan	channels[0];
 };
 
 static struct device *chan2dev(struct dma_chan *chan)
@@ -537,7 +545,7 @@ static struct dma_async_tx_descriptor *td_prep_slave_sg(struct dma_chan *chan,
 	}
 
 	dma_sync_single_for_device(chan2dmadev(chan), td_desc->txd.phys,
-		td_desc->desc_list_len, DMA_TO_DEVICE);
+		td_desc->desc_list_len, DMA_MEM_TO_DEV);
 
 	return &td_desc->txd;
 }
@@ -563,9 +571,9 @@ static int td_terminate_all(struct dma_chan *chan)
 	return 0;
 }
 
-static void td_tasklet(struct tasklet_struct *t)
+static void td_tasklet(unsigned long data)
 {
-	struct timb_dma *td = from_tasklet(td, t, tasklet);
+	struct timb_dma *td = (struct timb_dma *)data;
 	u32 isr;
 	u32 ipr;
 	u32 ier;
@@ -635,8 +643,8 @@ static int td_probe(struct platform_device *pdev)
 		DRIVER_NAME))
 		return -EBUSY;
 
-	td  = kzalloc(struct_size(td, channels, pdata->nr_channels),
-		      GFP_KERNEL);
+	td  = kzalloc(sizeof(struct timb_dma) +
+		sizeof(struct timb_dma_chan) * pdata->nr_channels, GFP_KERNEL);
 	if (!td) {
 		err = -ENOMEM;
 		goto err_release_region;
@@ -658,7 +666,7 @@ static int td_probe(struct platform_device *pdev)
 	iowrite32(0x0, td->membase + TIMBDMA_IER);
 	iowrite32(0xFFFFFFFF, td->membase + TIMBDMA_ISR);
 
-	tasklet_setup(&td->tasklet, td_tasklet);
+	tasklet_init(&td->tasklet, td_tasklet, (unsigned long)td);
 
 	err = request_irq(irq, td_irq, IRQF_SHARED, DRIVER_NAME, td);
 	if (err) {

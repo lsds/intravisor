@@ -27,5 +27,7 @@ struct lkl_netdev *lkl_netdev_macvtap_create(const char *path, int offload)
 		.ifr_flags = IFF_TAP | IFF_NO_PI,
 	};
 
-	return lkl_netdev_tap_init(path, offload, &ifr);
+	lkl_printf("NET is disabled %s %d\n", __func__,__LINE__);
+	return 0;
+//	return lkl_netdev_tap_init(path, offload, &ifr);
 }

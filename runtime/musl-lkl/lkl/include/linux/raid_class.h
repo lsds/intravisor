@@ -1,8 +1,9 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * raid_class.h - a generic raid visualisation class
  *
  * Copyright (c) 2005 - James Bottomley <James.Bottomley@steeleye.com>
+ *
+ * This file is licensed under GPLv2
  */
 #include <linux/transport_class.h>
 

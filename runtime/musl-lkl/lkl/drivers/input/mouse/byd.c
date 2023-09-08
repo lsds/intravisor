@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * BYD TouchPad PS/2 mouse driver
  *
@@ -7,6 +6,10 @@
  * Copyright (C) 2015 Tai Chi Minh Ralph Eastwood
  * Copyright (C) 2015 Martin Wimpress
  * Copyright (C) 2015 Jay Kuri
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License version 2 as published by
+ * the Free Software Foundation.
  */
 
 #include <linux/delay.h>
@@ -191,7 +194,7 @@
 
 /*
  * The touchpad generates a mixture of absolute and relative packets, indicated
- * by the last byte of each packet being set to one of the following:
+ * by the the last byte of each packet being set to one of the following:
  */
 #define BYD_PACKET_ABSOLUTE			0xf8
 #define BYD_PACKET_RELATIVE			0x00

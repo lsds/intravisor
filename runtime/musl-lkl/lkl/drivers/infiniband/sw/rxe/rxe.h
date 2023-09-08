@@ -1,7 +1,34 @@
-/* SPDX-License-Identifier: GPL-2.0 OR Linux-OpenIB */
 /*
  * Copyright (c) 2016 Mellanox Technologies Ltd. All rights reserved.
  * Copyright (c) 2015 System Fabric Works, Inc. All rights reserved.
+ *
+ * This software is available to you under a choice of one of two
+ * licenses.  You may choose to be licensed under the terms of the GNU
+ * General Public License (GPL) Version 2, available from the file
+ * COPYING in the main directory of this source tree, or the
+ * OpenIB.org BSD license below:
+ *
+ *     Redistribution and use in source and binary forms, with or
+ *     without modification, are permitted provided that the following
+ *     conditions are met:
+ *
+ *	- Redistributions of source code must retain the above
+ *	  copyright notice, this list of conditions and the following
+ *	  disclaimer.
+ *
+ *	- Redistributions in binary form must reproduce the above
+ *	  copyright notice, this list of conditions and the following
+ *	  disclaimer in the documentation and/or other materials
+ *	  provided with the distribution.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+ * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+ * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS
+ * BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
+ * ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+ * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
  */
 
 #ifndef RXE_H
@@ -12,7 +39,9 @@
 #endif
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
+#include <linux/module.h>
 #include <linux/skbuff.h>
+#include <linux/crc32.h>
 
 #include <rdma/ib_verbs.h>
 #include <rdma/ib_user_verbs.h>
@@ -36,27 +65,49 @@
  */
 #define RXE_UVERBS_ABI_VERSION		2
 
+#define IB_PHYS_STATE_LINK_UP		(5)
+#define IB_PHYS_STATE_LINK_DOWN		(3)
+
 #define RXE_ROCE_V2_SPORT		(0xc000)
 
-void rxe_set_mtu(struct rxe_dev *rxe, unsigned int dev_mtu);
-
-int rxe_add(struct rxe_dev *rxe, unsigned int mtu, const char *ibdev_name);
-
-void rxe_rcv(struct sk_buff *skb);
-
-/* The caller must do a matching ib_device_put(&dev->ib_dev) */
-static inline struct rxe_dev *rxe_get_dev_from_net(struct net_device *ndev)
+static inline u32 rxe_crc32(struct rxe_dev *rxe,
+			    u32 crc, void *next, size_t len)
 {
-	struct ib_device *ibdev =
-		ib_device_get_by_netdev(ndev, RDMA_DRIVER_RXE);
+	u32 retval;
+	int err;
 
-	if (!ibdev)
-		return NULL;
-	return container_of(ibdev, struct rxe_dev, ib_dev);
+	SHASH_DESC_ON_STACK(shash, rxe->tfm);
+
+	shash->tfm = rxe->tfm;
+	shash->flags = 0;
+	*(u32 *)shash_desc_ctx(shash) = crc;
+	err = crypto_shash_update(shash, next, len);
+	if (unlikely(err)) {
+		pr_warn_ratelimited("failed crc calculation, err: %d\n", err);
+		return crc32_le(crc, next, len);
+	}
+
+	retval = *(u32 *)shash_desc_ctx(shash);
+	barrier_data(shash_desc_ctx(shash));
+	return retval;
 }
+
+int rxe_set_mtu(struct rxe_dev *rxe, unsigned int dev_mtu);
+
+int rxe_add(struct rxe_dev *rxe, unsigned int mtu);
+void rxe_remove(struct rxe_dev *rxe);
+void rxe_remove_all(void);
+
+int rxe_rcv(struct sk_buff *skb);
+
+static inline void rxe_dev_put(struct rxe_dev *rxe)
+{
+	kref_put(&rxe->ref_cnt, rxe_release);
+}
+struct rxe_dev *net_to_rxe(struct net_device *ndev);
+struct rxe_dev *get_rxe_by_name(const char *name);
 
 void rxe_port_up(struct rxe_dev *rxe);
 void rxe_port_down(struct rxe_dev *rxe);
-void rxe_set_port_state(struct rxe_dev *rxe);
 
 #endif /* RXE_H */

@@ -53,12 +53,15 @@ static ssize_t proc_mpc_write(struct file *file, const char __user *buff,
 
 static int parse_qos(const char *buff);
 
-static const struct proc_ops mpc_proc_ops = {
-	.proc_open	= proc_mpc_open,
-	.proc_read	= seq_read,
-	.proc_lseek	= seq_lseek,
-	.proc_write	= proc_mpc_write,
-	.proc_release	= seq_release,
+/*
+ *   Define allowed FILE OPERATIONS
+ */
+static const struct file_operations mpc_file_operations = {
+	.open =		proc_mpc_open,
+	.read =		seq_read,
+	.llseek =	seq_lseek,
+	.write =	proc_mpc_write,
+	.release =	seq_release,
 };
 
 /*
@@ -219,12 +222,11 @@ static ssize_t proc_mpc_write(struct file *file, const char __user *buff,
 	if (!page)
 		return -ENOMEM;
 
-	for (p = page, len = 0; len < nbytes; p++) {
+	for (p = page, len = 0; len < nbytes; p++, len++) {
 		if (get_user(*p, buff++)) {
 			free_page((unsigned long)page);
 			return -EFAULT;
 		}
-		len += 1;
 		if (*p == '\0' || *p == '\n')
 			break;
 	}
@@ -288,7 +290,7 @@ int mpc_proc_init(void)
 {
 	struct proc_dir_entry *p;
 
-	p = proc_create(STAT_FILE_NAME, 0, atm_proc_root, &mpc_proc_ops);
+	p = proc_create(STAT_FILE_NAME, 0, atm_proc_root, &mpc_file_operations);
 	if (!p) {
 		pr_err("Unable to initialize /proc/atm/%s\n", STAT_FILE_NAME);
 		return -ENOMEM;
@@ -305,3 +307,9 @@ void mpc_proc_clean(void)
 }
 
 #endif /* CONFIG_PROC_FS */
+
+
+
+
+
+

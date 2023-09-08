@@ -4,7 +4,7 @@
 #include <linux/irq.h>
 #include <linux/interrupt.h>
 
-void mpc8xx_pic_init(void);
+int mpc8xx_pic_init(void);
 unsigned int mpc8xx_get_irq(void);
 
 /*

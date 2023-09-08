@@ -73,7 +73,7 @@ static inline bool seg_writable(struct desc_struct *d)
 	return (d->type & SEG_TYPE_EXECUTE_MASK) == SEG_TYPE_WRITABLE;
 }
 
-#define I387			(&current->thread.fpu.fpstate->regs)
+#define I387			(&current->thread.fpu.state)
 #define FPU_info		(I387->soft.info)
 
 #define FPU_CS			(*(unsigned short *) &(FPU_info->regs->cs))
@@ -104,11 +104,9 @@ static inline bool seg_writable(struct desc_struct *d)
 #define instruction_address	(*(struct address *)&I387->soft.fip)
 #define operand_address		(*(struct address *)&I387->soft.foo)
 
-#define FPU_access_ok(y,z)	if ( !access_ok(y,z) ) \
+#define FPU_access_ok(x,y,z)	if ( !access_ok(x,y,z) ) \
 				math_abort(FPU_info,SIGSEGV)
 #define FPU_abort		math_abort(FPU_info, SIGSEGV)
-#define FPU_copy_from_user(to, from, n)	\
-		do { if (copy_from_user(to, from, n)) FPU_abort; } while (0)
 
 #undef FPU_IGNORE_CODE_SEGV
 #ifdef FPU_IGNORE_CODE_SEGV
@@ -121,10 +119,10 @@ static inline bool seg_writable(struct desc_struct *d)
 /* A simpler test than access_ok() can probably be done for
    FPU_code_access_ok() because the only possible error is to step
    past the upper boundary of a legal code area. */
-#define	FPU_code_access_ok(z) FPU_access_ok((void __user *)FPU_EIP,z)
+#define	FPU_code_access_ok(z) FPU_access_ok(VERIFY_READ,(void __user *)FPU_EIP,z)
 #endif
 
-#define FPU_get_user(x,y) do { if (get_user((x),(y))) FPU_abort; } while (0)
-#define FPU_put_user(x,y) do { if (put_user((x),(y))) FPU_abort; } while (0)
+#define FPU_get_user(x,y)       get_user((x),(y))
+#define FPU_put_user(x,y)       put_user((x),(y))
 
 #endif

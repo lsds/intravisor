@@ -132,7 +132,6 @@ int search_by_entry_key(struct super_block *sb, const struct cpu_key *key,
 			return IO_ERROR;
 		}
 		PATH_LAST_POSITION(path)--;
-		break;
 
 	case ITEM_FOUND:
 		break;
@@ -378,13 +377,10 @@ static struct dentry *reiserfs_lookup(struct inode *dir, struct dentry *dentry,
 
 		/*
 		 * Propagate the private flag so we know we're
-		 * in the priv tree.  Also clear IOP_XATTR
-		 * since we don't have xattrs on xattr files.
+		 * in the priv tree
 		 */
-		if (IS_PRIVATE(dir)) {
+		if (IS_PRIVATE(dir))
 			inode->i_flags |= S_PRIVATE;
-			inode->i_opflags &= ~IOP_XATTR;
-		}
 	}
 	reiserfs_write_unlock(dir->i_sb);
 	if (retval == IO_ERROR) {
@@ -616,12 +612,12 @@ static int new_inode_init(struct inode *inode, struct inode *dir, umode_t mode)
 	 * the quota init calls have to know who to charge the quota to, so
 	 * we have to set uid and gid here
 	 */
-	inode_init_owner(&init_user_ns, inode, dir, mode);
+	inode_init_owner(inode, dir, mode);
 	return dquot_initialize(inode);
 }
 
-static int reiserfs_create(struct user_namespace *mnt_userns, struct inode *dir,
-			   struct dentry *dentry, umode_t mode, bool excl)
+static int reiserfs_create(struct inode *dir, struct dentry *dentry, umode_t mode,
+			   bool excl)
 {
 	int retval;
 	struct inode *inode;
@@ -699,8 +695,8 @@ out_failed:
 	return retval;
 }
 
-static int reiserfs_mknod(struct user_namespace *mnt_userns, struct inode *dir,
-			  struct dentry *dentry, umode_t mode, dev_t rdev)
+static int reiserfs_mknod(struct inode *dir, struct dentry *dentry, umode_t mode,
+			  dev_t rdev)
 {
 	int retval;
 	struct inode *inode;
@@ -782,8 +778,7 @@ out_failed:
 	return retval;
 }
 
-static int reiserfs_mkdir(struct user_namespace *mnt_userns, struct inode *dir,
-			  struct dentry *dentry, umode_t mode)
+static int reiserfs_mkdir(struct inode *dir, struct dentry *dentry, umode_t mode)
 {
 	int retval;
 	struct inode *inode;
@@ -840,10 +835,10 @@ static int reiserfs_mkdir(struct user_namespace *mnt_userns, struct inode *dir,
 	 */
 	INC_DIR_INODE_NLINK(dir)
 
-	retval = reiserfs_new_inode(&th, dir, mode, NULL /*symlink */,
-				    old_format_only(dir->i_sb) ?
-				    EMPTY_DIR_SIZE_V1 : EMPTY_DIR_SIZE,
-				    dentry, inode, &security);
+	    retval = reiserfs_new_inode(&th, dir, mode, NULL /*symlink */ ,
+					old_format_only(dir->i_sb) ?
+					EMPTY_DIR_SIZE_V1 : EMPTY_DIR_SIZE,
+					dentry, inode, &security);
 	if (retval) {
 		DEC_DIR_INODE_NLINK(dir)
 		goto out_failed;
@@ -969,7 +964,7 @@ static int reiserfs_rmdir(struct inode *dir, struct dentry *dentry)
 	reiserfs_update_sd(&th, inode);
 
 	DEC_DIR_INODE_NLINK(dir)
-	dir->i_size -= (DEH_SIZE + de.de_entrylen);
+	    dir->i_size -= (DEH_SIZE + de.de_entrylen);
 	reiserfs_update_sd(&th, dir);
 
 	/* prevent empty directory from getting lost */
@@ -1096,9 +1091,8 @@ out_unlink:
 	return retval;
 }
 
-static int reiserfs_symlink(struct user_namespace *mnt_userns,
-			    struct inode *parent_dir, struct dentry *dentry,
-			    const char *symname)
+static int reiserfs_symlink(struct inode *parent_dir,
+			    struct dentry *dentry, const char *symname)
 {
 	int retval;
 	struct inode *inode;
@@ -1307,8 +1301,7 @@ static void set_ino_in_dir_entry(struct reiserfs_dir_entry *de,
  * one path. If it holds 2 or more, it can get into endless waiting in
  * get_empty_nodes or its clones
  */
-static int reiserfs_rename(struct user_namespace *mnt_userns,
-			   struct inode *old_dir, struct dentry *old_dentry,
+static int reiserfs_rename(struct inode *old_dir, struct dentry *old_dentry,
 			   struct inode *new_dir, struct dentry *new_dentry,
 			   unsigned int flags)
 {
@@ -1323,7 +1316,7 @@ static int reiserfs_rename(struct user_namespace *mnt_userns,
 	int jbegin_count;
 	umode_t old_inode_mode;
 	unsigned long savelink = 1;
-	struct timespec64 ctime;
+	struct timespec ctime;
 
 	if (flags & ~RENAME_NOREPLACE)
 		return -EINVAL;
@@ -1661,8 +1654,6 @@ const struct inode_operations reiserfs_dir_inode_operations = {
 	.permission = reiserfs_permission,
 	.get_acl = reiserfs_get_acl,
 	.set_acl = reiserfs_set_acl,
-	.fileattr_get = reiserfs_fileattr_get,
-	.fileattr_set = reiserfs_fileattr_set,
 };
 
 /*

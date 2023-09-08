@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * v4l2-fh.h
  *
@@ -8,6 +7,15 @@
  * Copyright (C) 2009--2010 Nokia Corporation.
  *
  * Contact: Sakari Ailus <sakari.ailus@iki.fi>
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * version 2 as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * General Public License for more details.
  */
 
 #ifndef V4L2_FH_H
@@ -30,13 +38,10 @@ struct v4l2_ctrl_handler;
  * @prio: priority of the file handler, as defined by &enum v4l2_priority
  *
  * @wait: event' s wait queue
- * @subscribe_lock: serialise changes to the subscribed list; guarantee that
- *		    the add and del event callbacks are orderly called
  * @subscribed: list of subscribed events
  * @available: list of events waiting to be dequeued
  * @navailable: number of available events at @available list
  * @sequence: event sequence number
- *
  * @m2m_ctx: pointer to &struct v4l2_m2m_ctx
  */
 struct v4l2_fh {
@@ -47,13 +52,14 @@ struct v4l2_fh {
 
 	/* Events */
 	wait_queue_head_t	wait;
-	struct mutex		subscribe_lock;
 	struct list_head	subscribed;
 	struct list_head	available;
 	unsigned int		navailable;
 	u32			sequence;
 
+#if IS_ENABLED(CONFIG_V4L2_MEM2MEM_DEV)
 	struct v4l2_m2m_ctx	*m2m_ctx;
+#endif
 };
 
 /**

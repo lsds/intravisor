@@ -1,8 +1,17 @@
-/* SPDX-License-Identifier: GPL-2.0+ */
 /*
- * NILFS local header file.
+ * nilfs.h - NILFS local header file.
  *
  * Copyright (C) 2005-2008 Nippon Telegraph and Telephone Corporation.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
  *
  * Written by Koji Sato and Ryusuke Konishi.
  */
@@ -28,7 +37,7 @@
  * @i_xattr: <TODO>
  * @i_dir_start_lookup: page index of last successful search
  * @i_cno: checkpoint number for GC inode
- * @i_assoc_inode: associated inode (B-tree node cache holder or back pointer)
+ * @i_btnode_cache: cached pages of b-tree nodes
  * @i_dirty: list for connecting dirty files
  * @xattr_sem: semaphore for extended attributes processing
  * @i_bh: buffer contains disk inode
@@ -43,7 +52,7 @@ struct nilfs_inode_info {
 	__u64 i_xattr;	/* sector_t ??? */
 	__u32 i_dir_start_lookup;
 	__u64 i_cno;		/* check point number for GC inode */
-	struct inode *i_assoc_inode;
+	struct address_space i_btnode_cache;
 	struct list_head i_dirty;	/* List for connecting dirty files */
 
 #ifdef CONFIG_NILFS_XATTR
@@ -75,6 +84,13 @@ NILFS_BMAP_I(const struct nilfs_bmap *bmap)
 	return container_of(bmap, struct nilfs_inode_info, i_bmap_data);
 }
 
+static inline struct inode *NILFS_BTNC_I(struct address_space *btnc)
+{
+	struct nilfs_inode_info *ii =
+		container_of(btnc, struct nilfs_inode_info, i_btnode_cache);
+	return &ii->vfs_inode;
+}
+
 /*
  * Dynamic state flags of NILFS on-memory inode (i_state)
  */
@@ -91,8 +107,6 @@ enum {
 	NILFS_I_INODE_SYNC,		/* dsync is not allowed for inode */
 	NILFS_I_BMAP,			/* has bmap and btnode_cache */
 	NILFS_I_GCINODE,		/* inode for GC, on memory only */
-	NILFS_I_BTNC,			/* inode for btree node cache */
-	NILFS_I_SHADOW,			/* inode for shadowed page cache */
 };
 
 /*
@@ -198,9 +212,6 @@ static inline int nilfs_acl_chmod(struct inode *inode)
 
 static inline int nilfs_init_acl(struct inode *inode, struct inode *dir)
 {
-	if (S_ISLNK(inode->i_mode))
-		return 0;
-
 	inode->i_mode &= ~current_umask();
 	return 0;
 }
@@ -241,9 +252,6 @@ extern void nilfs_set_link(struct inode *, struct nilfs_dir_entry *,
 extern int nilfs_sync_file(struct file *, loff_t, loff_t, int);
 
 /* ioctl.c */
-int nilfs_fileattr_get(struct dentry *dentry, struct fileattr *m);
-int nilfs_fileattr_set(struct user_namespace *mnt_userns,
-		       struct dentry *dentry, struct fileattr *fa);
 long nilfs_ioctl(struct file *, unsigned int, unsigned long);
 long nilfs_compat_ioctl(struct file *file, unsigned int cmd, unsigned long arg);
 int nilfs_ioctl_prepare_clean_segments(struct the_nilfs *, struct nilfs_argv *,
@@ -253,6 +261,7 @@ int nilfs_ioctl_prepare_clean_segments(struct the_nilfs *, struct nilfs_argv *,
 void nilfs_inode_add_blocks(struct inode *inode, int n);
 void nilfs_inode_sub_blocks(struct inode *inode, int n);
 extern struct inode *nilfs_new_inode(struct inode *, umode_t);
+extern void nilfs_free_inode(struct inode *);
 extern int nilfs_get_block(struct inode *, sector_t, struct buffer_head *, int);
 extern void nilfs_set_inode_flags(struct inode *);
 extern int nilfs_read_inode_common(struct inode *, struct nilfs_inode *);
@@ -265,17 +274,12 @@ struct inode *nilfs_iget(struct super_block *sb, struct nilfs_root *root,
 			 unsigned long ino);
 extern struct inode *nilfs_iget_for_gc(struct super_block *sb,
 				       unsigned long ino, __u64 cno);
-int nilfs_attach_btree_node_cache(struct inode *inode);
-void nilfs_detach_btree_node_cache(struct inode *inode);
-struct inode *nilfs_iget_for_shadow(struct inode *inode);
 extern void nilfs_update_inode(struct inode *, struct buffer_head *, int);
 extern void nilfs_truncate(struct inode *);
 extern void nilfs_evict_inode(struct inode *);
-extern int nilfs_setattr(struct user_namespace *, struct dentry *,
-			 struct iattr *);
+extern int nilfs_setattr(struct dentry *, struct iattr *);
 extern void nilfs_write_failed(struct address_space *mapping, loff_t to);
-int nilfs_permission(struct user_namespace *mnt_userns, struct inode *inode,
-		     int mask);
+int nilfs_permission(struct inode *inode, int mask);
 int nilfs_load_inode_block(struct inode *inode, struct buffer_head **pbh);
 extern int nilfs_inode_dirty(struct inode *);
 int nilfs_set_file_dirty(struct inode *inode, unsigned int nr_dirty);
@@ -294,9 +298,11 @@ static inline int nilfs_mark_inode_dirty_sync(struct inode *inode)
 
 /* super.c */
 extern struct inode *nilfs_alloc_inode(struct super_block *);
+extern void nilfs_destroy_inode(struct inode *);
 
-__printf(2, 3)
-void __nilfs_msg(struct super_block *sb, const char *fmt, ...);
+extern __printf(3, 4)
+void __nilfs_msg(struct super_block *sb, const char *level,
+		 const char *fmt, ...);
 extern __printf(3, 4)
 void __nilfs_error(struct super_block *sb, const char *function,
 		   const char *fmt, ...);
@@ -304,7 +310,7 @@ void __nilfs_error(struct super_block *sb, const char *function,
 #ifdef CONFIG_PRINTK
 
 #define nilfs_msg(sb, level, fmt, ...)					\
-	__nilfs_msg(sb, level fmt, ##__VA_ARGS__)
+	__nilfs_msg(sb, level, fmt, ##__VA_ARGS__)
 #define nilfs_error(sb, fmt, ...)					\
 	__nilfs_error(sb, __func__, fmt, ##__VA_ARGS__)
 
@@ -312,7 +318,7 @@ void __nilfs_error(struct super_block *sb, const char *function,
 
 #define nilfs_msg(sb, level, fmt, ...)					\
 	do {								\
-		no_printk(level fmt, ##__VA_ARGS__);			\
+		no_printk(fmt, ##__VA_ARGS__);				\
 		(void)(sb);						\
 	} while (0)
 #define nilfs_error(sb, fmt, ...)					\
@@ -322,15 +328,6 @@ void __nilfs_error(struct super_block *sb, const char *function,
 	} while (0)
 
 #endif /* CONFIG_PRINTK */
-
-#define nilfs_crit(sb, fmt, ...)					\
-	nilfs_msg(sb, KERN_CRIT, fmt, ##__VA_ARGS__)
-#define nilfs_err(sb, fmt, ...)						\
-	nilfs_msg(sb, KERN_ERR, fmt, ##__VA_ARGS__)
-#define nilfs_warn(sb, fmt, ...)					\
-	nilfs_msg(sb, KERN_WARNING, fmt, ##__VA_ARGS__)
-#define nilfs_info(sb, fmt, ...)					\
-	nilfs_msg(sb, KERN_INFO, fmt, ##__VA_ARGS__)
 
 extern struct nilfs_super_block *
 nilfs_read_super_block(struct super_block *, u64, int, struct buffer_head **);

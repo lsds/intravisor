@@ -3414,8 +3414,9 @@ static u16 MXL_ControlWrite_Group(struct dvb_frontend *fe, u16 controlNum,
 	u32 value, u16 controlGroup)
 {
 	struct mxl5005s_state *state = fe->tuner_priv;
-	u16 i, j;
+	u16 i, j, k;
 	u32 highLimit;
+	u32 ctrlVal;
 
 	if (controlGroup == 1) /* Initial Control */ {
 
@@ -3431,6 +3432,9 @@ static u16 MXL_ControlWrite_Group(struct dvb_frontend *fe, u16 controlNum,
 							(u8)(state->Init_Ctrl[i].bit[j]),
 							(u8)((value>>j) & 0x01));
 					}
+					ctrlVal = 0;
+					for (k = 0; k < state->Init_Ctrl[i].size; k++)
+						ctrlVal += state->Init_Ctrl[i].val[k] * (1 << k);
 				} else
 					return -1;
 			}
@@ -3450,6 +3454,9 @@ static u16 MXL_ControlWrite_Group(struct dvb_frontend *fe, u16 controlNum,
 							(u8)(state->CH_Ctrl[i].bit[j]),
 							(u8)((value>>j) & 0x01));
 					}
+					ctrlVal = 0;
+					for (k = 0; k < state->CH_Ctrl[i].size; k++)
+						ctrlVal += state->CH_Ctrl[i].val[k] * (1 << k);
 				} else
 					return -1;
 			}
@@ -3470,6 +3477,11 @@ static u16 MXL_ControlWrite_Group(struct dvb_frontend *fe, u16 controlNum,
 							(u8)(state->MXL_Ctrl[i].bit[j]),
 							(u8)((value>>j) & 0x01));
 					}
+					ctrlVal = 0;
+					for (k = 0; k < state->MXL_Ctrl[i].size; k++)
+						ctrlVal += state->
+							MXL_Ctrl[i].val[k] *
+							(1 << k);
 				} else
 					return -1;
 			}
@@ -3572,7 +3584,7 @@ static u32 MXL_Ceiling(u32 value, u32 resolution)
 	return value / resolution + (value % resolution > 0 ? 1 : 0);
 }
 
-/* Retrieve the Initialization Registers */
+/* Retrieve the Initialzation Registers */
 static u16 MXL_GetInitRegister(struct dvb_frontend *fe, u8 *RegNum,
 	u8 *RegVal, int *count)
 {
@@ -3914,25 +3926,14 @@ static int mxl5005s_reconfigure(struct dvb_frontend *fe, u32 mod_type,
 	u32 bandwidth)
 {
 	struct mxl5005s_state *state = fe->tuner_priv;
-	u8 *AddrTable;
-	u8 *ByteTable;
+
+	u8 AddrTable[MXL5005S_REG_WRITING_TABLE_LEN_MAX];
+	u8 ByteTable[MXL5005S_REG_WRITING_TABLE_LEN_MAX];
 	int TableLen;
 
 	dprintk(1, "%s(type=%d, bw=%d)\n", __func__, mod_type, bandwidth);
 
 	mxl5005s_reset(fe);
-
-	AddrTable = kcalloc(MXL5005S_REG_WRITING_TABLE_LEN_MAX, sizeof(u8),
-			    GFP_KERNEL);
-	if (!AddrTable)
-		return -ENOMEM;
-
-	ByteTable = kcalloc(MXL5005S_REG_WRITING_TABLE_LEN_MAX, sizeof(u8),
-			    GFP_KERNEL);
-	if (!ByteTable) {
-		kfree(AddrTable);
-		return -ENOMEM;
-	}
 
 	/* Tuner initialization stage 0 */
 	MXL_GetMasterControl(ByteTable, MC_SYNTH_RESET);
@@ -3947,9 +3948,6 @@ static int mxl5005s_reconfigure(struct dvb_frontend *fe, u32 mod_type,
 	MXL_GetInitRegister(fe, AddrTable, ByteTable, &TableLen);
 
 	mxl5005s_writeregs(fe, AddrTable, ByteTable, TableLen);
-
-	kfree(AddrTable);
-	kfree(ByteTable);
 
 	return 0;
 }
@@ -4077,10 +4075,10 @@ static void mxl5005s_release(struct dvb_frontend *fe)
 
 static const struct dvb_tuner_ops mxl5005s_tuner_ops = {
 	.info = {
-		.name              = "MaxLinear MXL5005S",
-		.frequency_min_hz  =  48 * MHz,
-		.frequency_max_hz  = 860 * MHz,
-		.frequency_step_hz =  50 * kHz,
+		.name           = "MaxLinear MXL5005S",
+		.frequency_min  =  48000000,
+		.frequency_max  = 860000000,
+		.frequency_step =     50000,
 	},
 
 	.release       = mxl5005s_release,

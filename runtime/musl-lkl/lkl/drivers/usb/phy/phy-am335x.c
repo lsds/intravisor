@@ -57,10 +57,13 @@ static int am335x_phy_probe(struct platform_device *pdev)
 
 	am_phy->dr_mode = of_usb_get_dr_mode_by_phy(pdev->dev.of_node, -1);
 
-	ret = usb_phy_gen_create_phy(dev, &am_phy->usb_phy_gen);
+	ret = usb_phy_gen_create_phy(dev, &am_phy->usb_phy_gen, NULL);
 	if (ret)
 		return ret;
 
+	ret = usb_add_phy_dev(&am_phy->usb_phy_gen.phy);
+	if (ret)
+		return ret;
 	am_phy->usb_phy_gen.phy.init = am335x_init;
 	am_phy->usb_phy_gen.phy.shutdown = am335x_shutdown;
 
@@ -79,7 +82,7 @@ static int am335x_phy_probe(struct platform_device *pdev)
 	device_set_wakeup_enable(dev, false);
 	phy_ctrl_power(am_phy->phy_ctrl, am_phy->id, am_phy->dr_mode, false);
 
-	return usb_add_phy_dev(&am_phy->usb_phy_gen.phy);
+	return 0;
 }
 
 static int am335x_phy_remove(struct platform_device *pdev)
@@ -93,7 +96,8 @@ static int am335x_phy_remove(struct platform_device *pdev)
 #ifdef CONFIG_PM_SLEEP
 static int am335x_phy_suspend(struct device *dev)
 {
-	struct am335x_phy *am_phy = dev_get_drvdata(dev);
+	struct platform_device	*pdev = to_platform_device(dev);
+	struct am335x_phy *am_phy = platform_get_drvdata(pdev);
 
 	/*
 	 * Enable phy wakeup only if dev->power.can_wakeup is true.
@@ -113,7 +117,8 @@ static int am335x_phy_suspend(struct device *dev)
 
 static int am335x_phy_resume(struct device *dev)
 {
-	struct am335x_phy	*am_phy = dev_get_drvdata(dev);
+	struct platform_device	*pdev = to_platform_device(dev);
+	struct am335x_phy	*am_phy = platform_get_drvdata(pdev);
 
 	phy_ctrl_power(am_phy->phy_ctrl, am_phy->id, am_phy->dr_mode, true);
 

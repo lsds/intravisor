@@ -1,13 +1,24 @@
-// SPDX-License-Identifier: GPL-2.0
-// RTC driver for ChromeOS Embedded Controller.
-//
-// Copyright (C) 2017 Google, Inc.
-// Author: Stephen Barber <smbarber@chromium.org>
+/*
+ * RTC driver for Chrome OS Embedded Controller
+ *
+ * Copyright (c) 2017, Google, Inc
+ *
+ * Author: Stephen Barber <smbarber@chromium.org>
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms and conditions of the GNU General Public License,
+ * version 2, as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+ * more details.
+ */
 
 #include <linux/kernel.h>
+#include <linux/mfd/cros_ec.h>
+#include <linux/mfd/cros_ec_commands.h>
 #include <linux/module.h>
-#include <linux/platform_data/cros_ec_commands.h>
-#include <linux/platform_data/cros_ec_proto.h>
 #include <linux/platform_device.h>
 #include <linux/rtc.h>
 #include <linux/slab.h>
@@ -106,7 +117,11 @@ static int cros_ec_rtc_set_time(struct device *dev, struct rtc_time *tm)
 	struct cros_ec_rtc *cros_ec_rtc = dev_get_drvdata(dev);
 	struct cros_ec_device *cros_ec = cros_ec_rtc->cros_ec;
 	int ret;
-	time64_t time = rtc_tm_to_time64(tm);
+	time64_t time;
+
+	time = rtc_tm_to_time64(tm);
+	if (time < 0 || time > U32_MAX)
+		return -EINVAL;
 
 	ret = cros_ec_rtc_set(cros_ec, EC_CMD_RTC_SET_VALUE, (u32)time);
 	if (ret < 0) {
@@ -294,7 +309,7 @@ static int cros_ec_rtc_suspend(struct device *dev)
 	struct cros_ec_rtc *cros_ec_rtc = dev_get_drvdata(&pdev->dev);
 
 	if (device_may_wakeup(dev))
-		return enable_irq_wake(cros_ec_rtc->cros_ec->irq);
+		enable_irq_wake(cros_ec_rtc->cros_ec->irq);
 
 	return 0;
 }
@@ -305,7 +320,7 @@ static int cros_ec_rtc_resume(struct device *dev)
 	struct cros_ec_rtc *cros_ec_rtc = dev_get_drvdata(&pdev->dev);
 
 	if (device_may_wakeup(dev))
-		return disable_irq_wake(cros_ec_rtc->cros_ec->irq);
+		disable_irq_wake(cros_ec_rtc->cros_ec->irq);
 
 	return 0;
 }
@@ -343,16 +358,14 @@ static int cros_ec_rtc_probe(struct platform_device *pdev)
 		return ret;
 	}
 
-	cros_ec_rtc->rtc = devm_rtc_allocate_device(&pdev->dev);
-	if (IS_ERR(cros_ec_rtc->rtc))
-		return PTR_ERR(cros_ec_rtc->rtc);
-
-	cros_ec_rtc->rtc->ops = &cros_ec_rtc_ops;
-	cros_ec_rtc->rtc->range_max = U32_MAX;
-
-	ret = devm_rtc_register_device(cros_ec_rtc->rtc);
-	if (ret)
+	cros_ec_rtc->rtc = devm_rtc_device_register(&pdev->dev, DRV_NAME,
+						    &cros_ec_rtc_ops,
+						    THIS_MODULE);
+	if (IS_ERR(cros_ec_rtc->rtc)) {
+		ret = PTR_ERR(cros_ec_rtc->rtc);
+		dev_err(&pdev->dev, "failed to register rtc device\n");
 		return ret;
+	}
 
 	/* Get RTC events from the EC. */
 	cros_ec_rtc->notifier.notifier_call = cros_ec_rtc_event;
@@ -375,8 +388,10 @@ static int cros_ec_rtc_remove(struct platform_device *pdev)
 	ret = blocking_notifier_chain_unregister(
 				&cros_ec_rtc->cros_ec->event_notifier,
 				&cros_ec_rtc->notifier);
-	if (ret)
+	if (ret) {
 		dev_err(dev, "failed to unregister notifier\n");
+		return ret;
+	}
 
 	return 0;
 }
@@ -394,5 +409,5 @@ module_platform_driver(cros_ec_rtc_driver);
 
 MODULE_DESCRIPTION("RTC driver for Chrome OS ECs");
 MODULE_AUTHOR("Stephen Barber <smbarber@chromium.org>");
-MODULE_LICENSE("GPL v2");
+MODULE_LICENSE("GPL");
 MODULE_ALIAS("platform:" DRV_NAME);

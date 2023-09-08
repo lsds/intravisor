@@ -1,10 +1,15 @@
-// SPDX-License-Identifier: GPL-2.0+
 /*
  *  Nano River Technologies viperboard GPIO lib driver
  *
  *  (C) 2012 by Lemonage GmbH
  *  Author: Lars Poeschel <poeschel@lemonage.de>
  *  All rights reserved.
+ *
+ *  This program is free software; you can redistribute  it and/or modify it
+ *  under  the terms of  the GNU General  Public License as published by the
+ *  Free Software Foundation;  either version 2 of the	License, or (at your
+ *  option) any later version.
+ *
  */
 
 #include <linux/kernel.h>
@@ -14,8 +19,9 @@
 #include <linux/types.h>
 #include <linux/mutex.h>
 #include <linux/platform_device.h>
+
 #include <linux/usb.h>
-#include <linux/gpio/driver.h>
+#include <linux/gpio.h>
 
 #include <linux/mfd/viperboard.h>
 
@@ -79,7 +85,7 @@ MODULE_PARM_DESC(gpioa_freq,
 /* ----- begin of gipo a chip -------------------------------------------- */
 
 static int vprbrd_gpioa_get(struct gpio_chip *chip,
-		unsigned int offset)
+		unsigned offset)
 {
 	int ret, answer, error = 0;
 	struct vprbrd_gpio *gpio = gpiochip_get_data(chip);
@@ -129,7 +135,7 @@ static int vprbrd_gpioa_get(struct gpio_chip *chip,
 }
 
 static void vprbrd_gpioa_set(struct gpio_chip *chip,
-		unsigned int offset, int value)
+		unsigned offset, int value)
 {
 	int ret;
 	struct vprbrd_gpio *gpio = gpiochip_get_data(chip);
@@ -170,7 +176,7 @@ static void vprbrd_gpioa_set(struct gpio_chip *chip,
 }
 
 static int vprbrd_gpioa_direction_input(struct gpio_chip *chip,
-			unsigned int offset)
+			unsigned offset)
 {
 	int ret;
 	struct vprbrd_gpio *gpio = gpiochip_get_data(chip);
@@ -207,7 +213,7 @@ static int vprbrd_gpioa_direction_input(struct gpio_chip *chip,
 }
 
 static int vprbrd_gpioa_direction_output(struct gpio_chip *chip,
-			unsigned int offset, int value)
+			unsigned offset, int value)
 {
 	int ret;
 	struct vprbrd_gpio *gpio = gpiochip_get_data(chip);
@@ -251,8 +257,8 @@ static int vprbrd_gpioa_direction_output(struct gpio_chip *chip,
 
 /* ----- begin of gipo b chip -------------------------------------------- */
 
-static int vprbrd_gpiob_setdir(struct vprbrd *vb, unsigned int offset,
-	unsigned int dir)
+static int vprbrd_gpiob_setdir(struct vprbrd *vb, unsigned offset,
+	unsigned dir)
 {
 	struct vprbrd_gpiob_msg *gbmsg = (struct vprbrd_gpiob_msg *)vb->buf;
 	int ret;
@@ -273,7 +279,7 @@ static int vprbrd_gpiob_setdir(struct vprbrd *vb, unsigned int offset,
 }
 
 static int vprbrd_gpiob_get(struct gpio_chip *chip,
-		unsigned int offset)
+		unsigned offset)
 {
 	int ret;
 	u16 val;
@@ -305,7 +311,7 @@ static int vprbrd_gpiob_get(struct gpio_chip *chip,
 }
 
 static void vprbrd_gpiob_set(struct gpio_chip *chip,
-		unsigned int offset, int value)
+		unsigned offset, int value)
 {
 	int ret;
 	struct vprbrd_gpio *gpio = gpiochip_get_data(chip);
@@ -338,7 +344,7 @@ static void vprbrd_gpiob_set(struct gpio_chip *chip,
 }
 
 static int vprbrd_gpiob_direction_input(struct gpio_chip *chip,
-			unsigned int offset)
+			unsigned offset)
 {
 	int ret;
 	struct vprbrd_gpio *gpio = gpiochip_get_data(chip);
@@ -359,7 +365,7 @@ static int vprbrd_gpiob_direction_input(struct gpio_chip *chip,
 }
 
 static int vprbrd_gpiob_direction_output(struct gpio_chip *chip,
-			unsigned int offset, int value)
+			unsigned offset, int value)
 {
 	int ret;
 	struct vprbrd_gpio *gpio = gpiochip_get_data(chip);
@@ -404,10 +410,11 @@ static int vprbrd_gpio_probe(struct platform_device *pdev)
 	vb_gpio->gpioa.get = vprbrd_gpioa_get;
 	vb_gpio->gpioa.direction_input = vprbrd_gpioa_direction_input;
 	vb_gpio->gpioa.direction_output = vprbrd_gpioa_direction_output;
-
 	ret = devm_gpiochip_add_data(&pdev->dev, &vb_gpio->gpioa, vb_gpio);
-	if (ret < 0)
+	if (ret < 0) {
+		dev_err(vb_gpio->gpioa.parent, "could not add gpio a");
 		return ret;
+	}
 
 	/* registering gpio b */
 	vb_gpio->gpiob.label = "viperboard gpio b";
@@ -420,8 +427,15 @@ static int vprbrd_gpio_probe(struct platform_device *pdev)
 	vb_gpio->gpiob.get = vprbrd_gpiob_get;
 	vb_gpio->gpiob.direction_input = vprbrd_gpiob_direction_input;
 	vb_gpio->gpiob.direction_output = vprbrd_gpiob_direction_output;
+	ret = devm_gpiochip_add_data(&pdev->dev, &vb_gpio->gpiob, vb_gpio);
+	if (ret < 0) {
+		dev_err(vb_gpio->gpiob.parent, "could not add gpio b");
+		return ret;
+	}
 
-	return devm_gpiochip_add_data(&pdev->dev, &vb_gpio->gpiob, vb_gpio);
+	platform_set_drvdata(pdev, vb_gpio);
+
+	return ret;
 }
 
 static struct platform_driver vprbrd_gpio_driver = {

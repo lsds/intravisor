@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * linux/arch/arm/mach-omap1/board-palmte.c
  *
@@ -12,6 +11,10 @@
  *                palmtelinux-developpers@lists.sf.net
  *
  * Copyright (c) 2006 Andrzej Zaborowski  <balrog@zabor.org>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 #include <linux/gpio.h>
 #include <linux/kernel.h>
@@ -25,20 +28,21 @@
 #include <linux/interrupt.h>
 #include <linux/apm-emulation.h>
 #include <linux/omapfb.h>
-#include <linux/omap-dma.h>
-#include <linux/platform_data/keypad-omap.h>
 #include <linux/platform_data/omap1_bl.h>
 
 #include <asm/mach-types.h>
 #include <asm/mach/arch.h>
 #include <asm/mach/map.h>
 
-#include "tc.h"
 #include "flash.h"
-#include "mux.h"
-#include "hardware.h"
-#include "usb.h"
-#include "mmc.h"
+#include <mach/mux.h>
+#include <mach/tc.h>
+#include <linux/omap-dma.h>
+#include <linux/platform_data/keypad-omap.h>
+
+#include <mach/hardware.h>
+#include <mach/usb.h>
+
 #include "common.h"
 
 #define PALMTE_USBDETECT_GPIO	0
@@ -204,33 +208,6 @@ static void __init palmte_misc_gpio_setup(void)
 	gpio_direction_input(PALMTE_USB_OR_DC_GPIO);
 }
 
-#if IS_ENABLED(CONFIG_MMC_OMAP)
-
-static struct omap_mmc_platform_data _palmte_mmc_config = {
-	.nr_slots			= 1,
-	.slots[0]			= {
-		.ocr_mask		= MMC_VDD_32_33|MMC_VDD_33_34,
-		.name			= "mmcblk",
-	},
-};
-
-static struct omap_mmc_platform_data *palmte_mmc_config[OMAP15XX_NR_MMC] = {
-	[0] = &_palmte_mmc_config,
-};
-
-static void palmte_mmc_init(void)
-{
-	omap1_init_mmc(palmte_mmc_config, OMAP15XX_NR_MMC);
-}
-
-#else /* CONFIG_MMC_OMAP */
-
-static void palmte_mmc_init(void)
-{
-}
-
-#endif /* CONFIG_MMC_OMAP */
-
 static void __init omap_palmte_init(void)
 {
 	/* mux pins for uarts */
@@ -251,7 +228,6 @@ static void __init omap_palmte_init(void)
 	omap_register_i2c_bus(1, 100, NULL, 0);
 
 	omapfb_set_lcd_config(&palmte_lcd_config);
-	palmte_mmc_init();
 }
 
 MACHINE_START(OMAP_PALMTE, "OMAP310 based Palm Tungsten E")

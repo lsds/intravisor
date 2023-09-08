@@ -9,9 +9,9 @@ kernel.  Unsurprisingly, the kernel development community has evolved a set
 of conventions and procedures which are used in the posting of patches;
 following them will make life much easier for everybody involved.  This
 document will attempt to cover these expectations in reasonable detail;
-more information can also be found in the files
-:ref:`Documentation/process/submitting-patches.rst <submittingpatches>`
-and :ref:`Documentation/process/submit-checklist.rst <submitchecklist>`.
+more information can also be found in the files process/submitting-patches.rst,
+process/submitting-drivers.rst, and process/submit-checklist.rst in the kernel documentation
+directory.
 
 
 When to post
@@ -196,29 +196,12 @@ the build process, for example, or editor backup files) in the patch.  The
 file "dontdiff" in the Documentation directory can help in this regard;
 pass it to diff with the "-X" option.
 
-The tags already briefly mentioned above are used to provide insights how
-the patch came into being. They are described in detail in the
-:ref:`Documentation/process/submitting-patches.rst <submittingpatches>`
-document; what follows here is a brief summary.
+The tags mentioned above are used to describe how various developers have
+been associated with the development of this patch.  They are described in
+detail in the process/submitting-patches.rst document; what follows here is a brief
+summary.  Each of these lines has the format:
 
-One tag is used to refer to earlier commits which introduced problems fixed by
-the patch::
-
-	Fixes: 1f2e3d4c5b6a ("The first line of the commit specified by the first 12 characters of its SHA-1 ID")
-
-Another tag is used for linking web pages with additional backgrounds or
-details, for example a report about a bug fixed by the patch or a document
-with a specification implemented by the patch::
-
-	Link: https://example.com/somewhere.html  optional-other-stuff
-
-Many maintainers when applying a patch also add this tag to link to the
-latest public review posting of the patch; often this is automatically done
-by tools like b4 or a git hook like the one described in
-'Documentation/maintainer/configure-git.rst'.
-
-A third kind of tag is used to document who was involved in the development of
-the patch. Each of these uses this format::
+::
 
 	tag: Full Name <email address>  optional-other-stuff
 
@@ -227,15 +210,13 @@ The tags in common use are:
  - Signed-off-by: this is a developer's certification that he or she has
    the right to submit the patch for inclusion into the kernel.  It is an
    agreement to the Developer's Certificate of Origin, the full text of
-   which can be found in :ref:`Documentation/process/submitting-patches.rst <submittingpatches>`
-   Code without a proper signoff cannot be merged into the mainline.
+   which can be found in Documentation/process/submitting-patches.rst.  Code without a
+   proper signoff cannot be merged into the mainline.
 
- - Co-developed-by: states that the patch was co-created by several developers;
-   it is a used to give attribution to co-authors (in addition to the author
-   attributed by the From: tag) when multiple people work on a single patch.
-   Every Co-developed-by: must be immediately followed by a Signed-off-by: of
-   the associated co-author.  Details and examples can be found in
-   :ref:`Documentation/process/submitting-patches.rst <submittingpatches>`.
+ - Co-developed-by: states that the patch was also created by another developer
+   along with the original author.  This is useful at times when multiple
+   people work on a single patch.  Note, this person also needs to have a
+   Signed-off-by: line in the patch as well.
 
  - Acked-by: indicates an agreement by another developer (often a
    maintainer of the relevant code) that the patch is appropriate for
@@ -245,8 +226,8 @@ The tags in common use are:
    it to work.
 
  - Reviewed-by: the named developer has reviewed the patch for correctness;
-   see the reviewer's statement in :ref:`Documentation/process/submitting-patches.rst <submittingpatches>`
-   for more detail.
+   see the reviewer's statement in Documentation/process/submitting-patches.rst for more
+   detail.
 
  - Reported-by: names a user who reported a problem which is fixed by this
    patch; this tag is used to give credit to the (often underappreciated)
@@ -256,10 +237,8 @@ The tags in common use are:
  - Cc: the named person received a copy of the patch and had the
    opportunity to comment on it.
 
-Be careful in the addition of tags to your patches, as only Cc: is appropriate
-for addition without the explicit permission of the person named; using
-Reported-by: is fine most of the time as well, but ask for permission if
-the bug was reported in private.
+Be careful in the addition of tags to your patches: only Cc: is appropriate
+for addition without the explicit permission of the person named.
 
 
 Sending the patch
@@ -274,8 +253,8 @@ take care of:
    be examined in any detail.  If there is any doubt at all, mail the patch
    to yourself and convince yourself that it shows up intact.
 
-   :ref:`Documentation/process/email-clients.rst <email_clients>` has some
-   helpful hints on making specific mail clients work for sending patches.
+   Documentation/process/email-clients.rst has some helpful hints on making
+   specific mail clients work for sending patches.
 
  - Are you sure your patch is free of silly mistakes?  You should always
    run patches through scripts/checkpatch.pl and address the complaints it

@@ -1,8 +1,9 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * AD1936/AD1937 audio driver
  *
  * Copyright 2014 Analog Devices Inc.
+ *
+ * Licensed under the GPL-2.
  */
 
 #include <linux/module.h>
@@ -20,10 +21,10 @@ static const struct i2c_device_id ad193x_id[] = {
 };
 MODULE_DEVICE_TABLE(i2c, ad193x_id);
 
-static int ad193x_i2c_probe(struct i2c_client *client)
+static int ad193x_i2c_probe(struct i2c_client *client,
+			    const struct i2c_device_id *id)
 {
 	struct regmap_config config;
-	const struct i2c_device_id *id = i2c_match_id(ad193x_id, client);
 
 	config = ad193x_regmap_config;
 	config.val_bits = 8;
@@ -38,7 +39,7 @@ static struct i2c_driver ad193x_i2c_driver = {
 	.driver = {
 		.name = "ad193x",
 	},
-	.probe_new = ad193x_i2c_probe,
+	.probe    = ad193x_i2c_probe,
 	.id_table = ad193x_id,
 };
 module_i2c_driver(ad193x_i2c_driver);

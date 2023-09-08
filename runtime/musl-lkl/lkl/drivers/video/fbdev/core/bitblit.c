@@ -216,7 +216,7 @@ static void bit_clear_margins(struct vc_data *vc, struct fb_info *info,
 	region.color = color;
 	region.rop = ROP_COPY;
 
-	if ((int) rw > 0 && !bottom_only) {
+	if (rw && !bottom_only) {
 		region.dx = info->var.xoffset + rs;
 		region.dy = 0;
 		region.width = rw;
@@ -224,7 +224,7 @@ static void bit_clear_margins(struct vc_data *vc, struct fb_info *info,
 		info->fbops->fb_fillrect(info, &region);
 	}
 
-	if ((int) bh > 0) {
+	if (bh) {
 		region.dx = info->var.xoffset;
 		region.dy = info->var.yoffset + bs;
 		region.width = rs;
@@ -234,18 +234,27 @@ static void bit_clear_margins(struct vc_data *vc, struct fb_info *info,
 }
 
 static void bit_cursor(struct vc_data *vc, struct fb_info *info, int mode,
-		       int fg, int bg)
+		       int softback_lines, int fg, int bg)
 {
 	struct fb_cursor cursor;
 	struct fbcon_ops *ops = info->fbcon_par;
 	unsigned short charmask = vc->vc_hi_font_mask ? 0x1ff : 0xff;
 	int w = DIV_ROUND_UP(vc->vc_font.width, 8), c;
-	int y = real_y(ops->p, vc->state.y);
-	int attribute, use_sw = vc->vc_cursor_type & CUR_SW;
+	int y = real_y(ops->p, vc->vc_y);
+	int attribute, use_sw = (vc->vc_cursor_type & 0x10);
 	int err = 1;
 	char *src;
 
 	cursor.set = 0;
+
+	if (softback_lines) {
+		if (y + softback_lines >= vc->vc_rows) {
+			mode = CM_ERASE;
+			ops->cursor_flash = 0;
+			return;
+		} else
+			y += softback_lines;
+	}
 
  	c = scr_readw((u16 *) vc->vc_pos);
 	attribute = get_attribute(info, c);
@@ -260,7 +269,7 @@ static void bit_cursor(struct vc_data *vc, struct fb_info *info, int mode,
 	if (attribute) {
 		u8 *dst;
 
-		dst = kmalloc_array(w, vc->vc_font.height, GFP_ATOMIC);
+		dst = kmalloc(w * vc->vc_font.height, GFP_ATOMIC);
 		if (!dst)
 			return;
 		kfree(ops->cursor_data);
@@ -277,10 +286,10 @@ static void bit_cursor(struct vc_data *vc, struct fb_info *info, int mode,
 		cursor.set |= FB_CUR_SETCMAP;
 	}
 
-	if ((ops->cursor_state.image.dx != (vc->vc_font.width * vc->state.x)) ||
+	if ((ops->cursor_state.image.dx != (vc->vc_font.width * vc->vc_x)) ||
 	    (ops->cursor_state.image.dy != (vc->vc_font.height * y)) ||
 	    ops->cursor_reset) {
-		ops->cursor_state.image.dx = vc->vc_font.width * vc->state.x;
+		ops->cursor_state.image.dx = vc->vc_font.width * vc->vc_x;
 		ops->cursor_state.image.dy = vc->vc_font.height * y;
 		cursor.set |= FB_CUR_SETPOS;
 	}
@@ -303,7 +312,7 @@ static void bit_cursor(struct vc_data *vc, struct fb_info *info, int mode,
 	    vc->vc_cursor_type != ops->p->cursor_shape ||
 	    ops->cursor_state.mask == NULL ||
 	    ops->cursor_reset) {
-		char *mask = kmalloc_array(w, vc->vc_font.height, GFP_ATOMIC);
+		char *mask = kmalloc(w*vc->vc_font.height, GFP_ATOMIC);
 		int cur_height, size, i = 0;
 		u8 msk = 0xff;
 
@@ -316,7 +325,7 @@ static void bit_cursor(struct vc_data *vc, struct fb_info *info, int mode,
 		ops->p->cursor_shape = vc->vc_cursor_type;
 		cursor.set |= FB_CUR_SETSHAPE;
 
-		switch (CUR_SIZE(ops->p->cursor_shape)) {
+		switch (ops->p->cursor_shape & CUR_HWMASK) {
 		case CUR_NONE:
 			cur_height = 0;
 			break;
@@ -404,3 +413,6 @@ void fbcon_set_bitops(struct fbcon_ops *ops)
 	if (ops->rotate)
 		fbcon_set_rotate(ops);
 }
+
+EXPORT_SYMBOL(fbcon_set_bitops);
+

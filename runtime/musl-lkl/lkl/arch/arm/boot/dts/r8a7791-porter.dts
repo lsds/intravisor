@@ -1,8 +1,11 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * Device Tree Source for the Porter board
  *
  * Copyright (C) 2015 Cogent Embedded, Inc.
+ *
+ * This file is licensed under the terms of the GNU General Public License
+ * version 2.  This program is licensed "as is" without any warranty of any
+ * kind, whether express or implied.
  */
 
 /*
@@ -28,12 +31,10 @@
 		serial0 = &scif0;
 		i2c9 = &gpioi2c2;
 		i2c10 = &i2chdmi;
-		mmc0 = &sdhi0;
-		mmc1 = &sdhi2;
 	};
 
 	chosen {
-		bootargs = "ignore_loglevel rw root=/dev/nfs ip=on";
+		bootargs = "ignore_loglevel rw root=/dev/nfs ip=dhcp";
 		stdout-path = "serial0:115200n8";
 	};
 
@@ -65,7 +66,8 @@
 
 		gpios = <&gpio2 12 GPIO_ACTIVE_HIGH>;
 		gpios-states = <1>;
-		states = <3300000 1>, <1800000 0>;
+		states = <3300000 1
+			  1800000 0>;
 	};
 
 	vcc_sdhi2: regulator-vcc-sdhi2 {
@@ -86,7 +88,8 @@
 
 		gpios = <&gpio2 26 GPIO_ACTIVE_HIGH>;
 		gpios-states = <1>;
-		states = <3300000 1>, <1800000 0>;
+		states = <3300000 1
+			  1800000 0>;
 	};
 
 	hdmi-out {
@@ -164,6 +167,7 @@
 		composite-in@20 {
 			compatible = "adi,adv7180";
 			reg = <0x20>;
+			remote = <&vin0>;
 
 			port {
 				adv7180: endpoint {
@@ -182,6 +186,8 @@
 			adi,input-depth = <8>;
 			adi,input-colorspace = "rgb";
 			adi,input-clock = "1x";
+			adi,input-style = <1>;
+			adi,input-justification = "evenly";
 
 			ports {
 				#address-cells = <1>;
@@ -222,11 +228,6 @@
 
 	phy1_pins: phy1 {
 		groups = "intc_irq0";
-		function = "intc";
-	};
-
-	pmic_irq_pins: pmicirq {
-		groups = "intc_irq2";
 		function = "intc";
 	};
 
@@ -294,7 +295,7 @@
 };
 
 &ether {
-	pinctrl-0 = <&ether_pins>, <&phy1_pins>;
+	pinctrl-0 = <&ether_pins &phy1_pins>;
 	pinctrl-names = "default";
 
 	phy-handle = <&phy1>;
@@ -302,13 +303,10 @@
 	status = "okay";
 
 	phy1: ethernet-phy@1 {
-		compatible = "ethernet-phy-id0022.1537",
-			     "ethernet-phy-ieee802.3-c22";
 		reg = <1>;
 		interrupt-parent = <&irqc0>;
 		interrupts = <0 IRQ_TYPE_LEVEL_LOW>;
 		micrel,led-mode = <1>;
-		reset-gpios = <&gpio5 22 GPIO_ACTIVE_LOW>;
 	};
 };
 
@@ -377,43 +375,8 @@
 	clock-frequency = <400000>;
 };
 
-&i2c6 {
-	pinctrl-names = "default";
-	pinctrl-0 = <&pmic_irq_pins>;
-	status = "okay";
-	clock-frequency = <100000>;
-
-	pmic@5a {
-		compatible = "dlg,da9063l";
-		reg = <0x5a>;
-		interrupt-parent = <&irqc0>;
-		interrupts = <2 IRQ_TYPE_LEVEL_LOW>;
-		interrupt-controller;
-
-		watchdog {
-			compatible = "dlg,da9063-watchdog";
-		};
-	};
-
-	vdd_dvfs: regulator@68 {
-		compatible = "dlg,da9210";
-		reg = <0x68>;
-		interrupt-parent = <&irqc0>;
-		interrupts = <2 IRQ_TYPE_LEVEL_LOW>;
-
-		regulator-min-microvolt = <1000000>;
-		regulator-max-microvolt = <1000000>;
-		regulator-boot-on;
-		regulator-always-on;
-	};
-};
-
 &sata0 {
 	status = "okay";
-};
-
-&cpu0 {
-	cpu0-supply = <&vdd_dvfs>;
 };
 
 /* composite video input */
@@ -423,6 +386,9 @@
 	pinctrl-names = "default";
 
 	port {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
 		vin0ep: endpoint {
 			remote-endpoint = <&adv7180>;
 			bus-width = <8>;
@@ -489,6 +455,8 @@
 };
 
 &lvds0 {
+	status = "okay";
+
 	ports {
 		port@1 {
 			lvds_connector: endpoint {
@@ -498,7 +466,7 @@
 };
 
 &rcar_sound {
-	pinctrl-0 = <&ssi_pins>, <&audio_clk_pins>;
+	pinctrl-0 = <&ssi_pins &audio_clk_pins>;
 	pinctrl-names = "default";
 	status = "okay";
 
@@ -511,11 +479,6 @@
 			capture  = <&ssi1>;
 		};
 	};
-};
-
-&rwdt {
-	timeout-sec = <60>;
-	status = "okay";
 };
 
 &ssi1 {

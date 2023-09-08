@@ -3,6 +3,19 @@
 // Socionext UniPhier AIO ALSA driver for LD11/LD20.
 //
 // Copyright (c) 2016-2018 Socionext Inc.
+//
+// This program is free software; you can redistribute it and/or
+// modify it under the terms of the GNU General Public License
+// as published by the Free Software Foundation; version 2
+// of the License.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program; if not, see <http://www.gnu.org/licenses/>.
 
 #include <linux/module.h>
 
@@ -218,6 +231,8 @@ static struct snd_soc_dai_driver uniphier_aio_dai_ld11[] = {
 		.name    = AUD_GNAME_HDMI,
 		.probe   = uniphier_aio_ld11_probe,
 		.remove  = uniphier_aio_dai_remove,
+		.suspend = uniphier_aio_dai_suspend,
+		.resume  = uniphier_aio_dai_resume,
 		.playback = {
 			.stream_name = AUD_NAME_PCMOUT1,
 			.formats     = SNDRV_PCM_FMTBIT_S32_LE,
@@ -240,6 +255,8 @@ static struct snd_soc_dai_driver uniphier_aio_dai_ld11[] = {
 		.name    = AUD_NAME_PCMIN2,
 		.probe   = uniphier_aio_ld11_probe,
 		.remove  = uniphier_aio_dai_remove,
+		.suspend = uniphier_aio_dai_suspend,
+		.resume  = uniphier_aio_dai_resume,
 		.capture = {
 			.stream_name = AUD_NAME_PCMIN2,
 			.formats     = SNDRV_PCM_FMTBIT_S32_LE,
@@ -253,6 +270,8 @@ static struct snd_soc_dai_driver uniphier_aio_dai_ld11[] = {
 		.name    = AUD_GNAME_LINE,
 		.probe   = uniphier_aio_ld11_probe,
 		.remove  = uniphier_aio_dai_remove,
+		.suspend = uniphier_aio_dai_suspend,
+		.resume  = uniphier_aio_dai_resume,
 		.playback = {
 			.stream_name = AUD_NAME_PCMOUT2,
 			.formats     = SNDRV_PCM_FMTBIT_S32_LE,
@@ -273,12 +292,14 @@ static struct snd_soc_dai_driver uniphier_aio_dai_ld11[] = {
 		.name    = AUD_NAME_HPCMOUT1,
 		.probe   = uniphier_aio_ld11_probe,
 		.remove  = uniphier_aio_dai_remove,
+		.suspend = uniphier_aio_dai_suspend,
+		.resume  = uniphier_aio_dai_resume,
 		.playback = {
 			.stream_name = AUD_NAME_HPCMOUT1,
 			.formats     = SNDRV_PCM_FMTBIT_S32_LE,
 			.rates       = SNDRV_PCM_RATE_48000,
 			.channels_min = 2,
-			.channels_max = 8,
+			.channels_max = 2,
 		},
 		.ops = &uniphier_aio_i2s_ops,
 	},
@@ -286,6 +307,8 @@ static struct snd_soc_dai_driver uniphier_aio_dai_ld11[] = {
 		.name    = AUD_NAME_PCMOUT3,
 		.probe   = uniphier_aio_ld11_probe,
 		.remove  = uniphier_aio_dai_remove,
+		.suspend = uniphier_aio_dai_suspend,
+		.resume  = uniphier_aio_dai_resume,
 		.playback = {
 			.stream_name = AUD_NAME_PCMOUT3,
 			.formats     = SNDRV_PCM_FMTBIT_S32_LE,
@@ -299,6 +322,8 @@ static struct snd_soc_dai_driver uniphier_aio_dai_ld11[] = {
 		.name    = AUD_NAME_HIECOUT1,
 		.probe   = uniphier_aio_ld11_probe,
 		.remove  = uniphier_aio_dai_remove,
+		.suspend = uniphier_aio_dai_suspend,
+		.resume  = uniphier_aio_dai_resume,
 		.playback = {
 			.stream_name = AUD_NAME_HIECOUT1,
 			.formats     = SNDRV_PCM_FMTBIT_S32_LE,
@@ -312,6 +337,8 @@ static struct snd_soc_dai_driver uniphier_aio_dai_ld11[] = {
 		.name    = AUD_NAME_EPCMOUT2,
 		.probe   = uniphier_aio_ld11_probe,
 		.remove  = uniphier_aio_dai_remove,
+		.suspend = uniphier_aio_dai_suspend,
+		.resume  = uniphier_aio_dai_resume,
 		.playback = {
 			.stream_name = AUD_NAME_EPCMOUT2,
 			.formats     = SNDRV_PCM_FMTBIT_S32_LE,
@@ -327,6 +354,8 @@ static struct snd_soc_dai_driver uniphier_aio_dai_ld11[] = {
 		.name    = AUD_NAME_EPCMOUT3,
 		.probe   = uniphier_aio_ld11_probe,
 		.remove  = uniphier_aio_dai_remove,
+		.suspend = uniphier_aio_dai_suspend,
+		.resume  = uniphier_aio_dai_resume,
 		.playback = {
 			.stream_name = AUD_NAME_EPCMOUT3,
 			.formats     = SNDRV_PCM_FMTBIT_S32_LE,
@@ -342,6 +371,8 @@ static struct snd_soc_dai_driver uniphier_aio_dai_ld11[] = {
 		.name    = AUD_NAME_HIECCOMPOUT1,
 		.probe   = uniphier_aio_ld11_probe,
 		.remove  = uniphier_aio_dai_remove,
+		.suspend = uniphier_aio_dai_suspend,
+		.resume  = uniphier_aio_dai_resume,
 		.compress_new = snd_soc_new_compress,
 		.playback = {
 			.stream_name = AUD_NAME_HIECCOMPOUT1,
@@ -372,7 +403,7 @@ static const struct uniphier_aio_chip_spec uniphier_aio_ld20_spec = {
 	.addr_ext  = 1,
 };
 
-static const struct of_device_id uniphier_aio_of_match[] __maybe_unused = {
+static const struct of_device_id uniphier_aio_of_match[] = {
 	{
 		.compatible = "socionext,uniphier-ld11-aio",
 		.data = &uniphier_aio_ld11_spec,

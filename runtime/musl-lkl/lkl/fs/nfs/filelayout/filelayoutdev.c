@@ -82,7 +82,7 @@ nfs4_fl_alloc_deviceid_node(struct nfs_server *server, struct pnfs_device *pdev,
 		goto out_err;
 
 	xdr_init_decode_pages(&stream, &buf, pdev->pages, pdev->pglen);
-	xdr_set_scratch_page(&stream, scratch);
+	xdr_set_scratch_buffer(&stream, page_address(scratch), PAGE_SIZE);
 
 	/* Get the stripe count (number of stripe index) */
 	p = xdr_inline_decode(&stream, 4);
@@ -136,7 +136,9 @@ nfs4_fl_alloc_deviceid_node(struct nfs_server *server, struct pnfs_device *pdev,
 		goto out_err_free_stripe_indices;
 	}
 
-	dsaddr = kzalloc(struct_size(dsaddr, ds_list, num), gfp_flags);
+	dsaddr = kzalloc(sizeof(*dsaddr) +
+			(sizeof(struct nfs4_pnfs_ds *) * (num - 1)),
+			gfp_flags);
 	if (!dsaddr)
 		goto out_err_free_stripe_indices;
 

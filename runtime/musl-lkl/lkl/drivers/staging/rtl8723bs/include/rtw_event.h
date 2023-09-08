@@ -1,7 +1,15 @@
-/* SPDX-License-Identifier: GPL-2.0 */
 /******************************************************************************
  *
  * Copyright(c) 2007 - 2011 Realtek Corporation. All rights reserved.
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of version 2 of the GNU General Public License as
+ * published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for
+ * more details.
  *
  ******************************************************************************/
 #ifndef _RTW_EVENT_H_
@@ -60,7 +68,13 @@ struct stadel_event {
  int mac_id;
 };
 
-struct wmm_event {
+struct addba_event
+{
+	unsigned int tid;
+};
+
+struct wmm_event
+{
 	unsigned char wmm;
 };
 
@@ -76,12 +90,19 @@ struct fwevent {
 
 #define C2HEVENT_SZ			32
 
-struct event_node {
+struct event_node{
 	unsigned char *node;
 	unsigned char evt_code;
 	unsigned short evt_sz;
 	volatile int	*caller_ff_tail;
 	int	caller_ff_sz;
+};
+
+struct c2hevent_queue {
+	volatile int	head;
+	volatile int	tail;
+	struct	event_node	nodes[C2HEVENT_SZ];
+	unsigned char seq;
 };
 
 #define NETWORK_QUEUE_SZ	4

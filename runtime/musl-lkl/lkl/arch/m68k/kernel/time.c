@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  *  linux/arch/m68k/kernel/time.c
  *
@@ -35,9 +34,18 @@
 unsigned long (*mach_random_get_entropy)(void);
 EXPORT_SYMBOL_GPL(mach_random_get_entropy);
 
-#ifdef CONFIG_HEARTBEAT
-void timer_heartbeat(void)
+
+/*
+ * timer_interrupt() needs to keep up the real-time clock,
+ * as well as call the "xtime_update()" routine every clocktick
+ */
+static irqreturn_t timer_interrupt(int irq, void *dummy)
 {
+	xtime_update(1);
+	update_process_times(user_mode(get_irq_regs()));
+	profile_tick(CPU_PROFILING);
+
+#ifdef CONFIG_HEARTBEAT
 	/* use power LED as a heartbeat instead -- much more useful
 	   for debugging -- based on the version for PReP by Cort */
 	/* acts like an actual heart beat -- ie thump-thump-pause... */
@@ -59,38 +67,27 @@ void timer_heartbeat(void)
 		dist = period / 4;
 	    }
 	}
-}
 #endif /* CONFIG_HEARTBEAT */
+	return IRQ_HANDLED;
+}
 
-#ifdef CONFIG_M68KCLASSIC
-/* machine dependent timer functions */
-int (*mach_hwclk) (int, struct rtc_time*);
-EXPORT_SYMBOL(mach_hwclk);
-
-int (*mach_get_rtc_pll)(struct rtc_pll_info *);
-int (*mach_set_rtc_pll)(struct rtc_pll_info *);
-EXPORT_SYMBOL(mach_get_rtc_pll);
-EXPORT_SYMBOL(mach_set_rtc_pll);
-
-#if !IS_BUILTIN(CONFIG_RTC_DRV_GENERIC)
-void read_persistent_clock64(struct timespec64 *ts)
+void read_persistent_clock(struct timespec *ts)
 {
 	struct rtc_time time;
-
 	ts->tv_sec = 0;
 	ts->tv_nsec = 0;
 
-	if (!mach_hwclk)
-		return;
+	if (mach_hwclk) {
+		mach_hwclk(0, &time);
 
-	mach_hwclk(0, &time);
-
-	ts->tv_sec = mktime64(time.tm_year + 1900, time.tm_mon + 1, time.tm_mday,
-			      time.tm_hour, time.tm_min, time.tm_sec);
+		if ((time.tm_year += 1900) < 1970)
+			time.tm_year += 100;
+		ts->tv_sec = mktime(time.tm_year, time.tm_mon, time.tm_mday,
+				      time.tm_hour, time.tm_min, time.tm_sec);
+	}
 }
-#endif
 
-#if IS_ENABLED(CONFIG_RTC_DRV_GENERIC)
+#if defined(CONFIG_ARCH_USES_GETTIMEOFFSET) && IS_ENABLED(CONFIG_RTC_DRV_GENERIC)
 static int rtc_generic_get_time(struct device *dev, struct rtc_time *tm)
 {
 	mach_hwclk(0, tm);
@@ -148,10 +145,10 @@ static int __init rtc_init(void)
 }
 
 module_init(rtc_init);
-#endif /* CONFIG_RTC_DRV_GENERIC */
-#endif /* CONFIG M68KCLASSIC */
+
+#endif /* CONFIG_ARCH_USES_GETTIMEOFFSET */
 
 void __init time_init(void)
 {
-	mach_sched_init();
+	mach_sched_init(timer_interrupt);
 }

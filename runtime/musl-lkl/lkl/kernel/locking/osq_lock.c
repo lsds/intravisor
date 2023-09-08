@@ -134,17 +134,20 @@ bool osq_lock(struct optimistic_spin_queue *lock)
 	 * cmpxchg in an attempt to undo our queueing.
 	 */
 
-	/*
-	 * Wait to acquire the lock or cancellation. Note that need_resched()
-	 * will come with an IPI, which will wake smp_cond_load_relaxed() if it
-	 * is implemented with a monitor-wait. vcpu_is_preempted() relies on
-	 * polling, be careful.
-	 */
-	if (smp_cond_load_relaxed(&node->locked, VAL || need_resched() ||
-				  vcpu_is_preempted(node_cpu(node->prev))))
-		return true;
+	while (!READ_ONCE(node->locked)) {
+		/*
+		 * If we need to reschedule bail... so we can block.
+		 * Use vcpu_is_preempted() to avoid waiting for a preempted
+		 * lock holder:
+		 */
+		if (need_resched() || vcpu_is_preempted(node_cpu(node->prev)))
+			goto unqueue;
 
-	/* unqueue */
+		cpu_relax();
+	}
+	return true;
+
+unqueue:
 	/*
 	 * Step - A  -- stabilize @prev
 	 *
@@ -154,17 +157,13 @@ bool osq_lock(struct optimistic_spin_queue *lock)
 	 */
 
 	for (;;) {
-		/*
-		 * cpu_relax() below implies a compiler barrier which would
-		 * prevent this comparison being optimized away.
-		 */
-		if (data_race(prev->next) == node &&
+		if (prev->next == node &&
 		    cmpxchg(&prev->next, node, NULL) == node)
 			break;
 
 		/*
 		 * We can only fail the cmpxchg() racing against an unlock(),
-		 * in which case we should observe @node->locked becoming
+		 * in which case we should observe @node->locked becomming
 		 * true.
 		 */
 		if (smp_load_acquire(&node->locked))

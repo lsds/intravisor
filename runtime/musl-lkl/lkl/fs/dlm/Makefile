@@ -9,6 +9,7 @@ dlm-y :=			ast.o \
 				member.o \
 				memory.o \
 				midcomms.o \
+				netlink.o \
 				lowcomms.o \
 				plock.o \
 				rcom.o \
@@ -17,6 +18,5 @@ dlm-y :=			ast.o \
 				requestqueue.o \
 				user.o \
 				util.o 
-dlm-$(CONFIG_DLM_DEPRECATED_API) +=	netlink.o
 dlm-$(CONFIG_DLM_DEBUG) +=	debug_fs.o
 

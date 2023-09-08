@@ -1,16 +1,19 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * PXA27x standby mode
  *
  * Author: David Burrage
  *
- * 2005 (c) MontaVista Software, Inc.
+ * 2005 (c) MontaVista Software, Inc. This file is licensed under
+ * the terms of the GNU General Public License version 2. This program
+ * is licensed "as is" without any warranty of any kind, whether express
+ * or implied.
  */
 
 #include <linux/linkage.h>
 #include <asm/assembler.h>
+#include <mach/hardware.h>
 
-#include "pxa2xx-regs.h"
+#include <mach/pxa2xx-regs.h>
 
 		.text
 

@@ -435,6 +435,8 @@ struct powerpc_macro
 extern const struct powerpc_macro powerpc_macros[];
 extern const int powerpc_num_macros;
 
+extern ppc_cpu_t ppc_parse_cpu (ppc_cpu_t, ppc_cpu_t *, const char *);
+
 static inline long
 ppc_optional_operand_value (const struct powerpc_operand *operand)
 {

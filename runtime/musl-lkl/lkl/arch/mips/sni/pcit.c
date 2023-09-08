@@ -244,9 +244,7 @@ void __init sni_pcit_irq_init(void)
 	*(volatile u32 *)SNI_PCIT_INT_REG = 0;
 	sni_hwint = sni_pcit_hwint;
 	change_c0_status(ST0_IM, IE_IRQ1);
-	if (request_irq(SNI_PCIT_INT_START + 6, sni_isa_irq_handler, 0, "ISA",
-			NULL))
-		pr_err("Failed to register ISA interrupt\n");
+	setup_irq(SNI_PCIT_INT_START + 6, &sni_isa_irq);
 }
 
 void __init sni_pcit_cplus_irq_init(void)
@@ -259,9 +257,7 @@ void __init sni_pcit_cplus_irq_init(void)
 	*(volatile u32 *)SNI_PCIT_INT_REG = 0x40000000;
 	sni_hwint = sni_pcit_hwint_cplus;
 	change_c0_status(ST0_IM, IE_IRQ0);
-	if (request_irq(MIPS_CPU_IRQ_BASE + 3, sni_isa_irq_handler, 0, "ISA",
-			NULL))
-		pr_err("Failed to register ISA interrupt\n");
+	setup_irq(MIPS_CPU_IRQ_BASE + 3, &sni_isa_irq);
 }
 
 void __init sni_pcit_init(void)

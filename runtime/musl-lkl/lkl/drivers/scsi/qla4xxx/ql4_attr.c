@@ -1,7 +1,8 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * QLogic iSCSI HBA Driver
  * Copyright (c)  2003-2013 QLogic Corporation
+ *
+ * See LICENSE.qla4xxx for copyright and licensing details.
  */
 
 #include "ql4_def.h"
@@ -330,30 +331,21 @@ static DEVICE_ATTR(fw_ext_timestamp, S_IRUGO, qla4xxx_fw_ext_timestamp_show,
 static DEVICE_ATTR(fw_load_src, S_IRUGO, qla4xxx_fw_load_src_show, NULL);
 static DEVICE_ATTR(fw_uptime, S_IRUGO, qla4xxx_fw_uptime_show, NULL);
 
-static struct attribute *qla4xxx_host_attrs[] = {
-	&dev_attr_fw_version.attr,
-	&dev_attr_serial_num.attr,
-	&dev_attr_iscsi_version.attr,
-	&dev_attr_optrom_version.attr,
-	&dev_attr_board_id.attr,
-	&dev_attr_fw_state.attr,
-	&dev_attr_phy_port_cnt.attr,
-	&dev_attr_phy_port_num.attr,
-	&dev_attr_iscsi_func_cnt.attr,
-	&dev_attr_hba_model.attr,
-	&dev_attr_fw_timestamp.attr,
-	&dev_attr_fw_build_user.attr,
-	&dev_attr_fw_ext_timestamp.attr,
-	&dev_attr_fw_load_src.attr,
-	&dev_attr_fw_uptime.attr,
+struct device_attribute *qla4xxx_host_attrs[] = {
+	&dev_attr_fw_version,
+	&dev_attr_serial_num,
+	&dev_attr_iscsi_version,
+	&dev_attr_optrom_version,
+	&dev_attr_board_id,
+	&dev_attr_fw_state,
+	&dev_attr_phy_port_cnt,
+	&dev_attr_phy_port_num,
+	&dev_attr_iscsi_func_cnt,
+	&dev_attr_hba_model,
+	&dev_attr_fw_timestamp,
+	&dev_attr_fw_build_user,
+	&dev_attr_fw_ext_timestamp,
+	&dev_attr_fw_load_src,
+	&dev_attr_fw_uptime,
 	NULL,
-};
-
-static const struct attribute_group qla4xxx_host_attr_group = {
-	.attrs = qla4xxx_host_attrs
-};
-
-const struct attribute_group *qla4xxx_host_groups[] = {
-	&qla4xxx_host_attr_group,
-	NULL
 };

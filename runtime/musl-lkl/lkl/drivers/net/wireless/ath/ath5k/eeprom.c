@@ -746,9 +746,6 @@ ath5k_eeprom_convert_pcal_info_5111(struct ath5k_hw *ah, int mode,
 			}
 		}
 
-		if (idx == AR5K_EEPROM_N_PD_CURVES)
-			goto err_out;
-
 		ee->ee_pd_gains[mode] = 1;
 
 		pd = &chinfo[pier].pd_curves[idx];
@@ -1175,13 +1172,13 @@ ath5k_cal_data_offset_2413(struct ath5k_eeprom_info *ee, int mode)
 			offset += ath5k_pdgains_size_2413(ee,
 					AR5K_EEPROM_MODE_11B) +
 					AR5K_EEPROM_N_2GHZ_CHAN_2413 / 2;
-		fallthrough;
+		/* fall through */
 	case AR5K_EEPROM_MODE_11B:
 		if (AR5K_EEPROM_HDR_11A(ee->ee_header))
 			offset += ath5k_pdgains_size_2413(ee,
 					AR5K_EEPROM_MODE_11A) +
 					AR5K_EEPROM_N_5GHZ_CHAN / 2;
-		fallthrough;
+		/* fall through */
 	case AR5K_EEPROM_MODE_11A:
 		break;
 	default:
@@ -1710,7 +1707,7 @@ ath5k_eeprom_read_spur_chans(struct ath5k_hw *ah)
 	struct ath5k_eeprom_info *ee = &ah->ah_capabilities.cap_eeprom;
 	u32 offset;
 	u16 val;
-	int  i;
+	int ret = 0, i;
 
 	offset = AR5K_EEPROM_CTL(ee->ee_version) +
 				AR5K_EEPROM_N_CTLS(ee->ee_version);
@@ -1733,7 +1730,7 @@ ath5k_eeprom_read_spur_chans(struct ath5k_hw *ah)
 		}
 	}
 
-	return 0;
+	return ret;
 }
 
 

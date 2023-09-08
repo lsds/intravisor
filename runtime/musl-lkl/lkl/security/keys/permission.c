@@ -1,11 +1,15 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /* Key permission checking
  *
  * Copyright (C) 2005 Red Hat, Inc. All Rights Reserved.
  * Written by David Howells (dhowells@redhat.com)
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version
+ * 2 of the License, or (at your option) any later version.
  */
 
-#include <linux/export.h>
+#include <linux/module.h>
 #include <linux/security.h>
 #include "internal.h"
 
@@ -13,7 +17,7 @@
  * key_task_permission - Check a key can be used
  * @key_ref: The key to check.
  * @cred: The credentials to use.
- * @need_perm: The permission required.
+ * @perm: The permissions to check for.
  *
  * Check to see whether permission is granted to use a key in the desired way,
  * but permit the security modules to override.
@@ -24,29 +28,11 @@
  * permissions bits or the LSM check.
  */
 int key_task_permission(const key_ref_t key_ref, const struct cred *cred,
-			enum key_need_perm need_perm)
+			unsigned perm)
 {
 	struct key *key;
-	key_perm_t kperm, mask;
+	key_perm_t kperm;
 	int ret;
-
-	switch (need_perm) {
-	default:
-		WARN_ON(1);
-		return -EACCES;
-	case KEY_NEED_UNLINK:
-	case KEY_SYSADMIN_OVERRIDE:
-	case KEY_AUTHTOKEN_OVERRIDE:
-	case KEY_DEFER_PERM_CHECK:
-		goto lsm;
-
-	case KEY_NEED_VIEW:	mask = KEY_OTH_VIEW;	break;
-	case KEY_NEED_READ:	mask = KEY_OTH_READ;	break;
-	case KEY_NEED_WRITE:	mask = KEY_OTH_WRITE;	break;
-	case KEY_NEED_SEARCH:	mask = KEY_OTH_SEARCH;	break;
-	case KEY_NEED_LINK:	mask = KEY_OTH_LINK;	break;
-	case KEY_NEED_SETATTR:	mask = KEY_OTH_SETATTR;	break;
-	}
 
 	key = key_ref_to_ptr(key_ref);
 
@@ -82,12 +68,13 @@ use_these_perms:
 	if (is_key_possessed(key_ref))
 		kperm |= key->perm >> 24;
 
-	if ((kperm & mask) != mask)
+	kperm = kperm & perm & KEY_NEED_ALL;
+
+	if (kperm != perm)
 		return -EACCES;
 
 	/* let LSM be the final arbiter */
-lsm:
-	return security_key_permission(key_ref, cred, need_perm);
+	return security_key_permission(key_ref, cred, perm);
 }
 EXPORT_SYMBOL(key_task_permission);
 

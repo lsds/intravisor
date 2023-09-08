@@ -100,15 +100,6 @@ amidi_map
     MIDI device number maps assigned to the 2st OSS device;
     Default: 1
 
-Module snd-soc-core
--------------------
-
-The soc core module. It is used by all ALSA card drivers.
-It takes the following options which have global effects.
-
-prealloc_buffer_size_kbytes
-    Specify prealloc buffer size in kbytes (default: 512).
-
 Common parameters for top sound card modules
 --------------------------------------------
 
@@ -318,7 +309,7 @@ pcifix
 This module supports all ADB PCM channels, ac97 mixer, SPDIF, hardware
 EQ, mpu401, gameport. A3D and wavetable support are still in development.
 Development and reverse engineering work is being coordinated at
-https://savannah.nongnu.org/projects/openvortex/
+http://savannah.nongnu.org/projects/openvortex/
 SPDIF output has a copy of the AC97 codec output, unless you use the
 ``spdif`` pcm device, which allows raw data passthru.
 The hardware EQ hardware and SPDIF is only present in the Vortex2 and 
@@ -504,8 +495,7 @@ Module for C-Media CMI8338/8738/8768/8770 PCI sound cards.
 mpu_port
     port address of MIDI interface (8338 only):
     0x300,0x310,0x320,0x330 = legacy port,
-    1 = integrated PCI port (default on 8738),
-    0 = disable
+    0 = disable (default)
 fm_port
     port address of OPL-3 FM synthesizer (8x38 only):
     0x388 = legacy port,
@@ -1011,8 +1001,6 @@ position_fix
     2 = POSBUF: use position buffer,
     3 = VIACOMBO: VIA-specific workaround for capture,
     4 = COMBO: use LPIB for playback, auto for capture stream
-    5 = SKL+: apply the delay calculation available on recent Intel chips
-    6 = FIFO: correct the position with the fixed FIFO size, for recent AMD chips
 probe_mask
     Bitmask to probe codecs (default = -1, meaning all slots);
     When the bit 8 (0x100) is set, the lower 8 bits are used
@@ -1068,19 +1056,13 @@ The model name ``generic`` is treated as a special case.  When this
 model is given, the driver uses the generic codec parser without
 "codec-patch".  It's sometimes good for testing and debugging.
 
-The model option can be used also for aliasing to another PCI or codec
-SSID.  When it's passed in the form of ``model=XXXX:YYYY`` where XXXX
-and YYYY are the sub-vendor and sub-device IDs in hex numbers,
-respectively, the driver will refer to that SSID as a reference to the
-quirk table.
-
 If the default configuration doesn't work and one of the above
 matches with your device, report it together with alsa-info.sh
 output (with ``--no-upload`` option) to kernel bugzilla or alsa-devel
 ML (see the section `Links and Addresses`_).
 
 ``power_save`` and ``power_save_controller`` options are for power-saving
-mode.  See powersave.rst for details.
+mode.  See powersave.txt for details.
 
 Note 2: If you get click noises on output, try the module option
 ``position_fix=1`` or ``2``.  ``position_fix=1`` will use the SD_LPIB
@@ -1151,7 +1133,7 @@ line_outs_monitor
 enable_monitor
     Enable Analog Out on Channel 63/64 by default.
 
-See hdspm.rst for details.
+See hdspm.txt for details.
 
 Module snd-ice1712
 ------------------
@@ -1516,7 +1498,7 @@ Module for Digigram miXart8 sound cards.
 
 This module supports multiple cards.
 Note: One miXart8 board will be represented as 4 alsa cards.
-See Documentation/sound/cards/mixart.rst for details.
+See MIXART.txt for details.
 
 When the driver is compiled as a module and the hotplug firmware
 is supported, the firmware data is loaded via hotplug automatically.
@@ -1586,11 +1568,11 @@ joystick_io
 The driver requires firmware files ``turtlebeach/msndinit.bin`` and
 ``turtlebeach/msndperm.bin`` in the proper firmware directory.
 
-See Documentation/sound/cards/multisound.sh for important information
+See Documentation/sound/oss/MultiSound for important information
 about this driver.  Note that it has been discontinued, but the 
 Voyetra Turtle Beach knowledge base entry for it is still available
 at
-https://www.turtlebeach.com
+http://www.turtlebeach.com
 
 Module snd-msnd-pinnacle
 ------------------------
@@ -2242,54 +2224,6 @@ quirk_alias
     Quirk alias list, pass strings like ``0123abcd:5678beef``, which
     applies the existing quirk for the device 5678:beef to a new
     device 0123:abcd.
-implicit_fb
-    Apply the generic implicit feedback sync mode.  When this is set
-    and the playback stream sync mode is ASYNC, the driver tries to
-    tie an adjacent ASYNC capture stream as the implicit feedback
-    source.  This is equivalent with quirk_flags bit 17.
-use_vmalloc
-    Use vmalloc() for allocations of the PCM buffers (default: yes).
-    For architectures with non-coherent memory like ARM or MIPS, the
-    mmap access may give inconsistent results with vmalloc'ed
-    buffers.  If mmap is used on such architectures, turn off this
-    option, so that the DMA-coherent buffers are allocated and used
-    instead.
-delayed_register
-    The option is needed for devices that have multiple streams
-    defined in multiple USB interfaces.  The driver may invoke
-    registrations multiple times (once per interface) and this may
-    lead to the insufficient device enumeration.
-    This option receives an array of strings, and you can pass
-    ID:INTERFACE like ``0123abcd:4`` for performing the delayed
-    registration to the given device.  In this example, when a USB
-    device 0123:abcd is probed, the driver waits the registration
-    until the USB interface 4 gets probed.
-    The driver prints a message like "Found post-registration device
-    assignment: 1234abcd:04" for such a device, so that user can
-    notice the need.
-quirk_flags
-    Contains the bit flags for various device specific workarounds.
-    Applied to the corresponding card index.
-
-        * bit 0: Skip reading sample rate for devices
-        * bit 1: Create Media Controller API entries
-        * bit 2: Allow alignment on audio sub-slot at transfer
-        * bit 3: Add length specifier to transfers
-        * bit 4: Start playback stream at first in implement feedback mode
-        * bit 5: Skip clock selector setup
-        * bit 6: Ignore errors from clock source search
-        * bit 7: Indicates ITF-USB DSD based DACs
-        * bit 8: Add a delay of 20ms at each control message handling
-        * bit 9: Add a delay of 1-2ms at each control message handling
-        * bit 10: Add a delay of 5-6ms at each control message handling
-        * bit 11: Add a delay of 50ms at each interface setup
-        * bit 12: Perform sample rate validations at probe
-        * bit 13: Disable runtime PM autosuspend
-        * bit 14: Ignore errors for mixer access
-        * bit 15: Support generic DSD raw U32_BE format
-        * bit 16: Set up the interface at first like UAC1
-        * bit 17: Apply the generic implicit feedback sync mode
-        * bit 18: Don't apply implicit feedback sync mode
 
 This module supports multiple devices, autoprobe and hotplugging.
 
@@ -2299,14 +2233,11 @@ check.
 
 NB: ``ignore_ctl_error=1`` may help when you get an error at accessing
 the mixer element such as URB error -22.  This happens on some
-buggy USB device or the controller.  This workaround corresponds to
-the ``quirk_flags`` bit 14, too.
+buggy USB device or the controller.
 
-NB: ``quirk_alias`` option is provided only for testing / development.
+NB: quirk_alias option is provided only for testing / development.
 If you want to have a proper support, contact to upstream for
 adding the matching quirk in the driver code statically.
-Ditto for ``quirk_flags``.  If a device is known to require specific
-workarounds, please report to the upstream.
 
 Module snd-usb-caiaq
 --------------------
@@ -2749,4 +2680,4 @@ Kernel Bugzilla
 ALSA Developers ML
     mailto:alsa-devel@alsa-project.org
 alsa-info.sh script
-    https://www.alsa-project.org/alsa-info.sh
+    http://www.alsa-project.org/alsa-info.sh

@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * arch/arm/mach-spear6xx/spear6xx.c
  *
@@ -8,11 +7,14 @@
  * Rajeev Kumar<rajeev-dlh.kumar@st.com>
  *
  * Copyright 2012 Stefan Roese <sr@denx.de>
+ *
+ * This file is licensed under the terms of the GNU General Public
+ * License version 2. This program is licensed "as is" without any
+ * warranty of any kind, whether express or implied.
  */
 
 #include <linux/amba/pl08x.h>
 #include <linux/clk.h>
-#include <linux/clk/spear.h>
 #include <linux/err.h>
 #include <linux/of.h>
 #include <linux/of_address.h>
@@ -23,8 +25,8 @@
 #include <asm/mach/map.h>
 #include "pl080.h"
 #include "generic.h"
-#include "spear.h"
-#include "misc_regs.h"
+#include <mach/spear.h>
+#include <mach/misc_regs.h>
 
 /* dmac device registration */
 static struct pl08x_channel_data spear600_dma_info[] = {
@@ -340,7 +342,7 @@ static struct pl08x_platform_data spear6xx_pl080_plat_data = {
  * 0xD0000000		0xFD000000
  * 0xFC000000		0xFC000000
  */
-static struct map_desc spear6xx_io_desc[] __initdata = {
+struct map_desc spear6xx_io_desc[] __initdata = {
 	{
 		.virtual	= (unsigned long)VA_SPEAR6XX_ML_CPU_BASE,
 		.pfn		= __phys_to_pfn(SPEAR_ICM3_ML1_2_BASE),
@@ -360,12 +362,12 @@ static struct map_desc spear6xx_io_desc[] __initdata = {
 };
 
 /* This will create static memory mapping for selected devices */
-static void __init spear6xx_map_io(void)
+void __init spear6xx_map_io(void)
 {
 	iotable_init(spear6xx_io_desc, ARRAY_SIZE(spear6xx_io_desc));
 }
 
-static void __init spear6xx_timer_init(void)
+void __init spear6xx_timer_init(void)
 {
 	char pclk_name[] = "pll3_clk";
 	struct clk *gpt_clk, *pclk;
@@ -395,7 +397,7 @@ static void __init spear6xx_timer_init(void)
 }
 
 /* Add auxdata to pass platform data */
-static struct of_dev_auxdata spear6xx_auxdata_lookup[] __initdata = {
+struct of_dev_auxdata spear6xx_auxdata_lookup[] __initdata = {
 	OF_DEV_AUXDATA("arm,pl080", SPEAR_ICM3_DMA_BASE, NULL,
 			&spear6xx_pl080_plat_data),
 	{}

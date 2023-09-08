@@ -1,5 +1,19 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright 2012 Cisco Systems, Inc.  All rights reserved. */
+/*
+ * Copyright 2012 Cisco Systems, Inc.  All rights reserved.
+ *
+ * This program is free software; you may redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; version 2 of the License.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+ * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+ * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS
+ * BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
+ * ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+ * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ */
 
 #ifndef __FNIC_TRACE_H__
 #define __FNIC_TRACE_H__
@@ -97,7 +111,7 @@ int fnic_trace_buf_init(void);
 void fnic_trace_free(void);
 int fnic_debugfs_init(void);
 void fnic_debugfs_terminate(void);
-void fnic_trace_debugfs_init(void);
+int fnic_trace_debugfs_init(void);
 void fnic_trace_debugfs_terminate(void);
 
 /* Fnic FC CTLR Trace releated function */
@@ -109,7 +123,7 @@ int fnic_fc_trace_get_data(fnic_dbgfs_t *fnic_dbgfs_prt, u8 rdata_flag);
 void copy_and_format_trace_data(struct fc_trace_hdr *tdata,
 				fnic_dbgfs_t *fnic_dbgfs_prt,
 				int *len, u8 rdata_flag);
-void fnic_fc_trace_debugfs_init(void);
+int fnic_fc_trace_debugfs_init(void);
 void fnic_fc_trace_debugfs_terminate(void);
 
 #endif

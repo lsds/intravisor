@@ -27,19 +27,14 @@
 
 /*-------------------------------------------------------------------------*/
 
-/* PID Codes that are used here, from EHCI specification, Table 3-16. */
-#define PID_CODE_IN    1
-#define PID_CODE_SETUP 2
-
 /* fill a qtd, returning how much of the buffer we were able to queue up */
 
-static unsigned int
+static int
 qtd_fill(struct ehci_hcd *ehci, struct ehci_qtd *qtd, dma_addr_t buf,
 		  size_t len, int token, int maxpacket)
 {
-	unsigned int count;
+	int	i, count;
 	u64	addr = buf;
-	int	i;
 
 	/* one buffer entry per 4K ... first might be short or unaligned */
 	qtd->hw_buf[0] = cpu_to_hc32(ehci, (u32)addr);
@@ -195,7 +190,7 @@ static int qtd_copy_status (
 	int	status = -EINPROGRESS;
 
 	/* count IN/OUT bytes, not SETUP (even short packets) */
-	if (likely(QTD_PID(token) != PID_CODE_SETUP))
+	if (likely (QTD_PID (token) != 2))
 		urb->actual_length += length - QTD_LENGTH (token);
 
 	/* don't modify error codes */
@@ -211,13 +206,6 @@ static int qtd_copy_status (
 		if (token & QTD_STS_BABBLE) {
 			/* FIXME "must" disable babbling device's port too */
 			status = -EOVERFLOW;
-		/*
-		 * When MMF is active and PID Code is IN, queue is halted.
-		 * EHCI Specification, Table 4-13.
-		 */
-		} else if ((token & QTD_STS_MMF) &&
-					(QTD_PID(token) == PID_CODE_IN)) {
-			status = -EPROTO;
 		/* CERR nonzero + halt --> stall */
 		} else if (QTD_CERR(token)) {
 			status = -EPIPE;
@@ -257,12 +245,12 @@ ehci_urb_done(struct ehci_hcd *ehci, struct urb *urb, int status)
 	}
 
 	if (unlikely(urb->unlinked)) {
-		INCR(ehci->stats.unlink);
+		COUNT(ehci->stats.unlink);
 	} else {
 		/* report non-error and short read status as zero */
 		if (status == -EINPROGRESS || status == -EREMOTEIO)
 			status = 0;
-		INCR(ehci->stats.complete);
+		COUNT(ehci->stats.complete);
 	}
 
 #ifdef EHCI_URB_TRACE
@@ -645,7 +633,7 @@ qh_urb_transaction (
 		token |= (1 /* "in" */ << 8);
 	/* else it's already initted to "out" pid (0 << 8) */
 
-	maxpacket = usb_endpoint_maxp(&urb->ep->desc);
+	maxpacket = usb_maxpacket(urb->dev, urb->pipe, !is_input);
 
 	/*
 	 * buffer gets wrapped in one or more qtds;
@@ -653,7 +641,7 @@ qh_urb_transaction (
 	 * and may serve as a control status ack
 	 */
 	for (;;) {
-		unsigned int this_qtd_len;
+		int this_qtd_len;
 
 		this_qtd_len = qtd_fill(ehci, qtd, buf, this_sg_len, token,
 				maxpacket);
@@ -875,7 +863,7 @@ qh_make (
 	switch (urb->dev->speed) {
 	case USB_SPEED_LOW:
 		info1 |= QH_LOW_SPEED;
-		fallthrough;
+		/* FALL THROUGH */
 
 	case USB_SPEED_FULL:
 		/* EPS 0 means "full" */
@@ -1162,11 +1150,11 @@ submit_async (
  * This is done in two parts: first SETUP req for GetDesc is sent then
  * 15 seconds later, the IN stage for GetDesc starts to req data from dev
  *
- * is_setup : i/p argument decides which of the two stage needs to be
+ * is_setup : i/p arguement decides which of the two stage needs to be
  * performed; TRUE - SETUP and FALSE - IN+STATUS
  * Returns 0 if success
  */
-static int ehci_submit_single_step_set_feature(
+static int submit_single_step_set_feature(
 	struct usb_hcd  *hcd,
 	struct urb      *urb,
 	int             is_setup
@@ -1218,7 +1206,7 @@ static int ehci_submit_single_step_set_feature(
 
 	token |= (1 /* "in" */ << 8);  /*This is IN stage*/
 
-	maxpacket = usb_endpoint_maxp(&urb->ep->desc);
+	maxpacket = usb_maxpacket(urb->dev, urb->pipe, 0);
 
 	qtd_fill(ehci, qtd, buf, len, token, maxpacket);
 

@@ -25,7 +25,7 @@
 #include <linux/leds.h>
 #include <linux/adb.h>
 #include <linux/pmu.h>
-#include <linux/of.h>
+#include <asm/prom.h>
 
 static spinlock_t pmu_blink_lock;
 static struct adb_request pmu_blink_req;

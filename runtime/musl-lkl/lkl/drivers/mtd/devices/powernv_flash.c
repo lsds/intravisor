@@ -1,8 +1,17 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * OPAL PNOR flash MTD abstraction
  *
  * Copyright IBM 2015
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
  */
 
 #include <linux/kernel.h>
@@ -126,7 +135,6 @@ out:
 }
 
 /**
- * powernv_flash_read
  * @mtd: the device
  * @from: the offset to read from
  * @len: the number of bytes to read
@@ -143,7 +151,6 @@ static int powernv_flash_read(struct mtd_info *mtd, loff_t from, size_t len,
 }
 
 /**
- * powernv_flash_write
  * @mtd: the device
  * @to: the offset to write to
  * @len: the number of bytes to write
@@ -160,7 +167,6 @@ static int powernv_flash_write(struct mtd_info *mtd, loff_t to, size_t len,
 }
 
 /**
- * powernv_flash_erase
  * @mtd: the device
  * @erase: the erase info
  * Returns 0 if erase successful or -ERRNO if an error occurred
@@ -179,7 +185,7 @@ static int powernv_flash_erase(struct mtd_info *mtd, struct erase_info *erase)
 
 /**
  * powernv_flash_set_driver_info - Fill the mtd_info structure and docg3
- * @dev: The device structure
+ * structure @pdev: The platform device
  * @mtd: The structure to fill
  */
 static int powernv_flash_set_driver_info(struct device *dev,
@@ -206,7 +212,7 @@ static int powernv_flash_set_driver_info(struct device *dev,
 	 * Going to have to check what details I need to set and how to
 	 * get them
 	 */
-	mtd->name = devm_kasprintf(dev, GFP_KERNEL, "%pOFP", dev->of_node);
+	mtd->name = of_get_property(dev->of_node, "name", NULL);
 	mtd->type = MTD_NORFLASH;
 	mtd->flags = MTD_WRITEABLE;
 	mtd->size = size;
@@ -217,7 +223,6 @@ static int powernv_flash_set_driver_info(struct device *dev,
 	mtd->_read = powernv_flash_read;
 	mtd->_write = powernv_flash_write;
 	mtd->dev.parent = dev;
-	mtd_set_of_node(mtd, dev->of_node);
 	return 0;
 }
 
@@ -270,9 +275,7 @@ static int powernv_flash_release(struct platform_device *pdev)
 	struct powernv_flash *data = dev_get_drvdata(&(pdev->dev));
 
 	/* All resources should be freed automatically */
-	WARN_ON(mtd_device_unregister(&data->mtd));
-
-	return 0;
+	return mtd_device_unregister(&(data->mtd));
 }
 
 static const struct of_device_id powernv_flash_match[] = {

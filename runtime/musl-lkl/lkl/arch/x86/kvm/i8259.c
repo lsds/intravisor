@@ -50,7 +50,7 @@ static void pic_unlock(struct kvm_pic *s)
 {
 	bool wakeup = s->wakeup_needed;
 	struct kvm_vcpu *vcpu;
-	unsigned long i;
+	int i;
 
 	s->wakeup_needed = false;
 
@@ -252,6 +252,7 @@ int kvm_pic_read_irq(struct kvm *kvm)
 				 */
 				irq2 = 7;
 			intno = s->pics[1].irq_base + irq2;
+			irq = irq2 + 8;
 		} else
 			intno = s->pics[0].irq_base + irq;
 	} else {
@@ -269,8 +270,7 @@ int kvm_pic_read_irq(struct kvm *kvm)
 
 static void kvm_pic_reset(struct kvm_kpic_state *s)
 {
-	int irq;
-	unsigned long i;
+	int irq, i;
 	struct kvm_vcpu *vcpu;
 	u8 edge_irr = s->irr & ~s->elcr;
 	bool found = false;
@@ -436,13 +436,13 @@ static u32 pic_ioport_read(void *opaque, u32 addr)
 	return ret;
 }
 
-static void elcr_ioport_write(void *opaque, u32 val)
+static void elcr_ioport_write(void *opaque, u32 addr, u32 val)
 {
 	struct kvm_kpic_state *s = opaque;
 	s->elcr = val & s->elcr_mask;
 }
 
-static u32 elcr_ioport_read(void *opaque)
+static u32 elcr_ioport_read(void *opaque, u32 addr1)
 {
 	struct kvm_kpic_state *s = opaque;
 	return s->elcr;
@@ -460,20 +460,16 @@ static int picdev_write(struct kvm_pic *s,
 	switch (addr) {
 	case 0x20:
 	case 0x21:
-		pic_lock(s);
-		pic_ioport_write(&s->pics[0], addr, data);
-		pic_unlock(s);
-		break;
 	case 0xa0:
 	case 0xa1:
 		pic_lock(s);
-		pic_ioport_write(&s->pics[1], addr, data);
+		pic_ioport_write(&s->pics[addr >> 7], addr, data);
 		pic_unlock(s);
 		break;
 	case 0x4d0:
 	case 0x4d1:
 		pic_lock(s);
-		elcr_ioport_write(&s->pics[addr & 1], data);
+		elcr_ioport_write(&s->pics[addr & 1], addr, data);
 		pic_unlock(s);
 		break;
 	default:
@@ -504,7 +500,7 @@ static int picdev_read(struct kvm_pic *s,
 	case 0x4d0:
 	case 0x4d1:
 		pic_lock(s);
-		*data = elcr_ioport_read(&s->pics[addr & 1]);
+		*data = elcr_ioport_read(&s->pics[addr & 1], addr);
 		pic_unlock(s);
 		break;
 	default:
@@ -541,17 +537,17 @@ static int picdev_slave_read(struct kvm_vcpu *vcpu, struct kvm_io_device *dev,
 			    addr, len, val);
 }
 
-static int picdev_elcr_write(struct kvm_vcpu *vcpu, struct kvm_io_device *dev,
+static int picdev_eclr_write(struct kvm_vcpu *vcpu, struct kvm_io_device *dev,
 			     gpa_t addr, int len, const void *val)
 {
-	return picdev_write(container_of(dev, struct kvm_pic, dev_elcr),
+	return picdev_write(container_of(dev, struct kvm_pic, dev_eclr),
 			    addr, len, val);
 }
 
-static int picdev_elcr_read(struct kvm_vcpu *vcpu, struct kvm_io_device *dev,
+static int picdev_eclr_read(struct kvm_vcpu *vcpu, struct kvm_io_device *dev,
 			    gpa_t addr, int len, void *val)
 {
-	return picdev_read(container_of(dev, struct kvm_pic, dev_elcr),
+	return picdev_read(container_of(dev, struct kvm_pic, dev_eclr),
 			    addr, len, val);
 }
 
@@ -577,9 +573,9 @@ static const struct kvm_io_device_ops picdev_slave_ops = {
 	.write    = picdev_slave_write,
 };
 
-static const struct kvm_io_device_ops picdev_elcr_ops = {
-	.read     = picdev_elcr_read,
-	.write    = picdev_elcr_write,
+static const struct kvm_io_device_ops picdev_eclr_ops = {
+	.read     = picdev_eclr_read,
+	.write    = picdev_eclr_write,
 };
 
 int kvm_pic_init(struct kvm *kvm)
@@ -587,7 +583,7 @@ int kvm_pic_init(struct kvm *kvm)
 	struct kvm_pic *s;
 	int ret;
 
-	s = kzalloc(sizeof(struct kvm_pic), GFP_KERNEL_ACCOUNT);
+	s = kzalloc(sizeof(struct kvm_pic), GFP_KERNEL);
 	if (!s)
 		return -ENOMEM;
 	spin_lock_init(&s->lock);
@@ -602,7 +598,7 @@ int kvm_pic_init(struct kvm *kvm)
 	 */
 	kvm_iodevice_init(&s->dev_master, &picdev_master_ops);
 	kvm_iodevice_init(&s->dev_slave, &picdev_slave_ops);
-	kvm_iodevice_init(&s->dev_elcr, &picdev_elcr_ops);
+	kvm_iodevice_init(&s->dev_eclr, &picdev_eclr_ops);
 	mutex_lock(&kvm->slots_lock);
 	ret = kvm_io_bus_register_dev(kvm, KVM_PIO_BUS, 0x20, 2,
 				      &s->dev_master);
@@ -613,7 +609,7 @@ int kvm_pic_init(struct kvm *kvm)
 	if (ret < 0)
 		goto fail_unreg_2;
 
-	ret = kvm_io_bus_register_dev(kvm, KVM_PIO_BUS, 0x4d0, 2, &s->dev_elcr);
+	ret = kvm_io_bus_register_dev(kvm, KVM_PIO_BUS, 0x4d0, 2, &s->dev_eclr);
 	if (ret < 0)
 		goto fail_unreg_1;
 
@@ -647,7 +643,7 @@ void kvm_pic_destroy(struct kvm *kvm)
 	mutex_lock(&kvm->slots_lock);
 	kvm_io_bus_unregister_dev(vpic->kvm, KVM_PIO_BUS, &vpic->dev_master);
 	kvm_io_bus_unregister_dev(vpic->kvm, KVM_PIO_BUS, &vpic->dev_slave);
-	kvm_io_bus_unregister_dev(vpic->kvm, KVM_PIO_BUS, &vpic->dev_elcr);
+	kvm_io_bus_unregister_dev(vpic->kvm, KVM_PIO_BUS, &vpic->dev_eclr);
 	mutex_unlock(&kvm->slots_lock);
 
 	kvm->arch.vpic = NULL;

@@ -1,8 +1,11 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Network Service Header
  *
  * Copyright (c) 2017 Red Hat, Inc. -- Jiri Benc <jbenc@redhat.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 
 #include <linux/module.h>
@@ -101,7 +104,7 @@ static struct sk_buff *nsh_gso_segment(struct sk_buff *skb,
 	__skb_pull(skb, nsh_len);
 
 	skb_reset_mac_header(skb);
-	skb->mac_len = proto == htons(ETH_P_TEB) ? ETH_HLEN : 0;
+	skb_reset_mac_len(skb);
 	skb->protocol = proto;
 
 	features &= NETIF_F_SG;

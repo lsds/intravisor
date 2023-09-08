@@ -1,8 +1,14 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Synopsys DWC Ethernet Quality-of-Service v4.10a linux driver
  *
  * Copyright (C) 2016 Joao Pinto <jpinto@synopsys.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
 #include <linux/clk.h>
@@ -40,7 +46,7 @@ struct tegra_eqos {
 static int dwc_eth_dwmac_config_dt(struct platform_device *pdev,
 				   struct plat_stmmacenet_data *plat_dat)
 {
-	struct device *dev = &pdev->dev;
+	struct device_node *np = pdev->dev.of_node;
 	u32 burst_map = 0;
 	u32 bit_index = 0;
 	u32 a_index = 0;
@@ -52,10 +58,9 @@ static int dwc_eth_dwmac_config_dt(struct platform_device *pdev,
 			return -ENOMEM;
 	}
 
-	plat_dat->axi->axi_lpi_en = device_property_read_bool(dev,
-							      "snps,en-lpi");
-	if (device_property_read_u32(dev, "snps,write-requests",
-				     &plat_dat->axi->axi_wr_osr_lmt)) {
+	plat_dat->axi->axi_lpi_en = of_property_read_bool(np, "snps,en-lpi");
+	if (of_property_read_u32(np, "snps,write-requests",
+				 &plat_dat->axi->axi_wr_osr_lmt)) {
 		/**
 		 * Since the register has a reset value of 1, if property
 		 * is missing, default to 1.
@@ -69,8 +74,8 @@ static int dwc_eth_dwmac_config_dt(struct platform_device *pdev,
 		plat_dat->axi->axi_wr_osr_lmt--;
 	}
 
-	if (device_property_read_u32(dev, "snps,read-requests",
-				     &plat_dat->axi->axi_rd_osr_lmt)) {
+	if (of_property_read_u32(np, "snps,read-requests",
+				 &plat_dat->axi->axi_rd_osr_lmt)) {
 		/**
 		 * Since the register has a reset value of 1, if property
 		 * is missing, default to 1.
@@ -83,7 +88,7 @@ static int dwc_eth_dwmac_config_dt(struct platform_device *pdev,
 		 */
 		plat_dat->axi->axi_rd_osr_lmt--;
 	}
-	device_property_read_u32(dev, "snps,burst-map", &burst_map);
+	of_property_read_u32(np, "snps,burst-map", &burst_map);
 
 	/* converts burst-map bitmask to burst array */
 	for (bit_index = 0; bit_index < 7; bit_index++) {
@@ -119,23 +124,23 @@ static int dwc_eth_dwmac_config_dt(struct platform_device *pdev,
 	return 0;
 }
 
-static int dwc_qos_probe(struct platform_device *pdev,
-			 struct plat_stmmacenet_data *plat_dat,
-			 struct stmmac_resources *stmmac_res)
+static void *dwc_qos_probe(struct platform_device *pdev,
+			   struct plat_stmmacenet_data *plat_dat,
+			   struct stmmac_resources *stmmac_res)
 {
 	int err;
 
 	plat_dat->stmmac_clk = devm_clk_get(&pdev->dev, "apb_pclk");
 	if (IS_ERR(plat_dat->stmmac_clk)) {
 		dev_err(&pdev->dev, "apb_pclk clock not found.\n");
-		return PTR_ERR(plat_dat->stmmac_clk);
+		return ERR_CAST(plat_dat->stmmac_clk);
 	}
 
 	err = clk_prepare_enable(plat_dat->stmmac_clk);
 	if (err < 0) {
 		dev_err(&pdev->dev, "failed to enable apb_pclk clock: %d\n",
 			err);
-		return err;
+		return ERR_PTR(err);
 	}
 
 	plat_dat->pclk = devm_clk_get(&pdev->dev, "phy_ref_clk");
@@ -152,11 +157,11 @@ static int dwc_qos_probe(struct platform_device *pdev,
 		goto disable;
 	}
 
-	return 0;
+	return NULL;
 
 disable:
 	clk_disable_unprepare(plat_dat->stmmac_clk);
-	return err;
+	return ERR_PTR(err);
 }
 
 static int dwc_qos_remove(struct platform_device *pdev)
@@ -267,23 +272,21 @@ static int tegra_eqos_init(struct platform_device *pdev, void *priv)
 	return 0;
 }
 
-static int tegra_eqos_probe(struct platform_device *pdev,
-			    struct plat_stmmacenet_data *data,
-			    struct stmmac_resources *res)
+static void *tegra_eqos_probe(struct platform_device *pdev,
+			      struct plat_stmmacenet_data *data,
+			      struct stmmac_resources *res)
 {
-	struct device *dev = &pdev->dev;
 	struct tegra_eqos *eqos;
 	int err;
 
 	eqos = devm_kzalloc(&pdev->dev, sizeof(*eqos), GFP_KERNEL);
-	if (!eqos)
-		return -ENOMEM;
+	if (!eqos) {
+		err = -ENOMEM;
+		goto error;
+	}
 
 	eqos->dev = &pdev->dev;
 	eqos->regs = res->addr;
-
-	if (!is_of_node(dev->fwnode))
-		goto bypass_clk_reset_gpio;
 
 	eqos->clk_master = devm_clk_get(&pdev->dev, "master_bus");
 	if (IS_ERR(eqos->clk_master)) {
@@ -336,9 +339,6 @@ static int tegra_eqos_probe(struct platform_device *pdev,
 	usleep_range(2000, 4000);
 	gpiod_set_value(eqos->reset, 0);
 
-	/* MDIO bus was already reset just above */
-	data->mdio_bus_data->needs_reset = false;
-
 	eqos->rst = devm_reset_control_get(&pdev->dev, "eqos");
 	if (IS_ERR(eqos->rst)) {
 		err = PTR_ERR(eqos->rst);
@@ -357,17 +357,17 @@ static int tegra_eqos_probe(struct platform_device *pdev,
 
 	usleep_range(2000, 4000);
 
-bypass_clk_reset_gpio:
 	data->fix_mac_speed = tegra_eqos_fix_speed;
 	data->init = tegra_eqos_init;
 	data->bsp_priv = eqos;
-	data->sph_disable = 1;
 
 	err = tegra_eqos_init(pdev, eqos);
 	if (err < 0)
 		goto reset;
 
-	return 0;
+out:
+	return eqos;
+
 reset:
 	reset_control_assert(eqos->rst);
 reset_phy:
@@ -381,7 +381,8 @@ disable_slave:
 disable_master:
 	clk_disable_unprepare(eqos->clk_master);
 error:
-	return err;
+	eqos = ERR_PTR(err);
+	goto out;
 }
 
 static int tegra_eqos_remove(struct platform_device *pdev)
@@ -399,9 +400,9 @@ static int tegra_eqos_remove(struct platform_device *pdev)
 }
 
 struct dwc_eth_dwmac_data {
-	int (*probe)(struct platform_device *pdev,
-		     struct plat_stmmacenet_data *data,
-		     struct stmmac_resources *res);
+	void *(*probe)(struct platform_device *pdev,
+		       struct plat_stmmacenet_data *data,
+		       struct stmmac_resources *res);
 	int (*remove)(struct platform_device *pdev);
 };
 
@@ -420,9 +421,11 @@ static int dwc_eth_dwmac_probe(struct platform_device *pdev)
 	const struct dwc_eth_dwmac_data *data;
 	struct plat_stmmacenet_data *plat_dat;
 	struct stmmac_resources stmmac_res;
+	struct resource *res;
+	void *priv;
 	int ret;
 
-	data = device_get_match_data(&pdev->dev);
+	data = of_device_get_match_data(&pdev->dev);
 
 	memset(&stmmac_res, 0, sizeof(struct stmmac_resources));
 
@@ -431,22 +434,28 @@ static int dwc_eth_dwmac_probe(struct platform_device *pdev)
 	 * resource initialization is done in the glue logic.
 	 */
 	stmmac_res.irq = platform_get_irq(pdev, 0);
-	if (stmmac_res.irq < 0)
+	if (stmmac_res.irq < 0) {
+		if (stmmac_res.irq != -EPROBE_DEFER)
+			dev_err(&pdev->dev,
+				"IRQ configuration information not found\n");
+
 		return stmmac_res.irq;
+	}
 	stmmac_res.wol_irq = stmmac_res.irq;
 
-	stmmac_res.addr = devm_platform_ioremap_resource(pdev, 0);
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	stmmac_res.addr = devm_ioremap_resource(&pdev->dev, res);
 	if (IS_ERR(stmmac_res.addr))
 		return PTR_ERR(stmmac_res.addr);
 
-	plat_dat = stmmac_probe_config_dt(pdev, stmmac_res.mac);
+	plat_dat = stmmac_probe_config_dt(pdev, &stmmac_res.mac);
 	if (IS_ERR(plat_dat))
 		return PTR_ERR(plat_dat);
 
-	ret = data->probe(pdev, plat_dat, &stmmac_res);
-	if (ret < 0) {
-		dev_err_probe(&pdev->dev, ret, "failed to probe subdriver\n");
-
+	priv = data->probe(pdev, plat_dat, &stmmac_res);
+	if (IS_ERR(priv)) {
+		ret = PTR_ERR(priv);
+		dev_err(&pdev->dev, "failed to probe subdriver: %d\n", ret);
 		goto remove_config;
 	}
 
@@ -475,7 +484,7 @@ static int dwc_eth_dwmac_remove(struct platform_device *pdev)
 	const struct dwc_eth_dwmac_data *data;
 	int err;
 
-	data = device_get_match_data(&pdev->dev);
+	data = of_device_get_match_data(&pdev->dev);
 
 	err = stmmac_dvr_remove(&pdev->dev);
 	if (err < 0)

@@ -26,21 +26,19 @@ choice
 
 	config SOC_RT288X
 		bool "RT288x"
-		select MIPS_AUTO_PFN_OFFSET
 		select MIPS_L1_CACHE_SHIFT_4
-		select HAVE_PCI
+		select HW_HAS_PCI
 
 	config SOC_RT305X
 		bool "RT305x"
 
 	config SOC_RT3883
 		bool "RT3883"
-		select HAVE_PCI
+		select HW_HAS_PCI
 
 	config SOC_MT7620
 		bool "MT7620/8"
-		select CPU_MIPSR2_IRQ_VI
-		select HAVE_PCI
+		select HW_HAS_PCI
 
 	config SOC_MT7621
 		bool "MT7621"
@@ -50,19 +48,13 @@ choice
 		select SYS_SUPPORTS_MIPS_CPS
 		select SYS_SUPPORTS_HIGHMEM
 		select MIPS_GIC
+		select COMMON_CLK
 		select CLKSRC_MIPS_GIC
-		select HAVE_PCI
-		select PCI_DRIVERS_GENERIC
-		select SOC_BUS
-
-		help
-		  The MT7621 system-on-a-chip includes an 880 MHz MIPS1004Kc dual-core CPU,
-		  a 5-port 10/100/1000 switch/PHY and one RGMII.
+		select HW_HAS_PCI
 endchoice
 
 choice
 	prompt "Devicetree selection"
-	depends on !SOC_MT7621
 	default DTB_RT_NONE
 	help
 	  Select the devicetree.

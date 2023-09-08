@@ -13,8 +13,6 @@
  */
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
-#include <linux/ip.h>
-#include <linux/ipv6.h>
 #include <linux/module.h>
 #include <linux/skbuff.h>
 #include <linux/netfilter/x_tables.h>
@@ -62,10 +60,10 @@ connlimit_mt(const struct sk_buff *skb, struct xt_action_param *par)
 		key[4] = zone->id;
 	} else {
 		const struct iphdr *iph = ip_hdr(skb);
-
 		key[0] = (info->flags & XT_CONNLIMIT_DADDR) ?
-			 (__force __u32)iph->daddr : (__force __u32)iph->saddr;
-		key[0] &= (__force __u32)info->mask.ip;
+			  iph->daddr : iph->saddr;
+
+		key[0] &= info->mask.ip;
 		key[1] = zone->id;
 	}
 
@@ -95,8 +93,10 @@ static int connlimit_mt_check(const struct xt_mtchk_param *par)
 
 	/* init private data */
 	info->data = nf_conncount_init(par->net, par->family, keylen);
+	if (IS_ERR(info->data))
+		return PTR_ERR(info->data);
 
-	return PTR_ERR_OR_ZERO(info->data);
+	return 0;
 }
 
 static void connlimit_mt_destroy(const struct xt_mtdtor_param *par)

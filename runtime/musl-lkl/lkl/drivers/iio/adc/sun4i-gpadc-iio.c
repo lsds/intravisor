@@ -1,7 +1,10 @@
-// SPDX-License-Identifier: GPL-2.0
 /* ADC driver for sunxi platforms' (A10, A13 and A31) GPADC
  *
  * Copyright (c) 2016 Quentin Schulz <quentin.schulz@free-electrons.com>
+ *
+ * This program is free software; you can redistribute it and/or modify it under
+ * the terms of the GNU General Public License version 2 as published by the
+ * Free Software Foundation.
  *
  * The Allwinner SoCs all have an ADC that can also act as a touchscreen
  * controller and a thermal sensor.
@@ -412,9 +415,9 @@ static int sun4i_gpadc_runtime_resume(struct device *dev)
 	return 0;
 }
 
-static int sun4i_gpadc_get_temp(struct thermal_zone_device *tz, int *temp)
+static int sun4i_gpadc_get_temp(void *data, int *temp)
 {
-	struct sun4i_gpadc_iio *info = tz->devdata;
+	struct sun4i_gpadc_iio *info = data;
 	int val, scale, offset;
 
 	if (sun4i_gpadc_temp_read(info->indio_dev, &val))
@@ -428,7 +431,7 @@ static int sun4i_gpadc_get_temp(struct thermal_zone_device *tz, int *temp)
 	return 0;
 }
 
-static const struct thermal_zone_device_ops sun4i_ts_tz_ops = {
+static const struct thermal_zone_of_device_ops sun4i_ts_tz_ops = {
 	.get_temp = &sun4i_gpadc_get_temp,
 };
 
@@ -460,8 +463,10 @@ static int sun4i_irq_init(struct platform_device *pdev, const char *name,
 	atomic_set(atomic, 1);
 
 	ret = platform_get_irq_byname(pdev, name);
-	if (ret < 0)
+	if (ret < 0) {
+		dev_err(&pdev->dev, "no %s interrupt registered\n", name);
 		return ret;
+	}
 
 	ret = regmap_irq_get_virq(mfd_dev->regmap_irqc, ret);
 	if (ret < 0) {
@@ -470,8 +475,7 @@ static int sun4i_irq_init(struct platform_device *pdev, const char *name,
 	}
 
 	*irq = ret;
-	ret = devm_request_any_context_irq(&pdev->dev, *irq, handler,
-					   IRQF_NO_AUTOEN,
+	ret = devm_request_any_context_irq(&pdev->dev, *irq, handler, 0,
 					   devname, info);
 	if (ret < 0) {
 		dev_err(&pdev->dev, "could not request %s interrupt: %d\n",
@@ -479,6 +483,7 @@ static int sun4i_irq_init(struct platform_device *pdev, const char *name,
 		return ret;
 	}
 
+	disable_irq(*irq);
 	atomic_set(atomic, 0);
 
 	return 0;
@@ -496,6 +501,7 @@ static int sun4i_gpadc_probe_dt(struct platform_device *pdev,
 				struct iio_dev *indio_dev)
 {
 	struct sun4i_gpadc_iio *info = iio_priv(indio_dev);
+	struct resource *mem;
 	void __iomem *base;
 	int ret;
 
@@ -507,7 +513,8 @@ static int sun4i_gpadc_probe_dt(struct platform_device *pdev,
 	indio_dev->num_channels = ARRAY_SIZE(sun8i_a33_gpadc_channels);
 	indio_dev->channels = sun8i_a33_gpadc_channels;
 
-	base = devm_platform_ioremap_resource(pdev, 0);
+	mem = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	base = devm_ioremap_resource(&pdev->dev, mem);
 	if (IS_ERR(base))
 		return PTR_ERR(base);
 
@@ -619,6 +626,8 @@ static int sun4i_gpadc_probe(struct platform_device *pdev)
 	info->indio_dev = indio_dev;
 	init_completion(&info->completion);
 	indio_dev->name = dev_name(&pdev->dev);
+	indio_dev->dev.parent = &pdev->dev;
+	indio_dev->dev.of_node = pdev->dev.of_node;
 	indio_dev->info = &sun4i_gpadc_iio_info;
 	indio_dev->modes = INDIO_DIRECT_MODE;
 
@@ -637,9 +646,9 @@ static int sun4i_gpadc_probe(struct platform_device *pdev)
 	pm_runtime_enable(&pdev->dev);
 
 	if (IS_ENABLED(CONFIG_THERMAL_OF)) {
-		info->tzd = devm_thermal_of_zone_register(info->sensor_device,
-							  0, info,
-							  &sun4i_ts_tz_ops);
+		info->tzd = thermal_zone_of_sensor_register(info->sensor_device,
+							    0, info,
+							    &sun4i_ts_tz_ops);
 		/*
 		 * Do not fail driver probing when failing to register in
 		 * thermal because no thermal DT node is found.
@@ -680,6 +689,8 @@ static int sun4i_gpadc_remove(struct platform_device *pdev)
 
 	if (!IS_ENABLED(CONFIG_THERMAL_OF))
 		return 0;
+
+	thermal_zone_of_sensor_unregister(info->sensor_device, info->tzd);
 
 	if (!info->no_irq)
 		iio_map_array_unregister(indio_dev);

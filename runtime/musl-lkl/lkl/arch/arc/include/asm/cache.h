@@ -1,6 +1,9 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (C) 2004, 2007-2010, 2011-2012 Synopsys, Inc. (www.synopsys.com)
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 
 #ifndef __ARC_ASM_CACHE_H
@@ -25,8 +28,6 @@
 
 #ifndef __ASSEMBLY__
 
-#include <linux/build_bug.h>
-
 /* Uncached access macros */
 #define arc_read_uncached_32(ptr)	\
 ({					\
@@ -47,20 +48,11 @@
 })
 
 /* Largest line length for either L1 or L2 is 128 bytes */
-#define SMP_CACHE_BYTES		128
-#define cache_line_size()	SMP_CACHE_BYTES
-#define ARCH_DMA_MINALIGN	SMP_CACHE_BYTES
+#define ARCH_DMA_MINALIGN      128
 
-/*
- * Make sure slab-allocated buffers are 64-bit aligned when atomic64_t uses
- * ARCv2 64-bit atomics (LLOCKD/SCONDD). This guarantess runtime 64-bit
- * alignment for any atomic64_t embedded in buffer.
- * Default ARCH_SLAB_MINALIGN is __alignof__(long long) which has a relaxed
- * value of 4 (and not 8) in ARC ABI.
- */
-#if defined(CONFIG_ARC_HAS_LL64) && defined(CONFIG_ARC_HAS_LLSC)
-#define ARCH_SLAB_MINALIGN	8
-#endif
+extern void arc_cache_init(void);
+extern char *arc_cache_mumbojumbo(int cpu_id, char *buf, int len);
+extern void read_decode_cache_bcr(void);
 
 extern int ioc_enable;
 extern unsigned long perip_base, perip_end;
@@ -119,9 +111,7 @@ extern unsigned long perip_base, perip_end;
 
 /* IO coherency related Auxiliary registers */
 #define ARC_REG_IO_COH_ENABLE	0x500
-#define ARC_IO_COH_ENABLE_BIT	BIT(0)
 #define ARC_REG_IO_COH_PARTIAL	0x501
-#define ARC_IO_COH_PARTIAL_BIT	BIT(0)
 #define ARC_REG_IO_COH_AP0_BASE	0x508
 #define ARC_REG_IO_COH_AP0_SIZE	0x509
 

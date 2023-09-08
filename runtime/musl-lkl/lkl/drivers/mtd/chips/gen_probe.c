@@ -20,7 +20,7 @@ static int genprobe_new_chip(struct map_info *map, struct chip_probe *cp,
 
 struct mtd_info *mtd_do_chip_probe(struct map_info *map, struct chip_probe *cp)
 {
-	struct mtd_info *mtd;
+	struct mtd_info *mtd = NULL;
 	struct cfi_private *cfi;
 
 	/* First probe the map to see if we have CFI stuff there. */
@@ -61,8 +61,8 @@ static struct cfi_private *genprobe_ident_chips(struct map_info *map, struct chi
 	struct cfi_private cfi;
 	struct cfi_private *retcfi;
 	unsigned long *chip_map;
+	int i, j, mapsize;
 	int max_chips;
-	int i, j;
 
 	memset(&cfi, 0, sizeof(cfi));
 
@@ -111,7 +111,8 @@ static struct cfi_private *genprobe_ident_chips(struct map_info *map, struct chi
 		max_chips = 1;
 	}
 
-	chip_map = bitmap_zalloc(max_chips, GFP_KERNEL);
+	mapsize = sizeof(long) * DIV_ROUND_UP(max_chips, BITS_PER_LONG);
+	chip_map = kzalloc(mapsize, GFP_KERNEL);
 	if (!chip_map) {
 		kfree(cfi.cfiq);
 		return NULL;
@@ -134,11 +135,11 @@ static struct cfi_private *genprobe_ident_chips(struct map_info *map, struct chi
 	 * our caller, and copy the appropriate data into them.
 	 */
 
-	retcfi = kmalloc(struct_size(retcfi, chips, cfi.numchips), GFP_KERNEL);
+	retcfi = kmalloc(sizeof(struct cfi_private) + cfi.numchips * sizeof(struct flchip), GFP_KERNEL);
 
 	if (!retcfi) {
 		kfree(cfi.cfiq);
-		bitmap_free(chip_map);
+		kfree(chip_map);
 		return NULL;
 	}
 
@@ -156,7 +157,7 @@ static struct cfi_private *genprobe_ident_chips(struct map_info *map, struct chi
 		}
 	}
 
-	bitmap_free(chip_map);
+	kfree(chip_map);
 	return retcfi;
 }
 
@@ -201,19 +202,16 @@ static inline struct mtd_info *cfi_cmdset_unknown(struct map_info *map,
 	struct cfi_private *cfi = map->fldrv_priv;
 	__u16 type = primary?cfi->cfiq->P_ID:cfi->cfiq->A_ID;
 #ifdef CONFIG_MODULES
+	char probename[sizeof(VMLINUX_SYMBOL_STR(cfi_cmdset_%4.4X))];
 	cfi_cmdset_fn_t *probe_function;
-	char *probename;
 
-	probename = kasprintf(GFP_KERNEL, "cfi_cmdset_%4.4X", type);
-	if (!probename)
-		return NULL;
+	sprintf(probename, VMLINUX_SYMBOL_STR(cfi_cmdset_%4.4X), type);
 
 	probe_function = __symbol_get(probename);
 	if (!probe_function) {
 		request_module("cfi_cmdset_%4.4X", type);
 		probe_function = __symbol_get(probename);
 	}
-	kfree(probename);
 
 	if (probe_function) {
 		struct mtd_info *mtd;

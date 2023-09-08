@@ -1,18 +1,19 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Device driver for regulators in hi655x IC
  *
- * Copyright (c) 2016 HiSilicon Ltd.
+ * Copyright (c) 2016 Hisilicon.
  *
  * Authors:
  * Chen Feng <puck.chen@hisilicon.com>
  * Fei  Wang <w.f@huawei.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 
 #ifndef __HI655X_PMIC_H
 #define __HI655X_PMIC_H
-
-#include <linux/gpio/consumer.h>
 
 /* Hi655x registers are mapped to memory bus in 4 bytes stride */
 #define HI655X_STRIDE                   4
@@ -55,7 +56,7 @@ struct hi655x_pmic {
 	struct resource *res;
 	struct device *dev;
 	struct regmap *regmap;
-	struct gpio_desc *gpio;
+	int gpio;
 	unsigned int ver;
 	struct regmap_irq_chip_data *irq_data;
 };

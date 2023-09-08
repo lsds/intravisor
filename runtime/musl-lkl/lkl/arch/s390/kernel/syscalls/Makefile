@@ -21,13 +21,20 @@ uapi:	$(uapi-hdrs-y)
 
 
 # Create output directory if not already present
-$(shell mkdir -p $(uapi) $(kapi))
+_dummy := $(shell [ -d '$(uapi)' ] || mkdir -p '$(uapi)') \
+	  $(shell [ -d '$(kapi)' ] || mkdir -p '$(kapi)')
 
-filechk_syshdr = $(CONFIG_SHELL) '$(systbl)' -H -a $(syshdr_abi_$(basetarget)) -f "$2" < $<
+define filechk_syshdr
+	$(CONFIG_SHELL) '$(systbl)' -H -a $(syshdr_abi_$(basetarget)) -f "$2"
+endef
 
-filechk_sysnr = $(CONFIG_SHELL) '$(systbl)' -N -a $(sysnr_abi_$(basetarget)) < $<
+define filechk_sysnr
+	$(CONFIG_SHELL) '$(systbl)' -N -a $(sysnr_abi_$(basetarget))
+endef
 
-filechk_syscalls = $(CONFIG_SHELL) '$(systbl)' -S < $<
+define filechk_syscalls
+	$(CONFIG_SHELL) '$(systbl)' -S
+endef
 
 syshdr_abi_unistd_32 := common,32
 $(uapi)/unistd_32.h: $(syscall) FORCE

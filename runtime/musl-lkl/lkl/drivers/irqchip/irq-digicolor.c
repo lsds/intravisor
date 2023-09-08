@@ -50,7 +50,7 @@ static void __exception_irq_entry digicolor_handle_irq(struct pt_regs *regs)
 				return;
 		}
 
-		generic_handle_domain_irq(digicolor_irq_domain, hwirq);
+		handle_domain_irq(digicolor_irq_domain, hwirq, regs);
 	} while (1);
 }
 

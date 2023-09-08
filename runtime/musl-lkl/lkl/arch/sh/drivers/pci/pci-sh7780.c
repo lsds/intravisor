@@ -1,8 +1,11 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * Low-Level PCI Support for the SH7780
  *
  *  Copyright (C) 2005 - 2010  Paul Mundt
+ *
+ * This file is subject to the terms and conditions of the GNU General Public
+ * License.  See the file "COPYING" in the main directory of this archive
+ * for more details.
  */
 #include <linux/types.h>
 #include <linux/kernel.h>
@@ -16,7 +19,7 @@
 #include <linux/log2.h>
 #include "pci-sh4.h"
 #include <asm/mmu.h>
-#include <linux/sizes.h>
+#include <asm/sizes.h>
 
 #if defined(CONFIG_CPU_BIG_ENDIAN)
 # define PCICR_ENDIANNESS SH4_PCICR_BSWP
@@ -148,7 +151,7 @@ static irqreturn_t sh7780_pci_serr_irq(int irq, void *dev_id)
 
 	printk(KERN_DEBUG "PCI: system error received: ");
 	pcibios_report_status(PCI_STATUS_SIG_SYSTEM_ERROR, 1);
-	pr_cont("\n");
+	printk("\n");
 
 	/* Deassert SERR */
 	__raw_writel(SH4_PCIINTM_SDIM, hose->reg_base + SH4_PCIINTM);
@@ -179,7 +182,7 @@ static int __init sh7780_pci_setup_irqs(struct pci_channel *hose)
 	ret = request_irq(hose->serr_irq, sh7780_pci_serr_irq, 0,
 			  "PCI SERR interrupt", hose);
 	if (unlikely(ret)) {
-		pr_err("PCI: Failed hooking SERR IRQ\n");
+		printk(KERN_ERR "PCI: Failed hooking SERR IRQ\n");
 		return ret;
 	}
 
@@ -250,7 +253,7 @@ static int __init sh7780_pci_init(void)
 	const char *type;
 	int ret, i;
 
-	pr_notice("PCI: Starting initialization.\n");
+	printk(KERN_NOTICE "PCI: Starting initialization.\n");
 
 	chan->reg_base = 0xfe040000;
 
@@ -270,7 +273,7 @@ static int __init sh7780_pci_init(void)
 
 	id = __raw_readw(chan->reg_base + PCI_VENDOR_ID);
 	if (id != PCI_VENDOR_ID_RENESAS) {
-		pr_err("PCI: Unknown vendor ID 0x%04x.\n", id);
+		printk(KERN_ERR "PCI: Unknown vendor ID 0x%04x.\n", id);
 		return -ENODEV;
 	}
 
@@ -281,13 +284,14 @@ static int __init sh7780_pci_init(void)
 	       (id == PCI_DEVICE_ID_RENESAS_SH7785) ? "SH7785" :
 					  NULL;
 	if (unlikely(!type)) {
-		pr_err("PCI: Found an unsupported Renesas host controller, device id 0x%04x.\n",
-		       id);
+		printk(KERN_ERR "PCI: Found an unsupported Renesas host "
+		       "controller, device id 0x%04x.\n", id);
 		return -EINVAL;
 	}
 
-	pr_notice("PCI: Found a Renesas %s host controller, revision %d.\n",
-		  type, __raw_readb(chan->reg_base + PCI_REVISION_ID));
+	printk(KERN_NOTICE "PCI: Found a Renesas %s host "
+	       "controller, revision %d.\n", type,
+	       __raw_readb(chan->reg_base + PCI_REVISION_ID));
 
 	/*
 	 * Now throw it in to register initialization mode and
@@ -394,9 +398,9 @@ static int __init sh7780_pci_init(void)
 
 	sh7780_pci66_init(chan);
 
-	pr_notice("PCI: Running at %dMHz.\n",
-		  (__raw_readw(chan->reg_base + PCI_STATUS) & PCI_STATUS_66MHZ)
-		  ? 66 : 33);
+	printk(KERN_NOTICE "PCI: Running at %dMHz.\n",
+	       (__raw_readw(chan->reg_base + PCI_STATUS) & PCI_STATUS_66MHZ) ?
+	       66 : 33);
 
 	return 0;
 

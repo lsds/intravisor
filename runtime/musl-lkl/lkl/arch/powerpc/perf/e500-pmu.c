@@ -1,9 +1,13 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Performance counter support for e500 family processors.
  *
  * Copyright 2008-2009 Paul Mackerras, IBM Corporation.
  * Copyright 2010 Freescale Semiconductor, Inc.
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version
+ * 2 of the License, or (at your option) any later version.
  */
 #include <linux/string.h>
 #include <linux/perf_event.h>
@@ -118,13 +122,12 @@ static struct fsl_emb_pmu e500_pmu = {
 
 static int init_e500_pmu(void)
 {
-	unsigned int pvr = mfspr(SPRN_PVR);
+	if (!cur_cpu_spec->oprofile_cpu_type)
+		return -ENODEV;
 
-	/* ec500mc */
-	if (PVR_VER(pvr) == PVR_VER_E500MC || PVR_VER(pvr) == PVR_VER_E5500)
+	if (!strcmp(cur_cpu_spec->oprofile_cpu_type, "ppc/e500mc"))
 		num_events = 256;
-	/* e500 */
-	else if (PVR_VER(pvr) != PVR_VER_E500V1 && PVR_VER(pvr) != PVR_VER_E500V2)
+	else if (strcmp(cur_cpu_spec->oprofile_cpu_type, "ppc/e500"))
 		return -ENODEV;
 
 	return register_fsl_emb_pmu(&e500_pmu);

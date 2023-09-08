@@ -44,7 +44,7 @@
 
 		cpu@0 {
 			device_type = "cpu";
-			compatible = "arm,cortex-a72";
+			compatible = "arm,cortex-a72", "arm,armv8";
 			reg = <0x0 0x0>;
 			enable-method = "psci";
 			next-level-cache = <&CLUSTER0_L2>;
@@ -52,7 +52,7 @@
 
 		cpu@1 {
 			device_type = "cpu";
-			compatible = "arm,cortex-a72";
+			compatible = "arm,cortex-a72", "arm,armv8";
 			reg = <0x0 0x1>;
 			enable-method = "psci";
 			next-level-cache = <&CLUSTER0_L2>;
@@ -60,7 +60,7 @@
 
 		cpu@100 {
 			device_type = "cpu";
-			compatible = "arm,cortex-a72";
+			compatible = "arm,cortex-a72", "arm,armv8";
 			reg = <0x0 0x100>;
 			enable-method = "psci";
 			next-level-cache = <&CLUSTER1_L2>;
@@ -68,7 +68,7 @@
 
 		cpu@101 {
 			device_type = "cpu";
-			compatible = "arm,cortex-a72";
+			compatible = "arm,cortex-a72", "arm,armv8";
 			reg = <0x0 0x101>;
 			enable-method = "psci";
 			next-level-cache = <&CLUSTER1_L2>;
@@ -76,7 +76,7 @@
 
 		cpu@200 {
 			device_type = "cpu";
-			compatible = "arm,cortex-a72";
+			compatible = "arm,cortex-a72", "arm,armv8";
 			reg = <0x0 0x200>;
 			enable-method = "psci";
 			next-level-cache = <&CLUSTER2_L2>;
@@ -84,7 +84,7 @@
 
 		cpu@201 {
 			device_type = "cpu";
-			compatible = "arm,cortex-a72";
+			compatible = "arm,cortex-a72", "arm,armv8";
 			reg = <0x0 0x201>;
 			enable-method = "psci";
 			next-level-cache = <&CLUSTER2_L2>;
@@ -92,7 +92,7 @@
 
 		cpu@300 {
 			device_type = "cpu";
-			compatible = "arm,cortex-a72";
+			compatible = "arm,cortex-a72", "arm,armv8";
 			reg = <0x0 0x300>;
 			enable-method = "psci";
 			next-level-cache = <&CLUSTER3_L2>;
@@ -100,7 +100,7 @@
 
 		cpu@301 {
 			device_type = "cpu";
-			compatible = "arm,cortex-a72";
+			compatible = "arm,cortex-a72", "arm,armv8";
 			reg = <0x0 0x301>;
 			enable-method = "psci";
 			next-level-cache = <&CLUSTER3_L2>;
@@ -144,11 +144,6 @@
 			     <GIC_PPI 14 IRQ_TYPE_LEVEL_LOW>,
 			     <GIC_PPI 11 IRQ_TYPE_LEVEL_LOW>,
 			     <GIC_PPI 10 IRQ_TYPE_LEVEL_LOW>;
-	};
-
-	mhb: syscon@60401000 {
-		compatible = "brcm,sr-mhb", "syscon";
-		reg = <0 0x60401000 0 0x38c>;
 	};
 
 	scr {
@@ -263,18 +258,6 @@
 
 		#include "stingray-clock.dtsi"
 
-		otp: otp@1c400 {
-			compatible = "brcm,ocotp-v2";
-			reg = <0x0001c400 0x68>;
-			brcm,ocotp-size = <2048>;
-			status = "okay";
-		};
-
-		cdru: syscon@1d000 {
-			compatible = "brcm,sr-cdru", "syscon";
-			reg = <0x0001d000 0x400>;
-		};
-
 		gpio_crmu: gpio@24800 {
 			compatible = "brcm,iproc-gpio";
 			reg = <0x00024800 0x4c>;
@@ -285,8 +268,7 @@
 	};
 
 	#include "stingray-fs4.dtsi"
-	#include "stingray-pcie.dtsi"
-	#include "stingray-usb.dtsi"
+	#include "stingray-sata.dtsi"
 
 	hsls {
 		compatible = "simple-bus";
@@ -296,14 +278,20 @@
 
 		#include "stingray-pinctrl.dtsi"
 
-		mdio_mux_iproc: mdio-mux@20000 {
+		mdio_mux_iproc: mdio-mux@2023c {
 			compatible = "brcm,mdio-mux-iproc";
-			reg = <0x00020000 0x250>;
+			reg = <0x0002023c 0x14>;
 			#address-cells = <1>;
 			#size-cells = <0>;
 
 			mdio@0 { /* PCIe serdes */
 				reg = <0x0>;
+				#address-cells = <1>;
+				#size-cells = <0>;
+			};
+
+			mdio@2 { /* SATA */
+				reg = <0x2>;
 				#address-cells = <1>;
 				#size-cells = <0>;
 			};
@@ -421,7 +409,7 @@
 			reg = <0x000b0000 0x100>;
 			#address-cells = <1>;
 			#size-cells = <0>;
-			interrupts = <GIC_SPI 177 IRQ_TYPE_LEVEL_HIGH>;
+			interrupts = <GIC_SPI 177 IRQ_TYPE_NONE>;
 			clock-frequency = <100000>;
 			status = "disabled";
 		};
@@ -431,8 +419,7 @@
 			reg = <0x000c0000 0x1000>;
 			interrupts = <GIC_SPI 189 IRQ_TYPE_LEVEL_HIGH>;
 			clocks = <&hsls_25m_div2_clk>, <&hsls_div4_clk>;
-			clock-names = "wdog_clk", "apb_pclk";
-			timeout-sec = <60>;
+			clock-names = "wdogclk", "apb_pclk";
 		};
 
 		gpio_hsls: gpio@d0000 {
@@ -457,7 +444,8 @@
 					<&pinmux 108 16 27>,
 					<&pinmux 135 77 6>,
 					<&pinmux 141 67 4>,
-					<&pinmux 145 149 6>;
+					<&pinmux 145 149 6>,
+					<&pinmux 151 91 4>;
 		};
 
 		i2c1: i2c@e0000 {
@@ -465,12 +453,12 @@
 			reg = <0x000e0000 0x100>;
 			#address-cells = <1>;
 			#size-cells = <0>;
-			interrupts = <GIC_SPI 178 IRQ_TYPE_LEVEL_HIGH>;
+			interrupts = <GIC_SPI 178 IRQ_TYPE_NONE>;
 			clock-frequency = <100000>;
 			status = "disabled";
 		};
 
-		uart0: serial@100000 {
+		uart0: uart@100000 {
 			device_type = "serial";
 			compatible = "snps,dw-apb-uart";
 			reg = <0x00100000 0x1000>;
@@ -481,7 +469,7 @@
 			status = "disabled";
 		};
 
-		uart1: serial@110000 {
+		uart1: uart@110000 {
 			device_type = "serial";
 			compatible = "snps,dw-apb-uart";
 			reg = <0x00110000 0x1000>;
@@ -492,7 +480,7 @@
 			status = "disabled";
 		};
 
-		uart2: serial@120000 {
+		uart2: uart@120000 {
 			device_type = "serial";
 			compatible = "snps,dw-apb-uart";
 			reg = <0x00120000 0x1000>;
@@ -503,7 +491,7 @@
 			status = "disabled";
 		};
 
-		uart3: serial@130000 {
+		uart3: uart@130000 {
 			device_type = "serial";
 			compatible = "snps,dw-apb-uart";
 			reg = <0x00130000 0x1000>;
@@ -514,24 +502,24 @@
 			status = "disabled";
 		};
 
-		ssp0: spi@180000 {
+		ssp0: ssp@180000 {
 			compatible = "arm,pl022", "arm,primecell";
 			reg = <0x00180000 0x1000>;
 			interrupts = <GIC_SPI 187 IRQ_TYPE_LEVEL_HIGH>;
 			clocks = <&hsls_div2_clk>, <&hsls_div2_clk>;
-			clock-names = "sspclk", "apb_pclk";
+			clock-names = "spiclk", "apb_pclk";
 			num-cs = <1>;
 			#address-cells = <1>;
 			#size-cells = <0>;
 			status = "disabled";
 		};
 
-		ssp1: spi@190000 {
+		ssp1: ssp@190000 {
 			compatible = "arm,pl022", "arm,primecell";
 			reg = <0x00190000 0x1000>;
 			interrupts = <GIC_SPI 188 IRQ_TYPE_LEVEL_HIGH>;
 			clocks = <&hsls_div2_clk>, <&hsls_div2_clk>;
-			clock-names = "sspclk", "apb_pclk";
+			clock-names = "spiclk", "apb_pclk";
 			num-cs = <1>;
 			#address-cells = <1>;
 			#size-cells = <0>;
@@ -543,7 +531,7 @@
 			reg = <0x00220000 0x28>;
 		};
 
-		dma0: dma-controller@310000 {
+		dma0: dma@310000 {
 			compatible = "arm,pl330", "arm,primecell";
 			reg = <0x00310000 0x1000>;
 			interrupts = <GIC_SPI 193 IRQ_TYPE_LEVEL_HIGH>,
@@ -556,6 +544,8 @@
 				     <GIC_SPI 200 IRQ_TYPE_LEVEL_HIGH>,
 				     <GIC_SPI 201 IRQ_TYPE_LEVEL_HIGH>;
 			#dma-cells = <1>;
+			#dma-channels = <8>;
+			#dma-requests = <32>;
 			clocks = <&hsls_div2_clk>;
 			clock-names = "apb_pclk";
 			iommus = <&smmu 0x6000 0x0000>;
@@ -567,7 +557,7 @@
 			reg-names = "amac_base";
 			dma-coherent;
 			interrupts = <GIC_SPI 213 IRQ_TYPE_LEVEL_HIGH>;
-			status = "disabled";
+			status= "disabled";
 		};
 
 		nand: nand@360000 {
@@ -600,113 +590,6 @@
 			bus-width = <8>;
 			clocks = <&sdio1_clk>;
 			iommus = <&smmu 0x6003 0x0000>;
-			status = "disabled";
-		};
-	};
-
-	tmons {
-		compatible = "simple-bus";
-		#address-cells = <1>;
-		#size-cells = <1>;
-		ranges = <0x0 0x0 0x8f100000 0x100>;
-
-		tmon: tmon@0 {
-			compatible = "brcm,sr-thermal";
-			reg = <0x0 0x40>;
-			brcm,tmon-mask = <0x3f>;
-			#thermal-sensor-cells = <1>;
-		};
-	};
-
-	thermal-zones {
-		ihost0_thermal: ihost0-thermal {
-			polling-delay-passive = <0>;
-			polling-delay = <1000>;
-			thermal-sensors = <&tmon 0>;
-			trips {
-				cpu-crit {
-					temperature = <105000>;
-					hysteresis = <0>;
-					type = "critical";
-				};
-			};
-		};
-		ihost1_thermal: ihost1-thermal {
-			polling-delay-passive = <0>;
-			polling-delay = <1000>;
-			thermal-sensors = <&tmon 1>;
-			trips {
-				cpu-crit {
-					temperature = <105000>;
-					hysteresis = <0>;
-					type = "critical";
-				};
-			};
-		};
-		ihost2_thermal: ihost2-thermal {
-			polling-delay-passive = <0>;
-			polling-delay = <1000>;
-			thermal-sensors = <&tmon 2>;
-			trips {
-				cpu-crit {
-					temperature = <105000>;
-					hysteresis = <0>;
-					type = "critical";
-				};
-			};
-		};
-		ihost3_thermal: ihost3-thermal {
-			polling-delay-passive = <0>;
-			polling-delay = <1000>;
-			thermal-sensors = <&tmon 3>;
-			trips {
-				cpu-crit {
-					temperature = <105000>;
-					hysteresis = <0>;
-					type = "critical";
-				};
-			};
-		};
-		crmu_thermal: crmu-thermal {
-			polling-delay-passive = <0>;
-			polling-delay = <1000>;
-			thermal-sensors = <&tmon 4>;
-			trips {
-				cpu-crit {
-					temperature = <105000>;
-					hysteresis = <0>;
-					type = "critical";
-				};
-			};
-		};
-		nitro_thermal: nitro-thermal {
-			polling-delay-passive = <0>;
-			polling-delay = <1000>;
-			thermal-sensors = <&tmon 5>;
-			trips {
-				cpu-crit {
-					temperature = <105000>;
-					hysteresis = <0>;
-					type = "critical";
-				};
-			};
-		};
-	};
-
-	nic-hsls {
-		compatible = "simple-bus";
-		#address-cells = <1>;
-		#size-cells = <1>;
-		ranges = <0x0 0x0  0x0 0x7fffffff>;
-
-		nic_i2c0: i2c@60826100 {
-			compatible = "brcm,iproc-nic-i2c";
-			#address-cells = <1>;
-			#size-cells = <0>;
-			reg = <0x60826100 0x100>,
-			      <0x60e00408 0x1000>;
-			brcm,ape-hsls-addr-mask = <0x03400000>;
-			clock-frequency = <100000>;
 			status = "disabled";
 		};
 	};

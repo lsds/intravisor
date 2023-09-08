@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 #define pr_fmt(fmt) KBUILD_MODNAME ":%s: " fmt, __func__
 
 #include <linux/kernel.h>
@@ -473,7 +472,7 @@ static const uint8_t *copy_macs(struct mpoa_client *mpc,
 		if (mpc->number_of_mps_macs != 0)
 			kfree(mpc->mps_macs);
 		mpc->number_of_mps_macs = 0;
-		mpc->mps_macs = kmalloc_array(ETH_ALEN, num_macs, GFP_KERNEL);
+		mpc->mps_macs = kmalloc(num_macs * ETH_ALEN, GFP_KERNEL);
 		if (mpc->mps_macs == NULL) {
 			pr_info("(%s) out of mem\n", mpc->dev->name);
 			return NULL;
@@ -556,7 +555,8 @@ static int send_via_shortcut(struct sk_buff *skb, struct mpoa_client *mpc)
 					sizeof(struct llc_snap_hdr));
 	}
 
-	atm_account_tx(entry->shortcut, skb);
+	refcount_add(skb->truesize, &sk_atm(entry->shortcut)->sk_wmem_alloc);
+	ATM_SKB(skb)->atm_options = entry->shortcut->atm_options;
 	entry->shortcut->send(entry->shortcut, skb);
 	entry->packets_fwded++;
 	mpc->in_ops->put(entry);

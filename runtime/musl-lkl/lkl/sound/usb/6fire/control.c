@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Linux driver for TerraTec DMX 6Fire USB
  *
@@ -11,6 +10,11 @@
  * Thanks to:
  * - Holger Ruckdeschel: he found out how to control individual channel
  *   volumes and introduced mute switch
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
  */
 
 #include <linux/interrupt.h>
@@ -397,7 +401,7 @@ static int usb6fire_control_digital_thru_get(struct snd_kcontrol *kcontrol,
 	return 0;
 }
 
-static const struct snd_kcontrol_new vol_elements[] = {
+static struct snd_kcontrol_new vol_elements[] = {
 	{
 		.iface = SNDRV_CTL_ELEM_IFACE_MIXER,
 		.name = "Analog Playback Volume",
@@ -437,7 +441,7 @@ static const struct snd_kcontrol_new vol_elements[] = {
 	{}
 };
 
-static const struct snd_kcontrol_new mute_elements[] = {
+static struct snd_kcontrol_new mute_elements[] = {
 	{
 		.iface = SNDRV_CTL_ELEM_IFACE_MIXER,
 		.name = "Analog Playback Switch",
@@ -471,7 +475,7 @@ static const struct snd_kcontrol_new mute_elements[] = {
 	{}
 };
 
-static const struct snd_kcontrol_new elements[] = {
+static struct snd_kcontrol_new elements[] = {
 	{
 		.iface = SNDRV_CTL_ELEM_IFACE_MIXER,
 		.name = "Line/Phono Capture Route",
@@ -517,7 +521,7 @@ static int usb6fire_control_add_virtual(
 	struct control_runtime *rt,
 	struct snd_card *card,
 	char *name,
-	const struct snd_kcontrol_new *elems)
+	struct snd_kcontrol_new *elems)
 {
 	int ret;
 	int i;
@@ -539,7 +543,7 @@ static int usb6fire_control_add_virtual(
 		ret = snd_ctl_add(card, control);
 		if (ret < 0)
 			return ret;
-		ret = snd_ctl_add_follower(vmaster, control);
+		ret = snd_ctl_add_slave(vmaster, control);
 		if (ret < 0)
 			return ret;
 		i++;

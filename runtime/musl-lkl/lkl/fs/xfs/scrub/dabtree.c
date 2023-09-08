@@ -1,7 +1,21 @@
-// SPDX-License-Identifier: GPL-2.0+
 /*
  * Copyright (C) 2017 Oracle.  All Rights Reserved.
+ *
  * Author: Darrick J. Wong <darrick.wong@oracle.com>
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version 2
+ * of the License, or (at your option) any later version.
+ *
+ * This program is distributed in the hope that it would be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write the Free Software Foundation,
+ * Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301, USA.
  */
 #include "xfs.h"
 #include "xfs_fs.h"
@@ -9,12 +23,20 @@
 #include "xfs_format.h"
 #include "xfs_trans_resv.h"
 #include "xfs_mount.h"
+#include "xfs_defer.h"
+#include "xfs_btree.h"
+#include "xfs_bit.h"
 #include "xfs_log_format.h"
 #include "xfs_trans.h"
+#include "xfs_sb.h"
 #include "xfs_inode.h"
+#include "xfs_inode_fork.h"
+#include "xfs_da_format.h"
+#include "xfs_da_btree.h"
 #include "xfs_dir2.h"
 #include "xfs_dir2_priv.h"
 #include "xfs_attr_leaf.h"
+#include "scrub/xfs_scrub.h"
 #include "scrub/scrub.h"
 #include "scrub/common.h"
 #include "scrub/trace.h"
@@ -27,12 +49,12 @@
  * operational errors in common.c.
  */
 bool
-xchk_da_process_error(
-	struct xchk_da_btree	*ds,
-	int			level,
-	int			*error)
+xfs_scrub_da_process_error(
+	struct xfs_scrub_da_btree	*ds,
+	int				level,
+	int				*error)
 {
-	struct xfs_scrub	*sc = ds->sc;
+	struct xfs_scrub_context	*sc = ds->sc;
 
 	if (*error == 0)
 		return true;
@@ -40,16 +62,16 @@ xchk_da_process_error(
 	switch (*error) {
 	case -EDEADLOCK:
 		/* Used to restart an op with deadlock avoidance. */
-		trace_xchk_deadlock_retry(sc->ip, sc->sm, *error);
+		trace_xfs_scrub_deadlock_retry(sc->ip, sc->sm, *error);
 		break;
 	case -EFSBADCRC:
 	case -EFSCORRUPTED:
 		/* Note the badness but don't abort. */
 		sc->sm->sm_flags |= XFS_SCRUB_OFLAG_CORRUPT;
 		*error = 0;
-		fallthrough;
+		/* fall through */
 	default:
-		trace_xchk_file_op_error(sc, ds->dargs.whichfork,
+		trace_xfs_scrub_file_op_error(sc, ds->dargs.whichfork,
 				xfs_dir2_da_to_db(ds->dargs.geo,
 					ds->state->path.blk[level].blkno),
 				*error, __return_address);
@@ -63,41 +85,64 @@ xchk_da_process_error(
  * operational errors in common.c.
  */
 void
-xchk_da_set_corrupt(
-	struct xchk_da_btree	*ds,
-	int			level)
+xfs_scrub_da_set_corrupt(
+	struct xfs_scrub_da_btree	*ds,
+	int				level)
 {
-	struct xfs_scrub	*sc = ds->sc;
+	struct xfs_scrub_context	*sc = ds->sc;
 
 	sc->sm->sm_flags |= XFS_SCRUB_OFLAG_CORRUPT;
 
-	trace_xchk_fblock_error(sc, ds->dargs.whichfork,
+	trace_xfs_scrub_fblock_error(sc, ds->dargs.whichfork,
 			xfs_dir2_da_to_db(ds->dargs.geo,
 				ds->state->path.blk[level].blkno),
 			__return_address);
 }
 
-static struct xfs_da_node_entry *
-xchk_da_btree_node_entry(
-	struct xchk_da_btree		*ds,
-	int				level)
+/* Find an entry at a certain level in a da btree. */
+STATIC void *
+xfs_scrub_da_btree_entry(
+	struct xfs_scrub_da_btree	*ds,
+	int				level,
+	int				rec)
 {
-	struct xfs_da_state_blk		*blk = &ds->state->path.blk[level];
-	struct xfs_da3_icnode_hdr	hdr;
+	char				*ents;
+	struct xfs_da_state_blk		*blk;
+	void				*baddr;
 
-	ASSERT(blk->magic == XFS_DA_NODE_MAGIC);
+	/* Dispatch the entry finding function. */
+	blk = &ds->state->path.blk[level];
+	baddr = blk->bp->b_addr;
+	switch (blk->magic) {
+	case XFS_ATTR_LEAF_MAGIC:
+	case XFS_ATTR3_LEAF_MAGIC:
+		ents = (char *)xfs_attr3_leaf_entryp(baddr);
+		return ents + (rec * sizeof(struct xfs_attr_leaf_entry));
+	case XFS_DIR2_LEAFN_MAGIC:
+	case XFS_DIR3_LEAFN_MAGIC:
+		ents = (char *)ds->dargs.dp->d_ops->leaf_ents_p(baddr);
+		return ents + (rec * sizeof(struct xfs_dir2_leaf_entry));
+	case XFS_DIR2_LEAF1_MAGIC:
+	case XFS_DIR3_LEAF1_MAGIC:
+		ents = (char *)ds->dargs.dp->d_ops->leaf_ents_p(baddr);
+		return ents + (rec * sizeof(struct xfs_dir2_leaf_entry));
+	case XFS_DA_NODE_MAGIC:
+	case XFS_DA3_NODE_MAGIC:
+		ents = (char *)ds->dargs.dp->d_ops->node_tree_p(baddr);
+		return ents + (rec * sizeof(struct xfs_da_node_entry));
+	}
 
-	xfs_da3_node_hdr_from_disk(ds->sc->mp, &hdr, blk->bp->b_addr);
-	return hdr.btree + blk->index;
+	return NULL;
 }
 
 /* Scrub a da btree hash (key). */
 int
-xchk_da_btree_hash(
-	struct xchk_da_btree		*ds,
+xfs_scrub_da_btree_hash(
+	struct xfs_scrub_da_btree	*ds,
 	int				level,
 	__be32				*hashp)
 {
+	struct xfs_da_state_blk		*blks;
 	struct xfs_da_node_entry	*entry;
 	xfs_dahash_t			hash;
 	xfs_dahash_t			parent_hash;
@@ -105,17 +150,18 @@ xchk_da_btree_hash(
 	/* Is this hash in order? */
 	hash = be32_to_cpu(*hashp);
 	if (hash < ds->hashes[level])
-		xchk_da_set_corrupt(ds, level);
+		xfs_scrub_da_set_corrupt(ds, level);
 	ds->hashes[level] = hash;
 
 	if (level == 0)
 		return 0;
 
 	/* Is this hash no larger than the parent hash? */
-	entry = xchk_da_btree_node_entry(ds, level - 1);
+	blks = ds->state->path.blk;
+	entry = xfs_scrub_da_btree_entry(ds, level - 1, blks[level - 1].index);
 	parent_hash = be32_to_cpu(entry->hashval);
 	if (parent_hash < hash)
-		xchk_da_set_corrupt(ds, level);
+		xfs_scrub_da_set_corrupt(ds, level);
 
 	return 0;
 }
@@ -125,13 +171,13 @@ xchk_da_btree_hash(
  * pointer.
  */
 STATIC bool
-xchk_da_btree_ptr_ok(
-	struct xchk_da_btree	*ds,
-	int			level,
-	xfs_dablk_t		blkno)
+xfs_scrub_da_btree_ptr_ok(
+	struct xfs_scrub_da_btree	*ds,
+	int				level,
+	xfs_dablk_t			blkno)
 {
 	if (blkno < ds->lowest || (ds->highest != 0 && blkno >= ds->highest)) {
-		xchk_da_set_corrupt(ds, level);
+		xfs_scrub_da_set_corrupt(ds, level);
 		return false;
 	}
 
@@ -144,7 +190,7 @@ xchk_da_btree_ptr_ok(
  * leaf1, we must multiplex the verifiers.
  */
 static void
-xchk_da_btree_read_verify(
+xfs_scrub_da_btree_read_verify(
 	struct xfs_buf		*bp)
 {
 	struct xfs_da_blkinfo	*info = bp->b_addr;
@@ -166,7 +212,7 @@ xchk_da_btree_read_verify(
 	}
 }
 static void
-xchk_da_btree_write_verify(
+xfs_scrub_da_btree_write_verify(
 	struct xfs_buf		*bp)
 {
 	struct xfs_da_blkinfo	*info = bp->b_addr;
@@ -188,7 +234,7 @@ xchk_da_btree_write_verify(
 	}
 }
 static void *
-xchk_da_btree_verify(
+xfs_scrub_da_btree_verify(
 	struct xfs_buf		*bp)
 {
 	struct xfs_da_blkinfo	*info = bp->b_addr;
@@ -204,83 +250,71 @@ xchk_da_btree_verify(
 	}
 }
 
-static const struct xfs_buf_ops xchk_da_btree_buf_ops = {
-	.name = "xchk_da_btree",
-	.verify_read = xchk_da_btree_read_verify,
-	.verify_write = xchk_da_btree_write_verify,
-	.verify_struct = xchk_da_btree_verify,
+static const struct xfs_buf_ops xfs_scrub_da_btree_buf_ops = {
+	.name = "xfs_scrub_da_btree",
+	.verify_read = xfs_scrub_da_btree_read_verify,
+	.verify_write = xfs_scrub_da_btree_write_verify,
+	.verify_struct = xfs_scrub_da_btree_verify,
 };
 
 /* Check a block's sibling. */
 STATIC int
-xchk_da_btree_block_check_sibling(
-	struct xchk_da_btree	*ds,
-	int			level,
-	int			direction,
-	xfs_dablk_t		sibling)
+xfs_scrub_da_btree_block_check_sibling(
+	struct xfs_scrub_da_btree	*ds,
+	int				level,
+	int				direction,
+	xfs_dablk_t			sibling)
 {
-	struct xfs_da_state_path *path = &ds->state->path;
-	struct xfs_da_state_path *altpath = &ds->state->altpath;
-	int			retval;
-	int			plevel;
-	int			error;
+	int				retval;
+	int				error;
 
-	memcpy(altpath, path, sizeof(ds->state->altpath));
+	memcpy(&ds->state->altpath, &ds->state->path,
+			sizeof(ds->state->altpath));
 
 	/*
 	 * If the pointer is null, we shouldn't be able to move the upper
 	 * level pointer anywhere.
 	 */
 	if (sibling == 0) {
-		error = xfs_da3_path_shift(ds->state, altpath, direction,
-				false, &retval);
+		error = xfs_da3_path_shift(ds->state, &ds->state->altpath,
+				direction, false, &retval);
 		if (error == 0 && retval == 0)
-			xchk_da_set_corrupt(ds, level);
+			xfs_scrub_da_set_corrupt(ds, level);
 		error = 0;
 		goto out;
 	}
 
 	/* Move the alternate cursor one block in the direction given. */
-	error = xfs_da3_path_shift(ds->state, altpath, direction, false,
-			&retval);
-	if (!xchk_da_process_error(ds, level, &error))
-		goto out;
+	error = xfs_da3_path_shift(ds->state, &ds->state->altpath,
+			direction, false, &retval);
+	if (!xfs_scrub_da_process_error(ds, level, &error))
+		return error;
 	if (retval) {
-		xchk_da_set_corrupt(ds, level);
-		goto out;
+		xfs_scrub_da_set_corrupt(ds, level);
+		return error;
 	}
-	if (altpath->blk[level].bp)
-		xchk_buffer_recheck(ds->sc, altpath->blk[level].bp);
+	if (ds->state->altpath.blk[level].bp)
+		xfs_scrub_buffer_recheck(ds->sc,
+				ds->state->altpath.blk[level].bp);
 
 	/* Compare upper level pointer to sibling pointer. */
-	if (altpath->blk[level].blkno != sibling)
-		xchk_da_set_corrupt(ds, level);
-
+	if (ds->state->altpath.blk[level].blkno != sibling)
+		xfs_scrub_da_set_corrupt(ds, level);
+	xfs_trans_brelse(ds->dargs.trans, ds->state->altpath.blk[level].bp);
 out:
-	/* Free all buffers in the altpath that aren't referenced from path. */
-	for (plevel = 0; plevel < altpath->active; plevel++) {
-		if (altpath->blk[plevel].bp == NULL ||
-		    (plevel < path->active &&
-		     altpath->blk[plevel].bp == path->blk[plevel].bp))
-			continue;
-
-		xfs_trans_brelse(ds->dargs.trans, altpath->blk[plevel].bp);
-		altpath->blk[plevel].bp = NULL;
-	}
-
 	return error;
 }
 
 /* Check a block's sibling pointers. */
 STATIC int
-xchk_da_btree_block_check_siblings(
-	struct xchk_da_btree	*ds,
-	int			level,
-	struct xfs_da_blkinfo	*hdr)
+xfs_scrub_da_btree_block_check_siblings(
+	struct xfs_scrub_da_btree	*ds,
+	int				level,
+	struct xfs_da_blkinfo		*hdr)
 {
-	xfs_dablk_t		forw;
-	xfs_dablk_t		back;
-	int			error = 0;
+	xfs_dablk_t			forw;
+	xfs_dablk_t			back;
+	int				error = 0;
 
 	forw = be32_to_cpu(hdr->forw);
 	back = be32_to_cpu(hdr->back);
@@ -288,7 +322,7 @@ xchk_da_btree_block_check_siblings(
 	/* Top level blocks should not have sibling pointers. */
 	if (level == 0) {
 		if (forw != 0 || back != 0)
-			xchk_da_set_corrupt(ds, level);
+			xfs_scrub_da_set_corrupt(ds, level);
 		return 0;
 	}
 
@@ -296,10 +330,10 @@ xchk_da_btree_block_check_siblings(
 	 * Check back (left) and forw (right) pointers.  These functions
 	 * absorb error codes for us.
 	 */
-	error = xchk_da_btree_block_check_sibling(ds, level, 0, back);
+	error = xfs_scrub_da_btree_block_check_sibling(ds, level, 0, back);
 	if (error)
 		goto out;
-	error = xchk_da_btree_block_check_sibling(ds, level, 1, forw);
+	error = xfs_scrub_da_btree_block_check_sibling(ds, level, 1, forw);
 
 out:
 	memset(&ds->state->altpath, 0, sizeof(ds->state->altpath));
@@ -308,8 +342,8 @@ out:
 
 /* Load a dir/attribute block from a btree. */
 STATIC int
-xchk_da_btree_block(
-	struct xchk_da_btree		*ds,
+xfs_scrub_da_btree_block(
+	struct xfs_scrub_da_btree	*ds,
 	int				level,
 	xfs_dablk_t			blkno)
 {
@@ -335,17 +369,17 @@ xchk_da_btree_block(
 
 	/* Check the pointer. */
 	blk->blkno = blkno;
-	if (!xchk_da_btree_ptr_ok(ds, level, blkno))
+	if (!xfs_scrub_da_btree_ptr_ok(ds, level, blkno))
 		goto out_nobuf;
 
 	/* Read the buffer. */
-	error = xfs_da_read_buf(dargs->trans, dargs->dp, blk->blkno,
-			XFS_DABUF_MAP_HOLE_OK, &blk->bp, dargs->whichfork,
-			&xchk_da_btree_buf_ops);
-	if (!xchk_da_process_error(ds, level, &error))
+	error = xfs_da_read_buf(dargs->trans, dargs->dp, blk->blkno, -2,
+			&blk->bp, dargs->whichfork,
+			&xfs_scrub_da_btree_buf_ops);
+	if (!xfs_scrub_da_process_error(ds, level, &error))
 		goto out_nobuf;
 	if (blk->bp)
-		xchk_buffer_recheck(ds->sc, blk->bp);
+		xfs_scrub_buffer_recheck(ds->sc, blk->bp);
 
 	/*
 	 * We didn't find a dir btree root block, which means that
@@ -358,7 +392,7 @@ xchk_da_btree_block(
 
 	/* It's /not/ ok for attr trees not to have a da btree. */
 	if (blk->bp == NULL) {
-		xchk_da_set_corrupt(ds, level);
+		xfs_scrub_da_set_corrupt(ds, level);
 		goto out_nobuf;
 	}
 
@@ -367,18 +401,18 @@ xchk_da_btree_block(
 	pmaxrecs = &ds->maxrecs[level];
 
 	/* We only started zeroing the header on v5 filesystems. */
-	if (xfs_has_crc(ds->sc->mp) && hdr3->hdr.pad)
-		xchk_da_set_corrupt(ds, level);
+	if (xfs_sb_version_hascrc(&ds->sc->mp->m_sb) && hdr3->hdr.pad)
+		xfs_scrub_da_set_corrupt(ds, level);
 
 	/* Check the owner. */
-	if (xfs_has_crc(ip->i_mount)) {
+	if (xfs_sb_version_hascrc(&ip->i_mount->m_sb)) {
 		owner = be64_to_cpu(hdr3->owner);
 		if (owner != ip->i_ino)
-			xchk_da_set_corrupt(ds, level);
+			xfs_scrub_da_set_corrupt(ds, level);
 	}
 
 	/* Check the siblings. */
-	error = xchk_da_btree_block_check_siblings(ds, level, &hdr3->hdr);
+	error = xfs_scrub_da_btree_block_check_siblings(ds, level, &hdr3->hdr);
 	if (error)
 		goto out;
 
@@ -391,7 +425,7 @@ xchk_da_btree_block(
 		blk->magic = XFS_ATTR_LEAF_MAGIC;
 		blk->hashval = xfs_attr_leaf_lasthash(blk->bp, pmaxrecs);
 		if (ds->tree_level != 0)
-			xchk_da_set_corrupt(ds, level);
+			xfs_scrub_da_set_corrupt(ds, level);
 		break;
 	case XFS_DIR2_LEAFN_MAGIC:
 	case XFS_DIR3_LEAFN_MAGIC:
@@ -400,7 +434,7 @@ xchk_da_btree_block(
 		blk->magic = XFS_DIR2_LEAFN_MAGIC;
 		blk->hashval = xfs_dir2_leaf_lasthash(ip, blk->bp, pmaxrecs);
 		if (ds->tree_level != 0)
-			xchk_da_set_corrupt(ds, level);
+			xfs_scrub_da_set_corrupt(ds, level);
 		break;
 	case XFS_DIR2_LEAF1_MAGIC:
 	case XFS_DIR3_LEAF1_MAGIC:
@@ -409,7 +443,7 @@ xchk_da_btree_block(
 		blk->magic = XFS_DIR2_LEAF1_MAGIC;
 		blk->hashval = xfs_dir2_leaf_lasthash(ip, blk->bp, pmaxrecs);
 		if (ds->tree_level != 0)
-			xchk_da_set_corrupt(ds, level);
+			xfs_scrub_da_set_corrupt(ds, level);
 		break;
 	case XFS_DA_NODE_MAGIC:
 	case XFS_DA3_NODE_MAGIC:
@@ -417,19 +451,19 @@ xchk_da_btree_block(
 				XFS_BLFT_DA_NODE_BUF);
 		blk->magic = XFS_DA_NODE_MAGIC;
 		node = blk->bp->b_addr;
-		xfs_da3_node_hdr_from_disk(ip->i_mount, &nodehdr, node);
-		btree = nodehdr.btree;
+		ip->d_ops->node_hdr_from_disk(&nodehdr, node);
+		btree = ip->d_ops->node_tree_p(node);
 		*pmaxrecs = nodehdr.count;
 		blk->hashval = be32_to_cpu(btree[*pmaxrecs - 1].hashval);
 		if (level == 0) {
 			if (nodehdr.level >= XFS_DA_NODE_MAXDEPTH) {
-				xchk_da_set_corrupt(ds, level);
+				xfs_scrub_da_set_corrupt(ds, level);
 				goto out_freebp;
 			}
 			ds->tree_level = nodehdr.level;
 		} else {
 			if (ds->tree_level != nodehdr.level) {
-				xchk_da_set_corrupt(ds, level);
+				xfs_scrub_da_set_corrupt(ds, level);
 				goto out_freebp;
 			}
 		}
@@ -437,22 +471,8 @@ xchk_da_btree_block(
 		/* XXX: Check hdr3.pad32 once we know how to fix it. */
 		break;
 	default:
-		xchk_da_set_corrupt(ds, level);
+		xfs_scrub_da_set_corrupt(ds, level);
 		goto out_freebp;
-	}
-
-	/*
-	 * If we've been handed a block that is below the dabtree root, does
-	 * its hashval match what the parent block expected to see?
-	 */
-	if (level > 0) {
-		struct xfs_da_node_entry	*key;
-
-		key = xchk_da_btree_node_entry(ds, level - 1);
-		if (be32_to_cpu(key->hashval) != blk->hashval) {
-			xchk_da_set_corrupt(ds, level);
-			goto out_freebp;
-		}
 	}
 
 out:
@@ -467,54 +487,55 @@ out_nobuf:
 
 /* Visit all nodes and leaves of a da btree. */
 int
-xchk_da_btree(
-	struct xfs_scrub		*sc,
+xfs_scrub_da_btree(
+	struct xfs_scrub_context	*sc,
 	int				whichfork,
-	xchk_da_btree_rec_fn		scrub_fn,
+	xfs_scrub_da_btree_rec_fn	scrub_fn,
 	void				*private)
 {
-	struct xchk_da_btree		*ds;
+	struct xfs_scrub_da_btree	ds = {};
 	struct xfs_mount		*mp = sc->mp;
 	struct xfs_da_state_blk		*blks;
 	struct xfs_da_node_entry	*key;
+	void				*rec;
 	xfs_dablk_t			blkno;
 	int				level;
 	int				error;
 
 	/* Skip short format data structures; no btree to scan. */
-	if (!xfs_ifork_has_extents(xfs_ifork_ptr(sc->ip, whichfork)))
+	if (XFS_IFORK_FORMAT(sc->ip, whichfork) != XFS_DINODE_FMT_EXTENTS &&
+	    XFS_IFORK_FORMAT(sc->ip, whichfork) != XFS_DINODE_FMT_BTREE)
 		return 0;
 
 	/* Set up initial da state. */
-	ds = kmem_zalloc(sizeof(struct xchk_da_btree), KM_NOFS | KM_MAYFAIL);
-	if (!ds)
-		return -ENOMEM;
-	ds->dargs.dp = sc->ip;
-	ds->dargs.whichfork = whichfork;
-	ds->dargs.trans = sc->tp;
-	ds->dargs.op_flags = XFS_DA_OP_OKNOENT;
-	ds->state = xfs_da_state_alloc(&ds->dargs);
-	ds->sc = sc;
-	ds->private = private;
+	ds.dargs.dp = sc->ip;
+	ds.dargs.whichfork = whichfork;
+	ds.dargs.trans = sc->tp;
+	ds.dargs.op_flags = XFS_DA_OP_OKNOENT;
+	ds.state = xfs_da_state_alloc();
+	ds.state->args = &ds.dargs;
+	ds.state->mp = mp;
+	ds.sc = sc;
+	ds.private = private;
 	if (whichfork == XFS_ATTR_FORK) {
-		ds->dargs.geo = mp->m_attr_geo;
-		ds->lowest = 0;
-		ds->highest = 0;
+		ds.dargs.geo = mp->m_attr_geo;
+		ds.lowest = 0;
+		ds.highest = 0;
 	} else {
-		ds->dargs.geo = mp->m_dir_geo;
-		ds->lowest = ds->dargs.geo->leafblk;
-		ds->highest = ds->dargs.geo->freeblk;
+		ds.dargs.geo = mp->m_dir_geo;
+		ds.lowest = ds.dargs.geo->leafblk;
+		ds.highest = ds.dargs.geo->freeblk;
 	}
-	blkno = ds->lowest;
+	blkno = ds.lowest;
 	level = 0;
 
 	/* Find the root of the da tree, if present. */
-	blks = ds->state->path.blk;
-	error = xchk_da_btree_block(ds, level, blkno);
+	blks = ds.state->path.blk;
+	error = xfs_scrub_da_btree_block(&ds, level, blkno);
 	if (error)
 		goto out_state;
 	/*
-	 * We didn't find a block at ds->lowest, which means that there's
+	 * We didn't find a block at ds.lowest, which means that there's
 	 * no LEAF1/LEAFN tree (at least not where it's supposed to be),
 	 * so jump out now.
 	 */
@@ -526,19 +547,21 @@ xchk_da_btree(
 		/* Handle leaf block. */
 		if (blks[level].magic != XFS_DA_NODE_MAGIC) {
 			/* End of leaf, pop back towards the root. */
-			if (blks[level].index >= ds->maxrecs[level]) {
+			if (blks[level].index >= ds.maxrecs[level]) {
 				if (level > 0)
 					blks[level - 1].index++;
-				ds->tree_level++;
+				ds.tree_level++;
 				level--;
 				continue;
 			}
 
 			/* Dispatch record scrubbing. */
-			error = scrub_fn(ds, level);
+			rec = xfs_scrub_da_btree_entry(&ds, level,
+					blks[level].index);
+			error = scrub_fn(&ds, level, rec);
 			if (error)
 				break;
-			if (xchk_should_terminate(sc, &error) ||
+			if (xfs_scrub_should_terminate(sc, &error) ||
 			    (sc->sm->sm_flags & XFS_SCRUB_OFLAG_CORRUPT))
 				break;
 
@@ -548,30 +571,25 @@ xchk_da_btree(
 
 
 		/* End of node, pop back towards the root. */
-		if (blks[level].index >= ds->maxrecs[level]) {
+		if (blks[level].index >= ds.maxrecs[level]) {
 			if (level > 0)
 				blks[level - 1].index++;
-			ds->tree_level++;
+			ds.tree_level++;
 			level--;
 			continue;
 		}
 
 		/* Hashes in order for scrub? */
-		key = xchk_da_btree_node_entry(ds, level);
-		error = xchk_da_btree_hash(ds, level, &key->hashval);
+		key = xfs_scrub_da_btree_entry(&ds, level, blks[level].index);
+		error = xfs_scrub_da_btree_hash(&ds, level, &key->hashval);
 		if (error)
 			goto out;
 
 		/* Drill another level deeper. */
 		blkno = be32_to_cpu(key->before);
 		level++;
-		if (level >= XFS_DA_NODE_MAXDEPTH) {
-			/* Too deep! */
-			xchk_da_set_corrupt(ds, level - 1);
-			break;
-		}
-		ds->tree_level--;
-		error = xchk_da_btree_block(ds, level, blkno);
+		ds.tree_level--;
+		error = xfs_scrub_da_btree_block(&ds, level, blkno);
 		if (error)
 			goto out;
 		if (blks[level].bp == NULL)
@@ -590,7 +608,6 @@ out:
 	}
 
 out_state:
-	xfs_da_state_free(ds->state);
-	kmem_free(ds);
+	xfs_da_state_free(ds.state);
 	return error;
 }

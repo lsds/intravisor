@@ -1,4 +1,16 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-2.0
 # Checks fast/slow prime_number generation for inconsistencies
-$(dirname $0)/../kselftest/module.sh "prime numbers" prime_numbers selftest=65536
+
+if ! /sbin/modprobe -q -r prime_numbers; then
+	echo "prime_numbers: [SKIP]"
+	exit 77
+fi
+
+if /sbin/modprobe -q prime_numbers selftest=65536; then
+	/sbin/modprobe -q -r prime_numbers
+	echo "prime_numbers: ok"
+else
+	echo "prime_numbers: [FAIL]"
+	exit 1
+fi

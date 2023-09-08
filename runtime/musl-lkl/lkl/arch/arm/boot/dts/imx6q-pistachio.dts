@@ -57,7 +57,6 @@
 	};
 
 	memory@10000000 {
-		device_type = "memory";
 		reg = <0x10000000 0x80000000>;
 	};
 
@@ -100,10 +99,10 @@
 		pinctrl-names = "default";
 		pinctrl-0 = <&pinctrl_gpio_keys>;
 
-		key-power {
+		power {
 			label = "Power Button";
 			gpios = <&gpio2 12 GPIO_ACTIVE_LOW>;
-			wakeup-source;
+			gpio-key,wakeup;
 			linux,code = <KEY_POWER>;
 		};
 	};
@@ -570,7 +569,6 @@
 };
 
 &pwm1 {
-	#pwm-cells = <2>;
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_pwm1>;
 	status = "okay";
@@ -616,7 +614,7 @@
 &uart5 {
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_uart5>;
-	uart-has-rtscts;
+	fsl,uart-has-rtscts;
 	status = "okay";
 };
 

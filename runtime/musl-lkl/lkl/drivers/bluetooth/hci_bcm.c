@@ -1,9 +1,24 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  *
  *  Bluetooth HCI UART driver for Broadcom devices
  *
  *  Copyright (C) 2015  Intel Corporation
+ *
+ *
+ *  This program is free software; you can redistribute it and/or modify
+ *  it under the terms of the GNU General Public License as published by
+ *  the Free Software Foundation; either version 2 of the License, or
+ *  (at your option) any later version.
+ *
+ *  This program is distributed in the hope that it will be useful,
+ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *  GNU General Public License for more details.
+ *
+ *  You should have received a copy of the GNU General Public License
+ *  along with this program; if not, write to the Free Software
+ *  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ *
  */
 
 #include <linux/kernel.h>
@@ -13,14 +28,11 @@
 #include <linux/module.h>
 #include <linux/acpi.h>
 #include <linux/of.h>
-#include <linux/of_irq.h>
 #include <linux/property.h>
 #include <linux/platform_data/x86/apple.h>
 #include <linux/platform_device.h>
-#include <linux/regulator/consumer.h>
 #include <linux/clk.h>
 #include <linux/gpio/consumer.h>
-#include <linux/gpio/machine.h>
 #include <linux/tty.h>
 #include <linux/interrupt.h>
 #include <linux/dmi.h>
@@ -39,27 +51,7 @@
 #define BCM_LM_DIAG_PKT 0x07
 #define BCM_LM_DIAG_SIZE 63
 
-#define BCM_TYPE49_PKT 0x31
-#define BCM_TYPE49_SIZE 0
-
-#define BCM_TYPE52_PKT 0x34
-#define BCM_TYPE52_SIZE 0
-
 #define BCM_AUTOSUSPEND_DELAY	5000 /* default autosleep delay */
-
-#define BCM_NUM_SUPPLIES 2
-
-/**
- * struct bcm_device_data - device specific data
- * @no_early_set_baudrate: Disallow set baudrate before driver setup()
- * @drive_rts_on_open: drive RTS signal on ->open() when platform requires it
- * @max_autobaud_speed: max baudrate supported by device in autobaud mode
- */
-struct bcm_device_data {
-	bool	no_early_set_baudrate;
-	bool	drive_rts_on_open;
-	u32	max_autobaud_speed;
-};
 
 /**
  * struct bcm_device - device driver resources
@@ -72,8 +64,6 @@ struct bcm_device_data {
  *	deassert = Bluetooth device may sleep when sleep criteria are met
  * @shutdown: BT_REG_ON pin,
  *	power up or power down Bluetooth device internal regulators
- * @reset: BT_RST_N pin,
- *	active low resets the Bluetooth logic core
  * @set_device_wakeup: callback to toggle BT_WAKE pin
  *	either by accessing @device_wakeup or by calling @btlp
  * @set_shutdown: callback to toggle BT_REG_ON pin
@@ -81,12 +71,8 @@ struct bcm_device_data {
  * @btlp: Apple ACPI method to toggle BT_WAKE pin ("Bluetooth Low Power")
  * @btpu: Apple ACPI method to drive BT_REG_ON pin high ("Bluetooth Power Up")
  * @btpd: Apple ACPI method to drive BT_REG_ON pin low ("Bluetooth Power Down")
- * @gpio_count: internal counter for GPIO resources associated with ACPI device
- * @gpio_int_idx: index in _CRS for GpioInt() resource
- * @txco_clk: external reference frequency clock used by Bluetooth device
- * @lpo_clk: external LPO clock used by Bluetooth device
- * @supplies: VBAT and VDDIO supplies used by Bluetooth device
- * @res_enabled: whether clocks and supplies are prepared and enabled
+ * @clk: clock used by Bluetooth device
+ * @clk_enabled: whether @clk is prepared and enabled
  * @init_speed: default baudrate of Bluetooth device;
  *	the host UART is initially set to this baudrate so that
  *	it can configure the Bluetooth device for @oper_speed
@@ -94,15 +80,9 @@ struct bcm_device_data {
  *	set to 0 if @init_speed is already the preferred baudrate
  * @irq: interrupt triggered by HOST_WAKE_BT pin
  * @irq_active_low: whether @irq is active low
- * @irq_acquired: flag to show if IRQ handler has been assigned
  * @hu: pointer to HCI UART controller struct,
  *	used to disable flow control during runtime suspend and system sleep
  * @is_suspended: whether flow control is currently disabled
- * @no_early_set_baudrate: don't set_baudrate before setup()
- * @drive_rts_on_open: drive RTS signal on ->open() when platform requires it
- * @pcm_int_params: keep the initial PCM configuration
- * @use_autobaud_mode: start Bluetooth device in autobaud mode
- * @max_autobaud_speed: max baudrate supported by device in autobaud mode
  */
 struct bcm_device {
 	/* Must be the first member, hci_serdev.c expects this. */
@@ -114,7 +94,6 @@ struct bcm_device {
 	const char		*name;
 	struct gpio_desc	*device_wakeup;
 	struct gpio_desc	*shutdown;
-	struct gpio_desc	*reset;
 	int			(*set_device_wakeup)(struct bcm_device *, bool);
 	int			(*set_shutdown)(struct bcm_device *, bool);
 #ifdef CONFIG_ACPI
@@ -123,26 +102,18 @@ struct bcm_device {
 	int			gpio_int_idx;
 #endif
 
-	struct clk		*txco_clk;
-	struct clk		*lpo_clk;
-	struct regulator_bulk_data supplies[BCM_NUM_SUPPLIES];
-	bool			res_enabled;
+	struct clk		*clk;
+	bool			clk_enabled;
 
 	u32			init_speed;
 	u32			oper_speed;
 	int			irq;
 	bool			irq_active_low;
-	bool			irq_acquired;
 
 #ifdef CONFIG_PM
 	struct hci_uart		*hu;
 	bool			is_suspended;
 #endif
-	bool			no_early_set_baudrate;
-	bool			drive_rts_on_open;
-	bool			use_autobaud_mode;
-	u8			pcm_int_params[5];
-	u32			max_autobaud_speed;
 };
 
 /* generic bcm uart resources */
@@ -243,71 +214,32 @@ static int bcm_gpio_set_power(struct bcm_device *dev, bool powered)
 {
 	int err;
 
-	if (powered && !dev->res_enabled) {
-		/* Intel Macs use bcm_apple_get_resources() and don't
-		 * have regulator supplies configured.
-		 */
-		if (dev->supplies[0].supply) {
-			err = regulator_bulk_enable(BCM_NUM_SUPPLIES,
-						    dev->supplies);
-			if (err)
-				return err;
-		}
-
-		/* LPO clock needs to be 32.768 kHz */
-		err = clk_set_rate(dev->lpo_clk, 32768);
-		if (err) {
-			dev_err(dev->dev, "Could not set LPO clock rate\n");
-			goto err_regulator_disable;
-		}
-
-		err = clk_prepare_enable(dev->lpo_clk);
+	if (powered && !IS_ERR(dev->clk) && !dev->clk_enabled) {
+		err = clk_prepare_enable(dev->clk);
 		if (err)
-			goto err_regulator_disable;
-
-		err = clk_prepare_enable(dev->txco_clk);
-		if (err)
-			goto err_lpo_clk_disable;
+			return err;
 	}
 
 	err = dev->set_shutdown(dev, powered);
 	if (err)
-		goto err_txco_clk_disable;
+		goto err_clk_disable;
 
 	err = dev->set_device_wakeup(dev, powered);
 	if (err)
 		goto err_revert_shutdown;
 
-	if (!powered && dev->res_enabled) {
-		clk_disable_unprepare(dev->txco_clk);
-		clk_disable_unprepare(dev->lpo_clk);
+	if (!powered && !IS_ERR(dev->clk) && dev->clk_enabled)
+		clk_disable_unprepare(dev->clk);
 
-		/* Intel Macs use bcm_apple_get_resources() and don't
-		 * have regulator supplies configured.
-		 */
-		if (dev->supplies[0].supply)
-			regulator_bulk_disable(BCM_NUM_SUPPLIES,
-					       dev->supplies);
-	}
-
-	/* wait for device to power on and come out of reset */
-	usleep_range(100000, 120000);
-
-	dev->res_enabled = powered;
+	dev->clk_enabled = powered;
 
 	return 0;
 
 err_revert_shutdown:
 	dev->set_shutdown(dev, !powered);
-err_txco_clk_disable:
-	if (powered && !dev->res_enabled)
-		clk_disable_unprepare(dev->txco_clk);
-err_lpo_clk_disable:
-	if (powered && !dev->res_enabled)
-		clk_disable_unprepare(dev->lpo_clk);
-err_regulator_disable:
-	if (powered && !dev->res_enabled)
-		regulator_bulk_disable(BCM_NUM_SUPPLIES, dev->supplies);
+err_clk_disable:
+	if (powered && !IS_ERR(dev->clk) && !dev->clk_enabled)
+		clk_disable_unprepare(dev->clk);
 	return err;
 }
 
@@ -349,8 +281,6 @@ static int bcm_request_irq(struct bcm_data *bcm)
 		bdev->irq = err;
 		goto unlock;
 	}
-
-	bdev->irq_acquired = true;
 
 	device_init_wakeup(bdev->dev, true);
 
@@ -439,9 +369,6 @@ static int bcm_open(struct hci_uart *hu)
 
 	bt_dev_dbg(hu->hdev, "hu %p", hu);
 
-	if (!hci_uart_has_flow_control(hu))
-		return -EOPNOTSUPP;
-
 	bcm = kzalloc(sizeof(*bcm), GFP_KERNEL);
 	if (!bcm)
 		return -ENOMEM;
@@ -453,6 +380,10 @@ static int bcm_open(struct hci_uart *hu)
 	mutex_lock(&bcm_device_lock);
 
 	if (hu->serdev) {
+		err = serdev_device_open(hu->serdev);
+		if (err)
+			goto err_free;
+
 		bcm->dev = serdev_device_get_drvdata(hu->serdev);
 		goto out;
 	}
@@ -478,27 +409,9 @@ static int bcm_open(struct hci_uart *hu)
 
 out:
 	if (bcm->dev) {
-		if (bcm->dev->use_autobaud_mode)
-			hci_uart_set_flow_control(hu, false);	/* Assert BT_UART_CTS_N */
-		else if (bcm->dev->drive_rts_on_open)
-			hci_uart_set_flow_control(hu, true);
-
-		if (bcm->dev->use_autobaud_mode && bcm->dev->max_autobaud_speed)
-			hu->init_speed = min(bcm->dev->oper_speed, bcm->dev->max_autobaud_speed);
-		else
-			hu->init_speed = bcm->dev->init_speed;
-
-		/* If oper_speed is set, ldisc/serdev will set the baudrate
-		 * before calling setup()
-		 */
-		if (!bcm->dev->no_early_set_baudrate && !bcm->dev->use_autobaud_mode)
-			hu->oper_speed = bcm->dev->oper_speed;
-
+		hu->init_speed = bcm->dev->init_speed;
+		hu->oper_speed = bcm->dev->oper_speed;
 		err = bcm_gpio_set_power(bcm->dev, true);
-
-		if (bcm->dev->drive_rts_on_open)
-			hci_uart_set_flow_control(hu, false);
-
 		if (err)
 			goto err_unset_hu;
 	}
@@ -507,10 +420,13 @@ out:
 	return 0;
 
 err_unset_hu:
+	if (hu->serdev)
+		serdev_device_close(hu->serdev);
 #ifdef CONFIG_PM
-	if (!hu->serdev)
+	else
 		bcm->dev->hu = NULL;
 #endif
+err_free:
 	mutex_unlock(&bcm_device_lock);
 	hu->priv = NULL;
 	kfree(bcm);
@@ -529,6 +445,7 @@ static int bcm_close(struct hci_uart *hu)
 	mutex_lock(&bcm_device_lock);
 
 	if (hu->serdev) {
+		serdev_device_close(hu->serdev);
 		bdev = serdev_device_get_drvdata(hu->serdev);
 	} else if (bcm_device_exists(bcm->dev)) {
 		bdev = bcm->dev;
@@ -538,7 +455,7 @@ static int bcm_close(struct hci_uart *hu)
 	}
 
 	if (bdev) {
-		if (IS_ENABLED(CONFIG_PM) && bdev->irq_acquired) {
+		if (IS_ENABLED(CONFIG_PM) && bdev->irq > 0) {
 			devm_free_irq(bdev->dev, bdev->irq, bdev);
 			device_init_wakeup(bdev->dev, false);
 			pm_runtime_disable(bdev->dev);
@@ -574,8 +491,8 @@ static int bcm_flush(struct hci_uart *hu)
 static int bcm_setup(struct hci_uart *hu)
 {
 	struct bcm_data *bcm = hu->priv;
-	bool fw_load_done = false;
-	bool use_autobaud_mode = (bcm->dev ? bcm->dev->use_autobaud_mode : 0);
+	char fw_name[64];
+	const struct firmware *fw;
 	unsigned int speed;
 	int err;
 
@@ -584,16 +501,25 @@ static int bcm_setup(struct hci_uart *hu)
 	hu->hdev->set_diag = bcm_set_diag;
 	hu->hdev->set_bdaddr = btbcm_set_bdaddr;
 
-	err = btbcm_initialize(hu->hdev, &fw_load_done, use_autobaud_mode);
+	err = btbcm_initialize(hu->hdev, fw_name, sizeof(fw_name));
 	if (err)
 		return err;
 
-	if (!fw_load_done)
+	err = request_firmware(&fw, fw_name, &hu->hdev->dev);
+	if (err < 0) {
+		bt_dev_info(hu->hdev, "BCM: Patch %s not found", fw_name);
 		return 0;
+	}
+
+	err = btbcm_patchram(hu->hdev, fw);
+	if (err) {
+		bt_dev_info(hu->hdev, "BCM: Patch failed (%d)", err);
+		goto finalize;
+	}
 
 	/* Init speed if any */
-	if (bcm->dev && bcm->dev->init_speed)
-		speed = bcm->dev->init_speed;
+	if (hu->init_speed)
+		speed = hu->init_speed;
 	else if (hu->proto->init_speed)
 		speed = hu->proto->init_speed;
 	else
@@ -605,8 +531,6 @@ static int bcm_setup(struct hci_uart *hu)
 	/* Operational speed if any */
 	if (hu->oper_speed)
 		speed = hu->oper_speed;
-	else if (bcm->dev && bcm->dev->oper_speed)
-		speed = bcm->dev->oper_speed;
 	else if (hu->proto->oper_speed)
 		speed = hu->proto->oper_speed;
 	else
@@ -618,25 +542,12 @@ static int bcm_setup(struct hci_uart *hu)
 			host_set_baudrate(hu, speed);
 	}
 
-	/* PCM parameters if provided */
-	if (bcm->dev && bcm->dev->pcm_int_params[0] != 0xff) {
-		struct bcm_set_pcm_int_params params;
+finalize:
+	release_firmware(fw);
 
-		btbcm_read_pcm_int_params(hu->hdev, &params);
-
-		memcpy(&params, bcm->dev->pcm_int_params, 5);
-		btbcm_write_pcm_int_params(hu->hdev, &params);
-	}
-
-	err = btbcm_finalize(hu->hdev, &fw_load_done, use_autobaud_mode);
+	err = btbcm_finalize(hu->hdev);
 	if (err)
 		return err;
-
-	/* Some devices ship with the controller default address.
-	 * Allow the bootloader to set a valid address through the
-	 * device tree.
-	 */
-	set_bit(HCI_QUIRK_USE_BDADDR_PROPERTY, &hu->hdev->quirks);
 
 	if (!bcm_request_irq(bcm))
 		err = bcm_setup_sleep(hu);
@@ -658,29 +569,12 @@ static int bcm_setup(struct hci_uart *hu)
 	.lsize = 0, \
 	.maxlen = BCM_NULL_SIZE
 
-#define BCM_RECV_TYPE49 \
-	.type = BCM_TYPE49_PKT, \
-	.hlen = BCM_TYPE49_SIZE, \
-	.loff = 0, \
-	.lsize = 0, \
-	.maxlen = BCM_TYPE49_SIZE
-
-#define BCM_RECV_TYPE52 \
-	.type = BCM_TYPE52_PKT, \
-	.hlen = BCM_TYPE52_SIZE, \
-	.loff = 0, \
-	.lsize = 0, \
-	.maxlen = BCM_TYPE52_SIZE
-
 static const struct h4_recv_pkt bcm_recv_pkts[] = {
 	{ H4_RECV_ACL,      .recv = hci_recv_frame },
 	{ H4_RECV_SCO,      .recv = hci_recv_frame },
 	{ H4_RECV_EVENT,    .recv = hci_recv_frame },
-	{ H4_RECV_ISO,      .recv = hci_recv_frame },
 	{ BCM_RECV_LM_DIAG, .recv = hci_recv_diag  },
 	{ BCM_RECV_NULL,    .recv = hci_recv_diag  },
-	{ BCM_RECV_TYPE49,  .recv = hci_recv_diag  },
-	{ BCM_RECV_TYPE52,  .recv = hci_recv_diag  },
 };
 
 static int bcm_recv(struct hci_uart *hu, const void *data, int count)
@@ -882,37 +776,6 @@ unlock:
 }
 #endif
 
-/* Some firmware reports an IRQ which does not work (wrong pin in fw table?) */
-static struct gpiod_lookup_table asus_tf103c_irq_gpios = {
-	.dev_id = "serial0-0",
-	.table = {
-		GPIO_LOOKUP("INT33FC:02", 17, "host-wakeup-alt", GPIO_ACTIVE_HIGH),
-		{ }
-	},
-};
-
-static const struct dmi_system_id bcm_broken_irq_dmi_table[] = {
-	{
-		.ident = "Asus TF103C",
-		.matches = {
-			DMI_MATCH(DMI_SYS_VENDOR, "ASUSTeK COMPUTER INC."),
-			DMI_MATCH(DMI_PRODUCT_NAME, "TF103C"),
-		},
-		.driver_data = &asus_tf103c_irq_gpios,
-	},
-	{
-		.ident = "Meegopad T08",
-		.matches = {
-			DMI_EXACT_MATCH(DMI_BOARD_VENDOR,
-					"To be filled by OEM."),
-			DMI_EXACT_MATCH(DMI_BOARD_NAME, "T3 MRD"),
-			DMI_EXACT_MATCH(DMI_BOARD_VERSION, "V1.1"),
-		},
-	},
-	{ }
-};
-
-#ifdef CONFIG_ACPI
 static const struct acpi_gpio_params first_gpio = { 0, 0, false };
 static const struct acpi_gpio_params second_gpio = { 1, 0, false };
 static const struct acpi_gpio_params third_gpio = { 2, 0, false };
@@ -929,6 +792,19 @@ static const struct acpi_gpio_mapping acpi_bcm_int_first_gpios[] = {
 	{ "device-wakeup-gpios", &second_gpio, 1 },
 	{ "shutdown-gpios", &third_gpio, 1 },
 	{ },
+};
+
+#ifdef CONFIG_ACPI
+/* IRQ polarity of some chipsets are not defined correctly in ACPI table. */
+static const struct dmi_system_id bcm_active_low_irq_dmi_table[] = {
+	{	/* Handle ThinkPad 8 tablets with BCM2E55 chipset ACPI ID */
+		.ident = "Lenovo ThinkPad 8",
+		.matches = {
+			DMI_EXACT_MATCH(DMI_SYS_VENDOR, "LENOVO"),
+			DMI_EXACT_MATCH(DMI_PRODUCT_VERSION, "ThinkPad 8"),
+		},
+	},
+	{ }
 };
 
 static int bcm_resource(struct acpi_resource *ares, void *data)
@@ -1023,70 +899,17 @@ static int bcm_gpio_set_device_wakeup(struct bcm_device *dev, bool awake)
 static int bcm_gpio_set_shutdown(struct bcm_device *dev, bool powered)
 {
 	gpiod_set_value_cansleep(dev->shutdown, powered);
-	if (dev->reset)
-		/*
-		 * The reset line is asserted on powerdown and deasserted
-		 * on poweron so the inverse of powered is used. Notice
-		 * that the GPIO line BT_RST_N needs to be specified as
-		 * active low in the device tree or similar system
-		 * description.
-		 */
-		gpiod_set_value_cansleep(dev->reset, !powered);
 	return 0;
-}
-
-/* Try a bunch of names for TXCO */
-static struct clk *bcm_get_txco(struct device *dev)
-{
-	struct clk *clk;
-
-	/* New explicit name */
-	clk = devm_clk_get(dev, "txco");
-	if (!IS_ERR(clk) || PTR_ERR(clk) == -EPROBE_DEFER)
-		return clk;
-
-	/* Deprecated name */
-	clk = devm_clk_get(dev, "extclk");
-	if (!IS_ERR(clk) || PTR_ERR(clk) == -EPROBE_DEFER)
-		return clk;
-
-	/* Original code used no name at all */
-	return devm_clk_get(dev, NULL);
 }
 
 static int bcm_get_resources(struct bcm_device *dev)
 {
-	const struct dmi_system_id *broken_irq_dmi_id;
-	const char *irq_con_id = "host-wakeup";
-	int err;
-
 	dev->name = dev_name(dev->dev);
 
 	if (x86_apple_machine && !bcm_apple_get_resources(dev))
 		return 0;
 
-	dev->txco_clk = bcm_get_txco(dev->dev);
-
-	/* Handle deferred probing */
-	if (dev->txco_clk == ERR_PTR(-EPROBE_DEFER))
-		return PTR_ERR(dev->txco_clk);
-
-	/* Ignore all other errors as before */
-	if (IS_ERR(dev->txco_clk))
-		dev->txco_clk = NULL;
-
-	dev->lpo_clk = devm_clk_get(dev->dev, "lpo");
-	if (dev->lpo_clk == ERR_PTR(-EPROBE_DEFER))
-		return PTR_ERR(dev->lpo_clk);
-
-	if (IS_ERR(dev->lpo_clk))
-		dev->lpo_clk = NULL;
-
-	/* Check if we accidentally fetched the lpo clock twice */
-	if (dev->lpo_clk && clk_is_match(dev->lpo_clk, dev->txco_clk)) {
-		devm_clk_put(dev->dev, dev->txco_clk);
-		dev->txco_clk = NULL;
-	}
+	dev->clk = devm_clk_get(dev->dev, NULL);
 
 	dev->device_wakeup = devm_gpiod_get_optional(dev->dev, "device-wakeup",
 						     GPIOD_OUT_LOW);
@@ -1098,48 +921,19 @@ static int bcm_get_resources(struct bcm_device *dev)
 	if (IS_ERR(dev->shutdown))
 		return PTR_ERR(dev->shutdown);
 
-	dev->reset = devm_gpiod_get_optional(dev->dev, "reset",
-					     GPIOD_OUT_LOW);
-	if (IS_ERR(dev->reset))
-		return PTR_ERR(dev->reset);
-
 	dev->set_device_wakeup = bcm_gpio_set_device_wakeup;
 	dev->set_shutdown = bcm_gpio_set_shutdown;
-
-	dev->supplies[0].supply = "vbat";
-	dev->supplies[1].supply = "vddio";
-	err = devm_regulator_bulk_get(dev->dev, BCM_NUM_SUPPLIES,
-				      dev->supplies);
-	if (err)
-		return err;
-
-	broken_irq_dmi_id = dmi_first_match(bcm_broken_irq_dmi_table);
-	if (broken_irq_dmi_id && broken_irq_dmi_id->driver_data) {
-		gpiod_add_lookup_table(broken_irq_dmi_id->driver_data);
-		irq_con_id = "host-wakeup-alt";
-		dev->irq_active_low = false;
-		dev->irq = 0;
-	}
 
 	/* IRQ can be declared in ACPI table as Interrupt or GpioInt */
 	if (dev->irq <= 0) {
 		struct gpio_desc *gpio;
 
-		gpio = devm_gpiod_get_optional(dev->dev, irq_con_id, GPIOD_IN);
+		gpio = devm_gpiod_get_optional(dev->dev, "host-wakeup",
+					       GPIOD_IN);
 		if (IS_ERR(gpio))
 			return PTR_ERR(gpio);
 
 		dev->irq = gpiod_to_irq(gpio);
-	}
-
-	if (broken_irq_dmi_id) {
-		if (broken_irq_dmi_id->driver_data) {
-			gpiod_remove_lookup_table(broken_irq_dmi_id->driver_data);
-		} else {
-			dev_info(dev->dev, "%s: Has a broken IRQ config, disabling IRQ support / runtime-pm\n",
-				 broken_irq_dmi_id->ident);
-			dev->irq = 0;
-		}
 	}
 
 	dev_dbg(dev->dev, "BCM irq: %d\n", dev->irq);
@@ -1150,6 +944,7 @@ static int bcm_get_resources(struct bcm_device *dev)
 static int bcm_acpi_probe(struct bcm_device *dev)
 {
 	LIST_HEAD(resources);
+	const struct dmi_system_id *dmi_id;
 	const struct acpi_gpio_mapping *gpio_mapping = acpi_bcm_int_last_gpios;
 	struct resource_entry *entry;
 	int ret;
@@ -1196,6 +991,13 @@ static int bcm_acpi_probe(struct bcm_device *dev)
 		dev->irq_active_low = irq_polarity;
 		dev_warn(dev->dev, "Overwriting IRQ polarity to active %s by module-param\n",
 			 dev->irq_active_low ? "low" : "high");
+	} else {
+		dmi_id = dmi_first_match(bcm_active_low_irq_dmi_table);
+		if (dmi_id) {
+			dev_warn(dev->dev, "%s: Overwriting IRQ polarity to active low",
+				 dmi_id->ident);
+			dev->irq_active_low = true;
+		}
 	}
 
 	return 0;
@@ -1209,14 +1011,7 @@ static int bcm_acpi_probe(struct bcm_device *dev)
 
 static int bcm_of_probe(struct bcm_device *bdev)
 {
-	bdev->use_autobaud_mode = device_property_read_bool(bdev->dev,
-							    "brcm,requires-autobaud-mode");
 	device_property_read_u32(bdev->dev, "max-speed", &bdev->oper_speed);
-	device_property_read_u8_array(bdev->dev, "brcm,bt-pcm-int-params",
-				      bdev->pcm_int_params, 5);
-	bdev->irq = of_irq_get_byname(bdev->dev->of_node, "host-wakeup");
-	bdev->irq_active_low = irq_get_trigger_type(bdev->irq)
-			     & (IRQ_TYPE_EDGE_FALLING | IRQ_TYPE_LEVEL_LOW);
 	return 0;
 }
 
@@ -1230,15 +1025,7 @@ static int bcm_probe(struct platform_device *pdev)
 		return -ENOMEM;
 
 	dev->dev = &pdev->dev;
-
-	ret = platform_get_irq(pdev, 0);
-	if (ret < 0)
-		return ret;
-
-	dev->irq = ret;
-
-	/* Initialize routing field to an unused value */
-	dev->pcm_int_params[0] = 0xff;
+	dev->irq = platform_get_irq(pdev, 0);
 
 	if (has_acpi_companion(&pdev->dev)) {
 		ret = bcm_acpi_probe(dev);
@@ -1486,7 +1273,6 @@ static struct platform_driver bcm_driver = {
 static int bcm_serdev_probe(struct serdev_device *serdev)
 {
 	struct bcm_device *bcmdev;
-	const struct bcm_device_data *data;
 	int err;
 
 	bcmdev = devm_kzalloc(&serdev->dev, sizeof(*bcmdev), GFP_KERNEL);
@@ -1499,9 +1285,6 @@ static int bcm_serdev_probe(struct serdev_device *serdev)
 #endif
 	bcmdev->serdev_hu.serdev = serdev;
 	serdev_device_set_drvdata(serdev, bcmdev);
-
-	/* Initialize routing field to an unused value */
-	bcmdev->pcm_int_params[0] = 0xff;
 
 	if (has_acpi_companion(&serdev->dev))
 		err = bcm_acpi_probe(bcmdev);
@@ -1524,13 +1307,6 @@ static int bcm_serdev_probe(struct serdev_device *serdev)
 	if (err)
 		dev_err(&serdev->dev, "Failed to power down\n");
 
-	data = device_get_match_data(bcmdev->dev);
-	if (data) {
-		bcmdev->max_autobaud_speed = data->max_autobaud_speed;
-		bcmdev->no_early_set_baudrate = data->no_early_set_baudrate;
-		bcmdev->drive_rts_on_open = data->drive_rts_on_open;
-	}
-
 	return hci_uart_register_device(&bcmdev->serdev_hu, &bcm_proto);
 }
 
@@ -1542,31 +1318,8 @@ static void bcm_serdev_remove(struct serdev_device *serdev)
 }
 
 #ifdef CONFIG_OF
-static struct bcm_device_data bcm4354_device_data = {
-	.no_early_set_baudrate = true,
-};
-
-static struct bcm_device_data bcm43438_device_data = {
-	.drive_rts_on_open = true,
-};
-
-static struct bcm_device_data cyw55572_device_data = {
-	.max_autobaud_speed = 921600,
-};
-
 static const struct of_device_id bcm_bluetooth_of_match[] = {
-	{ .compatible = "brcm,bcm20702a1" },
-	{ .compatible = "brcm,bcm4329-bt" },
-	{ .compatible = "brcm,bcm4330-bt" },
-	{ .compatible = "brcm,bcm4334-bt" },
-	{ .compatible = "brcm,bcm4345c5" },
-	{ .compatible = "brcm,bcm43430a0-bt" },
-	{ .compatible = "brcm,bcm43430a1-bt" },
-	{ .compatible = "brcm,bcm43438-bt", .data = &bcm43438_device_data },
-	{ .compatible = "brcm,bcm4349-bt", .data = &bcm43438_device_data },
-	{ .compatible = "brcm,bcm43540-bt", .data = &bcm4354_device_data },
-	{ .compatible = "brcm,bcm4335a0" },
-	{ .compatible = "infineon,cyw55572-bt", .data = &cyw55572_device_data },
+	{ .compatible = "brcm,bcm43438-bt" },
 	{ },
 };
 MODULE_DEVICE_TABLE(of, bcm_bluetooth_of_match);

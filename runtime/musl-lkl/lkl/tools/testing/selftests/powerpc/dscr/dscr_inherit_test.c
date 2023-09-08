@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * POWER Data Stream Control Register (DSCR) fork test
  *
@@ -14,6 +13,10 @@
  *
  * Copyright 2012, Anton Blanchard, IBM Corporation.
  * Copyright 2015, Anshuman Khandual, IBM Corporation.
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License version 2 as published
+ * by the Free Software Foundation.
  */
 #include "dscr.h"
 
@@ -21,8 +24,6 @@ int dscr_inherit(void)
 {
 	unsigned long i, dscr = 0;
 	pid_t pid;
-
-	SKIP_IF(!have_hwcap2(PPC_FEATURE2_DSCR));
 
 	srand(getpid());
 	set_dscr(dscr);

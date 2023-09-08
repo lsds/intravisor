@@ -1,9 +1,12 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * EBI driver for Atmel chips
  * inspired by the fsl weim bus driver
  *
  * Copyright (C) 2013 Jean-Jacques Hiblot <jjhiblot@traphandler.com>
+ *
+ * This file is licensed under the terms of the GNU General Public
+ * License version 2. This program is licensed "as is" without any
+ * warranty of any kind, whether express or implied.
  */
 
 #include <linux/clk.h>
@@ -14,9 +17,6 @@
 #include <linux/init.h>
 #include <linux/of_device.h>
 #include <linux/regmap.h>
-#include <soc/at91/atmel-sfr.h>
-
-#define AT91_EBI_NUM_CS		8
 
 struct atmel_ebi_dev_config {
 	int cs;
@@ -36,7 +36,6 @@ struct atmel_ebi_dev {
 struct atmel_ebi_caps {
 	unsigned int available_cs;
 	unsigned int ebi_csa_offs;
-	const char *regmap_name;
 	void (*get_config)(struct atmel_ebi_dev *ebid,
 			   struct atmel_ebi_dev_config *conf);
 	int (*xlate_config)(struct atmel_ebi_dev *ebid,
@@ -48,7 +47,7 @@ struct atmel_ebi_caps {
 
 struct atmel_ebi {
 	struct clk *clk;
-	struct regmap *regmap;
+	struct regmap *matrix;
 	struct  {
 		struct regmap *regmap;
 		struct clk *clk;
@@ -313,7 +312,7 @@ static int atmel_ebi_dev_setup(struct atmel_ebi *ebi, struct device_node *np,
 		if (ret)
 			return ret;
 
-		if (cs >= AT91_EBI_NUM_CS ||
+		if (cs >= AT91_MATRIX_EBI_NUM_CS ||
 		    !(ebi->caps->available_cs & BIT(cs))) {
 			dev_err(dev, "invalid reg property in %pOF\n", np);
 			return -EINVAL;
@@ -328,7 +327,8 @@ static int atmel_ebi_dev_setup(struct atmel_ebi *ebi, struct device_node *np,
 		return -EINVAL;
 	}
 
-	ebid = devm_kzalloc(ebi->dev, struct_size(ebid, configs, numcs),
+	ebid = devm_kzalloc(ebi->dev,
+			    sizeof(*ebid) + (numcs * sizeof(*ebid->configs)),
 			    GFP_KERNEL);
 	if (!ebid)
 		return -ENOMEM;
@@ -343,7 +343,7 @@ static int atmel_ebi_dev_setup(struct atmel_ebi *ebi, struct device_node *np,
 		apply = true;
 
 	i = 0;
-	for_each_set_bit(cs, &cslines, AT91_EBI_NUM_CS) {
+	for_each_set_bit(cs, &cslines, AT91_MATRIX_EBI_NUM_CS) {
 		ebid->configs[i].cs = cs;
 
 		if (apply) {
@@ -358,7 +358,7 @@ static int atmel_ebi_dev_setup(struct atmel_ebi *ebi, struct device_node *np,
 		 * one "atmel,smc-" property is present.
 		 */
 		if (ebi->caps->ebi_csa_offs && apply)
-			regmap_update_bits(ebi->regmap,
+			regmap_update_bits(ebi->matrix,
 					   ebi->caps->ebi_csa_offs,
 					   BIT(cs), 0);
 
@@ -373,7 +373,6 @@ static int atmel_ebi_dev_setup(struct atmel_ebi *ebi, struct device_node *np,
 static const struct atmel_ebi_caps at91sam9260_ebi_caps = {
 	.available_cs = 0xff,
 	.ebi_csa_offs = AT91SAM9260_MATRIX_EBICSA,
-	.regmap_name = "atmel,matrix",
 	.get_config = at91sam9_ebi_get_config,
 	.xlate_config = atmel_ebi_xslate_smc_config,
 	.apply_config = at91sam9_ebi_apply_config,
@@ -382,7 +381,6 @@ static const struct atmel_ebi_caps at91sam9260_ebi_caps = {
 static const struct atmel_ebi_caps at91sam9261_ebi_caps = {
 	.available_cs = 0xff,
 	.ebi_csa_offs = AT91SAM9261_MATRIX_EBICSA,
-	.regmap_name = "atmel,matrix",
 	.get_config = at91sam9_ebi_get_config,
 	.xlate_config = atmel_ebi_xslate_smc_config,
 	.apply_config = at91sam9_ebi_apply_config,
@@ -391,7 +389,6 @@ static const struct atmel_ebi_caps at91sam9261_ebi_caps = {
 static const struct atmel_ebi_caps at91sam9263_ebi0_caps = {
 	.available_cs = 0x3f,
 	.ebi_csa_offs = AT91SAM9263_MATRIX_EBI0CSA,
-	.regmap_name = "atmel,matrix",
 	.get_config = at91sam9_ebi_get_config,
 	.xlate_config = atmel_ebi_xslate_smc_config,
 	.apply_config = at91sam9_ebi_apply_config,
@@ -400,7 +397,6 @@ static const struct atmel_ebi_caps at91sam9263_ebi0_caps = {
 static const struct atmel_ebi_caps at91sam9263_ebi1_caps = {
 	.available_cs = 0x7,
 	.ebi_csa_offs = AT91SAM9263_MATRIX_EBI1CSA,
-	.regmap_name = "atmel,matrix",
 	.get_config = at91sam9_ebi_get_config,
 	.xlate_config = atmel_ebi_xslate_smc_config,
 	.apply_config = at91sam9_ebi_apply_config,
@@ -409,7 +405,6 @@ static const struct atmel_ebi_caps at91sam9263_ebi1_caps = {
 static const struct atmel_ebi_caps at91sam9rl_ebi_caps = {
 	.available_cs = 0x3f,
 	.ebi_csa_offs = AT91SAM9RL_MATRIX_EBICSA,
-	.regmap_name = "atmel,matrix",
 	.get_config = at91sam9_ebi_get_config,
 	.xlate_config = atmel_ebi_xslate_smc_config,
 	.apply_config = at91sam9_ebi_apply_config,
@@ -418,7 +413,6 @@ static const struct atmel_ebi_caps at91sam9rl_ebi_caps = {
 static const struct atmel_ebi_caps at91sam9g45_ebi_caps = {
 	.available_cs = 0x3f,
 	.ebi_csa_offs = AT91SAM9G45_MATRIX_EBICSA,
-	.regmap_name = "atmel,matrix",
 	.get_config = at91sam9_ebi_get_config,
 	.xlate_config = atmel_ebi_xslate_smc_config,
 	.apply_config = at91sam9_ebi_apply_config,
@@ -427,7 +421,6 @@ static const struct atmel_ebi_caps at91sam9g45_ebi_caps = {
 static const struct atmel_ebi_caps at91sam9x5_ebi_caps = {
 	.available_cs = 0x3f,
 	.ebi_csa_offs = AT91SAM9X5_MATRIX_EBICSA,
-	.regmap_name = "atmel,matrix",
 	.get_config = at91sam9_ebi_get_config,
 	.xlate_config = atmel_ebi_xslate_smc_config,
 	.apply_config = at91sam9_ebi_apply_config,
@@ -438,15 +431,6 @@ static const struct atmel_ebi_caps sama5d3_ebi_caps = {
 	.get_config = sama5_ebi_get_config,
 	.xlate_config = atmel_ebi_xslate_smc_config,
 	.apply_config = sama5_ebi_apply_config,
-};
-
-static const struct atmel_ebi_caps sam9x60_ebi_caps = {
-	.available_cs = 0x3f,
-	.ebi_csa_offs = AT91_SFR_CCFG_EBICSA,
-	.regmap_name = "microchip,sfr",
-	.get_config = at91sam9_ebi_get_config,
-	.xlate_config = atmel_ebi_xslate_smc_config,
-	.apply_config = at91sam9_ebi_apply_config,
 };
 
 static const struct of_device_id atmel_ebi_id_table[] = {
@@ -481,10 +465,6 @@ static const struct of_device_id atmel_ebi_id_table[] = {
 	{
 		.compatible = "atmel,sama5d3-ebi",
 		.data = &sama5d3_ebi_caps,
-	},
-	{
-		.compatible = "microchip,sam9x60-ebi",
-		.data = &sam9x60_ebi_caps,
 	},
 	{ /* sentinel */ }
 };
@@ -544,41 +524,33 @@ static int atmel_ebi_probe(struct platform_device *pdev)
 	smc_np = of_parse_phandle(dev->of_node, "atmel,smc", 0);
 
 	ebi->smc.regmap = syscon_node_to_regmap(smc_np);
-	if (IS_ERR(ebi->smc.regmap)) {
-		ret = PTR_ERR(ebi->smc.regmap);
-		goto put_node;
-	}
+	if (IS_ERR(ebi->smc.regmap))
+		return PTR_ERR(ebi->smc.regmap);
 
 	ebi->smc.layout = atmel_hsmc_get_reg_layout(smc_np);
-	if (IS_ERR(ebi->smc.layout)) {
-		ret = PTR_ERR(ebi->smc.layout);
-		goto put_node;
-	}
+	if (IS_ERR(ebi->smc.layout))
+		return PTR_ERR(ebi->smc.layout);
 
 	ebi->smc.clk = of_clk_get(smc_np, 0);
 	if (IS_ERR(ebi->smc.clk)) {
-		if (PTR_ERR(ebi->smc.clk) != -ENOENT) {
-			ret = PTR_ERR(ebi->smc.clk);
-			goto put_node;
-		}
+		if (PTR_ERR(ebi->smc.clk) != -ENOENT)
+			return PTR_ERR(ebi->smc.clk);
 
 		ebi->smc.clk = NULL;
 	}
-	of_node_put(smc_np);
 	ret = clk_prepare_enable(ebi->smc.clk);
 	if (ret)
 		return ret;
 
 	/*
 	 * The sama5d3 does not provide an EBICSA register and thus does need
-	 * to access it.
+	 * to access the matrix registers.
 	 */
 	if (ebi->caps->ebi_csa_offs) {
-		ebi->regmap =
-			syscon_regmap_lookup_by_phandle(np,
-							ebi->caps->regmap_name);
-		if (IS_ERR(ebi->regmap))
-			return PTR_ERR(ebi->regmap);
+		ebi->matrix =
+			syscon_regmap_lookup_by_phandle(np, "atmel,matrix");
+		if (IS_ERR(ebi->matrix))
+			return PTR_ERR(ebi->matrix);
 	}
 
 	ret = of_property_read_u32(np, "#address-cells", &val);
@@ -607,18 +579,12 @@ static int atmel_ebi_probe(struct platform_device *pdev)
 				child);
 
 			ret = atmel_ebi_dev_disable(ebi, child);
-			if (ret) {
-				of_node_put(child);
+			if (ret)
 				return ret;
-			}
 		}
 	}
 
 	return of_platform_populate(np, NULL, NULL, dev);
-
-put_node:
-	of_node_put(smc_np);
-	return ret;
 }
 
 static __maybe_unused int atmel_ebi_resume(struct device *dev)

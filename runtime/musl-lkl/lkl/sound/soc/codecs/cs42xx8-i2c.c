@@ -17,7 +17,8 @@
 
 #include "cs42xx8.h"
 
-static int cs42xx8_i2c_probe(struct i2c_client *i2c)
+static int cs42xx8_i2c_probe(struct i2c_client *i2c,
+			     const struct i2c_device_id *id)
 {
 	int ret = cs42xx8_probe(&i2c->dev,
 			devm_regmap_init_i2c(i2c, &cs42xx8_regmap_config));
@@ -30,9 +31,11 @@ static int cs42xx8_i2c_probe(struct i2c_client *i2c)
 	return 0;
 }
 
-static void cs42xx8_i2c_remove(struct i2c_client *i2c)
+static int cs42xx8_i2c_remove(struct i2c_client *i2c)
 {
 	pm_runtime_disable(&i2c->dev);
+
+	return 0;
 }
 
 static struct i2c_device_id cs42xx8_i2c_id[] = {
@@ -48,7 +51,7 @@ static struct i2c_driver cs42xx8_i2c_driver = {
 		.pm = &cs42xx8_pm,
 		.of_match_table = cs42xx8_of_match,
 	},
-	.probe_new = cs42xx8_i2c_probe,
+	.probe = cs42xx8_i2c_probe,
 	.remove = cs42xx8_i2c_remove,
 	.id_table = cs42xx8_i2c_id,
 };

@@ -20,43 +20,12 @@ that litmus test to be exercised within the Linux kernel.
 REQUIREMENTS
 ============
 
-Version 7.52 or higher of the "herd7" and "klitmus7" tools must be
-downloaded separately:
+Version 7.48 of the "herd7" and "klitmus7" tools must be downloaded
+separately:
 
   https://github.com/herd/herdtools7
 
 See "herdtools7/INSTALL.md" for installation instructions.
-
-Note that although these tools usually provide backwards compatibility,
-this is not absolutely guaranteed.
-
-For example, a future version of herd7 might not work with the model
-in this release.  A compatible model will likely be made available in
-a later release of Linux kernel.
-
-If you absolutely need to run the model in this particular release,
-please try using the exact version called out above.
-
-klitmus7 is independent of the model provided here.  It has its own
-dependency on a target kernel release where converted code is built
-and executed.  Any change in kernel APIs essential to klitmus7 will
-necessitate an upgrade of klitmus7.
-
-If you find any compatibility issues in klitmus7, please inform the
-memory model maintainers.
-
-klitmus7 Compatibility Table
-----------------------------
-
-	============  ==========
-	target Linux  herdtools7
-	------------  ----------
-	     -- 4.14  7.48 --
-	4.15 -- 4.19  7.49 --
-	4.20 -- 5.5   7.54 --
-	5.6  -- 5.16  7.56 --
-	5.17 --       7.56.1 --
-	============  ==========
 
 
 ==================
@@ -64,37 +33,15 @@ BASIC USAGE: HERD7
 ==================
 
 The memory model is used, in conjunction with "herd7", to exhaustively
-explore the state space of small litmus tests.  Documentation describing
-the format, features, capabilities and limitations of these litmus
-tests is available in tools/memory-model/Documentation/litmus-tests.txt.
+explore the state space of small litmus tests.
 
-Example litmus tests may be found in the Linux-kernel source tree:
+For example, to run SB+mbonceonces.litmus against the memory model:
 
-	tools/memory-model/litmus-tests/
-	Documentation/litmus-tests/
-
-Several thousand more example litmus tests are available here:
-
-	https://github.com/paulmckrcu/litmus
-	https://git.kernel.org/pub/scm/linux/kernel/git/paulmck/perfbook.git/tree/CodeSamples/formal/herd
-	https://git.kernel.org/pub/scm/linux/kernel/git/paulmck/perfbook.git/tree/CodeSamples/formal/litmus
-
-Documentation describing litmus tests and now to use them may be found
-here:
-
-	tools/memory-model/Documentation/litmus-tests.txt
-
-The remainder of this section uses the SB+fencembonceonces.litmus test
-located in the tools/memory-model directory.
-
-To run SB+fencembonceonces.litmus against the memory model:
-
-  $ cd $LINUX_SOURCE_TREE/tools/memory-model
-  $ herd7 -conf linux-kernel.cfg litmus-tests/SB+fencembonceonces.litmus
+  $ herd7 -conf linux-kernel.cfg litmus-tests/SB+mbonceonces.litmus
 
 Here is the corresponding output:
 
-  Test SB+fencembonceonces Allowed
+  Test SB+mbonceonces Allowed
   States 3
   0:r0=0; 1:r0=1;
   0:r0=1; 1:r0=0;
@@ -103,18 +50,14 @@ Here is the corresponding output:
   Witnesses
   Positive: 0 Negative: 3
   Condition exists (0:r0=0 /\ 1:r0=0)
-  Observation SB+fencembonceonces Never 0 3
-  Time SB+fencembonceonces 0.01
+  Observation SB+mbonceonces Never 0 3
+  Time SB+mbonceonces 0.01
   Hash=d66d99523e2cac6b06e66f4c995ebb48
 
 The "Positive: 0 Negative: 3" and the "Never 0 3" each indicate that
 this litmus test's "exists" clause can not be satisfied.
 
-See "herd7 -help" or "herdtools7/doc/" for more information on running the
-tool itself, but please be aware that this documentation is intended for
-people who work on the memory model itself, that is, people making changes
-to the tools/memory-model/linux-kernel.* files.  It is not intended for
-people focusing on writing, understanding, and running LKMM litmus tests.
+See "herd7 -help" or "herdtools7/doc/" for more information.
 
 
 =====================
@@ -124,16 +67,16 @@ BASIC USAGE: KLITMUS7
 The "klitmus7" tool converts a litmus test into a Linux kernel module,
 which may then be loaded and run.
 
-For example, to run SB+fencembonceonces.litmus against hardware:
+For example, to run SB+mbonceonces.litmus against hardware:
 
   $ mkdir mymodules
-  $ klitmus7 -o mymodules litmus-tests/SB+fencembonceonces.litmus
+  $ klitmus7 -o mymodules litmus-tests/SB+mbonceonces.litmus
   $ cd mymodules ; make
   $ sudo sh run.sh
 
 The corresponding output includes:
 
-  Test SB+fencembonceonces Allowed
+  Test SB+mbonceonces Allowed
   Histogram (3 states)
   644580  :>0:r0=1; 1:r0=0;
   644328  :>0:r0=0; 1:r0=1;
@@ -143,27 +86,32 @@ The corresponding output includes:
   Positive: 0, Negative: 2000000
   Condition exists (0:r0=0 /\ 1:r0=0) is NOT validated
   Hash=d66d99523e2cac6b06e66f4c995ebb48
-  Observation SB+fencembonceonces Never 0 2000000
-  Time SB+fencembonceonces 0.16
+  Observation SB+mbonceonces Never 0 2000000
+  Time SB+mbonceonces 0.16
 
 The "Positive: 0 Negative: 2000000" and the "Never 0 2000000" indicate
 that during two million trials, the state specified in this litmus
 test's "exists" clause was not reached.
 
 And, as with "herd7", please see "klitmus7 -help" or "herdtools7/doc/"
-for more information.  And again, please be aware that this documentation
-is intended for people who work on the memory model itself, that is,
-people making changes to the tools/memory-model/linux-kernel.* files.
-It is not intended for people focusing on writing, understanding, and
-running LKMM litmus tests.
+for more information.
 
 
 ====================
 DESCRIPTION OF FILES
 ====================
 
-Documentation/README
-	Guide to the other documents in the Documentation/ directory.
+Documentation/cheatsheet.txt
+	Quick-reference guide to the Linux-kernel memory model.
+
+Documentation/explanation.txt
+	Describes the memory model in detail.
+
+Documentation/recipes.txt
+	Lists common memory-ordering patterns.
+
+Documentation/references.txt
+	Provides background reading.
 
 linux-kernel.bell
 	Categorizes the relevant instructions, including memory
@@ -196,18 +144,6 @@ litmus-tests
 	are listed in litmus-tests/README.  A great deal more litmus
 	tests are available at https://github.com/paulmckrcu/litmus.
 
-	By "representative", it means the one in the litmus-tests
-	directory is:
-
-		1) simple, the number of threads should be relatively
-		   small and each thread function should be relatively
-		   simple.
-		2) orthogonal, there should be no two litmus tests
-		   describing the same aspect of the memory model.
-		3) textbook, developers can easily copy-paste-modify
-		   the litmus tests to use the patterns on their own
-		   code.
-
 lock.cat
 	Provides a front-end analysis of lock acquisition and release,
 	for example, associating a lock acquisition with the preceding
@@ -220,4 +156,51 @@ lock.cat
 README
 	This file.
 
-scripts	Various scripts, see scripts/README.
+
+===========
+LIMITATIONS
+===========
+
+The Linux-kernel memory model has the following limitations:
+
+1.	Compiler optimizations are not modeled.  Of course, the use
+	of READ_ONCE() and WRITE_ONCE() limits the compiler's ability
+	to optimize, but there is Linux-kernel code that uses bare C
+	memory accesses.  Handling this code is on the to-do list.
+	For more information, see Documentation/explanation.txt (in
+	particular, the "THE PROGRAM ORDER RELATION: po AND po-loc"
+	and "A WARNING" sections).
+
+2.	Multiple access sizes for a single variable are not supported,
+	and neither are misaligned or partially overlapping accesses.
+
+3.	Exceptions and interrupts are not modeled.  In some cases,
+	this limitation can be overcome by modeling the interrupt or
+	exception with an additional process.
+
+4.	I/O such as MMIO or DMA is not supported.
+
+5.	Self-modifying code (such as that found in the kernel's
+	alternatives mechanism, function tracer, Berkeley Packet Filter
+	JIT compiler, and module loader) is not supported.
+
+6.	Complete modeling of all variants of atomic read-modify-write
+	operations, locking primitives, and RCU is not provided.
+	For example, call_rcu() and rcu_barrier() are not supported.
+	However, a substantial amount of support is provided for these
+	operations, as shown in the linux-kernel.def file.
+
+The "herd7" tool has some additional limitations of its own, apart from
+the memory model:
+
+1.	Non-trivial data structures such as arrays or structures are
+	not supported.	However, pointers are supported, allowing trivial
+	linked lists to be constructed.
+
+2.	Dynamic memory allocation is not supported, although this can
+	be worked around in some cases by supplying multiple statically
+	allocated variables.
+
+Some of these limitations may be overcome in the future, but others are
+more likely to be addressed by incorporating the Linux-kernel memory model
+into other tools.

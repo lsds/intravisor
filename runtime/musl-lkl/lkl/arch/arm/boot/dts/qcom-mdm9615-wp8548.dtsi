@@ -49,8 +49,7 @@
 	model = "Sierra Wireless WP8548 Module";
 	compatible = "swir,wp8548", "qcom,mdm9615";
 
-	memory@48000000 {
-		device_type = "memory";
+	memory {
 		reg = <0x48000000 0x7F00000>;
 	};
 };
@@ -114,7 +113,7 @@
 };
 
 &pmicgpio {
-	usb_vbus_5v_pins: usb-vbus-5v-state {
+	usb_vbus_5v_pins: usb_vbus_5v_pins {
 		pins = "gpio4";
 		function = "normal";
 		output-high;
@@ -125,12 +124,12 @@
 };
 
 &gsbi3 {
-	status = "okay";
+	status = "ok";
 	qcom,mode = <GSBI_PROT_SPI>;
 };
 
 &gsbi3_spi {
-	status = "okay";
+	status = "ok";
 	pinctrl-0 = <&gsbi3_pins>;
 	pinctrl-names = "default";
 	assigned-clocks = <&gcc GSBI3_QUP_CLK>;
@@ -138,34 +137,34 @@
 };
 
 &gsbi4 {
-	status = "okay";
+	status = "ok";
 	qcom,mode = <GSBI_PROT_UART_W_FC>;
 };
 
 &gsbi4_serial {
-	status = "okay";
+	status = "ok";
 	pinctrl-0 = <&gsbi4_pins>;
 	pinctrl-names = "default";
 };
 
 &gsbi5 {
-	status = "okay";
+	status = "ok";
 	qcom,mode = <GSBI_PROT_I2C_UART>;
 };
 
 &gsbi5_i2c {
-	status = "okay";
+	status = "ok";
 	clock-frequency = <200000>;
 	pinctrl-0 = <&gsbi5_i2c_pins>;
 	pinctrl-names = "default";
 };
 
 &gsbi5_serial {
-	status = "okay";
+	status = "ok";
 	pinctrl-0 = <&gsbi5_uart_pins>;
 	pinctrl-names = "default";
 };
 
 &sdcc1 {
-	status = "okay";
+	status = "ok";
 };

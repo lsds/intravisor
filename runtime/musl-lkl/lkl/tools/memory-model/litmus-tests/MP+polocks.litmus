@@ -13,23 +13,23 @@ C MP+polocks
 
 {}
 
-P0(int *buf, int *flag, spinlock_t *mylock) // Producer
+P0(int *x, int *y, spinlock_t *mylock)
 {
-	WRITE_ONCE(*buf, 1);
+	WRITE_ONCE(*x, 1);
 	spin_lock(mylock);
-	WRITE_ONCE(*flag, 1);
+	WRITE_ONCE(*y, 1);
 	spin_unlock(mylock);
 }
 
-P1(int *buf, int *flag, spinlock_t *mylock) // Consumer
+P1(int *x, int *y, spinlock_t *mylock)
 {
 	int r0;
 	int r1;
 
 	spin_lock(mylock);
-	r0 = READ_ONCE(*flag);
+	r0 = READ_ONCE(*y);
 	spin_unlock(mylock);
-	r1 = READ_ONCE(*buf);
+	r1 = READ_ONCE(*x);
 }
 
-exists (1:r0=1 /\ 1:r1=0) (* Bad outcome. *)
+exists (1:r0=1 /\ 1:r1=0)

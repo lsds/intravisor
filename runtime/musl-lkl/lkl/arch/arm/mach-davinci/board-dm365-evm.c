@@ -1,8 +1,16 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * TI DaVinci DM365 EVM board support
  *
  * Copyright (C) 2009 Texas Instruments Incorporated
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License as
+ * published by the Free Software Foundation version 2.
+ *
+ * This program is distributed "as is" WITHOUT ANY WARRANTY of any
+ * kind, whether express or implied; without even the implied warranty
+ * of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
  */
 #include <linux/kernel.h>
 #include <linux/init.h>
@@ -10,25 +18,24 @@
 #include <linux/i2c.h>
 #include <linux/io.h>
 #include <linux/clk.h>
-#include <linux/property.h>
+#include <linux/platform_data/at24.h>
 #include <linux/leds.h>
 #include <linux/mtd/mtd.h>
 #include <linux/mtd/partitions.h>
 #include <linux/slab.h>
 #include <linux/mtd/rawnand.h>
-#include <linux/nvmem-provider.h>
 #include <linux/input.h>
 #include <linux/spi/spi.h>
 #include <linux/spi/eeprom.h>
 #include <linux/v4l2-dv-timings.h>
-#include <linux/platform_data/ti-aemif.h>
-#include <linux/regulator/fixed.h>
-#include <linux/regulator/machine.h>
 
 #include <asm/mach-types.h>
 #include <asm/mach/arch.h>
 
+#include <mach/mux.h>
+#include <mach/common.h>
 #include <linux/platform_data/i2c-davinci.h>
+#include <mach/serial.h>
 #include <linux/platform_data/mmc-davinci.h>
 #include <linux/platform_data/mtd-davinci.h>
 #include <linux/platform_data/keyscan-davinci.h>
@@ -36,9 +43,6 @@
 #include <media/i2c/ths7303.h>
 #include <media/i2c/tvp514x.h>
 
-#include "mux.h"
-#include "common.h"
-#include "serial.h"
 #include "davinci.h"
 
 static inline int have_imager(void)
@@ -134,11 +138,10 @@ static struct mtd_partition davinci_nand_partitions[] = {
 };
 
 static struct davinci_nand_pdata davinci_nand_data = {
-	.core_chipsel		= 0,
 	.mask_chipsel		= BIT(14),
 	.parts			= davinci_nand_partitions,
 	.nr_parts		= ARRAY_SIZE(davinci_nand_partitions),
-	.engine_type		= NAND_ECC_ENGINE_TYPE_ON_HOST,
+	.ecc_mode		= NAND_ECC_HW,
 	.bbt_options		= NAND_BBT_USE_FLASH,
 	.ecc_bits		= 4,
 };
@@ -155,83 +158,28 @@ static struct resource davinci_nand_resources[] = {
 	},
 };
 
-static struct platform_device davinci_aemif_devices[] = {
-	{
-		.name		= "davinci_nand",
-		.id		= 0,
-		.num_resources	= ARRAY_SIZE(davinci_nand_resources),
-		.resource	= davinci_nand_resources,
-		.dev		= {
-			.platform_data	= &davinci_nand_data,
-		},
-	}
-};
-
-static struct resource davinci_aemif_resources[] = {
-	{
-		.start		= DM365_ASYNC_EMIF_CONTROL_BASE,
-		.end		= DM365_ASYNC_EMIF_CONTROL_BASE + SZ_4K - 1,
-		.flags		= IORESOURCE_MEM,
+static struct platform_device davinci_nand_device = {
+	.name			= "davinci_nand",
+	.id			= 0,
+	.num_resources		= ARRAY_SIZE(davinci_nand_resources),
+	.resource		= davinci_nand_resources,
+	.dev			= {
+		.platform_data	= &davinci_nand_data,
 	},
 };
 
-static struct aemif_abus_data da850_evm_aemif_abus_data[] = {
-	{
-		.cs		= 1,
-	},
-};
-
-static struct aemif_platform_data davinci_aemif_pdata = {
-	.abus_data		= da850_evm_aemif_abus_data,
-	.num_abus_data		= ARRAY_SIZE(da850_evm_aemif_abus_data),
-	.sub_devices		= davinci_aemif_devices,
-	.num_sub_devices	= ARRAY_SIZE(davinci_aemif_devices),
-};
-
-static struct platform_device davinci_aemif_device = {
-	.name			= "ti-aemif",
-	.id			= -1,
-	.dev = {
-		.platform_data	= &davinci_aemif_pdata,
-	},
-	.resource		= davinci_aemif_resources,
-	.num_resources		= ARRAY_SIZE(davinci_aemif_resources),
-};
-
-static struct nvmem_cell_info davinci_nvmem_cells[] = {
-	{
-		.name		= "macaddr",
-		.offset		= 0x7f00,
-		.bytes		= ETH_ALEN,
-	}
-};
-
-static struct nvmem_cell_table davinci_nvmem_cell_table = {
-	.nvmem_name	= "1-00500",
-	.cells		= davinci_nvmem_cells,
-	.ncells		= ARRAY_SIZE(davinci_nvmem_cells),
-};
-
-static struct nvmem_cell_lookup davinci_nvmem_cell_lookup = {
-	.nvmem_name	= "1-00500",
-	.cell_name	= "macaddr",
-	.dev_id		= "davinci_emac.1",
-	.con_id		= "mac-address",
-};
-
-static const struct property_entry eeprom_properties[] = {
-	PROPERTY_ENTRY_U32("pagesize", 64),
-	{ }
-};
-
-static const struct software_node eeprom_node = {
-	.properties = eeprom_properties,
+static struct at24_platform_data eeprom_info = {
+	.byte_len       = (256*1024) / 8,
+	.page_size      = 64,
+	.flags          = AT24_FLAG_ADDR16,
+	.setup          = davinci_get_mac_addr,
+	.context	= (void *)0x7f00,
 };
 
 static struct i2c_board_info i2c_info[] = {
 	{
 		I2C_BOARD_INFO("24c256", 0x50),
-		.swnode = &eeprom_node,
+		.platform_data	= &eeprom_info,
 	},
 	{
 		I2C_BOARD_INFO("tlv320aic3x", 0x18),
@@ -241,19 +189,6 @@ static struct i2c_board_info i2c_info[] = {
 static struct davinci_i2c_platform_data i2c_pdata = {
 	.bus_freq	= 400	/* kHz */,
 	.bus_delay	= 0	/* usec */,
-};
-
-/* Fixed regulator support */
-static struct regulator_consumer_supply fixed_supplies_3_3v[] = {
-	/* Baseboard 3.3V: 5V -> TPS767D301 -> 3.3V */
-	REGULATOR_SUPPLY("AVDD", "1-0018"),
-	REGULATOR_SUPPLY("DRVDD", "1-0018"),
-	REGULATOR_SUPPLY("IOVDD", "1-0018"),
-};
-
-static struct regulator_consumer_supply fixed_supplies_1_8v[] = {
-	/* Baseboard 1.8V: 5V -> TPS767D301 -> 1.8V */
-	REGULATOR_SUPPLY("DVDD", "1-0018"),
 };
 
 static int dm365evm_keyscan_enable(struct device *dev)
@@ -601,6 +536,10 @@ static void __init evm_init_i2c(void)
 	i2c_register_board_info(1, i2c_info, ARRAY_SIZE(i2c_info));
 }
 
+static struct platform_device *dm365_evm_nand_devices[] __initdata = {
+	&davinci_nand_device,
+};
+
 static inline int have_leds(void)
 {
 #ifdef CONFIG_LEDS_CLASS
@@ -688,7 +627,6 @@ static void __init evm_init_cpld(void)
 	u8 mux, resets;
 	const char *label;
 	struct clk *aemif_clk;
-	int rc;
 
 	/* Make sure we can configure the CPLD through CS1.  Then
 	 * leave it on for later access to MMC and LED registers.
@@ -721,10 +659,8 @@ fail:
 		/* external keypad mux */
 		mux |= BIT(7);
 
-		rc = platform_device_register(&davinci_aemif_device);
-		if (rc)
-			pr_warn("%s(): error registering the aemif device: %d\n",
-				__func__, rc);
+		platform_add_devices(dm365_evm_nand_devices,
+				ARRAY_SIZE(dm365_evm_nand_devices));
 	} else {
 		/* no OneNAND support yet */
 	}
@@ -805,19 +741,9 @@ static __init void dm365_evm_init(void)
 {
 	int ret;
 
-	dm365_register_clocks();
-
 	ret = dm365_gpio_register();
 	if (ret)
 		pr_warn("%s: GPIO init failed: %d\n", __func__, ret);
-
-	regulator_register_always_on(0, "fixed-dummy", fixed_supplies_1_8v,
-				     ARRAY_SIZE(fixed_supplies_1_8v), 1800000);
-	regulator_register_always_on(1, "fixed-dummy", fixed_supplies_3_3v,
-				     ARRAY_SIZE(fixed_supplies_3_3v), 3300000);
-
-	nvmem_add_cell_table(&davinci_nvmem_cell_table);
-	nvmem_add_cell_lookups(&davinci_nvmem_cell_lookup, 1);
 
 	evm_init_i2c();
 	davinci_serial_init(dm365_serial_device);
@@ -832,9 +758,9 @@ static __init void dm365_evm_init(void)
 	/* maybe setup mmc1/etc ... _after_ mmc0 */
 	evm_init_cpld();
 
-#ifdef CONFIG_SND_SOC_DM365_AIC3X_CODEC
+#ifdef CONFIG_SND_DM365_AIC3X_CODEC
 	dm365_init_asp();
-#elif defined(CONFIG_SND_SOC_DM365_VOICE_CODEC)
+#elif defined(CONFIG_SND_DM365_VOICE_CODEC)
 	dm365_init_vc();
 #endif
 	dm365_init_rtc();
@@ -847,9 +773,10 @@ static __init void dm365_evm_init(void)
 MACHINE_START(DAVINCI_DM365_EVM, "DaVinci DM365 EVM")
 	.atag_offset	= 0x100,
 	.map_io		= dm365_evm_map_io,
-	.init_irq	= dm365_init_irq,
+	.init_irq	= davinci_irq_init,
 	.init_time	= dm365_init_time,
 	.init_machine	= dm365_evm_init,
 	.init_late	= davinci_init_late,
 	.dma_zone_size	= SZ_128M,
 MACHINE_END
+

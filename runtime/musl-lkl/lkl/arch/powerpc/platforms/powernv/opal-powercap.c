@@ -1,8 +1,12 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * PowerNV OPAL Powercap interface
  *
  * Copyright 2017 IBM Corp.
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version
+ * 2 of the License, or (at your option) any later version.
  */
 
 #define pr_fmt(fmt)     "opal-powercap: " fmt
@@ -13,7 +17,7 @@
 
 #include <asm/opal.h>
 
-static DEFINE_MUTEX(powercap_mutex);
+DEFINE_MUTEX(powercap_mutex);
 
 static struct kobject *powercap_kobj;
 
@@ -129,7 +133,7 @@ out_token:
 	return ret;
 }
 
-static void __init powercap_add_attr(int handle, const char *name,
+static void powercap_add_attr(int handle, const char *name,
 			      struct powercap_attr *attr)
 {
 	attr->handle = handle;
@@ -153,7 +157,7 @@ void __init opal_powercap_init(void)
 	pcaps = kcalloc(of_get_child_count(powercap), sizeof(*pcaps),
 			GFP_KERNEL);
 	if (!pcaps)
-		goto out_put_powercap;
+		return;
 
 	powercap_kobj = kobject_create_and_add("powercap", opal_kobj);
 	if (!powercap_kobj) {
@@ -195,7 +199,7 @@ void __init opal_powercap_init(void)
 		}
 
 		j = 0;
-		pcaps[i].pg.name = kasprintf(GFP_KERNEL, "%pOFn", node);
+		pcaps[i].pg.name = node->name;
 		if (has_min) {
 			powercap_add_attr(min, "powercap-min",
 					  &pcaps[i].pattrs[j]);
@@ -226,7 +230,6 @@ void __init opal_powercap_init(void)
 		}
 		i++;
 	}
-	of_node_put(powercap);
 
 	return;
 
@@ -234,12 +237,8 @@ out_pcaps_pattrs:
 	while (--i >= 0) {
 		kfree(pcaps[i].pattrs);
 		kfree(pcaps[i].pg.attrs);
-		kfree(pcaps[i].pg.name);
 	}
 	kobject_put(powercap_kobj);
-	of_node_put(node);
 out_pcaps:
 	kfree(pcaps);
-out_put_powercap:
-	of_node_put(powercap);
 }

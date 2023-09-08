@@ -1,12 +1,11 @@
 #include <uapi/linux/bpf.h>
+#include "bpf_helpers.h"
 #include <uapi/linux/in.h>
 #include <uapi/linux/if.h>
 #include <uapi/linux/if_ether.h>
 #include <uapi/linux/ip.h>
 #include <uapi/linux/ipv6.h>
 #include <uapi/linux/if_tunnel.h>
-#include <bpf/bpf_helpers.h>
-#include "bpf_legacy.h"
 #define IP_MF		0x2000
 #define IP_OFFSET	0x1FFF
 
@@ -15,7 +14,7 @@ struct vlan_hdr {
 	__be16 h_vlan_encapsulated_proto;
 };
 
-struct flow_key_record {
+struct bpf_flow_keys {
 	__be32 src;
 	__be32 dst;
 	union {
@@ -60,7 +59,7 @@ static inline __u32 ipv6_addr_hash(struct __sk_buff *ctx, __u64 off)
 }
 
 static inline __u64 parse_ip(struct __sk_buff *skb, __u64 nhoff, __u64 *ip_proto,
-			     struct flow_key_record *flow)
+			     struct bpf_flow_keys *flow)
 {
 	__u64 verlen;
 
@@ -84,7 +83,7 @@ static inline __u64 parse_ip(struct __sk_buff *skb, __u64 nhoff, __u64 *ip_proto
 }
 
 static inline __u64 parse_ipv6(struct __sk_buff *skb, __u64 nhoff, __u64 *ip_proto,
-			       struct flow_key_record *flow)
+			       struct bpf_flow_keys *flow)
 {
 	*ip_proto = load_byte(skb,
 			      nhoff + offsetof(struct ipv6hdr, nexthdr));
@@ -97,8 +96,7 @@ static inline __u64 parse_ipv6(struct __sk_buff *skb, __u64 nhoff, __u64 *ip_pro
 	return nhoff;
 }
 
-static inline bool flow_dissector(struct __sk_buff *skb,
-				  struct flow_key_record *flow)
+static inline bool flow_dissector(struct __sk_buff *skb, struct bpf_flow_keys *flow)
 {
 	__u64 nhoff = ETH_HLEN;
 	__u64 ip_proto;
@@ -190,17 +188,17 @@ struct pair {
 	long bytes;
 };
 
-struct {
-	__uint(type, BPF_MAP_TYPE_HASH);
-	__type(key, __be32);
-	__type(value, struct pair);
-	__uint(max_entries, 1024);
-} hash_map SEC(".maps");
+struct bpf_map_def SEC("maps") hash_map = {
+	.type = BPF_MAP_TYPE_HASH,
+	.key_size = sizeof(__be32),
+	.value_size = sizeof(struct pair),
+	.max_entries = 1024,
+};
 
 SEC("socket2")
 int bpf_prog2(struct __sk_buff *skb)
 {
-	struct flow_key_record flow = {};
+	struct bpf_flow_keys flow = {};
 	struct pair *value;
 	u32 key;
 

@@ -109,6 +109,10 @@ static int disable_msi = 0;
 module_param(disable_msi, int, 0);
 MODULE_PARM_DESC(disable_msi, "Disable Message Signaled Interrupt (MSI)");
 
+static const char pci_speed[][4] = {
+	"33", "66", "100", "133"
+};
+
 /*
  * Setup MAC to receive the types of packets we want.
  */
@@ -211,10 +215,9 @@ static int cxgb_up(struct adapter *adapter)
 	t1_interrupts_clear(adapter);
 
 	adapter->params.has_msi = !disable_msi && !pci_enable_msi(adapter->pdev);
-	err = request_threaded_irq(adapter->pdev->irq, t1_interrupt,
-				   t1_interrupt_thread,
-				   adapter->params.has_msi ? 0 : IRQF_SHARED,
-				   adapter->name, adapter);
+	err = request_irq(adapter->pdev->irq, t1_interrupt,
+			  adapter->params.has_msi ? 0 : IRQF_SHARED,
+			  adapter->name, adapter);
 	if (err) {
 		if (adapter->params.has_msi)
 			pci_disable_msi(adapter->pdev);
@@ -429,8 +432,9 @@ static void get_drvinfo(struct net_device *dev, struct ethtool_drvinfo *info)
 {
 	struct adapter *adapter = dev->ml_priv;
 
-	strscpy(info->driver, DRV_NAME, sizeof(info->driver));
-	strscpy(info->bus_info, pci_name(adapter->pdev),
+	strlcpy(info->driver, DRV_NAME, sizeof(info->driver));
+	strlcpy(info->version, DRV_VERSION, sizeof(info->version));
+	strlcpy(info->bus_info, pci_name(adapter->pdev),
 		sizeof(info->bus_info));
 }
 
@@ -710,9 +714,7 @@ static int set_pauseparam(struct net_device *dev,
 	return 0;
 }
 
-static void get_sge_param(struct net_device *dev, struct ethtool_ringparam *e,
-			  struct kernel_ethtool_ringparam *kernel_e,
-			  struct netlink_ext_ack *extack)
+static void get_sge_param(struct net_device *dev, struct ethtool_ringparam *e)
 {
 	struct adapter *adapter = dev->ml_priv;
 	int jumbo_fl = t1_is_T1B(adapter) ? 1 : 0;
@@ -726,9 +728,7 @@ static void get_sge_param(struct net_device *dev, struct ethtool_ringparam *e,
 	e->tx_pending = adapter->params.sge.cmdQ_size[0];
 }
 
-static int set_sge_param(struct net_device *dev, struct ethtool_ringparam *e,
-			 struct kernel_ethtool_ringparam *kernel_e,
-			 struct netlink_ext_ack *extack)
+static int set_sge_param(struct net_device *dev, struct ethtool_ringparam *e)
 {
 	struct adapter *adapter = dev->ml_priv;
 	int jumbo_fl = t1_is_T1B(adapter) ? 1 : 0;
@@ -752,9 +752,7 @@ static int set_sge_param(struct net_device *dev, struct ethtool_ringparam *e,
 	return 0;
 }
 
-static int set_coalesce(struct net_device *dev, struct ethtool_coalesce *c,
-			struct kernel_ethtool_coalesce *kernel_coal,
-			struct netlink_ext_ack *extack)
+static int set_coalesce(struct net_device *dev, struct ethtool_coalesce *c)
 {
 	struct adapter *adapter = dev->ml_priv;
 
@@ -765,9 +763,7 @@ static int set_coalesce(struct net_device *dev, struct ethtool_coalesce *c,
 	return 0;
 }
 
-static int get_coalesce(struct net_device *dev, struct ethtool_coalesce *c,
-			struct kernel_ethtool_coalesce *kernel_coal,
-			struct netlink_ext_ack *extack)
+static int get_coalesce(struct net_device *dev, struct ethtool_coalesce *c)
 {
 	struct adapter *adapter = dev->ml_priv;
 
@@ -802,9 +798,6 @@ static int get_eeprom(struct net_device *dev, struct ethtool_eeprom *e,
 }
 
 static const struct ethtool_ops t1_ethtool_ops = {
-	.supported_coalesce_params = ETHTOOL_COALESCE_RX_USECS |
-				     ETHTOOL_COALESCE_USE_ADAPTIVE_RX |
-				     ETHTOOL_COALESCE_RATE_SAMPLE_INTERVAL,
 	.get_drvinfo       = get_drvinfo,
 	.get_msglevel      = get_msglevel,
 	.set_msglevel      = set_msglevel,
@@ -857,7 +850,7 @@ static int t1_set_mac_addr(struct net_device *dev, void *p)
 	if (!mac->ops->macaddress_set)
 		return -EOPNOTSUPP;
 
-	eth_hw_addr_set(dev, addr->sa_data);
+	memcpy(dev->dev_addr, addr->sa_data, dev->addr_len);
 	mac->ops->macaddress_set(mac, dev->dev_addr);
 	return 0;
 }
@@ -925,6 +918,51 @@ static void mac_stats_task(struct work_struct *work)
 	spin_unlock(&adapter->work_lock);
 }
 
+/*
+ * Processes elmer0 external interrupts in process context.
+ */
+static void ext_intr_task(struct work_struct *work)
+{
+	struct adapter *adapter =
+		container_of(work, struct adapter, ext_intr_handler_task);
+
+	t1_elmer0_ext_intr_handler(adapter);
+
+	/* Now reenable external interrupts */
+	spin_lock_irq(&adapter->async_lock);
+	adapter->slow_intr_mask |= F_PL_INTR_EXT;
+	writel(F_PL_INTR_EXT, adapter->regs + A_PL_CAUSE);
+	writel(adapter->slow_intr_mask | F_PL_INTR_SGE_DATA,
+		   adapter->regs + A_PL_ENABLE);
+	spin_unlock_irq(&adapter->async_lock);
+}
+
+/*
+ * Interrupt-context handler for elmer0 external interrupts.
+ */
+void t1_elmer0_ext_intr(struct adapter *adapter)
+{
+	/*
+	 * Schedule a task to handle external interrupts as we require
+	 * a process context.  We disable EXT interrupts in the interim
+	 * and let the task reenable them when it's done.
+	 */
+	adapter->slow_intr_mask &= ~F_PL_INTR_EXT;
+	writel(adapter->slow_intr_mask | F_PL_INTR_SGE_DATA,
+		   adapter->regs + A_PL_ENABLE);
+	schedule_work(&adapter->ext_intr_handler_task);
+}
+
+void t1_fatal_err(struct adapter *adapter)
+{
+	if (adapter->flags & FULL_INIT_DONE) {
+		t1_sge_stop(adapter->sge);
+		t1_interrupts_disable(adapter);
+	}
+	pr_alert("%s: encountered fatal error, operation suspended\n",
+		 adapter->name);
+}
+
 static const struct net_device_ops cxgb_netdev_ops = {
 	.ndo_open		= cxgb_open,
 	.ndo_stop		= cxgb_close,
@@ -932,7 +970,7 @@ static const struct net_device_ops cxgb_netdev_ops = {
 	.ndo_get_stats		= t1_get_stats,
 	.ndo_validate_addr	= eth_validate_addr,
 	.ndo_set_rx_mode	= t1_set_rxmode,
-	.ndo_eth_ioctl		= t1_ioctl,
+	.ndo_do_ioctl		= t1_ioctl,
 	.ndo_change_mtu		= t1_change_mtu,
 	.ndo_set_mac_address	= t1_set_mac_addr,
 	.ndo_fix_features	= t1_fix_features,
@@ -944,11 +982,13 @@ static const struct net_device_ops cxgb_netdev_ops = {
 
 static int init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 {
+	int i, err, pci_using_dac = 0;
 	unsigned long mmio_start, mmio_len;
 	const struct board_info *bi;
 	struct adapter *adapter = NULL;
 	struct port_info *pi;
-	int i, err;
+
+	pr_info_once("%s - version %s\n", DRV_DESCRIPTION, DRV_VERSION);
 
 	err = pci_enable_device(pdev);
 	if (err)
@@ -961,8 +1001,17 @@ static int init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 		goto out_disable_pdev;
 	}
 
-	err = dma_set_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(64));
-	if (err) {
+	if (!pci_set_dma_mask(pdev, DMA_BIT_MASK(64))) {
+		pci_using_dac = 1;
+
+		if (pci_set_consistent_dma_mask(pdev, DMA_BIT_MASK(64))) {
+			pr_err("%s: unable to obtain 64-bit DMA for "
+			       "consistent allocations\n", pci_name(pdev));
+			err = -ENODEV;
+			goto out_disable_pdev;
+		}
+
+	} else if ((err = pci_set_dma_mask(pdev, DMA_BIT_MASK(32))) != 0) {
 		pr_err("%s: no usable DMA configuration\n", pci_name(pdev));
 		goto out_disable_pdev;
 	}
@@ -1017,6 +1066,8 @@ static int init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 			spin_lock_init(&adapter->async_lock);
 			spin_lock_init(&adapter->mac_lock);
 
+			INIT_WORK(&adapter->ext_intr_handler_task,
+				  ext_intr_task);
 			INIT_DELAYED_WORK(&adapter->stats_update_task,
 					  mac_stats_task);
 
@@ -1034,8 +1085,10 @@ static int init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 		netdev->hw_features |= NETIF_F_SG | NETIF_F_IP_CSUM |
 			NETIF_F_RXCSUM;
 		netdev->features |= NETIF_F_SG | NETIF_F_IP_CSUM |
-			NETIF_F_RXCSUM | NETIF_F_LLTX | NETIF_F_HIGHDMA;
+			NETIF_F_RXCSUM | NETIF_F_LLTX;
 
+		if (pci_using_dac)
+			netdev->features |= NETIF_F_HIGHDMA;
 		if (vlan_tso_capable(adapter)) {
 			netdev->features |=
 				NETIF_F_HW_VLAN_CTAG_TX |
@@ -1053,7 +1106,7 @@ static int init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 		netdev->hard_header_len += (netdev->hw_features & NETIF_F_TSO) ?
 			sizeof(struct cpl_tx_pkt_lso) : sizeof(struct cpl_tx_pkt);
 
-		netif_napi_add(netdev, &adapter->napi, t1_poll);
+		netif_napi_add(netdev, &adapter->napi, t1_poll, 64);
 
 		netdev->ethtool_ops = &t1_ethtool_ops;
 
@@ -1104,7 +1157,6 @@ static int init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 	if (!adapter->registered_device_map) {
 		pr_err("%s: could not register any net devices\n",
 		       pci_name(pdev));
-		err = -EINVAL;
 		goto out_release_adapter_res;
 	}
 

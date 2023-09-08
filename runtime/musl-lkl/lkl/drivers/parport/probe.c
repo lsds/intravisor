@@ -8,8 +8,8 @@
 
 #include <linux/module.h>
 #include <linux/parport.h>
+#include <linux/ctype.h>
 #include <linux/string.h>
-#include <linux/string_helpers.h>
 #include <linux/slab.h>
 #include <linux/uaccess.h>
 
@@ -38,16 +38,16 @@ static void pretty_print(struct parport *port, int device)
 {
 	struct parport_device_info *info = &port->probe_info[device + 1];
 
-	pr_info("%s", port->name);
+	printk(KERN_INFO "%s", port->name);
 
 	if (device >= 0)
-		pr_cont(" (addr %d)", device);
+		printk (" (addr %d)", device);
 
-	pr_cont(": %s", classes[info->class].descr);
+	printk (": %s", classes[info->class].descr);
 	if (info->class)
-		pr_cont(", %s %s", info->mfr, info->model);
+		printk(", %s %s", info->mfr, info->model);
 
-	pr_cont("\n");
+	printk("\n");
 }
 
 static void parse_data(struct parport *port, int device, char *str)
@@ -58,7 +58,7 @@ static void parse_data(struct parport *port, int device, char *str)
 	struct parport_device_info *info = &port->probe_info[device + 1];
 
 	if (!txt) {
-		pr_warn("%s probe: memory squeeze\n", port->name);
+		printk(KERN_WARNING "%s probe: memory squeeze\n", port->name);
 		return;
 	}
 	strcpy(txt, str);
@@ -74,7 +74,11 @@ static void parse_data(struct parport *port, int device, char *str)
 			u = sep + strlen (sep) - 1;
 			while (u >= p && *u == ' ')
 				*u-- = '\0';
-			string_upper(p, p);
+			u = p;
+			while (*u) {
+				*u = toupper(*u);
+				u++;
+			}
 			if (!strcmp(p, "MFG") || !strcmp(p, "MANUFACTURER")) {
 				kfree(info->mfr);
 				info->mfr = kstrdup(sep, GFP_KERNEL);
@@ -86,15 +90,15 @@ static void parse_data(struct parport *port, int device, char *str)
 
 				kfree(info->class_name);
 				info->class_name = kstrdup(sep, GFP_KERNEL);
-				string_upper(sep, sep);
+				for (u = sep; *u; u++)
+					*u = toupper(*u);
 				for (i = 0; classes[i].token; i++) {
 					if (!strcmp(classes[i].token, sep)) {
 						info->class = i;
 						goto rock_on;
 					}
 				}
-				pr_warn("%s probe: warning, class '%s' not understood\n",
-					port->name, sep);
+				printk(KERN_WARNING "%s probe: warning, class '%s' not understood.\n", port->name, sep);
 				info->class = PARPORT_CLASS_OTHER;
 			} else if (!strcmp(p, "CMD") ||
 				   !strcmp(p, "COMMAND SET")) {
@@ -173,8 +177,9 @@ static ssize_t parport_read_device_id (struct parport *port, char *buffer,
 		 * just return constant nibble forever. This catches
 		 * also those cases. */
 		if (idlens[0] == 0 || idlens[0] > 0xFFF) {
-			printk(KERN_DEBUG "%s: reported broken Device ID length of %#zX bytes\n",
-			       port->name, idlens[0]);
+			printk (KERN_DEBUG "%s: reported broken Device ID"
+				" length of %#zX bytes\n",
+				port->name, idlens[0]);
 			return -EIO;
 		}
 		numidlens = 2;
@@ -196,8 +201,10 @@ static ssize_t parport_read_device_id (struct parport *port, char *buffer,
 
 		if (port->physport->ieee1284.phase != IEEE1284_PH_HBUSY_DAVAIL) {
 			if (belen != len) {
-				printk(KERN_DEBUG "%s: Device ID was %zd bytes while device told it would be %d bytes\n",
-				       port->name, len, belen);
+				printk (KERN_DEBUG "%s: Device ID was %zd bytes"
+					" while device told it would be %d"
+					" bytes\n",
+					port->name, len, belen);
 			}
 			goto done;
 		}
@@ -207,9 +214,11 @@ static ssize_t parport_read_device_id (struct parport *port, char *buffer,
 		 * the first 256 bytes or so that we must have read so
 		 * far. */
 		if (buffer[len-1] == ';') {
-			printk(KERN_DEBUG "%s: Device ID reading stopped before device told data not available. Current idlen %u of %u, len bytes %02X %02X\n",
-			       port->name, current_idlen, numidlens,
-			       length[0], length[1]);
+ 			printk (KERN_DEBUG "%s: Device ID reading stopped"
+				" before device told data not available. "
+				"Current idlen %u of %u, len bytes %02X %02X\n",
+				port->name, current_idlen, numidlens,
+				length[0], length[1]);
 			goto done;
 		}
 	}
@@ -248,7 +257,7 @@ static ssize_t parport_read_device_id (struct parport *port, char *buffer,
 ssize_t parport_device_id (int devnum, char *buffer, size_t count)
 {
 	ssize_t retval = -ENXIO;
-	struct pardevice *dev = parport_open(devnum, daisy_dev_name);
+	struct pardevice *dev = parport_open (devnum, "Device ID probe");
 	if (!dev)
 		return -ENXIO;
 

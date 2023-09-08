@@ -1,8 +1,13 @@
-// SPDX-License-Identifier: GPL-2.0
-// ak4554.c
-//
-// Copyright (C) 2013 Renesas Solutions Corp.
-// Kuninori Morimoto <kuninori.morimoto.gx@renesas.com>
+/*
+ * ak4554.c
+ *
+ * Copyright (C) 2013 Renesas Solutions Corp.
+ * Kuninori Morimoto <kuninori.morimoto.gx@renesas.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ */
 
 #include <linux/module.h>
 #include <sound/soc.h>
@@ -56,7 +61,7 @@ static struct snd_soc_dai_driver ak4554_dai = {
 		.rates = SNDRV_PCM_RATE_8000_48000,
 		.formats = SNDRV_PCM_FMTBIT_S16_LE,
 	},
-	.symmetric_rate = 1,
+	.symmetric_rates = 1,
 };
 
 static const struct snd_soc_component_driver soc_component_dev_ak4554 = {
@@ -67,6 +72,7 @@ static const struct snd_soc_component_driver soc_component_dev_ak4554 = {
 	.idle_bias_on		= 1,
 	.use_pmdown_time	= 1,
 	.endianness		= 1,
+	.non_legacy_dai_naming	= 1,
 };
 
 static int ak4554_soc_probe(struct platform_device *pdev)
@@ -91,6 +97,6 @@ static struct platform_driver ak4554_driver = {
 };
 module_platform_driver(ak4554_driver);
 
-MODULE_LICENSE("GPL v2");
+MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("SoC AK4554 driver");
 MODULE_AUTHOR("Kuninori Morimoto <kuninori.morimoto.gx@renesas.com>");

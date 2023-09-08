@@ -1,13 +1,21 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * adv7183.c Analog Devices ADV7183 video decoder driver
  *
  * Copyright (c) 2011 Analog Devices Inc.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
  */
 
 #include <linux/delay.h>
 #include <linux/errno.h>
-#include <linux/gpio/consumer.h>
+#include <linux/gpio.h>
 #include <linux/i2c.h>
 #include <linux/init.h>
 #include <linux/module.h>
@@ -28,8 +36,8 @@ struct adv7183 {
 	v4l2_std_id std; /* Current set standard */
 	u32 input;
 	u32 output;
-	struct gpio_desc *reset_pin;
-	struct gpio_desc *oe_pin;
+	unsigned reset_pin;
+	unsigned oe_pin;
 	struct v4l2_mbus_framefmt fmt;
 };
 
@@ -409,7 +417,7 @@ static int adv7183_g_input_status(struct v4l2_subdev *sd, u32 *status)
 }
 
 static int adv7183_enum_mbus_code(struct v4l2_subdev *sd,
-		struct v4l2_subdev_state *sd_state,
+		struct v4l2_subdev_pad_config *cfg,
 		struct v4l2_subdev_mbus_code_enum *code)
 {
 	if (code->pad || code->index > 0)
@@ -420,7 +428,7 @@ static int adv7183_enum_mbus_code(struct v4l2_subdev *sd,
 }
 
 static int adv7183_set_fmt(struct v4l2_subdev *sd,
-		struct v4l2_subdev_state *sd_state,
+		struct v4l2_subdev_pad_config *cfg,
 		struct v4l2_subdev_format *format)
 {
 	struct adv7183 *decoder = to_adv7183(sd);
@@ -443,12 +451,12 @@ static int adv7183_set_fmt(struct v4l2_subdev *sd,
 	if (format->which == V4L2_SUBDEV_FORMAT_ACTIVE)
 		decoder->fmt = *fmt;
 	else
-		sd_state->pads->try_fmt = *fmt;
+		cfg->try_fmt = *fmt;
 	return 0;
 }
 
 static int adv7183_get_fmt(struct v4l2_subdev *sd,
-		struct v4l2_subdev_state *sd_state,
+		struct v4l2_subdev_pad_config *cfg,
 		struct v4l2_subdev_format *format)
 {
 	struct adv7183 *decoder = to_adv7183(sd);
@@ -465,9 +473,9 @@ static int adv7183_s_stream(struct v4l2_subdev *sd, int enable)
 	struct adv7183 *decoder = to_adv7183(sd);
 
 	if (enable)
-		gpiod_set_value(decoder->oe_pin, 1);
+		gpio_set_value(decoder->oe_pin, 0);
 	else
-		gpiod_set_value(decoder->oe_pin, 0);
+		gpio_set_value(decoder->oe_pin, 1);
 	udelay(1);
 	return 0;
 }
@@ -531,6 +539,7 @@ static int adv7183_probe(struct i2c_client *client,
 	struct v4l2_subdev_format fmt = {
 		.which = V4L2_SUBDEV_FORMAT_ACTIVE,
 	};
+	const unsigned *pin_array;
 
 	/* Check if the adapter supports the needed features */
 	if (!i2c_check_functionality(client->adapter, I2C_FUNC_SMBUS_BYTE_DATA))
@@ -539,28 +548,29 @@ static int adv7183_probe(struct i2c_client *client,
 	v4l_info(client, "chip found @ 0x%02x (%s)\n",
 			client->addr << 1, client->adapter->name);
 
+	pin_array = client->dev.platform_data;
+	if (pin_array == NULL)
+		return -EINVAL;
+
 	decoder = devm_kzalloc(&client->dev, sizeof(*decoder), GFP_KERNEL);
 	if (decoder == NULL)
 		return -ENOMEM;
 
-	/*
-	 * Requesting high will assert reset, the line should be
-	 * flagged as active low in descriptor table or machine description.
-	 */
-	decoder->reset_pin = devm_gpiod_get(&client->dev, "reset",
-					    GPIOD_OUT_HIGH);
-	if (IS_ERR(decoder->reset_pin))
-		return PTR_ERR(decoder->reset_pin);
-	gpiod_set_consumer_name(decoder->reset_pin, "ADV7183 Reset");
-	/*
-	 * Requesting low will start with output disabled, the line should be
-	 * flagged as active low in descriptor table or machine description.
-	 */
-	decoder->oe_pin = devm_gpiod_get(&client->dev, "oe",
-					 GPIOD_OUT_LOW);
-	if (IS_ERR(decoder->oe_pin))
-		return PTR_ERR(decoder->oe_pin);
-	gpiod_set_consumer_name(decoder->reset_pin, "ADV7183 Output Enable");
+	decoder->reset_pin = pin_array[0];
+	decoder->oe_pin = pin_array[1];
+
+	if (devm_gpio_request_one(&client->dev, decoder->reset_pin,
+				  GPIOF_OUT_INIT_LOW, "ADV7183 Reset")) {
+		v4l_err(client, "failed to request GPIO %d\n", decoder->reset_pin);
+		return -EBUSY;
+	}
+
+	if (devm_gpio_request_one(&client->dev, decoder->oe_pin,
+				  GPIOF_OUT_INIT_HIGH,
+				  "ADV7183 Output Enable")) {
+		v4l_err(client, "failed to request GPIO %d\n", decoder->oe_pin);
+		return -EBUSY;
+	}
 
 	sd = &decoder->sd;
 	v4l2_i2c_subdev_init(sd, client, &adv7183_ops);
@@ -592,8 +602,7 @@ static int adv7183_probe(struct i2c_client *client,
 	/* reset chip */
 	/* reset pulse width at least 5ms */
 	mdelay(10);
-	/* De-assert reset line (descriptor tagged active low) */
-	gpiod_set_value(decoder->reset_pin, 0);
+	gpio_set_value(decoder->reset_pin, 1);
 	/* wait 5ms before any further i2c writes are performed */
 	mdelay(5);
 
@@ -613,12 +622,13 @@ static int adv7183_probe(struct i2c_client *client,
 	return 0;
 }
 
-static void adv7183_remove(struct i2c_client *client)
+static int adv7183_remove(struct i2c_client *client)
 {
 	struct v4l2_subdev *sd = i2c_get_clientdata(client);
 
 	v4l2_device_unregister_subdev(sd);
 	v4l2_ctrl_handler_free(sd->ctrl_handler);
+	return 0;
 }
 
 static const struct i2c_device_id adv7183_id[] = {

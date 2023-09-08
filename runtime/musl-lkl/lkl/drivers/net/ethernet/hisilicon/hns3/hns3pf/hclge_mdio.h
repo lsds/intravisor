@@ -1,19 +1,17 @@
-/* SPDX-License-Identifier: GPL-2.0+ */
-// Copyright (c) 2016-2017 Hisilicon Limited.
+/*
+ * Copyright (c) 2016-2017 Hisilicon Limited.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ */
 
 #ifndef __HCLGE_MDIO_H
 #define __HCLGE_MDIO_H
 
-#include "hnae3.h"
-
-struct hclge_dev;
-
 int hclge_mac_mdio_config(struct hclge_dev *hdev);
-int hclge_mac_connect_phy(struct hnae3_handle *handle);
-void hclge_mac_disconnect_phy(struct hnae3_handle *handle);
-void hclge_mac_start_phy(struct hclge_dev *hdev);
+int hclge_mac_start_phy(struct hclge_dev *hdev);
 void hclge_mac_stop_phy(struct hclge_dev *hdev);
-u16 hclge_read_phy_reg(struct hclge_dev *hdev, u16 reg_addr);
-int hclge_write_phy_reg(struct hclge_dev *hdev, u16 reg_addr, u16 val);
 
 #endif

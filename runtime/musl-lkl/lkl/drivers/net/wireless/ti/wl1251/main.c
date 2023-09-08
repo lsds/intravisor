@@ -1,8 +1,22 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * This file is part of wl1251
  *
  * Copyright (C) 2008-2009 Nokia Corporation
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * version 2 as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
+ * 02110-1301 USA
+ *
  */
 
 #include <linux/module.h>
@@ -546,7 +560,7 @@ static int wl1251_build_null_data(struct wl1251 *wl)
 		size = sizeof(struct wl12xx_null_data_template);
 		ptr = NULL;
 	} else {
-		skb = ieee80211_nullfunc_get(wl->hw, wl->vif, -1, false);
+		skb = ieee80211_nullfunc_get(wl->hw, wl->vif, false);
 		if (!skb)
 			goto out;
 		size = skb->len;
@@ -558,7 +572,7 @@ static int wl1251_build_null_data(struct wl1251 *wl)
 out:
 	dev_kfree_skb(skb);
 	if (ret)
-		wl1251_warning("cmd build null data failed: %d", ret);
+		wl1251_warning("cmd buld null data failed: %d", ret);
 
 	return ret;
 }
@@ -1077,7 +1091,7 @@ out:
 static void wl1251_op_bss_info_changed(struct ieee80211_hw *hw,
 				       struct ieee80211_vif *vif,
 				       struct ieee80211_bss_conf *bss_conf,
-				       u64 changed)
+				       u32 changed)
 {
 	struct wl1251 *wl = hw->priv;
 	struct sk_buff *beacon, *skb;
@@ -1123,7 +1137,7 @@ static void wl1251_op_bss_info_changed(struct ieee80211_hw *hw,
 	}
 
 	if (changed & BSS_CHANGED_ASSOC) {
-		if (vif->cfg.assoc) {
+		if (bss_conf->assoc) {
 			wl->beacon_int = bss_conf->beacon_int;
 
 			skb = ieee80211_pspoll_get(wl->hw, wl->vif);
@@ -1137,7 +1151,7 @@ static void wl1251_op_bss_info_changed(struct ieee80211_hw *hw,
 			if (ret < 0)
 				goto out_sleep;
 
-			ret = wl1251_acx_aid(wl, vif->cfg.aid);
+			ret = wl1251_acx_aid(wl, bss_conf->aid);
 			if (ret < 0)
 				goto out_sleep;
 		} else {
@@ -1176,17 +1190,17 @@ static void wl1251_op_bss_info_changed(struct ieee80211_hw *hw,
 	}
 
 	if (changed & BSS_CHANGED_ARP_FILTER) {
-		__be32 addr = vif->cfg.arp_addr_list[0];
+		__be32 addr = bss_conf->arp_addr_list[0];
 		WARN_ON(wl->bss_type != BSS_TYPE_STA_BSS);
 
-		enable = vif->cfg.arp_addr_cnt == 1 && vif->cfg.assoc;
+		enable = bss_conf->arp_addr_cnt == 1 && bss_conf->assoc;
 		ret = wl1251_acx_arp_ip_filter(wl, enable, addr);
 		if (ret < 0)
 			goto out_sleep;
 	}
 
 	if (changed & BSS_CHANGED_BEACON) {
-		beacon = ieee80211_beacon_get(hw, vif, 0);
+		beacon = ieee80211_beacon_get(hw, vif);
 		if (!beacon)
 			goto out_sleep;
 
@@ -1282,8 +1296,7 @@ static struct ieee80211_channel wl1251_channels[] = {
 };
 
 static int wl1251_op_conf_tx(struct ieee80211_hw *hw,
-			     struct ieee80211_vif *vif,
-			     unsigned int link_id, u16 queue,
+			     struct ieee80211_vif *vif, u16 queue,
 			     const struct ieee80211_tx_queue_params *params)
 {
 	enum wl1251_acx_ps_scheme ps_scheme;
@@ -1521,12 +1534,6 @@ int wl1251_init_ieee80211(struct wl1251 *wl)
 	wl->hw->wiphy->interface_modes = BIT(NL80211_IFTYPE_STATION) |
 					 BIT(NL80211_IFTYPE_ADHOC);
 	wl->hw->wiphy->max_scan_ssids = 1;
-
-	/* We set max_scan_ie_len to a random value to make wpa_supplicant scans not
-	 * fail, as the driver will the ignore the extra passed IEs anyway
-	 */
-	wl->hw->wiphy->max_scan_ie_len = 512;
-
 	wl->hw->wiphy->bands[NL80211_BAND_2GHZ] = &wl1251_band_2ghz;
 
 	wl->hw->queues = 4;

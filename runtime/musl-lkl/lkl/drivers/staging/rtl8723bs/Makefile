@@ -10,6 +10,7 @@ r8723bs-y = \
 		core/rtw_ieee80211.o \
 		core/rtw_mlme.o \
 		core/rtw_mlme_ext.o \
+		core/rtw_odm.o \
 		core/rtw_pwrctrl.o \
 		core/rtw_recv.o \
 		core/rtw_rf.o \
@@ -22,17 +23,21 @@ r8723bs-y = \
 		hal/hal_com_phycfg.o \
 		hal/hal_btcoex.o \
 		hal/hal_sdio.o \
-		hal/hal_pwr_seq.o \
+		hal/Hal8723BPwrSeq.o \
 		hal/HalPhyRf.o \
 		hal/HalPwrSeqCmd.o \
 		hal/odm.o \
 		hal/odm_CfoTracking.o \
+		hal/odm_debug.o \
 		hal/odm_DIG.o \
 		hal/odm_DynamicBBPowerSaving.o \
 		hal/odm_DynamicTxPower.o \
 		hal/odm_EdcaTurboCheck.o \
 		hal/odm_HWConfig.o \
+		hal/odm_NoiseMonitor.o \
+		hal/odm_PathDiv.o \
 		hal/odm_RegConfig8723B.o \
+		hal/odm_RTL8723B.o \
 		hal/rtl8723b_cmd.o \
 		hal/rtl8723b_dm.o \
 		hal/rtl8723b_hal_init.o \
@@ -55,6 +60,7 @@ r8723bs-y = \
 		os_dep/osdep_service.o \
 		os_dep/os_intfs.o \
 		os_dep/recv_linux.o \
+		os_dep/rtw_proc.o \
 		os_dep/sdio_intf.o \
 		os_dep/sdio_ops_linux.o \
 		os_dep/wifi_regd.o \

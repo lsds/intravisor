@@ -28,7 +28,6 @@
 #include <linux/dma-mapping.h>
 #include <linux/of.h>
 #include <linux/of_device.h>
-#include <linux/pgtable.h>
 
 #include <asm/io.h>
 #include <asm/dma.h>
@@ -37,6 +36,7 @@
 #include <asm/openprom.h>
 #include <asm/oplib.h>
 #include <asm/auxio.h>
+#include <asm/pgtable.h>
 #include <asm/irq.h>
 
 #include "sunqe.h"
@@ -144,7 +144,7 @@ static int qe_init(struct sunqe *qep, int from_irq)
 	void __iomem *cregs = qep->qcregs;
 	void __iomem *mregs = qep->mregs;
 	void __iomem *gregs = qecp->gregs;
-	const unsigned char *e = &qep->dev->dev_addr[0];
+	unsigned char *e = &qep->dev->dev_addr[0];
 	__u32 qblk_dvma = (__u32)qep->qblock_dvma;
 	u32 tmp;
 	int i;
@@ -544,7 +544,7 @@ static void qe_tx_reclaim(struct sunqe *qep)
 	qep->tx_old = elem;
 }
 
-static void qe_tx_timeout(struct net_device *dev, unsigned int txqueue)
+static void qe_tx_timeout(struct net_device *dev)
 {
 	struct sunqe *qep = netdev_priv(dev);
 	int tx_full;
@@ -570,7 +570,7 @@ out:
 }
 
 /* Get a packet queued to go onto the wire. */
-static netdev_tx_t qe_start_xmit(struct sk_buff *skb, struct net_device *dev)
+static int qe_start_xmit(struct sk_buff *skb, struct net_device *dev)
 {
 	struct sunqe *qep = netdev_priv(dev);
 	struct sunqe_buffers *qbufs = qep->buffers;
@@ -684,8 +684,8 @@ static void qe_get_drvinfo(struct net_device *dev, struct ethtool_drvinfo *info)
 	struct sunqe *qep = netdev_priv(dev);
 	struct platform_device *op;
 
-	strscpy(info->driver, "sunqe", sizeof(info->driver));
-	strscpy(info->version, "3.0", sizeof(info->version));
+	strlcpy(info->driver, "sunqe", sizeof(info->driver));
+	strlcpy(info->version, "3.0", sizeof(info->version));
 
 	op = qep->op;
 	regs = of_get_property(op->dev.of_node, "reg", NULL);
@@ -844,7 +844,7 @@ static int qec_ether_init(struct platform_device *op)
 	if (!dev)
 		return -ENOMEM;
 
-	eth_hw_addr_set(dev, idprom->id_ethaddr);
+	memcpy(dev->dev_addr, idprom->id_ethaddr, ETH_ALEN);
 
 	qe = netdev_priv(dev);
 

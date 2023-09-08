@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * spectrum management
  *
@@ -9,7 +8,11 @@
  * Copyright 2007, Michael Wu <flamingice@sourmilk.net>
  * Copyright 2007-2008, Intel Corporation
  * Copyright 2008, Johannes Berg <johannes@sipsolutions.net>
- * Copyright (C) 2018, 2020, 2022 Intel Corporation
+ * Copyright (C) 2018        Intel Corporation
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 
 #include <linux/ieee80211.h>
@@ -22,8 +25,7 @@
 int ieee80211_parse_ch_switch_ie(struct ieee80211_sub_if_data *sdata,
 				 struct ieee802_11_elems *elems,
 				 enum nl80211_band current_band,
-				 u32 vht_cap_info,
-				 ieee80211_conn_flags_t conn_flags, u8 *bssid,
+				 u32 sta_flags, u8 *bssid,
 				 struct ieee80211_csa_ie *csa_ie)
 {
 	enum nl80211_band new_band = current_band;
@@ -40,13 +42,13 @@ int ieee80211_parse_ch_switch_ie(struct ieee80211_sub_if_data *sdata,
 	sec_chan_offs = elems->sec_chan_offs;
 	wide_bw_chansw_ie = elems->wide_bw_chansw_ie;
 
-	if (conn_flags & (IEEE80211_CONN_DISABLE_HT |
-			  IEEE80211_CONN_DISABLE_40MHZ)) {
+	if (sta_flags & (IEEE80211_STA_DISABLE_HT |
+			 IEEE80211_STA_DISABLE_40MHZ)) {
 		sec_chan_offs = NULL;
 		wide_bw_chansw_ie = NULL;
 	}
 
-	if (conn_flags & IEEE80211_CONN_DISABLE_VHT)
+	if (sta_flags & IEEE80211_STA_DISABLE_VHT)
 		wide_bw_chansw_ie = NULL;
 
 	if (elems->ext_chansw_ie) {
@@ -93,7 +95,7 @@ int ieee80211_parse_ch_switch_ie(struct ieee80211_sub_if_data *sdata,
 
 	if (sec_chan_offs) {
 		secondary_channel_offset = sec_chan_offs->sec_chan_offs;
-	} else if (!(conn_flags & IEEE80211_CONN_DISABLE_HT)) {
+	} else if (!(sta_flags & IEEE80211_STA_DISABLE_HT)) {
 		/* If the secondary channel offset IE is not present,
 		 * we can't know what's the post-CSA offset, so the
 		 * best we can do is use 20MHz.
@@ -133,19 +135,14 @@ int ieee80211_parse_ch_switch_ie(struct ieee80211_sub_if_data *sdata,
 	}
 
 	if (wide_bw_chansw_ie) {
-		u8 new_seg1 = wide_bw_chansw_ie->new_center_freq_seg1;
 		struct ieee80211_vht_operation vht_oper = {
 			.chan_width =
 				wide_bw_chansw_ie->new_channel_width,
 			.center_freq_seg0_idx =
 				wide_bw_chansw_ie->new_center_freq_seg0,
-			.center_freq_seg1_idx = new_seg1,
+			.center_freq_seg1_idx =
+				wide_bw_chansw_ie->new_center_freq_seg1,
 			/* .basic_mcs_set doesn't matter */
-		};
-		struct ieee80211_ht_operation ht_oper = {
-			.operation_mode =
-				cpu_to_le16(new_seg1 <<
-					    IEEE80211_HT_OP_MODE_CCFS2_SHIFT),
 		};
 
 		/* default, for the case of IEEE80211_VHT_CHANWIDTH_USE_HT,
@@ -154,16 +151,13 @@ int ieee80211_parse_ch_switch_ie(struct ieee80211_sub_if_data *sdata,
 		new_vht_chandef = csa_ie->chandef;
 
 		/* ignore if parsing fails */
-		if (!ieee80211_chandef_vht_oper(&sdata->local->hw,
-						vht_cap_info,
-						&vht_oper, &ht_oper,
-						&new_vht_chandef))
+		if (!ieee80211_chandef_vht_oper(&vht_oper, &new_vht_chandef))
 			new_vht_chandef.chan = NULL;
 
-		if (conn_flags & IEEE80211_CONN_DISABLE_80P80MHZ &&
+		if (sta_flags & IEEE80211_STA_DISABLE_80P80MHZ &&
 		    new_vht_chandef.width == NL80211_CHAN_WIDTH_80P80)
 			ieee80211_chandef_downgrade(&new_vht_chandef);
-		if (conn_flags & IEEE80211_CONN_DISABLE_160MHZ &&
+		if (sta_flags & IEEE80211_STA_DISABLE_160MHZ &&
 		    new_vht_chandef.width == NL80211_CHAN_WIDTH_160)
 			ieee80211_chandef_downgrade(&new_vht_chandef);
 	}
@@ -179,12 +173,6 @@ int ieee80211_parse_ch_switch_ie(struct ieee80211_sub_if_data *sdata,
 		}
 		csa_ie->chandef = new_vht_chandef;
 	}
-
-	if (elems->max_channel_switch_time)
-		csa_ie->max_switch_time =
-			(elems->max_channel_switch_time[0] << 0) |
-			(elems->max_channel_switch_time[1] <<  8) |
-			(elems->max_channel_switch_time[2] << 16);
 
 	return 0;
 }

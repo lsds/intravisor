@@ -1,20 +1,24 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * arch/powerpc/platforms/83xx/mpc837x_mds.c
  *
  * Copyright (C) 2007 Freescale Semiconductor, Inc. All rights reserved.
  *
  * MPC837x MDS board specific routines
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License as published by the
+ * Free Software Foundation;  either version 2 of the License, or (at your
+ * option) any later version.
  */
 
 #include <linux/pci.h>
 #include <linux/of.h>
-#include <linux/of_address.h>
 #include <linux/of_platform.h>
 
 #include <asm/time.h>
 #include <asm/ipic.h>
 #include <asm/udbg.h>
+#include <asm/prom.h>
 #include <sysdev/fsl_pci.h>
 
 #include "mpc83xx.h"
@@ -23,7 +27,7 @@
 #define BCSR12_USB_SER_PIN	0x80
 #define BCSR12_USB_SER_DEVICE	0x02
 
-static int __init mpc837xmds_usb_cfg(void)
+static int mpc837xmds_usb_cfg(void)
 {
 	struct device_node *np;
 	const void *phy_type, *mode;
@@ -93,7 +97,6 @@ define_machine(mpc837x_mds) {
 	.name			= "MPC837x MDS",
 	.probe			= mpc837x_mds_probe,
 	.setup_arch		= mpc837x_mds_setup_arch,
-	.discover_phbs  	= mpc83xx_setup_pci,
 	.init_IRQ		= mpc83xx_ipic_init_IRQ,
 	.get_irq		= ipic_get_irq,
 	.restart		= mpc83xx_restart,

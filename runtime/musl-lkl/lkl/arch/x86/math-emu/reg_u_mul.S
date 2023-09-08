@@ -45,7 +45,7 @@ FPU_accum_1:
 
 
 .text
-SYM_FUNC_START(FPU_u_mul)
+ENTRY(FPU_u_mul)
 	pushl	%ebp
 	movl	%esp,%ebp
 #ifndef NON_REENTRANT_FPU
@@ -144,7 +144,7 @@ L_exit:
 	popl	%edi
 	popl	%esi
 	leave
-	RET
+	ret
 #endif /* PARANOID */ 
 
-SYM_FUNC_END(FPU_u_mul)
+ENDPROC(FPU_u_mul)

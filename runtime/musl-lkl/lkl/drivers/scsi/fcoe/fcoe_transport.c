@@ -1,6 +1,18 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright(c) 2008 - 2011 Intel Corporation. All rights reserved.
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms and conditions of the GNU General Public License,
+ * version 2, as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+ * more details.
+ *
+ * You should have received a copy of the GNU General Public License along with
+ * this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin St - Fifth Floor, Boston, MA 02110-1301 USA.
  *
  * Maintained at www.Open-FCoE.org
  */
@@ -10,7 +22,6 @@
 #include <linux/kernel.h>
 #include <linux/list.h>
 #include <linux/netdevice.h>
-#include <linux/ethtool.h>
 #include <linux/errno.h>
 #include <linux/crc32.h>
 #include <scsi/libfcoe.h>
@@ -183,9 +194,9 @@ void __fcoe_get_lesb(struct fc_lport *lport,
 	memset(lesb, 0, sizeof(*lesb));
 	for_each_possible_cpu(cpu) {
 		stats = per_cpu_ptr(lport->stats, cpu);
-		lfc += READ_ONCE(stats->LinkFailureCount);
-		vlfc += READ_ONCE(stats->VLinkFailureCount);
-		mdac += READ_ONCE(stats->MissDiscAdvCount);
+		lfc += stats->LinkFailureCount;
+		vlfc += stats->VLinkFailureCount;
+		mdac += stats->MissDiscAdvCount;
 	}
 	lesb->lesb_link_fail = htonl(lfc);
 	lesb->lesb_vlink_fail = htonl(vlfc);
@@ -309,7 +320,7 @@ EXPORT_SYMBOL_GPL(fcoe_get_wwn);
 u32 fcoe_fc_crc(struct fc_frame *fp)
 {
 	struct sk_buff *skb = fp_skb(fp);
-	skb_frag_t *frag;
+	struct skb_frag_struct *frag;
 	unsigned char *data;
 	unsigned long off, len, clen;
 	u32 crc;
@@ -319,7 +330,7 @@ u32 fcoe_fc_crc(struct fc_frame *fp)
 
 	for (i = 0; i < skb_shinfo(skb)->nr_frags; i++) {
 		frag = &skb_shinfo(skb)->frags[i];
-		off = skb_frag_off(frag);
+		off = frag->page_offset;
 		len = skb_frag_size(frag);
 		while (len > 0) {
 			clen = min(len, PAGE_SIZE - (off & ~PAGE_MASK));
@@ -383,7 +394,6 @@ EXPORT_SYMBOL_GPL(fcoe_clean_pending_queue);
 /**
  * fcoe_check_wait_queue() - Attempt to clear the transmit backlog
  * @lport: The local port whose backlog is to be cleared
- * @skb: The received FIP packet
  *
  * This empties the wait_queue, dequeues the head of the wait_queue queue
  * and calls fcoe_start_io() for each packet. If all skb have been
@@ -441,7 +451,7 @@ EXPORT_SYMBOL_GPL(fcoe_check_wait_queue);
 
 /**
  * fcoe_queue_timer() - The fcoe queue timer
- * @t: Timer context use to obtain the FCoE port
+ * @lport: The local port
  *
  * Calls fcoe_check_wait_queue on timeout
  */
@@ -674,7 +684,6 @@ static void fcoe_del_netdev_mapping(struct net_device *netdev)
 /**
  * fcoe_netdev_map_lookup - find the fcoe transport that matches the netdev on which
  * it was created
- * @netdev: The net device that the FCoE interface is on
  *
  * Returns : ptr to the fcoe transport that supports this netdev or NULL
  * if not found.
@@ -846,6 +855,7 @@ out_nodev:
 	mutex_unlock(&ft_mutex);
 	return rc;
 }
+EXPORT_SYMBOL(fcoe_ctlr_destroy_store);
 
 /**
  * fcoe_transport_create() - Create a fcoe interface
@@ -863,7 +873,7 @@ static int fcoe_transport_create(const char *buffer,
 	int rc = -ENODEV;
 	struct net_device *netdev = NULL;
 	struct fcoe_transport *ft = NULL;
-	enum fip_mode fip_mode = (enum fip_mode)(uintptr_t)kp->arg;
+	enum fip_state fip_mode = (enum fip_state)(long)kp->arg;
 
 	mutex_lock(&ft_mutex);
 

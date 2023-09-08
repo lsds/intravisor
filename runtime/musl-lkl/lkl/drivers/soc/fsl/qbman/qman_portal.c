@@ -38,7 +38,6 @@ EXPORT_SYMBOL(qman_dma_portal);
 #define CONFIG_FSL_DPA_PIRQ_FAST  1
 
 static struct cpumask portal_cpus;
-static int __qman_portals_probed;
 /* protect qman global registers and global data shared among portals */
 static DEFINE_SPINLOCK(qman_lock);
 
@@ -46,6 +45,9 @@ static void portal_set_cpu(struct qm_portal_config *pcfg, int cpu)
 {
 #ifdef CONFIG_FSL_PAMU
 	struct device *dev = pcfg->dev;
+	int window_count = 1;
+	struct iommu_domain_geometry geom_attr;
+	struct pamu_stash_attribute stash_attr;
 	int ret;
 
 	pcfg->iommu_domain = iommu_domain_alloc(&platform_bus_type);
@@ -53,9 +55,38 @@ static void portal_set_cpu(struct qm_portal_config *pcfg, int cpu)
 		dev_err(dev, "%s(): iommu_domain_alloc() failed", __func__);
 		goto no_iommu;
 	}
-	ret = fsl_pamu_configure_l1_stash(pcfg->iommu_domain, cpu);
+	geom_attr.aperture_start = 0;
+	geom_attr.aperture_end =
+		((dma_addr_t)1 << min(8 * sizeof(dma_addr_t), (size_t)36)) - 1;
+	geom_attr.force_aperture = true;
+	ret = iommu_domain_set_attr(pcfg->iommu_domain, DOMAIN_ATTR_GEOMETRY,
+				    &geom_attr);
 	if (ret < 0) {
-		dev_err(dev, "%s(): fsl_pamu_configure_l1_stash() = %d",
+		dev_err(dev, "%s(): iommu_domain_set_attr() = %d", __func__,
+			ret);
+		goto out_domain_free;
+	}
+	ret = iommu_domain_set_attr(pcfg->iommu_domain, DOMAIN_ATTR_WINDOWS,
+				    &window_count);
+	if (ret < 0) {
+		dev_err(dev, "%s(): iommu_domain_set_attr() = %d", __func__,
+			ret);
+		goto out_domain_free;
+	}
+	stash_attr.cpu = cpu;
+	stash_attr.cache = PAMU_ATTR_CACHE_L1;
+	ret = iommu_domain_set_attr(pcfg->iommu_domain,
+				    DOMAIN_ATTR_FSL_PAMU_STASH,
+				    &stash_attr);
+	if (ret < 0) {
+		dev_err(dev, "%s(): iommu_domain_set_attr() = %d",
+			__func__, ret);
+		goto out_domain_free;
+	}
+	ret = iommu_domain_window_enable(pcfg->iommu_domain, 0, 0, 1ULL << 36,
+					 IOMMU_READ | IOMMU_WRITE);
+	if (ret < 0) {
+		dev_err(dev, "%s(): iommu_domain_window_enable() = %d",
 			__func__, ret);
 		goto out_domain_free;
 	}
@@ -65,6 +96,14 @@ static void portal_set_cpu(struct qm_portal_config *pcfg, int cpu)
 			ret);
 		goto out_domain_free;
 	}
+	ret = iommu_domain_set_attr(pcfg->iommu_domain,
+				    DOMAIN_ATTR_FSL_PAMU_ENABLE,
+				    &window_count);
+	if (ret < 0) {
+		dev_err(dev, "%s(): iommu_domain_set_attr() = %d", __func__,
+			ret);
+		goto out_detach_device;
+	}
 
 no_iommu:
 #endif
@@ -73,6 +112,8 @@ no_iommu:
 	return;
 
 #ifdef CONFIG_FSL_PAMU
+out_detach_device:
+	iommu_detach_device(pcfg->iommu_domain, NULL);
 out_domain_free:
 	iommu_domain_free(pcfg->iommu_domain);
 	pcfg->iommu_domain = NULL;
@@ -127,8 +168,15 @@ static void qman_portal_update_sdest(const struct qm_portal_config *pcfg,
 							unsigned int cpu)
 {
 #ifdef CONFIG_FSL_PAMU /* TODO */
+	struct pamu_stash_attribute stash_attr;
+	int ret;
+
 	if (pcfg->iommu_domain) {
-		if (fsl_pamu_configure_l1_stash(pcfg->iommu_domain, cpu) < 0) {
+		stash_attr.cpu = cpu;
+		stash_attr.cache = PAMU_ATTR_CACHE_L1;
+		ret = iommu_domain_set_attr(pcfg->iommu_domain,
+				DOMAIN_ATTR_FSL_PAMU_STASH, &stash_attr);
+		if (ret < 0) {
 			dev_err(pcfg->dev,
 				"Failed to update pamu stash setting\n");
 			return;
@@ -147,10 +195,8 @@ static int qman_offline_cpu(unsigned int cpu)
 	if (p) {
 		pcfg = qman_get_qm_portal_config(p);
 		if (pcfg) {
-			/* select any other online CPU */
-			cpu = cpumask_any_but(cpu_online_mask, cpu);
-			irq_set_affinity(pcfg->irq, cpumask_of(cpu));
-			qman_portal_update_sdest(pcfg, cpu);
+			irq_set_affinity(pcfg->irq, cpumask_of(0));
+			qman_portal_update_sdest(pcfg, 0);
 		}
 	}
 	return 0;
@@ -172,34 +218,18 @@ static int qman_online_cpu(unsigned int cpu)
 	return 0;
 }
 
-int qman_portals_probed(void)
-{
-	return __qman_portals_probed;
-}
-EXPORT_SYMBOL_GPL(qman_portals_probed);
-
 static int qman_portal_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
 	struct device_node *node = dev->of_node;
 	struct qm_portal_config *pcfg;
 	struct resource *addr_phys[2];
-	int irq, cpu, err, i;
+	int irq, cpu, err;
 	u32 val;
 
-	err = qman_is_probed();
-	if (!err)
-		return -EPROBE_DEFER;
-	if (err < 0) {
-		dev_err(&pdev->dev, "failing probe due to qman probe error\n");
-		return -ENODEV;
-	}
-
 	pcfg = devm_kmalloc(dev, sizeof(*pcfg), GFP_KERNEL);
-	if (!pcfg) {
-		__qman_portals_probed = -1;
+	if (!pcfg)
 		return -ENOMEM;
-	}
 
 	pcfg->dev = dev;
 
@@ -207,27 +237,28 @@ static int qman_portal_probe(struct platform_device *pdev)
 					     DPAA_PORTAL_CE);
 	if (!addr_phys[0]) {
 		dev_err(dev, "Can't get %pOF property 'reg::CE'\n", node);
-		goto err_ioremap1;
+		return -ENXIO;
 	}
 
 	addr_phys[1] = platform_get_resource(pdev, IORESOURCE_MEM,
 					     DPAA_PORTAL_CI);
 	if (!addr_phys[1]) {
 		dev_err(dev, "Can't get %pOF property 'reg::CI'\n", node);
-		goto err_ioremap1;
+		return -ENXIO;
 	}
 
 	err = of_property_read_u32(node, "cell-index", &val);
 	if (err) {
 		dev_err(dev, "Can't get %pOF property 'cell-index'\n", node);
-		__qman_portals_probed = -1;
 		return err;
 	}
 	pcfg->channel = val;
 	pcfg->cpu = -1;
 	irq = platform_get_irq(pdev, 0);
-	if (irq <= 0)
-		goto err_ioremap1;
+	if (irq <= 0) {
+		dev_err(dev, "Can't get %pOF IRQ\n", node);
+		return -ENXIO;
+	}
 	pcfg->irq = irq;
 
 	pcfg->addr_virt_ce = memremap(addr_phys[0]->start,
@@ -248,12 +279,11 @@ static int qman_portal_probe(struct platform_device *pdev)
 	pcfg->pools = qm_get_pools_sdqcr();
 
 	spin_lock(&qman_lock);
-	cpu = cpumask_first_zero(&portal_cpus);
+	cpu = cpumask_next_zero(-1, &portal_cpus);
 	if (cpu >= nr_cpu_ids) {
-		__qman_portals_probed = 1;
 		/* unassigned portal, skip init */
 		spin_unlock(&qman_lock);
-		goto check_cleanup;
+		return 0;
 	}
 
 	cpumask_set_cpu(cpu, &portal_cpus);
@@ -274,23 +304,6 @@ static int qman_portal_probe(struct platform_device *pdev)
 	if (!cpu_online(cpu))
 		qman_offline_cpu(cpu);
 
-check_cleanup:
-	if (__qman_portals_probed == 1 && qman_requires_cleanup()) {
-		/*
-		 * QMan wasn't reset prior to boot (Kexec for example)
-		 * Empty all the frame queues so they are in reset state
-		 */
-		for (i = 0; i < qm_get_fqid_maxcnt(); i++) {
-			err =  qman_shutdown_fq(i);
-			if (err) {
-				dev_err(dev, "Failed to shutdown frame queue %d\n",
-					i);
-				goto err_portal_init;
-			}
-		}
-		qman_done_cleanup();
-	}
-
 	return 0;
 
 err_portal_init:
@@ -298,8 +311,6 @@ err_portal_init:
 err_ioremap2:
 	memunmap(pcfg->addr_virt_ce);
 err_ioremap1:
-	__qman_portals_probed = -1;
-
 	return -ENXIO;
 }
 

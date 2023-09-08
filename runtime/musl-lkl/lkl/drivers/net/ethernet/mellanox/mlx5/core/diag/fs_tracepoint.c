@@ -76,59 +76,58 @@ static void print_lyr_2_4_hdrs(struct trace_seq *p,
 		.v = MLX5_GET(fte_match_set_lyr_2_4, value, dmac_47_16) << 16 |
 		     MLX5_GET(fte_match_set_lyr_2_4, value, dmac_15_0)};
 	MASK_VAL_L2(u16, ethertype, ethertype);
-	MASK_VAL_L2(u8, ip_version, ip_version);
 
 	PRINT_MASKED_VALP(smac, u8 *, p, "%pM");
 	PRINT_MASKED_VALP(dmac, u8 *, p, "%pM");
 	PRINT_MASKED_VAL(ethertype, p, "%04x");
 
-	if ((ethertype.m == 0xffff && ethertype.v == ETH_P_IP) ||
-	    (ip_version.m == 0xf && ip_version.v == 4)) {
+	if (ethertype.m == 0xffff) {
+		if (ethertype.v == ETH_P_IP) {
 #define MASK_VAL_L2_BE(type, name, fld) \
 	MASK_VAL_BE(type, fte_match_set_lyr_2_4, name, mask, value, fld)
-		MASK_VAL_L2_BE(u32, src_ipv4,
-			       src_ipv4_src_ipv6.ipv4_layout.ipv4);
-		MASK_VAL_L2_BE(u32, dst_ipv4,
-			       dst_ipv4_dst_ipv6.ipv4_layout.ipv4);
+			MASK_VAL_L2_BE(u32, src_ipv4,
+				       src_ipv4_src_ipv6.ipv4_layout.ipv4);
+			MASK_VAL_L2_BE(u32, dst_ipv4,
+				       dst_ipv4_dst_ipv6.ipv4_layout.ipv4);
 
-		PRINT_MASKED_VALP(src_ipv4, typeof(&src_ipv4.v), p,
-				  "%pI4");
-		PRINT_MASKED_VALP(dst_ipv4, typeof(&dst_ipv4.v), p,
-				  "%pI4");
-	} else if ((ethertype.m == 0xffff && ethertype.v == ETH_P_IPV6) ||
-		   (ip_version.m == 0xf && ip_version.v == 6)) {
-		static const struct in6_addr full_ones = {
-			.in6_u.u6_addr32 = {__constant_htonl(0xffffffff),
-					    __constant_htonl(0xffffffff),
-					    __constant_htonl(0xffffffff),
-					    __constant_htonl(0xffffffff)},
-		};
-		DECLARE_MASK_VAL(struct in6_addr, src_ipv6);
-		DECLARE_MASK_VAL(struct in6_addr, dst_ipv6);
+			PRINT_MASKED_VALP(src_ipv4, typeof(&src_ipv4.v), p,
+					  "%pI4");
+			PRINT_MASKED_VALP(dst_ipv4, typeof(&dst_ipv4.v), p,
+					  "%pI4");
+		} else if (ethertype.v == ETH_P_IPV6) {
+			static const struct in6_addr full_ones = {
+				.in6_u.u6_addr32 = {__constant_htonl(0xffffffff),
+						    __constant_htonl(0xffffffff),
+						    __constant_htonl(0xffffffff),
+						    __constant_htonl(0xffffffff)},
+			};
+			DECLARE_MASK_VAL(struct in6_addr, src_ipv6);
+			DECLARE_MASK_VAL(struct in6_addr, dst_ipv6);
 
-		memcpy(src_ipv6.m.in6_u.u6_addr8,
-		       MLX5_ADDR_OF(fte_match_set_lyr_2_4, mask,
-				    src_ipv4_src_ipv6.ipv6_layout.ipv6),
-		       sizeof(src_ipv6.m));
-		memcpy(dst_ipv6.m.in6_u.u6_addr8,
-		       MLX5_ADDR_OF(fte_match_set_lyr_2_4, mask,
-				    dst_ipv4_dst_ipv6.ipv6_layout.ipv6),
-		       sizeof(dst_ipv6.m));
-		memcpy(src_ipv6.v.in6_u.u6_addr8,
-		       MLX5_ADDR_OF(fte_match_set_lyr_2_4, value,
-				    src_ipv4_src_ipv6.ipv6_layout.ipv6),
-		       sizeof(src_ipv6.v));
-		memcpy(dst_ipv6.v.in6_u.u6_addr8,
-		       MLX5_ADDR_OF(fte_match_set_lyr_2_4, value,
-				    dst_ipv4_dst_ipv6.ipv6_layout.ipv6),
-		       sizeof(dst_ipv6.v));
+			memcpy(src_ipv6.m.in6_u.u6_addr8,
+			       MLX5_ADDR_OF(fte_match_set_lyr_2_4, mask,
+					    src_ipv4_src_ipv6.ipv6_layout.ipv6),
+			       sizeof(src_ipv6.m));
+			memcpy(dst_ipv6.m.in6_u.u6_addr8,
+			       MLX5_ADDR_OF(fte_match_set_lyr_2_4, mask,
+					    dst_ipv4_dst_ipv6.ipv6_layout.ipv6),
+			       sizeof(dst_ipv6.m));
+			memcpy(src_ipv6.v.in6_u.u6_addr8,
+			       MLX5_ADDR_OF(fte_match_set_lyr_2_4, value,
+					    src_ipv4_src_ipv6.ipv6_layout.ipv6),
+			       sizeof(src_ipv6.v));
+			memcpy(dst_ipv6.v.in6_u.u6_addr8,
+			       MLX5_ADDR_OF(fte_match_set_lyr_2_4, value,
+					    dst_ipv4_dst_ipv6.ipv6_layout.ipv6),
+			       sizeof(dst_ipv6.v));
 
-		if (!memcmp(&src_ipv6.m, &full_ones, sizeof(full_ones)))
-			trace_seq_printf(p, "src_ipv6=%pI6 ",
-					 &src_ipv6.v);
-		if (!memcmp(&dst_ipv6.m, &full_ones, sizeof(full_ones)))
-			trace_seq_printf(p, "dst_ipv6=%pI6 ",
-					 &dst_ipv6.v);
+			if (!memcmp(&src_ipv6.m, &full_ones, sizeof(full_ones)))
+				trace_seq_printf(p, "src_ipv6=%pI6 ",
+						 &src_ipv6.v);
+			if (!memcmp(&dst_ipv6.m, &full_ones, sizeof(full_ones)))
+				trace_seq_printf(p, "dst_ipv6=%pI6 ",
+						 &dst_ipv6.v);
+		}
 	}
 
 #define PRINT_MASKED_VAL_L2(type, name, fld, p, format) {\
@@ -162,10 +161,10 @@ static void print_misc_parameters_hdrs(struct trace_seq *p,
 	PRINT_MASKED_VAL(name, p, format);		   \
 }
 	DECLARE_MASK_VAL(u64, gre_key) = {
-		.m = MLX5_GET(fte_match_set_misc, mask, gre_key.nvgre.hi) << 8 |
-		     MLX5_GET(fte_match_set_misc, mask, gre_key.nvgre.lo),
-		.v = MLX5_GET(fte_match_set_misc, value, gre_key.nvgre.hi) << 8 |
-		     MLX5_GET(fte_match_set_misc, value, gre_key.nvgre.lo)};
+		.m = MLX5_GET(fte_match_set_misc, mask, gre_key_h) << 8 |
+		     MLX5_GET(fte_match_set_misc, mask, gre_key_l),
+		.v = MLX5_GET(fte_match_set_misc, value, gre_key_h) << 8 |
+		     MLX5_GET(fte_match_set_misc, value, gre_key_l)};
 
 	PRINT_MASKED_VAL(gre_key, p, "%llu");
 	PRINT_MASKED_VAL_MISC(u32, source_sqn, source_sqn, p, "%u");
@@ -235,23 +234,14 @@ const char *parse_fs_dst(struct trace_seq *p,
 	const char *ret = trace_seq_buffer_ptr(p);
 
 	switch (dst->type) {
-	case MLX5_FLOW_DESTINATION_TYPE_UPLINK:
-		trace_seq_printf(p, "uplink\n");
-		break;
 	case MLX5_FLOW_DESTINATION_TYPE_VPORT:
-		trace_seq_printf(p, "vport=%u\n", dst->vport.num);
+		trace_seq_printf(p, "vport=%u\n", dst->vport_num);
 		break;
 	case MLX5_FLOW_DESTINATION_TYPE_FLOW_TABLE:
 		trace_seq_printf(p, "ft=%p\n", dst->ft);
 		break;
-	case MLX5_FLOW_DESTINATION_TYPE_FLOW_TABLE_NUM:
-		trace_seq_printf(p, "ft_num=%u\n", dst->ft_num);
-		break;
 	case MLX5_FLOW_DESTINATION_TYPE_TIR:
 		trace_seq_printf(p, "tir=%u\n", dst->tir_num);
-		break;
-	case MLX5_FLOW_DESTINATION_TYPE_FLOW_SAMPLER:
-		trace_seq_printf(p, "sampler_id=%u\n", dst->sampler_id);
 		break;
 	case MLX5_FLOW_DESTINATION_TYPE_COUNTER:
 		trace_seq_printf(p, "counter_id=%u\n", counter_id);
@@ -259,17 +249,12 @@ const char *parse_fs_dst(struct trace_seq *p,
 	case MLX5_FLOW_DESTINATION_TYPE_PORT:
 		trace_seq_printf(p, "port\n");
 		break;
-	case MLX5_FLOW_DESTINATION_TYPE_NONE:
-		trace_seq_printf(p, "none\n");
-		break;
 	}
 
 	trace_seq_putc(p, 0);
 	return ret;
 }
 
-EXPORT_TRACEPOINT_SYMBOL(mlx5_fs_add_ft);
-EXPORT_TRACEPOINT_SYMBOL(mlx5_fs_del_ft);
 EXPORT_TRACEPOINT_SYMBOL(mlx5_fs_add_fg);
 EXPORT_TRACEPOINT_SYMBOL(mlx5_fs_del_fg);
 EXPORT_TRACEPOINT_SYMBOL(mlx5_fs_set_fte);

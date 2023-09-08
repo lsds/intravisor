@@ -1,9 +1,12 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Map driver for Intel XScale PXA2xx platforms.
  *
  * Author:	Nicolas Pitre
  * Copyright:	(C) 2001 MontaVista Software Inc.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 
 #include <linux/module.h>
@@ -16,6 +19,8 @@
 #include <linux/mtd/partitions.h>
 
 #include <asm/io.h>
+#include <mach/hardware.h>
+
 #include <asm/mach/flash.h>
 
 #define CACHELINESIZE	32
@@ -66,7 +71,8 @@ static int pxa2xx_flash_probe(struct platform_device *pdev)
 		       info->map.name);
 		return -ENOMEM;
 	}
-	info->map.cached = ioremap_cache(info->map.phys, info->map.size);
+	info->map.cached =
+		ioremap_cached(info->map.phys, info->map.size);
 	if (!info->map.cached)
 		printk(KERN_WARNING "Failed to ioremap cached %s\n",
 		       info->map.name);

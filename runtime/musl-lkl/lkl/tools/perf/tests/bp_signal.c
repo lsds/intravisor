@@ -25,8 +25,7 @@
 
 #include "tests.h"
 #include "debug.h"
-#include "event.h"
-#include "perf-sys.h"
+#include "perf.h"
 #include "cloexec.h"
 
 static int fd1;
@@ -45,13 +44,18 @@ volatile long the_var;
 #if defined (__x86_64__)
 extern void __test_function(volatile long *ptr);
 asm (
-	".pushsection .text;"
 	".globl __test_function\n"
-	".type __test_function, @function;"
 	"__test_function:\n"
 	"incq (%rdi)\n"
-	"ret\n"
-	".popsection\n");
+	"ret\n");
+#elif defined (__aarch64__)
+extern void __test_function(volatile long *ptr);
+asm (
+	".globl __test_function\n"
+	"__test_function:\n"
+	"str x30, [x0]\n"
+	"ret\n");
+
 #else
 static void __test_function(volatile long *ptr)
 {
@@ -161,15 +165,10 @@ static long long bp_count(int fd)
 	return count;
 }
 
-static int test__bp_signal(struct test_suite *test __maybe_unused, int subtest __maybe_unused)
+int test__bp_signal(struct test *test __maybe_unused, int subtest __maybe_unused)
 {
 	struct sigaction sa;
 	long long count1, count2, count3;
-
-	if (!BP_SIGNAL_IS_SUPPORTED) {
-		pr_debug("Test not supported on this architecture");
-		return TEST_SKIP;
-	}
 
 	/* setup SIGIO signal handler */
 	memset(&sa, 0, sizeof(struct sigaction));
@@ -230,11 +229,11 @@ static int test__bp_signal(struct test_suite *test __maybe_unused, int subtest _
 	 *
 	 * The test case check following error conditions:
 	 * - we get stuck in signal handler because of debug
-	 *   exception being triggered recursively due to
+	 *   exception being triggered receursively due to
 	 *   the wrong RF EFLAG management
 	 *
 	 * - we never trigger the sig_handler breakpoint due
-	 *   to the wrong RF EFLAG management
+	 *   to the rong RF EFLAG management
 	 *
 	 */
 
@@ -247,7 +246,7 @@ static int test__bp_signal(struct test_suite *test __maybe_unused, int subtest _
 	ioctl(fd3, PERF_EVENT_IOC_ENABLE, 0);
 
 	/*
-	 * Kick off the test by triggering 'fd1'
+	 * Kick off the test by trigering 'fd1'
 	 * breakpoint.
 	 */
 	test_function();
@@ -271,23 +270,35 @@ static int test__bp_signal(struct test_suite *test __maybe_unused, int subtest _
 		if (count1 == 11)
 			pr_debug("failed: RF EFLAG recursion issue detected\n");
 		else
-			pr_debug("failed: wrong count for bp1: %lld, expected 1\n", count1);
+			pr_debug("failed: wrong count for bp1%lld\n", count1);
 	}
 
 	if (overflows != 3)
-		pr_debug("failed: wrong overflow (%d) hit, expected 3\n", overflows);
+		pr_debug("failed: wrong overflow hit\n");
 
 	if (overflows_2 != 3)
-		pr_debug("failed: wrong overflow_2 (%d) hit, expected 3\n", overflows_2);
+		pr_debug("failed: wrong overflow_2 hit\n");
 
 	if (count2 != 3)
-		pr_debug("failed: wrong count for bp2 (%lld), expected 3\n", count2);
+		pr_debug("failed: wrong count for bp2\n");
 
 	if (count3 != 2)
-		pr_debug("failed: wrong count for bp3 (%lld), expected 2\n", count3);
+		pr_debug("failed: wrong count for bp3\n");
 
 	return count1 == 1 && overflows == 3 && count2 == 3 && overflows_2 == 3 && count3 == 2 ?
 		TEST_OK : TEST_FAIL;
 }
 
-DEFINE_SUITE("Breakpoint overflow signal handler", bp_signal);
+bool test__bp_signal_is_supported(void)
+{
+/*
+ * The powerpc so far does not have support to even create
+ * instruction breakpoint using the perf event interface.
+ * Once it's there we can release this.
+ */
+#if defined(__powerpc__) || defined(__s390x__)
+	return false;
+#else
+	return true;
+#endif
+}

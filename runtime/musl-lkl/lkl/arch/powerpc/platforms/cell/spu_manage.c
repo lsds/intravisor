@@ -1,10 +1,22 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * spu management operations for of based platforms
  *
  * (C) Copyright IBM Deutschland Entwicklung GmbH 2005
  * Copyright 2006 Sony Corp.
  * (C) Copyright 2007 TOSHIBA CORPORATION
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; version 2 of the License.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
 #include <linux/interrupt.h>
@@ -16,12 +28,11 @@
 #include <linux/io.h>
 #include <linux/mutex.h>
 #include <linux/device.h>
-#include <linux/of_address.h>
-#include <linux/of_irq.h>
 
 #include <asm/spu.h>
 #include <asm/spu_priv1.h>
 #include <asm/firmware.h>
+#include <asm/prom.h>
 
 #include "spufs/spufs.h"
 #include "interrupt.h"
@@ -169,25 +180,38 @@ out:
 
 static int __init spu_map_interrupts(struct spu *spu, struct device_node *np)
 {
+	struct of_phandle_args oirq;
+	int ret;
 	int i;
 
 	for (i=0; i < 3; i++) {
-		spu->irqs[i] = irq_of_parse_and_map(np, i);
-		if (!spu->irqs[i])
+		ret = of_irq_parse_one(np, i, &oirq);
+		if (ret) {
+			pr_debug("spu_new: failed to get irq %d\n", i);
 			goto err;
+		}
+		ret = -EINVAL;
+		pr_debug("  irq %d no 0x%x on %pOF\n", i, oirq.args[0],
+			 oirq.np);
+		spu->irqs[i] = irq_create_of_mapping(&oirq);
+		if (!spu->irqs[i]) {
+			pr_debug("spu_new: failed to map it !\n");
+			goto err;
+		}
 	}
 	return 0;
 
 err:
-	pr_debug("failed to map irq %x for spu %s\n", i, spu->name);
+	pr_debug("failed to map irq %x for spu %s\n", *oirq.args,
+		spu->name);
 	for (; i >= 0; i--) {
 		if (spu->irqs[i])
 			irq_dispose_mapping(spu->irqs[i]);
 	}
-	return -EINVAL;
+	return ret;
 }
 
-static int __init spu_map_resource(struct spu *spu, int nr,
+static int spu_map_resource(struct spu *spu, int nr,
 			    void __iomem** virt, unsigned long *phys)
 {
 	struct device_node *np = spu->devnode;
@@ -271,8 +295,8 @@ static int __init of_enumerate_spus(int (*fn)(void *data))
 	for_each_node_by_type(node, "spe") {
 		ret = fn(node);
 		if (ret) {
-			printk(KERN_WARNING "%s: Error initializing %pOFn\n",
-				__func__, node);
+			printk(KERN_WARNING "%s: Error initializing %s\n",
+				__func__, node->name);
 			of_node_put(node);
 			break;
 		}
@@ -362,7 +386,7 @@ static void disable_spu_by_master_run(struct spu_context *ctx)
 static int qs20_reg_idxs[QS20_SPES_PER_BE] =   { 0, 2, 4, 6, 7, 5, 3, 1 };
 static int qs20_reg_memory[QS20_SPES_PER_BE] = { 1, 1, 0, 0, 0, 0, 0, 0 };
 
-static struct spu *__init spu_lookup_reg(int node, u32 reg)
+static struct spu *spu_lookup_reg(int node, u32 reg)
 {
 	struct spu *spu;
 	const u32 *spu_reg;
@@ -375,7 +399,7 @@ static struct spu *__init spu_lookup_reg(int node, u32 reg)
 	return NULL;
 }
 
-static void __init init_affinity_qs20_harcoded(void)
+static void init_affinity_qs20_harcoded(void)
 {
 	int node, i;
 	struct spu *last_spu, *spu;
@@ -397,7 +421,7 @@ static void __init init_affinity_qs20_harcoded(void)
 	}
 }
 
-static int __init of_has_vicinity(void)
+static int of_has_vicinity(void)
 {
 	struct device_node *dn;
 
@@ -410,7 +434,7 @@ static int __init of_has_vicinity(void)
 	return 0;
 }
 
-static struct spu *__init devnode_spu(int cbe, struct device_node *dn)
+static struct spu *devnode_spu(int cbe, struct device_node *dn)
 {
 	struct spu *spu;
 
@@ -420,7 +444,7 @@ static struct spu *__init devnode_spu(int cbe, struct device_node *dn)
 	return NULL;
 }
 
-static struct spu * __init
+static struct spu *
 neighbour_spu(int cbe, struct device_node *target, struct device_node *avoid)
 {
 	struct spu *spu;
@@ -441,12 +465,13 @@ neighbour_spu(int cbe, struct device_node *target, struct device_node *avoid)
 	return NULL;
 }
 
-static void __init init_affinity_node(int cbe)
+static void init_affinity_node(int cbe)
 {
 	struct spu *spu, *last_spu;
 	struct device_node *vic_dn, *last_spu_dn;
 	phandle avoid_ph;
 	const phandle *vic_handles;
+	const char *name;
 	int lenp, i, added;
 
 	last_spu = list_first_entry(&cbe_spu_info[cbe].spus, struct spu,
@@ -458,7 +483,7 @@ static void __init init_affinity_node(int cbe)
 
 		/*
 		 * Walk through each phandle in vicinity property of the spu
-		 * (typically two vicinity phandles per spe node)
+		 * (tipically two vicinity phandles per spe node)
 		 */
 		for (i = 0; i < (lenp / sizeof(phandle)); i++) {
 			if (vic_handles[i] == avoid_ph)
@@ -468,7 +493,12 @@ static void __init init_affinity_node(int cbe)
 			if (!vic_dn)
 				continue;
 
-			if (of_node_name_eq(vic_dn, "spe") ) {
+			/* a neighbour might be spe, mic-tm, or bif0 */
+			name = of_get_property(vic_dn, "name", NULL);
+			if (!name)
+				continue;
+
+			if (strcmp(name, "spe") == 0) {
 				spu = devnode_spu(cbe, vic_dn);
 				avoid_ph = last_spu_dn->phandle;
 			} else {
@@ -481,14 +511,12 @@ static void __init init_affinity_node(int cbe)
 				spu = neighbour_spu(cbe, vic_dn, last_spu_dn);
 				if (!spu)
 					continue;
-				if (of_node_name_eq(vic_dn, "mic-tm")) {
+				if (!strcmp(name, "mic-tm")) {
 					last_spu->has_mem_affinity = 1;
 					spu->has_mem_affinity = 1;
 				}
 				avoid_ph = vic_dn->phandle;
 			}
-
-			of_node_put(vic_dn);
 
 			list_add_tail(&spu->aff_list, &last_spu->aff_list);
 			last_spu = spu;
@@ -497,7 +525,7 @@ static void __init init_affinity_node(int cbe)
 	}
 }
 
-static void __init init_affinity_fw(void)
+static void init_affinity_fw(void)
 {
 	int cbe;
 

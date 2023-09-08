@@ -105,12 +105,6 @@ struct drbg_test_data {
 	struct drbg_string *testentropy; /* TEST PARAMETER: test entropy */
 };
 
-enum drbg_seed_state {
-	DRBG_SEED_STATE_UNSEEDED,
-	DRBG_SEED_STATE_PARTIAL, /* Seeded with !rng_is_initialized() */
-	DRBG_SEED_STATE_FULL,
-};
-
 struct drbg_state {
 	struct mutex drbg_mutex;	/* lock around DRBG */
 	unsigned char *V;	/* internal state 10.1.1.1 1a) */
@@ -128,20 +122,20 @@ struct drbg_state {
 
 	struct crypto_skcipher *ctr_handle;	/* CTR mode cipher handle */
 	struct skcipher_request *ctr_req;	/* CTR mode request handle */
+	__u8 *ctr_null_value_buf;		/* CTR mode unaligned buffer */
+	__u8 *ctr_null_value;			/* CTR mode aligned zero buf */
 	__u8 *outscratchpadbuf;			/* CTR mode output scratchpad */
         __u8 *outscratchpad;			/* CTR mode aligned outbuf */
 	struct crypto_wait ctr_wait;		/* CTR mode async wait obj */
-	struct scatterlist sg_in, sg_out;	/* CTR mode SGLs */
 
-	enum drbg_seed_state seeded;		/* DRBG fully seeded? */
-	unsigned long last_seed_time;
+	bool seeded;		/* DRBG fully seeded? */
 	bool pr;		/* Prediction resistance enabled? */
-	bool fips_primed;	/* Continuous test primed? */
-	unsigned char *prev;	/* FIPS 140-2 continuous test value */
+	struct work_struct seed_work;	/* asynchronous seeding support */
 	struct crypto_rng *jent;
 	const struct drbg_state_ops *d_ops;
 	const struct drbg_core *core;
 	struct drbg_string test_data;
+	struct random_ready_callback random_ready;
 };
 
 static inline __u8 drbg_statelen(struct drbg_state *drbg)
@@ -189,7 +183,11 @@ static inline size_t drbg_max_addtl(struct drbg_state *drbg)
 static inline size_t drbg_max_requests(struct drbg_state *drbg)
 {
 	/* SP800-90A requires 2**48 maximum requests before reseeding */
-	return (1<<20);
+#if (__BITS_PER_LONG == 32)
+	return SIZE_MAX;
+#else
+	return (1UL<<48);
+#endif
 }
 
 /*

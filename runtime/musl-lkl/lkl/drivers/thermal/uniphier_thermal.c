@@ -1,10 +1,21 @@
-// SPDX-License-Identifier: GPL-2.0
 /**
  * uniphier_thermal.c - Socionext UniPhier thermal driver
+ *
  * Copyright 2014      Panasonic Corporation
  * Copyright 2016-2017 Socionext Inc.
+ * All rights reserved.
+ *
  * Author:
  *	Kunihiko Hayashi <hayashi.kunihiko@socionext.com>
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2  of
+ * the License as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
  */
 
 #include <linux/bitops.h>
@@ -187,9 +198,9 @@ static void uniphier_tm_disable_sensor(struct uniphier_tm_dev *tdev)
 	usleep_range(1000, 2000);	/* The spec note says at least 1ms */
 }
 
-static int uniphier_tm_get_temp(struct thermal_zone_device *tz, int *out_temp)
+static int uniphier_tm_get_temp(void *data, int *out_temp)
 {
-	struct uniphier_tm_dev *tdev = tz->devdata;
+	struct uniphier_tm_dev *tdev = data;
 	struct regmap *map = tdev->regmap;
 	int ret;
 	u32 temp;
@@ -204,7 +215,7 @@ static int uniphier_tm_get_temp(struct thermal_zone_device *tz, int *out_temp)
 	return 0;
 }
 
-static const struct thermal_zone_device_ops uniphier_of_thermal_ops = {
+static const struct thermal_zone_of_device_ops uniphier_of_thermal_ops = {
 	.get_temp = uniphier_tm_get_temp,
 };
 
@@ -289,8 +300,8 @@ static int uniphier_tm_probe(struct platform_device *pdev)
 
 	platform_set_drvdata(pdev, tdev);
 
-	tdev->tz_dev = devm_thermal_of_zone_register(dev, 0, tdev,
-						     &uniphier_of_thermal_ops);
+	tdev->tz_dev = devm_thermal_zone_of_sensor_register(dev, 0, tdev,
+						&uniphier_of_thermal_ops);
 	if (IS_ERR(tdev->tz_dev)) {
 		dev_err(dev, "failed to register sensor device\n");
 		return PTR_ERR(tdev->tz_dev);
@@ -352,14 +363,6 @@ static const struct of_device_id uniphier_tm_dt_ids[] = {
 	},
 	{
 		.compatible = "socionext,uniphier-ld20-thermal",
-		.data       = &uniphier_ld20_tm_data,
-	},
-	{
-		.compatible = "socionext,uniphier-pxs3-thermal",
-		.data       = &uniphier_ld20_tm_data,
-	},
-	{
-		.compatible = "socionext,uniphier-nx1-thermal",
 		.data       = &uniphier_ld20_tm_data,
 	},
 	{ /* sentinel */ }

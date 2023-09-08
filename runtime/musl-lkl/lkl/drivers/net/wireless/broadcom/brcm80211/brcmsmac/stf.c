@@ -304,8 +304,9 @@ int brcms_c_stf_txchain_set(struct brcms_c_info *wlc, s32 int_val, bool force)
  * update wlc->stf->ss_opmode which represents the operational stf_ss mode
  * we're using
  */
-void brcms_c_stf_ss_update(struct brcms_c_info *wlc, struct brcms_band *band)
+int brcms_c_stf_ss_update(struct brcms_c_info *wlc, struct brcms_band *band)
 {
+	int ret_code = 0;
 	u8 prev_stf_ss;
 	u8 upd_stf_ss;
 
@@ -324,7 +325,7 @@ void brcms_c_stf_ss_update(struct brcms_c_info *wlc, struct brcms_band *band)
 				    PHY_TXC1_MODE_SISO : PHY_TXC1_MODE_CDD;
 	} else {
 		if (wlc->band != band)
-			return;
+			return ret_code;
 		upd_stf_ss = (wlc->stf->txstreams == 1) ?
 				PHY_TXC1_MODE_SISO : band->band_stf_ss_mode;
 	}
@@ -332,6 +333,8 @@ void brcms_c_stf_ss_update(struct brcms_c_info *wlc, struct brcms_band *band)
 		wlc->stf->ss_opmode = upd_stf_ss;
 		brcms_b_band_stf_ss_set(wlc->hw, upd_stf_ss);
 	}
+
+	return ret_code;
 }
 
 int brcms_c_stf_attach(struct brcms_c_info *wlc)

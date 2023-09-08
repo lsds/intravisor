@@ -35,7 +35,6 @@ static void symbol_int_callback(struct urb *urb)
 	struct symbol_private *priv = usb_get_serial_port_data(port);
 	unsigned char *data = urb->transfer_buffer;
 	int status = urb->status;
-	unsigned long flags;
 	int result;
 	int data_length;
 
@@ -74,7 +73,7 @@ static void symbol_int_callback(struct urb *urb)
 	}
 
 exit:
-	spin_lock_irqsave(&priv->lock, flags);
+	spin_lock(&priv->lock);
 
 	/* Continue trying to always read if we should */
 	if (!priv->throttled) {
@@ -85,7 +84,7 @@ exit:
 							__func__, result);
 	} else
 		priv->actually_throttled = true;
-	spin_unlock_irqrestore(&priv->lock, flags);
+	spin_unlock(&priv->lock);
 }
 
 static int symbol_open(struct tty_struct *tty, struct usb_serial_port *port)
@@ -160,11 +159,13 @@ static int symbol_port_probe(struct usb_serial_port *port)
 	return 0;
 }
 
-static void symbol_port_remove(struct usb_serial_port *port)
+static int symbol_port_remove(struct usb_serial_port *port)
 {
 	struct symbol_private *priv = usb_get_serial_port_data(port);
 
 	kfree(priv);
+
+	return 0;
 }
 
 static struct usb_serial_driver symbol_device = {

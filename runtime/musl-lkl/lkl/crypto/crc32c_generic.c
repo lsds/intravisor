@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Cryptographic API.
  *
@@ -15,7 +14,7 @@
  * pages =        {},
  * month =        {June},
  *}
- * Used by the iSCSI driver, possibly others, and derived from
+ * Used by the iSCSI driver, possibly others, and derived from the
  * the iscsi-crc.c module of the linux-iscsi driver at
  * http://linux-iscsi.sourceforge.net.
  *
@@ -28,9 +27,14 @@
  *
  * Copyright (c) 2004 Cisco Systems, Inc.
  * Copyright (c) 2008 Herbert Xu <herbert@gondor.apana.org.au>
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License as published by the Free
+ * Software Foundation; either version 2 of the License, or (at your option)
+ * any later version.
+ *
  */
 
-#include <asm/unaligned.h>
 #include <crypto/internal/hash.h>
 #include <linux/init.h>
 #include <linux/module.h>
@@ -50,7 +54,7 @@ struct chksum_desc_ctx {
 };
 
 /*
- * Steps through buffer one byte at a time, calculates reflected
+ * Steps through buffer one byte at at time, calculates reflected
  * crc using table.
  */
 
@@ -74,9 +78,11 @@ static int chksum_setkey(struct crypto_shash *tfm, const u8 *key,
 {
 	struct chksum_ctx *mctx = crypto_shash_ctx(tfm);
 
-	if (keylen != sizeof(mctx->key))
+	if (keylen != sizeof(mctx->key)) {
+		crypto_shash_set_flags(tfm, CRYPTO_TFM_RES_BAD_KEY_LEN);
 		return -EINVAL;
-	mctx->key = get_unaligned_le32(key);
+	}
+	mctx->key = le32_to_cpu(*(__le32 *)key);
 	return 0;
 }
 
@@ -93,13 +99,13 @@ static int chksum_final(struct shash_desc *desc, u8 *out)
 {
 	struct chksum_desc_ctx *ctx = shash_desc_ctx(desc);
 
-	put_unaligned_le32(~ctx->crc, out);
+	*(__le32 *)out = ~cpu_to_le32p(&ctx->crc);
 	return 0;
 }
 
 static int __chksum_finup(u32 *crcp, const u8 *data, unsigned int len, u8 *out)
 {
-	put_unaligned_le32(~__crc32c_le(*crcp, data, len), out);
+	*(__le32 *)out = ~cpu_to_le32(__crc32c_le(*crcp, data, len));
 	return 0;
 }
 
@@ -142,6 +148,7 @@ static struct shash_alg alg = {
 		.cra_priority		=	100,
 		.cra_flags		=	CRYPTO_ALG_OPTIONAL_KEY,
 		.cra_blocksize		=	CHKSUM_BLOCK_SIZE,
+		.cra_alignmask		=	3,
 		.cra_ctxsize		=	sizeof(struct chksum_ctx),
 		.cra_module		=	THIS_MODULE,
 		.cra_init		=	crc32c_cra_init,
@@ -158,7 +165,7 @@ static void __exit crc32c_mod_fini(void)
 	crypto_unregister_shash(&alg);
 }
 
-subsys_initcall(crc32c_mod_init);
+module_init(crc32c_mod_init);
 module_exit(crc32c_mod_fini);
 
 MODULE_AUTHOR("Clay Haapala <chaapala@cisco.com>");

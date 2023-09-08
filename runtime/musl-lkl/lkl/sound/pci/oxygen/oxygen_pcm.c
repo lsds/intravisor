@@ -1,8 +1,20 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * C-Media CMI8788 driver - PCM code
  *
  * Copyright (c) Clemens Ladisch <clemens@ladisch.de>
+ *
+ *
+ *  This driver is free software; you can redistribute it and/or modify
+ *  it under the terms of the GNU General Public License, version 2.
+ *
+ *  This driver is distributed in the hope that it will be useful,
+ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *  GNU General Public License for more details.
+ *
+ *  You should have received a copy of the GNU General Public License
+ *  along with this driver; if not, write to the Free Software
+ *  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307 USA
  */
 
 #include <linux/pci.h>
@@ -137,7 +149,7 @@ static int oxygen_open(struct snd_pcm_substream *substream,
 					       SNDRV_PCM_RATE_64000);
 			runtime->hw.rate_min = 44100;
 		}
-		fallthrough;
+		/* fall through */
 	case PCM_A:
 	case PCM_B:
 		runtime->hw.fifo_size = 0;
@@ -304,6 +316,12 @@ static int oxygen_hw_params(struct snd_pcm_substream *substream,
 {
 	struct oxygen *chip = snd_pcm_substream_chip(substream);
 	unsigned int channel = oxygen_substream_channel(substream);
+	int err;
+
+	err = snd_pcm_lib_malloc_pages(substream,
+				       params_buffer_bytes(hw_params));
+	if (err < 0)
+		return err;
 
 	oxygen_write32(chip, channel_base_registers[channel],
 		       (u32)substream->runtime->dma_addr);
@@ -523,7 +541,7 @@ static int oxygen_hw_free(struct snd_pcm_substream *substream)
 	oxygen_clear_bits8(chip, OXYGEN_DMA_FLUSH, channel_mask);
 	spin_unlock_irq(&chip->reg_lock);
 
-	return 0;
+	return snd_pcm_lib_free_pages(substream);
 }
 
 static int oxygen_spdif_hw_free(struct snd_pcm_substream *substream)
@@ -616,6 +634,7 @@ static snd_pcm_uframes_t oxygen_pointer(struct snd_pcm_substream *substream)
 static const struct snd_pcm_ops oxygen_rec_a_ops = {
 	.open      = oxygen_rec_a_open,
 	.close     = oxygen_close,
+	.ioctl     = snd_pcm_lib_ioctl,
 	.hw_params = oxygen_rec_a_hw_params,
 	.hw_free   = oxygen_hw_free,
 	.prepare   = oxygen_prepare,
@@ -626,6 +645,7 @@ static const struct snd_pcm_ops oxygen_rec_a_ops = {
 static const struct snd_pcm_ops oxygen_rec_b_ops = {
 	.open      = oxygen_rec_b_open,
 	.close     = oxygen_close,
+	.ioctl     = snd_pcm_lib_ioctl,
 	.hw_params = oxygen_rec_b_hw_params,
 	.hw_free   = oxygen_hw_free,
 	.prepare   = oxygen_prepare,
@@ -636,6 +656,7 @@ static const struct snd_pcm_ops oxygen_rec_b_ops = {
 static const struct snd_pcm_ops oxygen_rec_c_ops = {
 	.open      = oxygen_rec_c_open,
 	.close     = oxygen_close,
+	.ioctl     = snd_pcm_lib_ioctl,
 	.hw_params = oxygen_rec_c_hw_params,
 	.hw_free   = oxygen_hw_free,
 	.prepare   = oxygen_prepare,
@@ -646,6 +667,7 @@ static const struct snd_pcm_ops oxygen_rec_c_ops = {
 static const struct snd_pcm_ops oxygen_spdif_ops = {
 	.open      = oxygen_spdif_open,
 	.close     = oxygen_close,
+	.ioctl     = snd_pcm_lib_ioctl,
 	.hw_params = oxygen_spdif_hw_params,
 	.hw_free   = oxygen_spdif_hw_free,
 	.prepare   = oxygen_prepare,
@@ -656,6 +678,7 @@ static const struct snd_pcm_ops oxygen_spdif_ops = {
 static const struct snd_pcm_ops oxygen_multich_ops = {
 	.open      = oxygen_multich_open,
 	.close     = oxygen_close,
+	.ioctl     = snd_pcm_lib_ioctl,
 	.hw_params = oxygen_multich_hw_params,
 	.hw_free   = oxygen_hw_free,
 	.prepare   = oxygen_prepare,
@@ -666,6 +689,7 @@ static const struct snd_pcm_ops oxygen_multich_ops = {
 static const struct snd_pcm_ops oxygen_ac97_ops = {
 	.open      = oxygen_ac97_open,
 	.close     = oxygen_close,
+	.ioctl     = snd_pcm_lib_ioctl,
 	.hw_params = oxygen_hw_params,
 	.hw_free   = oxygen_hw_free,
 	.prepare   = oxygen_prepare,
@@ -699,17 +723,17 @@ int oxygen_pcm_init(struct oxygen *chip)
 		pcm->private_data = chip;
 		strcpy(pcm->name, "Multichannel");
 		if (outs)
-			snd_pcm_set_managed_buffer(pcm->streams[SNDRV_PCM_STREAM_PLAYBACK].substream,
-						   SNDRV_DMA_TYPE_DEV,
-						   &chip->pci->dev,
-						   DEFAULT_BUFFER_BYTES_MULTICH,
-						   BUFFER_BYTES_MAX_MULTICH);
+			snd_pcm_lib_preallocate_pages(pcm->streams[SNDRV_PCM_STREAM_PLAYBACK].substream,
+						      SNDRV_DMA_TYPE_DEV,
+						      snd_dma_pci_data(chip->pci),
+						      DEFAULT_BUFFER_BYTES_MULTICH,
+						      BUFFER_BYTES_MAX_MULTICH);
 		if (ins)
-			snd_pcm_set_managed_buffer(pcm->streams[SNDRV_PCM_STREAM_CAPTURE].substream,
-						   SNDRV_DMA_TYPE_DEV,
-						   &chip->pci->dev,
-						   DEFAULT_BUFFER_BYTES,
-						   BUFFER_BYTES_MAX);
+			snd_pcm_lib_preallocate_pages(pcm->streams[SNDRV_PCM_STREAM_CAPTURE].substream,
+						      SNDRV_DMA_TYPE_DEV,
+						      snd_dma_pci_data(chip->pci),
+						      DEFAULT_BUFFER_BYTES,
+						      BUFFER_BYTES_MAX);
 	}
 
 	outs = !!(chip->model.device_config & PLAYBACK_1_TO_SPDIF);
@@ -726,10 +750,10 @@ int oxygen_pcm_init(struct oxygen *chip)
 					&oxygen_rec_c_ops);
 		pcm->private_data = chip;
 		strcpy(pcm->name, "Digital");
-		snd_pcm_set_managed_buffer_all(pcm, SNDRV_DMA_TYPE_DEV,
-					       &chip->pci->dev,
-					       DEFAULT_BUFFER_BYTES,
-					       BUFFER_BYTES_MAX);
+		snd_pcm_lib_preallocate_pages_for_all(pcm, SNDRV_DMA_TYPE_DEV,
+						      snd_dma_pci_data(chip->pci),
+						      DEFAULT_BUFFER_BYTES,
+						      BUFFER_BYTES_MAX);
 	}
 
 	if (chip->has_ac97_1) {
@@ -756,10 +780,10 @@ int oxygen_pcm_init(struct oxygen *chip)
 					&oxygen_rec_b_ops);
 		pcm->private_data = chip;
 		strcpy(pcm->name, outs ? "Front Panel" : "Analog 2");
-		snd_pcm_set_managed_buffer_all(pcm, SNDRV_DMA_TYPE_DEV,
-					       &chip->pci->dev,
-					       DEFAULT_BUFFER_BYTES,
-					       BUFFER_BYTES_MAX);
+		snd_pcm_lib_preallocate_pages_for_all(pcm, SNDRV_DMA_TYPE_DEV,
+						      snd_dma_pci_data(chip->pci),
+						      DEFAULT_BUFFER_BYTES,
+						      BUFFER_BYTES_MAX);
 	}
 
 	ins = !!(chip->model.device_config & CAPTURE_3_FROM_I2S_3);
@@ -774,10 +798,10 @@ int oxygen_pcm_init(struct oxygen *chip)
 				     OXYGEN_REC_C_ROUTE_MASK);
 		pcm->private_data = chip;
 		strcpy(pcm->name, "Analog 3");
-		snd_pcm_set_managed_buffer_all(pcm, SNDRV_DMA_TYPE_DEV,
-					       &chip->pci->dev,
-					       DEFAULT_BUFFER_BYTES,
-					       BUFFER_BYTES_MAX);
+		snd_pcm_lib_preallocate_pages_for_all(pcm, SNDRV_DMA_TYPE_DEV,
+						      snd_dma_pci_data(chip->pci),
+						      DEFAULT_BUFFER_BYTES,
+						      BUFFER_BYTES_MAX);
 	}
 	return 0;
 }

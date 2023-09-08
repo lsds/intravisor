@@ -6,7 +6,6 @@
 #include <linux/string.h>
 #include <linux/module.h>
 #include <linux/device.h>
-#include <linux/scatterlist.h>
 
 #include "usbip_common.h"
 #include "stub.h"
@@ -23,7 +22,7 @@ struct kmem_cache *stub_priv_cache;
  */
 #define MAX_BUSID 16
 static struct bus_id_priv busid_table[MAX_BUSID];
-static DEFINE_SPINLOCK(busid_table_lock);
+static spinlock_t busid_table_lock;
 
 static void init_busid_table(void)
 {
@@ -34,6 +33,8 @@ static void init_busid_table(void)
 	 * STUB_BUSID_OTHER, which is 0.
 	 */
 	memset(busid_table, 0, sizeof(busid_table));
+
+	spin_lock_init(&busid_table_lock);
 
 	for (i = 0; i < MAX_BUSID; i++)
 		spin_lock_init(&busid_table[i].busid_lock);
@@ -100,7 +101,7 @@ static int add_match_busid(char *busid)
 	for (i = 0; i < MAX_BUSID; i++) {
 		spin_lock(&busid_table[i].busid_lock);
 		if (!busid_table[i].name[0]) {
-			strscpy(busid_table[i].name, busid, BUSID_SIZE);
+			strlcpy(busid_table[i].name, busid, BUSID_SIZE);
 			if ((busid_table[i].status != STUB_BUSID_ALLOC) &&
 			    (busid_table[i].status != STUB_BUSID_REMOV))
 				busid_table[i].status = STUB_BUSID_ADDED;
@@ -200,7 +201,7 @@ static DRIVER_ATTR_RW(match_busid);
 
 static int do_rebind(char *busid, struct bus_id_priv *busid_priv)
 {
-	int ret = 0;
+	int ret;
 
 	/* device_attach() callers should hold parent lock for USB */
 	if (busid_priv->udev->dev.parent)
@@ -208,9 +209,11 @@ static int do_rebind(char *busid, struct bus_id_priv *busid_priv)
 	ret = device_attach(&busid_priv->udev->dev);
 	if (busid_priv->udev->dev.parent)
 		device_unlock(busid_priv->udev->dev.parent);
-	if (ret < 0)
+	if (ret < 0) {
 		dev_err(&busid_priv->udev->dev, "rebind failed\n");
-	return ret;
+		return ret;
+	}
+	return 0;
 }
 
 static void stub_device_rebind(void)
@@ -280,47 +283,11 @@ static struct stub_priv *stub_priv_pop_from_listhead(struct list_head *listhead)
 	struct stub_priv *priv, *tmp;
 
 	list_for_each_entry_safe(priv, tmp, listhead, list) {
-		list_del_init(&priv->list);
+		list_del(&priv->list);
 		return priv;
 	}
 
 	return NULL;
-}
-
-void stub_free_priv_and_urb(struct stub_priv *priv)
-{
-	struct urb *urb;
-	int i;
-
-	for (i = 0; i < priv->num_urbs; i++) {
-		urb = priv->urbs[i];
-
-		if (!urb)
-			return;
-
-		kfree(urb->setup_packet);
-		urb->setup_packet = NULL;
-
-
-		if (urb->transfer_buffer && !priv->sgl) {
-			kfree(urb->transfer_buffer);
-			urb->transfer_buffer = NULL;
-		}
-
-		if (urb->num_sgs) {
-			sgl_free(urb->sg);
-			urb->sg = NULL;
-			urb->num_sgs = 0;
-		}
-
-		usb_free_urb(urb);
-	}
-	if (!list_empty(&priv->list))
-		list_del(&priv->list);
-	if (priv->sgl)
-		sgl_free(priv->sgl);
-	kfree(priv->urbs);
-	kmem_cache_free(stub_priv_cache, priv);
 }
 
 static struct stub_priv *stub_priv_pop(struct stub_device *sdev)
@@ -349,15 +316,25 @@ done:
 void stub_device_cleanup_urbs(struct stub_device *sdev)
 {
 	struct stub_priv *priv;
-	int i;
+	struct urb *urb;
 
 	dev_dbg(&sdev->udev->dev, "Stub device cleaning up urbs\n");
 
 	while ((priv = stub_priv_pop(sdev))) {
-		for (i = 0; i < priv->num_urbs; i++)
-			usb_kill_urb(priv->urbs[i]);
+		urb = priv->urb;
+		dev_dbg(&sdev->udev->dev, "free urb seqnum %lu\n",
+			priv->seqnum);
+		usb_kill_urb(urb);
 
-		stub_free_priv_and_urb(priv);
+		kmem_cache_free(stub_priv_cache, priv);
+
+		kfree(urb->transfer_buffer);
+		urb->transfer_buffer = NULL;
+
+		kfree(urb->setup_packet);
+		urb->setup_packet = NULL;
+
+		usb_free_urb(urb);
 	}
 }
 

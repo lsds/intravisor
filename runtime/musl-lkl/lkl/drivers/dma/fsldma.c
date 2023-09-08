@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Freescale MPC85xx, MPC83xx DMA Engine support
  *
@@ -17,6 +16,12 @@
  * command for PCI read operations, instead of using the default PCI Read Line
  * command. Please be aware that this setting may result in read pre-fetching
  * on some platforms.
+ *
+ * This is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
  */
 
 #include <linux/init.h>
@@ -48,42 +53,42 @@ static const char msg_ld_oom[] = "No free memory for link descriptor";
 
 static void set_sr(struct fsldma_chan *chan, u32 val)
 {
-	FSL_DMA_OUT(chan, &chan->regs->sr, val, 32);
+	DMA_OUT(chan, &chan->regs->sr, val, 32);
 }
 
 static u32 get_sr(struct fsldma_chan *chan)
 {
-	return FSL_DMA_IN(chan, &chan->regs->sr, 32);
+	return DMA_IN(chan, &chan->regs->sr, 32);
 }
 
 static void set_mr(struct fsldma_chan *chan, u32 val)
 {
-	FSL_DMA_OUT(chan, &chan->regs->mr, val, 32);
+	DMA_OUT(chan, &chan->regs->mr, val, 32);
 }
 
 static u32 get_mr(struct fsldma_chan *chan)
 {
-	return FSL_DMA_IN(chan, &chan->regs->mr, 32);
+	return DMA_IN(chan, &chan->regs->mr, 32);
 }
 
 static void set_cdar(struct fsldma_chan *chan, dma_addr_t addr)
 {
-	FSL_DMA_OUT(chan, &chan->regs->cdar, addr | FSL_DMA_SNEN, 64);
+	DMA_OUT(chan, &chan->regs->cdar, addr | FSL_DMA_SNEN, 64);
 }
 
 static dma_addr_t get_cdar(struct fsldma_chan *chan)
 {
-	return FSL_DMA_IN(chan, &chan->regs->cdar, 64) & ~FSL_DMA_SNEN;
+	return DMA_IN(chan, &chan->regs->cdar, 64) & ~FSL_DMA_SNEN;
 }
 
 static void set_bcr(struct fsldma_chan *chan, u32 val)
 {
-	FSL_DMA_OUT(chan, &chan->regs->bcr, val, 32);
+	DMA_OUT(chan, &chan->regs->bcr, val, 32);
 }
 
 static u32 get_bcr(struct fsldma_chan *chan)
 {
-	return FSL_DMA_IN(chan, &chan->regs->bcr, 32);
+	return DMA_IN(chan, &chan->regs->bcr, 32);
 }
 
 /*
@@ -976,13 +981,13 @@ static irqreturn_t fsldma_chan_irq(int irq, void *data)
 	return IRQ_HANDLED;
 }
 
-static void dma_do_tasklet(struct tasklet_struct *t)
+static void dma_do_tasklet(unsigned long data)
 {
-	struct fsldma_chan *chan = from_tasklet(chan, t, tasklet);
+	struct fsldma_chan *chan = (struct fsldma_chan *)data;
 
 	chan_dbg(chan, "tasklet entry\n");
 
-	spin_lock(&chan->desc_lock);
+	spin_lock_bh(&chan->desc_lock);
 
 	/* the hardware is now idle and ready for more */
 	chan->idle = true;
@@ -990,7 +995,7 @@ static void dma_do_tasklet(struct tasklet_struct *t)
 	/* Run all cleanup for descriptors which have been completed */
 	fsldma_cleanup_descriptors(chan);
 
-	spin_unlock(&chan->desc_lock);
+	spin_unlock_bh(&chan->desc_lock);
 
 	chan_dbg(chan, "tasklet exit\n");
 }
@@ -1151,7 +1156,7 @@ static int fsl_dma_chan_probe(struct fsldma_device *fdev,
 	}
 
 	fdev->chan[chan->id] = chan;
-	tasklet_setup(&chan->tasklet, dma_do_tasklet);
+	tasklet_init(&chan->tasklet, dma_do_tasklet, (unsigned long)chan);
 	snprintf(chan->name, sizeof(chan->name), "chan%d", chan->id);
 
 	/* Initialize the channel */
@@ -1163,7 +1168,6 @@ static int fsl_dma_chan_probe(struct fsldma_device *fdev,
 	switch (chan->feature & FSL_DMA_IP_MASK) {
 	case FSL_DMA_IP_85XX:
 		chan->toggle_ext_pause = fsl_chan_toggle_ext_pause;
-		fallthrough;
 	case FSL_DMA_IP_83XX:
 		chan->toggle_ext_start = fsl_chan_toggle_ext_start;
 		chan->set_src_loop_size = fsl_chan_set_src_loop_size;
@@ -1214,7 +1218,6 @@ static int fsldma_of_probe(struct platform_device *op)
 {
 	struct fsldma_device *fdev;
 	struct device_node *child;
-	unsigned int i;
 	int err;
 
 	fdev = kzalloc(sizeof(*fdev), GFP_KERNEL);
@@ -1293,10 +1296,6 @@ static int fsldma_of_probe(struct platform_device *op)
 	return 0;
 
 out_free_fdev:
-	for (i = 0; i < FSL_DMA_MAX_CHANS_PER_DEVICE; i++) {
-		if (fdev->chan[i])
-			fsl_dma_chan_remove(fdev->chan[i]);
-	}
 	irq_dispose_mapping(fdev->irq);
 	iounmap(fdev->regs);
 out_free:
@@ -1319,7 +1318,6 @@ static int fsldma_of_remove(struct platform_device *op)
 		if (fdev->chan[i])
 			fsl_dma_chan_remove(fdev->chan[i]);
 	}
-	irq_dispose_mapping(fdev->irq);
 
 	iounmap(fdev->regs);
 	kfree(fdev);
@@ -1330,7 +1328,8 @@ static int fsldma_of_remove(struct platform_device *op)
 #ifdef CONFIG_PM
 static int fsldma_suspend_late(struct device *dev)
 {
-	struct fsldma_device *fdev = dev_get_drvdata(dev);
+	struct platform_device *pdev = to_platform_device(dev);
+	struct fsldma_device *fdev = platform_get_drvdata(pdev);
 	struct fsldma_chan *chan;
 	int i;
 
@@ -1361,7 +1360,8 @@ out:
 
 static int fsldma_resume_early(struct device *dev)
 {
-	struct fsldma_device *fdev = dev_get_drvdata(dev);
+	struct platform_device *pdev = to_platform_device(dev);
+	struct fsldma_device *fdev = platform_get_drvdata(pdev);
 	struct fsldma_chan *chan;
 	u32 mode;
 	int i;

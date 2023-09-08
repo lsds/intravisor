@@ -74,6 +74,13 @@ static inline void nvt_set_reg_bit(struct nvt_dev *nvt, u8 val, u8 reg)
 	nvt_cr_write(nvt, tmp, reg);
 }
 
+/* clear config register bit without changing other bits */
+static inline void nvt_clear_reg_bit(struct nvt_dev *nvt, u8 val, u8 reg)
+{
+	u8 tmp = nvt_cr_read(nvt, reg) & ~val;
+	nvt_cr_write(nvt, tmp, reg);
+}
+
 /* enter extended function mode */
 static inline int nvt_efm_enable(struct nvt_dev *nvt)
 {
@@ -223,10 +230,10 @@ static ssize_t wakeup_data_show(struct device *dev,
 	for (i = 0; i < fifo_len; i++) {
 		duration = nvt_cir_wake_reg_read(nvt, CIR_WAKE_RD_FIFO_ONLY);
 		duration = (duration & BUF_LEN_MASK) * SAMPLE_PERIOD;
-		buf_len += scnprintf(buf + buf_len, PAGE_SIZE - buf_len,
+		buf_len += snprintf(buf + buf_len, PAGE_SIZE - buf_len,
 				    "%d ", duration);
 	}
-	buf_len += scnprintf(buf + buf_len, PAGE_SIZE - buf_len, "\n");
+	buf_len += snprintf(buf + buf_len, PAGE_SIZE - buf_len, "\n");
 
 	spin_unlock_irqrestore(&nvt->lock, flags);
 
@@ -528,8 +535,6 @@ static void nvt_set_cir_iren(struct nvt_dev *nvt)
 
 static void nvt_cir_regs_init(struct nvt_dev *nvt)
 {
-	nvt_enable_logical_dev(nvt, LOGICAL_DEV_CIR);
-
 	/* set sample limit count (PE interrupt raised when reached) */
 	nvt_cir_reg_write(nvt, CIR_RX_LIMIT_COUNT >> 8, CIR_SLCH);
 	nvt_cir_reg_write(nvt, CIR_RX_LIMIT_COUNT & 0xff, CIR_SLCL);
@@ -538,17 +543,31 @@ static void nvt_cir_regs_init(struct nvt_dev *nvt)
 	nvt_cir_reg_write(nvt, CIR_FIFOCON_TX_TRIGGER_LEV |
 			  CIR_FIFOCON_RX_TRIGGER_LEV, CIR_FIFOCON);
 
+	/*
+	 * Enable TX and RX, specify carrier on = low, off = high, and set
+	 * sample period (currently 50us)
+	 */
+	nvt_cir_reg_write(nvt,
+			  CIR_IRCON_TXEN | CIR_IRCON_RXEN |
+			  CIR_IRCON_RXINV | CIR_IRCON_SAMPLE_PERIOD_SEL,
+			  CIR_IRCON);
+
 	/* clear hardware rx and tx fifos */
 	nvt_clear_cir_fifo(nvt);
 	nvt_clear_tx_fifo(nvt);
 
-	nvt_disable_logical_dev(nvt, LOGICAL_DEV_CIR);
+	/* clear any and all stray interrupts */
+	nvt_cir_reg_write(nvt, 0xff, CIR_IRSTS);
+
+	/* and finally, enable interrupts */
+	nvt_set_cir_iren(nvt);
+
+	/* enable the CIR logical device */
+	nvt_enable_logical_dev(nvt, LOGICAL_DEV_CIR);
 }
 
 static void nvt_cir_wake_regs_init(struct nvt_dev *nvt)
 {
-	nvt_enable_logical_dev(nvt, LOGICAL_DEV_CIR_WAKE);
-
 	/*
 	 * Disable RX, set specific carrier on = low, off = high,
 	 * and sample period (currently 50us)
@@ -560,6 +579,9 @@ static void nvt_cir_wake_regs_init(struct nvt_dev *nvt)
 
 	/* clear any and all stray interrupts */
 	nvt_cir_wake_reg_write(nvt, 0xff, CIR_WAKE_IRSTS);
+
+	/* enable the CIR WAKE logical device */
+	nvt_enable_logical_dev(nvt, LOGICAL_DEV_CIR_WAKE);
 }
 
 static void nvt_enable_wake(struct nvt_dev *nvt)
@@ -624,6 +646,30 @@ static u32 nvt_rx_carrier_detect(struct nvt_dev *nvt)
 	return carrier;
 }
 #endif
+/*
+ * set carrier frequency
+ *
+ * set carrier on 2 registers: CP & CC
+ * always set CP as 0x81
+ * set CC by SPEC, CC = 3MHz/carrier - 1
+ */
+static int nvt_set_tx_carrier(struct rc_dev *dev, u32 carrier)
+{
+	struct nvt_dev *nvt = dev->priv;
+	u16 val;
+
+	if (carrier == 0)
+		return -EINVAL;
+
+	nvt_cir_reg_write(nvt, 1, CIR_CP);
+	val = 3000000 / (carrier) - 1;
+	nvt_cir_reg_write(nvt, val & 0xff, CIR_CC);
+
+	nvt_dbg("cp: 0x%x cc: 0x%x\n",
+		nvt_cir_reg_read(nvt, CIR_CP), nvt_cir_reg_read(nvt, CIR_CC));
+
+	return 0;
+}
 
 static int nvt_ir_raw_set_wakeup_filter(struct rc_dev *dev,
 					struct rc_scancode_filter *sc_filter)
@@ -653,7 +699,8 @@ static int nvt_ir_raw_set_wakeup_filter(struct rc_dev *dev,
 
 	/* Inspect the ir samples */
 	for (i = 0, count = 0; i < ret && count < WAKEUP_MAX_SIZE; ++i) {
-		val = raw[i].duration / SAMPLE_PERIOD;
+		/* NS to US */
+		val = DIV_ROUND_UP(raw[i].duration, 1000L) / SAMPLE_PERIOD;
 
 		/* Split too large values into several smaller ones */
 		while (val > 0 && count < WAKEUP_MAX_SIZE) {
@@ -705,7 +752,7 @@ static void nvt_dump_rx_buf(struct nvt_dev *nvt)
  */
 static void nvt_process_rx_ir_data(struct nvt_dev *nvt)
 {
-	struct ir_raw_event rawir = {};
+	DEFINE_IR_RAW_EVENT(rawir);
 	u8 sample;
 	int i;
 
@@ -720,7 +767,8 @@ static void nvt_process_rx_ir_data(struct nvt_dev *nvt)
 		sample = nvt->buf[i];
 
 		rawir.pulse = ((sample & BUF_PULSE_BIT) != 0);
-		rawir.duration = (sample & BUF_LEN_MASK) * SAMPLE_PERIOD;
+		rawir.duration = US_TO_NS((sample & BUF_LEN_MASK)
+					  * SAMPLE_PERIOD);
 
 		nvt_dbg("Storing %s with duration %d",
 			rawir.pulse ? "pulse" : "space", rawir.duration);
@@ -742,7 +790,7 @@ static void nvt_handle_rx_fifo_overrun(struct nvt_dev *nvt)
 
 	nvt->pkts = 0;
 	nvt_clear_cir_fifo(nvt);
-	ir_raw_event_overflow(nvt->rdev);
+	ir_raw_event_reset(nvt->rdev);
 }
 
 /* copy data from hardware rx fifo into driver buffer */
@@ -844,32 +892,6 @@ static irqreturn_t nvt_cir_isr(int irq, void *data)
 	return IRQ_HANDLED;
 }
 
-static void nvt_enable_cir(struct nvt_dev *nvt)
-{
-	unsigned long flags;
-
-	/* enable the CIR logical device */
-	nvt_enable_logical_dev(nvt, LOGICAL_DEV_CIR);
-
-	spin_lock_irqsave(&nvt->lock, flags);
-
-	/*
-	 * Enable TX and RX, specify carrier on = low, off = high, and set
-	 * sample period (currently 50us)
-	 */
-	nvt_cir_reg_write(nvt, CIR_IRCON_TXEN | CIR_IRCON_RXEN |
-			  CIR_IRCON_RXINV | CIR_IRCON_SAMPLE_PERIOD_SEL,
-			  CIR_IRCON);
-
-	/* clear all pending interrupts */
-	nvt_cir_reg_write(nvt, 0xff, CIR_IRSTS);
-
-	/* enable interrupts */
-	nvt_set_cir_iren(nvt);
-
-	spin_unlock_irqrestore(&nvt->lock, flags);
-}
-
 static void nvt_disable_cir(struct nvt_dev *nvt)
 {
 	unsigned long flags;
@@ -898,8 +920,25 @@ static void nvt_disable_cir(struct nvt_dev *nvt)
 static int nvt_open(struct rc_dev *dev)
 {
 	struct nvt_dev *nvt = dev->priv;
+	unsigned long flags;
 
-	nvt_enable_cir(nvt);
+	spin_lock_irqsave(&nvt->lock, flags);
+
+	/* set function enable flags */
+	nvt_cir_reg_write(nvt, CIR_IRCON_TXEN | CIR_IRCON_RXEN |
+			  CIR_IRCON_RXINV | CIR_IRCON_SAMPLE_PERIOD_SEL,
+			  CIR_IRCON);
+
+	/* clear all pending interrupts */
+	nvt_cir_reg_write(nvt, 0xff, CIR_IRSTS);
+
+	/* enable interrupts */
+	nvt_set_cir_iren(nvt);
+
+	spin_unlock_irqrestore(&nvt->lock, flags);
+
+	/* enable the CIR logical device */
+	nvt_enable_logical_dev(nvt, LOGICAL_DEV_CIR);
 
 	return 0;
 }
@@ -989,6 +1028,7 @@ static int nvt_probe(struct pnp_dev *pdev, const struct pnp_device_id *dev_id)
 	rdev->encode_wakeup = true;
 	rdev->open = nvt_open;
 	rdev->close = nvt_close;
+	rdev->s_tx_carrier = nvt_set_tx_carrier;
 	rdev->s_wakeup_filter = nvt_ir_raw_set_wakeup_filter;
 	rdev->device_name = "Nuvoton w836x7hg Infrared Remote Transceiver";
 	rdev->input_phys = "nuvoton/cir0";
@@ -998,9 +1038,9 @@ static int nvt_probe(struct pnp_dev *pdev, const struct pnp_device_id *dev_id)
 	rdev->input_id.version = nvt->chip_minor;
 	rdev->driver_name = NVT_DRIVER_NAME;
 	rdev->map_name = RC_MAP_RC6_MCE;
-	rdev->timeout = MS_TO_US(100);
+	rdev->timeout = MS_TO_NS(100);
 	/* rx resolution is hardwired to 50us atm, 1, 25, 100 also possible */
-	rdev->rx_resolution = CIR_SAMPLE_PERIOD;
+	rdev->rx_resolution = US_TO_NS(CIR_SAMPLE_PERIOD);
 #if 0
 	rdev->min_timeout = XYZ;
 	rdev->max_timeout = XYZ;
@@ -1053,13 +1093,19 @@ static void nvt_remove(struct pnp_dev *pdev)
 static int nvt_suspend(struct pnp_dev *pdev, pm_message_t state)
 {
 	struct nvt_dev *nvt = pnp_get_drvdata(pdev);
+	unsigned long flags;
 
 	nvt_dbg("%s called", __func__);
 
-	mutex_lock(&nvt->rdev->lock);
-	if (nvt->rdev->users)
-		nvt_disable_cir(nvt);
-	mutex_unlock(&nvt->rdev->lock);
+	spin_lock_irqsave(&nvt->lock, flags);
+
+	/* disable all CIR interrupts */
+	nvt_cir_reg_write(nvt, 0, CIR_IREN);
+
+	spin_unlock_irqrestore(&nvt->lock, flags);
+
+	/* disable cir logical dev */
+	nvt_disable_logical_dev(nvt, LOGICAL_DEV_CIR);
 
 	/* make sure wake is enabled */
 	nvt_enable_wake(nvt);
@@ -1075,11 +1121,6 @@ static int nvt_resume(struct pnp_dev *pdev)
 
 	nvt_cir_regs_init(nvt);
 	nvt_cir_wake_regs_init(nvt);
-
-	mutex_lock(&nvt->rdev->lock);
-	if (nvt->rdev->users)
-		nvt_enable_cir(nvt);
-	mutex_unlock(&nvt->rdev->lock);
 
 	return 0;
 }

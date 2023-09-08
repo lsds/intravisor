@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * ichxrom.c
  *
@@ -184,7 +183,7 @@ static int __init ichxrom_init_one(struct pci_dev *pdev,
 	}
 
 	/* Map the firmware hub into my address space. */
-	window->virt = ioremap(window->phys, window->size);
+	window->virt = ioremap_nocache(window->phys, window->size);
 	if (!window->virt) {
 		printk(KERN_ERR MOD_NAME ": ioremap(%08lx, %08lx) failed\n",
 			window->phys, window->size);
@@ -213,8 +212,10 @@ static int __init ichxrom_init_one(struct pci_dev *pdev,
 
 		if (!map) {
 			map = kmalloc(sizeof(*map), GFP_KERNEL);
-			if (!map)
-				goto out;
+		}
+		if (!map) {
+			printk(KERN_ERR MOD_NAME ": kmalloc failed");
+			goto out;
 		}
 		memset(map, 0, sizeof(*map));
 		INIT_LIST_HEAD(&map->list);

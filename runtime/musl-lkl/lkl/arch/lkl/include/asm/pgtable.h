@@ -1,12 +1,13 @@
 #ifndef _LKL_PGTABLE_H
 #define _LKL_PGTABLE_H
 
+#include <asm-generic/4level-fixup.h>
+
 /*
  * (C) Copyright 2000-2002, Greg Ungerer <gerg@snapgear.com>
  */
 
-#include <asm/page.h>
-#include <asm-generic/pgtable-nopud.h>
+#include <linux/slab.h>
 #include <asm/processor.h>
 #include <asm/io.h>
 
@@ -39,6 +40,10 @@ void paging_init(void);
 extern void *empty_zero_page;
 #define ZERO_PAGE(vaddr)	(virt_to_page(empty_zero_page))
 
+/*
+ * No page table caches to initialise.
+ */
+#define pgtable_cache_init()	do { } while (0)
 
 /*
  * All 32bit addresses are effectively valid for vmalloc...
@@ -49,7 +54,8 @@ extern void *empty_zero_page;
 #define	KMAP_START		0
 #define	KMAP_END		0xffffffff
 
-#define PTRS_PER_PTE 0
-#define PTRS_PER_PMD 0
+#include <asm-generic/pgtable.h>
+
+#define check_pgt_cache()	do { } while (0)
 
 #endif

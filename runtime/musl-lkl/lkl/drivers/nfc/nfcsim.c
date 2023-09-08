@@ -1,7 +1,16 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * NFC hardware simulation driver
  * Copyright (c) 2013, Intel Corporation.
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms and conditions of the GNU General Public License,
+ * version 2, as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+ * more details.
+ *
  */
 
 #include <linux/device.h>
@@ -192,7 +201,8 @@ static void nfcsim_recv_wq(struct work_struct *work)
 
 		if (!IS_ERR(skb))
 			dev_kfree_skb(skb);
-		return;
+
+		skb = ERR_PTR(-ENODEV);
 	}
 
 	dev->cb(dev->nfc_digital_dev, dev->arg, skb);
@@ -239,7 +249,7 @@ static int nfcsim_send(struct nfc_digital_dev *ddev, struct sk_buff *skb,
 
 static void nfcsim_abort_cmd(struct nfc_digital_dev *ddev)
 {
-	const struct nfcsim *dev = nfc_digital_get_drvdata(ddev);
+	struct nfcsim *dev = nfc_digital_get_drvdata(ddev);
 
 	nfcsim_link_recv_cancel(dev->link_in);
 }
@@ -319,7 +329,7 @@ static int nfcsim_tg_listen(struct nfc_digital_dev *ddev, u16 timeout,
 	return nfcsim_send(ddev, NULL, timeout, cb, arg);
 }
 
-static const struct nfc_digital_ops nfcsim_digital_ops = {
+static struct nfc_digital_ops nfcsim_digital_ops = {
 	.in_configure_hw = nfcsim_in_configure_hw,
 	.in_send_cmd = nfcsim_in_send_cmd,
 

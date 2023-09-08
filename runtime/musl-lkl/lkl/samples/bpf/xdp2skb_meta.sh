@@ -16,8 +16,8 @@
 BPF_FILE=xdp2skb_meta_kern.o
 DIR=$(dirname $0)
 
-[ -z "$TC" ] && TC=tc
-[ -z "$IP" ] && IP=ip
+export TC=/usr/sbin/tc
+export IP=/usr/sbin/ip
 
 function usage() {
     echo ""
@@ -53,7 +53,7 @@ function _call_cmd() {
     local allow_fail="$2"
     shift 2
     if [[ -n "$VERBOSE" ]]; then
-	echo "$cmd $@"
+	echo "$(basename $cmd) $@"
     fi
     if [[ -n "$DRYRUN" ]]; then
 	return

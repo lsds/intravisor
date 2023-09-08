@@ -1,4 +1,3 @@
-# SPDX-License-Identifier: GPL-2.0-only
 inffast.c
 inflate.c
 inftrees.c

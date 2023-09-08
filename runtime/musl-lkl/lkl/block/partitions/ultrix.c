@@ -8,6 +8,7 @@
  */
 
 #include "check.h"
+#include "ultrix.h"
 
 int ultrix_partition(struct parsed_partitions *state)
 {

@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * drivers/media/video/tvp514x.h
  *
@@ -11,6 +10,16 @@
  *     Hardik Shah <hardik.shah@ti.com>
  *     Manjunath Hadli <mrh@ti.com>
  *     Karicheri Muralidharan <m-karicheri2@ti.com>
+ *
+ * This package is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
  */
 
 #ifndef _TVP514X_H
@@ -29,7 +38,10 @@
 #define PAL_NUM_ACTIVE_PIXELS		(720)
 #define PAL_NUM_ACTIVE_LINES		(576)
 
-/* enum for different decoder input pin configuration */
+/**
+ * enum tvp514x_input - enum for different decoder input pin
+ *		configuration.
+ */
 enum tvp514x_input {
 	/*
 	 * CVBS input selection
@@ -66,7 +78,11 @@ enum tvp514x_input {
 	INPUT_INVALID
 };
 
-/* enum for output format supported. */
+/**
+ * enum tvp514x_output - enum for output format
+ *			supported.
+ *
+ */
 enum tvp514x_output {
 	OUTPUT_10BIT_422_EMBEDDED_SYNC = 0,
 	OUTPUT_20BIT_422_SEPERATE_SYNC,

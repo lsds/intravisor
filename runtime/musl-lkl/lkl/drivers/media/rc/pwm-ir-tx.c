@@ -1,6 +1,14 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Copyright (C) 2017 Sean Young <sean@mess.org>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
  */
 
 #include <linux/kernel.h>
@@ -53,21 +61,22 @@ static int pwm_ir_tx(struct rc_dev *dev, unsigned int *txbuf,
 {
 	struct pwm_ir *pwm_ir = dev->priv;
 	struct pwm_device *pwm = pwm_ir->pwm;
-	struct pwm_state state;
-	int i;
+	int i, duty, period;
 	ktime_t edge;
 	long delta;
 
-	pwm_init_state(pwm, &state);
+	period = DIV_ROUND_CLOSEST(NSEC_PER_SEC, pwm_ir->carrier);
+	duty = DIV_ROUND_CLOSEST(pwm_ir->duty_cycle * period, 100);
 
-	state.period = DIV_ROUND_CLOSEST(NSEC_PER_SEC, pwm_ir->carrier);
-	pwm_set_relative_duty_cycle(&state, pwm_ir->duty_cycle, 100);
+	pwm_config(pwm, duty, period);
 
 	edge = ktime_get();
 
 	for (i = 0; i < count; i++) {
-		state.enabled = !(i % 2);
-		pwm_apply_state(pwm, &state);
+		if (i % 2) // space
+			pwm_disable(pwm);
+		else
+			pwm_enable(pwm);
 
 		edge = ktime_add_us(edge, txbuf[i]);
 		delta = ktime_us_delta(edge, ktime_get());
@@ -75,8 +84,7 @@ static int pwm_ir_tx(struct rc_dev *dev, unsigned int *txbuf,
 			usleep_range(delta, delta + 10);
 	}
 
-	state.enabled = false;
-	pwm_apply_state(pwm, &state);
+	pwm_disable(pwm);
 
 	return count;
 }

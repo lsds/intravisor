@@ -1,16 +1,24 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Block Translation Table
  * Copyright (c) 2014-2015, Intel Corporation.
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms and conditions of the GNU General Public License,
+ * version 2, as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+ * more details.
  */
 #include <linux/highmem.h>
 #include <linux/debugfs.h>
 #include <linux/blkdev.h>
-#include <linux/pagemap.h>
 #include <linux/module.h>
 #include <linux/device.h>
 #include <linux/mutex.h>
 #include <linux/hdreg.h>
+#include <linux/genhd.h>
 #include <linux/sizes.h>
 #include <linux/ndctl.h>
 #include <linux/fs.h>
@@ -392,9 +400,9 @@ static int btt_flog_write(struct arena_info *arena, u32 lane, u32 sub,
 	arena->freelist[lane].sub = 1 - arena->freelist[lane].sub;
 	if (++(arena->freelist[lane].seq) == 4)
 		arena->freelist[lane].seq = 1;
-	if (ent_e_flag(le32_to_cpu(ent->old_map)))
+	if (ent_e_flag(ent->old_map))
 		arena->freelist[lane].has_err = 1;
-	arena->freelist[lane].block = ent_lba(le32_to_cpu(ent->old_map));
+	arena->freelist[lane].block = le32_to_cpu(ent_lba(ent->old_map));
 
 	return ret;
 }
@@ -533,9 +541,9 @@ static int arena_clear_freelist_error(struct arena_info *arena, u32 lane)
 
 static int btt_freelist_init(struct arena_info *arena)
 {
-	int new, ret;
-	struct log_entry log_new;
-	u32 i, map_entry, log_oldmap, log_newmap;
+	int old, new, ret;
+	u32 i, map_entry;
+	struct log_entry log_new, log_old;
 
 	arena->freelist = kcalloc(arena->nfree, sizeof(struct free_entry),
 					GFP_KERNEL);
@@ -543,26 +551,24 @@ static int btt_freelist_init(struct arena_info *arena)
 		return -ENOMEM;
 
 	for (i = 0; i < arena->nfree; i++) {
+		old = btt_log_read(arena, i, &log_old, LOG_OLD_ENT);
+		if (old < 0)
+			return old;
+
 		new = btt_log_read(arena, i, &log_new, LOG_NEW_ENT);
 		if (new < 0)
 			return new;
 
-		/* old and new map entries with any flags stripped out */
-		log_oldmap = ent_lba(le32_to_cpu(log_new.old_map));
-		log_newmap = ent_lba(le32_to_cpu(log_new.new_map));
-
 		/* sub points to the next one to be overwritten */
 		arena->freelist[i].sub = 1 - new;
 		arena->freelist[i].seq = nd_inc_seq(le32_to_cpu(log_new.seq));
-		arena->freelist[i].block = log_oldmap;
+		arena->freelist[i].block = le32_to_cpu(log_new.old_map);
 
 		/*
 		 * FIXME: if error clearing fails during init, we want to make
 		 * the BTT read-only
 		 */
-		if (ent_e_flag(le32_to_cpu(log_new.old_map)) &&
-		    !ent_normal(le32_to_cpu(log_new.old_map))) {
-			arena->freelist[i].has_err = 1;
+		if (ent_e_flag(log_new.old_map)) {
 			ret = arena_clear_freelist_error(arena, i);
 			if (ret)
 				dev_err_ratelimited(to_dev(arena),
@@ -570,7 +576,7 @@ static int btt_freelist_init(struct arena_info *arena)
 		}
 
 		/* This implies a newly created or untouched flog entry */
-		if (log_oldmap == log_newmap)
+		if (log_new.old_map == log_new.new_map)
 			continue;
 
 		/* Check if map recovery is needed */
@@ -578,15 +584,8 @@ static int btt_freelist_init(struct arena_info *arena)
 				NULL, NULL, 0);
 		if (ret)
 			return ret;
-
-		/*
-		 * The map_entry from btt_read_map is stripped of any flag bits,
-		 * so use the stripped out versions from the log as well for
-		 * testing whether recovery is needed. For restoration, use the
-		 * 'raw' version of the log entries as that captured what we
-		 * were going to write originally.
-		 */
-		if ((log_newmap != map_entry) && (log_oldmap == map_entry)) {
+		if ((le32_to_cpu(log_new.new_map) != map_entry) &&
+				(le32_to_cpu(log_new.old_map) == map_entry)) {
 			/*
 			 * Last transaction wrote the flog, but wasn't able
 			 * to complete the map write. So fix up the map.
@@ -972,7 +971,7 @@ static int btt_arena_write_layout(struct arena_info *arena)
 	u64 sum;
 	struct btt_sb *super;
 	struct nd_btt *nd_btt = arena->nd_btt;
-	const uuid_t *parent_uuid = nd_dev_to_uuid(&nd_btt->ndns->dev);
+	const u8 *parent_uuid = nd_dev_to_uuid(&nd_btt->ndns->dev);
 
 	ret = btt_map_init(arena);
 	if (ret)
@@ -987,8 +986,8 @@ static int btt_arena_write_layout(struct arena_info *arena)
 		return -ENOMEM;
 
 	strncpy(super->signature, BTT_SIG, BTT_SIG_LEN);
-	export_uuid(super->uuid, nd_btt->uuid);
-	export_uuid(super->parent_uuid, parent_uuid);
+	memcpy(super->uuid, nd_btt->uuid, 16);
+	memcpy(super->parent_uuid, parent_uuid, 16);
 	super->flags = cpu_to_le32(arena->flags);
 	super->version_major = cpu_to_le16(arena->version_major);
 	super->version_minor = cpu_to_le16(arena->version_minor);
@@ -1163,15 +1162,17 @@ static int btt_rw_integrity(struct btt *btt, struct bio_integrity_payload *bip,
 		 */
 
 		cur_len = min(len, bv.bv_len);
-		mem = bvec_kmap_local(&bv);
+		mem = kmap_atomic(bv.bv_page);
 		if (rw)
-			ret = arena_write_bytes(arena, meta_nsoff, mem, cur_len,
+			ret = arena_write_bytes(arena, meta_nsoff,
+					mem + bv.bv_offset, cur_len,
 					NVDIMM_IO_ATOMIC);
 		else
-			ret = arena_read_bytes(arena, meta_nsoff, mem, cur_len,
+			ret = arena_read_bytes(arena, meta_nsoff,
+					mem + bv.bv_offset, cur_len,
 					NVDIMM_IO_ATOMIC);
 
-		kunmap_local(mem);
+		kunmap_atomic(mem);
 		if (ret)
 			return ret;
 
@@ -1259,11 +1260,11 @@ static int btt_read_pg(struct btt *btt, struct bio_integrity_payload *bip,
 
 		ret = btt_data_read(arena, page, off, postmap, cur_len);
 		if (ret) {
+			int rc;
+
 			/* Media error - set the e_flag */
-			if (btt_map_write(arena, premap, postmap, 0, 1, NVDIMM_IO_ATOMIC))
-				dev_warn_ratelimited(to_dev(arena),
-					"Error persistently tracking bad blocks at %#x\n",
-					premap);
+			rc = btt_map_write(arena, premap, postmap, 0, 1,
+				NVDIMM_IO_ATOMIC);
 			goto out_rtt;
 		}
 
@@ -1422,11 +1423,11 @@ static int btt_write_pg(struct btt *btt, struct bio_integrity_payload *bip,
 
 static int btt_do_bvec(struct btt *btt, struct bio_integrity_payload *bip,
 			struct page *page, unsigned int len, unsigned int off,
-			enum req_op op, sector_t sector)
+			bool is_write, sector_t sector)
 {
 	int ret;
 
-	if (!op_is_write(op)) {
+	if (!is_write) {
 		ret = btt_read_pg(btt, bip, page, off, sector, len);
 		flush_dcache_page(page);
 	} else {
@@ -1437,10 +1438,10 @@ static int btt_do_bvec(struct btt *btt, struct bio_integrity_payload *bip,
 	return ret;
 }
 
-static void btt_submit_bio(struct bio *bio)
+static blk_qc_t btt_make_request(struct request_queue *q, struct bio *bio)
 {
 	struct bio_integrity_payload *bip = bio_integrity(bio);
-	struct btt *btt = bio->bi_bdev->bd_disk->private_data;
+	struct btt *btt = q->queuedata;
 	struct bvec_iter iter;
 	unsigned long start;
 	struct bio_vec bvec;
@@ -1448,11 +1449,9 @@ static void btt_submit_bio(struct bio *bio)
 	bool do_acct;
 
 	if (!bio_integrity_prep(bio))
-		return;
+		return BLK_QC_T_NONE;
 
-	do_acct = blk_queue_io_stat(bio->bi_bdev->bd_disk->queue);
-	if (do_acct)
-		start = bio_start_io_acct(bio);
+	do_acct = nd_iostat_start(bio, &start);
 	bio_for_each_segment(bvec, bio, iter) {
 		unsigned int len = bvec.bv_len;
 
@@ -1465,7 +1464,7 @@ static void btt_submit_bio(struct bio *bio)
 		}
 
 		err = btt_do_bvec(btt, bip, bvec.bv_page, len, bvec.bv_offset,
-				  bio_op(bio), iter.bi_sector);
+				  op_is_write(bio_op(bio)), iter.bi_sector);
 		if (err) {
 			dev_err(&btt->nd_btt->dev,
 					"io error in %s sector %lld, len %d,\n",
@@ -1477,20 +1476,23 @@ static void btt_submit_bio(struct bio *bio)
 		}
 	}
 	if (do_acct)
-		bio_end_io_acct(bio, start);
+		nd_iostat_end(bio, start);
 
 	bio_endio(bio);
+	return BLK_QC_T_NONE;
 }
 
 static int btt_rw_page(struct block_device *bdev, sector_t sector,
-		struct page *page, enum req_op op)
+		struct page *page, bool is_write)
 {
 	struct btt *btt = bdev->bd_disk->private_data;
 	int rc;
+	unsigned int len;
 
-	rc = btt_do_bvec(btt, NULL, page, thp_size(page), 0, op, sector);
+	len = hpage_nr_pages(page) * PAGE_SIZE;
+	rc = btt_do_bvec(btt, NULL, page, len, 0, is_write, sector);
 	if (rc == 0)
-		page_endio(page, op_is_write(op), 0);
+		page_endio(page, is_write, 0);
 
 	return rc;
 }
@@ -1507,55 +1509,65 @@ static int btt_getgeo(struct block_device *bd, struct hd_geometry *geo)
 
 static const struct block_device_operations btt_fops = {
 	.owner =		THIS_MODULE,
-	.submit_bio =		btt_submit_bio,
 	.rw_page =		btt_rw_page,
 	.getgeo =		btt_getgeo,
+	.revalidate_disk =	nvdimm_revalidate_disk,
 };
 
 static int btt_blk_init(struct btt *btt)
 {
 	struct nd_btt *nd_btt = btt->nd_btt;
 	struct nd_namespace_common *ndns = nd_btt->ndns;
-	int rc = -ENOMEM;
 
-	btt->btt_disk = blk_alloc_disk(NUMA_NO_NODE);
-	if (!btt->btt_disk)
+	/* create a new disk and request queue for btt */
+	btt->btt_queue = blk_alloc_queue(GFP_KERNEL);
+	if (!btt->btt_queue)
 		return -ENOMEM;
+
+	btt->btt_disk = alloc_disk(0);
+	if (!btt->btt_disk) {
+		blk_cleanup_queue(btt->btt_queue);
+		return -ENOMEM;
+	}
 
 	nvdimm_namespace_disk_name(ndns, btt->btt_disk->disk_name);
 	btt->btt_disk->first_minor = 0;
 	btt->btt_disk->fops = &btt_fops;
 	btt->btt_disk->private_data = btt;
+	btt->btt_disk->queue = btt->btt_queue;
+	btt->btt_disk->flags = GENHD_FL_EXT_DEVT;
+	btt->btt_disk->queue->backing_dev_info->capabilities |=
+			BDI_CAP_SYNCHRONOUS_IO;
 
-	blk_queue_logical_block_size(btt->btt_disk->queue, btt->sector_size);
-	blk_queue_max_hw_sectors(btt->btt_disk->queue, UINT_MAX);
-	blk_queue_flag_set(QUEUE_FLAG_NONROT, btt->btt_disk->queue);
+	blk_queue_make_request(btt->btt_queue, btt_make_request);
+	blk_queue_logical_block_size(btt->btt_queue, btt->sector_size);
+	blk_queue_max_hw_sectors(btt->btt_queue, UINT_MAX);
+	blk_queue_flag_set(QUEUE_FLAG_NONROT, btt->btt_queue);
+	btt->btt_queue->queuedata = btt;
 
 	if (btt_meta_size(btt)) {
-		rc = nd_integrity_init(btt->btt_disk, btt_meta_size(btt));
-		if (rc)
-			goto out_cleanup_disk;
+		int rc = nd_integrity_init(btt->btt_disk, btt_meta_size(btt));
+
+		if (rc) {
+			del_gendisk(btt->btt_disk);
+			put_disk(btt->btt_disk);
+			blk_cleanup_queue(btt->btt_queue);
+			return rc;
+		}
 	}
-
 	set_capacity(btt->btt_disk, btt->nlba * btt->sector_size >> 9);
-	rc = device_add_disk(&btt->nd_btt->dev, btt->btt_disk, NULL);
-	if (rc)
-		goto out_cleanup_disk;
-
+	device_add_disk(&btt->nd_btt->dev, btt->btt_disk);
 	btt->nd_btt->size = btt->nlba * (u64)btt->sector_size;
-	nvdimm_check_and_set_ro(btt->btt_disk);
+	revalidate_disk(btt->btt_disk);
 
 	return 0;
-
-out_cleanup_disk:
-	put_disk(btt->btt_disk);
-	return rc;
 }
 
 static void btt_blk_cleanup(struct btt *btt)
 {
 	del_gendisk(btt->btt_disk);
 	put_disk(btt->btt_disk);
+	blk_cleanup_queue(btt->btt_queue);
 }
 
 /**
@@ -1576,8 +1588,7 @@ static void btt_blk_cleanup(struct btt *btt)
  * Pointer to a new struct btt on success, NULL on failure.
  */
 static struct btt *btt_init(struct nd_btt *nd_btt, unsigned long long rawsize,
-			    u32 lbasize, uuid_t *uuid,
-			    struct nd_region *nd_region)
+		u32 lbasize, u8 *uuid, struct nd_region *nd_region)
 {
 	int ret;
 	struct btt *btt;
@@ -1662,8 +1673,7 @@ int nvdimm_namespace_attach_btt(struct nd_namespace_common *ndns)
 	struct nd_region *nd_region;
 	struct btt_sb *btt_sb;
 	struct btt *btt;
-	size_t size, rawsize;
-	int rc;
+	size_t rawsize;
 
 	if (!nd_btt->uuid || !nd_btt->ndns || !nd_btt->lbasize) {
 		dev_dbg(&nd_btt->dev, "incomplete btt configuration\n");
@@ -1674,11 +1684,6 @@ int nvdimm_namespace_attach_btt(struct nd_namespace_common *ndns)
 	if (!btt_sb)
 		return -ENOMEM;
 
-	size = nvdimm_namespace_capacity(ndns);
-	rc = devm_namespace_enable(&nd_btt->dev, ndns, size);
-	if (rc)
-		return rc;
-
 	/*
 	 * If this returns < 0, that is ok as it just means there wasn't
 	 * an existing BTT, and we're creating a new one. We still need to
@@ -1687,7 +1692,7 @@ int nvdimm_namespace_attach_btt(struct nd_namespace_common *ndns)
 	 */
 	nd_btt_version(nd_btt, ndns, btt_sb);
 
-	rawsize = size - nd_btt->initial_offset;
+	rawsize = nvdimm_namespace_capacity(ndns) - nd_btt->initial_offset;
 	if (rawsize < ARENA_MIN_SIZE) {
 		dev_dbg(&nd_btt->dev, "%s must be at least %ld bytes\n",
 				dev_name(&ndns->dev),
@@ -1696,7 +1701,7 @@ int nvdimm_namespace_attach_btt(struct nd_namespace_common *ndns)
 	}
 	nd_region = to_nd_region(nd_btt->dev.parent);
 	btt = btt_init(nd_btt, rawsize, nd_btt->lbasize, nd_btt->uuid,
-		       nd_region);
+			nd_region);
 	if (!btt)
 		return -ENOMEM;
 	nd_btt->btt = btt;

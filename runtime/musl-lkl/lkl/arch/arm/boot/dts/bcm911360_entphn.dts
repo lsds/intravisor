@@ -47,10 +47,12 @@
 		stdout-path = "serial0:115200n8";
 	};
 
-	gpio-keys {
+	gpio_keys {
 		compatible = "gpio-keys";
+		#address-cells = <1>;
+		#size-cells = <0>;
 
-		button-hook {
+		hook {
 			label = "HOOK";
 			linux,code = <KEY_O>;
 			gpios = <&gpio_asiu 48 0>;
@@ -82,8 +84,8 @@
 	status = "okay";
 };
 
-&nand_controller {
-	nand@1 {
+&nand {
+	nandcs@1 {
 		compatible = "brcm,nandcs";
 		reg = <0>;
 		nand-on-flash-bbt;

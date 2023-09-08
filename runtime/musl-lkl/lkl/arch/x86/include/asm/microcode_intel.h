@@ -19,7 +19,7 @@ struct microcode_header_intel {
 
 struct microcode_intel {
 	struct microcode_header_intel hdr;
-	unsigned int            bits[];
+	unsigned int            bits[0];
 };
 
 /* microcode format is extended from prescott processors */
@@ -33,7 +33,7 @@ struct extended_sigtable {
 	unsigned int            count;
 	unsigned int            cksum;
 	unsigned int            reserved[3];
-	struct extended_signature sigs[];
+	struct extended_signature sigs[0];
 };
 
 #define DEFAULT_UCODE_DATASIZE	(2000)

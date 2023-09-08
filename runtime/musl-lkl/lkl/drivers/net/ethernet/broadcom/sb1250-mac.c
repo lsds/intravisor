@@ -1,7 +1,20 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Copyright (C) 2001,2002,2003,2004 Broadcom Corporation
  * Copyright (c) 2006, 2007  Maciej W. Rozycki
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version 2
+ * of the License, or (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, see <http://www.gnu.org/licenses/>.
+ *
  *
  * This driver is designed for the Broadcom SiByte SOC built-in
  * Ethernet controllers. Written by Mitch Lichtenberg at Broadcom Corp.
@@ -143,7 +156,7 @@ enum sbmac_state {
 			  (d)->sbdma_dscrtable : (d)->f+1)
 
 
-#define NUMCACHEBLKS(x) DIV_ROUND_UP(x, SMP_CACHE_BYTES)
+#define NUMCACHEBLKS(x) (((x)+SMP_CACHE_BYTES-1)/SMP_CACHE_BYTES)
 
 #define SBMAC_MAX_TXDESCR	256
 #define SBMAC_MAX_RXDESCR	256
@@ -286,7 +299,7 @@ static enum sbmac_state sbmac_set_channel_state(struct sbmac_softc *,
 static void sbmac_promiscuous_mode(struct sbmac_softc *sc, int onoff);
 static uint64_t sbmac_addr2reg(unsigned char *ptr);
 static irqreturn_t sbmac_intr(int irq, void *dev_instance);
-static netdev_tx_t sbmac_start_tx(struct sk_buff *skb, struct net_device *dev);
+static int sbmac_start_tx(struct sk_buff *skb, struct net_device *dev);
 static void sbmac_setmulti(struct sbmac_softc *sc);
 static int sbmac_init(struct platform_device *pldev, long long base);
 static int sbmac_set_speed(struct sbmac_softc *s, enum sbmac_speed speed);
@@ -294,7 +307,7 @@ static int sbmac_set_duplex(struct sbmac_softc *s, enum sbmac_duplex duplex,
 			    enum sbmac_fc fc);
 
 static int sbmac_open(struct net_device *dev);
-static void sbmac_tx_timeout (struct net_device *dev, unsigned int txqueue);
+static void sbmac_tx_timeout (struct net_device *dev);
 static void sbmac_set_rx_mode(struct net_device *dev);
 static int sbmac_mii_ioctl(struct net_device *dev, struct ifreq *rq, int cmd);
 static int sbmac_close(struct net_device *dev);
@@ -1275,7 +1288,7 @@ static void sbdma_tx_process(struct sbmac_softc *sc, struct sbmacdma *d,
 		 * for transmits, we just free buffers.
 		 */
 
-		dev_consume_skb_irq(sb);
+		dev_kfree_skb_irq(sb);
 
 		/*
 		 * .. and advance to the next buffer.
@@ -2015,7 +2028,7 @@ static irqreturn_t sbmac_intr(int irq,void *dev_instance)
  *  Return value:
  *  	   nothing
  ********************************************************************* */
-static netdev_tx_t sbmac_start_tx(struct sk_buff *skb, struct net_device *dev)
+static int sbmac_start_tx(struct sk_buff *skb, struct net_device *dev)
 {
 	struct sbmac_softc *sc = netdev_priv(dev);
 	unsigned long flags;
@@ -2136,7 +2149,7 @@ static const struct net_device_ops sbmac_netdev_ops = {
 	.ndo_start_xmit		= sbmac_start_tx,
 	.ndo_set_rx_mode	= sbmac_set_rx_mode,
 	.ndo_tx_timeout		= sbmac_tx_timeout,
-	.ndo_eth_ioctl		= sbmac_mii_ioctl,
+	.ndo_do_ioctl		= sbmac_mii_ioctl,
 	.ndo_validate_addr	= eth_validate_addr,
 	.ndo_set_mac_address	= eth_mac_addr,
 #ifdef CONFIG_NET_POLL_CONTROLLER
@@ -2183,7 +2196,9 @@ static int sbmac_init(struct platform_device *pldev, long long base)
 		ea_reg >>= 8;
 	}
 
-	eth_hw_addr_set(dev, eaddr);
+	for (i = 0; i < 6; i++) {
+		dev->dev_addr[i] = eaddr[i];
+	}
 
 	/*
 	 * Initialize context (get pointers to registers and stuff), then
@@ -2203,7 +2218,7 @@ static int sbmac_init(struct platform_device *pldev, long long base)
 	dev->min_mtu = 0;
 	dev->max_mtu = ENET_PACKET_SIZE;
 
-	netif_napi_add_weight(dev, &sc->napi, sbmac_poll, 16);
+	netif_napi_add(dev, &sc->napi, sbmac_poll, 16);
 
 	dev->irq		= UNIT_INT(idx);
 
@@ -2342,10 +2357,20 @@ static int sbmac_mii_probe(struct net_device *dev)
 	}
 
 	/* Remove any features not supported by the controller */
-	phy_set_max_speed(phy_dev, SPEED_1000);
-	phy_support_asym_pause(phy_dev);
+	phy_dev->supported &= SUPPORTED_10baseT_Half |
+			      SUPPORTED_10baseT_Full |
+			      SUPPORTED_100baseT_Half |
+			      SUPPORTED_100baseT_Full |
+			      SUPPORTED_1000baseT_Half |
+			      SUPPORTED_1000baseT_Full |
+			      SUPPORTED_Autoneg |
+			      SUPPORTED_MII |
+			      SUPPORTED_Pause |
+			      SUPPORTED_Asym_Pause;
 
 	phy_attached_info(phy_dev);
+
+	phy_dev->advertising = phy_dev->supported;
 
 	sc->phy_dev = phy_dev;
 
@@ -2417,7 +2442,7 @@ static void sbmac_mii_poll(struct net_device *dev)
 }
 
 
-static void sbmac_tx_timeout (struct net_device *dev, unsigned int txqueue)
+static void sbmac_tx_timeout (struct net_device *dev)
 {
 	struct sbmac_softc *sc = netdev_priv(dev);
 	unsigned long flags;
@@ -2534,13 +2559,8 @@ static int sbmac_probe(struct platform_device *pldev)
 	int err;
 
 	res = platform_get_resource(pldev, IORESOURCE_MEM, 0);
-	if (!res) {
-		printk(KERN_ERR "%s: failed to get resource\n",
-		       dev_name(&pldev->dev));
-		err = -EINVAL;
-		goto out_out;
-	}
-	sbm_base = ioremap(res->start, resource_size(res));
+	BUG_ON(!res);
+	sbm_base = ioremap_nocache(res->start, resource_size(res));
 	if (!sbm_base) {
 		printk(KERN_ERR "%s: unable to map device registers\n",
 		       dev_name(&pldev->dev));

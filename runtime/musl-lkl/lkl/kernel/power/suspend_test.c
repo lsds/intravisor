@@ -1,8 +1,9 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * kernel/power/suspend_test.c - Suspend to RAM and standby test facility.
  *
  * Copyright (c) 2009 Pavel Machek <pavel@ucw.cz>
+ *
+ * This file is released under the GPLv2.
  */
 
 #include <linux/init.h>
@@ -70,7 +71,7 @@ static void __init test_wakealarm(struct rtc_device *rtc, suspend_state_t state)
 	static char info_test[] __initdata =
 		KERN_INFO "PM: test RTC wakeup from '%s' suspend\n";
 
-	time64_t		now;
+	unsigned long		now;
 	struct rtc_wkalrm	alm;
 	int			status;
 
@@ -81,10 +82,10 @@ repeat:
 		printk(err_readtime, dev_name(&rtc->dev), status);
 		return;
 	}
-	now = rtc_tm_to_time64(&alm.time);
+	rtc_tm_to_time(&alm.time, &now);
 
 	memset(&alm, 0, sizeof alm);
-	rtc_time64_to_tm(now + TEST_SUSPEND_SECONDS, &alm.time);
+	rtc_time_to_tm(now + TEST_SUSPEND_SECONDS, &alm.time);
 	alm.enabled = true;
 
 	status = rtc_set_alarm(rtc, &alm);
@@ -129,7 +130,7 @@ static int __init has_wakealarm(struct device *dev, const void *data)
 {
 	struct rtc_device *candidate = to_rtc_device(dev);
 
-	if (!test_bit(RTC_FEATURE_ALARM, candidate->features))
+	if (!candidate->ops->set_alarm)
 		return 0;
 	if (!device_may_wakeup(candidate->dev.parent))
 		return 0;
@@ -157,22 +158,22 @@ static int __init setup_test_suspend(char *value)
 	value++;
 	suspend_type = strsep(&value, ",");
 	if (!suspend_type)
-		return 1;
+		return 0;
 
 	repeat = strsep(&value, ",");
 	if (repeat) {
 		if (kstrtou32(repeat, 0, &test_repeat_count_max))
-			return 1;
+			return 0;
 	}
 
 	for (i = PM_SUSPEND_MIN; i < PM_SUSPEND_MAX; i++)
 		if (!strcmp(pm_labels[i], suspend_type)) {
 			test_state_label = pm_labels[i];
-			return 1;
+			return 0;
 		}
 
 	printk(warn_bad_state, suspend_type);
-	return 1;
+	return 0;
 }
 __setup("test_suspend", setup_test_suspend);
 

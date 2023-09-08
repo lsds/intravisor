@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * itg3200_buffer.c -- support InvenSense ITG3200
  *                     Digital 3-Axis Gyroscope driver
@@ -6,6 +5,10 @@
  * Copyright (c) 2011 Christian Strobel <christian.strobel@iis.fraunhofer.de>
  * Copyright (c) 2011 Manuel Stahl <manuel.stahl@iis.fraunhofer.de>
  * Copyright (c) 2012 Thorsten Nowak <thorsten.nowak@iis.fraunhofer.de>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 
 #include <linux/slab.h>
@@ -46,24 +49,17 @@ static irqreturn_t itg3200_trigger_handler(int irq, void *p)
 	struct iio_poll_func *pf = p;
 	struct iio_dev *indio_dev = pf->indio_dev;
 	struct itg3200 *st = iio_priv(indio_dev);
-	/*
-	 * Ensure correct alignment and padding including for the
-	 * timestamp that may be inserted.
-	 */
-	struct {
-		__be16 buf[ITG3200_SCAN_ELEMENTS];
-		s64 ts __aligned(8);
-	} scan;
+	__be16 buf[ITG3200_SCAN_ELEMENTS + sizeof(s64)/sizeof(u16)];
 
-	int ret = itg3200_read_all_channels(st->i2c, scan.buf);
+	int ret = itg3200_read_all_channels(st->i2c, buf);
 	if (ret < 0)
 		goto error_ret;
 
-	iio_push_to_buffers_with_timestamp(indio_dev, &scan, pf->timestamp);
+	iio_push_to_buffers_with_timestamp(indio_dev, buf, pf->timestamp);
 
-error_ret:
 	iio_trigger_notify_done(indio_dev->trig);
 
+error_ret:
 	return IRQ_HANDLED;
 }
 
@@ -113,8 +109,8 @@ int itg3200_probe_trigger(struct iio_dev *indio_dev)
 	int ret;
 	struct itg3200 *st = iio_priv(indio_dev);
 
-	st->trig = iio_trigger_alloc(&st->i2c->dev, "%s-dev%d", indio_dev->name,
-				     iio_device_id(indio_dev));
+	st->trig = iio_trigger_alloc("%s-dev%d", indio_dev->name,
+				     indio_dev->id);
 	if (!st->trig)
 		return -ENOMEM;
 
@@ -127,6 +123,7 @@ int itg3200_probe_trigger(struct iio_dev *indio_dev)
 		goto error_free_trig;
 
 
+	st->trig->dev.parent = &st->i2c->dev;
 	st->trig->ops = &itg3200_trigger_ops;
 	iio_trigger_set_drvdata(st->trig, indio_dev);
 	ret = iio_trigger_register(st->trig);

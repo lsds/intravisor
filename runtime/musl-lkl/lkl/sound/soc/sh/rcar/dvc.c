@@ -1,9 +1,13 @@
-// SPDX-License-Identifier: GPL-2.0
-//
-// Renesas R-Car DVC support
-//
-// Copyright (C) 2014 Renesas Solutions Corp.
-// Kuninori Morimoto <kuninori.morimoto.gx@renesas.com>
+/*
+ * Renesas R-Car DVC support
+ *
+ * Copyright (C) 2014 Renesas Solutions Corp.
+ * Kuninori Morimoto <kuninori.morimoto.gx@renesas.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ */
 
 /*
  * Playback Volume
@@ -40,7 +44,10 @@ struct rsnd_dvc {
 	struct rsnd_kctrl_cfg_s ren;	/* Ramp Enable */
 	struct rsnd_kctrl_cfg_s rup;	/* Ramp Rate Up */
 	struct rsnd_kctrl_cfg_s rdown;	/* Ramp Rate Down */
+	u32 flags;
 };
+
+#define KCTRL_INITIALIZED	(1 << 0)
 
 #define rsnd_dvc_get(priv, id) ((struct rsnd_dvc *)(priv->dvc) + id)
 #define rsnd_dvc_nr(priv) ((priv)->dvc_nr)
@@ -86,8 +93,14 @@ static void rsnd_dvc_volume_parameter(struct rsnd_dai_stream *io,
 			val[i] = rsnd_kctrl_valm(dvc->volume, i);
 
 	/* Enable Digital Volume */
-	for (i = 0; i < RSND_MAX_CHANNELS; i++)
-		rsnd_mod_write(mod, DVC_VOLxR(i), val[i]);
+	rsnd_mod_write(mod, DVC_VOL0R, val[0]);
+	rsnd_mod_write(mod, DVC_VOL1R, val[1]);
+	rsnd_mod_write(mod, DVC_VOL2R, val[2]);
+	rsnd_mod_write(mod, DVC_VOL3R, val[3]);
+	rsnd_mod_write(mod, DVC_VOL4R, val[4]);
+	rsnd_mod_write(mod, DVC_VOL5R, val[5]);
+	rsnd_mod_write(mod, DVC_VOL6R, val[6]);
+	rsnd_mod_write(mod, DVC_VOL7R, val[7]);
 }
 
 static void rsnd_dvc_volume_init(struct rsnd_dai_stream *io,
@@ -186,11 +199,7 @@ static int rsnd_dvc_init(struct rsnd_mod *mod,
 			 struct rsnd_dai_stream *io,
 			 struct rsnd_priv *priv)
 {
-	int ret;
-
-	ret = rsnd_mod_power_on(mod);
-	if (ret < 0)
-		return ret;
+	rsnd_mod_power_on(mod);
 
 	rsnd_dvc_activation(mod);
 
@@ -221,6 +230,9 @@ static int rsnd_dvc_pcm_new(struct rsnd_mod *mod,
 	int is_play = rsnd_io_is_play(io);
 	int channels = rsnd_rdai_channels_get(rdai);
 	int ret;
+
+	if (rsnd_flags_has(dvc, KCTRL_INITIALIZED))
+		return 0;
 
 	/* Volume */
 	ret = rsnd_kctrl_new_m(mod, io, rtd,
@@ -277,6 +289,8 @@ static int rsnd_dvc_pcm_new(struct rsnd_mod *mod,
 	if (ret < 0)
 		return ret;
 
+	rsnd_flags_set(dvc, KCTRL_INITIALIZED);
+
 	return 0;
 }
 
@@ -286,21 +300,8 @@ static struct dma_chan *rsnd_dvc_dma_req(struct rsnd_dai_stream *io,
 	struct rsnd_priv *priv = rsnd_mod_to_priv(mod);
 
 	return rsnd_dma_request_channel(rsnd_dvc_of_node(priv),
-					DVC_NAME, mod, "tx");
+					mod, "tx");
 }
-
-#ifdef CONFIG_DEBUG_FS
-static void rsnd_dvc_debug_info(struct seq_file *m,
-				struct rsnd_dai_stream *io,
-				struct rsnd_mod *mod)
-{
-	rsnd_debugfs_mod_reg_show(m, mod, RSND_GEN2_SCU,
-				  0xe00 + rsnd_mod_id(mod) * 0x100, 0x60);
-}
-#define DEBUG_INFO .debug_info = rsnd_dvc_debug_info
-#else
-#define DEBUG_INFO
-#endif
 
 static struct rsnd_mod_ops rsnd_dvc_ops = {
 	.name		= DVC_NAME,
@@ -309,8 +310,6 @@ static struct rsnd_mod_ops rsnd_dvc_ops = {
 	.init		= rsnd_dvc_init,
 	.quit		= rsnd_dvc_quit,
 	.pcm_new	= rsnd_dvc_pcm_new,
-	.get_status	= rsnd_mod_get_status,
-	DEBUG_INFO
 };
 
 struct rsnd_mod *rsnd_dvc_mod_get(struct rsnd_priv *priv, int id)
@@ -345,7 +344,7 @@ int rsnd_dvc_probe(struct rsnd_priv *priv)
 		goto rsnd_dvc_probe_done;
 	}
 
-	dvc	= devm_kcalloc(dev, nr, sizeof(*dvc), GFP_KERNEL);
+	dvc	= devm_kzalloc(dev, sizeof(*dvc) * nr, GFP_KERNEL);
 	if (!dvc) {
 		ret = -ENOMEM;
 		goto rsnd_dvc_probe_done;
@@ -370,7 +369,7 @@ int rsnd_dvc_probe(struct rsnd_priv *priv)
 		}
 
 		ret = rsnd_mod_init(priv, rsnd_mod_get(dvc), &rsnd_dvc_ops,
-				    clk, RSND_MOD_DVC, i);
+				    clk, rsnd_mod_get_status, RSND_MOD_DVC, i);
 		if (ret) {
 			of_node_put(np);
 			goto rsnd_dvc_probe_done;

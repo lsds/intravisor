@@ -28,7 +28,6 @@
  */
 
 #include <linux/module.h>
-#include <linux/mod_devicetable.h>
 #include <linux/platform_device.h>
 #include <linux/acpi.h>
 #include <linux/slab.h>
@@ -215,9 +214,6 @@ static void fw_cfg_io_cleanup(void)
 #  define FW_CFG_CTRL_OFF 0x08
 #  define FW_CFG_DATA_OFF 0x00
 #  define FW_CFG_DMA_OFF 0x10
-# elif defined(CONFIG_PARISC)	/* parisc */
-#  define FW_CFG_CTRL_OFF 0x00
-#  define FW_CFG_DATA_OFF 0x04
 # elif (defined(CONFIG_PPC_PMAC) || defined(CONFIG_SPARC32)) /* ppc/mac,sun4m */
 #  define FW_CFG_CTRL_OFF 0x00
 #  define FW_CFG_DATA_OFF 0x02
@@ -299,13 +295,15 @@ static int fw_cfg_do_platform_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static ssize_t fw_cfg_showrev(struct kobject *k, struct kobj_attribute *a,
-			      char *buf)
+static ssize_t fw_cfg_showrev(struct kobject *k, struct attribute *a, char *buf)
 {
 	return sprintf(buf, "%u\n", fw_cfg_rev);
 }
 
-static const struct kobj_attribute fw_cfg_rev_attr = {
+static const struct {
+	struct attribute attr;
+	ssize_t (*show)(struct kobject *k, struct attribute *a, char *buf);
+} fw_cfg_rev_attr = {
 	.attr = { .name = "rev", .mode = S_IRUSR },
 	.show = fw_cfg_showrev,
 };
@@ -388,13 +386,14 @@ static void fw_cfg_sysfs_cache_cleanup(void)
 	struct fw_cfg_sysfs_entry *entry, *next;
 
 	list_for_each_entry_safe(entry, next, &fw_cfg_entry_cache, list) {
-		fw_cfg_sysfs_cache_delist(entry);
-		kobject_del(&entry->kobj);
+		/* will end up invoking fw_cfg_sysfs_cache_delist()
+		 * via each object's release() method (i.e. destructor)
+		 */
 		kobject_put(&entry->kobj);
 	}
 }
 
-/* per-entry attributes and show methods */
+/* default_attrs: per-entry attributes and show methods */
 
 #define FW_CFG_SYSFS_ATTR(_attr) \
 struct fw_cfg_sysfs_attribute fw_cfg_sysfs_attr_##_attr = { \
@@ -427,7 +426,6 @@ static struct attribute *fw_cfg_sysfs_entry_attrs[] = {
 	&fw_cfg_sysfs_attr_name.attr,
 	NULL,
 };
-ATTRIBUTE_GROUPS(fw_cfg_sysfs_entry);
 
 /* sysfs_ops: find fw_cfg_[entry, attribute] and call appropriate show method */
 static ssize_t fw_cfg_sysfs_attr_show(struct kobject *kobj, struct attribute *a,
@@ -448,12 +446,13 @@ static void fw_cfg_sysfs_release_entry(struct kobject *kobj)
 {
 	struct fw_cfg_sysfs_entry *entry = to_entry(kobj);
 
+	fw_cfg_sysfs_cache_delist(entry);
 	kfree(entry);
 }
 
 /* kobj_type: ties together all properties required to register an entry */
 static struct kobj_type fw_cfg_sysfs_entry_ktype = {
-	.default_groups = fw_cfg_sysfs_entry_groups,
+	.default_attrs = fw_cfg_sysfs_entry_attrs,
 	.sysfs_ops = &fw_cfg_sysfs_attr_ops,
 	.release = fw_cfg_sysfs_release_entry,
 };
@@ -600,18 +599,18 @@ static int fw_cfg_register_file(const struct fw_cfg_file *f)
 	/* set file entry information */
 	entry->size = be32_to_cpu(f->size);
 	entry->select = be16_to_cpu(f->select);
-	strscpy(entry->name, f->name, FW_CFG_MAX_FILE_PATH);
+	memcpy(entry->name, f->name, FW_CFG_MAX_FILE_PATH);
 
 	/* register entry under "/sys/firmware/qemu_fw_cfg/by_key/" */
 	err = kobject_init_and_add(&entry->kobj, &fw_cfg_sysfs_entry_ktype,
 				   fw_cfg_sel_ko, "%d", entry->select);
 	if (err)
-		goto err_put_entry;
+		goto err_register;
 
 	/* add raw binary content access */
 	err = sysfs_create_bin_file(&entry->kobj, &fw_cfg_sysfs_attr_raw);
 	if (err)
-		goto err_del_entry;
+		goto err_add_raw;
 
 	/* try adding "/sys/firmware/qemu_fw_cfg/by_name/" symlink */
 	fw_cfg_build_symlink(fw_cfg_fname_kset, &entry->kobj, entry->name);
@@ -620,10 +619,10 @@ static int fw_cfg_register_file(const struct fw_cfg_file *f)
 	fw_cfg_sysfs_cache_enlist(entry);
 	return 0;
 
-err_del_entry:
+err_add_raw:
 	kobject_del(&entry->kobj);
-err_put_entry:
-	kobject_put(&entry->kobj);
+err_register:
+	kfree(entry);
 	return err;
 }
 

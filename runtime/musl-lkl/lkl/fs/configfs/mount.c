@@ -1,6 +1,22 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
-/*
+/* -*- mode: c; c-basic-offset: 8; -*-
+ * vim: noexpandtab sw=8 ts=8 sts=0:
+ *
  * mount.c - operations for initializing and mounting configfs.
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public
+ * License as published by the Free Software Foundation; either
+ * version 2 of the License, or (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public
+ * License along with this program; if not, write to the
+ * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+ * Boston, MA 021110-1307, USA.
  *
  * Based on sysfs:
  * 	sysfs is Copyright (C) 2001, 2002, 2003 Patrick Mochel
@@ -11,7 +27,6 @@
 #include <linux/fs.h>
 #include <linux/module.h>
 #include <linux/mount.h>
-#include <linux/fs_context.h>
 #include <linux/pagemap.h>
 #include <linux/init.h>
 #include <linux/slab.h>
@@ -26,18 +41,9 @@ static struct vfsmount *configfs_mount = NULL;
 struct kmem_cache *configfs_dir_cachep;
 static int configfs_mnt_count = 0;
 
-
-static void configfs_free_inode(struct inode *inode)
-{
-	if (S_ISLNK(inode->i_mode))
-		kfree(inode->i_link);
-	free_inode_nonrcu(inode);
-}
-
 static const struct super_operations configfs_ops = {
 	.statfs		= simple_statfs,
 	.drop_inode	= generic_delete_inode,
-	.free_inode	= configfs_free_inode,
 };
 
 static struct config_group configfs_root_group = {
@@ -60,7 +66,7 @@ static struct configfs_dirent configfs_root = {
 	.s_iattr	= NULL,
 };
 
-static int configfs_fill_super(struct super_block *sb, struct fs_context *fc)
+static int configfs_fill_super(struct super_block *sb, void *data, int silent)
 {
 	struct inode *inode;
 	struct dentry *root;
@@ -96,25 +102,16 @@ static int configfs_fill_super(struct super_block *sb, struct fs_context *fc)
 	return 0;
 }
 
-static int configfs_get_tree(struct fs_context *fc)
+static struct dentry *configfs_do_mount(struct file_system_type *fs_type,
+	int flags, const char *dev_name, void *data)
 {
-	return get_tree_single(fc, configfs_fill_super);
-}
-
-static const struct fs_context_operations configfs_context_ops = {
-	.get_tree	= configfs_get_tree,
-};
-
-static int configfs_init_fs_context(struct fs_context *fc)
-{
-	fc->ops = &configfs_context_ops;
-	return 0;
+	return mount_single(fs_type, flags, data, configfs_fill_super);
 }
 
 static struct file_system_type configfs_fs_type = {
 	.owner		= THIS_MODULE,
 	.name		= "configfs",
-	.init_fs_context = configfs_init_fs_context,
+	.mount		= configfs_do_mount,
 	.kill_sb	= kill_litter_super,
 };
 MODULE_ALIAS_FS("configfs");

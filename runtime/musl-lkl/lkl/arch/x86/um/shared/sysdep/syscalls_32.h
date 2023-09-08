@@ -6,9 +6,10 @@
 #include <asm/unistd.h>
 #include <sysdep/ptrace.h>
 
-typedef long syscall_handler_t(struct syscall_args);
+typedef long syscall_handler_t(struct pt_regs);
 
 extern syscall_handler_t *sys_call_table[];
 
 #define EXECUTE_SYSCALL(syscall, regs) \
-	((*sys_call_table[syscall]))(SYSCALL_ARGS(&regs->regs))
+	((long (*)(struct syscall_args)) \
+	 (*sys_call_table[syscall]))(SYSCALL_ARGS(&regs->regs))

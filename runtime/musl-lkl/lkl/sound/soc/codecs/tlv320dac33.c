@@ -1,10 +1,24 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * ALSA SoC Texas Instruments TLV320DAC33 codec driver
  *
  * Author: Peter Ujfalusi <peter.ujfalusi@ti.com>
  *
  * Copyright:   (C) 2009 Nokia Corporation
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
+ * 02110-1301 USA
+ *
  */
 
 #include <linux/module.h>
@@ -380,7 +394,7 @@ static int dac33_hard_power(struct snd_soc_component *component, int power)
 		if (ret != 0) {
 			dev_err(component->dev,
 				"Failed to enable supplies: %d\n", ret);
-			goto exit;
+				goto exit;
 		}
 
 		if (dac33->power_gpio >= 0)
@@ -449,7 +463,7 @@ static int dac33_set_fifo_mode(struct snd_kcontrol *kcontrol,
 	if (dac33->fifo_mode == ucontrol->value.enumerated.item[0])
 		return 0;
 	/* Do not allow changes while stream is running*/
-	if (snd_soc_component_active(component))
+	if (snd_soc_component_is_active(component))
 		return -EPERM;
 
 	if (ucontrol->value.enumerated.item[0] >= DAC33_FIFO_LAST_MODE)
@@ -1071,7 +1085,7 @@ static void dac33_calculate_times(struct snd_pcm_substream *substream,
 			 */
 			dac33->nsample = period_size *
 				((dac33->alarm_threshold / period_size) +
-				 ((dac33->alarm_threshold % period_size) ?
+				(dac33->alarm_threshold % period_size ?
 				1 : 0));
 		else if (period_size > nsample_limit)
 			dac33->nsample = nsample_limit;
@@ -1317,14 +1331,16 @@ static int dac33_set_dai_fmt(struct snd_soc_dai *codec_dai,
 
 	aictrl_a = dac33_read_reg_cache(component, DAC33_SER_AUDIOIF_CTRL_A);
 	aictrl_b = dac33_read_reg_cache(component, DAC33_SER_AUDIOIF_CTRL_B);
-
-	switch (fmt & SND_SOC_DAIFMT_CLOCK_PROVIDER_MASK) {
-	case SND_SOC_DAIFMT_CBP_CFP:
+	/* set master/slave audio interface */
+	switch (fmt & SND_SOC_DAIFMT_MASTER_MASK) {
+	case SND_SOC_DAIFMT_CBM_CFM:
+		/* Codec Master */
 		aictrl_a |= (DAC33_MSBCLK | DAC33_MSWCLK);
 		break;
-	case SND_SOC_DAIFMT_CBC_CFC:
+	case SND_SOC_DAIFMT_CBS_CFS:
+		/* Codec Slave */
 		if (dac33->fifo_mode) {
-			dev_err(component->dev, "FIFO mode requires provider mode\n");
+			dev_err(component->dev, "FIFO mode requires master mode\n");
 			return -EINVAL;
 		} else
 			aictrl_a &= ~(DAC33_MSBCLK | DAC33_MSWCLK);
@@ -1431,6 +1447,7 @@ static const struct snd_soc_component_driver soc_component_dev_tlv320dac33 = {
 	.num_dapm_routes	= ARRAY_SIZE(audio_map),
 	.use_pmdown_time	= 1,
 	.endianness		= 1,
+	.non_legacy_dai_naming	= 1,
 };
 
 #define DAC33_RATES	(SNDRV_PCM_RATE_44100 | \
@@ -1460,7 +1477,8 @@ static struct snd_soc_dai_driver dac33_dai = {
 	.ops = &dac33_dai_ops,
 };
 
-static int dac33_i2c_probe(struct i2c_client *client)
+static int dac33_i2c_probe(struct i2c_client *client,
+			   const struct i2c_device_id *id)
 {
 	struct tlv320dac33_platform_data *pdata;
 	struct tlv320dac33_priv *dac33;
@@ -1536,7 +1554,7 @@ err_gpio:
 	return ret;
 }
 
-static void dac33_i2c_remove(struct i2c_client *client)
+static int dac33_i2c_remove(struct i2c_client *client)
 {
 	struct tlv320dac33_priv *dac33 = i2c_get_clientdata(client);
 
@@ -1545,6 +1563,8 @@ static void dac33_i2c_remove(struct i2c_client *client)
 
 	if (dac33->power_gpio >= 0)
 		gpio_free(dac33->power_gpio);
+
+	return 0;
 }
 
 static const struct i2c_device_id tlv320dac33_i2c_id[] = {
@@ -1560,7 +1580,7 @@ static struct i2c_driver tlv320dac33_i2c_driver = {
 	.driver = {
 		.name = "tlv320dac33-codec",
 	},
-	.probe_new	= dac33_i2c_probe,
+	.probe		= dac33_i2c_probe,
 	.remove		= dac33_i2c_remove,
 	.id_table	= tlv320dac33_i2c_id,
 };

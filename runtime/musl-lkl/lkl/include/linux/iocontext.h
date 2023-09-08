@@ -8,7 +8,6 @@
 
 enum {
 	ICQ_EXITED		= 1 << 2,
-	ICQ_DESTROYED		= 1 << 3,
 };
 
 /*
@@ -99,40 +98,61 @@ struct io_cq {
 struct io_context {
 	atomic_long_t refcount;
 	atomic_t active_ref;
+	atomic_t nr_tasks;
+
+	/* all the fields below are protected by this lock */
+	spinlock_t lock;
 
 	unsigned short ioprio;
 
-#ifdef CONFIG_BLK_ICQ
-	/* all the fields below are protected by this lock */
-	spinlock_t lock;
+	/*
+	 * For request batching
+	 */
+	int nr_batch_requests;     /* Number of requests left in the batch */
+	unsigned long last_waited; /* Time last woken after wait for request */
 
 	struct radix_tree_root	icq_tree;
 	struct io_cq __rcu	*icq_hint;
 	struct hlist_head	icq_list;
 
 	struct work_struct release_work;
-#endif /* CONFIG_BLK_ICQ */
 };
+
+/**
+ * get_io_context_active - get active reference on ioc
+ * @ioc: ioc of interest
+ *
+ * Only iocs with active reference can issue new IOs.  This function
+ * acquires an active reference on @ioc.  The caller must already have an
+ * active reference on @ioc.
+ */
+static inline void get_io_context_active(struct io_context *ioc)
+{
+	WARN_ON_ONCE(atomic_long_read(&ioc->refcount) <= 0);
+	WARN_ON_ONCE(atomic_read(&ioc->active_ref) <= 0);
+	atomic_long_inc(&ioc->refcount);
+	atomic_inc(&ioc->active_ref);
+}
+
+static inline void ioc_task_link(struct io_context *ioc)
+{
+	get_io_context_active(ioc);
+
+	WARN_ON_ONCE(atomic_read(&ioc->nr_tasks) <= 0);
+	atomic_inc(&ioc->nr_tasks);
+}
 
 struct task_struct;
 #ifdef CONFIG_BLOCK
 void put_io_context(struct io_context *ioc);
+void put_io_context_active(struct io_context *ioc);
 void exit_io_context(struct task_struct *task);
-int __copy_io(unsigned long clone_flags, struct task_struct *tsk);
-static inline int copy_io(unsigned long clone_flags, struct task_struct *tsk)
-{
-	if (!current->io_context)
-		return 0;
-	return __copy_io(clone_flags, tsk);
-}
+struct io_context *get_task_io_context(struct task_struct *task,
+				       gfp_t gfp_flags, int node);
 #else
 struct io_context;
 static inline void put_io_context(struct io_context *ioc) { }
 static inline void exit_io_context(struct task_struct *task) { }
-static inline int copy_io(unsigned long clone_flags, struct task_struct *tsk)
-{
-	return 0;
-}
-#endif /* CONFIG_BLOCK */
+#endif
 
-#endif /* IOCONTEXT_H */
+#endif

@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * palinfo.c
  *
@@ -120,7 +119,7 @@ static const char *mem_attrib[]={
  * Input:
  *	- a pointer to a buffer to hold the string
  *	- a 64-bit vector
- * Output:
+ * Ouput:
  *	- a pointer to the end of the buffer
  *
  */
@@ -648,6 +647,46 @@ static int version_info(struct seq_file *m)
 	return 0;
 }
 
+static int perfmon_info(struct seq_file *m)
+{
+	u64 pm_buffer[16];
+	pal_perf_mon_info_u_t pm_info;
+
+	if (ia64_pal_perf_mon_info(pm_buffer, &pm_info) != 0)
+		return 0;
+
+	seq_printf(m,
+		   "PMC/PMD pairs                 : %d\n"
+		   "Counter width                 : %d bits\n"
+		   "Cycle event number            : %d\n"
+		   "Retired event number          : %d\n"
+		   "Implemented PMC               : ",
+		   pm_info.pal_perf_mon_info_s.generic,
+		   pm_info.pal_perf_mon_info_s.width,
+		   pm_info.pal_perf_mon_info_s.cycles,
+		   pm_info.pal_perf_mon_info_s.retired);
+
+	bitregister_process(m, pm_buffer, 256);
+	seq_puts(m, "\nImplemented PMD               : ");
+	bitregister_process(m, pm_buffer+4, 256);
+	seq_puts(m, "\nCycles count capable          : ");
+	bitregister_process(m, pm_buffer+8, 256);
+	seq_puts(m, "\nRetired bundles count capable : ");
+
+#ifdef CONFIG_ITANIUM
+	/*
+	 * PAL_PERF_MON_INFO reports that only PMC4 can be used to count CPU_CYCLES
+	 * which is wrong, both PMC4 and PMD5 support it.
+	 */
+	if (pm_buffer[12] == 0x10)
+		pm_buffer[12]=0x30;
+#endif
+
+	bitregister_process(m, pm_buffer+12, 256);
+	seq_putc(m, '\n');
+	return 0;
+}
+
 static int frequency_info(struct seq_file *m)
 {
 	struct pal_freq_ratio proc, itc, bus;
@@ -776,6 +815,7 @@ static const palinfo_entry_t palinfo_entries[]={
 	{ "power_info",		power_info, },
 	{ "register_info",	register_info, },
 	{ "processor_info",	processor_info, },
+	{ "perfmon_info",	perfmon_info, },
 	{ "frequency_info",	frequency_info, },
 	{ "bus_info",		bus_info },
 	{ "tr_info",		tr_info, }
@@ -880,6 +920,18 @@ static int proc_palinfo_show(struct seq_file *m, void *v)
 	return 0;
 }
 
+static int proc_palinfo_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, proc_palinfo_show, PDE_DATA(inode));
+}
+
+static const struct file_operations proc_palinfo_fops = {
+	.open		= proc_palinfo_open,
+	.read		= seq_read,
+	.llseek		= seq_lseek,
+	.release	= single_release,
+};
+
 static int palinfo_add_proc(unsigned int cpu)
 {
 	pal_func_cpu_u_t f;
@@ -896,8 +948,8 @@ static int palinfo_add_proc(unsigned int cpu)
 
 	for (j=0; j < NR_PALINFO_ENTRIES; j++) {
 		f.func_id = j;
-		proc_create_single_data(palinfo_entries[j].name, 0, cpu_dir,
-				proc_palinfo_show, (void *)f.value);
+		proc_create_data(palinfo_entries[j].name, 0, cpu_dir,
+				 &proc_palinfo_fops, (void *)f.value);
 	}
 	return 0;
 }

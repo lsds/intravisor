@@ -1,6 +1,30 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2000-2001 Christoph Hellwig.
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions, and the following disclaimer,
+ *    without modification.
+ * 2. The name of the author may not be used to endorse or promote products
+ *    derived from this software without specific prior written permission.
+ *
+ * Alternatively, this software may be distributed under the terms of the
+ * GNU General Public License ("GPL").
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED. IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE FOR
+ * ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+ * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ * SUCH DAMAGE.
  */
 
 /*
@@ -14,11 +38,11 @@
 #include "vxfs_extern.h"
 
 
-static int		vxfs_read_folio(struct file *, struct folio *);
+static int		vxfs_readpage(struct file *, struct page *);
 static sector_t		vxfs_bmap(struct address_space *, sector_t);
 
 const struct address_space_operations vxfs_aops = {
-	.read_folio =		vxfs_read_folio,
+	.readpage =		vxfs_readpage,
 	.bmap =			vxfs_bmap,
 };
 
@@ -51,9 +75,15 @@ vxfs_get_page(struct address_space *mapping, u_long n)
 		kmap(pp);
 		/** if (!PageChecked(pp)) **/
 			/** vxfs_check_page(pp); **/
+		if (PageError(pp))
+			goto fail;
 	}
 	
 	return (pp);
+		 
+fail:
+	vxfs_put_page(pp);
+	return ERR_PTR(-EIO);
 }
 
 /**
@@ -111,23 +141,24 @@ vxfs_getblk(struct inode *ip, sector_t iblock,
 }
 
 /**
- * vxfs_read_folio - read one page synchronously into the pagecache
+ * vxfs_readpage - read one page synchronously into the pagecache
  * @file:	file context (unused)
- * @folio:	folio to fill in.
+ * @page:	page frame to fill in.
  *
  * Description:
- *   The vxfs_read_folio routine reads @folio synchronously into the
+ *   The vxfs_readpage routine reads @page synchronously into the
  *   pagecache.
  *
  * Returns:
  *   Zero on success, else a negative error code.
  *
  * Locking status:
- *   @folio is locked and will be unlocked.
+ *   @page is locked and will be unlocked.
  */
-static int vxfs_read_folio(struct file *file, struct folio *folio)
+static int
+vxfs_readpage(struct file *file, struct page *page)
 {
-	return block_read_full_folio(folio, vxfs_getblk);
+	return block_read_full_page(page, vxfs_getblk);
 }
  
 /**

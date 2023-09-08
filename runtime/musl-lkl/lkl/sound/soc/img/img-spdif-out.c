@@ -1,10 +1,13 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * IMG SPDIF output controller driver
  *
  * Copyright (C) 2015 Imagination Technologies Ltd.
  *
  * Author: Damien Horsley <Damien.Horsley@imgtec.com>
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms and conditions of the GNU General Public License,
+ * version 2, as published by the Free Software Foundation.
  */
 
 #include <linux/clk.h>
@@ -316,8 +319,7 @@ static struct snd_soc_dai_driver img_spdif_out_dai = {
 };
 
 static const struct snd_soc_component_driver img_spdif_out_component = {
-	.name = "img-spdif-out",
-	.legacy_dai_naming = 1,
+	.name = "img-spdif-out"
 };
 
 static int img_spdif_out_probe(struct platform_device *pdev)
@@ -336,26 +338,33 @@ static int img_spdif_out_probe(struct platform_device *pdev)
 
 	spdif->dev = &pdev->dev;
 
-	base = devm_platform_get_and_ioremap_resource(pdev, 0, &res);
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	base = devm_ioremap_resource(&pdev->dev, res);
 	if (IS_ERR(base))
 		return PTR_ERR(base);
 
 	spdif->base = base;
 
 	spdif->rst = devm_reset_control_get_exclusive(&pdev->dev, "rst");
-	if (IS_ERR(spdif->rst))
-		return dev_err_probe(&pdev->dev, PTR_ERR(spdif->rst),
-				     "No top level reset found\n");
+	if (IS_ERR(spdif->rst)) {
+		if (PTR_ERR(spdif->rst) != -EPROBE_DEFER)
+			dev_err(&pdev->dev, "No top level reset found\n");
+		return PTR_ERR(spdif->rst);
+	}
 
 	spdif->clk_sys = devm_clk_get(&pdev->dev, "sys");
-	if (IS_ERR(spdif->clk_sys))
-		return dev_err_probe(dev, PTR_ERR(spdif->clk_sys),
-				     "Failed to acquire clock 'sys'\n");
+	if (IS_ERR(spdif->clk_sys)) {
+		if (PTR_ERR(spdif->clk_sys) != -EPROBE_DEFER)
+			dev_err(dev, "Failed to acquire clock 'sys'\n");
+		return PTR_ERR(spdif->clk_sys);
+	}
 
 	spdif->clk_ref = devm_clk_get(&pdev->dev, "ref");
-	if (IS_ERR(spdif->clk_ref))
-		return dev_err_probe(dev, PTR_ERR(spdif->clk_ref),
-				     "Failed to acquire clock 'ref'\n");
+	if (IS_ERR(spdif->clk_ref)) {
+		if (PTR_ERR(spdif->clk_ref) != -EPROBE_DEFER)
+			dev_err(dev, "Failed to acquire clock 'ref'\n");
+		return PTR_ERR(spdif->clk_ref);
+	}
 
 	pm_runtime_enable(&pdev->dev);
 	if (!pm_runtime_enabled(&pdev->dev)) {
@@ -363,7 +372,7 @@ static int img_spdif_out_probe(struct platform_device *pdev)
 		if (ret)
 			goto err_pm_disable;
 	}
-	ret = pm_runtime_resume_and_get(&pdev->dev);
+	ret = pm_runtime_get_sync(&pdev->dev);
 	if (ret < 0)
 		goto err_suspend;
 

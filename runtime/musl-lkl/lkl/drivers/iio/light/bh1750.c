@@ -1,8 +1,11 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * ROHM BH1710/BH1715/BH1721/BH1750/BH1751 ambient light sensor driver
  *
  * Copyright (c) Tomasz Duszynski <tduszyns@gmail.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  *
  * Data sheets:
  *  http://rohmfs.rohm.com/en/products/databook/datasheet/ic/sensor/light/bh1710fvc-e.pdf
@@ -59,9 +62,9 @@ struct bh1750_chip_info {
 
 	u16 int_time_low_mask;
 	u16 int_time_high_mask;
-};
+}
 
-static const struct bh1750_chip_info bh1750_chip_info_tbl[] = {
+static const bh1750_chip_info_tbl[] = {
 	[BH1710] = { 140, 1022, 300, 400,  250000000, 2, 0x001F, 0x03E0 },
 	[BH1721] = { 140, 1020, 300, 400,  250000000, 2, 0x0010, 0x03E0 },
 	[BH1750] = { 31,  254,  69,  1740, 57500000,  1, 0x001F, 0x00E0 },
@@ -254,6 +257,7 @@ static int bh1750_probe(struct i2c_client *client,
 		return ret;
 
 	mutex_init(&data->lock);
+	indio_dev->dev.parent = &client->dev;
 	indio_dev->info = &bh1750_info;
 	indio_dev->name = id->name;
 	indio_dev->channels = bh1750_channels;
@@ -263,7 +267,7 @@ static int bh1750_probe(struct i2c_client *client,
 	return iio_device_register(indio_dev);
 }
 
-static void bh1750_remove(struct i2c_client *client)
+static int bh1750_remove(struct i2c_client *client)
 {
 	struct iio_dev *indio_dev = i2c_get_clientdata(client);
 	struct bh1750_data *data = iio_priv(indio_dev);
@@ -273,8 +277,11 @@ static void bh1750_remove(struct i2c_client *client)
 	mutex_lock(&data->lock);
 	i2c_smbus_write_byte(client, BH1750_POWER_DOWN);
 	mutex_unlock(&data->lock);
+
+	return 0;
 }
 
+#ifdef CONFIG_PM_SLEEP
 static int bh1750_suspend(struct device *dev)
 {
 	int ret;
@@ -292,7 +299,11 @@ static int bh1750_suspend(struct device *dev)
 	return ret;
 }
 
-static DEFINE_SIMPLE_DEV_PM_OPS(bh1750_pm_ops, bh1750_suspend, NULL);
+static SIMPLE_DEV_PM_OPS(bh1750_pm_ops, bh1750_suspend, NULL);
+#define BH1750_PM_OPS (&bh1750_pm_ops)
+#else
+#define BH1750_PM_OPS NULL
+#endif
 
 static const struct i2c_device_id bh1750_id[] = {
 	{ "bh1710", BH1710 },
@@ -304,21 +315,10 @@ static const struct i2c_device_id bh1750_id[] = {
 };
 MODULE_DEVICE_TABLE(i2c, bh1750_id);
 
-static const struct of_device_id bh1750_of_match[] = {
-	{ .compatible = "rohm,bh1710", },
-	{ .compatible = "rohm,bh1715", },
-	{ .compatible = "rohm,bh1721", },
-	{ .compatible = "rohm,bh1750", },
-	{ .compatible = "rohm,bh1751", },
-	{ }
-};
-MODULE_DEVICE_TABLE(of, bh1750_of_match);
-
 static struct i2c_driver bh1750_driver = {
 	.driver = {
 		.name = "bh1750",
-		.of_match_table = bh1750_of_match,
-		.pm = pm_sleep_ptr(&bh1750_pm_ops),
+		.pm = BH1750_PM_OPS,
 	},
 	.probe = bh1750_probe,
 	.remove = bh1750_remove,

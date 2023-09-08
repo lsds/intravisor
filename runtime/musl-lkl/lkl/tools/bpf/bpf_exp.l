@@ -175,7 +175,7 @@ extern void yyerror(const char *str);
 			yylval.number = strtol(yytext, NULL, 10);
 			return number;
 		}
-([0][0-7]+)	{
+([0][0-9]+)	{
 			yylval.number = strtol(yytext + 1, NULL, 8);
 			return number;
 		}

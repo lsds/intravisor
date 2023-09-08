@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0 */
 /*
  * Support for GalaxyCore GC2235 2M camera sensor.
  *
@@ -33,11 +32,6 @@
 #include <media/media-entity.h>
 
 #include "../include/linux/atomisp_platform.h"
-
-/*
- * FIXME: non-preview resolutions are currently broken
- */
-#define ENABLE_NON_PREVIEW     0
 
 /* Defines for register writes and register array processing */
 #define I2C_MSG_LENGTH		0x2
@@ -158,10 +152,11 @@ struct gc2235_device {
 	struct v4l2_mbus_framefmt format;
 	struct mutex input_lock;
 	struct v4l2_ctrl_handler ctrl_handler;
-	struct gc2235_resolution *res;
 
 	struct camera_sensor_platform_data *platform_data;
 	int vt_pix_clk_freq_mhz;
+	int fmt_idx;
+	u8 res;
 	u8 type;
 };
 
@@ -217,7 +212,7 @@ static struct gc2235_reg const gc2235_stream_off[] = {
 };
 
 static struct gc2235_reg const gc2235_init_settings[] = {
-	/* System */
+	/* Sysytem */
 	{ GC2235_8BIT, 0xfe, 0x80 },
 	{ GC2235_8BIT, 0xfe, 0x80 },
 	{ GC2235_8BIT, 0xfe, 0x80 },
@@ -286,11 +281,9 @@ static struct gc2235_reg const gc2235_init_settings[] = {
 	{ GC2235_8BIT, 0xfe, 0x00 }, /* switch to P0 */
 	{ GC2235_TOK_TERM, 0, 0 }
 };
-
 /*
  * Register settings for various resolution
  */
-#if ENABLE_NON_PREVIEW
 static struct gc2235_reg const gc2235_1296_736_30fps[] = {
 	{ GC2235_8BIT, 0x8b, 0xa0 },
 	{ GC2235_8BIT, 0x8c, 0x02 },
@@ -394,7 +387,6 @@ static struct gc2235_reg const gc2235_960_640_30fps[] = {
 	{ GC2235_8BIT, 0xfe, 0x00 }, /* switch to P0 */
 	{ GC2235_TOK_TERM, 0, 0 }
 };
-#endif
 
 static struct gc2235_reg const gc2235_1600_900_30fps[] = {
 	{ GC2235_8BIT, 0x8b, 0xa0 },
@@ -531,6 +523,7 @@ static struct gc2235_reg const gc2235_1616_1216_30fps[] = {
 };
 
 static struct gc2235_resolution gc2235_res_preview[] = {
+
 	{
 		.desc = "gc2235_1600_900_30fps",
 		.width = 1600,
@@ -579,14 +572,13 @@ static struct gc2235_resolution gc2235_res_preview[] = {
 	},
 
 };
-
 #define N_RES_PREVIEW (ARRAY_SIZE(gc2235_res_preview))
 
 /*
  * Disable non-preview configurations until the configuration selection is
  * improved.
  */
-#if ENABLE_NON_PREVIEW
+#if 0
 static struct gc2235_resolution gc2235_res_still[] = {
 	{
 		.desc = "gc2235_1600_900_30fps",
@@ -635,7 +627,6 @@ static struct gc2235_resolution gc2235_res_still[] = {
 	},
 
 };
-
 #define N_RES_STILL (ARRAY_SIZE(gc2235_res_still))
 
 static struct gc2235_resolution gc2235_res_video[] = {
@@ -671,7 +662,6 @@ static struct gc2235_resolution gc2235_res_video[] = {
 	},
 
 };
-
 #define N_RES_VIDEO (ARRAY_SIZE(gc2235_res_video))
 #endif
 

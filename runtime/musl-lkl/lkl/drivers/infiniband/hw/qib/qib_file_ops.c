@@ -40,10 +40,10 @@
 #include <linux/highmem.h>
 #include <linux/io.h>
 #include <linux/jiffies.h>
+#include <asm/pgtable.h>
 #include <linux/delay.h>
 #include <linux/export.h>
 #include <linux/uio.h>
-#include <linux/pgtable.h>
 
 #include <rdma/ib.h>
 
@@ -153,7 +153,7 @@ static int qib_get_base_info(struct file *fp, void __user *ubase,
 		kinfo->spi_tidcnt += dd->rcvtidcnt % subctxt_cnt;
 	/*
 	 * for this use, may be cfgctxts summed over all chips that
-	 * are configured and present
+	 * are are configured and present
 	 */
 	kinfo->spi_nctxts = dd->cfgctxts;
 	/* unit (chip/board) our context is on */
@@ -343,7 +343,7 @@ static int qib_tid_update(struct qib_ctxtdata *rcd, struct file *fp,
 
 	/* virtual address of first page in transfer */
 	vaddr = ti->tidvaddr;
-	if (!access_ok((void __user *) vaddr,
+	if (!access_ok(VERIFY_WRITE, (void __user *) vaddr,
 		       cnt * PAGE_SIZE)) {
 		ret = -EFAULT;
 		goto done;
@@ -364,8 +364,6 @@ static int qib_tid_update(struct qib_ctxtdata *rcd, struct file *fp,
 		goto done;
 	}
 	for (i = 0; i < cnt; i++, vaddr += PAGE_SIZE) {
-		dma_addr_t daddr;
-
 		for (; ntids--; tid++) {
 			if (tid == tidcnt)
 				tid = 0;
@@ -382,14 +380,12 @@ static int qib_tid_update(struct qib_ctxtdata *rcd, struct file *fp,
 			ret = -ENOMEM;
 			break;
 		}
-		ret = qib_map_page(dd->pcidev, pagep[i], &daddr);
-		if (ret)
-			break;
-
 		tidlist[i] = tid + tidoff;
 		/* we "know" system pages and TID pages are same size */
 		dd->pageshadow[ctxttid + tid] = pagep[i];
-		dd->physshadow[ctxttid + tid] = daddr;
+		dd->physshadow[ctxttid + tid] =
+			qib_map_page(dd->pcidev, pagep[i], 0, PAGE_SIZE,
+				     PCI_DMA_FROMDEVICE);
 		/*
 		 * don't need atomic or it's overhead
 		 */
@@ -429,8 +425,8 @@ cleanup:
 				dd->f_put_tid(dd, &tidbase[tid],
 					      RCVHQ_RCV_TYPE_EXPECTED,
 					      dd->tidinvalid);
-				dma_unmap_page(&dd->pcidev->dev, phys,
-					       PAGE_SIZE, DMA_FROM_DEVICE);
+				pci_unmap_page(dd->pcidev, phys, PAGE_SIZE,
+					       PCI_DMA_FROMDEVICE);
 				dd->pageshadow[ctxttid + tid] = NULL;
 			}
 		}
@@ -544,8 +540,8 @@ static int qib_tid_free(struct qib_ctxtdata *rcd, unsigned subctxt,
 			 */
 			dd->f_put_tid(dd, &tidbase[tid],
 				      RCVHQ_RCV_TYPE_EXPECTED, dd->tidinvalid);
-			dma_unmap_page(&dd->pcidev->dev, phys, PAGE_SIZE,
-				       DMA_FROM_DEVICE);
+			pci_unmap_page(dd->pcidev, phys, PAGE_SIZE,
+				       PCI_DMA_FROMDEVICE);
 			qib_release_user_pages(&p, 1);
 		}
 	}
@@ -851,7 +847,7 @@ static int mmap_rcvegrbufs(struct vm_area_struct *vma,
 		ret = -EPERM;
 		goto bail;
 	}
-	/* don't allow them to later change to writable with mprotect */
+	/* don't allow them to later change to writeable with mprotect */
 	vma->vm_flags &= ~VM_MAYWRITE;
 
 	start = vma->vm_start;
@@ -872,7 +868,7 @@ bail:
 /*
  * qib_file_vma_fault - handle a VMA page fault.
  */
-static vm_fault_t qib_file_vma_fault(struct vm_fault *vmf)
+static int qib_file_vma_fault(struct vm_fault *vmf)
 {
 	struct page *page;
 
@@ -941,7 +937,7 @@ static int mmap_kvaddr(struct vm_area_struct *vma, u64 pgaddr,
 			goto bail;
 		}
 		/*
-		 * Don't allow permission to later change to writable
+		 * Don't allow permission to later change to writeable
 		 * with mprotect.
 		 */
 		vma->vm_flags &= ~VM_MAYWRITE;
@@ -1142,7 +1138,7 @@ static __poll_t qib_poll(struct file *fp, struct poll_table_struct *pt)
 static void assign_ctxt_affinity(struct file *fp, struct qib_devdata *dd)
 {
 	struct qib_filedata *fd = fp->private_data;
-	const unsigned int weight = current->nr_cpus_allowed;
+	const unsigned int weight = cpumask_weight(&current->cpus_allowed);
 	const struct cpumask *local_mask = cpumask_of_pcibus(dd->pcidev->bus);
 	int local_cpu;
 
@@ -1321,7 +1317,7 @@ static int setup_ctxt(struct qib_pportdata *ppd, int ctxt,
 	rcd->tid_pg_list = ptmp;
 	rcd->pid = current->pid;
 	init_waitqueue_head(&dd->rcd[ctxt]->wait);
-	get_task_comm(rcd->comm, current);
+	strlcpy(rcd->comm, current->comm, sizeof(rcd->comm));
 	ctxt_fp(fp) = rcd;
 	qib_stats.sps_ctxts++;
 	dd->freectxts--;
@@ -1623,8 +1619,9 @@ static int qib_assign_ctxt(struct file *fp, const struct qib_user_info *uinfo)
 		ret = find_free_ctxt(i_minor - 1, fp, uinfo);
 	else {
 		int unit;
-		const unsigned int cpu = cpumask_first(current->cpus_ptr);
-		const unsigned int weight = current->nr_cpus_allowed;
+		const unsigned int cpu = cpumask_first(&current->cpus_allowed);
+		const unsigned int weight =
+			cpumask_weight(&current->cpus_allowed);
 
 		if (weight == 1 && !test_bit(cpu, qib_cpulist))
 			if (!find_hca(cpu, &unit) && unit >= 0)
@@ -1758,8 +1755,7 @@ bail:
 }
 
 /**
- * unlock_expected_tids - unlock any expected TID entries context still had
- * in use
+ * unlock_exptid - unlock any expected TID entries context still had in use
  * @rcd: ctxt
  *
  * We don't actually update the chip here, because we do a bulk update
@@ -1781,8 +1777,8 @@ static void unlock_expected_tids(struct qib_ctxtdata *rcd)
 		phys = dd->physshadow[i];
 		dd->physshadow[i] = dd->tidinvalid;
 		dd->pageshadow[i] = NULL;
-		dma_unmap_page(&dd->pcidev->dev, phys, PAGE_SIZE,
-			       DMA_FROM_DEVICE);
+		pci_unmap_page(dd->pcidev, phys, PAGE_SIZE,
+			       PCI_DMA_FROMDEVICE);
 		qib_release_user_pages(&p, 1);
 		cnt++;
 	}
@@ -1790,6 +1786,7 @@ static void unlock_expected_tids(struct qib_ctxtdata *rcd)
 
 static int qib_close(struct inode *in, struct file *fp)
 {
+	int ret = 0;
 	struct qib_filedata *fd;
 	struct qib_ctxtdata *rcd;
 	struct qib_devdata *dd;
@@ -1873,7 +1870,7 @@ static int qib_close(struct inode *in, struct file *fp)
 
 bail:
 	kfree(fd);
-	return 0;
+	return ret;
 }
 
 static int qib_ctxt_info(struct file *fp, struct qib_ctxt_info __user *uinfo)
@@ -2248,7 +2245,7 @@ static ssize_t qib_write_iter(struct kiocb *iocb, struct iov_iter *from)
 
 	if (!iter_is_iovec(from) || !from->nr_segs || !pq)
 		return -EINVAL;
-
+			 
 	return qib_user_sdma_writev(rcd, pq, from->iov, from->nr_segs);
 }
 

@@ -30,10 +30,6 @@
 #include <linux/attribute_container.h>
 #include <linux/transport_class.h>
 
-static int transport_remove_classdev(struct attribute_container *cont,
-				     struct device *dev,
-				     struct device *classdev);
-
 /**
  * transport_class_register - register an initial transport class
  *
@@ -176,11 +172,10 @@ static int transport_add_class_device(struct attribute_container *cont,
  * routine is simply a trigger point used to add the device to the
  * system and register attributes for it.
  */
-int transport_add_device(struct device *dev)
+
+void transport_add_device(struct device *dev)
 {
-	return attribute_container_device_trigger_safe(dev,
-					transport_add_class_device,
-					transport_remove_classdev);
+	attribute_container_device_trigger(dev, transport_add_class_device);
 }
 EXPORT_SYMBOL_GPL(transport_add_device);
 

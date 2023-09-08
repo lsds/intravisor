@@ -243,35 +243,19 @@ enum stm32_dfsdm_sinc_order {
 };
 
 /**
- * struct stm32_dfsdm_filter_osr - DFSDM filter settings linked to oversampling
+ * struct stm32_dfsdm_filter - structure relative to stm32 FDSDM filter
  * @iosr: integrator oversampling
  * @fosr: filter oversampling
- * @rshift: output sample right shift (hardware shift)
- * @lshift: output sample left shift (software shift)
- * @res: output sample resolution
- * @bits: output sample resolution in bits
- * @max: output sample maximum positive value
- */
-struct stm32_dfsdm_filter_osr {
-	unsigned int iosr;
-	unsigned int fosr;
-	unsigned int rshift;
-	unsigned int lshift;
-	u64 res;
-	u32 bits;
-	s32 max;
-};
-
-/**
- * struct stm32_dfsdm_filter - structure relative to stm32 FDSDM filter
  * @ford: filter order
- * @flo: filter oversampling data table indexed by fast mode flag
+ * @res: output sample resolution
  * @sync_mode: filter synchronized with filter 0
  * @fast: filter fast mode
  */
 struct stm32_dfsdm_filter {
+	unsigned int iosr;
+	unsigned int fosr;
 	enum stm32_dfsdm_sinc_order ford;
-	struct stm32_dfsdm_filter_osr flo[2];
+	u64 res;
 	unsigned int sync_mode;
 	unsigned int fast;
 };

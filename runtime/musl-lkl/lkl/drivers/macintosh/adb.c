@@ -38,10 +38,10 @@
 #include <linux/kthread.h>
 #include <linux/platform_device.h>
 #include <linux/mutex.h>
-#include <linux/of.h>
 
 #include <linux/uaccess.h>
 #ifdef CONFIG_PPC
+#include <asm/prom.h>
 #include <asm/machdep.h>
 #endif
 
@@ -65,7 +65,7 @@ static struct adb_driver *adb_driver_list[] = {
 #ifdef CONFIG_ADB_IOP
 	&adb_iop_driver,
 #endif
-#ifdef CONFIG_ADB_PMU
+#if defined(CONFIG_ADB_PMU) || defined(CONFIG_ADB_PMU68K)
 	&via_pmu_driver,
 #endif
 #ifdef CONFIG_ADB_MACIO
@@ -163,7 +163,7 @@ static int adb_scan_bus(void)
 			 * See if anybody actually moved. This is suggested
 			 * by HW TechNote 01:
 			 *
-			 * https://developer.apple.com/technotes/hw/hw_01.html
+			 * http://developer.apple.com/technotes/hw/hw_01.html
 			 */
 			adb_request(&req, NULL, ADBREQ_SYNC | ADBREQ_REPLY, 1,
 				    (highFree << 4) | 0xf);
@@ -203,15 +203,15 @@ static int adb_scan_bus(void)
 	}
 
 	/* Now fill in the handler_id field of the adb_handler entries. */
+	pr_debug("adb devices:\n");
 	for (i = 1; i < 16; i++) {
 		if (adb_handler[i].original_address == 0)
 			continue;
 		adb_request(&req, NULL, ADBREQ_SYNC | ADBREQ_REPLY, 1,
 			    (i << 4) | 0xf);
 		adb_handler[i].handler_id = req.reply[2];
-		printk(KERN_DEBUG "adb device [%d]: %d 0x%X\n", i,
-		       adb_handler[i].original_address,
-		       adb_handler[i].handler_id);
+		pr_debug(" [%d]: %d %x\n", i, adb_handler[i].original_address,
+			 adb_handler[i].handler_id);
 		devmask |= 1 << i;
 	}
 	return devmask;
@@ -579,8 +579,6 @@ adb_try_handler_change(int address, int new_id)
 	mutex_lock(&adb_handler_mutex);
 	ret = try_handler_change(address, new_id);
 	mutex_unlock(&adb_handler_mutex);
-	if (ret)
-		pr_debug("adb handler change: [%d] 0x%X\n", address, new_id);
 	return ret;
 }
 EXPORT_SYMBOL(adb_try_handler_change);
@@ -647,7 +645,7 @@ do_adb_query(struct adb_request *req)
 
 	switch(req->data[1]) {
 	case ADB_QUERY_GETDEVINFO:
-		if (req->nbytes < 3 || req->data[2] >= 16)
+		if (req->nbytes < 3)
 			break;
 		mutex_lock(&adb_handler_mutex);
 		req->reply[0] = adb_handler[req->data[2]].original_address;

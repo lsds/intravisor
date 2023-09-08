@@ -1,6 +1,9 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (C) 2011 Richard Weinberger <richrd@nod.at>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  *
  * This vDSO turns all calls into a syscall so that UML can trap them.
  */
@@ -13,7 +16,7 @@
 #include <linux/getcpu.h>
 #include <asm/unistd.h>
 
-int __vdso_clock_gettime(clockid_t clock, struct __kernel_old_timespec *ts)
+int __vdso_clock_gettime(clockid_t clock, struct timespec *ts)
 {
 	long ret;
 
@@ -22,10 +25,10 @@ int __vdso_clock_gettime(clockid_t clock, struct __kernel_old_timespec *ts)
 
 	return ret;
 }
-int clock_gettime(clockid_t, struct __kernel_old_timespec *)
+int clock_gettime(clockid_t, struct timespec *)
 	__attribute__((weak, alias("__vdso_clock_gettime")));
 
-int __vdso_gettimeofday(struct __kernel_old_timeval *tv, struct timezone *tz)
+int __vdso_gettimeofday(struct timeval *tv, struct timezone *tz)
 {
 	long ret;
 
@@ -34,10 +37,10 @@ int __vdso_gettimeofday(struct __kernel_old_timeval *tv, struct timezone *tz)
 
 	return ret;
 }
-int gettimeofday(struct __kernel_old_timeval *, struct timezone *)
+int gettimeofday(struct timeval *, struct timezone *)
 	__attribute__((weak, alias("__vdso_gettimeofday")));
 
-__kernel_old_time_t __vdso_time(__kernel_old_time_t *t)
+time_t __vdso_time(time_t *t)
 {
 	long secs;
 
@@ -47,7 +50,7 @@ __kernel_old_time_t __vdso_time(__kernel_old_time_t *t)
 
 	return secs;
 }
-__kernel_old_time_t time(__kernel_old_time_t *t) __attribute__((weak, alias("__vdso_time")));
+int time(time_t *t) __attribute__((weak, alias("__vdso_time")));
 
 long
 __vdso_getcpu(unsigned *cpu, unsigned *node, struct getcpu_cache *unused)

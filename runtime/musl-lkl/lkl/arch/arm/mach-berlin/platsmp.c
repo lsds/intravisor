@@ -1,8 +1,11 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (C) 2014 Marvell Technology Group Ltd.
  *
  * Antoine Ténart <antoine.tenart@free-electrons.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 
 #include <linux/io.h>
@@ -78,6 +81,7 @@ static void __init berlin_smp_prepare_cpus(unsigned int max_cpus)
 		goto unmap_scu;
 
 	scu_enable(scu_base);
+	flush_cache_all();
 
 	/*
 	 * Write the first instruction the CPU will execute after being reset

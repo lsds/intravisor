@@ -5,7 +5,6 @@
  * Copyright (C) 2006-2016 Oracle Corporation
  */
 
-#include <linux/cred.h>
 #include <linux/input.h>
 #include <linux/kernel.h>
 #include <linux/miscdevice.h>
@@ -29,23 +28,6 @@ static DEFINE_MUTEX(vbg_gdev_mutex);
 /** Global vbg_gdev pointer used by vbg_get/put_gdev. */
 static struct vbg_dev *vbg_gdev;
 
-static u32 vbg_misc_device_requestor(struct inode *inode)
-{
-	u32 requestor = VMMDEV_REQUESTOR_USERMODE |
-			VMMDEV_REQUESTOR_CON_DONT_KNOW |
-			VMMDEV_REQUESTOR_TRUST_NOT_GIVEN;
-
-	if (from_kuid(current_user_ns(), current_uid()) == 0)
-		requestor |= VMMDEV_REQUESTOR_USR_ROOT;
-	else
-		requestor |= VMMDEV_REQUESTOR_USR_USER;
-
-	if (in_egroup_p(inode->i_gid))
-		requestor |= VMMDEV_REQUESTOR_GRP_VBOX;
-
-	return requestor;
-}
-
 static int vbg_misc_device_open(struct inode *inode, struct file *filp)
 {
 	struct vbg_session *session;
@@ -54,7 +36,7 @@ static int vbg_misc_device_open(struct inode *inode, struct file *filp)
 	/* misc_open sets filp->private_data to our misc device */
 	gdev = container_of(filp->private_data, struct vbg_dev, misc_device);
 
-	session = vbg_core_open_session(gdev, vbg_misc_device_requestor(inode));
+	session = vbg_core_open_session(gdev, false);
 	if (IS_ERR(session))
 		return PTR_ERR(session);
 
@@ -71,8 +53,7 @@ static int vbg_misc_device_user_open(struct inode *inode, struct file *filp)
 	gdev = container_of(filp->private_data, struct vbg_dev,
 			    misc_device_user);
 
-	session = vbg_core_open_session(gdev, vbg_misc_device_requestor(inode) |
-					      VMMDEV_REQUESTOR_USER_DEVICE);
+	session = vbg_core_open_session(gdev, false);
 	if (IS_ERR(session))
 		return PTR_ERR(session);
 
@@ -131,20 +112,16 @@ static long vbg_misc_device_ioctl(struct file *filp, unsigned int req,
 	 * the need for a bounce-buffer and another copy later on.
 	 */
 	is_vmmdev_req = (req & ~IOCSIZE_MASK) == VBG_IOCTL_VMMDEV_REQUEST(0) ||
-			 req == VBG_IOCTL_VMMDEV_REQUEST_BIG ||
-			 req == VBG_IOCTL_VMMDEV_REQUEST_BIG_ALT;
+			 req == VBG_IOCTL_VMMDEV_REQUEST_BIG;
 
 	if (is_vmmdev_req)
-		buf = vbg_req_alloc(size, VBG_IOCTL_HDR_TYPE_DEFAULT,
-				    session->requestor);
+		buf = vbg_req_alloc(size, VBG_IOCTL_HDR_TYPE_DEFAULT);
 	else
 		buf = kmalloc(size, GFP_KERNEL);
 	if (!buf)
 		return -ENOMEM;
 
-	*((struct vbg_ioctl_hdr *)buf) = hdr;
-	if (copy_from_user(buf + sizeof(hdr), (void *)arg + sizeof(hdr),
-			   hdr.size_in - sizeof(hdr))) {
+	if (copy_from_user(buf, (void *)arg, hdr.size_in)) {
 		ret = -EFAULT;
 		goto out;
 	}
@@ -202,8 +179,13 @@ static int vbg_input_open(struct input_dev *input)
 {
 	struct vbg_dev *gdev = input_get_drvdata(input);
 	u32 feat = VMMDEV_MOUSE_GUEST_CAN_ABSOLUTE | VMMDEV_MOUSE_NEW_PROTOCOL;
+	int ret;
 
-	return vbg_core_set_mouse_status(gdev, feat);
+	ret = vbg_core_set_mouse_status(gdev, feat);
+	if (ret)
+		return ret;
+
+	return 0;
 }
 
 /**
@@ -269,13 +251,6 @@ static ssize_t host_features_show(struct device *dev,
 
 static DEVICE_ATTR_RO(host_version);
 static DEVICE_ATTR_RO(host_features);
-
-static struct attribute *vbg_pci_attrs[] = {
-	&dev_attr_host_version.attr,
-	&dev_attr_host_features.attr,
-	NULL,
-};
-ATTRIBUTE_GROUPS(vbg_pci);
 
 /**
  * Does the PCI detection and init of the device.
@@ -363,8 +338,8 @@ static int vbg_pci_probe(struct pci_dev *pci, const struct pci_device_id *id)
 		goto err_vbg_core_exit;
 	}
 
-	ret = request_irq(pci->irq, vbg_core_isr, IRQF_SHARED, DEVICE_NAME,
-			  gdev);
+	ret = devm_request_irq(dev, pci->irq, vbg_core_isr, IRQF_SHARED,
+			       DEVICE_NAME, gdev);
 	if (ret) {
 		vbg_err("vboxguest: Error requesting irq: %d\n", ret);
 		goto err_vbg_core_exit;
@@ -374,7 +349,7 @@ static int vbg_pci_probe(struct pci_dev *pci, const struct pci_device_id *id)
 	if (ret) {
 		vbg_err("vboxguest: Error misc_register %s failed: %d\n",
 			DEVICE_NAME, ret);
-		goto err_free_irq;
+		goto err_vbg_core_exit;
 	}
 
 	ret = misc_register(&gdev->misc_device_user);
@@ -397,6 +372,12 @@ static int vbg_pci_probe(struct pci_dev *pci, const struct pci_device_id *id)
 	}
 
 	pci_set_drvdata(pci, gdev);
+	device_create_file(dev, &dev_attr_host_version);
+	device_create_file(dev, &dev_attr_host_features);
+
+	vbg_info("vboxguest: misc device minor %d, IRQ %d, I/O port %x, MMIO at %pap (size %pap)\n",
+		 gdev->misc_device.minor, pci->irq, gdev->io_port,
+		 &mmio, &mmio_len);
 
 	return 0;
 
@@ -404,8 +385,6 @@ err_unregister_misc_device_user:
 	misc_deregister(&gdev->misc_device_user);
 err_unregister_misc_device:
 	misc_deregister(&gdev->misc_device);
-err_free_irq:
-	free_irq(pci->irq, gdev);
 err_vbg_core_exit:
 	vbg_core_exit(gdev);
 err_disable_pcidev:
@@ -422,7 +401,8 @@ static void vbg_pci_remove(struct pci_dev *pci)
 	vbg_gdev = NULL;
 	mutex_unlock(&vbg_gdev_mutex);
 
-	free_irq(pci->irq, gdev);
+	device_remove_file(gdev->dev, &dev_attr_host_features);
+	device_remove_file(gdev->dev, &dev_attr_host_version);
 	misc_deregister(&gdev->misc_device_user);
 	misc_deregister(&gdev->misc_device);
 	vbg_core_exit(gdev);
@@ -487,7 +467,6 @@ MODULE_DEVICE_TABLE(pci,  vbg_pci_ids);
 
 static struct pci_driver vbg_pci_driver = {
 	.name		= DEVICE_NAME,
-	.dev_groups	= vbg_pci_groups,
 	.id_table	= vbg_pci_ids,
 	.probe		= vbg_pci_probe,
 	.remove		= vbg_pci_remove,

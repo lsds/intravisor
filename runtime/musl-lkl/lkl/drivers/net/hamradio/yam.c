@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*****************************************************************************/
 
 /*
@@ -7,9 +6,24 @@
  *      Copyright (C) 1998 Frederic Rible F1OAT (frible@teaser.fr)
  *      Adapted from baycom.c driver written by Thomas Sailer (sailer@ife.ee.ethz.ch)
  *
+ *      This program is free software; you can redistribute it and/or modify
+ *      it under the terms of the GNU General Public License as published by
+ *      the Free Software Foundation; either version 2 of the License, or
+ *      (at your option) any later version.
+ *
+ *      This program is distributed in the hope that it will be useful,
+ *      but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *      MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *      GNU General Public License for more details.
+ *
+ *      You should have received a copy of the GNU General Public License
+ *      along with this program; if not, write to the Free Software
+ *      Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ *
  *  Please note that the GPL allows you to use the driver, NOT the radio.
  *  In order to use the radio, you need a license from the communications
  *  authority of your country.
+ *
  *
  *  History:
  *   0.0 F1OAT 06.06.98  Begin of work with baycom.c source code V 0.3
@@ -23,6 +37,7 @@
  *   0.8 F6FBB 14.10.98  Fixed slottime/persistence timing bug
  *       OK1ZIA 2.09.01  Fixed "kfree_skb on hard IRQ" 
  *                       using dev_kfree_skb_any(). (important in 2.4 kernel)
+ *   
  */
 
 /*****************************************************************************/
@@ -626,7 +641,7 @@ static void yam_arbitrate(struct net_device *dev)
 	yp->slotcnt = yp->slot / 10;
 
 	/* is random > persist ? */
-	if (get_random_u8() > yp->pers)
+	if ((prandom_u32() % 256) > yp->pers)
 		return;
 
 	yam_start_tx(dev, yp);
@@ -668,7 +683,7 @@ static void yam_tx_byte(struct net_device *dev, struct yam_port *yp)
 			}
 			yp->tx_len = skb->len - 1;	/* strip KISS byte */
 			if (yp->tx_len >= YAM_MAX_FRAME || yp->tx_len < 2) {
-				dev_kfree_skb_any(skb);
+        			dev_kfree_skb_any(skb);
 				break;
 			}
 			skb_copy_from_linear_data_offset(skb, 1,
@@ -826,6 +841,20 @@ static const struct seq_operations yam_seqops = {
 	.stop = yam_seq_stop,
 	.show = yam_seq_show,
 };
+
+static int yam_info_open(struct inode *inode, struct file *file)
+{
+	return seq_open(file, &yam_seqops);
+}
+
+static const struct file_operations yam_info_fops = {
+	.owner = THIS_MODULE,
+	.open = yam_info_open,
+	.read = seq_read,
+	.llseek = seq_lseek,
+	.release = seq_release,
+};
+
 #endif
 
 
@@ -920,15 +949,15 @@ static int yam_close(struct net_device *dev)
 
 /* --------------------------------------------------------------------- */
 
-static int yam_siocdevprivate(struct net_device *dev, struct ifreq *ifr, void __user *data, int cmd)
+static int yam_ioctl(struct net_device *dev, struct ifreq *ifr, int cmd)
 {
 	struct yam_port *yp = netdev_priv(dev);
 	struct yamdrv_ioctl_cfg yi;
 	struct yamdrv_ioctl_mcs *ym;
 	int ioctl_cmd;
 
-	if (copy_from_user(&ioctl_cmd, data, sizeof(int)))
-		return -EFAULT;
+	if (copy_from_user(&ioctl_cmd, ifr->ifr_data, sizeof(int)))
+		 return -EFAULT;
 
 	if (yp->magic != YAM_MAGIC)
 		return -EINVAL;
@@ -947,10 +976,11 @@ static int yam_siocdevprivate(struct net_device *dev, struct ifreq *ifr, void __
 	case SIOCYAMSMCS:
 		if (netif_running(dev))
 			return -EINVAL;		/* Cannot change this parameter when up */
-		ym = memdup_user(data, sizeof(struct yamdrv_ioctl_mcs));
+		ym = memdup_user(ifr->ifr_data,
+				 sizeof(struct yamdrv_ioctl_mcs));
 		if (IS_ERR(ym))
 			return PTR_ERR(ym);
-		if (ym->cmd != SIOCYAMSMCS || ym->bitrate > YAM_MAXBITRATE) {
+		if (ym->bitrate > YAM_MAXBITRATE) {
 			kfree(ym);
 			return -EINVAL;
 		}
@@ -962,11 +992,9 @@ static int yam_siocdevprivate(struct net_device *dev, struct ifreq *ifr, void __
 	case SIOCYAMSCFG:
 		if (!capable(CAP_SYS_RAWIO))
 			return -EPERM;
-		if (copy_from_user(&yi, data, sizeof(struct yamdrv_ioctl_cfg)))
-			return -EFAULT;
+		if (copy_from_user(&yi, ifr->ifr_data, sizeof(struct yamdrv_ioctl_cfg)))
+			 return -EFAULT;
 
-		if (yi.cmd != SIOCYAMSCFG)
-			return -EINVAL;
 		if ((yi.cfg.mask & YAM_IOBASE) && netif_running(dev))
 			return -EINVAL;		/* Cannot change this parameter when up */
 		if ((yi.cfg.mask & YAM_IRQ) && netif_running(dev))
@@ -1042,8 +1070,8 @@ static int yam_siocdevprivate(struct net_device *dev, struct ifreq *ifr, void __
 		yi.cfg.txtail = yp->txtail;
 		yi.cfg.persist = yp->pers;
 		yi.cfg.slottime = yp->slot;
-		if (copy_to_user(data, &yi, sizeof(struct yamdrv_ioctl_cfg)))
-			return -EFAULT;
+		if (copy_to_user(ifr->ifr_data, &yi, sizeof(struct yamdrv_ioctl_cfg)))
+			 return -EFAULT;
 		break;
 
 	default:
@@ -1061,7 +1089,7 @@ static int yam_set_mac_address(struct net_device *dev, void *addr)
 	struct sockaddr *sa = (struct sockaddr *) addr;
 
 	/* addr is an AX.25 shifted ASCII mac address */
-	dev_addr_set(dev, sa->sa_data);
+	memcpy(dev->dev_addr, sa->sa_data, dev->addr_len);
 	return 0;
 }
 
@@ -1071,7 +1099,7 @@ static const struct net_device_ops yam_netdev_ops = {
 	.ndo_open	     = yam_open,
 	.ndo_stop	     = yam_close,
 	.ndo_start_xmit      = yam_send_packet,
-	.ndo_siocdevprivate  = yam_siocdevprivate,
+	.ndo_do_ioctl 	     = yam_ioctl,
 	.ndo_set_mac_address = yam_set_mac_address,
 };
 
@@ -1105,7 +1133,7 @@ static void yam_setup(struct net_device *dev)
 	dev->mtu = AX25_MTU;
 	dev->addr_len = AX25_ADDR_LEN;
 	memcpy(dev->broadcast, &ax25_bcast, AX25_ADDR_LEN);
-	dev_addr_set(dev, (u8 *)&ax25_defaddr);
+	memcpy(dev->dev_addr, &ax25_defaddr, AX25_ADDR_LEN);
 }
 
 static int __init yam_init_driver(void)
@@ -1130,7 +1158,6 @@ static int __init yam_init_driver(void)
 		err = register_netdev(dev);
 		if (err) {
 			printk(KERN_WARNING "yam: cannot register net device %s\n", dev->name);
-			free_netdev(dev);
 			goto error;
 		}
 		yam_devs[i] = dev;
@@ -1141,7 +1168,7 @@ static int __init yam_init_driver(void)
 	yam_timer.expires = jiffies + HZ / 100;
 	add_timer(&yam_timer);
 
-	proc_create_seq("yam", 0444, init_net.proc_net, &yam_seqops);
+	proc_create("yam", 0444, init_net.proc_net, &yam_info_fops);
 	return 0;
  error:
 	while (--i >= 0) {

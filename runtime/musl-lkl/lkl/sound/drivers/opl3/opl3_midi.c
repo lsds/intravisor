@@ -1,8 +1,22 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  *  Copyright (c) by Uros Bizjak <uros@kss-loka.si>
  *
  *  Midi synth routines for OPL2/OPL3/OPL4 FM
+ *
+ *   This program is free software; you can redistribute it and/or modify
+ *   it under the terms of the GNU General Public License as published by
+ *   the Free Software Foundation; either version 2 of the License, or
+ *   (at your option) any later version.
+ *
+ *   This program is distributed in the hope that it will be useful,
+ *   but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *   GNU General Public License for more details.
+ *
+ *   You should have received a copy of the GNU General Public License
+ *   along with this program; if not, write to the Free Software
+ *   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307 USA
+ *
  */
 
 #undef DEBUG_ALLOC
@@ -10,6 +24,10 @@
 
 #include "opl3_voice.h"
 #include <sound/asoundef.h>
+
+extern char snd_opl3_regmap[MAX_OPL2_VOICES][4];
+
+extern bool use_internal_drums;
 
 static void snd_opl3_note_off_unsafe(void *p, int note, int vel,
 				     struct snd_midi_channel *chan);
@@ -23,7 +41,7 @@ static void snd_opl3_note_off_unsafe(void *p, int note, int vel,
  * it saves a lot of log() calculations. (Rob Hooft <hooft@chem.ruu.nl>)
  */
 
-static const char opl3_volume_table[128] =
+static char opl3_volume_table[128] =
 {
 	-63, -48, -40, -35, -32, -29, -27, -26,
 	-24, -23, -21, -20, -19, -18, -18, -17,
@@ -69,7 +87,7 @@ void snd_opl3_calc_volume(unsigned char *volbyte, int vel,
 /*
  * Converts the note frequency to block and fnum values for the FM chip
  */
-static const short opl3_note_table[16] =
+static short opl3_note_table[16] =
 {
 	305, 323,	/* for pitch bending, -2 semitones */
 	343, 363, 385, 408, 432, 458, 485, 514, 544, 577, 611, 647,
@@ -180,7 +198,8 @@ static int opl3_get_voice(struct snd_opl3 *opl3, int instr_4op,
 			if (vp2->state == SNDRV_OPL3_ST_ON_2OP) {
 				/* kill two voices, EXPENSIVE */
 				bp++;
-				voice_time = max(voice_time, vp2->time);
+				voice_time = (voice_time > vp->time) ?
+					voice_time : vp->time;
 			}
 		} else {
 			/* allocate 2op voice */
@@ -265,7 +284,7 @@ static void snd_opl3_start_timer(struct snd_opl3 *opl3)
 /* ------------------------------ */
 
 
-static const int snd_opl3_oss_map[MAX_OPL3_VOICES] = {
+static int snd_opl3_oss_map[MAX_OPL3_VOICES] = {
 	0, 1, 2, 9, 10, 11, 6, 7, 8, 15, 16, 17, 3, 4 ,5, 12, 13, 14
 };
 
@@ -353,7 +372,6 @@ void snd_opl3_note_on(void *p, int note, int vel, struct snd_midi_channel *chan)
 			instr_4op = 1;
 			break;
 		}
-		fallthrough;
 	default:
 		spin_unlock_irqrestore(&opl3->voice_lock, flags);
 		return;
@@ -397,7 +415,7 @@ void snd_opl3_note_on(void *p, int note, int vel, struct snd_midi_channel *chan)
 	}
 	if (instr_4op) {
 		vp2 = &opl3->voices[voice + 3];
-		if (vp2->state > 0) {
+		if (vp->state > 0) {
 			opl3_reg = reg_side | (OPL3_REG_KEYON_BLOCK +
 					       voice_offset + 3);
 			reg_val = vp->keyon_reg & ~OPL3_KEYON_BIT;
@@ -442,7 +460,7 @@ void snd_opl3_note_on(void *p, int note, int vel, struct snd_midi_channel *chan)
 		switch (connection) {
 		case 0x03:
 			snd_opl3_calc_volume(&vol_op[2], vel, chan);
-			fallthrough;
+			/* fallthru */
 		case 0x02:
 			snd_opl3_calc_volume(&vol_op[0], vel, chan);
 			break;
@@ -703,6 +721,9 @@ void snd_opl3_note_off(void *p, int note, int vel,
  */
 void snd_opl3_key_press(void *p, int note, int vel, struct snd_midi_channel *chan)
 {
+  	struct snd_opl3 *opl3;
+
+	opl3 = p;
 #ifdef DEBUG_MIDI
 	snd_printk(KERN_DEBUG "Key pressure, ch#: %i, inst#: %i\n",
 		   chan->number, chan->midi_program);
@@ -714,6 +735,9 @@ void snd_opl3_key_press(void *p, int note, int vel, struct snd_midi_channel *cha
  */
 void snd_opl3_terminate_note(void *p, int note, struct snd_midi_channel *chan)
 {
+  	struct snd_opl3 *opl3;
+
+	opl3 = p;
 #ifdef DEBUG_MIDI
 	snd_printk(KERN_DEBUG "Terminate note, ch#: %i, inst#: %i\n",
 		   chan->number, chan->midi_program);
@@ -837,6 +861,9 @@ void snd_opl3_control(void *p, int type, struct snd_midi_channel *chan)
 void snd_opl3_nrpn(void *p, struct snd_midi_channel *chan,
 		   struct snd_midi_channel_set *chset)
 {
+  	struct snd_opl3 *opl3;
+
+	opl3 = p;
 #ifdef DEBUG_MIDI
 	snd_printk(KERN_DEBUG "NRPN, ch#: %i, inst#: %i\n",
 		   chan->number, chan->midi_program);
@@ -849,6 +876,9 @@ void snd_opl3_nrpn(void *p, struct snd_midi_channel *chan,
 void snd_opl3_sysex(void *p, unsigned char *buf, int len,
 		    int parsed, struct snd_midi_channel_set *chset)
 {
+  	struct snd_opl3 *opl3;
+
+	opl3 = p;
 #ifdef DEBUG_MIDI
 	snd_printk(KERN_DEBUG "SYSEX\n");
 #endif

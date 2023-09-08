@@ -1,8 +1,11 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Driver for Virtual PS/2 Mouse on VMware and QEMU hypervisors.
  *
  * Copyright (C) 2014, VMware, Inc. All Rights Reserved.
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License version 2 as published by
+ * the Free Software Foundation.
  *
  * Twin device code is hugely inspired by the ALPS driver.
  * Authors:
@@ -16,12 +19,12 @@
 #include <linux/slab.h>
 #include <linux/module.h>
 #include <asm/hypervisor.h>
-#include <asm/vmware.h>
 
 #include "psmouse.h"
 #include "vmmouse.h"
 
 #define VMMOUSE_PROTO_MAGIC			0x564D5868U
+#define VMMOUSE_PROTO_PORT			0x5658
 
 /*
  * Main commands supported by the vmmouse hypervisor port.
@@ -76,7 +79,7 @@ struct vmmouse_data {
 	char dev_name[128];
 };
 
-/*
+/**
  * Hypervisor-specific bi-directional communication channel
  * implementing the vmmouse protocol. Should never execute on
  * bare metal hardware.
@@ -84,7 +87,7 @@ struct vmmouse_data {
 #define VMMOUSE_CMD(cmd, in1, out1, out2, out3, out4)	\
 ({							\
 	unsigned long __dummy1, __dummy2;		\
-	__asm__ __volatile__ (VMWARE_HYPERCALL :	\
+	__asm__ __volatile__ ("inl %%dx" :		\
 		"=a"(out1),				\
 		"=b"(out2),				\
 		"=c"(out3),				\
@@ -94,7 +97,7 @@ struct vmmouse_data {
 		"a"(VMMOUSE_PROTO_MAGIC),		\
 		"b"(in1),				\
 		"c"(VMMOUSE_PROTO_CMD_##cmd),		\
-		"d"(0) :			        \
+		"d"(VMMOUSE_PROTO_PORT) :		\
 		"memory");		                \
 })
 
@@ -366,19 +369,6 @@ int vmmouse_detect(struct psmouse *psmouse, bool set_properties)
 }
 
 /**
- * vmmouse_reset - Disable vmmouse and reset
- *
- * @psmouse: Pointer to the psmouse struct
- *
- * Tries to disable vmmouse mode before enter suspend.
- */
-static void vmmouse_reset(struct psmouse *psmouse)
-{
-	vmmouse_disable(psmouse);
-	psmouse_reset(psmouse);
-}
-
-/**
  * vmmouse_disconnect - Take down vmmouse driver
  *
  * @psmouse: Pointer to the psmouse struct
@@ -485,7 +475,6 @@ int vmmouse_init(struct psmouse *psmouse)
 	psmouse->protocol_handler = vmmouse_process_byte;
 	psmouse->disconnect = vmmouse_disconnect;
 	psmouse->reconnect = vmmouse_reconnect;
-	psmouse->cleanup = vmmouse_reset;
 
 	return 0;
 

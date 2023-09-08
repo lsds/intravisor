@@ -46,7 +46,7 @@
 };
 
 &dss {
-	status = "okay";
+	status = "ok";
 	port {
 		dpi_out: endpoint {
 			remote-endpoint = <&lcd_in>;

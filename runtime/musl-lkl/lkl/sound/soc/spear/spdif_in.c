@@ -172,8 +172,7 @@ static struct snd_soc_dai_driver spdif_in_dai = {
 };
 
 static const struct snd_soc_component_driver spdif_in_component = {
-	.name			= "spdif-in",
-	.legacy_dai_naming	= 1,
+	.name		= "spdif-in",
 };
 
 static irqreturn_t spdif_in_irq(int irq, void *arg)
@@ -203,11 +202,12 @@ static int spdif_in_probe(struct platform_device *pdev)
 {
 	struct spdif_in_dev *host;
 	struct spear_spdif_platform_data *pdata;
-	struct resource *res_fifo;
+	struct resource *res, *res_fifo;
 	void __iomem *io_base;
 	int ret;
 
-	io_base = devm_platform_ioremap_resource(pdev, 0);
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	io_base = devm_ioremap_resource(&pdev->dev, res);
 	if (IS_ERR(io_base))
 		return PTR_ERR(io_base);
 

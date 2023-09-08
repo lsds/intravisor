@@ -211,8 +211,7 @@ static int lklfuse_chmod(const char *path, mode_t mode)
 
 static int lklfuse_chown(const char *path, uid_t uid, gid_t gid)
 {
-	return lkl_sys_fchownat(LKL_AT_FDCWD, path, uid, gid,
-				LKL_AT_SYMLINK_NOFOLLOW);
+	return lkl_sys_chown(path, uid, gid);
 }
 
 static int lklfuse_truncate(const char *path, off_t off)
@@ -451,8 +450,7 @@ static int lklfuse_utimens(const char *path, const struct timespec tv[2])
 	ts[1].tv_sec = tv[0].tv_sec;
 	ts[1].tv_nsec = tv[0].tv_nsec;
 
-	return lkl_sys_utimensat(-1, path, (struct __lkl__kernel_timespec *)ts,
-				 LKL_AT_SYMLINK_NOFOLLOW);
+	return lkl_sys_utimensat(-1, path, ts, LKL_AT_SYMLINK_NOFOLLOW);
 }
 
 static int lklfuse_fallocate(const char *path, int mode, off_t offset,
@@ -510,9 +508,10 @@ const struct fuse_operations lklfuse_ops = {
 static int start_lkl(void)
 {
 	long ret;
-	char mpoint[32];
+	char mpoint[32], cmdline[16];
 
-	ret = lkl_start_kernel("mem=%dM", lklfuse.mb);
+	snprintf(cmdline, sizeof(cmdline), "mem=%dM", lklfuse.mb);
+	ret = lkl_start_kernel(&lkl_host_ops, cmdline);
 	if (ret) {
 		fprintf(stderr, "can't start kernel: %s\n", lkl_strerror(ret));
 		goto out;
@@ -594,16 +593,10 @@ int main(int argc, char **argv)
 
 	lklfuse.disk.fd = ret;
 
-	ret = lkl_init(&lkl_host_ops);
-	if (ret < 0) {
-		fprintf(stderr, "lkl init failed: %s\n", lkl_strerror(ret));
-		goto out_close_disk;
-	}
-
 	ret = lkl_disk_add(&lklfuse.disk);
 	if (ret < 0) {
 		fprintf(stderr, "can't add disk: %s\n", lkl_strerror(ret));
-		goto out_lkl_cleanup;
+		goto out_close_disk;
 	}
 
 	lklfuse.disk_id = ret;
@@ -651,9 +644,6 @@ out_fuse_unmount:
 out_fuse_destroy:
 	if (fuse)
 		fuse_destroy(fuse);
-
-out_lkl_cleanup:
-	lkl_cleanup();
 
 out_close_disk:
 	close(lklfuse.disk.fd);

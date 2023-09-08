@@ -1,9 +1,12 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * V4L2 flash LED sub-device registration helpers.
  *
  *	Copyright (C) 2015 Samsung Electronics Co., Ltd
  *	Author: Jacek Anaszewski <j.anaszewski@samsung.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 
 #include <linux/led-class-flash.h>
@@ -76,11 +79,10 @@ static s32 __led_brightness_to_intensity(struct v4l2_ctrl *ctrl,
 	return (brightness * ctrl->step) + ctrl->minimum;
 }
 
-static int v4l2_flash_set_led_brightness(struct v4l2_flash *v4l2_flash,
-					 struct v4l2_ctrl *ctrl)
+static void v4l2_flash_set_led_brightness(struct v4l2_flash *v4l2_flash,
+					struct v4l2_ctrl *ctrl)
 {
 	struct v4l2_ctrl **ctrls = v4l2_flash->ctrls;
-	struct led_classdev *led_cdev;
 	enum led_brightness brightness;
 
 	if (has_flash_op(v4l2_flash, intensity_to_led_brightness))
@@ -94,7 +96,7 @@ static int v4l2_flash_set_led_brightness(struct v4l2_flash *v4l2_flash,
 	 * brightness <-> intensity conversion, it also must have defined
 	 * related v4l2 control step == 1. In such a case a backward conversion
 	 * from led brightness to v4l2 intensity is required to find out the
-	 * aligned intensity value.
+	 * the aligned intensity value.
 	 */
 	if (has_flash_op(v4l2_flash, led_brightness_to_intensity))
 		ctrl->val = call_flash_op(v4l2_flash,
@@ -103,20 +105,14 @@ static int v4l2_flash_set_led_brightness(struct v4l2_flash *v4l2_flash,
 
 	if (ctrl == ctrls[TORCH_INTENSITY]) {
 		if (ctrls[LED_MODE]->val != V4L2_FLASH_LED_MODE_TORCH)
-			return 0;
+			return;
 
-		if (WARN_ON_ONCE(!v4l2_flash->fled_cdev))
-			return -EINVAL;
-
-		led_cdev = &v4l2_flash->fled_cdev->led_cdev;
+		led_set_brightness_sync(&v4l2_flash->fled_cdev->led_cdev,
+					brightness);
 	} else {
-		if (WARN_ON_ONCE(!v4l2_flash->iled_cdev))
-			return -EINVAL;
-
-		led_cdev = v4l2_flash->iled_cdev;
+		led_set_brightness_sync(v4l2_flash->iled_cdev,
+					brightness);
 	}
-
-	return led_set_brightness_sync(led_cdev, brightness);
 }
 
 static int v4l2_flash_update_led_brightness(struct v4l2_flash *v4l2_flash,
@@ -135,15 +131,8 @@ static int v4l2_flash_update_led_brightness(struct v4l2_flash *v4l2_flash,
 		 */
 		if (ctrls[LED_MODE]->val != V4L2_FLASH_LED_MODE_TORCH)
 			return 0;
-
-		if (WARN_ON_ONCE(!v4l2_flash->fled_cdev))
-			return -EINVAL;
-
 		led_cdev = &v4l2_flash->fled_cdev->led_cdev;
 	} else {
-		if (WARN_ON_ONCE(!v4l2_flash->iled_cdev))
-			return -EINVAL;
-
 		led_cdev = v4l2_flash->iled_cdev;
 	}
 
@@ -173,12 +162,6 @@ static int v4l2_flash_g_volatile_ctrl(struct v4l2_ctrl *c)
 	case V4L2_CID_FLASH_TORCH_INTENSITY:
 	case V4L2_CID_FLASH_INDICATOR_INTENSITY:
 		return v4l2_flash_update_led_brightness(v4l2_flash, c);
-	}
-
-	if (!fled_cdev)
-		return -EINVAL;
-
-	switch (c->id) {
 	case V4L2_CID_FLASH_INTENSITY:
 		ret = led_update_flash_brightness(fled_cdev);
 		if (ret < 0)
@@ -214,21 +197,10 @@ static int v4l2_flash_s_ctrl(struct v4l2_ctrl *c)
 {
 	struct v4l2_flash *v4l2_flash = v4l2_ctrl_to_v4l2_flash(c);
 	struct led_classdev_flash *fled_cdev = v4l2_flash->fled_cdev;
-	struct led_classdev *led_cdev;
+	struct led_classdev *led_cdev = fled_cdev ? &fled_cdev->led_cdev : NULL;
 	struct v4l2_ctrl **ctrls = v4l2_flash->ctrls;
 	bool external_strobe;
 	int ret = 0;
-
-	switch (c->id) {
-	case V4L2_CID_FLASH_TORCH_INTENSITY:
-	case V4L2_CID_FLASH_INDICATOR_INTENSITY:
-		return v4l2_flash_set_led_brightness(v4l2_flash, c);
-	}
-
-	if (!fled_cdev)
-		return -EINVAL;
-
-	led_cdev = &fled_cdev->led_cdev;
 
 	switch (c->id) {
 	case V4L2_CID_FLASH_LED_MODE:
@@ -261,8 +233,9 @@ static int v4l2_flash_s_ctrl(struct v4l2_ctrl *c)
 			if (ret < 0)
 				return ret;
 
-			return v4l2_flash_set_led_brightness(v4l2_flash,
-							     ctrls[TORCH_INTENSITY]);
+			v4l2_flash_set_led_brightness(v4l2_flash,
+							ctrls[TORCH_INTENSITY]);
+			return 0;
 		}
 		break;
 	case V4L2_CID_FLASH_STROBE_SOURCE:
@@ -298,6 +271,10 @@ static int v4l2_flash_s_ctrl(struct v4l2_ctrl *c)
 		 * microamperes for flash intensity units.
 		 */
 		return led_set_flash_brightness(fled_cdev, c->val);
+	case V4L2_CID_FLASH_TORCH_INTENSITY:
+	case V4L2_CID_FLASH_INDICATOR_INTENSITY:
+		v4l2_flash_set_led_brightness(v4l2_flash, c);
+		return 0;
 	}
 
 	return -EINVAL;
@@ -435,10 +412,9 @@ static int v4l2_flash_init_controls(struct v4l2_flash *v4l2_flash,
 	struct v4l2_ctrl_config *ctrl_cfg;
 	int i, ret, num_ctrls = 0;
 
-	v4l2_flash->ctrls = devm_kcalloc(v4l2_flash->sd.dev,
-					STROBE_SOURCE + 1,
-					sizeof(*v4l2_flash->ctrls),
-					GFP_KERNEL);
+	v4l2_flash->ctrls = devm_kzalloc(v4l2_flash->sd.dev,
+					sizeof(*v4l2_flash->ctrls) *
+					(STROBE_SOURCE + 1), GFP_KERNEL);
 	if (!v4l2_flash->ctrls)
 		return -ENOMEM;
 
@@ -509,24 +485,15 @@ static int __sync_device_with_v4l2_controls(struct v4l2_flash *v4l2_flash)
 	struct v4l2_ctrl **ctrls = v4l2_flash->ctrls;
 	int ret = 0;
 
-	if (ctrls[TORCH_INTENSITY]) {
-		ret = v4l2_flash_set_led_brightness(v4l2_flash,
-						    ctrls[TORCH_INTENSITY]);
-		if (ret < 0)
-			return ret;
-	}
+	if (ctrls[TORCH_INTENSITY])
+		v4l2_flash_set_led_brightness(v4l2_flash,
+					      ctrls[TORCH_INTENSITY]);
 
-	if (ctrls[INDICATOR_INTENSITY]) {
-		ret = v4l2_flash_set_led_brightness(v4l2_flash,
-						    ctrls[INDICATOR_INTENSITY]);
-		if (ret < 0)
-			return ret;
-	}
+	if (ctrls[INDICATOR_INTENSITY])
+		v4l2_flash_set_led_brightness(v4l2_flash,
+						ctrls[INDICATOR_INTENSITY]);
 
 	if (ctrls[FLASH_TIMEOUT]) {
-		if (WARN_ON_ONCE(!fled_cdev))
-			return -EINVAL;
-
 		ret = led_set_flash_timeout(fled_cdev,
 					ctrls[FLASH_TIMEOUT]->val);
 		if (ret < 0)
@@ -534,9 +501,6 @@ static int __sync_device_with_v4l2_controls(struct v4l2_flash *v4l2_flash)
 	}
 
 	if (ctrls[FLASH_INTENSITY]) {
-		if (WARN_ON_ONCE(!fled_cdev))
-			return -EINVAL;
-
 		ret = led_set_flash_brightness(fled_cdev,
 					ctrls[FLASH_INTENSITY]->val);
 		if (ret < 0)
@@ -675,7 +639,7 @@ static struct v4l2_flash *__v4l2_flash_init(
 	v4l2_subdev_init(sd, &v4l2_flash_subdev_ops);
 	sd->internal_ops = &v4l2_flash_subdev_internal_ops;
 	sd->flags |= V4L2_SUBDEV_FL_HAS_DEVNODE;
-	strscpy(sd->name, config->dev_name, sizeof(sd->name));
+	strlcpy(sd->name, config->dev_name, sizeof(sd->name));
 
 	ret = media_entity_pads_init(&sd->entity, 0, NULL);
 	if (ret < 0)

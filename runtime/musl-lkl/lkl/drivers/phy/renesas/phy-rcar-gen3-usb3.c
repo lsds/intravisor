@@ -1,8 +1,11 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * Renesas R-Car Gen3 for USB3.0 PHY driver
  *
  * Copyright (C) 2017 Renesas Electronics Corporation
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 
 #include <linux/clk.h>
@@ -133,6 +136,7 @@ static int rcar_gen3_phy_usb3_probe(struct platform_device *pdev)
 	struct device *dev = &pdev->dev;
 	struct rcar_gen3_usb3 *r;
 	struct phy_provider *provider;
+	struct resource *res;
 	int ret = 0;
 	struct clk *clk;
 
@@ -145,7 +149,8 @@ static int rcar_gen3_phy_usb3_probe(struct platform_device *pdev)
 	if (!r)
 		return -ENOMEM;
 
-	r->base = devm_platform_ioremap_resource(pdev, 0);
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	r->base = devm_ioremap_resource(dev, res);
 	if (IS_ERR(r->base))
 		return PTR_ERR(r->base);
 

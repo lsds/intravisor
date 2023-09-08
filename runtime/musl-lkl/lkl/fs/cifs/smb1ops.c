@@ -1,19 +1,29 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  *  SMB1 (CIFS) version specific operations
  *
  *  Copyright (c) 2012, Jeff Layton <jlayton@redhat.com>
+ *
+ *  This library is free software; you can redistribute it and/or modify
+ *  it under the terms of the GNU General Public License v2 as published
+ *  by the Free Software Foundation.
+ *
+ *  This library is distributed in the hope that it will be useful,
+ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See
+ *  the GNU Lesser General Public License for more details.
+ *
+ *  You should have received a copy of the GNU Lesser General Public License
+ *  along with this library; if not, write to the Free Software
+ *  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
  */
 
 #include <linux/pagemap.h>
 #include <linux/vfs.h>
-#include <uapi/linux/magic.h>
 #include "cifsglob.h"
 #include "cifsproto.h"
 #include "cifs_debug.h"
 #include "cifspdu.h"
 #include "cifs_unicode.h"
-#include "fs_context.h"
 
 /*
  * An NT cancel request header looks just like the original request except:
@@ -38,10 +48,10 @@ send_nt_cancel(struct TCP_Server_Info *server, struct smb_rqst *rqst,
 	in_buf->WordCount = 0;
 	put_bcc(0, in_buf);
 
-	cifs_server_lock(server);
+	mutex_lock(&server->srv_mutex);
 	rc = cifs_sign_smb(in_buf, server, &mid->sequence_number);
 	if (rc) {
-		cifs_server_unlock(server);
+		mutex_unlock(&server->srv_mutex);
 		return rc;
 	}
 
@@ -55,7 +65,7 @@ send_nt_cancel(struct TCP_Server_Info *server, struct smb_rqst *rqst,
 	if (rc < 0)
 		server->sequence_number--;
 
-	cifs_server_unlock(server);
+	mutex_unlock(&server->srv_mutex);
 
 	cifs_dbg(FYI, "issued NT_CANCEL for mid %u, rc = %d\n",
 		 get_mid(in_buf), rc);
@@ -92,26 +102,25 @@ cifs_find_mid(struct TCP_Server_Info *server, char *buffer)
 	struct smb_hdr *buf = (struct smb_hdr *)buffer;
 	struct mid_q_entry *mid;
 
-	spin_lock(&server->mid_lock);
+	spin_lock(&GlobalMid_Lock);
 	list_for_each_entry(mid, &server->pending_mid_q, qhead) {
 		if (compare_mid(mid->mid, buf) &&
 		    mid->mid_state == MID_REQUEST_SUBMITTED &&
 		    le16_to_cpu(mid->command) == buf->Command) {
-			kref_get(&mid->refcount);
-			spin_unlock(&server->mid_lock);
+			spin_unlock(&GlobalMid_Lock);
 			return mid;
 		}
 	}
-	spin_unlock(&server->mid_lock);
+	spin_unlock(&GlobalMid_Lock);
 	return NULL;
 }
 
 static void
-cifs_add_credits(struct TCP_Server_Info *server,
-		 const struct cifs_credits *credits, const int optype)
+cifs_add_credits(struct TCP_Server_Info *server, const unsigned int add,
+		 const int optype)
 {
 	spin_lock(&server->req_lock);
-	server->credits += credits->value;
+	server->credits += add;
 	server->in_flight--;
 	spin_unlock(&server->req_lock);
 	wake_up(&server->request_q);
@@ -164,18 +173,15 @@ cifs_get_next_mid(struct TCP_Server_Info *server)
 {
 	__u64 mid = 0;
 	__u16 last_mid, cur_mid;
-	bool collision, reconnect = false;
+	bool collision;
 
-	spin_lock(&server->mid_lock);
+	spin_lock(&GlobalMid_Lock);
 
 	/* mid is 16 bit only for CIFS/SMB */
 	cur_mid = (__u16)((server->CurrentMid) & 0xffff);
 	/* we do not want to loop forever */
 	last_mid = cur_mid;
 	cur_mid++;
-	/* avoid 0xFFFF MID */
-	if (cur_mid == 0xffff)
-		cur_mid++;
 
 	/*
 	 * This nested loop looks more expensive than it is.
@@ -216,7 +222,7 @@ cifs_get_next_mid(struct TCP_Server_Info *server)
 		 * an eventual reconnect to clean out the pending_mid_q.
 		 */
 		if (num_mids > 32768)
-			reconnect = true;
+			server->tcpStatus = CifsNeedReconnect;
 
 		if (!collision) {
 			mid = (__u64)cur_mid;
@@ -225,12 +231,7 @@ cifs_get_next_mid(struct TCP_Server_Info *server)
 		}
 		cur_mid++;
 	}
-	spin_unlock(&server->mid_lock);
-
-	if (reconnect) {
-		cifs_signal_cifsd_for_reconnect(server, false);
-	}
-
+	spin_unlock(&GlobalMid_Lock);
 	return mid;
 }
 
@@ -254,7 +255,7 @@ check2ndT2(char *buf)
 	/* check for plausible wct, bcc and t2 data and parm sizes */
 	/* check for parm and data offset going beyond end of smb */
 	if (pSMB->WordCount != 10) { /* coalesce_t2 depends on this */
-		cifs_dbg(FYI, "Invalid transact2 word count\n");
+		cifs_dbg(FYI, "invalid transact2 word count\n");
 		return -EINVAL;
 	}
 
@@ -306,7 +307,7 @@ coalesce_t2(char *second_buf, struct smb_hdr *target_hdr)
 	remaining = tgt_total_cnt - total_in_tgt;
 
 	if (remaining < 0) {
-		cifs_dbg(FYI, "Server sent too much data. tgt_total_cnt=%hu total_in_tgt=%u\n",
+		cifs_dbg(FYI, "Server sent too much data. tgt_total_cnt=%hu total_in_tgt=%hu\n",
 			 tgt_total_cnt, total_in_tgt);
 		return -EPROTO;
 	}
@@ -376,10 +377,12 @@ coalesce_t2(char *second_buf, struct smb_hdr *target_hdr)
 
 static void
 cifs_downgrade_oplock(struct TCP_Server_Info *server,
-		      struct cifsInodeInfo *cinode, __u32 oplock,
-		      unsigned int epoch, bool *purge_cache)
+			struct cifsInodeInfo *cinode, bool set_level2)
 {
-	cifs_set_oplock_level(cinode, oplock);
+	if (set_level2)
+		cifs_set_oplock_level(cinode, OPLOCK_READ);
+	else
+		cifs_set_oplock_level(cinode, 0);
 }
 
 static bool
@@ -420,16 +423,14 @@ cifs_need_neg(struct TCP_Server_Info *server)
 }
 
 static int
-cifs_negotiate(const unsigned int xid,
-	       struct cifs_ses *ses,
-	       struct TCP_Server_Info *server)
+cifs_negotiate(const unsigned int xid, struct cifs_ses *ses)
 {
 	int rc;
-	rc = CIFSSMBNegotiate(xid, ses, server);
+	rc = CIFSSMBNegotiate(xid, ses);
 	if (rc == -EAGAIN) {
 		/* retry only once on 1st time connection */
-		set_credits(server, 1);
-		rc = CIFSSMBNegotiate(xid, ses, server);
+		set_credits(ses->server, 1);
+		rc = CIFSSMBNegotiate(xid, ses);
 		if (rc == -EAGAIN)
 			rc = -EHOSTDOWN;
 	}
@@ -437,15 +438,15 @@ cifs_negotiate(const unsigned int xid,
 }
 
 static unsigned int
-cifs_negotiate_wsize(struct cifs_tcon *tcon, struct smb3_fs_context *ctx)
+cifs_negotiate_wsize(struct cifs_tcon *tcon, struct smb_vol *volume_info)
 {
 	__u64 unix_cap = le64_to_cpu(tcon->fsUnixInfo.Capability);
 	struct TCP_Server_Info *server = tcon->ses->server;
 	unsigned int wsize;
 
 	/* start with specified wsize, or default */
-	if (ctx->wsize)
-		wsize = ctx->wsize;
+	if (volume_info->wsize)
+		wsize = volume_info->wsize;
 	else if (tcon->unix_ext && (unix_cap & CIFS_UNIX_LARGE_WRITE_CAP))
 		wsize = CIFS_DEFAULT_IOSIZE;
 	else
@@ -472,7 +473,7 @@ cifs_negotiate_wsize(struct cifs_tcon *tcon, struct smb3_fs_context *ctx)
 }
 
 static unsigned int
-cifs_negotiate_rsize(struct cifs_tcon *tcon, struct smb3_fs_context *ctx)
+cifs_negotiate_rsize(struct cifs_tcon *tcon, struct smb_vol *volume_info)
 {
 	__u64 unix_cap = le64_to_cpu(tcon->fsUnixInfo.Capability);
 	struct TCP_Server_Info *server = tcon->ses->server;
@@ -497,7 +498,7 @@ cifs_negotiate_rsize(struct cifs_tcon *tcon, struct smb3_fs_context *ctx)
 	else
 		defsize = server->maxBuf - sizeof(READ_RSP);
 
-	rsize = ctx->rsize ? ctx->rsize : defsize;
+	rsize = volume_info->rsize ? volume_info->rsize : defsize;
 
 	/*
 	 * no CAP_LARGE_READ_X? Then MS-CIFS states that we must limit this to
@@ -513,8 +514,7 @@ cifs_negotiate_rsize(struct cifs_tcon *tcon, struct smb3_fs_context *ctx)
 }
 
 static void
-cifs_qfs_tcon(const unsigned int xid, struct cifs_tcon *tcon,
-	      struct cifs_sb_info *cifs_sb)
+cifs_qfs_tcon(const unsigned int xid, struct cifs_tcon *tcon)
 {
 	CIFSSMBQFSDeviceInfo(xid, tcon);
 	CIFSSMBQFSAttributeInfo(xid, tcon);
@@ -542,32 +542,31 @@ cifs_is_path_accessible(const unsigned int xid, struct cifs_tcon *tcon,
 	return rc;
 }
 
-static int cifs_query_path_info(const unsigned int xid, struct cifs_tcon *tcon,
-				struct cifs_sb_info *cifs_sb, const char *full_path,
-				struct cifs_open_info_data *data, bool *adjustTZ, bool *symlink)
+static int
+cifs_query_path_info(const unsigned int xid, struct cifs_tcon *tcon,
+		     struct cifs_sb_info *cifs_sb, const char *full_path,
+		     FILE_ALL_INFO *data, bool *adjustTZ, bool *symlink)
 {
 	int rc;
-	FILE_ALL_INFO fi = {};
 
 	*symlink = false;
 
 	/* could do find first instead but this returns more info */
-	rc = CIFSSMBQPathInfo(xid, tcon, full_path, &fi, 0 /* not legacy */, cifs_sb->local_nls,
-			      cifs_remap(cifs_sb));
+	rc = CIFSSMBQPathInfo(xid, tcon, full_path, data, 0 /* not legacy */,
+			      cifs_sb->local_nls, cifs_remap(cifs_sb));
 	/*
 	 * BB optimize code so we do not make the above call when server claims
 	 * no NT SMB support and the above call failed at least once - set flag
 	 * in tcon or mount.
 	 */
 	if ((rc == -EOPNOTSUPP) || (rc == -EINVAL)) {
-		rc = SMBQueryInformation(xid, tcon, full_path, &fi, cifs_sb->local_nls,
+		rc = SMBQueryInformation(xid, tcon, full_path, data,
+					 cifs_sb->local_nls,
 					 cifs_remap(cifs_sb));
-		if (!rc)
-			move_cifs_info_to_smb2(&data->fi, &fi);
 		*adjustTZ = true;
 	}
 
-	if (!rc && (le32_to_cpu(fi.Attributes) & ATTR_REPARSE)) {
+	if (!rc && (le32_to_cpu(data->Attributes) & ATTR_REPARSE)) {
 		int tmprc;
 		int oplock = 0;
 		struct cifs_fid fid;
@@ -576,7 +575,7 @@ static int cifs_query_path_info(const unsigned int xid, struct cifs_tcon *tcon,
 		oparms.tcon = tcon;
 		oparms.cifs_sb = cifs_sb;
 		oparms.desired_access = FILE_READ_ATTRIBUTES;
-		oparms.create_options = cifs_create_options(cifs_sb, 0);
+		oparms.create_options = 0;
 		oparms.disposition = FILE_OPEN;
 		oparms.path = full_path;
 		oparms.fid = &fid;
@@ -593,9 +592,10 @@ static int cifs_query_path_info(const unsigned int xid, struct cifs_tcon *tcon,
 	return rc;
 }
 
-static int cifs_get_srv_inum(const unsigned int xid, struct cifs_tcon *tcon,
-			     struct cifs_sb_info *cifs_sb, const char *full_path,
-			     u64 *uniqueid, struct cifs_open_info_data *unused)
+static int
+cifs_get_srv_inum(const unsigned int xid, struct cifs_tcon *tcon,
+		  struct cifs_sb_info *cifs_sb, const char *full_path,
+		  u64 *uniqueid, FILE_ALL_INFO *data)
 {
 	/*
 	 * We can not use the IndexNumber field by default from Windows or
@@ -613,27 +613,17 @@ static int cifs_get_srv_inum(const unsigned int xid, struct cifs_tcon *tcon,
 				     cifs_remap(cifs_sb));
 }
 
-static int cifs_query_file_info(const unsigned int xid, struct cifs_tcon *tcon,
-				struct cifsFileInfo *cfile, struct cifs_open_info_data *data)
+static int
+cifs_query_file_info(const unsigned int xid, struct cifs_tcon *tcon,
+		     struct cifs_fid *fid, FILE_ALL_INFO *data)
 {
-	int rc;
-	FILE_ALL_INFO fi = {};
-
-	if (cfile->symlink_target) {
-		data->symlink_target = kstrdup(cfile->symlink_target, GFP_KERNEL);
-		if (!data->symlink_target)
-			return -ENOMEM;
-	}
-
-	rc = CIFSSMBQFileInfo(xid, tcon, cfile->fid.netfid, &fi);
-	if (!rc)
-		move_cifs_info_to_smb2(&data->fi, &fi);
-	return rc;
+	return CIFSSMBQFileInfo(xid, tcon, fid->netfid, data);
 }
 
 static void
 cifs_clear_stats(struct cifs_tcon *tcon)
 {
+#ifdef CONFIG_CIFS_STATS
 	atomic_set(&tcon->stats.cifs_stats.num_writes, 0);
 	atomic_set(&tcon->stats.cifs_stats.num_reads, 0);
 	atomic_set(&tcon->stats.cifs_stats.num_flushes, 0);
@@ -655,11 +645,13 @@ cifs_clear_stats(struct cifs_tcon *tcon)
 	atomic_set(&tcon->stats.cifs_stats.num_locks, 0);
 	atomic_set(&tcon->stats.cifs_stats.num_acl_get, 0);
 	atomic_set(&tcon->stats.cifs_stats.num_acl_set, 0);
+#endif
 }
 
 static void
 cifs_print_stats(struct seq_file *m, struct cifs_tcon *tcon)
 {
+#ifdef CONFIG_CIFS_STATS
 	seq_printf(m, " Oplocks breaks: %d",
 		   atomic_read(&tcon->stats.cifs_stats.num_oplock_brks));
 	seq_printf(m, "\nReads:  %d Bytes: %llu",
@@ -691,6 +683,7 @@ cifs_print_stats(struct seq_file *m, struct cifs_tcon *tcon)
 		   atomic_read(&tcon->stats.cifs_stats.num_ffirst),
 		   atomic_read(&tcon->stats.cifs_stats.num_fnext),
 		   atomic_read(&tcon->stats.cifs_stats.num_fclose));
+#endif
 }
 
 static void
@@ -708,25 +701,24 @@ cifs_mkdir_setinfo(struct inode *inode, const char *full_path,
 	dosattrs = cifsInode->cifsAttrs|ATTR_READONLY;
 	info.Attributes = cpu_to_le32(dosattrs);
 	rc = CIFSSMBSetPathInfo(xid, tcon, full_path, &info, cifs_sb->local_nls,
-				cifs_sb);
+				cifs_remap(cifs_sb));
 	if (rc == 0)
 		cifsInode->cifsAttrs = dosattrs;
 }
 
-static int cifs_open_file(const unsigned int xid, struct cifs_open_parms *oparms, __u32 *oplock,
-			  void *buf)
+static int
+cifs_open_file(const unsigned int xid, struct cifs_open_parms *oparms,
+	       __u32 *oplock, FILE_ALL_INFO *buf)
 {
-	FILE_ALL_INFO *fi = buf;
-
 	if (!(oparms->tcon->ses->capabilities & CAP_NT_SMBS))
 		return SMBLegacyOpen(xid, oparms->tcon, oparms->path,
 				     oparms->disposition,
 				     oparms->desired_access,
 				     oparms->create_options,
-				     &oparms->fid->netfid, oplock, fi,
+				     &oparms->fid->netfid, oplock, buf,
 				     oparms->cifs_sb->local_nls,
 				     cifs_remap(oparms->cifs_sb));
-	return CIFS_open(xid, oparms, oplock, fi);
+	return CIFS_open(xid, oparms, oplock, buf);
 }
 
 static void
@@ -787,7 +779,7 @@ smb_set_file_info(struct inode *inode, const char *full_path,
 	struct cifs_tcon *tcon;
 
 	/* if the file is already open for write, just use that fileid */
-	open_file = find_writable_file(cinode, FIND_WR_FSUID_ONLY);
+	open_file = find_writable_file(cinode, true);
 	if (open_file) {
 		fid.netfid = open_file->fid.netfid;
 		netpid = open_file->pid;
@@ -804,7 +796,7 @@ smb_set_file_info(struct inode *inode, const char *full_path,
 	tcon = tlink_tcon(tlink);
 
 	rc = CIFSSMBSetPathInfo(xid, tcon, full_path, buf, cifs_sb->local_nls,
-				cifs_sb);
+				cifs_remap(cifs_sb));
 	if (rc == 0) {
 		cinode->cifsAttrs = le32_to_cpu(buf->Attributes);
 		goto out;
@@ -815,7 +807,7 @@ smb_set_file_info(struct inode *inode, const char *full_path,
 	oparms.tcon = tcon;
 	oparms.cifs_sb = cifs_sb;
 	oparms.desired_access = SYNCHRONIZE | FILE_WRITE_ATTRIBUTES;
-	oparms.create_options = cifs_create_options(cifs_sb, CREATE_NOT_DIR);
+	oparms.create_options = CREATE_NOT_DIR;
 	oparms.disposition = FILE_OPEN;
 	oparms.path = full_path;
 	oparms.fid = &fid;
@@ -894,11 +886,11 @@ cifs_oplock_response(struct cifs_tcon *tcon, struct cifs_fid *fid,
 
 static int
 cifs_queryfs(const unsigned int xid, struct cifs_tcon *tcon,
-	     struct cifs_sb_info *cifs_sb, struct kstatfs *buf)
+	     struct kstatfs *buf)
 {
 	int rc = -EOPNOTSUPP;
 
-	buf->f_type = CIFS_SUPER_MAGIC;
+	buf->f_type = CIFS_MAGIC_NUMBER;
 
 	/*
 	 * We could add a second check for a QFS Unix capability bit
@@ -940,16 +932,19 @@ cifs_unix_dfs_readlink(const unsigned int xid, struct cifs_tcon *tcon,
 {
 #ifdef CONFIG_CIFS_DFS_UPCALL
 	int rc;
-	struct dfs_info3_param referral = {0};
+	unsigned int num_referrals = 0;
+	struct dfs_info3_param *referrals = NULL;
 
-	rc = get_dfs_path(xid, tcon->ses, searchName, nls_codepage, &referral,
-			  0);
+	rc = get_dfs_path(xid, tcon->ses, searchName, nls_codepage,
+			  &num_referrals, &referrals, 0);
 
-	if (!rc) {
-		*symlinkinfo = kstrdup(referral.node_name, GFP_KERNEL);
-		free_dfs_info_param(&referral);
+	if (!rc && num_referrals > 0) {
+		*symlinkinfo = kstrndup(referrals->node_name,
+					strlen(referrals->node_name),
+					GFP_KERNEL);
 		if (!*symlinkinfo)
 			rc = -ENOMEM;
+		free_dfs_info_array(referrals, num_referrals);
 	}
 	return rc;
 #else /* No DFS support */
@@ -959,8 +954,8 @@ cifs_unix_dfs_readlink(const unsigned int xid, struct cifs_tcon *tcon,
 
 static int
 cifs_query_symlink(const unsigned int xid, struct cifs_tcon *tcon,
-		   struct cifs_sb_info *cifs_sb, const char *full_path,
-		   char **target_path, bool is_reparse_point)
+		   const char *full_path, char **target_path,
+		   struct cifs_sb_info *cifs_sb)
 {
 	int rc;
 	int oplock = 0;
@@ -968,11 +963,6 @@ cifs_query_symlink(const unsigned int xid, struct cifs_tcon *tcon,
 	struct cifs_open_parms oparms;
 
 	cifs_dbg(FYI, "%s: path: %s\n", __func__, full_path);
-
-	if (is_reparse_point) {
-		cifs_dbg(VFS, "reparse points not handled for SMB1 symlinks\n");
-		return -EOPNOTSUPP;
-	}
 
 	/* Check for unix extensions */
 	if (cap_unix(tcon->ses)) {
@@ -990,8 +980,7 @@ cifs_query_symlink(const unsigned int xid, struct cifs_tcon *tcon,
 	oparms.tcon = tcon;
 	oparms.cifs_sb = cifs_sb;
 	oparms.desired_access = FILE_READ_ATTRIBUTES;
-	oparms.create_options = cifs_create_options(cifs_sb,
-						    OPEN_REPARSE_POINT);
+	oparms.create_options = OPEN_REPARSE_POINT;
 	oparms.disposition = FILE_OPEN;
 	oparms.path = full_path;
 	oparms.fid = &fid;
@@ -1024,7 +1013,7 @@ cifs_is_read_op(__u32 oplock)
 static unsigned int
 cifs_wp_retry_size(struct inode *inode)
 {
-	return CIFS_SB(inode->i_sb)->ctx->wsize;
+	return CIFS_SB(inode->i_sb)->wsize;
 }
 
 static bool
@@ -1041,128 +1030,6 @@ cifs_can_echo(struct TCP_Server_Info *server)
 
 	return false;
 }
-
-static int
-cifs_make_node(unsigned int xid, struct inode *inode,
-	       struct dentry *dentry, struct cifs_tcon *tcon,
-	       const char *full_path, umode_t mode, dev_t dev)
-{
-	struct cifs_sb_info *cifs_sb = CIFS_SB(inode->i_sb);
-	struct inode *newinode = NULL;
-	int rc = -EPERM;
-	FILE_ALL_INFO *buf = NULL;
-	struct cifs_io_parms io_parms;
-	__u32 oplock = 0;
-	struct cifs_fid fid;
-	struct cifs_open_parms oparms;
-	unsigned int bytes_written;
-	struct win_dev *pdev;
-	struct kvec iov[2];
-
-	if (tcon->unix_ext) {
-		/*
-		 * SMB1 Unix Extensions: requires server support but
-		 * works with all special files
-		 */
-		struct cifs_unix_set_info_args args = {
-			.mode	= mode & ~current_umask(),
-			.ctime	= NO_CHANGE_64,
-			.atime	= NO_CHANGE_64,
-			.mtime	= NO_CHANGE_64,
-			.device	= dev,
-		};
-		if (cifs_sb->mnt_cifs_flags & CIFS_MOUNT_SET_UID) {
-			args.uid = current_fsuid();
-			args.gid = current_fsgid();
-		} else {
-			args.uid = INVALID_UID; /* no change */
-			args.gid = INVALID_GID; /* no change */
-		}
-		rc = CIFSSMBUnixSetPathInfo(xid, tcon, full_path, &args,
-					    cifs_sb->local_nls,
-					    cifs_remap(cifs_sb));
-		if (rc)
-			goto out;
-
-		rc = cifs_get_inode_info_unix(&newinode, full_path,
-					      inode->i_sb, xid);
-
-		if (rc == 0)
-			d_instantiate(dentry, newinode);
-		goto out;
-	}
-
-	/*
-	 * SMB1 SFU emulation: should work with all servers, but only
-	 * support block and char device (no socket & fifo)
-	 */
-	if (!(cifs_sb->mnt_cifs_flags & CIFS_MOUNT_UNX_EMUL))
-		goto out;
-
-	if (!S_ISCHR(mode) && !S_ISBLK(mode))
-		goto out;
-
-	cifs_dbg(FYI, "sfu compat create special file\n");
-
-	buf = kmalloc(sizeof(FILE_ALL_INFO), GFP_KERNEL);
-	if (buf == NULL) {
-		rc = -ENOMEM;
-		goto out;
-	}
-
-	oparms.tcon = tcon;
-	oparms.cifs_sb = cifs_sb;
-	oparms.desired_access = GENERIC_WRITE;
-	oparms.create_options = cifs_create_options(cifs_sb, CREATE_NOT_DIR |
-						    CREATE_OPTION_SPECIAL);
-	oparms.disposition = FILE_CREATE;
-	oparms.path = full_path;
-	oparms.fid = &fid;
-	oparms.reconnect = false;
-
-	if (tcon->ses->server->oplocks)
-		oplock = REQ_OPLOCK;
-	else
-		oplock = 0;
-	rc = tcon->ses->server->ops->open(xid, &oparms, &oplock, buf);
-	if (rc)
-		goto out;
-
-	/*
-	 * BB Do not bother to decode buf since no local inode yet to put
-	 * timestamps in, but we can reuse it safely.
-	 */
-
-	pdev = (struct win_dev *)buf;
-	io_parms.pid = current->tgid;
-	io_parms.tcon = tcon;
-	io_parms.offset = 0;
-	io_parms.length = sizeof(struct win_dev);
-	iov[1].iov_base = buf;
-	iov[1].iov_len = sizeof(struct win_dev);
-	if (S_ISCHR(mode)) {
-		memcpy(pdev->type, "IntxCHR", 8);
-		pdev->major = cpu_to_le64(MAJOR(dev));
-		pdev->minor = cpu_to_le64(MINOR(dev));
-		rc = tcon->ses->server->ops->sync_write(xid, &fid, &io_parms,
-							&bytes_written, iov, 1);
-	} else if (S_ISBLK(mode)) {
-		memcpy(pdev->type, "IntxBLK", 8);
-		pdev->major = cpu_to_le64(MAJOR(dev));
-		pdev->minor = cpu_to_le64(MINOR(dev));
-		rc = tcon->ses->server->ops->sync_write(xid, &fid, &io_parms,
-							&bytes_written, iov, 1);
-	}
-	tcon->ses->server->ops->close(xid, tcon, &fid);
-	d_drop(dentry);
-
-	/* FIXME: add code here to set EAs */
-out:
-	kfree(buf);
-	return rc;
-}
-
-
 
 struct smb_version_operations smb1_operations = {
 	.send_cancel = send_nt_cancel,
@@ -1242,15 +1109,15 @@ struct smb_version_operations smb1_operations = {
 	.query_all_EAs = CIFSSMBQAllEAs,
 	.set_EA = CIFSSMBSetEA,
 #endif /* CIFS_XATTR */
+#ifdef CONFIG_CIFS_ACL
 	.get_acl = get_cifs_acl,
 	.get_acl_by_fid = get_cifs_acl_by_fid,
 	.set_acl = set_cifs_acl,
-	.make_node = cifs_make_node,
+#endif /* CIFS_ACL */
 };
 
 struct smb_version_values smb1_values = {
 	.version_string = SMB1_VERSION_STRING,
-	.protocol_id = SMB10_PROT_ID,
 	.large_lock_type = LOCKING_ANDX_LARGE_FILES,
 	.exclusive_lock_type = 0,
 	.shared_lock_type = LOCKING_ANDX_SHARED_LOCK,

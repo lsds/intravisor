@@ -76,10 +76,8 @@ static int thunder_mmc_probe(struct pci_dev *pdev,
 		return ret;
 
 	host->base = pcim_iomap(pdev, 0, pci_resource_len(pdev, 0));
-	if (!host->base) {
-		ret = -EINVAL;
-		goto error;
-	}
+	if (!host->base)
+		return -EINVAL;
 
 	/* On ThunderX these are identical */
 	host->dma_base = host->base;
@@ -88,14 +86,12 @@ static int thunder_mmc_probe(struct pci_dev *pdev,
 	host->reg_off_dma = 0x160;
 
 	host->clk = devm_clk_get(dev, NULL);
-	if (IS_ERR(host->clk)) {
-		ret = PTR_ERR(host->clk);
-		goto error;
-	}
+	if (IS_ERR(host->clk))
+		return PTR_ERR(host->clk);
 
 	ret = clk_prepare_enable(host->clk);
 	if (ret)
-		goto error;
+		return ret;
 	host->sys_freq = clk_get_rate(host->clk);
 
 	spin_lock_init(&host->irq_handler_lock);
@@ -142,10 +138,8 @@ static int thunder_mmc_probe(struct pci_dev *pdev,
 				continue;
 
 			ret = cvm_mmc_of_slot_probe(&host->slot_pdev[i]->dev, host);
-			if (ret) {
-				of_node_put(child_node);
+			if (ret)
 				goto error;
-			}
 		}
 		i++;
 	}
@@ -163,7 +157,6 @@ error:
 		}
 	}
 	clk_disable_unprepare(host->clk);
-	pci_release_regions(pdev);
 	return ret;
 }
 
@@ -182,7 +175,6 @@ static void thunder_mmc_remove(struct pci_dev *pdev)
 	writeq(dma_cfg, host->dma_base + MIO_EMM_DMA_CFG(host));
 
 	clk_disable_unprepare(host->clk);
-	pci_release_regions(pdev);
 }
 
 static const struct pci_device_id thunder_mmc_id_table[] = {

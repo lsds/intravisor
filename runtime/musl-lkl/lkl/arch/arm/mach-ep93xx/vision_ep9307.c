@@ -1,10 +1,14 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * arch/arm/mach-ep93xx/vision_ep9307.c
  * Vision Engraving Systems EP9307 SoM support.
  *
  * Copyright (C) 2008-2011 Vision Engraving Systems
  * H Hartley Sweeten <hsweeten@visionengravers.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or (at
+ * your option) any later version.
  */
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
@@ -14,7 +18,6 @@
 #include <linux/platform_device.h>
 #include <linux/irq.h>
 #include <linux/gpio.h>
-#include <linux/gpio/machine.h>
 #include <linux/fb.h>
 #include <linux/io.h>
 #include <linux/mtd/partitions.h>
@@ -27,10 +30,10 @@
 
 #include <sound/cs4271.h>
 
-#include "hardware.h"
+#include <mach/hardware.h>
 #include <linux/platform_data/video-ep93xx.h>
 #include <linux/platform_data/spi-ep93xx.h>
-#include "gpio-ep93xx.h"
+#include <mach/gpio-ep93xx.h>
 
 #include <asm/mach-types.h>
 #include <asm/mach/map.h>
@@ -199,18 +202,11 @@ static struct mmc_spi_platform_data vision_spi_mmc_data = {
 	.detect_delay	= 100,
 	.powerup_msecs	= 100,
 	.ocr_mask	= MMC_VDD_32_33 | MMC_VDD_33_34,
+	.flags		= MMC_SPI_USE_CD_GPIO | MMC_SPI_USE_RO_GPIO,
+	.cd_gpio	= EP93XX_GPIO_LINE_EGPIO15,
+	.cd_debounce	= 1,
+	.ro_gpio	= EP93XX_GPIO_LINE_F(0),
 	.caps2		= MMC_CAP2_RO_ACTIVE_HIGH,
-};
-
-static struct gpiod_lookup_table vision_spi_mmc_gpio_table = {
-	.dev_id = "mmc_spi.2", /* "mmc_spi @ CS2 */
-	.table = {
-		/* Card detect */
-		GPIO_LOOKUP_IDX("B", 7, NULL, 0, GPIO_ACTIVE_LOW),
-		/* Write protect */
-		GPIO_LOOKUP_IDX("F", 0, NULL, 1, GPIO_ACTIVE_HIGH),
-		{ },
-	},
 };
 
 /*************************************************************************
@@ -241,17 +237,15 @@ static struct spi_board_info vision_spi_board_info[] __initdata = {
 	},
 };
 
-static struct gpiod_lookup_table vision_spi_cs_gpio_table = {
-	.dev_id = "spi0",
-	.table = {
-		GPIO_LOOKUP_IDX("A", 6, "cs", 0, GPIO_ACTIVE_LOW),
-		GPIO_LOOKUP_IDX("A", 7, "cs", 1, GPIO_ACTIVE_LOW),
-		GPIO_LOOKUP_IDX("G", 2, "cs", 2, GPIO_ACTIVE_LOW),
-		{ },
-	},
+static int vision_spi_chipselects[] __initdata = {
+	EP93XX_GPIO_LINE_EGPIO6,
+	EP93XX_GPIO_LINE_EGPIO7,
+	EP93XX_GPIO_LINE_G(2),
 };
 
 static struct ep93xx_spi_info vision_spi_master __initdata = {
+	.chipselect	= vision_spi_chipselects,
+	.num_chipselect	= ARRAY_SIZE(vision_spi_chipselects),
 	.use_dma	= 1,
 };
 
@@ -292,8 +286,6 @@ static void __init vision_init_machine(void)
 
 	ep93xx_register_i2c(vision_i2c_info,
 				ARRAY_SIZE(vision_i2c_info));
-	gpiod_add_lookup_table(&vision_spi_mmc_gpio_table);
-	gpiod_add_lookup_table(&vision_spi_cs_gpio_table);
 	ep93xx_register_spi(&vision_spi_master, vision_spi_board_info,
 				ARRAY_SIZE(vision_spi_board_info));
 	vision_register_i2s();
@@ -302,10 +294,10 @@ static void __init vision_init_machine(void)
 MACHINE_START(VISION_EP9307, "Vision Engraving Systems EP9307")
 	/* Maintainer: H Hartley Sweeten <hsweeten@visionengravers.com> */
 	.atag_offset	= 0x100,
-	.nr_irqs	= NR_EP93XX_IRQS + EP93XX_BOARD_IRQS,
 	.map_io		= vision_map_io,
 	.init_irq	= ep93xx_init_irq,
 	.init_time	= ep93xx_timer_init,
 	.init_machine	= vision_init_machine,
+	.init_late	= ep93xx_init_late,
 	.restart	= ep93xx_restart,
 MACHINE_END

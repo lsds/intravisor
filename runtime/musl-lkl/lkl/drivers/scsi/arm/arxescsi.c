@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * linux/drivers/scsi/arm/arxescsi.c
  *
@@ -35,12 +34,8 @@
 #include <asm/io.h>
 #include <asm/ecard.h>
 
-#include <scsi/scsi.h>
-#include <scsi/scsi_cmnd.h>
-#include <scsi/scsi_device.h>
-#include <scsi/scsi_eh.h>
+#include "../scsi.h"
 #include <scsi/scsi_host.h>
-#include <scsi/scsi_tcq.h>
 #include "fas216.h"
 
 struct arxescsi_info {
@@ -247,11 +242,10 @@ static struct scsi_host_template arxescsi_template = {
 	.eh_bus_reset_handler		= fas216_eh_bus_reset,
 	.eh_device_reset_handler	= fas216_eh_device_reset,
 	.eh_abort_handler		= fas216_eh_abort,
-	.cmd_size			= sizeof(struct fas216_cmd_priv),
 	.can_queue			= 0,
 	.this_id			= 7,
 	.sg_tablesize			= SG_ALL,
-	.dma_boundary			= PAGE_SIZE - 1,
+	.use_clustering			= DISABLE_CLUSTERING,
 	.proc_name			= "arxescsi",
 };
 

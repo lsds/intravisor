@@ -11,7 +11,6 @@
 #include <linux/init.h>
 #include <linux/export.h>
 #include <linux/kernel.h>
-#include <linux/memblock.h>
 #include <linux/spinlock.h>
 
 #include <asm/io.h>
@@ -41,36 +40,70 @@ static inline unsigned int get_bank_config(int bank)
 	return bank % 2 ? res & 0xffff : res >> 16;
 }
 
-#if defined(CONFIG_SGI_IP28) || defined(CONFIG_32BIT)
-static void __init probe_memory(void)
-{
-	/* prom detects all usable memory */
-}
-#else
+struct mem {
+	unsigned long addr;
+	unsigned long size;
+};
+
 /*
- * Detect installed memory, which PROM misses
+ * Detect installed memory, do some sanity checks and notify kernel about it
  */
 static void __init probe_memory(void)
 {
-	unsigned long addr, size;
-	int i;
+	int i, j, found, cnt = 0;
+	struct mem bank[4];
+	struct mem space[2] = {{SGIMC_SEG0_BADDR, 0}, {SGIMC_SEG1_BADDR, 0}};
 
 	printk(KERN_INFO "MC: Probing memory configuration:\n");
-	for (i = 0; i < 4; i++) {
+	for (i = 0; i < ARRAY_SIZE(bank); i++) {
 		unsigned int tmp = get_bank_config(i);
 		if (!(tmp & SGIMC_MCONFIG_BVALID))
 			continue;
 
-		size = get_bank_size(tmp);
-		addr = get_bank_addr(tmp);
+		bank[cnt].size = get_bank_size(tmp);
+		bank[cnt].addr = get_bank_addr(tmp);
 		printk(KERN_INFO " bank%d: %3ldM @ %08lx\n",
-			i, size / 1024 / 1024, addr);
-
-		if (addr >= SGIMC_SEG1_BADDR)
-			memblock_add(addr, size);
+			i, bank[cnt].size / 1024 / 1024, bank[cnt].addr);
+		cnt++;
 	}
+
+	/* And you thought bubble sort is dead algorithm... */
+	do {
+		unsigned long addr, size;
+
+		found = 0;
+		for (i = 1; i < cnt; i++)
+			if (bank[i-1].addr > bank[i].addr) {
+				addr = bank[i].addr;
+				size = bank[i].size;
+				bank[i].addr = bank[i-1].addr;
+				bank[i].size = bank[i-1].size;
+				bank[i-1].addr = addr;
+				bank[i-1].size = size;
+				found = 1;
+			}
+	} while (found);
+
+	/* Figure out how are memory banks mapped into spaces */
+	for (i = 0; i < cnt; i++) {
+		found = 0;
+		for (j = 0; j < ARRAY_SIZE(space) && !found; j++)
+			if (space[j].addr + space[j].size == bank[i].addr) {
+				space[j].size += bank[i].size;
+				found = 1;
+			}
+		/* There is either hole or overlapping memory */
+		if (!found)
+			printk(KERN_CRIT "MC: Memory configuration mismatch "
+					 "(%08lx), expect Bus Error soon\n",
+					 bank[i].addr);
+	}
+
+	for (i = 0; i < ARRAY_SIZE(space); i++)
+		if (space[i].size)
+			add_memory_region(space[i].addr, space[i].size,
+					  BOOT_MEM_RAM);
 }
-#endif
 
 void __init sgimc_init(void)
 {
@@ -172,9 +205,10 @@ void __init sgimc_init(void)
 	probe_memory();
 }
 
-#ifdef CONFIG_SGI_IP28
-void __init prom_cleanup(void)
+void __init prom_meminit(void) {}
+void __init prom_free_prom_memory(void)
 {
+#ifdef CONFIG_SGI_IP28
 	u32 mconfig1;
 	unsigned long flags;
 	spinlock_t lock;
@@ -199,5 +233,5 @@ void __init prom_cleanup(void)
 	sgimc->mconfig1 = mconfig1;
 	iob();
 	spin_unlock_irqrestore(&lock, flags);
-}
 #endif
+}

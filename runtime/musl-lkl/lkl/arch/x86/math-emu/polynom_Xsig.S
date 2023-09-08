@@ -37,7 +37,7 @@
 #define OVERFLOWED      -16(%ebp)	/* addition overflow flag */
 
 .text
-SYM_FUNC_START(polynomial_Xsig)
+ENTRY(polynomial_Xsig)
 	pushl	%ebp
 	movl	%esp,%ebp
 	subl	$32,%esp
@@ -133,5 +133,5 @@ L_accum_done:
 	popl	%edi
 	popl	%esi
 	leave
-	RET
-SYM_FUNC_END(polynomial_Xsig)
+	ret
+ENDPROC(polynomial_Xsig)

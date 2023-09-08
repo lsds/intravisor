@@ -14,7 +14,6 @@
  *  more details.
  */
 
-#include <linux/aperture.h>
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/errno.h>
@@ -28,6 +27,7 @@
 #include <linux/init.h>
 #include <linux/pci.h>
 #include <linux/console.h>
+#include <asm/io.h>
 
 #ifdef CONFIG_PMAC_BACKLIGHT
 #include <asm/backlight.h>
@@ -80,7 +80,7 @@ static int chipsfb_setcolreg(u_int regno, u_int red, u_int green, u_int blue,
 			     u_int transp, struct fb_info *info);
 static int chipsfb_blank(int blank, struct fb_info *info);
 
-static const struct fb_ops chipsfb_ops = {
+static struct fb_ops chipsfb_ops = {
 	.owner		= THIS_MODULE,
 	.fb_check_var	= chipsfb_check_var,
 	.fb_set_par	= chipsfb_set_par,
@@ -123,7 +123,7 @@ static int chipsfb_set_par(struct fb_info *info)
 		info->var.blue.offset = 0;
 		info->var.red.length = info->var.green.length =
 			info->var.blue.length = 5;
-
+		
 	} else {
 		/* p->var.bits_per_pixel == 8 */
 		write_cr(0x13, 100);		// Set line length (doublewords)
@@ -132,13 +132,13 @@ static int chipsfb_set_par(struct fb_info *info)
 		write_xr(0x20, 0x00);		// 8 bit blitter mode
 
 		info->fix.line_length = 800;
-		info->fix.visual = FB_VISUAL_PSEUDOCOLOR;
+		info->fix.visual = FB_VISUAL_PSEUDOCOLOR;		
 
  		info->var.red.offset = info->var.green.offset =
 			info->var.blue.offset = 0;
 		info->var.red.length = info->var.green.length =
 			info->var.blue.length = 8;
-
+		
 	}
 	return 0;
 }
@@ -332,7 +332,7 @@ static const struct fb_var_screeninfo chipsfb_var = {
 
 static void init_chips(struct fb_info *p, unsigned long addr)
 {
-	fb_memset(p->screen_base, 0, 0x100000);
+	memset(p->screen_base, 0, 0x100000);
 
 	p->fix = chipsfb_fix;
 	p->fix.smem_start = addr;
@@ -350,13 +350,9 @@ static void init_chips(struct fb_info *p, unsigned long addr)
 static int chipsfb_pci_init(struct pci_dev *dp, const struct pci_device_id *ent)
 {
 	struct fb_info *p;
-	unsigned long addr;
+	unsigned long addr, size;
 	unsigned short cmd;
-	int rc;
-
-	rc = aperture_remove_conflicting_pci_devices(dp, "chipsfb");
-	if (rc)
-		return rc;
+	int rc = -ENODEV;
 
 	if (pci_enable_device(dp) < 0) {
 		dev_err(&dp->dev, "Cannot enable PCI device\n");
@@ -366,11 +362,13 @@ static int chipsfb_pci_init(struct pci_dev *dp, const struct pci_device_id *ent)
 	if ((dp->resource[0].flags & IORESOURCE_MEM) == 0)
 		goto err_disable;
 	addr = pci_resource_start(dp, 0);
+	size = pci_resource_len(dp, 0);
 	if (addr == 0)
 		goto err_disable;
 
 	p = framebuffer_alloc(0, &dp->dev);
 	if (p == NULL) {
+		dev_err(&dp->dev, "Cannot allocate framebuffer structure\n");
 		rc = -ENOMEM;
 		goto err_disable;
 	}
@@ -403,7 +401,7 @@ static int chipsfb_pci_init(struct pci_dev *dp, const struct pci_device_id *ent)
 #endif /* CONFIG_PMAC_BACKLIGHT */
 
 #ifdef CONFIG_PPC
-	p->screen_base = ioremap_wc(addr, 0x200000);
+	p->screen_base = __ioremap(addr, 0x200000, _PAGE_NO_CACHE);
 #else
 	p->screen_base = ioremap(addr, 0x200000);
 #endif
@@ -435,7 +433,6 @@ static int chipsfb_pci_init(struct pci_dev *dp, const struct pci_device_id *ent)
  err_release_fb:
 	framebuffer_release(p);
  err_disable:
-	pci_disable_device(dp);
  err_out:
 	return rc;
 }

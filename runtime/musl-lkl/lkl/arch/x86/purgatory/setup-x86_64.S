@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * purgatory:  setup code
  *
@@ -6,15 +5,18 @@
  * Copyright (C) 2014 Red Hat Inc.
  *
  * This code has been taken from kexec-tools.
+ *
+ * This source code is licensed under the GNU General Public License,
+ * Version 2.  See the file COPYING for more details.
  */
-#include <linux/linkage.h>
 #include <asm/purgatory.h>
 
 	.text
+	.globl purgatory_start
 	.balign 16
+purgatory_start:
 	.code64
 
-SYM_CODE_START(purgatory_start)
 	/* Load a gdt so I know what the segment registers are */
 	lgdt	gdt(%rip)
 
@@ -32,12 +34,10 @@ SYM_CODE_START(purgatory_start)
 	/* Call the C code */
 	call purgatory
 	jmp	entry64
-SYM_CODE_END(purgatory_start)
 
 	.section ".rodata"
 	.balign 16
-SYM_DATA_START_LOCAL(gdt)
-	/* 0x00 unusable segment
+gdt:	/* 0x00 unusable segment
 	 * 0x08 unused
 	 * so use them as the gdt ptr
 	 */
@@ -50,10 +50,10 @@ SYM_DATA_START_LOCAL(gdt)
 
 	/* 0x18 4GB flat data segment */
 	.word	0xFFFF, 0x0000, 0x9200, 0x00CF
-SYM_DATA_END_LABEL(gdt, SYM_L_LOCAL, gdt_end)
+gdt_end:
 
 	.bss
 	.balign 4096
-SYM_DATA_START_LOCAL(lstack)
+lstack:
 	.skip 4096
-SYM_DATA_END_LABEL(lstack, SYM_L_LOCAL, lstack_end)
+lstack_end:

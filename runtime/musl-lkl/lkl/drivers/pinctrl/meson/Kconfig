@@ -1,9 +1,7 @@
-# SPDX-License-Identifier: GPL-2.0-only
 menuconfig PINCTRL_MESON
-	tristate "Amlogic SoC pinctrl drivers"
-	depends on ARCH_MESON || COMPILE_TEST
+	bool "Amlogic SoC pinctrl drivers"
+	depends on ARCH_MESON
 	depends on OF
-	default y
 	select PINMUX
 	select PINCONF
 	select GENERIC_PINCONF
@@ -26,45 +24,27 @@ config PINCTRL_MESON8B
 	default y
 
 config PINCTRL_MESON_GXBB
-	tristate "Meson gxbb SoC pinctrl driver"
+	bool "Meson gxbb SoC pinctrl driver"
 	depends on ARM64
 	select PINCTRL_MESON8_PMX
 	default y
 
 config PINCTRL_MESON_GXL
-	tristate "Meson gxl SoC pinctrl driver"
+	bool "Meson gxl SoC pinctrl driver"
 	depends on ARM64
 	select PINCTRL_MESON8_PMX
 	default y
 
 config PINCTRL_MESON8_PMX
-	tristate
+	bool
 
 config PINCTRL_MESON_AXG
-	tristate "Meson axg Soc pinctrl driver"
+	bool "Meson axg Soc pinctrl driver"
 	depends on ARM64
 	select PINCTRL_MESON_AXG_PMX
 	default y
 
 config PINCTRL_MESON_AXG_PMX
-	tristate
-
-config PINCTRL_MESON_G12A
-	tristate "Meson g12a Soc pinctrl driver"
-	depends on ARM64
-	select PINCTRL_MESON_AXG_PMX
-	default y
-
-config PINCTRL_MESON_A1
-	tristate "Meson a1 Soc pinctrl driver"
-	depends on ARM64
-	select PINCTRL_MESON_AXG_PMX
-	default y
-
-config PINCTRL_MESON_S4
-	tristate "Meson s4 Soc pinctrl driver"
-	depends on ARM64
-	select PINCTRL_MESON_AXG_PMX
-	default y
+	bool
 
 endif

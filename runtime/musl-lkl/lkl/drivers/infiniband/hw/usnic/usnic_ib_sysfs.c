@@ -31,6 +31,7 @@
  *
  */
 
+#include <linux/module.h>
 #include <linux/init.h>
 #include <linux/errno.h>
 
@@ -45,36 +46,44 @@
 #include "usnic_ib_sysfs.h"
 #include "usnic_log.h"
 
-static ssize_t board_id_show(struct device *device,
-			     struct device_attribute *attr, char *buf)
+static ssize_t usnic_ib_show_board(struct device *device,
+					struct device_attribute *attr,
+					char *buf)
 {
 	struct usnic_ib_dev *us_ibdev =
-		rdma_device_to_drv_device(device, struct usnic_ib_dev, ib_dev);
+		container_of(device, struct usnic_ib_dev, ib_dev.dev);
 	unsigned short subsystem_device_id;
 
 	mutex_lock(&us_ibdev->usdev_lock);
 	subsystem_device_id = us_ibdev->pdev->subsystem_device;
 	mutex_unlock(&us_ibdev->usdev_lock);
 
-	return sysfs_emit(buf, "%u\n", subsystem_device_id);
+	return scnprintf(buf, PAGE_SIZE, "%hu\n", subsystem_device_id);
 }
-static DEVICE_ATTR_RO(board_id);
 
 /*
  * Report the configuration for this PF
  */
 static ssize_t
-config_show(struct device *device, struct device_attribute *attr, char *buf)
+usnic_ib_show_config(struct device *device, struct device_attribute *attr,
+			char *buf)
 {
-	struct usnic_ib_dev *us_ibdev =
-		rdma_device_to_drv_device(device, struct usnic_ib_dev, ib_dev);
+	struct usnic_ib_dev *us_ibdev;
+	char *ptr;
+	unsigned left;
+	unsigned n;
 	enum usnic_vnic_res_type res_type;
-	int len;
+
+	us_ibdev = container_of(device, struct usnic_ib_dev, ib_dev.dev);
+
+	/* Buffer space limit is 1 page */
+	ptr = buf;
+	left = PAGE_SIZE;
 
 	mutex_lock(&us_ibdev->usdev_lock);
 	if (kref_read(&us_ibdev->vf_cnt) > 0) {
 		char *busname;
-		char *sep = "";
+
 		/*
 		 * bus name seems to come with annoying prefix.
 		 * Remove it if it is predictable
@@ -83,95 +92,106 @@ config_show(struct device *device, struct device_attribute *attr, char *buf)
 		if (strncmp(busname, "PCI Bus ", 8) == 0)
 			busname += 8;
 
-		len = sysfs_emit(buf, "%s: %s:%d.%d, %s, %pM, %u VFs\n",
-				 dev_name(&us_ibdev->ib_dev.dev),
-				 busname,
-				 PCI_SLOT(us_ibdev->pdev->devfn),
-				 PCI_FUNC(us_ibdev->pdev->devfn),
-				 netdev_name(us_ibdev->netdev),
-				 us_ibdev->ufdev->mac,
-				 kref_read(&us_ibdev->vf_cnt));
+		n = scnprintf(ptr, left,
+			"%s: %s:%d.%d, %s, %pM, %u VFs\n Per VF:",
+			us_ibdev->ib_dev.name,
+			busname,
+			PCI_SLOT(us_ibdev->pdev->devfn),
+			PCI_FUNC(us_ibdev->pdev->devfn),
+			netdev_name(us_ibdev->netdev),
+			us_ibdev->ufdev->mac,
+			kref_read(&us_ibdev->vf_cnt));
+		UPDATE_PTR_LEFT(n, ptr, left);
 
-		len += sysfs_emit_at(buf, len, " Per VF:");
 		for (res_type = USNIC_VNIC_RES_TYPE_EOL;
-		     res_type < USNIC_VNIC_RES_TYPE_MAX; res_type++) {
+				res_type < USNIC_VNIC_RES_TYPE_MAX;
+				res_type++) {
 			if (us_ibdev->vf_res_cnt[res_type] == 0)
 				continue;
-			len += sysfs_emit_at(buf, len, "%s %d %s",
-					     sep,
-					     us_ibdev->vf_res_cnt[res_type],
-					     usnic_vnic_res_type_to_str(res_type));
-			sep = ",";
+			n = scnprintf(ptr, left, " %d %s%s",
+				us_ibdev->vf_res_cnt[res_type],
+				usnic_vnic_res_type_to_str(res_type),
+				(res_type < (USNIC_VNIC_RES_TYPE_MAX - 1)) ?
+				 "," : "");
+			UPDATE_PTR_LEFT(n, ptr, left);
 		}
-		len += sysfs_emit_at(buf, len, "\n");
+		n = scnprintf(ptr, left, "\n");
+		UPDATE_PTR_LEFT(n, ptr, left);
 	} else {
-		len = sysfs_emit(buf, "%s: no VFs\n",
-				 dev_name(&us_ibdev->ib_dev.dev));
+		n = scnprintf(ptr, left, "%s: no VFs\n",
+				us_ibdev->ib_dev.name);
+		UPDATE_PTR_LEFT(n, ptr, left);
 	}
-
 	mutex_unlock(&us_ibdev->usdev_lock);
 
-	return len;
+	return ptr - buf;
 }
-static DEVICE_ATTR_RO(config);
 
 static ssize_t
-iface_show(struct device *device, struct device_attribute *attr, char *buf)
+usnic_ib_show_iface(struct device *device, struct device_attribute *attr,
+			char *buf)
 {
-	struct usnic_ib_dev *us_ibdev =
-		rdma_device_to_drv_device(device, struct usnic_ib_dev, ib_dev);
+	struct usnic_ib_dev *us_ibdev;
 
-	return sysfs_emit(buf, "%s\n", netdev_name(us_ibdev->netdev));
+	us_ibdev = container_of(device, struct usnic_ib_dev, ib_dev.dev);
+
+	return scnprintf(buf, PAGE_SIZE, "%s\n",
+			netdev_name(us_ibdev->netdev));
 }
-static DEVICE_ATTR_RO(iface);
 
 static ssize_t
-max_vf_show(struct device *device, struct device_attribute *attr, char *buf)
+usnic_ib_show_max_vf(struct device *device, struct device_attribute *attr,
+			char *buf)
 {
-	struct usnic_ib_dev *us_ibdev =
-		rdma_device_to_drv_device(device, struct usnic_ib_dev, ib_dev);
+	struct usnic_ib_dev *us_ibdev;
 
-	return sysfs_emit(buf, "%u\n", kref_read(&us_ibdev->vf_cnt));
+	us_ibdev = container_of(device, struct usnic_ib_dev, ib_dev.dev);
+
+	return scnprintf(buf, PAGE_SIZE, "%u\n",
+			kref_read(&us_ibdev->vf_cnt));
 }
-static DEVICE_ATTR_RO(max_vf);
 
 static ssize_t
-qp_per_vf_show(struct device *device, struct device_attribute *attr, char *buf)
+usnic_ib_show_qp_per_vf(struct device *device, struct device_attribute *attr,
+			char *buf)
 {
-	struct usnic_ib_dev *us_ibdev =
-		rdma_device_to_drv_device(device, struct usnic_ib_dev, ib_dev);
+	struct usnic_ib_dev *us_ibdev;
 	int qp_per_vf;
 
+	us_ibdev = container_of(device, struct usnic_ib_dev, ib_dev.dev);
 	qp_per_vf = max(us_ibdev->vf_res_cnt[USNIC_VNIC_RES_TYPE_WQ],
 			us_ibdev->vf_res_cnt[USNIC_VNIC_RES_TYPE_RQ]);
 
-	return sysfs_emit(buf, "%d\n", qp_per_vf);
+	return scnprintf(buf, PAGE_SIZE,
+				"%d\n", qp_per_vf);
 }
-static DEVICE_ATTR_RO(qp_per_vf);
 
 static ssize_t
-cq_per_vf_show(struct device *device, struct device_attribute *attr, char *buf)
+usnic_ib_show_cq_per_vf(struct device *device, struct device_attribute *attr,
+			char *buf)
 {
-	struct usnic_ib_dev *us_ibdev =
-		rdma_device_to_drv_device(device, struct usnic_ib_dev, ib_dev);
+	struct usnic_ib_dev *us_ibdev;
 
-	return sysfs_emit(buf, "%d\n",
-			  us_ibdev->vf_res_cnt[USNIC_VNIC_RES_TYPE_CQ]);
+	us_ibdev = container_of(device, struct usnic_ib_dev, ib_dev.dev);
+
+	return scnprintf(buf, PAGE_SIZE, "%d\n",
+			us_ibdev->vf_res_cnt[USNIC_VNIC_RES_TYPE_CQ]);
 }
-static DEVICE_ATTR_RO(cq_per_vf);
 
-static struct attribute *usnic_class_attributes[] = {
-	&dev_attr_board_id.attr,
-	&dev_attr_config.attr,
-	&dev_attr_iface.attr,
-	&dev_attr_max_vf.attr,
-	&dev_attr_qp_per_vf.attr,
-	&dev_attr_cq_per_vf.attr,
-	NULL
-};
+static DEVICE_ATTR(board_id, S_IRUGO, usnic_ib_show_board, NULL);
+static DEVICE_ATTR(config, S_IRUGO, usnic_ib_show_config, NULL);
+static DEVICE_ATTR(iface, S_IRUGO, usnic_ib_show_iface, NULL);
+static DEVICE_ATTR(max_vf, S_IRUGO, usnic_ib_show_max_vf, NULL);
+static DEVICE_ATTR(qp_per_vf, S_IRUGO, usnic_ib_show_qp_per_vf, NULL);
+static DEVICE_ATTR(cq_per_vf, S_IRUGO, usnic_ib_show_cq_per_vf, NULL);
 
-const struct attribute_group usnic_attr_group = {
-	.attrs = usnic_class_attributes,
+static struct device_attribute *usnic_class_attributes[] = {
+	&dev_attr_board_id,
+	&dev_attr_config,
+	&dev_attr_iface,
+	&dev_attr_max_vf,
+	&dev_attr_qp_per_vf,
+	&dev_attr_cq_per_vf,
 };
 
 struct qpn_attribute {
@@ -203,35 +223,43 @@ struct qpn_attribute qpn_attr_##NAME = __ATTR_RO(NAME)
 
 static ssize_t context_show(struct usnic_ib_qp_grp *qp_grp, char *buf)
 {
-	return sysfs_emit(buf, "0x%p\n", qp_grp->ctx);
+	return scnprintf(buf, PAGE_SIZE, "0x%p\n", qp_grp->ctx);
 }
 
 static ssize_t summary_show(struct usnic_ib_qp_grp *qp_grp, char *buf)
 {
-	int i, j;
+	int i, j, n;
+	int left;
+	char *ptr;
 	struct usnic_vnic_res_chunk *res_chunk;
 	struct usnic_vnic_res *vnic_res;
-	int len;
 
-	len = sysfs_emit(buf, "QPN: %d State: (%s) PID: %u VF Idx: %hu",
-			 qp_grp->ibqp.qp_num,
-			 usnic_ib_qp_grp_state_to_string(qp_grp->state),
-			 qp_grp->owner_pid,
-			 usnic_vnic_get_index(qp_grp->vf->vnic));
+	left = PAGE_SIZE;
+	ptr = buf;
+
+	n = scnprintf(ptr, left,
+			"QPN: %d State: (%s) PID: %u VF Idx: %hu ",
+			qp_grp->ibqp.qp_num,
+			usnic_ib_qp_grp_state_to_string(qp_grp->state),
+			qp_grp->owner_pid,
+			usnic_vnic_get_index(qp_grp->vf->vnic));
+	UPDATE_PTR_LEFT(n, ptr, left);
 
 	for (i = 0; qp_grp->res_chunk_list[i]; i++) {
 		res_chunk = qp_grp->res_chunk_list[i];
 		for (j = 0; j < res_chunk->cnt; j++) {
 			vnic_res = res_chunk->res[j];
-			len += sysfs_emit_at(buf, len, " %s[%d]",
+			n = scnprintf(ptr, left, "%s[%d] ",
 				usnic_vnic_res_type_to_str(vnic_res->type),
 				vnic_res->vnic_idx);
+			UPDATE_PTR_LEFT(n, ptr, left);
 		}
 	}
 
-	len += sysfs_emit_at(buf, len, "\n");
+	n = scnprintf(ptr, left, "\n");
+	UPDATE_PTR_LEFT(n, ptr, left);
 
-	return len;
+	return ptr - buf;
 }
 
 static QPN_ATTR_RO(context);
@@ -242,15 +270,26 @@ static struct attribute *usnic_ib_qpn_default_attrs[] = {
 	&qpn_attr_summary.attr,
 	NULL
 };
-ATTRIBUTE_GROUPS(usnic_ib_qpn_default);
 
 static struct kobj_type usnic_ib_qpn_type = {
 	.sysfs_ops = &usnic_ib_qpn_sysfs_ops,
-	.default_groups = usnic_ib_qpn_default_groups,
+	.default_attrs = usnic_ib_qpn_default_attrs
 };
 
 int usnic_ib_sysfs_register_usdev(struct usnic_ib_dev *us_ibdev)
 {
+	int i;
+	int err;
+	for (i = 0; i < ARRAY_SIZE(usnic_class_attributes); ++i) {
+		err = device_create_file(&us_ibdev->ib_dev.dev,
+						usnic_class_attributes[i]);
+		if (err) {
+			usnic_err("Failed to create device file %d for %s eith err %d",
+				i, us_ibdev->ib_dev.name, err);
+			return -EINVAL;
+		}
+	}
+
 	/* create kernel object for looking at individual QPs */
 	kobject_get(&us_ibdev->ib_dev.dev.kobj);
 	us_ibdev->qpn_kobj = kobject_create_and_add("qpn",
@@ -265,6 +304,12 @@ int usnic_ib_sysfs_register_usdev(struct usnic_ib_dev *us_ibdev)
 
 void usnic_ib_sysfs_unregister_usdev(struct usnic_ib_dev *us_ibdev)
 {
+	int i;
+	for (i = 0; i < ARRAY_SIZE(usnic_class_attributes); ++i) {
+		device_remove_file(&us_ibdev->ib_dev.dev,
+					usnic_class_attributes[i]);
+	}
+
 	kobject_put(us_ibdev->qpn_kobj);
 }
 

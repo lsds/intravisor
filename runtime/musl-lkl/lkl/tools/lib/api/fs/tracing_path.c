@@ -13,9 +13,11 @@
 
 #include "tracing_path.h"
 
-static char tracing_mnt[PATH_MAX]  = "/sys/kernel/debug";
-static char tracing_path[PATH_MAX]        = "/sys/kernel/debug/tracing";
-static char tracing_events_path[PATH_MAX] = "/sys/kernel/debug/tracing/events";
+
+char tracing_mnt[PATH_MAX]         = "/sys/kernel/debug";
+char tracing_path[PATH_MAX]        = "/sys/kernel/debug/tracing";
+char tracing_events_path[PATH_MAX] = "/sys/kernel/debug/tracing/events";
+
 
 static void __tracing_path_set(const char *tracing, const char *mountpoint)
 {
@@ -36,7 +38,7 @@ static const char *tracing_path_tracefs_mount(void)
 
 	__tracing_path_set("", mnt);
 
-	return tracing_path;
+	return mnt;
 }
 
 static const char *tracing_path_debugfs_mount(void)
@@ -49,7 +51,7 @@ static const char *tracing_path_debugfs_mount(void)
 
 	__tracing_path_set("tracing/", mnt);
 
-	return tracing_path;
+	return mnt;
 }
 
 const char *tracing_path_mount(void)
@@ -74,7 +76,7 @@ char *get_tracing_file(const char *name)
 {
 	char *file;
 
-	if (asprintf(&file, "%s/%s", tracing_path_mount(), name) < 0)
+	if (asprintf(&file, "%s/%s", tracing_path, name) < 0)
 		return NULL;
 
 	return file;
@@ -83,34 +85,6 @@ char *get_tracing_file(const char *name)
 void put_tracing_file(char *file)
 {
 	free(file);
-}
-
-char *get_events_file(const char *name)
-{
-	char *file;
-
-	if (asprintf(&file, "%s/events/%s", tracing_path_mount(), name) < 0)
-		return NULL;
-
-	return file;
-}
-
-void put_events_file(char *file)
-{
-	free(file);
-}
-
-DIR *tracing_events__opendir(void)
-{
-	DIR *dir = NULL;
-	char *path = get_tracing_file("events");
-
-	if (path) {
-		dir = opendir(path);
-		put_events_file(path);
-	}
-
-	return dir;
 }
 
 int tracing_path__strerror_open_tp(int err, char *buf, size_t size,
@@ -155,7 +129,7 @@ int tracing_path__strerror_open_tp(int err, char *buf, size_t size,
 		snprintf(buf, size,
 			 "Error:\tNo permissions to read %s/%s\n"
 			 "Hint:\tTry 'sudo mount -o remount,mode=755 %s'\n",
-			 tracing_events_path, filename, tracing_path_mount());
+			 tracing_events_path, filename, tracing_mnt);
 	}
 		break;
 	default:

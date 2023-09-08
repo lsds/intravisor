@@ -2,9 +2,8 @@
 // Copyright(c) 2015-17 Intel Corporation.
 
 #include <linux/device.h>
-#include <linux/errno.h>
+#include <linux/mod_devicetable.h>
 #include <linux/module.h>
-#include <linux/regmap.h>
 #include <linux/soundwire/sdw.h>
 #include "internal.h"
 
@@ -13,7 +12,7 @@ static int regmap_sdw_write(void *context, unsigned int reg, unsigned int val)
 	struct device *dev = context;
 	struct sdw_slave *slave = dev_to_sdw_dev(dev);
 
-	return sdw_write_no_pm(slave, reg, val);
+	return sdw_write(slave, reg, val);
 }
 
 static int regmap_sdw_read(void *context, unsigned int reg, unsigned int *val)
@@ -22,7 +21,7 @@ static int regmap_sdw_read(void *context, unsigned int reg, unsigned int *val)
 	struct sdw_slave *slave = dev_to_sdw_dev(dev);
 	int read;
 
-	read = sdw_read_no_pm(slave, reg);
+	read = sdw_read(slave, reg);
 	if (read < 0)
 		return read;
 
@@ -30,7 +29,7 @@ static int regmap_sdw_read(void *context, unsigned int reg, unsigned int *val)
 	return 0;
 }
 
-static const struct regmap_bus regmap_sdw = {
+static struct regmap_bus regmap_sdw = {
 	.reg_read = regmap_sdw_read,
 	.reg_write = regmap_sdw_write,
 	.reg_format_endian_default = REGMAP_ENDIAN_LITTLE,

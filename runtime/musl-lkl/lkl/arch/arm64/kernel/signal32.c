@@ -1,10 +1,21 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Based on arch/arm/kernel/signal.c
  *
  * Copyright (C) 1995-2009 Russell King
  * Copyright (C) 2012 ARM Ltd.
  * Modified by Will Deacon <will.deacon@arm.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
 #include <linux/compat.h>
@@ -18,7 +29,42 @@
 #include <asm/traps.h>
 #include <linux/uaccess.h>
 #include <asm/unistd.h>
-#include <asm/vdso.h>
+
+struct compat_sigcontext {
+	/* We always set these two fields to 0 */
+	compat_ulong_t			trap_no;
+	compat_ulong_t			error_code;
+
+	compat_ulong_t			oldmask;
+	compat_ulong_t			arm_r0;
+	compat_ulong_t			arm_r1;
+	compat_ulong_t			arm_r2;
+	compat_ulong_t			arm_r3;
+	compat_ulong_t			arm_r4;
+	compat_ulong_t			arm_r5;
+	compat_ulong_t			arm_r6;
+	compat_ulong_t			arm_r7;
+	compat_ulong_t			arm_r8;
+	compat_ulong_t			arm_r9;
+	compat_ulong_t			arm_r10;
+	compat_ulong_t			arm_fp;
+	compat_ulong_t			arm_ip;
+	compat_ulong_t			arm_sp;
+	compat_ulong_t			arm_lr;
+	compat_ulong_t			arm_pc;
+	compat_ulong_t			arm_cpsr;
+	compat_ulong_t			fault_address;
+};
+
+struct compat_ucontext {
+	compat_ulong_t			uc_flags;
+	compat_uptr_t			uc_link;
+	compat_stack_t			uc_stack;
+	struct compat_sigcontext	uc_mcontext;
+	compat_sigset_t			uc_sigmask;
+	int		__unused[32 - (sizeof (compat_sigset_t) / sizeof (int))];
+	compat_ulong_t	uc_regspace[128] __attribute__((__aligned__(8)));
+};
 
 struct compat_vfp_sigframe {
 	compat_ulong_t	magic;
@@ -45,6 +91,18 @@ struct compat_aux_sigframe {
 	/* Something that isn't a valid magic number for any coprocessor.  */
 	unsigned long			end_magic;
 } __attribute__((__aligned__(8)));
+
+struct compat_sigframe {
+	struct compat_ucontext	uc;
+	compat_ulong_t		retcode[2];
+};
+
+struct compat_rt_sigframe {
+	struct compat_siginfo info;
+	struct compat_sigframe sig;
+};
+
+#define _BLOCKABLE (~(sigmask(SIGKILL) | sigmask(SIGSTOP)))
 
 static inline int put_sigset_t(compat_sigset_t __user *uset, sigset_t *set)
 {
@@ -185,11 +243,12 @@ static int compat_restore_sigframe(struct pt_regs *regs,
 	int err;
 	sigset_t set;
 	struct compat_aux_sigframe __user *aux;
-	unsigned long psr;
 
 	err = get_sigset_t(&set, &sf->uc.uc_sigmask);
-	if (err == 0)
+	if (err == 0) {
+		sigdelsetmask(&set, ~_BLOCKABLE);
 		set_current_blocked(&set);
+	}
 
 	__get_user_error(regs->regs[0], &sf->uc.uc_mcontext.arm_r0, err);
 	__get_user_error(regs->regs[1], &sf->uc.uc_mcontext.arm_r1, err);
@@ -207,9 +266,7 @@ static int compat_restore_sigframe(struct pt_regs *regs,
 	__get_user_error(regs->compat_sp, &sf->uc.uc_mcontext.arm_sp, err);
 	__get_user_error(regs->compat_lr, &sf->uc.uc_mcontext.arm_lr, err);
 	__get_user_error(regs->pc, &sf->uc.uc_mcontext.arm_pc, err);
-	__get_user_error(psr, &sf->uc.uc_mcontext.arm_cpsr, err);
-
-	regs->pstate = compat_psr_to_pstate(psr);
+	__get_user_error(regs->pstate, &sf->uc.uc_mcontext.arm_cpsr, err);
 
 	/*
 	 * Avoid compat_sys_sigreturn() restarting.
@@ -219,15 +276,14 @@ static int compat_restore_sigframe(struct pt_regs *regs,
 	err |= !valid_user_regs(&regs->user_regs, current);
 
 	aux = (struct compat_aux_sigframe __user *) sf->uc.uc_regspace;
-	if (err == 0 && system_supports_fpsimd())
+	if (err == 0)
 		err |= compat_restore_vfp_context(&aux->vfp);
 
 	return err;
 }
 
-COMPAT_SYSCALL_DEFINE0(sigreturn)
+asmlinkage int compat_sys_sigreturn(struct pt_regs *regs)
 {
-	struct pt_regs *regs = current_pt_regs();
 	struct compat_sigframe __user *frame;
 
 	/* Always make any pending restarted system calls return -EINTR */
@@ -243,7 +299,7 @@ COMPAT_SYSCALL_DEFINE0(sigreturn)
 
 	frame = (struct compat_sigframe __user *)regs->compat_sp;
 
-	if (!access_ok(frame, sizeof (*frame)))
+	if (!access_ok(VERIFY_READ, frame, sizeof (*frame)))
 		goto badframe;
 
 	if (compat_restore_sigframe(regs, frame))
@@ -256,9 +312,8 @@ badframe:
 	return 0;
 }
 
-COMPAT_SYSCALL_DEFINE0(rt_sigreturn)
+asmlinkage int compat_sys_rt_sigreturn(struct pt_regs *regs)
 {
-	struct pt_regs *regs = current_pt_regs();
 	struct compat_rt_sigframe __user *frame;
 
 	/* Always make any pending restarted system calls return -EINTR */
@@ -274,7 +329,7 @@ COMPAT_SYSCALL_DEFINE0(rt_sigreturn)
 
 	frame = (struct compat_rt_sigframe __user *)regs->compat_sp;
 
-	if (!access_ok(frame, sizeof (*frame)))
+	if (!access_ok(VERIFY_READ, frame, sizeof (*frame)))
 		goto badframe;
 
 	if (compat_restore_sigframe(regs, &frame->sig))
@@ -305,7 +360,7 @@ static void __user *compat_get_sigframe(struct ksignal *ksig,
 	/*
 	 * Check that we can actually write to the signal frame.
 	 */
-	if (!access_ok(frame, framesize))
+	if (!access_ok(VERIFY_WRITE, frame, framesize))
 		frame = NULL;
 
 	return frame;
@@ -317,22 +372,22 @@ static void compat_setup_return(struct pt_regs *regs, struct k_sigaction *ka,
 {
 	compat_ulong_t handler = ptr_to_compat(ka->sa.sa_handler);
 	compat_ulong_t retcode;
-	compat_ulong_t spsr = regs->pstate & ~(PSR_f | PSR_AA32_E_BIT);
+	compat_ulong_t spsr = regs->pstate & ~(PSR_f | COMPAT_PSR_E_BIT);
 	int thumb;
 
 	/* Check if the handler is written for ARM or Thumb */
 	thumb = handler & 1;
 
 	if (thumb)
-		spsr |= PSR_AA32_T_BIT;
+		spsr |= COMPAT_PSR_T_BIT;
 	else
-		spsr &= ~PSR_AA32_T_BIT;
+		spsr &= ~COMPAT_PSR_T_BIT;
 
 	/* The IT state must be cleared for both ARM and Thumb-2 */
-	spsr &= ~PSR_AA32_IT_MASK;
+	spsr &= ~COMPAT_PSR_IT_MASK;
 
 	/* Restore the original endianness */
-	spsr |= PSR_AA32_ENDSTATE;
+	spsr |= COMPAT_PSR_ENDSTATE;
 
 	if (ka->sa.sa_flags & SA_RESTORER) {
 		retcode = ptr_to_compat(ka->sa.sa_restorer);
@@ -343,7 +398,8 @@ static void compat_setup_return(struct pt_regs *regs, struct k_sigaction *ka,
 		if (ka->sa.sa_flags & SA_SIGINFO)
 			idx += 3;
 
-		retcode = (unsigned long)current->mm->context.sigpage +
+		retcode = AARCH32_VECTORS_BASE +
+			  AARCH32_KERN_SIGRET_CODE_OFFSET +
 			  (idx << 2) + thumb;
 	}
 
@@ -358,7 +414,6 @@ static int compat_setup_sigframe(struct compat_sigframe __user *sf,
 				 struct pt_regs *regs, sigset_t *set)
 {
 	struct compat_aux_sigframe __user *aux;
-	unsigned long psr = pstate_to_compat_psr(regs->pstate);
 	int err = 0;
 
 	__put_user_error(regs->regs[0], &sf->uc.uc_mcontext.arm_r0, err);
@@ -377,7 +432,7 @@ static int compat_setup_sigframe(struct compat_sigframe __user *sf,
 	__put_user_error(regs->compat_sp, &sf->uc.uc_mcontext.arm_sp, err);
 	__put_user_error(regs->compat_lr, &sf->uc.uc_mcontext.arm_lr, err);
 	__put_user_error(regs->pc, &sf->uc.uc_mcontext.arm_pc, err);
-	__put_user_error(psr, &sf->uc.uc_mcontext.arm_cpsr, err);
+	__put_user_error(regs->pstate, &sf->uc.uc_mcontext.arm_cpsr, err);
 
 	__put_user_error((compat_ulong_t)0, &sf->uc.uc_mcontext.trap_no, err);
 	/* set the compat FSR WnR */
@@ -390,7 +445,7 @@ static int compat_setup_sigframe(struct compat_sigframe __user *sf,
 
 	aux = (struct compat_aux_sigframe __user *) sf->uc.uc_regspace;
 
-	if (err == 0 && system_supports_fpsimd())
+	if (err == 0)
 		err |= compat_preserve_vfp_context(&aux->vfp);
 	__put_user_error(0, &aux->end_magic, err);
 
@@ -453,43 +508,3 @@ void compat_setup_restart_syscall(struct pt_regs *regs)
 {
        regs->regs[7] = __NR_compat_restart_syscall;
 }
-
-/*
- * Compile-time assertions for siginfo_t offsets. Check NSIG* as well, as
- * changes likely come with new fields that should be added below.
- */
-static_assert(NSIGILL	== 11);
-static_assert(NSIGFPE	== 15);
-static_assert(NSIGSEGV	== 9);
-static_assert(NSIGBUS	== 5);
-static_assert(NSIGTRAP	== 6);
-static_assert(NSIGCHLD	== 6);
-static_assert(NSIGSYS	== 2);
-static_assert(sizeof(compat_siginfo_t) == 128);
-static_assert(__alignof__(compat_siginfo_t) == 4);
-static_assert(offsetof(compat_siginfo_t, si_signo)	== 0x00);
-static_assert(offsetof(compat_siginfo_t, si_errno)	== 0x04);
-static_assert(offsetof(compat_siginfo_t, si_code)	== 0x08);
-static_assert(offsetof(compat_siginfo_t, si_pid)	== 0x0c);
-static_assert(offsetof(compat_siginfo_t, si_uid)	== 0x10);
-static_assert(offsetof(compat_siginfo_t, si_tid)	== 0x0c);
-static_assert(offsetof(compat_siginfo_t, si_overrun)	== 0x10);
-static_assert(offsetof(compat_siginfo_t, si_status)	== 0x14);
-static_assert(offsetof(compat_siginfo_t, si_utime)	== 0x18);
-static_assert(offsetof(compat_siginfo_t, si_stime)	== 0x1c);
-static_assert(offsetof(compat_siginfo_t, si_value)	== 0x14);
-static_assert(offsetof(compat_siginfo_t, si_int)	== 0x14);
-static_assert(offsetof(compat_siginfo_t, si_ptr)	== 0x14);
-static_assert(offsetof(compat_siginfo_t, si_addr)	== 0x0c);
-static_assert(offsetof(compat_siginfo_t, si_addr_lsb)	== 0x10);
-static_assert(offsetof(compat_siginfo_t, si_lower)	== 0x14);
-static_assert(offsetof(compat_siginfo_t, si_upper)	== 0x18);
-static_assert(offsetof(compat_siginfo_t, si_pkey)	== 0x14);
-static_assert(offsetof(compat_siginfo_t, si_perf_data)	== 0x10);
-static_assert(offsetof(compat_siginfo_t, si_perf_type)	== 0x14);
-static_assert(offsetof(compat_siginfo_t, si_perf_flags)	== 0x18);
-static_assert(offsetof(compat_siginfo_t, si_band)	== 0x0c);
-static_assert(offsetof(compat_siginfo_t, si_fd)		== 0x10);
-static_assert(offsetof(compat_siginfo_t, si_call_addr)	== 0x0c);
-static_assert(offsetof(compat_siginfo_t, si_syscall)	== 0x10);
-static_assert(offsetof(compat_siginfo_t, si_arch)	== 0x14);

@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright 2001-2003 SuSE Labs.
  * Distributed under the GNU public license, v2.
@@ -157,7 +156,7 @@ static u64 amd64_configure(struct pci_dev *hammer, u64 gatt_table)
 
 	/* Address to map to */
 	pci_read_config_dword(hammer, AMD64_GARTAPERTUREBASE, &tmp);
-	aperturebase = (u64)tmp << 25;
+	aperturebase = tmp << 25;
 	aper_base = (aperturebase & PCI_BASE_ADDRESS_MEM_MASK);
 
 	enable_gart_translation(hammer, gatt_table);
@@ -278,7 +277,7 @@ static int fix_northbridge(struct pci_dev *nb, struct pci_dev *agp, u16 cap)
 	pci_read_config_dword(nb, AMD64_GARTAPERTURECTL, &nb_order);
 	nb_order = (nb_order >> 1) & 7;
 	pci_read_config_dword(nb, AMD64_GARTAPERTUREBASE, &nb_base);
-	nb_aper = (u64)nb_base << 25;
+	nb_aper = nb_base << 25;
 
 	/* Northbridge seems to contain crap. Try the AGP bridge. */
 
@@ -327,7 +326,7 @@ static int cache_nbs(struct pci_dev *pdev, u32 cap_ptr)
 {
 	int i;
 
-	if (!amd_nb_num())
+	if (amd_cache_northbridges() < 0)
 		return -ENODEV;
 
 	if (!amd_nb_has_feature(AMD_NB_GART))
@@ -588,17 +587,28 @@ static void agp_amd64_remove(struct pci_dev *pdev)
 	agp_bridges_found--;
 }
 
-#define agp_amd64_suspend NULL
+#ifdef CONFIG_PM
 
-static int __maybe_unused agp_amd64_resume(struct device *dev)
+static int agp_amd64_suspend(struct pci_dev *pdev, pm_message_t state)
 {
-	struct pci_dev *pdev = to_pci_dev(dev);
+	pci_save_state(pdev);
+	pci_set_power_state(pdev, pci_choose_state(pdev, state));
+
+	return 0;
+}
+
+static int agp_amd64_resume(struct pci_dev *pdev)
+{
+	pci_set_power_state(pdev, PCI_D0);
+	pci_restore_state(pdev);
 
 	if (pdev->vendor == PCI_VENDOR_ID_NVIDIA)
 		nforce3_agp_init(pdev);
 
 	return amd_8151_configure();
 }
+
+#endif /* CONFIG_PM */
 
 static const struct pci_device_id agp_amd64_pci_table[] = {
 	{
@@ -727,14 +737,15 @@ static const struct pci_device_id agp_amd64_pci_promisc_table[] = {
 	{ }
 };
 
-static SIMPLE_DEV_PM_OPS(agp_amd64_pm_ops, agp_amd64_suspend, agp_amd64_resume);
-
 static struct pci_driver agp_amd64_pci_driver = {
 	.name		= "agpgart-amd64",
 	.id_table	= agp_amd64_pci_table,
 	.probe		= agp_amd64_probe,
 	.remove		= agp_amd64_remove,
-	.driver.pm  = &agp_amd64_pm_ops,
+#ifdef CONFIG_PM
+	.suspend	= agp_amd64_suspend,
+	.resume		= agp_amd64_resume,
+#endif
 };
 
 
@@ -763,7 +774,7 @@ int __init agp_amd64_init(void)
 		}
 
 		/* First check that we have at least one AMD64 NB */
-		if (!amd_nb_num()) {
+		if (!pci_dev_present(amd_nb_misc_ids)) {
 			pci_unregister_driver(&agp_amd64_pci_driver);
 			return -ENODEV;
 		}

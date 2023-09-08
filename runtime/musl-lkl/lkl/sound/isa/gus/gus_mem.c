@@ -1,7 +1,22 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  *  Copyright (c) by Jaroslav Kysela <perex@perex.cz>
  *  GUS's memory allocation routines / bottom layer
+ *
+ *
+ *   This program is free software; you can redistribute it and/or modify
+ *   it under the terms of the GNU General Public License as published by
+ *   the Free Software Foundation; either version 2 of the License, or
+ *   (at your option) any later version.
+ *
+ *   This program is distributed in the hope that it will be useful,
+ *   but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *   GNU General Public License for more details.
+ *
+ *   You should have received a copy of the GNU General Public License
+ *   along with this program; if not, write to the Free Software
+ *   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307 USA
+ *
  */
 
 #include <linux/slab.h>
@@ -24,9 +39,8 @@ void snd_gf1_mem_lock(struct snd_gf1_mem * alloc, int xup)
 	}
 }
 
-static struct snd_gf1_mem_block *
-snd_gf1_mem_xalloc(struct snd_gf1_mem *alloc, struct snd_gf1_mem_block *block,
-		   const char *name)
+static struct snd_gf1_mem_block *snd_gf1_mem_xalloc(struct snd_gf1_mem * alloc,
+					       struct snd_gf1_mem_block * block)
 {
 	struct snd_gf1_mem_block *pblock, *nblock;
 
@@ -34,12 +48,6 @@ snd_gf1_mem_xalloc(struct snd_gf1_mem *alloc, struct snd_gf1_mem_block *block,
 	if (nblock == NULL)
 		return NULL;
 	*nblock = *block;
-	nblock->name = kstrdup(name, GFP_KERNEL);
-	if (!nblock->name) {
-		kfree(nblock);
-		return NULL;
-	}
-
 	pblock = alloc->first;
 	while (pblock) {
 		if (pblock->ptr > nblock->ptr) {
@@ -51,7 +59,7 @@ snd_gf1_mem_xalloc(struct snd_gf1_mem *alloc, struct snd_gf1_mem_block *block,
 			else
 				nblock->prev->next = nblock;
 			mutex_unlock(&alloc->memory_mutex);
-			return nblock;
+			return NULL;
 		}
 		pblock = pblock->next;
 	}
@@ -205,7 +213,8 @@ struct snd_gf1_mem_block *snd_gf1_mem_alloc(struct snd_gf1_mem * alloc, int owne
 	if (share_id != NULL)
 		memcpy(&block.share_id, share_id, sizeof(block.share_id));
 	block.owner = owner;
-	nblock = snd_gf1_mem_xalloc(alloc, &block, name);
+	block.name = kstrdup(name, GFP_KERNEL);
+	nblock = snd_gf1_mem_xalloc(alloc, &block);
 	snd_gf1_mem_lock(alloc, 1);
 	return nblock;
 }
@@ -216,8 +225,7 @@ int snd_gf1_mem_free(struct snd_gf1_mem * alloc, unsigned int address)
 	struct snd_gf1_mem_block *block;
 
 	snd_gf1_mem_lock(alloc, 0);
-	block = snd_gf1_mem_look(alloc, address);
-	if (block) {
+	if ((block = snd_gf1_mem_look(alloc, address)) != NULL) {
 		result = snd_gf1_mem_xfree(alloc, block);
 		snd_gf1_mem_lock(alloc, 1);
 		return result;
@@ -230,6 +238,9 @@ int snd_gf1_mem_init(struct snd_gus_card * gus)
 {
 	struct snd_gf1_mem *alloc;
 	struct snd_gf1_mem_block block;
+#ifdef CONFIG_SND_DEBUG
+	struct snd_info_entry *entry;
+#endif
 
 	alloc = &gus->gf1.mem_alloc;
 	mutex_init(&alloc->memory_mutex);
@@ -242,15 +253,18 @@ int snd_gf1_mem_init(struct snd_gus_card * gus)
 	if (gus->gf1.enh_mode) {
 		block.ptr = 0;
 		block.size = 1024;
-		if (!snd_gf1_mem_xalloc(alloc, &block, "InterWave LFOs"))
+		block.name = kstrdup("InterWave LFOs", GFP_KERNEL);
+		if (snd_gf1_mem_xalloc(alloc, &block) == NULL)
 			return -ENOMEM;
 	}
 	block.ptr = gus->gf1.default_voice_address;
 	block.size = 4;
-	if (!snd_gf1_mem_xalloc(alloc, &block, "Voice default (NULL's)"))
+	block.name = kstrdup("Voice default (NULL's)", GFP_KERNEL);
+	if (snd_gf1_mem_xalloc(alloc, &block) == NULL)
 		return -ENOMEM;
 #ifdef CONFIG_SND_DEBUG
-	snd_card_ro_proc_new(gus->card, "gusmem", gus, snd_gf1_mem_info_read);
+	if (! snd_card_proc_new(gus->card, "gusmem", &entry))
+		snd_info_set_text_ops(entry, gus, snd_gf1_mem_info_read);
 #endif
 	return 0;
 }
@@ -296,7 +310,7 @@ static void snd_gf1_mem_info_read(struct snd_info_entry *entry,
 	used = 0;
 	for (block = alloc->first, i = 0; block; block = block->next, i++) {
 		used += block->size;
-		snd_iprintf(buffer, "Block %i onboard 0x%x size %i (0x%x):\n", i, block->ptr, block->size, block->size);
+		snd_iprintf(buffer, "Block %i at 0x%lx onboard 0x%x size %i (0x%x):\n", i, (long) block, block->ptr, block->size, block->size);
 		if (block->share ||
 		    block->share_id[0] || block->share_id[1] ||
 		    block->share_id[2] || block->share_id[3])

@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 #include <linux/module.h>
 #include <linux/types.h>
 #include <linux/kernel.h>
@@ -65,7 +64,7 @@ static long (*save_emul) (unsigned long pc);
 long do_alpha_fp_emul_imprecise(struct pt_regs *, unsigned long);
 long do_alpha_fp_emul(unsigned long);
 
-static int alpha_fp_emul_init_module(void)
+int init_module(void)
 {
 	save_emul_imprecise = alpha_fp_emul_imprecise;
 	save_emul = alpha_fp_emul;
@@ -73,14 +72,12 @@ static int alpha_fp_emul_init_module(void)
 	alpha_fp_emul = do_alpha_fp_emul;
 	return 0;
 }
-module_init(alpha_fp_emul_init_module);
 
-static void alpha_fp_emul_cleanup_module(void)
+void cleanup_module(void)
 {
 	alpha_fp_emul_imprecise = save_emul_imprecise;
 	alpha_fp_emul = save_emul;
 }
-module_exit(alpha_fp_emul_cleanup_module);
 
 #undef  alpha_fp_emul_imprecise
 #define alpha_fp_emul_imprecise		do_alpha_fp_emul_imprecise

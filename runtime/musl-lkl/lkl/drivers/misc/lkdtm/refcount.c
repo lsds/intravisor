@@ -6,6 +6,14 @@
 #include "lkdtm.h"
 #include <linux/refcount.h>
 
+#ifdef CONFIG_REFCOUNT_FULL
+#define REFCOUNT_MAX		(UINT_MAX - 1)
+#define REFCOUNT_SATURATED	UINT_MAX
+#else
+#define REFCOUNT_MAX		INT_MAX
+#define REFCOUNT_SATURATED	(INT_MIN / 2)
+#endif
+
 static void overflow_check(refcount_t *ref)
 {
 	switch (refcount_read(ref)) {
@@ -24,7 +32,7 @@ static void overflow_check(refcount_t *ref)
  * A refcount_inc() above the maximum value of the refcount implementation,
  * should at least saturate, and at most also WARN.
  */
-static void lkdtm_REFCOUNT_INC_OVERFLOW(void)
+void lkdtm_REFCOUNT_INC_OVERFLOW(void)
 {
 	refcount_t over = REFCOUNT_INIT(REFCOUNT_MAX - 1);
 
@@ -40,7 +48,7 @@ static void lkdtm_REFCOUNT_INC_OVERFLOW(void)
 }
 
 /* refcount_add() should behave just like refcount_inc() above. */
-static void lkdtm_REFCOUNT_ADD_OVERFLOW(void)
+void lkdtm_REFCOUNT_ADD_OVERFLOW(void)
 {
 	refcount_t over = REFCOUNT_INIT(REFCOUNT_MAX - 1);
 
@@ -58,7 +66,7 @@ static void lkdtm_REFCOUNT_ADD_OVERFLOW(void)
 }
 
 /* refcount_inc_not_zero() should behave just like refcount_inc() above. */
-static void lkdtm_REFCOUNT_INC_NOT_ZERO_OVERFLOW(void)
+void lkdtm_REFCOUNT_INC_NOT_ZERO_OVERFLOW(void)
 {
 	refcount_t over = REFCOUNT_INIT(REFCOUNT_MAX);
 
@@ -70,7 +78,7 @@ static void lkdtm_REFCOUNT_INC_NOT_ZERO_OVERFLOW(void)
 }
 
 /* refcount_add_not_zero() should behave just like refcount_inc() above. */
-static void lkdtm_REFCOUNT_ADD_NOT_ZERO_OVERFLOW(void)
+void lkdtm_REFCOUNT_ADD_NOT_ZERO_OVERFLOW(void)
 {
 	refcount_t over = REFCOUNT_INIT(REFCOUNT_MAX);
 
@@ -103,7 +111,7 @@ static void check_zero(refcount_t *ref)
  * zero it should either saturate (when inc-from-zero isn't protected)
  * or stay at zero (when inc-from-zero is protected) and should WARN for both.
  */
-static void lkdtm_REFCOUNT_DEC_ZERO(void)
+void lkdtm_REFCOUNT_DEC_ZERO(void)
 {
 	refcount_t zero = REFCOUNT_INIT(2);
 
@@ -119,7 +127,7 @@ static void lkdtm_REFCOUNT_DEC_ZERO(void)
 static void check_negative(refcount_t *ref, int start)
 {
 	/*
-	 * refcount_t refuses to move a refcount at all on an
+	 * CONFIG_REFCOUNT_FULL refuses to move a refcount at all on an
 	 * over-sub, so we have to track our starting position instead of
 	 * looking only at zero-pinning.
 	 */
@@ -142,7 +150,7 @@ static void check_negative(refcount_t *ref, int start)
 }
 
 /* A refcount_dec() going negative should saturate and may WARN. */
-static void lkdtm_REFCOUNT_DEC_NEGATIVE(void)
+void lkdtm_REFCOUNT_DEC_NEGATIVE(void)
 {
 	refcount_t neg = REFCOUNT_INIT(0);
 
@@ -156,7 +164,7 @@ static void lkdtm_REFCOUNT_DEC_NEGATIVE(void)
  * A refcount_dec_and_test() should act like refcount_dec() above when
  * going negative.
  */
-static void lkdtm_REFCOUNT_DEC_AND_TEST_NEGATIVE(void)
+void lkdtm_REFCOUNT_DEC_AND_TEST_NEGATIVE(void)
 {
 	refcount_t neg = REFCOUNT_INIT(0);
 
@@ -171,7 +179,7 @@ static void lkdtm_REFCOUNT_DEC_AND_TEST_NEGATIVE(void)
  * A refcount_sub_and_test() should act like refcount_dec_and_test()
  * above when going negative.
  */
-static void lkdtm_REFCOUNT_SUB_AND_TEST_NEGATIVE(void)
+void lkdtm_REFCOUNT_SUB_AND_TEST_NEGATIVE(void)
 {
 	refcount_t neg = REFCOUNT_INIT(3);
 
@@ -202,8 +210,9 @@ static void check_from_zero(refcount_t *ref)
 
 /*
  * A refcount_inc() from zero should pin to zero or saturate and may WARN.
+ * Only CONFIG_REFCOUNT_FULL provides this protection currently.
  */
-static void lkdtm_REFCOUNT_INC_ZERO(void)
+void lkdtm_REFCOUNT_INC_ZERO(void)
 {
 	refcount_t zero = REFCOUNT_INIT(0);
 
@@ -228,7 +237,7 @@ static void lkdtm_REFCOUNT_INC_ZERO(void)
  * A refcount_add() should act like refcount_inc() above when starting
  * at zero.
  */
-static void lkdtm_REFCOUNT_ADD_ZERO(void)
+void lkdtm_REFCOUNT_ADD_ZERO(void)
 {
 	refcount_t zero = REFCOUNT_INIT(0);
 
@@ -267,7 +276,7 @@ static void check_saturated(refcount_t *ref)
  * A refcount_inc() from a saturated value should at most warn about
  * being saturated already.
  */
-static void lkdtm_REFCOUNT_INC_SATURATED(void)
+void lkdtm_REFCOUNT_INC_SATURATED(void)
 {
 	refcount_t sat = REFCOUNT_INIT(REFCOUNT_SATURATED);
 
@@ -278,7 +287,7 @@ static void lkdtm_REFCOUNT_INC_SATURATED(void)
 }
 
 /* Should act like refcount_inc() above from saturated. */
-static void lkdtm_REFCOUNT_DEC_SATURATED(void)
+void lkdtm_REFCOUNT_DEC_SATURATED(void)
 {
 	refcount_t sat = REFCOUNT_INIT(REFCOUNT_SATURATED);
 
@@ -289,7 +298,7 @@ static void lkdtm_REFCOUNT_DEC_SATURATED(void)
 }
 
 /* Should act like refcount_inc() above from saturated. */
-static void lkdtm_REFCOUNT_ADD_SATURATED(void)
+void lkdtm_REFCOUNT_ADD_SATURATED(void)
 {
 	refcount_t sat = REFCOUNT_INIT(REFCOUNT_SATURATED);
 
@@ -300,7 +309,7 @@ static void lkdtm_REFCOUNT_ADD_SATURATED(void)
 }
 
 /* Should act like refcount_inc() above from saturated. */
-static void lkdtm_REFCOUNT_INC_NOT_ZERO_SATURATED(void)
+void lkdtm_REFCOUNT_INC_NOT_ZERO_SATURATED(void)
 {
 	refcount_t sat = REFCOUNT_INIT(REFCOUNT_SATURATED);
 
@@ -312,7 +321,7 @@ static void lkdtm_REFCOUNT_INC_NOT_ZERO_SATURATED(void)
 }
 
 /* Should act like refcount_inc() above from saturated. */
-static void lkdtm_REFCOUNT_ADD_NOT_ZERO_SATURATED(void)
+void lkdtm_REFCOUNT_ADD_NOT_ZERO_SATURATED(void)
 {
 	refcount_t sat = REFCOUNT_INIT(REFCOUNT_SATURATED);
 
@@ -324,7 +333,7 @@ static void lkdtm_REFCOUNT_ADD_NOT_ZERO_SATURATED(void)
 }
 
 /* Should act like refcount_inc() above from saturated. */
-static void lkdtm_REFCOUNT_DEC_AND_TEST_SATURATED(void)
+void lkdtm_REFCOUNT_DEC_AND_TEST_SATURATED(void)
 {
 	refcount_t sat = REFCOUNT_INIT(REFCOUNT_SATURATED);
 
@@ -336,7 +345,7 @@ static void lkdtm_REFCOUNT_DEC_AND_TEST_SATURATED(void)
 }
 
 /* Should act like refcount_inc() above from saturated. */
-static void lkdtm_REFCOUNT_SUB_AND_TEST_SATURATED(void)
+void lkdtm_REFCOUNT_SUB_AND_TEST_SATURATED(void)
 {
 	refcount_t sat = REFCOUNT_INIT(REFCOUNT_SATURATED);
 
@@ -348,7 +357,7 @@ static void lkdtm_REFCOUNT_SUB_AND_TEST_SATURATED(void)
 }
 
 /* Used to time the existing atomic_t when used for reference counting */
-static void lkdtm_ATOMIC_TIMING(void)
+void lkdtm_ATOMIC_TIMING(void)
 {
 	unsigned int i;
 	atomic_t count = ATOMIC_INIT(1);
@@ -373,7 +382,7 @@ static void lkdtm_ATOMIC_TIMING(void)
  *    cd /sys/kernel/debug/provoke-crash
  *    perf stat -B -- cat <(echo REFCOUNT_TIMING) > DIRECT
  */
-static void lkdtm_REFCOUNT_TIMING(void)
+void lkdtm_REFCOUNT_TIMING(void)
 {
 	unsigned int i;
 	refcount_t count = REFCOUNT_INIT(1);
@@ -390,30 +399,3 @@ static void lkdtm_REFCOUNT_TIMING(void)
 	else
 		pr_info("refcount timing: done\n");
 }
-
-static struct crashtype crashtypes[] = {
-	CRASHTYPE(REFCOUNT_INC_OVERFLOW),
-	CRASHTYPE(REFCOUNT_ADD_OVERFLOW),
-	CRASHTYPE(REFCOUNT_INC_NOT_ZERO_OVERFLOW),
-	CRASHTYPE(REFCOUNT_ADD_NOT_ZERO_OVERFLOW),
-	CRASHTYPE(REFCOUNT_DEC_ZERO),
-	CRASHTYPE(REFCOUNT_DEC_NEGATIVE),
-	CRASHTYPE(REFCOUNT_DEC_AND_TEST_NEGATIVE),
-	CRASHTYPE(REFCOUNT_SUB_AND_TEST_NEGATIVE),
-	CRASHTYPE(REFCOUNT_INC_ZERO),
-	CRASHTYPE(REFCOUNT_ADD_ZERO),
-	CRASHTYPE(REFCOUNT_INC_SATURATED),
-	CRASHTYPE(REFCOUNT_DEC_SATURATED),
-	CRASHTYPE(REFCOUNT_ADD_SATURATED),
-	CRASHTYPE(REFCOUNT_INC_NOT_ZERO_SATURATED),
-	CRASHTYPE(REFCOUNT_ADD_NOT_ZERO_SATURATED),
-	CRASHTYPE(REFCOUNT_DEC_AND_TEST_SATURATED),
-	CRASHTYPE(REFCOUNT_SUB_AND_TEST_SATURATED),
-	CRASHTYPE(ATOMIC_TIMING),
-	CRASHTYPE(REFCOUNT_TIMING),
-};
-
-struct crashtype_category refcount_crashtypes = {
-	.crashtypes = crashtypes,
-	.len	    = ARRAY_SIZE(crashtypes),
-};

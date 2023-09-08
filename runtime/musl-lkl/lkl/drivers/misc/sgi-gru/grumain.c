@@ -1,10 +1,23 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * SN Platform GRU Driver
  *
  *            DRIVER TABLE MANAGER + GRU CONTEXT LOAD/UNLOAD
  *
  *  Copyright (c) 2008 Silicon Graphics, Inc.  All Rights Reserved.
+ *
+ *  This program is free software; you can redistribute it and/or modify
+ *  it under the terms of the GNU General Public License as published by
+ *  the Free Software Foundation; either version 2 of the License, or
+ *  (at your option) any later version.
+ *
+ *  This program is distributed in the hope that it will be useful,
+ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *  GNU General Public License for more details.
+ *
+ *  You should have received a copy of the GNU General Public License
+ *  along with this program; if not, write to the Free Software
+ *  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307 USA
  */
 
 #include <linux/kernel.h>
@@ -152,7 +165,7 @@ static int gru_assign_asid(struct gru_state *gru)
  * Optionally, build an array of chars that contain the bit numbers allocated.
  */
 static unsigned long reserve_resources(unsigned long *p, int n, int mmax,
-				       signed char *idx)
+				       char *idx)
 {
 	unsigned long bits = 0;
 	int i;
@@ -170,14 +183,14 @@ static unsigned long reserve_resources(unsigned long *p, int n, int mmax,
 }
 
 unsigned long gru_reserve_cb_resources(struct gru_state *gru, int cbr_au_count,
-				       signed char *cbmap)
+				       char *cbmap)
 {
 	return reserve_resources(&gru->gs_cbr_map, cbr_au_count, GRU_CBR_AU,
 				 cbmap);
 }
 
 unsigned long gru_reserve_ds_resources(struct gru_state *gru, int dsr_au_count,
-				       signed char *dsmap)
+				       char *dsmap)
 {
 	return reserve_resources(&gru->gs_dsr_map, dsr_au_count, GRU_DSR_AU,
 				 dsmap);
@@ -282,7 +295,7 @@ static void gru_unload_mm_tracker(struct gru_state *gru,
  */
 void gts_drop(struct gru_thread_state *gts)
 {
-	if (gts && refcount_dec_and_test(&gts->ts_refcnt)) {
+	if (gts && atomic_dec_return(&gts->ts_refcnt) == 0) {
 		if (gts->ts_gms)
 			gru_drop_mmu_notifier(gts->ts_gms);
 		kfree(gts);
@@ -323,7 +336,7 @@ struct gru_thread_state *gru_alloc_gts(struct vm_area_struct *vma,
 
 	STAT(gts_alloc);
 	memset(gts, 0, sizeof(struct gru_thread_state)); /* zero out header */
-	refcount_set(&gts->ts_refcnt, 1);
+	atomic_set(&gts->ts_refcnt, 1);
 	mutex_init(&gts->ts_ctxlock);
 	gts->ts_cbr_au_count = cbr_au_count;
 	gts->ts_dsr_au_count = dsr_au_count;
@@ -888,7 +901,7 @@ again:
 		gts->ts_gru = gru;
 		gts->ts_blade = gru->gs_blade_id;
 		gts->ts_ctxnum = gru_assign_context_number(gru);
-		refcount_inc(&gts->ts_refcnt);
+		atomic_inc(&gts->ts_refcnt);
 		gru->gs_gts[gts->ts_ctxnum] = gts;
 		spin_unlock(&gru->gs_lock);
 
@@ -913,7 +926,7 @@ again:
  *
  * 	Note: gru segments alway mmaped on GRU_GSEG_PAGESIZE boundaries.
  */
-vm_fault_t gru_fault(struct vm_fault *vmf)
+int gru_fault(struct vm_fault *vmf)
 {
 	struct vm_area_struct *vma = vmf->vma;
 	struct gru_thread_state *gts;

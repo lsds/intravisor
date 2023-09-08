@@ -1,12 +1,14 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
- * Networking over Thunderbolt/USB4 cables using USB4NET protocol
- * (formerly Apple ThunderboltIP).
+ * Networking over Thunderbolt cable using Apple ThunderboltIP protocol
  *
  * Copyright (C) 2017, Intel Corporation
  * Authors: Amir Levy <amir.jer.levy@intel.com>
  *          Michael Jamet <michael.jamet@intel.com>
  *          Mika Westerberg <mika.westerberg@linux.intel.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 
 #include <linux/atomic.h>
@@ -26,14 +28,13 @@
 /* Protocol timeouts in ms */
 #define TBNET_LOGIN_DELAY	4500
 #define TBNET_LOGIN_TIMEOUT	500
-#define TBNET_LOGOUT_TIMEOUT	1000
+#define TBNET_LOGOUT_TIMEOUT	100
 
 #define TBNET_RING_SIZE		256
+#define TBNET_LOCAL_PATH	0xf
 #define TBNET_LOGIN_RETRIES	60
-#define TBNET_LOGOUT_RETRIES	10
-#define TBNET_E2E		BIT(0)
+#define TBNET_LOGOUT_RETRIES	5
 #define TBNET_MATCH_FRAGS_ID	BIT(1)
-#define TBNET_64K_FRAMES	BIT(2)
 #define TBNET_MAX_MTU		SZ_64K
 #define TBNET_FRAME_SIZE	SZ_4K
 #define TBNET_MAX_PAYLOAD_SIZE	\
@@ -156,8 +157,8 @@ struct tbnet_ring {
  * @login_sent: ThunderboltIP login message successfully sent
  * @login_received: ThunderboltIP login message received from the remote
  *		    host
- * @local_transmit_path: HopID we are using to send out packets
- * @remote_transmit_path: HopID the other end is using to send packets to us
+ * @transmit_path: HopID the other end needs to use building the
+ *		   opposite side path.
  * @connection_lock: Lock serializing access to @login_sent,
  *		     @login_received and @transmit_path.
  * @login_retries: Number of login retries currently done
@@ -186,8 +187,7 @@ struct tbnet {
 	atomic_t command_id;
 	bool login_sent;
 	bool login_received;
-	int local_transmit_path;
-	int remote_transmit_path;
+	u32 transmit_path;
 	struct mutex connection_lock;
 	int login_retries;
 	struct delayed_work login_work;
@@ -210,10 +210,6 @@ static const uuid_t tbnet_svc_uuid =
 		  0x97, 0xc6, 0x56, 0x64, 0xa9, 0x20, 0xc8, 0xdd);
 
 static struct tb_property_dir *tbnet_dir;
-
-static bool tbnet_e2e = true;
-module_param_named(e2e, tbnet_e2e, bool, 0444);
-MODULE_PARM_DESC(e2e, "USB4NET full end-to-end flow control (default: true)");
 
 static void tbnet_fill_header(struct thunderbolt_ip_header *hdr, u64 route,
 	u8 sequence, const uuid_t *initiator_uuid, const uuid_t *target_uuid,
@@ -264,7 +260,7 @@ static int tbnet_login_request(struct tbnet *net, u8 sequence)
 			  atomic_inc_return(&net->command_id));
 
 	request.proto_version = TBIP_LOGIN_PROTO_VERSION;
-	request.transmit_path = net->local_transmit_path;
+	request.transmit_path = TBNET_LOCAL_PATH;
 
 	return tb_xdomain_request(xd, &request, sizeof(request),
 				  TB_CFG_PKG_XDOMAIN_RESP, &reply,
@@ -371,10 +367,10 @@ static void tbnet_tear_down(struct tbnet *net, bool send_logout)
 	mutex_lock(&net->connection_lock);
 
 	if (net->login_sent && net->login_received) {
-		int ret, retries = TBNET_LOGOUT_RETRIES;
+		int retries = TBNET_LOGOUT_RETRIES;
 
 		while (send_logout && retries-- > 0) {
-			ret = tbnet_logout_request(net);
+			int ret = tbnet_logout_request(net);
 			if (ret != -ETIMEDOUT)
 				break;
 		}
@@ -384,16 +380,8 @@ static void tbnet_tear_down(struct tbnet *net, bool send_logout)
 		tbnet_free_buffers(&net->rx_ring);
 		tbnet_free_buffers(&net->tx_ring);
 
-		ret = tb_xdomain_disable_paths(net->xd,
-					       net->local_transmit_path,
-					       net->rx_ring.ring->hop,
-					       net->remote_transmit_path,
-					       net->tx_ring.ring->hop);
-		if (ret)
+		if (tb_xdomain_disable_paths(net->xd))
 			netdev_warn(net->dev, "failed to disable DMA paths\n");
-
-		tb_xdomain_release_in_hopid(net->xd, net->remote_transmit_path);
-		net->remote_transmit_path = 0;
 	}
 
 	net->login_retries = 0;
@@ -439,7 +427,7 @@ static int tbnet_handle_packet(const void *buf, size_t size, void *data)
 		if (!ret) {
 			mutex_lock(&net->connection_lock);
 			net->login_received = true;
-			net->remote_transmit_path = pkg->transmit_path;
+			net->transmit_path = pkg->transmit_path;
 
 			/* If we reached the number of max retries or
 			 * previous logout, schedule another round of
@@ -612,19 +600,18 @@ static void tbnet_connected_work(struct work_struct *work)
 	if (!connected)
 		return;
 
-	ret = tb_xdomain_alloc_in_hopid(net->xd, net->remote_transmit_path);
-	if (ret != net->remote_transmit_path) {
-		netdev_err(net->dev, "failed to allocate Rx HopID\n");
+	/* Both logins successful so enable the high-speed DMA paths and
+	 * start the network device queue.
+	 */
+	ret = tb_xdomain_enable_paths(net->xd, TBNET_LOCAL_PATH,
+				      net->rx_ring.ring->hop,
+				      net->transmit_path,
+				      net->tx_ring.ring->hop);
+	if (ret) {
+		netdev_err(net->dev, "failed to enable DMA paths\n");
 		return;
 	}
 
-	/* Both logins successful so enable the rings, high-speed DMA
-	 * paths and start the network device queue.
-	 *
-	 * Note we enable the DMA paths last to make sure we have primed
-	 * the Rx ring before any incoming packets are allowed to
-	 * arrive.
-	 */
 	tb_ring_start(net->tx_ring.ring);
 	tb_ring_start(net->rx_ring.ring);
 
@@ -636,27 +623,15 @@ static void tbnet_connected_work(struct work_struct *work)
 	if (ret)
 		goto err_free_rx_buffers;
 
-	ret = tb_xdomain_enable_paths(net->xd, net->local_transmit_path,
-				      net->rx_ring.ring->hop,
-				      net->remote_transmit_path,
-				      net->tx_ring.ring->hop);
-	if (ret) {
-		netdev_err(net->dev, "failed to enable DMA paths\n");
-		goto err_free_tx_buffers;
-	}
-
 	netif_carrier_on(net->dev);
 	netif_start_queue(net->dev);
 	return;
 
-err_free_tx_buffers:
-	tbnet_free_buffers(&net->tx_ring);
 err_free_rx_buffers:
 	tbnet_free_buffers(&net->rx_ring);
 err_stop_rings:
 	tb_ring_stop(net->rx_ring.ring);
 	tb_ring_stop(net->tx_ring.ring);
-	tb_xdomain_release_in_hopid(net->xd, net->remote_transmit_path);
 }
 
 static void tbnet_login_work(struct work_struct *work)
@@ -879,8 +854,6 @@ static int tbnet_open(struct net_device *dev)
 	struct tb_xdomain *xd = net->xd;
 	u16 sof_mask, eof_mask;
 	struct tb_ring *ring;
-	unsigned int flags;
-	int hopid;
 
 	netif_carrier_off(dev);
 
@@ -892,29 +865,14 @@ static int tbnet_open(struct net_device *dev)
 	}
 	net->tx_ring.ring = ring;
 
-	hopid = tb_xdomain_alloc_out_hopid(xd, -1);
-	if (hopid < 0) {
-		netdev_err(dev, "failed to allocate Tx HopID\n");
-		tb_ring_free(net->tx_ring.ring);
-		net->tx_ring.ring = NULL;
-		return hopid;
-	}
-	net->local_transmit_path = hopid;
-
 	sof_mask = BIT(TBIP_PDF_FRAME_START);
 	eof_mask = BIT(TBIP_PDF_FRAME_END);
 
-	flags = RING_FLAG_FRAME;
-	/* Only enable full E2E if the other end supports it too */
-	if (tbnet_e2e && net->svc->prtcstns & TBNET_E2E)
-		flags |= RING_FLAG_E2E;
-
-	ring = tb_ring_alloc_rx(xd->tb->nhi, -1, TBNET_RING_SIZE, flags,
-				net->tx_ring.ring->hop, sof_mask,
+	ring = tb_ring_alloc_rx(xd->tb->nhi, -1, TBNET_RING_SIZE,
+				RING_FLAG_FRAME | RING_FLAG_E2E, sof_mask,
 				eof_mask, tbnet_start_poll, net);
 	if (!ring) {
 		netdev_err(dev, "failed to allocate Rx ring\n");
-		tb_xdomain_release_out_hopid(xd, hopid);
 		tb_ring_free(net->tx_ring.ring);
 		net->tx_ring.ring = NULL;
 		return -ENOMEM;
@@ -938,8 +896,6 @@ static int tbnet_stop(struct net_device *dev)
 
 	tb_ring_free(net->rx_ring.ring);
 	net->rx_ring.ring = NULL;
-
-	tb_xdomain_release_out_hopid(net->xd, net->local_transmit_path);
 	tb_ring_free(net->tx_ring.ring);
 	net->tx_ring.ring = NULL;
 
@@ -1052,7 +1008,7 @@ static void *tbnet_kmap_frag(struct sk_buff *skb, unsigned int frag_num,
 	const skb_frag_t *frag = &skb_shinfo(skb)->frags[frag_num];
 
 	*len = skb_frag_size(frag);
-	return kmap_atomic(skb_frag_page(frag)) + skb_frag_off(frag);
+	return kmap_atomic(skb_frag_page(frag)) + frag->page_offset;
 }
 
 static netdev_tx_t tbnet_start_xmit(struct sk_buff *skb,
@@ -1221,19 +1177,17 @@ static void tbnet_generate_mac(struct net_device *dev)
 {
 	const struct tbnet *net = netdev_priv(dev);
 	const struct tb_xdomain *xd = net->xd;
-	u8 addr[ETH_ALEN];
 	u8 phy_port;
 	u32 hash;
 
 	phy_port = tb_phy_port_from_link(TBNET_L0_PORT_NUM(xd->route));
 
 	/* Unicast and locally administered MAC */
-	addr[0] = phy_port << 4 | 0x02;
+	dev->dev_addr[0] = phy_port << 4 | 0x02;
 	hash = jhash2((u32 *)xd->local_uuid, 4, 0);
-	memcpy(addr + 1, &hash, sizeof(hash));
+	memcpy(dev->dev_addr + 1, &hash, sizeof(hash));
 	hash = jhash2((u32 *)xd->local_uuid, 4, hash);
-	addr[5] = hash & 0xff;
-	eth_hw_addr_set(dev, addr);
+	dev->dev_addr[5] = hash & 0xff;
 }
 
 static int tbnet_probe(struct tb_service *svc, const struct tb_service_id *id)
@@ -1283,14 +1237,14 @@ static int tbnet_probe(struct tb_service *svc, const struct tb_service_id *id)
 	dev->features = dev->hw_features | NETIF_F_HIGHDMA;
 	dev->hard_header_len += sizeof(struct thunderbolt_ip_frame_header);
 
-	netif_napi_add(dev, &net->napi, tbnet_poll);
+	netif_napi_add(dev, &net->napi, tbnet_poll, NAPI_POLL_WEIGHT);
 
 	/* MTU range: 68 - 65522 */
 	dev->min_mtu = ETH_MIN_MTU;
 	dev->max_mtu = TBNET_MAX_MTU - ETH_HLEN;
 
 	net->handler.uuid = &tbnet_svc_uuid;
-	net->handler.callback = tbnet_handle_packet;
+	net->handler.callback = tbnet_handle_packet,
 	net->handler.data = net;
 	tb_register_protocol_handler(&net->handler);
 
@@ -1331,7 +1285,6 @@ static int __maybe_unused tbnet_suspend(struct device *dev)
 		tbnet_tear_down(net, true);
 	}
 
-	tb_unregister_protocol_handler(&net->handler);
 	return 0;
 }
 
@@ -1339,8 +1292,6 @@ static int __maybe_unused tbnet_resume(struct device *dev)
 {
 	struct tb_service *svc = tb_to_service(dev);
 	struct tbnet *net = tb_service_get_drvdata(svc);
-
-	tb_register_protocol_handler(&net->handler);
 
 	netif_carrier_off(net->dev);
 	if (netif_running(net->dev)) {
@@ -1375,7 +1326,6 @@ static struct tb_service_driver tbnet_driver = {
 
 static int __init tbnet_init(void)
 {
-	unsigned int flags;
 	int ret;
 
 	tbnet_dir = tb_property_create_dir(&tbnet_dir_uuid);
@@ -1385,28 +1335,16 @@ static int __init tbnet_init(void)
 	tb_property_add_immediate(tbnet_dir, "prtcid", 1);
 	tb_property_add_immediate(tbnet_dir, "prtcvers", 1);
 	tb_property_add_immediate(tbnet_dir, "prtcrevs", 1);
-
-	flags = TBNET_MATCH_FRAGS_ID | TBNET_64K_FRAMES;
-	if (tbnet_e2e)
-		flags |= TBNET_E2E;
-	tb_property_add_immediate(tbnet_dir, "prtcstns", flags);
+	tb_property_add_immediate(tbnet_dir, "prtcstns",
+				  TBNET_MATCH_FRAGS_ID);
 
 	ret = tb_register_property_dir("network", tbnet_dir);
-	if (ret)
-		goto err_free_dir;
+	if (ret) {
+		tb_property_free_dir(tbnet_dir);
+		return ret;
+	}
 
-	ret = tb_register_service_driver(&tbnet_driver);
-	if (ret)
-		goto err_unregister;
-
-	return 0;
-
-err_unregister:
-	tb_unregister_property_dir("network", tbnet_dir);
-err_free_dir:
-	tb_property_free_dir(tbnet_dir);
-
-	return ret;
+	return tb_register_service_driver(&tbnet_driver);
 }
 module_init(tbnet_init);
 
@@ -1421,5 +1359,5 @@ module_exit(tbnet_exit);
 MODULE_AUTHOR("Amir Levy <amir.jer.levy@intel.com>");
 MODULE_AUTHOR("Michael Jamet <michael.jamet@intel.com>");
 MODULE_AUTHOR("Mika Westerberg <mika.westerberg@linux.intel.com>");
-MODULE_DESCRIPTION("Thunderbolt/USB4 network driver");
+MODULE_DESCRIPTION("Thunderbolt network driver");
 MODULE_LICENSE("GPL v2");

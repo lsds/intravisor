@@ -74,13 +74,6 @@ struct idt_bits {
 			p	: 1;
 } __attribute__((packed));
 
-struct idt_data {
-	unsigned int	vector;
-	unsigned int	segment;
-	struct idt_bits	bits;
-	const void	*addr;
-};
-
 struct gate_struct {
 	u16		offset_low;
 	u16		segment;
@@ -115,9 +108,6 @@ struct desc_ptr {
 } __attribute__((packed)) ;
 
 #endif /* !__ASSEMBLY__ */
-
-/* Boot IDT definitions */
-#define	BOOT_IDT_ENTRIES	32
 
 /* Access rights as returned by LAR */
 #define AR_TYPE_RODATA		(0 * (1 << 9))

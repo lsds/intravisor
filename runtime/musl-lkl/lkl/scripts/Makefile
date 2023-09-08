@@ -2,45 +2,46 @@
 ###
 # scripts contains sources for various helper programs used throughout
 # the kernel for the build process.
+# ---------------------------------------------------------------------------
+# kallsyms:      Find all symbols in vmlinux
+# pnmttologo:    Convert pnm files to logo files
+# conmakehash:   Create chartable
+# conmakehash:	 Create arrays for initializing the kernel console tables
 
-hostprogs-always-$(CONFIG_BUILD_BIN2C)			+= bin2c
-hostprogs-always-$(CONFIG_KALLSYMS)			+= kallsyms
-hostprogs-always-$(BUILD_C_RECORDMCOUNT)		+= recordmcount
-hostprogs-always-$(CONFIG_BUILDTIME_TABLE_SORT)		+= sorttable
-hostprogs-always-$(CONFIG_ASN1)				+= asn1_compiler
-hostprogs-always-$(CONFIG_MODULE_SIG_FORMAT)		+= sign-file
-hostprogs-always-$(CONFIG_SYSTEM_EXTRA_CERTIFICATE)	+= insert-sys-cert
-hostprogs-always-$(CONFIG_RUST)				+= generate_rust_target
+HOST_EXTRACFLAGS += -I$(srctree)/tools/include
 
-generate_rust_target-rust := y
+hostprogs-$(CONFIG_KALLSYMS)     += kallsyms
+hostprogs-$(CONFIG_LOGO)         += pnmtologo
+hostprogs-$(CONFIG_VT)           += conmakehash
+hostprogs-$(BUILD_C_RECORDMCOUNT) += recordmcount
+hostprogs-$(CONFIG_BUILDTIME_EXTABLE_SORT) += sortextable
+hostprogs-$(CONFIG_ASN1)	 += asn1_compiler
+hostprogs-$(CONFIG_MODULE_SIG)	 += sign-file
+hostprogs-$(CONFIG_SYSTEM_TRUSTED_KEYRING) += extract-cert
+hostprogs-$(CONFIG_SYSTEM_EXTRA_CERTIFICATE) += insert-sys-cert
 
-HOSTCFLAGS_sorttable.o = -I$(srctree)/tools/include
-HOSTLDLIBS_sorttable = -lpthread
+HOSTCFLAGS_sortextable.o = -I$(srctree)/tools/include
 HOSTCFLAGS_asn1_compiler.o = -I$(srctree)/include
-HOSTCFLAGS_sign-file.o = $(shell $(HOSTPKG_CONFIG) --cflags libcrypto 2> /dev/null)
-HOSTLDLIBS_sign-file = $(shell $(HOSTPKG_CONFIG) --libs libcrypto 2> /dev/null || echo -lcrypto)
+HOSTLOADLIBES_sign-file = -lcrypto
+HOSTLOADLIBES_extract-cert = -lcrypto
 
-ifdef CONFIG_UNWINDER_ORC
-ifeq ($(ARCH),x86_64)
-ARCH := x86
-endif
-HOSTCFLAGS_sorttable.o += -I$(srctree)/tools/arch/x86/include
-HOSTCFLAGS_sorttable.o += -DUNWINDER_ORC_ENABLED
-endif
+always		:= $(hostprogs-y) $(hostprogs-m)
 
-ifdef CONFIG_BUILDTIME_MCOUNT_SORT
-HOSTCFLAGS_sorttable.o += -DMCOUNT_SORT_ENABLED
-endif
+# The following hostprogs-y programs are only build on demand
+hostprogs-y += unifdef
 
-# The following programs are only built on demand
-hostprogs += unifdef
+# These targets are used internally to avoid "is up to date" messages
+PHONY += build_unifdef
+build_unifdef: $(obj)/unifdef
+	@:
 
-# The module linker script is preprocessed on demand
-targets += module.lds
-
-subdir-$(CONFIG_GCC_PLUGINS) += gcc-plugins
 subdir-$(CONFIG_MODVERSIONS) += genksyms
+ifeq ($(findstring elf,$(if $(CONFIG_OUTPUT_FORMAT),$(CONFIG_OUTPUT_FORMAT),elf)),elf)
+subdir-y                     += mod
+endif
 subdir-$(CONFIG_SECURITY_SELINUX) += selinux
+subdir-$(CONFIG_DTC)         += dtc
+subdir-$(CONFIG_GDB_SCRIPTS) += gdb
 
 # Let clean descend into subdirs
-subdir-	+= basic dtc gdb kconfig mod
+subdir-	+= basic kconfig package gcc-plugins

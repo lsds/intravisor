@@ -113,7 +113,7 @@ struct net_local {
 
 /* Index to functions, as function prototypes. */
 static int net_open(struct net_device *dev);
-static netdev_tx_t net_send_packet(struct sk_buff *skb, struct net_device *dev);
+static int net_send_packet(struct sk_buff *skb, struct net_device *dev);
 static irqreturn_t net_interrupt(int irq, void *dev_id);
 static void set_multicast_list(struct net_device *dev);
 static void net_rx(struct net_device *dev);
@@ -242,15 +242,12 @@ static int mac89x0_device_probe(struct platform_device *pdev)
 		pr_info("No EEPROM, giving up now.\n");
 		goto out1;
         } else {
-		u8 addr[ETH_ALEN];
-
                 for (i = 0; i < ETH_ALEN; i += 2) {
 			/* Big-endian (why??!) */
 			unsigned short s = readreg(dev, PP_IA + i);
-			addr[i] = s >> 8;
-			addr[i+1] = s & 0xff;
+                        dev->dev_addr[i] = s >> 8;
+                        dev->dev_addr[i+1] = s & 0xff;
                 }
-		eth_hw_addr_set(dev, addr);
         }
 
 	dev->irq = SLOT2IRQ(slot);
@@ -327,7 +324,7 @@ net_open(struct net_device *dev)
 	return 0;
 }
 
-static netdev_tx_t
+static int
 net_send_packet(struct sk_buff *skb, struct net_device *dev)
 {
 	struct net_local *lp = netdev_priv(dev);
@@ -544,7 +541,7 @@ static int set_mac_address(struct net_device *dev, void *addr)
 	if (!is_valid_ether_addr(saddr->sa_data))
 		return -EADDRNOTAVAIL;
 
-	eth_hw_addr_set(dev, saddr->sa_data);
+	memcpy(dev->dev_addr, saddr->sa_data, ETH_ALEN);
 	netdev_info(dev, "Setting MAC address to %pM\n", dev->dev_addr);
 
 	/* set the Ethernet address */

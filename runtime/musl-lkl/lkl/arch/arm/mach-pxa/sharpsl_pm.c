@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Battery and Power Management code for the Sharp SL-C7xx and SL-Cxx00
  * series of PDAs
@@ -6,6 +5,11 @@
  * Copyright (c) 2004-2005 Richard Purdie
  *
  * Based on code written by Sharp for 2.4 kernels
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ *
  */
 
 #undef DEBUG
@@ -24,7 +28,7 @@
 
 #include <asm/mach-types.h>
 #include "pm.h"
-#include "pxa2xx-regs.h"
+#include <mach/pxa2xx-regs.h>
 #include "regs-rtc.h"
 #include "sharpsl_pm.h"
 

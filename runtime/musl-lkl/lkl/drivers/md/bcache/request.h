@@ -8,7 +8,7 @@ struct data_insert_op {
 	struct bio		*bio;
 	struct workqueue_struct *wq;
 
-	unsigned int		inode;
+	unsigned		inode;
 	uint16_t		write_point;
 	uint16_t		write_prio;
 	blk_status_t		status;
@@ -17,15 +17,15 @@ struct data_insert_op {
 		uint16_t	flags;
 
 	struct {
-		unsigned int	bypass:1;
-		unsigned int	writeback:1;
-		unsigned int	flush_journal:1;
-		unsigned int	csum:1;
+		unsigned	bypass:1;
+		unsigned	writeback:1;
+		unsigned	flush_journal:1;
+		unsigned	csum:1;
 
-		unsigned int	replace:1;
-		unsigned int	replace_collision:1;
+		unsigned	replace:1;
+		unsigned	replace_collision:1;
 
-		unsigned int	insert_data_done:1;
+		unsigned	insert_data_done:1;
 	};
 	};
 
@@ -33,15 +33,12 @@ struct data_insert_op {
 	BKEY_PADDED(replace_key);
 };
 
-unsigned int bch_get_congested(const struct cache_set *c);
+unsigned bch_get_congested(struct cache_set *);
 void bch_data_insert(struct closure *cl);
 
 void bch_cached_dev_request_init(struct cached_dev *dc);
-void cached_dev_submit_bio(struct bio *bio);
-
 void bch_flash_dev_request_init(struct bcache_device *d);
-void flash_dev_submit_bio(struct bio *bio);
 
-extern struct kmem_cache *bch_search_cache;
+extern struct kmem_cache *bch_search_cache, *bch_passthrough_cache;
 
 #endif /* _BCACHE_REQUEST_H_ */

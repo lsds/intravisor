@@ -1,10 +1,14 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
+ * linux/kernel/time/clockevents.c
+ *
  * This file contains functions which manage clock event devices.
  *
  * Copyright(C) 2005-2006, Thomas Gleixner <tglx@linutronix.de>
  * Copyright(C) 2005-2007, Red Hat, Inc., Ingo Molnar
  * Copyright(C) 2006-2007, Timesys Corp., Thomas Gleixner
+ *
+ * This code is licenced under the GPL version 2. For details see
+ * kernel-base/COPYING.
  */
 
 #include <linux/clockchips.h>
@@ -35,8 +39,10 @@ static u64 cev_delta2ns(unsigned long latch, struct clock_event_device *evt,
 	u64 clc = (u64) latch << evt->shift;
 	u64 rnd;
 
-	if (WARN_ON(!evt->mult))
+	if (unlikely(!evt->mult)) {
 		evt->mult = 1;
+		WARN_ON(1);
+	}
 	rnd = (u64) evt->mult - 1;
 
 	/*
@@ -158,8 +164,10 @@ void clockevents_switch_state(struct clock_event_device *dev,
 		 * on it, so fix it up and emit a warning:
 		 */
 		if (clockevent_state_oneshot(dev)) {
-			if (WARN_ON(!dev->mult))
+			if (unlikely(!dev->mult)) {
 				dev->mult = 1;
+				WARN_ON(1);
+			}
 		}
 	}
 }
@@ -307,8 +315,10 @@ int clockevents_program_event(struct clock_event_device *dev, ktime_t expires,
 	int64_t delta;
 	int rc;
 
-	if (WARN_ON_ONCE(expires < 0))
+	if (unlikely(expires < 0)) {
+		WARN_ON_ONCE(1);
 		return -ETIME;
+	}
 
 	dev->next_event = expires;
 
@@ -347,7 +357,8 @@ static void clockevents_notify_released(void)
 	while (!list_empty(&clockevents_released)) {
 		dev = list_entry(clockevents_released.next,
 				 struct clock_event_device, list);
-		list_move(&dev->list, &clockevent_devices);
+		list_del(&dev->list);
+		list_add(&dev->list, &clockevent_devices);
 		tick_check_new_device(dev);
 	}
 }
@@ -450,12 +461,6 @@ void clockevents_register_device(struct clock_event_device *dev)
 	if (!dev->cpumask) {
 		WARN_ON(num_possible_cpus() > 1);
 		dev->cpumask = cpumask_of(smp_processor_id());
-	}
-
-	if (dev->cpumask == cpu_all_mask) {
-		WARN(1, "%s cpumask == cpu_all_mask, using cpu_possible_mask instead\n",
-		     dev->name);
-		dev->cpumask = cpu_possible_mask;
 	}
 
 	raw_spin_lock_irqsave(&clockevents_lock, flags);
@@ -575,7 +580,8 @@ void clockevents_exchange_device(struct clock_event_device *old,
 	if (old) {
 		module_put(old->owner);
 		clockevents_switch_state(old, CLOCK_EVT_STATE_DETACHED);
-		list_move(&old->list, &clockevents_released);
+		list_del(&old->list);
+		list_add(&old->list, &clockevents_released);
 	}
 
 	if (new) {
@@ -609,25 +615,8 @@ void clockevents_resume(void)
 }
 
 #ifdef CONFIG_HOTPLUG_CPU
-
-# ifdef CONFIG_GENERIC_CLOCKEVENTS_BROADCAST
-/**
- * tick_offline_cpu - Take CPU out of the broadcast mechanism
- * @cpu:	The outgoing CPU
- *
- * Called on the outgoing CPU after it took itself offline.
- */
-void tick_offline_cpu(unsigned int cpu)
-{
-	raw_spin_lock(&clockevents_lock);
-	tick_broadcast_offline(cpu);
-	raw_spin_unlock(&clockevents_lock);
-}
-# endif
-
 /**
  * tick_cleanup_dead_cpu - Cleanup the tick and clockevents of a dead cpu
- * @cpu:	The dead CPU
  */
 void tick_cleanup_dead_cpu(int cpu)
 {
@@ -636,6 +625,8 @@ void tick_cleanup_dead_cpu(int cpu)
 
 	raw_spin_lock_irqsave(&clockevents_lock, flags);
 
+	tick_shutdown_broadcast_oneshot(cpu);
+	tick_shutdown_broadcast(cpu);
 	tick_shutdown(cpu);
 	/*
 	 * Unregister the clock event devices which were
@@ -667,9 +658,9 @@ static struct bus_type clockevents_subsys = {
 static DEFINE_PER_CPU(struct device, tick_percpu_dev);
 static struct tick_device *tick_get_tick_dev(struct device *dev);
 
-static ssize_t current_device_show(struct device *dev,
-				   struct device_attribute *attr,
-				   char *buf)
+static ssize_t sysfs_show_current_tick_dev(struct device *dev,
+					   struct device_attribute *attr,
+					   char *buf)
 {
 	struct tick_device *td;
 	ssize_t count = 0;
@@ -681,16 +672,16 @@ static ssize_t current_device_show(struct device *dev,
 	raw_spin_unlock_irq(&clockevents_lock);
 	return count;
 }
-static DEVICE_ATTR_RO(current_device);
+static DEVICE_ATTR(current_device, 0444, sysfs_show_current_tick_dev, NULL);
 
 /* We don't support the abomination of removable broadcast devices */
-static ssize_t unbind_device_store(struct device *dev,
-				   struct device_attribute *attr,
-				   const char *buf, size_t count)
+static ssize_t sysfs_unbind_tick_dev(struct device *dev,
+				     struct device_attribute *attr,
+				     const char *buf, size_t count)
 {
 	char name[CS_NAME_LEN];
 	ssize_t ret = sysfs_get_uname(buf, name, count);
-	struct clock_event_device *ce = NULL, *iter;
+	struct clock_event_device *ce;
 
 	if (ret < 0)
 		return ret;
@@ -698,10 +689,9 @@ static ssize_t unbind_device_store(struct device *dev,
 	ret = -ENODEV;
 	mutex_lock(&clockevents_mutex);
 	raw_spin_lock_irq(&clockevents_lock);
-	list_for_each_entry(iter, &clockevent_devices, list) {
-		if (!strcmp(iter->name, name)) {
-			ret = __clockevents_try_unbind(iter, dev->id);
-			ce = iter;
+	list_for_each_entry(ce, &clockevent_devices, list) {
+		if (!strcmp(ce->name, name)) {
+			ret = __clockevents_try_unbind(ce, dev->id);
 			break;
 		}
 	}
@@ -714,7 +704,7 @@ static ssize_t unbind_device_store(struct device *dev,
 	mutex_unlock(&clockevents_mutex);
 	return ret ? ret : count;
 }
-static DEVICE_ATTR_WO(unbind_device);
+static DEVICE_ATTR(unbind_device, 0200, NULL, sysfs_unbind_tick_dev);
 
 #ifdef CONFIG_GENERIC_CLOCKEVENTS_BROADCAST
 static struct device tick_bc_dev = {

@@ -1,5 +1,3 @@
-.. _process_howto:
-
 HOWTO do Linux kernel development
 =================================
 
@@ -36,7 +34,7 @@ experience, the following books are good for, if anything, reference:
  - "C:  A Reference Manual" by Harbison and Steele [Prentice Hall]
 
 The kernel is written using GNU C and the GNU toolchain.  While it
-adheres to the ISO C11 standard, it uses a number of extensions that are
+adheres to the ISO C89 standard, it uses a number of extensions that are
 not featured in the standard.  The kernel is a freestanding C
 environment, with no reliance on the standard C library, so some
 portions of the C standard are not supported.  Arbitrary long long
@@ -59,13 +57,12 @@ of doing things.
 Legal Issues
 ------------
 
-The Linux kernel source code is released under the GPL.  Please see the file
-COPYING in the main directory of the source tree. The Linux kernel licensing
-rules and how to use `SPDX <https://spdx.org/>`_ identifiers in source code are
-described in :ref:`Documentation/process/license-rules.rst <kernel_licensing>`.
-If you have further questions about the license, please contact a lawyer, and do
-not ask on the Linux kernel mailing list.  The people on the mailing lists are
-not lawyers, and you should not rely on their statements on legal matters.
+The Linux kernel source code is released under the GPL.  Please see the
+file, COPYING, in the main directory of the source tree, for details on
+the license.  If you have further questions about the license, please
+contact a lawyer, and do not ask on the Linux kernel mailing list.  The
+people on the mailing lists are not lawyers, and you should not rely on
+their statements on legal matters.
 
 For common questions and answers about the GPL, please see:
 
@@ -88,7 +85,7 @@ linux-api@vger.kernel.org.
 Here is a list of files that are in the kernel source tree that are
 required reading:
 
-  :ref:`Documentation/admin-guide/README.rst <readme>`
+  README
     This file gives a short background on the Linux kernel and describes
     what is necessary to do to configure and build the kernel.  People
     who are new to the kernel should start here.
@@ -105,8 +102,8 @@ required reading:
     patches if these rules are followed, and many people will only
     review code if it is in the proper style.
 
-  :ref:`Documentation/process/submitting-patches.rst <submittingpatches>`
-    This file describes in explicit detail how to successfully create
+  :ref:`Documentation/process/submitting-patches.rst <submittingpatches>` and :ref:`Documentation/process/submitting-drivers.rst <submittingdrivers>`
+    These files describe in explicit detail how to successfully create
     and send a patch, including (but not limited to):
 
        - Email contents
@@ -123,7 +120,7 @@ required reading:
 		https://www.ozlabs.org/~akpm/stuff/tpp.txt
 
 	"Linux kernel patch submission format"
-		https://web.archive.org/web/20180829112450/http://linux.yyz.us/patch-format.html
+		http://linux.yyz.us/patch-format.html
 
   :ref:`Documentation/process/stable-api-nonsense.rst <stable_api_nonsense>`
     This file describes the rationale behind the conscious decision to
@@ -225,7 +222,7 @@ Cross-Reference project, which is able to present source code in a
 self-referential, indexed webpage format. An excellent up-to-date
 repository of the kernel code may be found at:
 
-	https://elixir.bootlin.com/
+	http://lxr.free-electrons.com/
 
 
 The development process
@@ -235,21 +232,23 @@ Linux kernel development process currently consists of a few different
 main kernel "branches" and lots of different subsystem-specific kernel
 branches.  These different branches are:
 
-  - Linus's mainline tree
-  - Various stable trees with multiple major numbers
-  - Subsystem-specific trees
-  - linux-next integration testing tree
+  - main 4.x kernel tree
+  - 4.x.y -stable kernel tree
+  - 4.x -git kernel patches
+  - subsystem specific kernel trees and patches
+  - the 4.x -next kernel tree for integration tests
 
-Mainline tree
-~~~~~~~~~~~~~
+4.x kernel tree
+~~~~~~~~~~~~~~~
 
-The mainline tree is maintained by Linus Torvalds, and can be found at
-https://kernel.org or in the repo.  Its development process is as follows:
+4.x kernels are maintained by Linus Torvalds, and can be found on
+https://kernel.org in the pub/linux/kernel/v4.x/ directory.  Its development
+process is as follows:
 
-  - As soon as a new kernel is released a two week window is open,
+  - As soon as a new kernel is released a two weeks window is open,
     during this period of time maintainers can submit big diffs to
     Linus, usually the patches that have already been included in the
-    linux-next for a few weeks.  The preferred way to submit big changes
+    -next kernel for a few weeks.  The preferred way to submit big changes
     is using git (the kernel's source management tool, more information
     can be found at https://git-scm.com/) but plain patches are also just
     fine.
@@ -276,31 +275,41 @@ mailing list about kernel releases:
 	released according to perceived bug status, not according to a
 	preconceived timeline."*
 
-Various stable trees with multiple major numbers
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+4.x.y -stable kernel tree
+~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Kernels with 3-part versions are -stable kernels. They contain
 relatively small and critical fixes for security problems or significant
-regressions discovered in a given major mainline release. Each release
-in a major stable series increments the third part of the version
-number, keeping the first two parts the same.
+regressions discovered in a given 4.x kernel.
 
 This is the recommended branch for users who want the most recent stable
 kernel and are not interested in helping test development/experimental
 versions.
 
-Stable trees are maintained by the "stable" team <stable@vger.kernel.org>, and
+If no 4.x.y kernel is available, then the highest numbered 4.x
+kernel is the current stable kernel.
+
+4.x.y are maintained by the "stable" team <stable@vger.kernel.org>, and
 are released as needs dictate.  The normal release period is approximately
 two weeks, but it can be longer if there are no pressing problems.  A
 security-related problem, instead, can cause a release to happen almost
 instantly.
 
-The file :ref:`Documentation/process/stable-kernel-rules.rst <stable_kernel_rules>`
-in the kernel tree documents what kinds of changes are acceptable for
-the -stable tree, and how the release process works.
+The file Documentation/process/stable-kernel-rules.rst in the kernel tree
+documents what kinds of changes are acceptable for the -stable tree, and
+how the release process works.
 
-Subsystem-specific trees
-~~~~~~~~~~~~~~~~~~~~~~~~
+4.x -git patches
+~~~~~~~~~~~~~~~~
+
+These are daily snapshots of Linus' kernel tree which are managed in a
+git repository (hence the name.) These patches are usually released
+daily and represent the current state of Linus' tree.  They are more
+experimental than -rc kernels since they are generated automatically
+without even a cursory glance to see if they are sane.
+
+Subsystem Specific kernel trees and patches
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 The maintainers of the various kernel subsystems --- and also many
 kernel subsystem developers --- expose their current state of
@@ -324,28 +333,34 @@ revisions to it, and maintainers can mark patches as under review,
 accepted, or rejected.  Most of these patchwork sites are listed at
 https://patchwork.kernel.org/.
 
-linux-next integration testing tree
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+4.x -next kernel tree for integration tests
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Before updates from subsystem trees are merged into the mainline tree,
-they need to be integration-tested.  For this purpose, a special
+Before updates from subsystem trees are merged into the mainline 4.x
+tree, they need to be integration-tested.  For this purpose, a special
 testing repository exists into which virtually all subsystem trees are
 pulled on an almost daily basis:
 
 	https://git.kernel.org/?p=linux/kernel/git/next/linux-next.git
 
-This way, the linux-next gives a summary outlook onto what will be
+This way, the -next kernel gives a summary outlook onto what will be
 expected to go into the mainline kernel at the next merge period.
-Adventurous testers are very welcome to runtime-test the linux-next.
+Adventurous testers are very welcome to runtime-test the -next kernel.
 
 
 Bug Reporting
 -------------
 
-The file 'Documentation/admin-guide/reporting-issues.rst' in the main kernel
-source directory describes how to report a possible kernel bug, and details
-what kind of information is needed by the kernel developers to help track
-down the problem.
+https://bugzilla.kernel.org is where the Linux kernel developers track kernel
+bugs.  Users are encouraged to report all bugs that they find in this
+tool.  For details on how to use the kernel bugzilla, please see:
+
+	https://bugzilla.kernel.org/page.cgi?id=faq.html
+
+The file admin-guide/reporting-bugs.rst in the main kernel source directory has a good
+template for how to report a possible kernel bug, and details what kind
+of information is needed by the kernel developers to help track down the
+problem.
 
 
 Managing bug reports
@@ -353,18 +368,12 @@ Managing bug reports
 
 One of the best ways to put into practice your hacking skills is by fixing
 bugs reported by other people. Not only you will help to make the kernel
-more stable, but you'll also learn to fix real world problems and you will
-improve your skills, and other developers will be aware of your presence.
-Fixing bugs is one of the best ways to get merits among other developers,
-because not many people like wasting time fixing other people's bugs.
+more stable, you'll learn to fix real world problems and you will improve
+your skills, and other developers will be aware of your presence. Fixing
+bugs is one of the best ways to get merits among other developers, because
+not many people like wasting time fixing other people's bugs.
 
-To work on already reported bug reports, find a subsystem you are interested in.
-Check the MAINTAINERS file where bugs for that subsystem get reported to; often
-it will be a mailing list, rarely a bugtracker. Search the archives of said
-place for recent reports and help where you see fit. You may also want to check
-https://bugzilla.kernel.org for bug reports; only a handful of kernel subsystems
-use it actively for reporting or tracking, nevertheless bugs for the whole
-kernel get filed there.
+To work in the already reported bug reports, go to https://bugzilla.kernel.org.
 
 
 Mailing lists
@@ -379,7 +388,7 @@ to subscribe and unsubscribe from the list can be found at:
 There are archives of the mailing list on the web in many different
 places.  Use a search engine to find these archives.  For example:
 
-	https://lore.kernel.org/lkml/
+	http://dir.gmane.org/gmane.linux.kernel
 
 It is highly recommended that you search the archives about the topic
 you want to bring up, before you post it to the list. A lot of things
@@ -414,7 +423,7 @@ add your statements between the individual quoted sections instead of
 writing at the top of the mail.
 
 If you add patches to your mail, make sure they are plain readable text
-as stated in :ref:`Documentation/process/submitting-patches.rst <submittingpatches>`.
+as stated in Documentation/process/submitting-patches.rst.
 Kernel developers don't want to deal with
 attachments or compressed patches; they may want to comment on
 individual lines of your patch, which works only that way. Make sure you
@@ -596,7 +605,7 @@ For more details on what this should all look like, please see the
 ChangeLog section of the document:
 
   "The Perfect Patch"
-      https://www.ozlabs.org/~akpm/stuff/tpp.txt
+      http://www.ozlabs.org/~akpm/stuff/tpp.txt
 
 
 All of these things are sometimes very hard to do. It can take years to

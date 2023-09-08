@@ -1,9 +1,21 @@
-// SPDX-License-Identifier: GPL-2.0
 /******************************************************************************
  * rtl8712_led.c
  *
  * Copyright(c) 2007 - 2010  Realtek Corporation. All rights reserved.
  * Linux device driver for RTL8192SU
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of version 2 of the GNU General Public License as
+ * published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+ * more details.
+ *
+ * You should have received a copy of the GNU General Public License along with
+ * this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110, USA
  *
  * Modifications for inclusion into the Linux staging tree are
  * Copyright(c) 2010 Larry Finger. All rights reserved.
@@ -75,8 +87,11 @@ static void BlinkWorkItemCallback(struct work_struct *work);
  *		Initialize an LED_871x object.
  */
 static void InitLed871x(struct _adapter *padapter, struct LED_871x *pLed,
-			enum LED_PIN_871x	LedPin)
+		 enum LED_PIN_871x	LedPin)
 {
+	struct  net_device *nic;
+
+	nic = padapter->pnetdev;
 	pLed->padapter = padapter;
 	pLed->LedPin = LedPin;
 	pLed->CurrLedState = LED_STATE_OFF;
@@ -109,7 +124,7 @@ static void SwLedOn(struct _adapter *padapter, struct LED_871x *pLed)
 {
 	u8	LedCfg;
 
-	if (padapter->surprise_removed || padapter->driver_stopped)
+	if (padapter->bSurpriseRemoved || padapter->bDriverStopped)
 		return;
 	LedCfg = r8712_read8(padapter, LEDCFG);
 	switch (pLed->LedPin) {
@@ -137,7 +152,7 @@ static void SwLedOff(struct _adapter *padapter, struct LED_871x *pLed)
 {
 	u8	LedCfg;
 
-	if (padapter->surprise_removed || padapter->driver_stopped)
+	if (padapter->bSurpriseRemoved || padapter->bDriverStopped)
 		return;
 	LedCfg = r8712_read8(padapter, LEDCFG);
 	switch (pLed->LedPin) {
@@ -419,7 +434,7 @@ static void SwLedBlink1(struct LED_871x *pLed)
 static void SwLedBlink2(struct LED_871x *pLed)
 {
 	struct _adapter *padapter = pLed->padapter;
-	struct mlme_priv *pmlmepriv = &padapter->mlmepriv;
+	struct mlme_priv *pmlmepriv = &(padapter->mlmepriv);
 	u8 bStopBlinking = false;
 
 	/* Change LED according to BlinkingLedState specified. */
@@ -816,7 +831,7 @@ static void BlinkTimerCallback(struct timer_list *t)
 	/* This fixed the crash problem on Fedora 12 when trying to do the
 	 * insmod;ifconfig up;rmmod commands.
 	 */
-	if (pLed->padapter->surprise_removed || pLed->padapter->driver_stopped)
+	if (pLed->padapter->bSurpriseRemoved || pLed->padapter->bDriverStopped)
 		return;
 	schedule_work(&pLed->BlinkWorkItem);
 }
@@ -883,7 +898,7 @@ static void SwLedControlMode1(struct _adapter *padapter,
 	case LED_CTL_NO_LINK:
 		if (!pLed->bLedNoLinkBlinkInProgress) {
 			if (pLed->CurrLedState == LED_SCAN_BLINK ||
-			    IS_LED_WPS_BLINKING(pLed))
+			  IS_LED_WPS_BLINKING(pLed))
 				return;
 			if (pLed->bLedLinkBlinkInProgress) {
 				del_timer(&pLed->BlinkTimer);
@@ -939,7 +954,7 @@ static void SwLedControlMode1(struct _adapter *padapter,
 			}
 			if (pLed->bLedLinkBlinkInProgress) {
 				del_timer(&pLed->BlinkTimer);
-				pLed->bLedLinkBlinkInProgress = false;
+				 pLed->bLedLinkBlinkInProgress = false;
 			}
 			if (pLed->bLedBlinkInProgress) {
 				del_timer(&pLed->BlinkTimer);
@@ -991,7 +1006,7 @@ static void SwLedControlMode1(struct _adapter *padapter,
 			}
 			if (pLed->bLedLinkBlinkInProgress) {
 				del_timer(&pLed->BlinkTimer);
-				pLed->bLedLinkBlinkInProgress = false;
+				 pLed->bLedLinkBlinkInProgress = false;
 			}
 			if (pLed->bLedBlinkInProgress) {
 				del_timer(&pLed->BlinkTimer);
@@ -1018,7 +1033,7 @@ static void SwLedControlMode1(struct _adapter *padapter,
 		}
 		if (pLed->bLedLinkBlinkInProgress) {
 			del_timer(&pLed->BlinkTimer);
-			pLed->bLedLinkBlinkInProgress = false;
+			 pLed->bLedLinkBlinkInProgress = false;
 		}
 		if (pLed->bLedBlinkInProgress) {
 			del_timer(&pLed->BlinkTimer);
@@ -1124,7 +1139,7 @@ static void SwLedControlMode2(struct _adapter *padapter,
 		if (!pLed->bLedBlinkInProgress &&
 		    check_fwstate(pmlmepriv, _FW_LINKED)) {
 			if (pLed->CurrLedState == LED_SCAN_BLINK ||
-			    IS_LED_WPS_BLINKING(pLed))
+			   IS_LED_WPS_BLINKING(pLed))
 				return;
 			pLed->bLedBlinkInProgress = true;
 			pLed->CurrLedState = LED_TXRX_BLINK;
@@ -1704,6 +1719,7 @@ static void SwLedControlMode5(struct _adapter *padapter,
 	}
 }
 
+
 static void SwLedControlMode6(struct _adapter *padapter,
 			      enum LED_CTL_MODE LedAction)
 {
@@ -1819,12 +1835,4 @@ void LedControl871x(struct _adapter *padapter, enum LED_CTL_MODE LedAction)
 	default:
 		break;
 	}
-}
-
-void r8712_flush_led_works(struct _adapter *padapter)
-{
-	struct led_priv *pledpriv = &padapter->ledpriv;
-
-	flush_work(&pledpriv->SwLed0.BlinkWorkItem);
-	flush_work(&pledpriv->SwLed1.BlinkWorkItem);
 }

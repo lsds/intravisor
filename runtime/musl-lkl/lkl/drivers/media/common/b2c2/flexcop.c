@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: LGPL-2.1-or-later
 /*
  * Linux driver for digital TV devices equipped with B2C2 FlexcopII(b)/III
  * flexcop.c - main module part
@@ -16,6 +15,16 @@
  *   Uwe Bugla, uwe.bugla at gmx.de (doing tests, restyling code, writing docu)
  *   Niklas Peinecke, peinecke at gdv.uni-hannover.de (hardware pid/mac
  *               filtering)
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public License
+ * as published by the Free Software Foundation; either version 2.1
+ * of the License, or (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
  */
 
 #include "flexcop.h"
@@ -33,7 +42,7 @@ int b2c2_flexcop_debug;
 EXPORT_SYMBOL_GPL(b2c2_flexcop_debug);
 module_param_named(debug, b2c2_flexcop_debug,  int, 0644);
 MODULE_PARM_DESC(debug,
-		"set debug level (1=info,2=tuner,4=i2c,8=ts,16=sram,32=reg,64=i2cdump (|-able))."
+		"set debug level (1=info,2=tuner,4=i2c,8=ts,16=sram,32=reg (|-able))."
 		DEBSTATUS);
 #undef DEBSTATUS
 

@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: GPL-2.0 */
+// SPDX-License-Identifier: GPL-2.0
 /*
  * mtu3.h - MediaTek USB3 DRD header
  *
@@ -10,7 +10,6 @@
 #ifndef __MTU3_H__
 #define __MTU3_H__
 
-#include <linux/clk.h>
 #include <linux/device.h>
 #include <linux/dmapool.h>
 #include <linux/extcon.h>
@@ -22,7 +21,6 @@
 #include <linux/usb/ch9.h>
 #include <linux/usb/gadget.h>
 #include <linux/usb/otg.h>
-#include <linux/usb/role.h>
 
 struct mtu3;
 struct mtu3_ep;
@@ -65,15 +63,6 @@ struct mtu3_request;
 #define MTU3_U2_IP_SLOT_DEFAULT 1
 
 /**
- * IP TRUNK version
- * from 0x1003 version, USB3 Gen2 is supported, two changes affect driver:
- * 1. MAXPKT and MULTI bits layout of TXCSR1 and RXCSR1 are adjusted,
- *    but not backward compatible
- * 2. QMU extend buffer length supported
- */
-#define MTU3_TRUNK_VERS_1003	0x1003
-
-/**
  * Normally the device works on HS or SS, to simplify fifo management,
  * devide fifo into some 512B parts, use bitmap to manage it; And
  * 128 bits size of bitmap is large enough, that means it can manage
@@ -89,8 +78,6 @@ struct mtu3_request;
  * the SET_SEL request uses 6 so far, and GET_STATUS is 2
  */
 #define EP0_RESPONSE_BUF  6
-
-#define BULK_CLKS_CNT	4
 
 /* device operated link and speed got from DEVICE_CONF register */
 enum mtu3_speed {
@@ -148,33 +135,45 @@ struct mtu3_fifo_info {
  *	The format of TX GPD is a little different from RX one.
  *	And the size of GPD is 16 bytes.
  *
- * @dw0_info:
+ * @flag:
  *	bit0: Hardware Own (HWO)
  *	bit1: Buffer Descriptor Present (BDP), always 0, BD is not supported
  *	bit2: Bypass (BPS), 1: HW skips this GPD if HWO = 1
- *	bit6: [EL] Zero Length Packet (ZLP), moved from @dw3_info[29]
  *	bit7: Interrupt On Completion (IOC)
- *	bit[31:16]: ([EL] bit[31:12]) allow data buffer length (RX ONLY),
- *		the buffer length of the data to receive
- *	bit[23:16]: ([EL] bit[31:24]) extension address (TX ONLY),
- *		lower 4 bits are extension bits of @buffer,
- *		upper 4 bits are extension bits of @next_gpd
+ * @chksum: This is used to validate the contents of this GPD;
+ *	If TXQ_CS_EN / RXQ_CS_EN bit is set, an interrupt is issued
+ *	when checksum validation fails;
+ *	Checksum value is calculated over the 16 bytes of the GPD by default;
+ * @data_buf_len (RX ONLY): This value indicates the length of
+ *	the assigned data buffer
+ * @tx_ext_addr (TX ONLY): [3:0] are 4 extension bits of @buffer,
+ *	[7:4] are 4 extension bits of @next_gpd
  * @next_gpd: Physical address of the next GPD
  * @buffer: Physical address of the data buffer
- * @dw3_info:
- *	bit[15:0]: ([EL] bit[19:0]) data buffer length,
- *		(TX): the buffer length of the data to transmit
- *		(RX): The total length of data received
- *	bit[23:16]: ([EL] bit[31:24]) extension address (RX ONLY),
- *		lower 4 bits are extension bits of @buffer,
- *		upper 4 bits are extension bits of @next_gpd
- *	bit29: ([EL] abandoned) Zero Length Packet (ZLP) (TX ONLY)
+ * @buf_len:
+ *	(TX): This value indicates the length of the assigned data buffer
+ *	(RX): The total length of data received
+ * @ext_len: reserved
+ * @rx_ext_addr(RX ONLY): [3:0] are 4 extension bits of @buffer,
+ *	[7:4] are 4 extension bits of @next_gpd
+ * @ext_flag:
+ *	bit5 (TX ONLY): Zero Length Packet (ZLP),
  */
 struct qmu_gpd {
-	__le32 dw0_info;
+	__u8 flag;
+	__u8 chksum;
+	union {
+		__le16 data_buf_len;
+		__le16 tx_ext_addr;
+	};
 	__le32 next_gpd;
 	__le32 buffer;
-	__le32 dw3_info;
+	__le16 buf_len;
+	union {
+		__u8 ext_len;
+		__u8 rx_ext_addr;
+	};
+	__u8 ext_flag;
 } __packed;
 
 /**
@@ -196,13 +195,11 @@ struct mtu3_gpd_ring {
 /**
 * @vbus: vbus 5V used by host mode
 * @edev: external connector used to detect vbus and iddig changes
-* @id_nb : notifier for iddig(idpin) detection
-* @dr_work : work for drd mode switch, used to avoid sleep in atomic context
-* @desired_role : role desired to switch
-* @default_role : default mode while usb role is USB_ROLE_NONE
-* @role_sw : use USB Role Switch to support dual-role switch, can't use
-*		extcon at the same time, and extcon is deprecated.
-* @role_sw_used : true when the USB Role Switch is used.
+* @vbus_nb: notifier for vbus detection
+* @vbus_nb: notifier for iddig(idpin) detection
+* @extcon_reg_dwork: delay work for extcon notifier register, waiting for
+*		xHCI driver initialization, it's necessary for system bootup
+*		as device.
 * @is_u3_drd: whether port0 supports usb3.0 dual-role device or not
 * @manual_drd_enabled: it's true when supports dual-role device by debugfs
 *		to switch host/device modes depending on user input.
@@ -210,12 +207,9 @@ struct mtu3_gpd_ring {
 struct otg_switch_mtk {
 	struct regulator *vbus;
 	struct extcon_dev *edev;
+	struct notifier_block vbus_nb;
 	struct notifier_block id_nb;
-	struct work_struct dr_work;
-	enum usb_role desired_role;
-	enum usb_role default_role;
-	struct usb_role_switch *role_sw;
-	bool role_sw_used;
+	struct delayed_work extcon_reg_dwork;
 	bool is_u3_drd;
 	bool manual_drd_enabled;
 };
@@ -224,13 +218,14 @@ struct otg_switch_mtk {
  * @mac_base: register base address of device MAC, exclude xHCI's
  * @ippc_base: register base address of IP Power and Clock interface (IPPC)
  * @vusb33: usb3.3V shared by device/host IP
+ * @sys_clk: system clock of mtu3, shared by device/host IP
+ * @ref_clk: reference clock
+ * @mcu_clk: mcu_bus_ck clock for AHB bus etc
+ * @dma_clk: dma_bus_ck clock for AXI bus etc
  * @dr_mode: works in which mode:
  *		host only, device only or dual-role mode
  * @u2_ports: number of usb2.0 host ports
  * @u3_ports: number of usb3.0 host ports
- * @u2p_dis_msk: mask of disabling usb2 ports, e.g. bit0==1 to
- *		disable u2port0, bit1==1 to disable u2port1,... etc,
- *		but when use dual-role mode, can't disable u2port0
  * @u3p_dis_msk: mask of disabling usb3 ports, for example, bit0==1 to
  *		disable u3port0, bit1==1 to disable u3port1,... etc
  * @dbgfs_root: only used when supports manual dual-role switch via debugfs
@@ -246,17 +241,18 @@ struct ssusb_mtk {
 	void __iomem *ippc_base;
 	struct phy **phys;
 	int num_phys;
-	int wakeup_irq;
 	/* common power & clock */
 	struct regulator *vusb33;
-	struct clk_bulk_data clks[BULK_CLKS_CNT];
+	struct clk *sys_clk;
+	struct clk *ref_clk;
+	struct clk *mcu_clk;
+	struct clk *dma_clk;
 	/* otg */
 	struct otg_switch_mtk otg_switch;
 	enum usb_dr_mode dr_mode;
 	bool is_host;
 	int u2_ports;
 	int u3_ports;
-	int u2p_dis_msk;
 	int u3p_dis_msk;
 	struct dentry *dbgfs_root;
 	/* usb wakeup for host mode */
@@ -290,6 +286,8 @@ struct mtu3_ep {
 	const struct usb_endpoint_descriptor *desc;
 
 	int flags;
+	u8 wedged;
+	u8 busy;
 };
 
 struct mtu3_request {
@@ -313,11 +311,9 @@ static inline struct ssusb_mtk *dev_to_ssusb(struct device *dev)
  * @may_wakeup: means device's remote wakeup is enabled
  * @is_self_powered: is reported in device status and the config descriptor
  * @delayed_status: true when function drivers ask for delayed status
- * @gen2cp: compatible with USB3 Gen2 IP
  * @ep0_req: dummy request used while handling standard USB requests
  *		for GET_STATUS and SET_SEL
  * @setup_buf: ep0 response buffer for GET_STATUS and SET_SEL requests
- * @u3_capable: is capable of supporting USB3
  */
 struct mtu3 {
 	spinlock_t lock;
@@ -344,8 +340,7 @@ struct mtu3 {
 	struct usb_gadget_driver *gadget_driver;
 	struct mtu3_request ep0_req;
 	u8 setup_buf[EP0_RESPONSE_BUF];
-	enum usb_device_speed max_speed;
-	enum usb_device_speed speed;
+	u32 max_speed;
 
 	unsigned is_active:1;
 	unsigned may_wakeup:1;
@@ -354,12 +349,8 @@ struct mtu3 {
 	unsigned softconnect:1;
 	unsigned u1_enable:1;
 	unsigned u2_enable:1;
-	unsigned u3_capable:1;
+	unsigned is_u3_ip:1;
 	unsigned delayed_status:1;
-	unsigned gen2cp:1;
-	unsigned connected:1;
-	unsigned async_callbacks:1;
-	unsigned separate_fifo:1;
 
 	u8 address;
 	u8 test_mode_nr;
@@ -369,6 +360,12 @@ struct mtu3 {
 static inline struct mtu3 *gadget_to_mtu3(struct usb_gadget *g)
 {
 	return container_of(g, struct mtu3, g);
+}
+
+static inline int is_first_entry(const struct list_head *list,
+	const struct list_head *head)
+{
+	return list_is_last(head, list);
 }
 
 static inline struct mtu3_request *to_mtu3_request(struct usb_request *req)
@@ -423,6 +420,7 @@ int mtu3_config_ep(struct mtu3 *mtu, struct mtu3_ep *mep,
 		int interval, int burst, int mult);
 void mtu3_deconfig_ep(struct mtu3 *mtu, struct mtu3_ep *mep);
 void mtu3_ep_stall_set(struct mtu3_ep *mep, bool set);
+void mtu3_ep0_setup(struct mtu3 *mtu);
 void mtu3_start(struct mtu3 *mtu);
 void mtu3_stop(struct mtu3 *mtu);
 void mtu3_dev_on_off(struct mtu3 *mtu, int is_on);

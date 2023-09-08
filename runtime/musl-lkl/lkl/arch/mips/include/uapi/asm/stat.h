@@ -19,24 +19,24 @@
 struct stat {
 	unsigned	st_dev;
 	long		st_pad1[3];		/* Reserved for network id */
-	__kernel_ino_t	st_ino;
-	__kernel_mode_t	st_mode;
+	ino_t		st_ino;
+	mode_t		st_mode;
 	__u32		st_nlink;
-	__kernel_uid32_t st_uid;
-	__kernel_gid32_t st_gid;
+	uid_t		st_uid;
+	gid_t		st_gid;
 	unsigned	st_rdev;
 	long		st_pad2[2];
-	long		st_size;
+	off_t		st_size;
 	long		st_pad3;
 	/*
 	 * Actually this should be timestruc_t st_atime, st_mtime and st_ctime
 	 * but we don't have it under Linux.
 	 */
-	long		st_atime;
+	time_t		st_atime;
 	long		st_atime_nsec;
-	long		st_mtime;
+	time_t		st_mtime;
 	long		st_mtime_nsec;
-	long		st_ctime;
+	time_t		st_ctime;
 	long		st_ctime_nsec;
 	long		st_blksize;
 	long		st_blocks;
@@ -55,11 +55,11 @@ struct stat64 {
 
 	unsigned long long	st_ino;
 
-	__kernel_mode_t	st_mode;
+	mode_t		st_mode;
 	__u32		st_nlink;
 
-	__kernel_uid32_t st_uid;
-	__kernel_gid32_t st_gid;
+	uid_t		st_uid;
+	gid_t		st_gid;
 
 	unsigned long	st_rdev;
 	unsigned long	st_pad1[3];	/* Reserved for st_rdev expansion  */
@@ -70,13 +70,13 @@ struct stat64 {
 	 * Actually this should be timestruc_t st_atime, st_mtime and st_ctime
 	 * but we don't have it under Linux.
 	 */
-	long		st_atime;
+	time_t		st_atime;
 	unsigned long	st_atime_nsec;	/* Reserved for st_atime expansion  */
 
-	long		st_mtime;
+	time_t		st_mtime;
 	unsigned long	st_mtime_nsec;	/* Reserved for st_mtime expansion  */
 
-	long		st_ctime;
+	time_t		st_ctime;
 	unsigned long	st_ctime_nsec;	/* Reserved for st_ctime expansion  */
 
 	unsigned long	st_blksize;
@@ -96,16 +96,16 @@ struct stat {
 
 	unsigned long		st_ino;
 
-	__kernel_mode_t		st_mode;
+	mode_t			st_mode;
 	__u32			st_nlink;
 
-	__kernel_uid32_t	st_uid;
-	__kernel_gid32_t	st_gid;
+	uid_t			st_uid;
+	gid_t			st_gid;
 
 	unsigned int		st_rdev;
 	unsigned int		st_pad1[3]; /* Reserved for st_rdev expansion */
 
-	long			st_size;
+	off_t			st_size;
 
 	/*
 	 * Actually this should be timestruc_t st_atime, st_mtime and st_ctime

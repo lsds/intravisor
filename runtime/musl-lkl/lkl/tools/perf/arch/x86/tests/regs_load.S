@@ -28,7 +28,7 @@
 
 .text
 #ifdef HAVE_ARCH_X86_64_SUPPORT
-SYM_FUNC_START(perf_regs_load)
+ENTRY(perf_regs_load)
 	movq %rax, AX(%rdi)
 	movq %rbx, BX(%rdi)
 	movq %rcx, CX(%rdi)
@@ -60,9 +60,9 @@ SYM_FUNC_START(perf_regs_load)
 	movq %r14, R14(%rdi)
 	movq %r15, R15(%rdi)
 	ret
-SYM_FUNC_END(perf_regs_load)
+ENDPROC(perf_regs_load)
 #else
-SYM_FUNC_START(perf_regs_load)
+ENTRY(perf_regs_load)
 	push %edi
 	movl 8(%esp), %edi
 	movl %eax, AX(%edi)
@@ -88,7 +88,7 @@ SYM_FUNC_START(perf_regs_load)
 	movl $0, FS(%edi)
 	movl $0, GS(%edi)
 	ret
-SYM_FUNC_END(perf_regs_load)
+ENDPROC(perf_regs_load)
 #endif
 
 /*

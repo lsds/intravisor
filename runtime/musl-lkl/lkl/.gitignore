@@ -1,4 +1,3 @@
-# SPDX-License-Identifier: GPL-2.0-only
 #
 # NOTE! Don't add files that are generated in specific
 # subdirectories here. Add them in the ".gitignore" file
@@ -16,9 +15,7 @@
 *.bin
 *.bz2
 *.c.[012]*.*
-*.dt.yaml
 *.dtb
-*.dtbo
 *.dtb.S
 *.dwo
 *.elf
@@ -32,43 +29,34 @@
 *.lz4
 *.lzma
 *.lzo
-*.mod
 *.mod.c
 *.o
 *.o.*
+*.order
 *.patch
-*.rmeta
-*.rsi
 *.s
 *.so
 *.so.dbg
 *.su
 *.symtypes
-*.symversions
 *.tab.[ch]
 *.tar
-*.usyms
 *.xz
-*.zst
 Module.symvers
-modules.order
+modules.builtin
 
 #
 # Top-level generic files
 #
+/tags
+/TAGS
 /linux
-/modules-only.symvers
 /vmlinux
 /vmlinux.32
-/vmlinux.map
-/vmlinux.symvers
 /vmlinux-gdb.py
 /vmlinuz
 /System.map
 /Module.markers
-/modules.builtin
-/modules.builtin.modinfo
-/modules.nsdeps
 
 #
 # RPM spec file (make rpm-pkg)
@@ -91,23 +79,20 @@ modules.order
 /tar-install/
 
 #
-# We don't want to ignore the following even if they are dot-files
+# git files that we don't want to ignore even if they are dot-files
 #
-!.clang-format
-!.cocciconfig
-!.get_maintainer.ignore
-!.gitattributes
 !.gitignore
 !.mailmap
-!.rustfmt.toml
+!.cocciconfig
+!.clang-format
 
 #
 # Generated include files
 #
-/include/config/
-/include/generated/
-/include/ksym/
-/arch/*/include/generated/
+include/config
+include/generated
+include/ksym
+arch/*/include/generated
 
 # stgit generated dirs
 patches-*
@@ -115,10 +100,6 @@ patches-*
 # quilt's files
 patches
 series
-
-# ctags files
-tags
-TAGS
 
 # cscope files
 cscope.*
@@ -147,24 +128,7 @@ signing_key.x509
 x509.genkey
 
 # Kconfig presets
-/all.config
-/alldef.config
-/allmod.config
-/allno.config
-/allrandom.config
-/allyes.config
-
-# Kconfig savedefconfig output
-/defconfig
+all.config
 
 # Kdevelop4
 *.kdev4
-
-# Clang's compilation database file
-/compile_commands.json
-
-# Documentation toolchain
-sphinx_*/
-
-# Rust analyzer configuration
-/rust-project.json

@@ -1,9 +1,12 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * devfreq-event: a framework to provide raw data and events of devfreq devices
  *
  * Copyright (C) 2015 Samsung Electronics
  * Author: Chanwoo Choi <cw00.choi@samsung.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  *
  * This driver is based on drivers/devfreq/devfreq.c.
  */
@@ -213,21 +216,20 @@ EXPORT_SYMBOL_GPL(devfreq_event_reset_event);
  * devfreq_event_get_edev_by_phandle() - Get the devfreq-event dev from
  *					 devicetree.
  * @dev		: the pointer to the given device
- * @phandle_name: name of property holding a phandle value
  * @index	: the index into list of devfreq-event device
  *
  * Note that this function return the pointer of devfreq-event device.
  */
 struct devfreq_event_dev *devfreq_event_get_edev_by_phandle(struct device *dev,
-					const char *phandle_name, int index)
+						      int index)
 {
 	struct device_node *node;
 	struct devfreq_event_dev *edev;
 
-	if (!dev->of_node || !phandle_name)
+	if (!dev->of_node)
 		return ERR_PTR(-EINVAL);
 
-	node = of_parse_phandle(dev->of_node, phandle_name, index);
+	node = of_parse_phandle(dev->of_node, "devfreq-events", index);
 	if (!node)
 		return ERR_PTR(-ENODEV);
 
@@ -238,7 +240,7 @@ struct devfreq_event_dev *devfreq_event_get_edev_by_phandle(struct device *dev,
 	}
 
 	list_for_each_entry(edev, &devfreq_event_list, node) {
-		if (of_node_name_eq(node, edev->desc->name))
+		if (!strcmp(edev->desc->name, node->name))
 			goto out;
 	}
 	edev = NULL;
@@ -259,20 +261,19 @@ EXPORT_SYMBOL_GPL(devfreq_event_get_edev_by_phandle);
 /**
  * devfreq_event_get_edev_count() - Get the count of devfreq-event dev
  * @dev		: the pointer to the given device
- * @phandle_name: name of property holding a phandle value
  *
  * Note that this function return the count of devfreq-event devices.
  */
-int devfreq_event_get_edev_count(struct device *dev, const char *phandle_name)
+int devfreq_event_get_edev_count(struct device *dev)
 {
 	int count;
 
-	if (!dev->of_node || !phandle_name) {
+	if (!dev->of_node) {
 		dev_err(dev, "device does not have a device node entry\n");
 		return -EINVAL;
 	}
 
-	count = of_property_count_elems_of_size(dev->of_node, phandle_name,
+	count = of_property_count_elems_of_size(dev->of_node, "devfreq-events",
 						sizeof(u32));
 	if (count < 0) {
 		dev_err(dev,
@@ -295,7 +296,7 @@ static void devfreq_event_release_edev(struct device *dev)
 /**
  * devfreq_event_add_edev() - Add new devfreq-event device.
  * @dev		: the device owning the devfreq-event device being created
- * @desc	: the devfreq-event device's descriptor which include essential
+ * @desc	: the devfreq-event device's decriptor which include essential
  *		  data for devfreq-event device.
  *
  * Note that this function add new devfreq-event device to devfreq-event class
@@ -348,9 +349,9 @@ EXPORT_SYMBOL_GPL(devfreq_event_add_edev);
 
 /**
  * devfreq_event_remove_edev() - Remove the devfreq-event device registered.
- * @edev	: the devfreq-event device
+ * @dev		: the devfreq-event device
  *
- * Note that this function removes the registered devfreq-event device.
+ * Note that this function remove the registered devfreq-event device.
  */
 int devfreq_event_remove_edev(struct devfreq_event_dev *edev)
 {
@@ -387,7 +388,7 @@ static void devm_devfreq_event_release(struct device *dev, void *res)
 /**
  * devm_devfreq_event_add_edev() - Resource-managed devfreq_event_add_edev()
  * @dev		: the device owning the devfreq-event device being created
- * @desc	: the devfreq-event device's descriptor which include essential
+ * @desc	: the devfreq-event device's decriptor which include essential
  *		  data for devfreq-event device.
  *
  * Note that this function manages automatically the memory of devfreq-event

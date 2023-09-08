@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0 */
 /*
  * Support for GalaxyCore GC0310 VGA camera sensor.
  *
@@ -150,7 +149,8 @@ struct gc0310_device {
 
 	struct camera_sensor_platform_data *platform_data;
 	int vt_pix_clk_freq_mhz;
-	struct gc0310_resolution *res;
+	int fmt_idx;
+	u8 res;
 	u8 type;
 };
 
@@ -343,7 +343,7 @@ static const struct gc0310_reg gc0310_reset_register[] = {
 /////////////////////////////////////////////////
 	{GC0310_8BIT, 0xfe, 0x01},
 	{GC0310_8BIT, 0x45, 0xa4}, // 0xf7
-	{GC0310_8BIT, 0x46, 0xf0}, // 0xff //f0//sun value th
+	{GC0310_8BIT, 0x46, 0xf0}, // 0xff //f0//sun vaule th
 	{GC0310_8BIT, 0x48, 0x03}, //sun mode
 	{GC0310_8BIT, 0x4f, 0x60}, //sun_clamp
 	{GC0310_8BIT, 0xfe, 0x00},
@@ -396,9 +396,9 @@ static struct gc0310_resolution gc0310_res_preview[] = {
 		.regs = gc0310_VGA_30fps,
 	},
 };
-
 #define N_RES_PREVIEW (ARRAY_SIZE(gc0310_res_preview))
 
 static struct gc0310_resolution *gc0310_res = gc0310_res_preview;
 static unsigned long N_RES = N_RES_PREVIEW;
 #endif
+

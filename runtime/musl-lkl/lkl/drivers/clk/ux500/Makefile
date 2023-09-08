@@ -8,9 +8,6 @@ obj-y += clk-prcc.o
 obj-y += clk-prcmu.o
 obj-y += clk-sysctrl.o
 
-# Reset control
-obj-y += reset-prcc.o
-
 # Clock definitions
 obj-y += u8500_of_clk.o
 

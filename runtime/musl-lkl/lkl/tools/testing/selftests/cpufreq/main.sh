@@ -13,9 +13,6 @@ SYSFS=
 CPUROOT=
 CPUFREQROOT=
 
-# Kselftest framework requirement - SKIP code is 4.
-ksft_skip=4
-
 helpme()
 {
 	printf "Usage: $0 [-h] [-todg args]
@@ -41,7 +38,7 @@ prerequisite()
 
 	if [ $UID != 0 ]; then
 		echo $msg must be run as root >&2
-		exit $ksft_skip
+		exit 2
 	fi
 
 	taskset -p 01 $$
@@ -194,5 +191,5 @@ prerequisite
 
 # Run requested functions
 clear_dumps $OUTFILE
-do_test | tee -a $OUTFILE.txt
+do_test >> $OUTFILE.txt
 dmesg_dumps $OUTFILE

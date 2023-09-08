@@ -83,7 +83,7 @@ struct mirror_set {
 	struct work_struct trigger_event;
 
 	unsigned nr_mirrors;
-	struct mirror mirror[];
+	struct mirror mirror[0];
 };
 
 DECLARE_DM_KCOPYD_THROTTLE_WITH_MODULE_PARM(raid1_resync_throttle,
@@ -145,7 +145,7 @@ static void dispatch_bios(void *context, struct bio_list *bio_list)
 
 struct dm_raid1_bio_record {
 	struct mirror *m;
-	/* if details->bi_bdev == NULL, details were not saved */
+	/* if details->bi_disk == NULL, details were not saved */
 	struct dm_bio_details details;
 	region_t write_region;
 };
@@ -260,7 +260,8 @@ static int mirror_flush(struct dm_target *ti)
 	struct dm_io_region io[MAX_NR_MIRRORS];
 	struct mirror *m;
 	struct dm_io_request io_req = {
-		.bi_opf = REQ_OP_WRITE | REQ_PREFLUSH | REQ_SYNC,
+		.bi_op = REQ_OP_WRITE,
+		.bi_op_flags = REQ_PREFLUSH | REQ_SYNC,
 		.mem.type = DM_IO_KMEM,
 		.mem.ptr.addr = NULL,
 		.client = ms->io_client,
@@ -325,8 +326,9 @@ static void recovery_complete(int read_err, unsigned long write_err,
 	dm_rh_recovery_end(reg, !(read_err || write_err));
 }
 
-static void recover(struct mirror_set *ms, struct dm_region *reg)
+static int recover(struct mirror_set *ms, struct dm_region *reg)
 {
+	int r;
 	unsigned i;
 	struct dm_io_region from, to[DM_KCOPYD_MAX_REGIONS], *dest;
 	struct mirror *m;
@@ -363,10 +365,12 @@ static void recover(struct mirror_set *ms, struct dm_region *reg)
 
 	/* hand to kcopyd */
 	if (!errors_handled(ms))
-		flags |= BIT(DM_KCOPYD_IGNORE_ERROR);
+		set_bit(DM_KCOPYD_IGNORE_ERROR, &flags);
 
-	dm_kcopyd_copy(ms->kcopyd_client, &from, ms->nr_mirrors - 1, to,
-		       flags, recovery_complete, reg);
+	r = dm_kcopyd_copy(ms->kcopyd_client, &from, ms->nr_mirrors - 1, to,
+			   flags, recovery_complete, reg);
+
+	return r;
 }
 
 static void reset_ms_flags(struct mirror_set *ms)
@@ -384,6 +388,7 @@ static void do_recovery(struct mirror_set *ms)
 {
 	struct dm_region *reg;
 	struct dm_dirty_log *log = dm_rh_dirty_log(ms->rh);
+	int r;
 
 	/*
 	 * Start quiescing some regions.
@@ -393,8 +398,11 @@ static void do_recovery(struct mirror_set *ms)
 	/*
 	 * Copy any already quiesced regions.
 	 */
-	while ((reg = dm_rh_recovery_start(ms->rh)))
-		recover(ms, reg);
+	while ((reg = dm_rh_recovery_start(ms->rh))) {
+		r = recover(ms, reg);
+		if (r)
+			dm_rh_recovery_end(reg, 0);
+	}
 
 	/*
 	 * Update the in sync flag.
@@ -534,7 +542,8 @@ static void read_async_bio(struct mirror *m, struct bio *bio)
 {
 	struct dm_io_region io;
 	struct dm_io_request io_req = {
-		.bi_opf = REQ_OP_READ,
+		.bi_op = REQ_OP_READ,
+		.bi_op_flags = 0,
 		.mem.type = DM_IO_BIO,
 		.mem.ptr.bio = bio,
 		.notify.fn = read_callback,
@@ -646,9 +655,9 @@ static void do_write(struct mirror_set *ms, struct bio *bio)
 	unsigned int i;
 	struct dm_io_region io[MAX_NR_MIRRORS], *dest = io;
 	struct mirror *m;
-	blk_opf_t op_flags = bio->bi_opf & (REQ_FUA | REQ_PREFLUSH);
 	struct dm_io_request io_req = {
-		.bi_opf = REQ_OP_WRITE | op_flags,
+		.bi_op = REQ_OP_WRITE,
+		.bi_op_flags = bio->bi_opf & (REQ_FUA | REQ_PREFLUSH),
 		.mem.type = DM_IO_BIO,
 		.mem.ptr.bio = bio,
 		.notify.fn = write_callback,
@@ -657,7 +666,7 @@ static void do_write(struct mirror_set *ms, struct bio *bio)
 	};
 
 	if (bio_op(bio) == REQ_OP_DISCARD) {
-		io_req.bi_opf = REQ_OP_DISCARD | op_flags;
+		io_req.bi_op = REQ_OP_DISCARD;
 		io_req.mem.type = DM_IO_KMEM;
 		io_req.mem.ptr.addr = NULL;
 	}
@@ -777,7 +786,7 @@ static void do_writes(struct mirror_set *ms, struct bio_list *writes)
 			wakeup_mirrord(ms);
 		} else {
 			map_bio(get_default_mirror(ms), bio);
-			submit_bio_noacct(bio);
+			generic_make_request(bio);
 		}
 	}
 }
@@ -876,9 +885,12 @@ static struct mirror_set *alloc_context(unsigned int nr_mirrors,
 					struct dm_target *ti,
 					struct dm_dirty_log *dl)
 {
-	struct mirror_set *ms =
-		kzalloc(struct_size(ms, mirror, nr_mirrors), GFP_KERNEL);
+	size_t len;
+	struct mirror_set *ms = NULL;
 
+	len = sizeof(*ms) + (sizeof(ms->mirror[0]) * nr_mirrors);
+
+	ms = kzalloc(len, GFP_KERNEL);
 	if (!ms) {
 		ti->error = "Cannot allocate mirror context";
 		return NULL;
@@ -938,8 +950,7 @@ static int get_mirror(struct mirror_set *ms, struct dm_target *ti,
 	char dummy;
 	int ret;
 
-	if (sscanf(argv[1], "%llu%c", &offset, &dummy) != 1 ||
-	    offset != (sector_t)offset) {
+	if (sscanf(argv[1], "%llu%c", &offset, &dummy) != 1) {
 		ti->error = "Invalid offset";
 		return -EINVAL;
 	}
@@ -1188,7 +1199,7 @@ static int mirror_map(struct dm_target *ti, struct bio *bio)
 	struct dm_raid1_bio_record *bio_record =
 	  dm_per_bio_data(bio, sizeof(struct dm_raid1_bio_record));
 
-	bio_record->details.bi_bdev = NULL;
+	bio_record->details.bi_disk = NULL;
 
 	if (rw == WRITE) {
 		/* Save region for mirror_end_io() handler */
@@ -1255,7 +1266,7 @@ static int mirror_end_io(struct dm_target *ti, struct bio *bio,
 		goto out;
 
 	if (unlikely(*error)) {
-		if (!bio_record->details.bi_bdev) {
+		if (!bio_record->details.bi_disk) {
 			/*
 			 * There wasn't enough memory to record necessary
 			 * information for a retry or there was no other
@@ -1280,7 +1291,7 @@ static int mirror_end_io(struct dm_target *ti, struct bio *bio,
 			bd = &bio_record->details;
 
 			dm_bio_restore(bd, bio);
-			bio_record->details.bi_bdev = NULL;
+			bio_record->details.bi_disk = NULL;
 			bio->bi_status = 0;
 
 			queue_bio(ms, bio, rw);
@@ -1290,7 +1301,7 @@ static int mirror_end_io(struct dm_target *ti, struct bio *bio,
 	}
 
 out:
-	bio_record->details.bi_bdev = NULL;
+	bio_record->details.bi_disk = NULL;
 
 	return DM_ENDIO_DONE;
 }
@@ -1432,23 +1443,6 @@ static void mirror_status(struct dm_target *ti, status_type_t type,
 				DMEMIT(" keep_log");
 		}
 
-		break;
-
-	case STATUSTYPE_IMA:
-		DMEMIT_TARGET_NAME_VERSION(ti->type);
-		DMEMIT(",nr_mirrors=%d", ms->nr_mirrors);
-		for (m = 0; m < ms->nr_mirrors; m++) {
-			DMEMIT(",mirror_device_%d=%s", m, ms->mirror[m].dev->name);
-			DMEMIT(",mirror_device_%d_status=%c",
-			       m, device_status_char(&(ms->mirror[m])));
-		}
-
-		DMEMIT(",handle_errors=%c", errors_handled(ms) ? 'y' : 'n');
-		DMEMIT(",keep_log=%c", keep_log(ms) ? 'y' : 'n');
-
-		DMEMIT(",log_type_status=");
-		sz += log->type->status(log, type, result+sz, maxlen-sz);
-		DMEMIT(";");
 		break;
 	}
 }

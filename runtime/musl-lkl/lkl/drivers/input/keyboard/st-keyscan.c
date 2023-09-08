@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * STMicroelectronics Key Scanning driver
  *
@@ -6,16 +5,18 @@
  * Author: Stuart Menefy <stuart.menefy@st.com>
  *
  * Based on sh_keysc.c, copyright 2008 Magnus Damm
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 
-#include <linux/clk.h>
-#include <linux/input.h>
-#include <linux/input/matrix_keypad.h>
-#include <linux/io.h>
-#include <linux/interrupt.h>
 #include <linux/module.h>
-#include <linux/of.h>
+#include <linux/interrupt.h>
 #include <linux/platform_device.h>
+#include <linux/clk.h>
+#include <linux/io.h>
+#include <linux/input/matrix_keypad.h>
 
 #define ST_KEYSCAN_MAXKEYS 16
 
@@ -152,8 +153,6 @@ static int keyscan_probe(struct platform_device *pdev)
 
 	input_dev->id.bustype = BUS_HOST;
 
-	keypad_data->input_dev = input_dev;
-
 	error = keypad_matrix_key_parse_dt(keypad_data);
 	if (error)
 		return error;
@@ -168,6 +167,8 @@ static int keyscan_probe(struct platform_device *pdev)
 	}
 
 	input_set_drvdata(input_dev, keypad_data);
+
+	keypad_data->input_dev = input_dev;
 
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	keypad_data->base = devm_ioremap_resource(&pdev->dev, res);
@@ -189,8 +190,10 @@ static int keyscan_probe(struct platform_device *pdev)
 	keyscan_stop(keypad_data);
 
 	keypad_data->irq = platform_get_irq(pdev, 0);
-	if (keypad_data->irq < 0)
+	if (keypad_data->irq < 0) {
+		dev_err(&pdev->dev, "no IRQ specified\n");
 		return -EINVAL;
+	}
 
 	error = devm_request_irq(&pdev->dev, keypad_data->irq, keyscan_isr, 0,
 				 pdev->name, keypad_data);
@@ -223,7 +226,7 @@ static int keyscan_suspend(struct device *dev)
 
 	if (device_may_wakeup(dev))
 		enable_irq_wake(keypad->irq);
-	else if (input_device_enabled(input))
+	else if (input->users)
 		keyscan_stop(keypad);
 
 	mutex_unlock(&input->mutex);
@@ -241,7 +244,7 @@ static int keyscan_resume(struct device *dev)
 
 	if (device_may_wakeup(dev))
 		disable_irq_wake(keypad->irq);
-	else if (input_device_enabled(input))
+	else if (input->users)
 		retval = keyscan_start(keypad);
 
 	mutex_unlock(&input->mutex);

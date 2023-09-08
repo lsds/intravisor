@@ -5,7 +5,6 @@
  * Copyright (C) 2007 David S. Miller (davem@davemloft.net)
  */
 
-#include <linux/aperture.h>
 #include <linux/kernel.h>
 #include <linux/fb.h>
 #include <linux/pci.h>
@@ -187,7 +186,7 @@ static void e3d_copyarea(struct fb_info *info, const struct fb_copyarea *area)
 	spin_unlock_irqrestore(&ep->lock, flags);
 }
 
-static const struct fb_ops e3d_ops = {
+static struct fb_ops e3d_ops = {
 	.owner			= THIS_MODULE,
 	.fb_setcolreg		= e3d_setcolreg,
 	.fb_fillrect		= e3d_fillrect,
@@ -208,7 +207,7 @@ static int e3d_set_fbinfo(struct e3d_info *ep)
 	info->pseudo_palette = ep->pseudo_palette;
 
 	/* Fill fix common fields */
-	strscpy(info->fix.id, "e3d", sizeof(info->fix.id));
+	strlcpy(info->fix.id, "e3d", sizeof(info->fix.id));
         info->fix.smem_start = ep->fb_base_phys;
         info->fix.smem_len = ep->fb_size;
         info->fix.type = FB_TYPE_PACKED_PIXELS;
@@ -250,10 +249,6 @@ static int e3d_pci_register(struct pci_dev *pdev,
 	unsigned int line_length;
 	int err;
 
-	err = aperture_remove_conflicting_pci_devices(pdev, "e3dfb");
-	if (err)
-		return err;
-
 	of_node = pci_device_to_OF_node(pdev);
 	if (!of_node) {
 		printk(KERN_ERR "e3d: Cannot find OF node of %s\n",
@@ -277,6 +272,7 @@ static int e3d_pci_register(struct pci_dev *pdev,
 
 	info = framebuffer_alloc(sizeof(struct e3d_info), &pdev->dev);
 	if (!info) {
+		printk(KERN_ERR "e3d: Cannot allocate fb_info\n");
 		err = -ENOMEM;
 		goto err_disable;
 	}

@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Generic Generic NCR5380 driver
  *
@@ -20,7 +19,7 @@
  * Added ISAPNP support for DTC436 adapters,
  * Thomas Sailer, sailer@ife.ee.ethz.ch
  *
- * See Documentation/scsi/g_NCR5380.rst for more info.
+ * See Documentation/scsi/g_NCR5380.txt for more info.
  */
 
 #include <asm/io.h>
@@ -340,7 +339,7 @@ static int generic_NCR5380_init_one(struct scsi_host_template *tpnt,
 			break;
 		case BOARD_DTC3181E:
 			hostdata->io_width = 2;	/* 16-bit PDMA */
-			fallthrough;
+			/* fall through */
 		case BOARD_NCR53C400A:
 		case BOARD_HP_C2502:
 			hostdata->c400_ctl_status = 9;
@@ -529,14 +528,14 @@ static inline int generic_NCR5380_precv(struct NCR5380_hostdata *hostdata,
 		if (start == len - 128) {
 			/* Ignore End of DMA interrupt for the final buffer */
 			if (NCR5380_poll_politely(hostdata, hostdata->c400_ctl_status,
-			                          CSR_HOST_BUF_NOT_RDY, 0, 0) < 0)
+			                          CSR_HOST_BUF_NOT_RDY, 0, HZ / 64) < 0)
 				break;
 		} else {
 			if (NCR5380_poll_politely2(hostdata, hostdata->c400_ctl_status,
 			                           CSR_HOST_BUF_NOT_RDY, 0,
 			                           hostdata->c400_ctl_status,
 			                           CSR_GATED_53C80_IRQ,
-			                           CSR_GATED_53C80_IRQ, 0) < 0 ||
+			                           CSR_GATED_53C80_IRQ, HZ / 64) < 0 ||
 			    NCR5380_read(hostdata->c400_ctl_status) & CSR_HOST_BUF_NOT_RDY)
 				break;
 		}
@@ -565,7 +564,7 @@ static inline int generic_NCR5380_precv(struct NCR5380_hostdata *hostdata,
 	if (residual == 0 && NCR5380_poll_politely(hostdata, BUS_AND_STATUS_REG,
 	                                           BASR_END_DMA_TRANSFER,
 	                                           BASR_END_DMA_TRANSFER,
-						   0) < 0)
+	                                           HZ / 64) < 0)
 		scmd_printk(KERN_ERR, hostdata->connected, "%s: End of DMA timeout\n",
 		            __func__);
 
@@ -597,7 +596,7 @@ static inline int generic_NCR5380_psend(struct NCR5380_hostdata *hostdata,
 		                           CSR_HOST_BUF_NOT_RDY, 0,
 		                           hostdata->c400_ctl_status,
 		                           CSR_GATED_53C80_IRQ,
-		                           CSR_GATED_53C80_IRQ, 0) < 0 ||
+		                           CSR_GATED_53C80_IRQ, HZ / 64) < 0 ||
 		    NCR5380_read(hostdata->c400_ctl_status) & CSR_HOST_BUF_NOT_RDY) {
 			/* Both 128 B buffers are in use */
 			if (start >= 128)
@@ -644,13 +643,13 @@ static inline int generic_NCR5380_psend(struct NCR5380_hostdata *hostdata,
 	if (residual == 0) {
 		if (NCR5380_poll_politely(hostdata, TARGET_COMMAND_REG,
 		                          TCR_LAST_BYTE_SENT, TCR_LAST_BYTE_SENT,
-					  0) < 0)
+		                          HZ / 64) < 0)
 			scmd_printk(KERN_ERR, hostdata->connected,
 			            "%s: Last Byte Sent timeout\n", __func__);
 
 		if (NCR5380_poll_politely(hostdata, BUS_AND_STATUS_REG,
 		                          BASR_END_DMA_TRANSFER, BASR_END_DMA_TRANSFER,
-					  0) < 0)
+		                          HZ / 64) < 0)
 			scmd_printk(KERN_ERR, hostdata->connected, "%s: End of DMA timeout\n",
 			            __func__);
 	}
@@ -663,7 +662,7 @@ static inline int generic_NCR5380_psend(struct NCR5380_hostdata *hostdata,
 static int generic_NCR5380_dma_xfer_len(struct NCR5380_hostdata *hostdata,
                                         struct scsi_cmnd *cmd)
 {
-	int transfersize = NCR5380_to_ncmd(cmd)->this_residual;
+	int transfersize = cmd->SCp.this_residual;
 
 	if (hostdata->flags & FLAG_NO_PSEUDO_DMA)
 		return 0;
@@ -675,7 +674,7 @@ static int generic_NCR5380_dma_xfer_len(struct NCR5380_hostdata *hostdata,
 	/* Limit PDMA send to 512 B to avoid random corruption on DTC3181E */
 	if (hostdata->board == BOARD_DTC3181E &&
 	    cmd->sc_data_direction == DMA_TO_DEVICE)
-		transfersize = min(transfersize, 512);
+		transfersize = min(cmd->SCp.this_residual, 512);
 
 	return min(transfersize, DMA_MAX_SIZE);
 }
@@ -701,8 +700,8 @@ static struct scsi_host_template driver_template = {
 	.this_id		= 7,
 	.sg_tablesize		= SG_ALL,
 	.cmd_per_lun		= 2,
-	.dma_boundary		= PAGE_SIZE - 1,
-	.cmd_size		= sizeof(struct NCR5380_cmd),
+	.use_clustering		= DISABLE_CLUSTERING,
+	.cmd_size		= NCR5380_CMD_SIZE,
 	.max_sectors		= 128,
 };
 
@@ -720,11 +719,12 @@ static int generic_NCR5380_isa_match(struct device *pdev, unsigned int ndev)
 	return 1;
 }
 
-static void generic_NCR5380_isa_remove(struct device *pdev,
-				       unsigned int ndev)
+static int generic_NCR5380_isa_remove(struct device *pdev,
+                                      unsigned int ndev)
 {
 	generic_NCR5380_release_resources(dev_get_drvdata(pdev));
 	dev_set_drvdata(pdev, NULL);
+	return 0;
 }
 
 static struct isa_driver generic_NCR5380_isa_driver = {

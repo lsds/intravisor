@@ -82,9 +82,5 @@
  * */
 #define AK4458_ATS_SHIFT	6
 #define AK4458_ATS_MASK		GENMASK(7, 6)
-#define AK4458_DCHAIN_MASK	(0x1 << 1)
 
-#define AK4458_DSDSEL_MASK		(0x1 << 0)
-#define AK4458_DP_MASK			(0x1 << 7)
-
-#endif
+#endif /* _AK4458_H */

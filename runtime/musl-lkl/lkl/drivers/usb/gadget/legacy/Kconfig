@@ -1,4 +1,3 @@
-# SPDX-License-Identifier: GPL-2.0
 #
 # USB Gadget support on a system involves
 #    (a) a peripheral controller, and
@@ -13,28 +12,6 @@
 # With help from a special transceiver and a "Mini-AB" jack, systems with
 # both kinds of controller can also support "USB On-the-Go" (CONFIG_USB_OTG).
 #
-# A Linux "Gadget Driver" talks to the USB Peripheral Controller
-# driver through the abstract "gadget" API.  Some other operating
-# systems call these "client" drivers, of which "class drivers"
-# are a subset (implementing a USB device class specification).
-# A gadget driver implements one or more USB functions using
-# the peripheral hardware.
-#
-# Gadget drivers are hardware-neutral, or "platform independent",
-# except that they sometimes must understand quirks or limitations
-# of the particular controllers they work with.  For example, when
-# a controller doesn't support alternate configurations or provide
-# enough of the right types of endpoints, the gadget driver might
-# not be able work with that controller, or might need to implement
-# a less common variant of a device class protocol.
-#
-# The available choices each represent a single precomposed USB
-# gadget configuration. In the device model, each option contains
-# both the device instantiation as a child for a USB gadget
-# controller, and the relevant drivers for each function declared
-# by the device.
-
-menu "USB Gadget precomposed configurations"
 
 config USB_ZERO
 	tristate "Gadget Zero (DEVELOPMENT)"
@@ -171,21 +148,22 @@ config USB_ETH_RNDIS
 	   is given in comments found in that info file.
 
 config USB_ETH_EEM
-	bool "Ethernet Emulation Model (EEM) support"
-	depends on USB_ETH
+       bool "Ethernet Emulation Model (EEM) support"
+       depends on USB_ETH
 	select USB_LIBCOMPOSITE
 	select USB_F_EEM
-	help
-	  CDC EEM is a newer USB standard that is somewhat simpler than CDC ECM
-	  and therefore can be supported by more hardware.  Technically ECM and
-	  EEM are designed for different applications.  The ECM model extends
-	  the network interface to the target (e.g. a USB cable modem), and the
-	  EEM model is for mobile devices to communicate with hosts using
-	  ethernet over USB.  For Linux gadgets, however, the interface with
-	  the host is the same (a usbX device), so the differences are minimal.
+       default n
+       help
+         CDC EEM is a newer USB standard that is somewhat simpler than CDC ECM
+         and therefore can be supported by more hardware.  Technically ECM and
+         EEM are designed for different applications.  The ECM model extends
+         the network interface to the target (e.g. a USB cable modem), and the
+         EEM model is for mobile devices to communicate with hosts using
+         ethernet over USB.  For Linux gadgets, however, the interface with
+         the host is the same (a usbX device), so the differences are minimal.
 
-	  If you say "y" here, the Ethernet gadget driver will use the EEM
-	  protocol rather than ECM.  If unsure, say "n".
+         If you say "y" here, the Ethernet gadget driver will use the EEM
+         protocol rather than ECM.  If unsure, say "n".
 
 config USB_G_NCM
 	tristate "Network Control Model (NCM) support"
@@ -309,7 +287,7 @@ config USB_G_SERIAL
 	  Say "y" to link the driver statically, or "m" to build a
 	  dynamically linked module called "g_serial".
 
-	  For more information, see Documentation/usb/gadget_serial.rst
+	  For more information, see Documentation/usb/gadget_serial.txt
 	  which includes instructions and a "driver info file" needed to
 	  make MS-Windows work with CDC ACM.
 
@@ -343,7 +321,7 @@ config USB_G_PRINTER
 	  Say "y" to link the driver statically, or "m" to build a
 	  dynamically linked module called "g_printer".
 
-	  For more information, see Documentation/usb/gadget_printer.rst
+	  For more information, see Documentation/usb/gadget_printer.txt
 	  which includes sample code for accessing the device file.
 
 if TTY
@@ -440,6 +418,7 @@ config USB_G_MULTI_RNDIS
 config USB_G_MULTI_CDC
 	bool "CDC Ethernet + CDC Serial + Storage configuration"
 	depends on USB_G_MULTI
+	default n
 	select USB_F_ECM
 	help
 	  This option enables a configuration with CDC Ethernet (ECM), CDC
@@ -458,7 +437,7 @@ config USB_G_HID
 	  The HID gadget driver provides generic emulation of USB
 	  Human Interface Devices (HID).
 
-	  For more information, see Documentation/usb/gadget_hid.rst which
+	  For more information, see Documentation/usb/gadget_hid.txt which
 	  includes sample code for accessing the device files.
 
 	  Say "y" to link the driver statically, or "m" to build a
@@ -500,9 +479,8 @@ endif
 # or video class gadget drivers), or specific hardware, here.
 config USB_G_WEBCAM
 	tristate "USB Webcam Gadget"
-	depends on VIDEO_DEV
+	depends on VIDEO_V4L2
 	select USB_LIBCOMPOSITE
-	select VIDEOBUF2_DMA_SG
 	select VIDEOBUF2_VMALLOC
 	select USB_F_UVC
 	help
@@ -512,21 +490,3 @@ config USB_G_WEBCAM
 
 	  Say "y" to link the driver statically, or "m" to build a
 	  dynamically linked module called "g_webcam".
-
-config USB_RAW_GADGET
-	tristate "USB Raw Gadget"
-	help
-	  USB Raw Gadget is a gadget driver that gives userspace low-level
-	  control over the gadget's communication process.
-
-	  Like any other gadget driver, Raw Gadget implements USB devices via
-	  the USB gadget API. Unlike most gadget drivers, Raw Gadget does not
-	  implement any concrete USB functions itself but requires userspace
-	  to do that.
-
-	  See Documentation/usb/raw-gadget.rst for details.
-
-	  Say "y" to link the driver statically, or "m" to build a
-	  dynamically linked module called "raw_gadget".
-
-endmenu

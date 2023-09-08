@@ -1,10 +1,13 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  *  Ralink RT3662/RT3883 SoC PCI support
  *
  *  Copyright (C) 2011-2013 Gabor Juhos <juhosg@openwrt.org>
  *
  *  Parts of this file are based on Ralink's 2.6.21 BSP
+ *
+ *  This program is free software; you can redistribute it and/or modify it
+ *  under the terms of the GNU General Public License version 2 as published
+ *  by the Free Software Foundation.
  */
 
 #include <linux/types.h>
@@ -13,7 +16,6 @@
 #include <linux/init.h>
 #include <linux/delay.h>
 #include <linux/interrupt.h>
-#include <linux/irqdomain.h>
 #include <linux/of.h>
 #include <linux/of_irq.h>
 #include <linux/of_pci.h>
@@ -101,19 +103,23 @@ static u32 rt3883_pci_read_cfg32(struct rt3883_pci_controller *rpc,
 			       unsigned bus, unsigned slot,
 			       unsigned func, unsigned reg)
 {
+	unsigned long flags;
 	u32 address;
+	u32 ret;
 
 	address = rt3883_pci_get_cfgaddr(bus, slot, func, reg);
 
 	rt3883_pci_w32(rpc, address, RT3883_PCI_REG_CFGADDR);
+	ret = rt3883_pci_r32(rpc, RT3883_PCI_REG_CFGDATA);
 
-	return rt3883_pci_r32(rpc, RT3883_PCI_REG_CFGDATA);
+	return ret;
 }
 
 static void rt3883_pci_write_cfg32(struct rt3883_pci_controller *rpc,
 				 unsigned bus, unsigned slot,
 				 unsigned func, unsigned reg, u32 val)
 {
+	unsigned long flags;
 	u32 address;
 
 	address = rt3883_pci_get_cfgaddr(bus, slot, func, reg);
@@ -138,9 +144,10 @@ static void rt3883_pci_irq_handler(struct irq_desc *desc)
 	}
 
 	while (pending) {
-		unsigned bit = __ffs(pending);
+		unsigned irq, bit = __ffs(pending);
 
-		generic_handle_domain_irq(rpc->irq_domain, bit);
+		irq = irq_find_mapping(rpc->irq_domain, bit);
+		generic_handle_irq(irq);
 
 		pending &= ~BIT(bit);
 	}
@@ -225,6 +232,7 @@ static int rt3883_pci_config_read(struct pci_bus *bus, unsigned int devfn,
 				  int where, int size, u32 *val)
 {
 	struct rt3883_pci_controller *rpc;
+	unsigned long flags;
 	u32 address;
 	u32 data;
 
@@ -258,6 +266,7 @@ static int rt3883_pci_config_write(struct pci_bus *bus, unsigned int devfn,
 				   int where, int size, u32 val)
 {
 	struct rt3883_pci_controller *rpc;
+	unsigned long flags;
 	u32 address;
 	u32 data;
 
@@ -429,13 +438,15 @@ static int rt3883_pci_probe(struct platform_device *pdev)
 
 	if (!rpc->intc_of_node) {
 		dev_err(dev, "%pOF has no %s child node",
-			np, "interrupt controller");
+			rpc->intc_of_node,
+			"interrupt controller");
 		return -EINVAL;
 	}
 
 	/* find the PCI host bridge child node */
 	for_each_child_of_node(np, child) {
-		if (of_node_is_type(child, "pci")) {
+		if (child->type &&
+		    of_node_cmp(child->type, "pci") == 0) {
 			rpc->pci_controller.of_node = child;
 			break;
 		}
@@ -443,7 +454,8 @@ static int rt3883_pci_probe(struct platform_device *pdev)
 
 	if (!rpc->pci_controller.of_node) {
 		dev_err(dev, "%pOF has no %s child node",
-			np, "PCI host bridge");
+			rpc->intc_of_node,
+			"PCI host bridge");
 		err = -EINVAL;
 		goto err_put_intc_node;
 	}
@@ -452,7 +464,8 @@ static int rt3883_pci_probe(struct platform_device *pdev)
 	for_each_available_child_of_node(rpc->pci_controller.of_node, child) {
 		int devfn;
 
-		if (!of_node_is_type(child, "pci"))
+		if (!child->type ||
+		    of_node_cmp(child->type, "pci") != 0)
 			continue;
 
 		devfn = of_pci_get_devfn(child);

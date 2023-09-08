@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 #include <linux/kernel.h>
 #include <linux/init.h>
 #include <linux/random.h>
@@ -66,16 +65,22 @@ static bool fail_task(struct fault_attr *attr, struct task_struct *task)
 
 static bool fail_stacktrace(struct fault_attr *attr)
 {
+	struct stack_trace trace;
 	int depth = attr->stacktrace_depth;
 	unsigned long entries[MAX_STACK_TRACE_DEPTH];
-	int n, nr_entries;
+	int n;
 	bool found = (attr->require_start == 0 && attr->require_end == ULONG_MAX);
 
 	if (depth == 0)
 		return found;
 
-	nr_entries = stack_trace_save(entries, depth, 1);
-	for (n = 0; n < nr_entries; n++) {
+	trace.nr_entries = 0;
+	trace.entries = entries;
+	trace.max_entries = depth;
+	trace.skip = 1;
+
+	save_stack_trace(&trace);
+	for (n = 0; n < trace.nr_entries; n++) {
 		if (attr->reject_start <= entries[n] &&
 			       entries[n] < attr->reject_end)
 			return false;
@@ -100,15 +105,13 @@ static inline bool fail_stacktrace(struct fault_attr *attr)
  * http://www.nongnu.org/failmalloc/
  */
 
-bool should_fail_ex(struct fault_attr *attr, ssize_t size, int flags)
+bool should_fail(struct fault_attr *attr, ssize_t size)
 {
 	if (in_task()) {
 		unsigned int fail_nth = READ_ONCE(current->fail_nth);
 
 		if (fail_nth) {
-			fail_nth--;
-			WRITE_ONCE(current->fail_nth, fail_nth);
-			if (!fail_nth)
+			if (!WRITE_ONCE(current->fail_nth, fail_nth - 1))
 				goto fail;
 
 			return false;
@@ -136,25 +139,19 @@ bool should_fail_ex(struct fault_attr *attr, ssize_t size, int flags)
 			return false;
 	}
 
-	if (attr->probability <= prandom_u32_max(100))
+	if (attr->probability <= prandom_u32() % 100)
 		return false;
 
 	if (!fail_stacktrace(attr))
 		return false;
 
 fail:
-	if (!(flags & FAULT_NOWARN))
-		fail_dump(attr);
+	fail_dump(attr);
 
 	if (atomic_read(&attr->times) != -1)
 		atomic_dec_not_zero(&attr->times);
 
 	return true;
-}
-
-bool should_fail(struct fault_attr *attr, ssize_t size)
-{
-	return should_fail_ex(attr, size, 0);
 }
 EXPORT_SYMBOL_GPL(should_fail);
 
@@ -174,10 +171,10 @@ static int debugfs_ul_get(void *data, u64 *val)
 
 DEFINE_SIMPLE_ATTRIBUTE(fops_ul, debugfs_ul_get, debugfs_ul_set, "%llu\n");
 
-static void debugfs_create_ul(const char *name, umode_t mode,
-			      struct dentry *parent, unsigned long *value)
+static struct dentry *debugfs_create_ul(const char *name, umode_t mode,
+				struct dentry *parent, unsigned long *value)
 {
-	debugfs_create_file(name, mode, parent, value, &fops_ul);
+	return debugfs_create_file(name, mode, parent, value, &fops_ul);
 }
 
 #ifdef CONFIG_FAULT_INJECTION_STACKTRACE_FILTER
@@ -193,11 +190,12 @@ static int debugfs_stacktrace_depth_set(void *data, u64 val)
 DEFINE_SIMPLE_ATTRIBUTE(fops_stacktrace_depth, debugfs_ul_get,
 			debugfs_stacktrace_depth_set, "%llu\n");
 
-static void debugfs_create_stacktrace_depth(const char *name, umode_t mode,
-					    struct dentry *parent,
-					    unsigned long *value)
+static struct dentry *debugfs_create_stacktrace_depth(
+	const char *name, umode_t mode,
+	struct dentry *parent, unsigned long *value)
 {
-	debugfs_create_file(name, mode, parent, value, &fops_stacktrace_depth);
+	return debugfs_create_file(name, mode, parent, value,
+				   &fops_stacktrace_depth);
 }
 
 #endif /* CONFIG_FAULT_INJECTION_STACKTRACE_FILTER */
@@ -209,31 +207,51 @@ struct dentry *fault_create_debugfs_attr(const char *name,
 	struct dentry *dir;
 
 	dir = debugfs_create_dir(name, parent);
-	if (IS_ERR(dir))
-		return dir;
+	if (!dir)
+		return ERR_PTR(-ENOMEM);
 
-	debugfs_create_ul("probability", mode, dir, &attr->probability);
-	debugfs_create_ul("interval", mode, dir, &attr->interval);
-	debugfs_create_atomic_t("times", mode, dir, &attr->times);
-	debugfs_create_atomic_t("space", mode, dir, &attr->space);
-	debugfs_create_ul("verbose", mode, dir, &attr->verbose);
-	debugfs_create_u32("verbose_ratelimit_interval_ms", mode, dir,
-			   &attr->ratelimit_state.interval);
-	debugfs_create_u32("verbose_ratelimit_burst", mode, dir,
-			   &attr->ratelimit_state.burst);
-	debugfs_create_bool("task-filter", mode, dir, &attr->task_filter);
+	if (!debugfs_create_ul("probability", mode, dir, &attr->probability))
+		goto fail;
+	if (!debugfs_create_ul("interval", mode, dir, &attr->interval))
+		goto fail;
+	if (!debugfs_create_atomic_t("times", mode, dir, &attr->times))
+		goto fail;
+	if (!debugfs_create_atomic_t("space", mode, dir, &attr->space))
+		goto fail;
+	if (!debugfs_create_ul("verbose", mode, dir, &attr->verbose))
+		goto fail;
+	if (!debugfs_create_u32("verbose_ratelimit_interval_ms", mode, dir,
+				&attr->ratelimit_state.interval))
+		goto fail;
+	if (!debugfs_create_u32("verbose_ratelimit_burst", mode, dir,
+				&attr->ratelimit_state.burst))
+		goto fail;
+	if (!debugfs_create_bool("task-filter", mode, dir, &attr->task_filter))
+		goto fail;
 
 #ifdef CONFIG_FAULT_INJECTION_STACKTRACE_FILTER
-	debugfs_create_stacktrace_depth("stacktrace-depth", mode, dir,
-					&attr->stacktrace_depth);
-	debugfs_create_ul("require-start", mode, dir, &attr->require_start);
-	debugfs_create_ul("require-end", mode, dir, &attr->require_end);
-	debugfs_create_ul("reject-start", mode, dir, &attr->reject_start);
-	debugfs_create_ul("reject-end", mode, dir, &attr->reject_end);
+
+	if (!debugfs_create_stacktrace_depth("stacktrace-depth", mode, dir,
+				&attr->stacktrace_depth))
+		goto fail;
+	if (!debugfs_create_ul("require-start", mode, dir,
+				&attr->require_start))
+		goto fail;
+	if (!debugfs_create_ul("require-end", mode, dir, &attr->require_end))
+		goto fail;
+	if (!debugfs_create_ul("reject-start", mode, dir, &attr->reject_start))
+		goto fail;
+	if (!debugfs_create_ul("reject-end", mode, dir, &attr->reject_end))
+		goto fail;
+
 #endif /* CONFIG_FAULT_INJECTION_STACKTRACE_FILTER */
 
 	attr->dname = dget(dir);
 	return dir;
+fail:
+	debugfs_remove_recursive(dir);
+
+	return ERR_PTR(-ENOMEM);
 }
 EXPORT_SYMBOL_GPL(fault_create_debugfs_attr);
 

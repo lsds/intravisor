@@ -1,13 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0 */
-#ifndef _LINUX_VERMAGIC_H
-#define _LINUX_VERMAGIC_H
-
-#ifndef INCLUDE_VERMAGIC
-#error "This header can be included from kernel/module.c or *.mod.c only"
-#endif
-
 #include <generated/utsrelease.h>
-#include <asm/vermagic.h>
 
 /* Simply sanity version stamp for modules. */
 #ifdef CONFIG_SMP
@@ -15,10 +7,8 @@
 #else
 #define MODULE_VERMAGIC_SMP ""
 #endif
-#ifdef CONFIG_PREEMPT_BUILD
+#ifdef CONFIG_PREEMPT
 #define MODULE_VERMAGIC_PREEMPT "preempt "
-#elif defined(CONFIG_PREEMPT_RT)
-#define MODULE_VERMAGIC_PREEMPT "preempt_rt "
 #else
 #define MODULE_VERMAGIC_PREEMPT ""
 #endif
@@ -32,11 +22,14 @@
 #else
 #define MODULE_VERMAGIC_MODVERSIONS ""
 #endif
-#ifdef RANDSTRUCT
-#include <generated/randstruct_hash.h>
-#define MODULE_RANDSTRUCT "RANDSTRUCT_" RANDSTRUCT_HASHED_SEED
+#ifndef MODULE_ARCH_VERMAGIC
+#define MODULE_ARCH_VERMAGIC ""
+#endif
+#ifdef RANDSTRUCT_PLUGIN
+#include <generated/randomize_layout_hash.h>
+#define MODULE_RANDSTRUCT_PLUGIN "RANDSTRUCT_PLUGIN_" RANDSTRUCT_HASHED_SEED
 #else
-#define MODULE_RANDSTRUCT
+#define MODULE_RANDSTRUCT_PLUGIN
 #endif
 
 #define VERMAGIC_STRING 						\
@@ -44,6 +37,5 @@
 	MODULE_VERMAGIC_SMP MODULE_VERMAGIC_PREEMPT 			\
 	MODULE_VERMAGIC_MODULE_UNLOAD MODULE_VERMAGIC_MODVERSIONS	\
 	MODULE_ARCH_VERMAGIC						\
-	MODULE_RANDSTRUCT
+	MODULE_RANDSTRUCT_PLUGIN
 
-#endif /* _LINUX_VERMAGIC_H */

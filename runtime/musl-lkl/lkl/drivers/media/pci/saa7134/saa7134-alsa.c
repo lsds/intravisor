@@ -1,6 +1,15 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  *   SAA713x ALSA support for V4L
+ *
+ *   This program is free software; you can redistribute it and/or modify
+ *   it under the terms of the GNU General Public License as published by
+ *   the Free Software Foundation, version 2
+ *
+ *   This program is distributed in the hope that it will be useful,
+ *   but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *   GNU General Public License for more details.
+ *
  */
 
 #include "saa7134.h"
@@ -252,8 +261,7 @@ static int snd_card_saa7134_capture_trigger(struct snd_pcm_substream * substream
 	return err;
 }
 
-static int saa7134_alsa_dma_init(struct saa7134_dev *dev,
-				 unsigned long nr_pages)
+static int saa7134_alsa_dma_init(struct saa7134_dev *dev, int nr_pages)
 {
 	struct saa7134_dmasound *dma = &dev->dmasound;
 	struct page *pg;
@@ -261,17 +269,17 @@ static int saa7134_alsa_dma_init(struct saa7134_dev *dev,
 
 	dma->vaddr = vmalloc_32(nr_pages << PAGE_SHIFT);
 	if (NULL == dma->vaddr) {
-		pr_debug("vmalloc_32(%lu pages) failed\n", nr_pages);
+		pr_debug("vmalloc_32(%d pages) failed\n", nr_pages);
 		return -ENOMEM;
 	}
 
-	pr_debug("vmalloc is at addr %p, size=%lu\n",
+	pr_debug("vmalloc is at addr %p, size=%d\n",
 		 dma->vaddr, nr_pages << PAGE_SHIFT);
 
 	memset(dma->vaddr, 0, nr_pages << PAGE_SHIFT);
 	dma->nr_pages = nr_pages;
 
-	dma->sglist = vzalloc(array_size(sizeof(*dma->sglist), dma->nr_pages));
+	dma->sglist = vzalloc(dma->nr_pages * sizeof(*dma->sglist));
 	if (NULL == dma->sglist)
 		goto vzalloc_err;
 
@@ -298,7 +306,7 @@ static int saa7134_alsa_dma_map(struct saa7134_dev *dev)
 	struct saa7134_dmasound *dma = &dev->dmasound;
 
 	dma->sglen = dma_map_sg(&dev->pci->dev, dma->sglist,
-			dma->nr_pages, DMA_FROM_DEVICE);
+			dma->nr_pages, PCI_DMA_FROMDEVICE);
 
 	if (0 == dma->sglen) {
 		pr_warn("%s: saa7134_alsa_map_sg failed\n", __func__);
@@ -314,7 +322,7 @@ static int saa7134_alsa_dma_unmap(struct saa7134_dev *dev)
 	if (!dma->sglen)
 		return 0;
 
-	dma_unmap_sg(&dev->pci->dev, dma->sglist, dma->nr_pages, DMA_FROM_DEVICE);
+	dma_unmap_sg(&dev->pci->dev, dma->sglist, dma->sglen, PCI_DMA_FROMDEVICE);
 	dma->sglen = 0;
 	return 0;
 }
@@ -866,6 +874,7 @@ static struct page *snd_card_saa7134_page(struct snd_pcm_substream *substream,
 static const struct snd_pcm_ops snd_card_saa7134_capture_ops = {
 	.open =			snd_card_saa7134_capture_open,
 	.close =		snd_card_saa7134_capture_close,
+	.ioctl =		snd_pcm_lib_ioctl,
 	.hw_params =		snd_card_saa7134_hw_params,
 	.hw_free =		snd_card_saa7134_hw_free,
 	.prepare =		snd_card_saa7134_capture_prepare,
@@ -892,7 +901,7 @@ static int snd_card_saa7134_pcm(snd_card_saa7134_t *saa7134, int device)
 	snd_pcm_set_ops(pcm, SNDRV_PCM_STREAM_CAPTURE, &snd_card_saa7134_capture_ops);
 	pcm->private_data = saa7134;
 	pcm->info_flags = 0;
-	strscpy(pcm->name, "SAA7134 PCM", sizeof(pcm->name));
+	strcpy(pcm->name, "SAA7134 PCM");
 	return 0;
 }
 
@@ -1065,7 +1074,7 @@ static int snd_card_saa7134_new_mixer(snd_card_saa7134_t * chip)
 	unsigned int idx;
 	int err, addr;
 
-	strscpy(card->mixername, "SAA7134 Mixer", sizeof(card->mixername));
+	strcpy(card->mixername, "SAA7134 Mixer");
 
 	for (idx = 0; idx < ARRAY_SIZE(snd_saa7134_volume_controls); idx++) {
 		kcontrol = snd_ctl_new1(&snd_saa7134_volume_controls[idx],
@@ -1129,7 +1138,7 @@ static int alsa_card_saa7134_create(struct saa7134_dev *dev, int devnum)
 	if (err < 0)
 		return err;
 
-	strscpy(card->driver, "SAA7134", sizeof(card->driver));
+	strcpy(card->driver, "SAA7134");
 
 	/* Card "creation" */
 
@@ -1169,7 +1178,7 @@ static int alsa_card_saa7134_create(struct saa7134_dev *dev, int devnum)
 
 	/* End of "creation" */
 
-	strscpy(card->shortname, "SAA7134", sizeof(card->shortname));
+	strcpy(card->shortname, "SAA7134");
 	sprintf(card->longname, "%s at 0x%lx irq %d",
 		chip->dev->name, chip->iobase, chip->irq);
 
@@ -1214,14 +1223,16 @@ static int alsa_device_exit(struct saa7134_dev *dev)
 
 static int saa7134_alsa_init(void)
 {
-	struct saa7134_dev *dev;
+	struct saa7134_dev *dev = NULL;
+	struct list_head *list;
 
 	saa7134_dmasound_init = alsa_device_init;
 	saa7134_dmasound_exit = alsa_device_exit;
 
 	pr_info("saa7134 ALSA driver for DMA sound loaded\n");
 
-	list_for_each_entry(dev, &saa7134_devlist, devlist) {
+	list_for_each(list,&saa7134_devlist) {
+		dev = list_entry(list, struct saa7134_dev, devlist);
 		if (dev->pci->device == PCI_DEVICE_ID_PHILIPS_SAA7130)
 			pr_info("%s/alsa: %s doesn't support digital audio\n",
 				dev->name, saa7134_boards[dev->board].name);
@@ -1229,7 +1240,7 @@ static int saa7134_alsa_init(void)
 			alsa_device_init(dev);
 	}
 
-	if (list_empty(&saa7134_devlist))
+	if (dev == NULL)
 		pr_info("saa7134 ALSA: no saa7134 cards found\n");
 
 	return 0;

@@ -1,4 +1,3 @@
-# SPDX-License-Identifier: GPL-2.0-only
 #
 # Industrial I/O generic buffer implementations
 #
@@ -11,7 +10,7 @@ config IIO_BUFFER_CB
 	  usage.  That is, those where the data is pushed to the consumer.
 
 config IIO_BUFFER_DMA
-	tristate "Industrial I/O DMA buffer infrastructure"
+	tristate
 	help
 	  Provides the generic IIO DMA buffer infrastructure that can be used by
 	  drivers for devices with DMA support to implement the IIO buffer.
@@ -20,13 +19,13 @@ config IIO_BUFFER_DMA
 	  infrastructure.
 
 config IIO_BUFFER_DMAENGINE
-	tristate "Industrial I/O DMA buffer integration with DMAEngine"
+	tristate
 	select IIO_BUFFER_DMA
 	help
 	  Provides a bonding of the generic IIO DMA buffer infrastructure with the
-	  DMAEngine framework. This can be used by converter drivers with a DMA port
+	  DMAengine framework. This can be used by converter drivers with a DMA port
 	  connected to an external DMA controller which is supported by the
-	  DMAEngine framework.
+	  DMAengine framework.
 
 	  Should be selected by drivers that want to use this functionality.
 
@@ -48,7 +47,7 @@ config IIO_KFIFO_BUF
 	  often to read from the buffer.
 
 config IIO_TRIGGERED_BUFFER
-	tristate "Industrial I/O triggered buffer support"
+	tristate
 	select IIO_TRIGGER
 	select IIO_KFIFO_BUF
 	help

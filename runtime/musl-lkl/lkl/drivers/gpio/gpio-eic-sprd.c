@@ -180,18 +180,7 @@ static void sprd_eic_free(struct gpio_chip *chip, unsigned int offset)
 
 static int sprd_eic_get(struct gpio_chip *chip, unsigned int offset)
 {
-	struct sprd_eic *sprd_eic = gpiochip_get_data(chip);
-
-	switch (sprd_eic->type) {
-	case SPRD_EIC_DEBOUNCE:
-		return sprd_eic_read(chip, offset, SPRD_EIC_DBNC_DATA);
-	case SPRD_EIC_ASYNC:
-		return sprd_eic_read(chip, offset, SPRD_EIC_ASYNC_DATA);
-	case SPRD_EIC_SYNC:
-		return sprd_eic_read(chip, offset, SPRD_EIC_SYNC_DATA);
-	default:
-		return -ENOTSUPP;
-	}
+	return sprd_eic_read(chip, offset, SPRD_EIC_DBNC_DATA);
 }
 
 static int sprd_eic_direction_input(struct gpio_chip *chip, unsigned int offset)
@@ -311,7 +300,6 @@ static int sprd_eic_irq_set_type(struct irq_data *data, unsigned int flow_type)
 	struct gpio_chip *chip = irq_data_get_irq_chip_data(data);
 	struct sprd_eic *sprd_eic = gpiochip_get_data(chip);
 	u32 offset = irqd_to_hwirq(data);
-	int state;
 
 	switch (sprd_eic->type) {
 	case SPRD_EIC_DEBOUNCE:
@@ -321,17 +309,6 @@ static int sprd_eic_irq_set_type(struct irq_data *data, unsigned int flow_type)
 			break;
 		case IRQ_TYPE_LEVEL_LOW:
 			sprd_eic_update(chip, offset, SPRD_EIC_DBNC_IEV, 0);
-			break;
-		case IRQ_TYPE_EDGE_RISING:
-		case IRQ_TYPE_EDGE_FALLING:
-		case IRQ_TYPE_EDGE_BOTH:
-			state = sprd_eic_get(chip, offset);
-			if (state)
-				sprd_eic_update(chip, offset,
-						SPRD_EIC_DBNC_IEV, 0);
-			else
-				sprd_eic_update(chip, offset,
-						SPRD_EIC_DBNC_IEV, 1);
 			break;
 		default:
 			return -ENOTSUPP;
@@ -346,17 +323,6 @@ static int sprd_eic_irq_set_type(struct irq_data *data, unsigned int flow_type)
 			break;
 		case IRQ_TYPE_LEVEL_LOW:
 			sprd_eic_update(chip, offset, SPRD_EIC_LATCH_INTPOL, 1);
-			break;
-		case IRQ_TYPE_EDGE_RISING:
-		case IRQ_TYPE_EDGE_FALLING:
-		case IRQ_TYPE_EDGE_BOTH:
-			state = sprd_eic_get(chip, offset);
-			if (state)
-				sprd_eic_update(chip, offset,
-						SPRD_EIC_LATCH_INTPOL, 0);
-			else
-				sprd_eic_update(chip, offset,
-						SPRD_EIC_LATCH_INTPOL, 1);
 			break;
 		default:
 			return -ENOTSUPP;
@@ -379,7 +345,6 @@ static int sprd_eic_irq_set_type(struct irq_data *data, unsigned int flow_type)
 			irq_set_handler_locked(data, handle_edge_irq);
 			break;
 		case IRQ_TYPE_EDGE_BOTH:
-			sprd_eic_update(chip, offset, SPRD_EIC_ASYNC_INTMODE, 0);
 			sprd_eic_update(chip, offset, SPRD_EIC_ASYNC_INTBOTH, 1);
 			irq_set_handler_locked(data, handle_edge_irq);
 			break;
@@ -414,7 +379,6 @@ static int sprd_eic_irq_set_type(struct irq_data *data, unsigned int flow_type)
 			irq_set_handler_locked(data, handle_edge_irq);
 			break;
 		case IRQ_TYPE_EDGE_BOTH:
-			sprd_eic_update(chip, offset, SPRD_EIC_SYNC_INTMODE, 0);
 			sprd_eic_update(chip, offset, SPRD_EIC_SYNC_INTBOTH, 1);
 			irq_set_handler_locked(data, handle_edge_irq);
 			break;
@@ -433,62 +397,12 @@ static int sprd_eic_irq_set_type(struct irq_data *data, unsigned int flow_type)
 		default:
 			return -ENOTSUPP;
 		}
-		break;
 	default:
 		dev_err(chip->parent, "Unsupported EIC type.\n");
 		return -ENOTSUPP;
 	}
 
 	return 0;
-}
-
-static void sprd_eic_toggle_trigger(struct gpio_chip *chip, unsigned int irq,
-				    unsigned int offset)
-{
-	struct sprd_eic *sprd_eic = gpiochip_get_data(chip);
-	struct irq_data *data = irq_get_irq_data(irq);
-	u32 trigger = irqd_get_trigger_type(data);
-	int state, post_state;
-
-	/*
-	 * The debounce EIC and latch EIC can only support level trigger, so we
-	 * can toggle the level trigger to emulate the edge trigger.
-	 */
-	if ((sprd_eic->type != SPRD_EIC_DEBOUNCE &&
-	     sprd_eic->type != SPRD_EIC_LATCH) ||
-	    !(trigger & IRQ_TYPE_EDGE_BOTH))
-		return;
-
-	sprd_eic_irq_mask(data);
-	state = sprd_eic_get(chip, offset);
-
-retry:
-	switch (sprd_eic->type) {
-	case SPRD_EIC_DEBOUNCE:
-		if (state)
-			sprd_eic_update(chip, offset, SPRD_EIC_DBNC_IEV, 0);
-		else
-			sprd_eic_update(chip, offset, SPRD_EIC_DBNC_IEV, 1);
-		break;
-	case SPRD_EIC_LATCH:
-		if (state)
-			sprd_eic_update(chip, offset, SPRD_EIC_LATCH_INTPOL, 0);
-		else
-			sprd_eic_update(chip, offset, SPRD_EIC_LATCH_INTPOL, 1);
-		break;
-	default:
-		sprd_eic_irq_unmask(data);
-		return;
-	}
-
-	post_state = sprd_eic_get(chip, offset);
-	if (state != post_state) {
-		dev_warn(chip->parent, "EIC level was changed.\n");
-		state = post_state;
-		goto retry;
-	}
-
-	sprd_eic_irq_unmask(data);
 }
 
 static int sprd_eic_match_chip_by_type(struct gpio_chip *chip, void *data)
@@ -530,12 +444,10 @@ static void sprd_eic_handle_one_type(struct gpio_chip *chip)
 		}
 
 		for_each_set_bit(n, &reg, SPRD_EIC_PER_BANK_NR) {
-			u32 offset = bank * SPRD_EIC_PER_BANK_NR + n;
-
-			girq = irq_find_mapping(chip->irq.domain, offset);
+			girq = irq_find_mapping(chip->irq.domain,
+					bank * SPRD_EIC_PER_BANK_NR + n);
 
 			generic_handle_irq(girq);
-			sprd_eic_toggle_trigger(chip, girq, offset);
 		}
 	}
 }
@@ -586,8 +498,10 @@ static int sprd_eic_probe(struct platform_device *pdev)
 	sprd_eic->type = pdata->type;
 
 	sprd_eic->irq = platform_get_irq(pdev, 0);
-	if (sprd_eic->irq < 0)
+	if (sprd_eic->irq < 0) {
+		dev_err(&pdev->dev, "Failed to get EIC interrupt.\n");
 		return sprd_eic->irq;
+	}
 
 	for (i = 0; i < SPRD_EIC_MAX_BANK; i++) {
 		/*
@@ -598,7 +512,7 @@ static int sprd_eic_probe(struct platform_device *pdev)
 		 */
 		res = platform_get_resource(pdev, IORESOURCE_MEM, i);
 		if (!res)
-			break;
+			continue;
 
 		sprd_eic->base[i] = devm_ioremap_resource(&pdev->dev, res);
 		if (IS_ERR(sprd_eic->base[i]))
@@ -609,6 +523,7 @@ static int sprd_eic_probe(struct platform_device *pdev)
 	sprd_eic->chip.ngpio = pdata->num_eics;
 	sprd_eic->chip.base = -1;
 	sprd_eic->chip.parent = &pdev->dev;
+	sprd_eic->chip.of_node = pdev->dev.of_node;
 	sprd_eic->chip.direction_input = sprd_eic_direction_input;
 	switch (sprd_eic->type) {
 	case SPRD_EIC_DEBOUNCE:
@@ -616,12 +531,14 @@ static int sprd_eic_probe(struct platform_device *pdev)
 		sprd_eic->chip.free = sprd_eic_free;
 		sprd_eic->chip.set_config = sprd_eic_set_config;
 		sprd_eic->chip.set = sprd_eic_set;
-		fallthrough;
+		/* fall-through */
 	case SPRD_EIC_ASYNC:
+		/* fall-through */
 	case SPRD_EIC_SYNC:
 		sprd_eic->chip.get = sprd_eic_get;
 		break;
 	case SPRD_EIC_LATCH:
+		/* fall-through */
 	default:
 		break;
 	}

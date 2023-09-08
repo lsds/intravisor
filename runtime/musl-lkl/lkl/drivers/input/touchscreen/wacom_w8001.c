@@ -27,8 +27,6 @@ MODULE_AUTHOR("Jaya Kumar <jayakumar.lkml@gmail.com>");
 MODULE_DESCRIPTION(DRIVER_DESC);
 MODULE_LICENSE("GPL");
 
-#define W8001_MAX_PHYS		42
-
 #define W8001_MAX_LENGTH	13
 #define W8001_LEAD_MASK		0x80
 #define W8001_LEAD_BYTE		0x80
@@ -91,7 +89,7 @@ struct w8001 {
 	unsigned char response_type;
 	unsigned char response[W8001_MAX_LENGTH];
 	unsigned char data[W8001_MAX_LENGTH];
-	char phys[W8001_MAX_PHYS];
+	char phys[32];
 	int type;
 	unsigned int pktlen;
 	u16 max_touch_x;
@@ -625,7 +623,7 @@ static int w8001_connect(struct serio *serio, struct serio_driver *drv)
 	/* For backwards-compatibility we compose the basename based on
 	 * capabilities and then just append the tool type
 	 */
-	strscpy(basename, "Wacom Serial", sizeof(basename));
+	strlcpy(basename, "Wacom Serial", sizeof(basename));
 
 	err_pen = w8001_setup_pen(w8001, basename, sizeof(basename));
 	err_touch = w8001_setup_touch(w8001, basename, sizeof(basename));
@@ -635,7 +633,7 @@ static int w8001_connect(struct serio *serio, struct serio_driver *drv)
 	}
 
 	if (!err_pen) {
-		strscpy(w8001->pen_name, basename, sizeof(w8001->pen_name));
+		strlcpy(w8001->pen_name, basename, sizeof(w8001->pen_name));
 		strlcat(w8001->pen_name, " Pen", sizeof(w8001->pen_name));
 		input_dev_pen->name = w8001->pen_name;
 
@@ -651,7 +649,7 @@ static int w8001_connect(struct serio *serio, struct serio_driver *drv)
 	}
 
 	if (!err_touch) {
-		strscpy(w8001->touch_name, basename, sizeof(w8001->touch_name));
+		strlcpy(w8001->touch_name, basename, sizeof(w8001->touch_name));
 		strlcat(w8001->touch_name, " Finger",
 			sizeof(w8001->touch_name));
 		input_dev_touch->name = w8001->touch_name;

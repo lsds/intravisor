@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /* ipv6header match - matches IPv6 packets based
    on whether they contain certain headers */
 
@@ -6,6 +5,10 @@
  * Rewritten by: Andras Kis-Szabo <kisza@sch.bme.hu> */
 
 /* (C) 2001-2002 Andras Kis-Szabo <kisza@sch.bme.hu>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 
 #include <linux/module.h>
@@ -16,7 +19,7 @@
 #include <net/ipv6.h>
 
 #include <linux/netfilter/x_tables.h>
-#include <linux/netfilter_ipv6.h>
+#include <linux/netfilter_ipv6/ip6_tables.h>
 #include <linux/netfilter_ipv6/ip6t_ipv6header.h>
 
 MODULE_LICENSE("GPL");
@@ -42,7 +45,7 @@ ipv6header_mt6(const struct sk_buff *skb, struct xt_action_param *par)
 	len = skb->len - ptr;
 	temp = 0;
 
-	while (nf_ip6_ext_hdr(nexthdr)) {
+	while (ip6t_ext_hdr(nexthdr)) {
 		const struct ipv6_opt_hdr *hp;
 		struct ipv6_opt_hdr _hdr;
 		int hdrlen;
@@ -62,16 +65,13 @@ ipv6header_mt6(const struct sk_buff *skb, struct xt_action_param *par)
 		}
 
 		hp = skb_header_pointer(skb, ptr, sizeof(_hdr), &_hdr);
-		if (!hp) {
-			par->hotdrop = true;
-			return false;
-		}
+		BUG_ON(hp == NULL);
 
 		/* Calculate the header length */
 		if (nexthdr == NEXTHDR_FRAGMENT)
 			hdrlen = 8;
 		else if (nexthdr == NEXTHDR_AUTH)
-			hdrlen = ipv6_authlen(hp);
+			hdrlen = (hp->hdrlen + 2) << 2;
 		else
 			hdrlen = ipv6_optlen(hp);
 

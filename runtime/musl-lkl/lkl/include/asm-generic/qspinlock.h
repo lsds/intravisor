@@ -1,35 +1,15 @@
-/* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
  * Queued spinlock
  *
- * A 'generic' spinlock implementation that is based on MCS locks. For an
- * architecture that's looking for a 'generic' spinlock, please first consider
- * ticket-lock.h and only come looking here when you've considered all the
- * constraints below and can show your hardware does actually perform better
- * with qspinlock.
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
  *
- * qspinlock relies on atomic_*_release()/atomic_*_acquire() to be RCsc (or no
- * weaker than RCtso if you're power), where regular code only expects atomic_t
- * to be RCpc.
- *
- * qspinlock relies on a far greater (compared to asm-generic/spinlock.h) set
- * of atomic operations to behave well together, please audit them carefully to
- * ensure they all have forward progress. Many atomic operations may default to
- * cmpxchg() loops which will not have good forward progress properties on
- * LL/SC architectures.
- *
- * One notable example is atomic_fetch_or_acquire(), which x86 cannot (cheaply)
- * do. Carefully read the patches that introduced
- * queued_fetch_set_pending_acquire().
- *
- * qspinlock also heavily relies on mixed size atomic operations, in specific
- * it requires architectures to have xchg16; something which many LL/SC
- * architectures need to implement as a 32bit and+or in order to satisfy the
- * forward progress guarantees mentioned above.
- *
- * Further reading on mixed size atomics that might be relevant:
- *
- *   http://www.cl.cam.ac.uk/~pes20/popl17/mixed-size.pdf
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
  *
  * (C) Copyright 2013-2015 Hewlett-Packard Development Company, L.P.
  * (C) Copyright 2015 Hewlett-Packard Enterprise Development LP
@@ -40,14 +20,13 @@
 #define __ASM_GENERIC_QSPINLOCK_H
 
 #include <asm-generic/qspinlock_types.h>
-#include <linux/atomic.h>
 
-#ifndef queued_spin_is_locked
 /**
  * queued_spin_is_locked - is the spinlock locked?
  * @lock: Pointer to queued spinlock structure
  * Return: 1 if it is locked, 0 otherwise
  */
+#ifndef queued_spin_is_locked
 static __always_inline int queued_spin_is_locked(struct qspinlock *lock)
 {
 	/*
@@ -89,31 +68,27 @@ static __always_inline int queued_spin_is_contended(struct qspinlock *lock)
  */
 static __always_inline int queued_spin_trylock(struct qspinlock *lock)
 {
-	int val = atomic_read(&lock->val);
-
-	if (unlikely(val))
-		return 0;
-
-	return likely(atomic_try_cmpxchg_acquire(&lock->val, &val, _Q_LOCKED_VAL));
+	if (!atomic_read(&lock->val) &&
+	   (atomic_cmpxchg_acquire(&lock->val, 0, _Q_LOCKED_VAL) == 0))
+		return 1;
+	return 0;
 }
 
 extern void queued_spin_lock_slowpath(struct qspinlock *lock, u32 val);
 
-#ifndef queued_spin_lock
 /**
  * queued_spin_lock - acquire a queued spinlock
  * @lock: Pointer to queued spinlock structure
  */
 static __always_inline void queued_spin_lock(struct qspinlock *lock)
 {
-	int val = 0;
+	u32 val;
 
-	if (likely(atomic_try_cmpxchg_acquire(&lock->val, &val, _Q_LOCKED_VAL)))
+	val = atomic_cmpxchg_acquire(&lock->val, 0, _Q_LOCKED_VAL);
+	if (likely(val == 0))
 		return;
-
 	queued_spin_lock_slowpath(lock, val);
 }
-#endif
 
 #ifndef queued_spin_unlock
 /**
@@ -125,7 +100,7 @@ static __always_inline void queued_spin_unlock(struct qspinlock *lock)
 	/*
 	 * unlock() needs release semantics:
 	 */
-	smp_store_release(&lock->locked, 0);
+	(void)atomic_sub_return_release(_Q_LOCKED_VAL, &lock->val);
 }
 #endif
 

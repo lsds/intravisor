@@ -1,12 +1,9 @@
 /* SPDX-License-Identifier: GPL-2.0 */
 
-#include <linux/pgtable.h>
 #include <asm/cache.h>
 #include <asm/ptrace.h>
+#include <asm/pgtable.h>
 #include <asm/thread_info.h>
-
-#define EMITS_PT_NOTE
-#define RO_EXCEPTION_TABLE_ALIGN	16
 
 #include <asm-generic/vmlinux.lds.h>
 
@@ -16,7 +13,7 @@ ENTRY(phys_start)
 jiffies = jiffies_64;
 
 PHDRS {
-	text   PT_LOAD;
+	code   PT_LOAD;
 	percpu PT_LOAD;
 	data   PT_LOAD;
 	note   PT_NOTE;
@@ -39,7 +36,7 @@ SECTIONS {
 	phys_start = _start - LOAD_OFFSET;
 
 	code : {
-	} :text
+	} :code
 	. = KERNEL_START;
 
 	_text = .;
@@ -54,8 +51,6 @@ SECTIONS {
 		CPUIDLE_TEXT
 		LOCK_TEXT
 		KPROBES_TEXT
-		IRQENTRY_TEXT
-		SOFTIRQENTRY_TEXT
 		*(.gnu.linkonce.t*)
 	}
 
@@ -73,6 +68,11 @@ SECTIONS {
 	/*
 	 * Read-only data
 	 */
+	NOTES :code :note       /* put .notes in text and mark in PT_NOTE  */
+	code_continues : {
+	} : code               /* switch back to regular program...  */
+
+	EXCEPTION_TABLE(16)
 
 	/* MCA table */
 	. = ALIGN(16);
@@ -102,11 +102,11 @@ SECTIONS {
 		__start_unwind = .;
 		*(.IA_64.unwind*)
 		__end_unwind = .;
-	} :text :unwind
+	} :code :unwind
 	code_continues2 : {
-	} :text
+	} : code
 
-	RO_DATA(4096)
+	RODATA
 
 	.opd : AT(ADDR(.opd) - LOAD_OFFSET) {
 		__start_opd = .;
@@ -140,6 +140,16 @@ SECTIONS {
 		*(.data..patch.mckinley_e9)
 		__end___mckinley_e9_bundles = .;
 	}
+
+#if defined(CONFIG_IA64_GENERIC)
+	/* Machine Vector */
+	. = ALIGN(16);
+	.machvec : AT(ADDR(.machvec) - LOAD_OFFSET) {
+		machvec_start = .;
+		*(.machvec)
+		machvec_end = .;
+	}
+#endif
 
 #ifdef	CONFIG_SMP
 	. = ALIGN(PERCPU_PAGE_SIZE);
@@ -214,11 +224,10 @@ SECTIONS {
 	_end = .;
 
 	code : {
-	} :text
+	} :code
 
 	STABS_DEBUG
 	DWARF_DEBUG
-	ELF_DETAILS
 
 	/* Default discards */
 	DISCARDS

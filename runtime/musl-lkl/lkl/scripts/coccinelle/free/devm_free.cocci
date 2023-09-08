@@ -1,9 +1,8 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /// Find uses of standard freeing functons on values allocated using devm_
 /// functions.  Values allocated using the devm_functions are freed when
 /// the device is detached, and thus the use of the standard freeing
 /// function would cause a double free.
-/// See Documentation/driver-api/driver-model/devres.rst for more information.
+/// See Documentation/driver-model/devres.txt for more information.
 ///
 /// A difficulty of detecting this problem is that the standard freeing
 /// function might be called from a different function than the one
@@ -15,9 +14,9 @@
 /// less reliable in these cases.
 ///
 // Confidence: Moderate
-// Copyright: (C) 2011 Julia Lawall, INRIA/LIP6.
-// Copyright: (C) 2011 Gilles Muller, INRIA/LiP6.
-// URL: https://coccinelle.gitlabpages.inria.fr/website
+// Copyright: (C) 2011 Julia Lawall, INRIA/LIP6.  GPLv2.
+// Copyright: (C) 2011 Gilles Muller, INRIA/LiP6.  GPLv2.
+// URL: http://coccinelle.lip6.fr/
 // Comments:
 // Options: --no-includes --include-headers
 
@@ -52,6 +51,8 @@ expression x;
 |
  x = devm_ioremap(...)
 |
+ x = devm_ioremap_nocache(...)
+|
  x = devm_ioport_map(...)
 )
 
@@ -83,13 +84,17 @@ position p;
 |
  x = ioremap(...)
 |
+ x = ioremap_nocache(...)
+|
  x = ioport_map(...)
 )
 ...
 (
  kfree@p(x)
 |
- kfree_sensitive@p(x)
+ kzfree@p(x)
+|
+ __krealloc@p(x, ...)
 |
  krealloc@p(x, ...)
 |
@@ -112,7 +117,9 @@ position p != safe.p;
 (
 * kfree@p(x)
 |
-* kfree_sensitive@p(x)
+* kzfree@p(x)
+|
+* __krealloc@p(x, ...)
 |
 * krealloc@p(x, ...)
 |

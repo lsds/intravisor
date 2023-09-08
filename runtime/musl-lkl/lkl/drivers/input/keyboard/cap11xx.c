@@ -1,8 +1,11 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Input driver for Microchip CAP11xx based capacitive touch sensors
  *
  * (c) 2014 Daniel Mack <linux@zonque.org>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 
 #include <linux/kernel.h>
@@ -72,7 +75,9 @@
 struct cap11xx_led {
 	struct cap11xx_priv *priv;
 	struct led_classdev cdev;
+	struct work_struct work;
 	u32 reg;
+	enum led_brightness new_brightness;
 };
 #endif
 
@@ -91,21 +96,18 @@ struct cap11xx_hw_model {
 	u8 product_id;
 	unsigned int num_channels;
 	unsigned int num_leds;
-	bool no_gain;
 };
 
 enum {
 	CAP1106,
 	CAP1126,
 	CAP1188,
-	CAP1206,
 };
 
 static const struct cap11xx_hw_model cap11xx_devices[] = {
-	[CAP1106] = { .product_id = 0x55, .num_channels = 6, .num_leds = 0, .no_gain = false },
-	[CAP1126] = { .product_id = 0x53, .num_channels = 6, .num_leds = 2, .no_gain = false },
-	[CAP1188] = { .product_id = 0x50, .num_channels = 8, .num_leds = 8, .no_gain = false },
-	[CAP1206] = { .product_id = 0x67, .num_channels = 6, .num_leds = 0, .no_gain = true },
+	[CAP1106] = { .product_id = 0x55, .num_channels = 6, .num_leds = 0 },
+	[CAP1126] = { .product_id = 0x53, .num_channels = 6, .num_leds = 2 },
+	[CAP1188] = { .product_id = 0x50, .num_channels = 8, .num_leds = 8 },
 };
 
 static const struct reg_default cap11xx_reg_defaults[] = {
@@ -231,21 +233,30 @@ static void cap11xx_input_close(struct input_dev *idev)
 }
 
 #ifdef CONFIG_LEDS_CLASS
-static int cap11xx_led_set(struct led_classdev *cdev,
-			    enum led_brightness value)
+static void cap11xx_led_work(struct work_struct *work)
 {
-	struct cap11xx_led *led = container_of(cdev, struct cap11xx_led, cdev);
+	struct cap11xx_led *led = container_of(work, struct cap11xx_led, work);
 	struct cap11xx_priv *priv = led->priv;
+	int value = led->new_brightness;
 
 	/*
-	 * All LEDs share the same duty cycle as this is a HW
-	 * limitation. Brightness levels per LED are either
-	 * 0 (OFF) and 1 (ON).
+	 * All LEDs share the same duty cycle as this is a HW limitation.
+	 * Brightness levels per LED are either 0 (OFF) and 1 (ON).
 	 */
-	return regmap_update_bits(priv->regmap,
-				  CAP11XX_REG_LED_OUTPUT_CONTROL,
-				  BIT(led->reg),
-				  value ? BIT(led->reg) : 0);
+	regmap_update_bits(priv->regmap, CAP11XX_REG_LED_OUTPUT_CONTROL,
+				BIT(led->reg), value ? BIT(led->reg) : 0);
+}
+
+static void cap11xx_led_set(struct led_classdev *cdev,
+			   enum led_brightness value)
+{
+	struct cap11xx_led *led = container_of(cdev, struct cap11xx_led, cdev);
+
+	if (led->new_brightness == value)
+		return;
+
+	led->new_brightness = value;
+	schedule_work(&led->work);
 }
 
 static int cap11xx_init_leds(struct device *dev,
@@ -288,7 +299,7 @@ static int cap11xx_init_leds(struct device *dev,
 		led->cdev.default_trigger =
 			of_get_property(child, "linux,default-trigger", NULL);
 		led->cdev.flags = 0;
-		led->cdev.brightness_set_blocking = cap11xx_led_set;
+		led->cdev.brightness_set = cap11xx_led_set;
 		led->cdev.max_brightness = 1;
 		led->cdev.brightness = LED_OFF;
 
@@ -300,6 +311,8 @@ static int cap11xx_init_leds(struct device *dev,
 
 		led->reg = reg;
 		led->priv = priv;
+
+		INIT_WORK(&led->work, cap11xx_led_work);
 
 		error = devm_led_classdev_register(dev, &led->cdev);
 		if (error) {
@@ -344,7 +357,8 @@ static int cap11xx_i2c_probe(struct i2c_client *i2c_client,
 	}
 
 	priv = devm_kzalloc(dev,
-			    struct_size(priv, keycodes, cap->num_channels),
+			    sizeof(*priv) +
+				cap->num_channels * sizeof(priv->keycodes[0]),
 			    GFP_KERNEL);
 	if (!priv)
 		return -ENOMEM;
@@ -381,24 +395,17 @@ static int cap11xx_i2c_probe(struct i2c_client *i2c_client,
 	node = dev->of_node;
 
 	if (!of_property_read_u32(node, "microchip,sensor-gain", &gain32)) {
-		if (cap->no_gain)
-			dev_warn(dev,
-				 "This version doesn't support sensor gain\n");
-		else if (is_power_of_2(gain32) && gain32 <= 8)
+		if (is_power_of_2(gain32) && gain32 <= 8)
 			gain = ilog2(gain32);
 		else
 			dev_err(dev, "Invalid sensor-gain value %d\n", gain32);
 	}
 
-	if (id->driver_data != CAP1206) {
-		if (of_property_read_bool(node, "microchip,irq-active-high")) {
-			error = regmap_update_bits(priv->regmap,
-						   CAP11XX_REG_CONFIG2,
-						   CAP11XX_REG_CONFIG2_ALT_POL,
-						   0);
-			if (error)
-				return error;
-		}
+	if (of_property_read_bool(node, "microchip,irq-active-high")) {
+		error = regmap_update_bits(priv->regmap, CAP11XX_REG_CONFIG2,
+					   CAP11XX_REG_CONFIG2_ALT_POL, 0);
+		if (error)
+			return error;
 	}
 
 	/* Provide some useful defaults */
@@ -408,14 +415,11 @@ static int cap11xx_i2c_probe(struct i2c_client *i2c_client,
 	of_property_read_u32_array(node, "linux,keycodes",
 				   priv->keycodes, cap->num_channels);
 
-	if (!cap->no_gain) {
-		error = regmap_update_bits(priv->regmap,
-				CAP11XX_REG_MAIN_CONTROL,
-				CAP11XX_REG_MAIN_CONTROL_GAIN_MASK,
-				gain << CAP11XX_REG_MAIN_CONTROL_GAIN_SHIFT);
-		if (error)
-			return error;
-	}
+	error = regmap_update_bits(priv->regmap, CAP11XX_REG_MAIN_CONTROL,
+				   CAP11XX_REG_MAIN_CONTROL_GAIN_MASK,
+				   gain << CAP11XX_REG_MAIN_CONTROL_GAIN_SHIFT);
+	if (error)
+		return error;
 
 	/* Disable autorepeat. The Linux input system has its own handling. */
 	error = regmap_write(priv->regmap, CAP11XX_REG_REPEAT_RATE, 0);
@@ -483,7 +487,6 @@ static const struct of_device_id cap11xx_dt_ids[] = {
 	{ .compatible = "microchip,cap1106", },
 	{ .compatible = "microchip,cap1126", },
 	{ .compatible = "microchip,cap1188", },
-	{ .compatible = "microchip,cap1206", },
 	{}
 };
 MODULE_DEVICE_TABLE(of, cap11xx_dt_ids);
@@ -492,7 +495,6 @@ static const struct i2c_device_id cap11xx_i2c_ids[] = {
 	{ "cap1106", CAP1106 },
 	{ "cap1126", CAP1126 },
 	{ "cap1188", CAP1188 },
-	{ "cap1206", CAP1206 },
 	{}
 };
 MODULE_DEVICE_TABLE(i2c, cap11xx_i2c_ids);

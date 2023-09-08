@@ -13,11 +13,6 @@ Required properties:
 - #gpio-cells : Should be two.
                 The first cell is the gpio pin number and the
                 second cell is used for optional parameters.
-- gpio-ranges: see ../gpio/gpio.txt
-
-Optional properties:
-
-- gpio-reserved-ranges: see ../gpio/gpio.txt
 
 Please refer to ../gpio/gpio.txt and ../interrupt-controller/interrupts.txt for
 a general description of GPIO and interrupt bindings.
@@ -26,7 +21,7 @@ Please refer to pinctrl-bindings.txt in this directory for details of the
 common pinctrl bindings used by client devices, including the meaning of the
 phrase "pin configuration node".
 
-The pin configuration nodes act as a container for an arbitrary number of
+The pin configuration nodes act as a container for an abitrary number of
 subnodes. Each of these subnodes represents some desired configuration for a
 pin, a group, or a list of pins or groups. This configuration can include the
 mux function to select on those pin(s)/group(s), and various pin configuration
@@ -44,8 +39,7 @@ information about e.g. the mux function.
 
 The following generic properties as defined in pinctrl-bindings.txt are valid
 to specify in a pin configuration subnode:
- pins, function, bias-disable, bias-pull-down, bias-pull-up, drive-open-drain,
- drive-strength.
+ pins, function, bias-disable, bias-pull-down, bias-pull,up, drive-strength.
 
 Non-empty subnodes must specify the 'pins' property.
 Note that not all properties are valid for all pins.
@@ -70,7 +64,6 @@ Example:
 
 		gpio-controller;
 		#gpio-cells = <2>;
-		gpio-ranges = <&tlmm 0 0 100>;
 		interrupt-controller;
 		#interrupt-cells = <2>;
 		interrupts = <0 208 0>;

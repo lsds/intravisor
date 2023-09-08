@@ -1,6 +1,9 @@
-// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
-// Copyright (C) 2016 ARM Ltd.
-// Copyright (C) 2018 Hauke Mehrtens <hauke@hauke-m.de>
+/*
+ * Copyright (C) 2016 ARM Ltd.
+ * Copyright (C) 2018 Hauke Mehrtens <hauke@hauke-m.de>
+ *
+ * SPDX-License-Identifier: (GPL-2.0+ OR X11)
+ */
 
 /dts-v1/;
 #include "sun50i-h5.dtsi"
@@ -33,13 +36,13 @@
 	leds {
 		compatible = "gpio-leds";
 
-		led-0 {
+		pwr {
 			label = "orangepi:green:pwr";
 			gpios = <&r_pio 0 10 GPIO_ACTIVE_HIGH>; /* PA10 */
 			default-state = "on";
 		};
 
-		led-1 {
+		status {
 			label = "orangepi:red:status";
 			gpios = <&pio 0 17 GPIO_ACTIVE_HIGH>; /* PA17 */
 		};
@@ -69,7 +72,7 @@
 	pinctrl-0 = <&emac_rgmii_pins>;
 	phy-supply = <&reg_gmac_3v3>;
 	phy-handle = <&ext_rgmii_phy>;
-	phy-mode = "rgmii-id";
+	phy-mode = "rgmii";
 	status = "okay";
 };
 
@@ -124,7 +127,7 @@
 
 &uart0 {
 	pinctrl-names = "default";
-	pinctrl-0 = <&uart0_pa_pins>;
+	pinctrl-0 = <&uart0_pins_a>;
 	status = "okay";
 };
 

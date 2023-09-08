@@ -536,8 +536,7 @@ static void release_uhci(struct uhci_hcd *uhci)
 	uhci->is_initialized = 0;
 	spin_unlock_irq(&uhci->lock);
 
-	debugfs_remove(debugfs_lookup(uhci_to_hcd(uhci)->self.bus_name,
-				      uhci_debugfs_root));
+	debugfs_remove(uhci->dentry);
 
 	for (i = 0; i < UHCI_NUM_SKELQH; i++)
 		uhci_free_qh(uhci, uhci->skelqh[i]);
@@ -578,10 +577,11 @@ static int uhci_start(struct usb_hcd *hcd)
 	struct uhci_hcd *uhci = hcd_to_uhci(hcd);
 	int retval = -EBUSY;
 	int i;
+	struct dentry __maybe_unused *dentry;
 
 	hcd->uses_new_polling = 1;
 	/* Accept arbitrarily long scatter-gather lists */
-	if (!hcd->localmem_pool)
+	if (!(hcd->driver->flags & HCD_LOCAL_MEM))
 		hcd->self.sg_tablesize = ~0;
 
 	spin_lock_init(&uhci->lock);
@@ -590,13 +590,19 @@ static int uhci_start(struct usb_hcd *hcd)
 	init_waitqueue_head(&uhci->waitqh);
 
 #ifdef UHCI_DEBUG_OPS
-	debugfs_create_file(hcd->self.bus_name, S_IFREG|S_IRUGO|S_IWUSR,
-			    uhci_debugfs_root, uhci, &uhci_debug_operations);
+	dentry = debugfs_create_file(hcd->self.bus_name,
+			S_IFREG|S_IRUGO|S_IWUSR, uhci_debugfs_root,
+			uhci, &uhci_debug_operations);
+	if (!dentry) {
+		dev_err(uhci_dev(uhci), "couldn't create uhci debugfs entry\n");
+		return -ENOMEM;
+	}
+	uhci->dentry = dentry;
 #endif
 
-	uhci->frame = dma_alloc_coherent(uhci_dev(uhci),
-					 UHCI_NUMFRAMES * sizeof(*uhci->frame),
-					 &uhci->frame_dma_handle, GFP_KERNEL);
+	uhci->frame = dma_zalloc_coherent(uhci_dev(uhci),
+			UHCI_NUMFRAMES * sizeof(*uhci->frame),
+			&uhci->frame_dma_handle, GFP_KERNEL);
 	if (!uhci->frame) {
 		dev_err(uhci_dev(uhci),
 			"unable to allocate consistent memory for frame list\n");
@@ -700,7 +706,7 @@ err_alloc_frame_cpu:
 			uhci->frame, uhci->frame_dma_handle);
 
 err_alloc_frame:
-	debugfs_remove(debugfs_lookup(hcd->self.bus_name, uhci_debugfs_root));
+	debugfs_remove(uhci->dentry);
 
 	return retval;
 }
@@ -867,6 +873,8 @@ static int __init uhci_hcd_init(void)
 	if (usb_disabled())
 		return -ENODEV;
 
+	printk(KERN_INFO "uhci_hcd: " DRIVER_DESC "%s\n",
+			ignore_oc ? ", overcurrent ignored" : "");
 	set_bit(USB_UHCI_LOADED, &usb_hcds_loaded);
 
 #ifdef CONFIG_DYNAMIC_DEBUG
@@ -874,6 +882,8 @@ static int __init uhci_hcd_init(void)
 	if (!errbuf)
 		goto errbuf_failed;
 	uhci_debugfs_root = debugfs_create_dir("uhci", usb_debug_root);
+	if (!uhci_debugfs_root)
+		goto debug_failed;
 #endif
 
 	uhci_up_cachep = kmem_cache_create("uhci_urb_priv",
@@ -908,6 +918,7 @@ up_failed:
 #if defined(DEBUG) || defined(CONFIG_DYNAMIC_DEBUG)
 	debugfs_remove(uhci_debugfs_root);
 
+debug_failed:
 	kfree(errbuf);
 
 errbuf_failed:

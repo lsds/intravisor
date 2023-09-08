@@ -14,7 +14,6 @@ ev6-$(CONFIG_ALPHA_EV6) := ev6-
 ev67-$(CONFIG_ALPHA_EV67) := ev67-
 
 lib-y =	__divqu.o __remqu.o __divlu.o __remlu.o \
-	udiv-qrnnd.o \
 	udelay.o \
 	$(ev6-y)memset.o \
 	$(ev6-y)memcpy.o \
@@ -35,6 +34,8 @@ lib-y =	__divqu.o __remqu.o __divlu.o __remlu.o \
 	fpreg.o \
 	callback_srm.o srm_puts.o srm_printk.o \
 	fls.o
+
+lib-$(CONFIG_SMP) += dec_and_lock.o
 
 # The division routines are built from single source, with different defines.
 AFLAGS___divqu.o = -DDIV

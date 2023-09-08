@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * Asynchronous refcounty things
  *
@@ -45,6 +44,7 @@ void closure_sub(struct closure *cl, int v)
 {
 	closure_put_after_sub(cl, atomic_sub_return(v, &cl->remaining));
 }
+EXPORT_SYMBOL(closure_sub);
 
 /*
  * closure_put - decrement a closure's refcount
@@ -53,6 +53,7 @@ void closure_put(struct closure *cl)
 {
 	closure_put_after_sub(cl, atomic_dec_return(&cl->remaining));
 }
+EXPORT_SYMBOL(closure_put);
 
 /*
  * closure_wake_up - wake up all closures on a wait list, without memory barrier
@@ -74,6 +75,7 @@ void __closure_wake_up(struct closure_waitlist *wait_list)
 		closure_sub(cl, CLOSURE_WAITING + 1);
 	}
 }
+EXPORT_SYMBOL(__closure_wake_up);
 
 /**
  * closure_wait - add a closure to a waitlist
@@ -93,6 +95,7 @@ bool closure_wait(struct closure_waitlist *waitlist, struct closure *cl)
 
 	return true;
 }
+EXPORT_SYMBOL(closure_wait);
 
 struct closure_syncer {
 	struct task_struct	*task;
@@ -101,14 +104,8 @@ struct closure_syncer {
 
 static void closure_sync_fn(struct closure *cl)
 {
-	struct closure_syncer *s = cl->s;
-	struct task_struct *p;
-
-	rcu_read_lock();
-	p = READ_ONCE(s->task);
-	s->done = 1;
-	wake_up_process(p);
-	rcu_read_unlock();
+	cl->s->done = 1;
+	wake_up_process(cl->s->task);
 }
 
 void __sched __closure_sync(struct closure *cl)
@@ -127,6 +124,7 @@ void __sched __closure_sync(struct closure *cl)
 
 	__set_current_state(TASK_RUNNING);
 }
+EXPORT_SYMBOL(__closure_sync);
 
 #ifdef CONFIG_BCACHE_CLOSURES_DEBUG
 
@@ -144,6 +142,7 @@ void closure_debug_create(struct closure *cl)
 	list_add(&cl->all, &closure_list);
 	spin_unlock_irqrestore(&closure_list_lock, flags);
 }
+EXPORT_SYMBOL(closure_debug_create);
 
 void closure_debug_destroy(struct closure *cl)
 {
@@ -156,19 +155,19 @@ void closure_debug_destroy(struct closure *cl)
 	list_del(&cl->all);
 	spin_unlock_irqrestore(&closure_list_lock, flags);
 }
+EXPORT_SYMBOL(closure_debug_destroy);
 
 static struct dentry *closure_debug;
 
-static int debug_show(struct seq_file *f, void *data)
+static int debug_seq_show(struct seq_file *f, void *data)
 {
 	struct closure *cl;
-
 	spin_lock_irq(&closure_list_lock);
 
 	list_for_each_entry(cl, &closure_list, all) {
 		int r = atomic_read(&cl->remaining);
 
-		seq_printf(f, "%p: %pS -> %pS p %p r %i ",
+		seq_printf(f, "%p: %pF -> %pf p %p r %i ",
 			   cl, (void *) cl->ip, cl->fn, cl->parent,
 			   r & CLOSURE_REMAINING_MASK);
 
@@ -178,7 +177,7 @@ static int debug_show(struct seq_file *f, void *data)
 			   r & CLOSURE_RUNNING	? "R" : "");
 
 		if (r & CLOSURE_WAITING)
-			seq_printf(f, " W %pS\n",
+			seq_printf(f, " W %pF\n",
 				   (void *) cl->waiting_on);
 
 		seq_printf(f, "\n");
@@ -188,18 +187,23 @@ static int debug_show(struct seq_file *f, void *data)
 	return 0;
 }
 
-DEFINE_SHOW_ATTRIBUTE(debug);
-
-void  __init closure_debug_init(void)
+static int debug_seq_open(struct inode *inode, struct file *file)
 {
-	if (!IS_ERR_OR_NULL(bcache_debug))
-		/*
-		 * it is unnecessary to check return value of
-		 * debugfs_create_file(), we should not care
-		 * about this.
-		 */
-		closure_debug = debugfs_create_file(
-			"closures", 0400, bcache_debug, NULL, &debug_fops);
+	return single_open(file, debug_seq_show, NULL);
+}
+
+static const struct file_operations debug_ops = {
+	.owner		= THIS_MODULE,
+	.open		= debug_seq_open,
+	.read		= seq_read,
+	.release	= single_release
+};
+
+int __init closure_debug_init(void)
+{
+	closure_debug = debugfs_create_file("closures",
+				0400, bcache_debug, NULL, &debug_ops);
+	return IS_ERR_OR_NULL(closure_debug);
 }
 #endif
 

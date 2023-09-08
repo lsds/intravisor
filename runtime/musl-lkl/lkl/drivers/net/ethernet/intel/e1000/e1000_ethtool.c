@@ -1,5 +1,26 @@
 // SPDX-License-Identifier: GPL-2.0
-/* Copyright(c) 1999 - 2006 Intel Corporation. */
+/*******************************************************************************
+ * Intel PRO/1000 Linux driver
+ * Copyright(c) 1999 - 2006 Intel Corporation.
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms and conditions of the GNU General Public License,
+ * version 2, as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+ * more details.
+ *
+ * The full GNU General Public License is included in this distribution in
+ * the file called "COPYING".
+ *
+ * Contact Information:
+ * Linux NICS <linux.nics@intel.com>
+ * e1000-devel Mailing List <e1000-devel@lists.sourceforge.net>
+ * Intel Corporation, 5200 N.E. Elam Young Parkway, Hillsboro, OR 97124-6497
+ *
+ ******************************************************************************/
 
 /* ethtool support for e1000 */
 
@@ -435,8 +456,8 @@ static int e1000_get_eeprom(struct net_device *netdev,
 	first_word = eeprom->offset >> 1;
 	last_word = (eeprom->offset + eeprom->len - 1) >> 1;
 
-	eeprom_buff = kmalloc_array(last_word - first_word + 1, sizeof(u16),
-				    GFP_KERNEL);
+	eeprom_buff = kmalloc(sizeof(u16) *
+			(last_word - first_word + 1), GFP_KERNEL);
 	if (!eeprom_buff)
 		return -ENOMEM;
 
@@ -513,7 +534,7 @@ static int e1000_set_eeprom(struct net_device *netdev,
 	memcpy(ptr, bytes, eeprom->len);
 
 	for (i = 0; i < last_word - first_word + 1; i++)
-		cpu_to_le16s(&eeprom_buff[i]);
+		eeprom_buff[i] = cpu_to_le16(eeprom_buff[i]);
 
 	ret_val = e1000_write_eeprom(hw, first_word,
 				     last_word - first_word + 1, eeprom_buff);
@@ -531,17 +552,17 @@ static void e1000_get_drvinfo(struct net_device *netdev,
 {
 	struct e1000_adapter *adapter = netdev_priv(netdev);
 
-	strscpy(drvinfo->driver,  e1000_driver_name,
+	strlcpy(drvinfo->driver,  e1000_driver_name,
 		sizeof(drvinfo->driver));
+	strlcpy(drvinfo->version, e1000_driver_version,
+		sizeof(drvinfo->version));
 
-	strscpy(drvinfo->bus_info, pci_name(adapter->pdev),
+	strlcpy(drvinfo->bus_info, pci_name(adapter->pdev),
 		sizeof(drvinfo->bus_info));
 }
 
 static void e1000_get_ringparam(struct net_device *netdev,
-				struct ethtool_ringparam *ring,
-				struct kernel_ethtool_ringparam *kernel_ring,
-				struct netlink_ext_ack *extack)
+				struct ethtool_ringparam *ring)
 {
 	struct e1000_adapter *adapter = netdev_priv(netdev);
 	struct e1000_hw *hw = &adapter->hw;
@@ -558,9 +579,7 @@ static void e1000_get_ringparam(struct net_device *netdev,
 }
 
 static int e1000_set_ringparam(struct net_device *netdev,
-			       struct ethtool_ringparam *ring,
-			       struct kernel_ethtool_ringparam *kernel_ring,
-			       struct netlink_ext_ack *extack)
+			       struct ethtool_ringparam *ring)
 {
 	struct e1000_adapter *adapter = netdev_priv(netdev);
 	struct e1000_hw *hw = &adapter->hw;
@@ -609,7 +628,6 @@ static int e1000_set_ringparam(struct net_device *netdev,
 	for (i = 0; i < adapter->num_rx_queues; i++)
 		rxdr[i].count = rxdr->count;
 
-	err = 0;
 	if (netif_running(adapter->netdev)) {
 		/* Try to get new resources before deleting old */
 		err = e1000_setup_all_rx_resources(adapter);
@@ -627,16 +645,17 @@ static int e1000_set_ringparam(struct net_device *netdev,
 		adapter->tx_ring = tx_old;
 		e1000_free_all_rx_resources(adapter);
 		e1000_free_all_tx_resources(adapter);
+		kfree(tx_old);
+		kfree(rx_old);
 		adapter->rx_ring = rxdr;
 		adapter->tx_ring = txdr;
 		err = e1000_up(adapter);
+		if (err)
+			goto err_setup;
 	}
-	kfree(tx_old);
-	kfree(rx_old);
 
 	clear_bit(__E1000_RESETTING, &adapter->flags);
-	return err;
-
+	return 0;
 err_setup_tx:
 	e1000_free_all_rx_resources(adapter);
 err_setup_rx:
@@ -646,8 +665,8 @@ err_setup_rx:
 err_alloc_rx:
 	kfree(txdr);
 err_alloc_tx:
-	if (netif_running(adapter->netdev))
-		e1000_up(adapter);
+	e1000_up(adapter);
+err_setup:
 	clear_bit(__E1000_RESETTING, &adapter->flags);
 	return err;
 }
@@ -938,7 +957,8 @@ static void e1000_free_desc_rings(struct e1000_adapter *adapter)
 						 txdr->buffer_info[i].dma,
 						 txdr->buffer_info[i].length,
 						 DMA_TO_DEVICE);
-			dev_kfree_skb(txdr->buffer_info[i].skb);
+			if (txdr->buffer_info[i].skb)
+				dev_kfree_skb(txdr->buffer_info[i].skb);
 		}
 	}
 
@@ -993,8 +1013,8 @@ static int e1000_setup_desc_rings(struct e1000_adapter *adapter)
 
 	txdr->size = txdr->count * sizeof(struct e1000_tx_desc);
 	txdr->size = ALIGN(txdr->size, 4096);
-	txdr->desc = dma_alloc_coherent(&pdev->dev, txdr->size, &txdr->dma,
-					GFP_KERNEL);
+	txdr->desc = dma_zalloc_coherent(&pdev->dev, txdr->size, &txdr->dma,
+					 GFP_KERNEL);
 	if (!txdr->desc) {
 		ret_val = 2;
 		goto err_nomem;
@@ -1051,8 +1071,8 @@ static int e1000_setup_desc_rings(struct e1000_adapter *adapter)
 	}
 
 	rxdr->size = rxdr->count * sizeof(struct e1000_rx_desc);
-	rxdr->desc = dma_alloc_coherent(&pdev->dev, rxdr->size, &rxdr->dma,
-					GFP_KERNEL);
+	rxdr->desc = dma_zalloc_coherent(&pdev->dev, rxdr->size, &rxdr->dma,
+					 GFP_KERNEL);
 	if (!rxdr->desc) {
 		ret_val = 6;
 		goto err_nomem;
@@ -1360,8 +1380,8 @@ static void e1000_create_lbtest_frame(struct sk_buff *skb,
 	memset(skb->data, 0xFF, frame_size);
 	frame_size &= ~1;
 	memset(&skb->data[frame_size / 2], 0xAA, frame_size / 2 - 1);
-	skb->data[frame_size / 2 + 10] = 0xBE;
-	skb->data[frame_size / 2 + 12] = 0xAF;
+	memset(&skb->data[frame_size / 2 + 10], 0xBE, 1);
+	memset(&skb->data[frame_size / 2 + 12], 0xAF, 1);
 }
 
 static int e1000_check_lbtest_frame(const unsigned char *data,
@@ -1743,9 +1763,7 @@ static int e1000_set_phys_id(struct net_device *netdev,
 }
 
 static int e1000_get_coalesce(struct net_device *netdev,
-			      struct ethtool_coalesce *ec,
-			      struct kernel_ethtool_coalesce *kernel_coal,
-			      struct netlink_ext_ack *extack)
+			      struct ethtool_coalesce *ec)
 {
 	struct e1000_adapter *adapter = netdev_priv(netdev);
 
@@ -1761,9 +1779,7 @@ static int e1000_get_coalesce(struct net_device *netdev,
 }
 
 static int e1000_set_coalesce(struct net_device *netdev,
-			      struct ethtool_coalesce *ec,
-			      struct kernel_ethtool_coalesce *kernel_coal,
-			      struct netlink_ext_ack *extack)
+			      struct ethtool_coalesce *ec)
 {
 	struct e1000_adapter *adapter = netdev_priv(netdev);
 	struct e1000_hw *hw = &adapter->hw;
@@ -1858,7 +1874,6 @@ static void e1000_get_strings(struct net_device *netdev, u32 stringset,
 }
 
 static const struct ethtool_ops e1000_ethtool_ops = {
-	.supported_coalesce_params = ETHTOOL_COALESCE_RX_USECS,
 	.get_drvinfo		= e1000_get_drvinfo,
 	.get_regs_len		= e1000_get_regs_len,
 	.get_regs		= e1000_get_regs,

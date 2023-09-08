@@ -8,13 +8,6 @@ Security Documentation
    credentials
    IMA-templates
    keys/index
-   lsm
-   lsm-development
-   sak
-   SCTP
+   LSM
    self-protection
-   siphash
    tpm/index
-   digsig
-   landlock
-   secrets/index

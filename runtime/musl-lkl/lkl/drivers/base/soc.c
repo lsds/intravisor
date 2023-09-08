@@ -17,9 +17,9 @@
 
 static DEFINE_IDA(soc_ida);
 
-/* Prototype to allow declarations of DEVICE_ATTR(<foo>) before soc_info_show */
-static ssize_t soc_info_show(struct device *dev, struct device_attribute *attr,
-			     char *buf);
+static ssize_t soc_info_get(struct device *dev,
+			    struct device_attribute *attr,
+			    char *buf);
 
 struct soc_device {
 	struct device dev;
@@ -31,11 +31,10 @@ static struct bus_type soc_bus_type = {
 	.name  = "soc",
 };
 
-static DEVICE_ATTR(machine,		0444, soc_info_show,  NULL);
-static DEVICE_ATTR(family,		0444, soc_info_show,  NULL);
-static DEVICE_ATTR(serial_number,	0444, soc_info_show,  NULL);
-static DEVICE_ATTR(soc_id,		0444, soc_info_show,  NULL);
-static DEVICE_ATTR(revision,		0444, soc_info_show,  NULL);
+static DEVICE_ATTR(machine,  S_IRUGO, soc_info_get,  NULL);
+static DEVICE_ATTR(family,   S_IRUGO, soc_info_get,  NULL);
+static DEVICE_ATTR(soc_id,   S_IRUGO, soc_info_get,  NULL);
+static DEVICE_ATTR(revision, S_IRUGO, soc_info_get,  NULL);
 
 struct device *soc_device_to_device(struct soc_device *soc_dev)
 {
@@ -46,50 +45,48 @@ static umode_t soc_attribute_mode(struct kobject *kobj,
 				struct attribute *attr,
 				int index)
 {
-	struct device *dev = kobj_to_dev(kobj);
+	struct device *dev = container_of(kobj, struct device, kobj);
 	struct soc_device *soc_dev = container_of(dev, struct soc_device, dev);
 
-	if ((attr == &dev_attr_machine.attr) && soc_dev->attr->machine)
+	if ((attr == &dev_attr_machine.attr)
+	    && (soc_dev->attr->machine != NULL))
 		return attr->mode;
-	if ((attr == &dev_attr_family.attr) && soc_dev->attr->family)
+	if ((attr == &dev_attr_family.attr)
+	    && (soc_dev->attr->family != NULL))
 		return attr->mode;
-	if ((attr == &dev_attr_revision.attr) && soc_dev->attr->revision)
+	if ((attr == &dev_attr_revision.attr)
+	    && (soc_dev->attr->revision != NULL))
 		return attr->mode;
-	if ((attr == &dev_attr_serial_number.attr) && soc_dev->attr->serial_number)
-		return attr->mode;
-	if ((attr == &dev_attr_soc_id.attr) && soc_dev->attr->soc_id)
+	if ((attr == &dev_attr_soc_id.attr)
+	    && (soc_dev->attr->soc_id != NULL))
 		return attr->mode;
 
-	/* Unknown or unfilled attribute */
+	/* Unknown or unfilled attribute. */
 	return 0;
 }
 
-static ssize_t soc_info_show(struct device *dev, struct device_attribute *attr,
-			     char *buf)
+static ssize_t soc_info_get(struct device *dev,
+			    struct device_attribute *attr,
+			    char *buf)
 {
 	struct soc_device *soc_dev = container_of(dev, struct soc_device, dev);
-	const char *output;
 
 	if (attr == &dev_attr_machine)
-		output = soc_dev->attr->machine;
-	else if (attr == &dev_attr_family)
-		output = soc_dev->attr->family;
-	else if (attr == &dev_attr_revision)
-		output = soc_dev->attr->revision;
-	else if (attr == &dev_attr_serial_number)
-		output = soc_dev->attr->serial_number;
-	else if (attr == &dev_attr_soc_id)
-		output = soc_dev->attr->soc_id;
-	else
-		return -EINVAL;
+		return sprintf(buf, "%s\n", soc_dev->attr->machine);
+	if (attr == &dev_attr_family)
+		return sprintf(buf, "%s\n", soc_dev->attr->family);
+	if (attr == &dev_attr_revision)
+		return sprintf(buf, "%s\n", soc_dev->attr->revision);
+	if (attr == &dev_attr_soc_id)
+		return sprintf(buf, "%s\n", soc_dev->attr->soc_id);
 
-	return sysfs_emit(buf, "%s\n", output);
+	return -EINVAL;
+
 }
 
 static struct attribute *soc_attr[] = {
 	&dev_attr_machine.attr,
 	&dev_attr_family.attr,
-	&dev_attr_serial_number.attr,
 	&dev_attr_soc_id.attr,
 	&dev_attr_revision.attr,
 	NULL,
@@ -100,12 +97,15 @@ static const struct attribute_group soc_attr_group = {
 	.is_visible = soc_attribute_mode,
 };
 
+static const struct attribute_group *soc_attr_groups[] = {
+	&soc_attr_group,
+	NULL,
+};
+
 static void soc_release(struct device *dev)
 {
 	struct soc_device *soc_dev = container_of(dev, struct soc_device, dev);
 
-	ida_simple_remove(&soc_ida, soc_dev->soc_dev_num);
-	kfree(soc_dev->dev.groups);
 	kfree(soc_dev);
 }
 
@@ -114,7 +114,6 @@ static struct soc_device_attribute *early_soc_dev_attr;
 struct soc_device *soc_device_register(struct soc_device_attribute *soc_dev_attr)
 {
 	struct soc_device *soc_dev;
-	const struct attribute_group **soc_attr_groups;
 	int ret;
 
 	if (!soc_bus_type.p) {
@@ -130,18 +129,10 @@ struct soc_device *soc_device_register(struct soc_device_attribute *soc_dev_attr
 		goto out1;
 	}
 
-	soc_attr_groups = kcalloc(3, sizeof(*soc_attr_groups), GFP_KERNEL);
-	if (!soc_attr_groups) {
-		ret = -ENOMEM;
-		goto out2;
-	}
-	soc_attr_groups[0] = &soc_attr_group;
-	soc_attr_groups[1] = soc_dev_attr->custom_attr_group;
-
 	/* Fetch a unique (reclaimable) SOC ID. */
 	ret = ida_simple_get(&soc_ida, 0, 0, GFP_KERNEL);
 	if (ret < 0)
-		goto out3;
+		goto out2;
 	soc_dev->soc_dev_num = ret;
 
 	soc_dev->attr = soc_dev_attr;
@@ -152,29 +143,29 @@ struct soc_device *soc_device_register(struct soc_device_attribute *soc_dev_attr
 	dev_set_name(&soc_dev->dev, "soc%d", soc_dev->soc_dev_num);
 
 	ret = device_register(&soc_dev->dev);
-	if (ret) {
-		put_device(&soc_dev->dev);
-		return ERR_PTR(ret);
-	}
+	if (ret)
+		goto out3;
 
 	return soc_dev;
 
 out3:
-	kfree(soc_attr_groups);
+	ida_simple_remove(&soc_ida, soc_dev->soc_dev_num);
+	put_device(&soc_dev->dev);
+	soc_dev = NULL;
 out2:
 	kfree(soc_dev);
 out1:
 	return ERR_PTR(ret);
 }
-EXPORT_SYMBOL_GPL(soc_device_register);
 
-/* Ensure soc_dev->attr is freed after calling soc_device_unregister. */
+/* Ensure soc_dev->attr is freed prior to calling soc_device_unregister. */
 void soc_device_unregister(struct soc_device *soc_dev)
 {
+	ida_simple_remove(&soc_ida, soc_dev->soc_dev_num);
+
 	device_unregister(&soc_dev->dev);
 	early_soc_dev_attr = NULL;
 }
-EXPORT_SYMBOL_GPL(soc_device_unregister);
 
 static int __init soc_bus_register(void)
 {
@@ -241,13 +232,15 @@ static int soc_device_match_one(struct device *dev, void *arg)
 const struct soc_device_attribute *soc_device_match(
 	const struct soc_device_attribute *matches)
 {
-	int ret;
+	int ret = 0;
 
 	if (!matches)
 		return NULL;
 
-	while (matches->machine || matches->family || matches->revision ||
-	       matches->soc_id) {
+	while (!ret) {
+		if (!(matches->machine || matches->family ||
+		      matches->revision || matches->soc_id))
+			break;
 		ret = bus_for_each_dev(&soc_bus_type, NULL, (void *)matches,
 				       soc_device_match_one);
 		if (ret < 0 && early_soc_dev_attr)
@@ -255,10 +248,10 @@ const struct soc_device_attribute *soc_device_match(
 						    matches);
 		if (ret < 0)
 			return NULL;
-		if (ret)
+		if (!ret)
+			matches++;
+		else
 			return matches;
-
-		matches++;
 	}
 	return NULL;
 }

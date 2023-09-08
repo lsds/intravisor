@@ -17,7 +17,6 @@
 #include <linux/wait.h>
 
 #include <media/v4l2-common.h>
-#include <media/videobuf2-dma-sg.h>
 #include <media/videobuf2-vmalloc.h>
 
 #include "uvc.h"
@@ -44,8 +43,6 @@ static int uvc_queue_setup(struct vb2_queue *vq,
 {
 	struct uvc_video_queue *queue = vb2_get_drv_priv(vq);
 	struct uvc_video *video = container_of(queue, struct uvc_video, queue);
-	unsigned int req_size;
-	unsigned int nreq;
 
 	if (*nbuffers > UVC_MAX_VIDEO_BUFFERS)
 		*nbuffers = UVC_MAX_VIDEO_BUFFERS;
@@ -53,17 +50,6 @@ static int uvc_queue_setup(struct vb2_queue *vq,
 	*nplanes = 1;
 
 	sizes[0] = video->imagesize;
-
-	req_size = video->ep->maxpacket
-		 * max_t(unsigned int, video->ep->maxburst, 1)
-		 * (video->ep->mult);
-
-	/* We divide by two, to increase the chance to run
-	 * into fewer requests for smaller framesizes.
-	 */
-	nreq = DIV_ROUND_UP(DIV_ROUND_UP(sizes[0], 2), req_size);
-	nreq = clamp(nreq, 4U, 64U);
-	video->uvc_num_requests = nreq;
 
 	return 0;
 }
@@ -84,12 +70,7 @@ static int uvc_buffer_prepare(struct vb2_buffer *vb)
 		return -ENODEV;
 
 	buf->state = UVC_BUF_STATE_QUEUED;
-	if (queue->use_sg) {
-		buf->sgt = vb2_dma_sg_plane_desc(vb, 0);
-		buf->sg = buf->sgt->sgl;
-	} else {
-		buf->mem = vb2_plane_vaddr(vb, 0);
-	}
+	buf->mem = vb2_plane_vaddr(vb, 0);
 	buf->length = vb2_plane_size(vb, 0);
 	if (vb->type == V4L2_BUF_TYPE_VIDEO_CAPTURE)
 		buf->bytesused = 0;
@@ -111,8 +92,7 @@ static void uvc_buffer_queue(struct vb2_buffer *vb)
 	if (likely(!(queue->flags & UVC_QUEUE_DISCONNECTED))) {
 		list_add_tail(&buf->queue, &queue->irqqueue);
 	} else {
-		/*
-		 * If the device is disconnected return the buffer to userspace
+		/* If the device is disconnected return the buffer to userspace
 		 * directly. The next QBUF call will fail with -ENODEV.
 		 */
 		buf->state = UVC_BUF_STATE_ERROR;
@@ -122,7 +102,7 @@ static void uvc_buffer_queue(struct vb2_buffer *vb)
 	spin_unlock_irqrestore(&queue->irqlock, flags);
 }
 
-static const struct vb2_ops uvc_queue_qops = {
+static struct vb2_ops uvc_queue_qops = {
 	.queue_setup = uvc_queue_setup,
 	.buf_prepare = uvc_buffer_prepare,
 	.buf_queue = uvc_buffer_queue,
@@ -130,11 +110,9 @@ static const struct vb2_ops uvc_queue_qops = {
 	.wait_finish = vb2_ops_wait_finish,
 };
 
-int uvcg_queue_init(struct uvc_video_queue *queue, struct device *dev, enum v4l2_buf_type type,
+int uvcg_queue_init(struct uvc_video_queue *queue, enum v4l2_buf_type type,
 		    struct mutex *lock)
 {
-	struct uvc_video *video = container_of(queue, struct uvc_video, queue);
-	struct usb_composite_dev *cdev = video->uvc->func.config->cdev;
 	int ret;
 
 	queue->queue.type = type;
@@ -143,17 +121,9 @@ int uvcg_queue_init(struct uvc_video_queue *queue, struct device *dev, enum v4l2
 	queue->queue.buf_struct_size = sizeof(struct uvc_buffer);
 	queue->queue.ops = &uvc_queue_qops;
 	queue->queue.lock = lock;
-	if (cdev->gadget->sg_supported) {
-		queue->queue.mem_ops = &vb2_dma_sg_memops;
-		queue->use_sg = 1;
-	} else {
-		queue->queue.mem_ops = &vb2_vmalloc_memops;
-	}
-
-	queue->queue.timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_COPY
+	queue->queue.mem_ops = &vb2_vmalloc_memops;
+	queue->queue.timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_MONOTONIC
 				     | V4L2_BUF_FLAG_TSTAMP_SRC_EOF;
-	queue->queue.dev = dev;
-
 	ret = vb2_queue_init(&queue->queue);
 	if (ret)
 		return ret;
@@ -193,7 +163,18 @@ int uvcg_query_buffer(struct uvc_video_queue *queue, struct v4l2_buffer *buf)
 
 int uvcg_queue_buffer(struct uvc_video_queue *queue, struct v4l2_buffer *buf)
 {
-	return vb2_qbuf(&queue->queue, NULL, buf);
+	unsigned long flags;
+	int ret;
+
+	ret = vb2_qbuf(&queue->queue, buf);
+	if (ret < 0)
+		return ret;
+
+	spin_lock_irqsave(&queue->irqlock, flags);
+	ret = (queue->flags & UVC_QUEUE_PAUSED) != 0;
+	queue->flags &= ~UVC_QUEUE_PAUSED;
+	spin_unlock_irqrestore(&queue->irqlock, flags);
+	return ret;
 }
 
 /*
@@ -261,10 +242,7 @@ void uvcg_queue_cancel(struct uvc_video_queue *queue, int disconnect)
 		buf->state = UVC_BUF_STATE_ERROR;
 		vb2_buffer_done(&buf->buf.vb2_buf, VB2_BUF_STATE_ERROR);
 	}
-	queue->buf_used = 0;
-
-	/*
-	 * This must be protected by the irqlock spinlock to avoid race
+	/* This must be protected by the irqlock spinlock to avoid race
 	 * conditions between uvc_queue_buffer and the disconnection event that
 	 * could result in an interruptible wait in uvc_dequeue_buffer. Do not
 	 * blindly replace this logic by checking for the UVC_DEV_DISCONNECTED
@@ -304,7 +282,6 @@ int uvcg_queue_enable(struct uvc_video_queue *queue, int enable)
 
 		queue->sequence = 0;
 		queue->buf_used = 0;
-		queue->flags &= ~UVC_QUEUE_DROP_INCOMPLETE;
 	} else {
 		ret = vb2_streamoff(&queue->queue, queue->queue.type);
 		if (ret < 0)
@@ -327,16 +304,24 @@ int uvcg_queue_enable(struct uvc_video_queue *queue, int enable)
 }
 
 /* called with &queue_irqlock held.. */
-void uvcg_complete_buffer(struct uvc_video_queue *queue,
+struct uvc_buffer *uvcg_queue_next_buffer(struct uvc_video_queue *queue,
 					  struct uvc_buffer *buf)
 {
-	if (queue->flags & UVC_QUEUE_DROP_INCOMPLETE) {
-		queue->flags &= ~UVC_QUEUE_DROP_INCOMPLETE;
-		buf->state = UVC_BUF_STATE_ERROR;
+	struct uvc_buffer *nextbuf;
+
+	if ((queue->flags & UVC_QUEUE_DROP_INCOMPLETE) &&
+	     buf->length != buf->bytesused) {
+		buf->state = UVC_BUF_STATE_QUEUED;
 		vb2_set_plane_payload(&buf->buf.vb2_buf, 0, 0);
-		vb2_buffer_done(&buf->buf.vb2_buf, VB2_BUF_STATE_ERROR);
-		return;
+		return buf;
 	}
+
+	list_del(&buf->queue);
+	if (!list_empty(&queue->irqqueue))
+		nextbuf = list_first_entry(&queue->irqqueue, struct uvc_buffer,
+					   queue);
+	else
+		nextbuf = NULL;
 
 	buf->buf.field = V4L2_FIELD_NONE;
 	buf->buf.sequence = queue->sequence++;
@@ -344,6 +329,8 @@ void uvcg_complete_buffer(struct uvc_video_queue *queue,
 
 	vb2_set_plane_payload(&buf->buf.vb2_buf, 0, buf->bytesused);
 	vb2_buffer_done(&buf->buf.vb2_buf, VB2_BUF_STATE_DONE);
+
+	return nextbuf;
 }
 
 struct uvc_buffer *uvcg_queue_head(struct uvc_video_queue *queue)
@@ -353,6 +340,8 @@ struct uvc_buffer *uvcg_queue_head(struct uvc_video_queue *queue)
 	if (!list_empty(&queue->irqqueue))
 		buf = list_first_entry(&queue->irqqueue, struct uvc_buffer,
 				       queue);
+	else
+		queue->flags |= UVC_QUEUE_PAUSED;
 
 	return buf;
 }

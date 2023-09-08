@@ -57,8 +57,18 @@ struct f_acm {
 
 	/* SetControlLineState request -- CDC 1.1 section 6.2.14 (INPUT) */
 	u16				port_handshake_bits;
+#define ACM_CTRL_RTS	(1 << 1)	/* unused with full duplex */
+#define ACM_CTRL_DTR	(1 << 0)	/* host is ready for data r/w */
+
 	/* SerialState notification -- CDC 1.1 section 6.3.5 (OUTPUT) */
 	u16				serial_state;
+#define ACM_CTRL_OVERRUN	(1 << 6)
+#define ACM_CTRL_PARITY		(1 << 5)
+#define ACM_CTRL_FRAMING	(1 << 4)
+#define ACM_CTRL_RI		(1 << 3)
+#define ACM_CTRL_BRK		(1 << 2)
+#define ACM_CTRL_DSR		(1 << 1)
+#define ACM_CTRL_DCD		(1 << 0)
 };
 
 static inline struct f_acm *func_to_acm(struct usb_function *f)
@@ -323,8 +333,6 @@ static void acm_complete_set_line_coding(struct usb_ep *ep,
 	}
 }
 
-static int acm_send_break(struct gserial *port, int duration);
-
 static int acm_setup(struct usb_function *f, const struct usb_ctrlrequest *ctrl)
 {
 	struct f_acm		*acm = func_to_acm(f);
@@ -377,18 +385,10 @@ static int acm_setup(struct usb_function *f, const struct usb_ctrlrequest *ctrl)
 		value = 0;
 
 		/* FIXME we should not allow data to flow until the
-		 * host sets the USB_CDC_CTRL_DTR bit; and when it clears
+		 * host sets the ACM_CTRL_DTR bit; and when it clears
 		 * that bit, we should return to that no-flow state.
 		 */
 		acm->port_handshake_bits = w_value;
-		break;
-
-	case ((USB_DIR_OUT | USB_TYPE_CLASS | USB_RECIP_INTERFACE) << 8)
-			| USB_CDC_REQ_SEND_BREAK:
-		if (w_index != acm->ctrl_id)
-			goto invalid;
-
-		acm_send_break(&acm->port, w_value);
 		break;
 
 	default:
@@ -425,11 +425,9 @@ static int acm_set_alt(struct usb_function *f, unsigned intf, unsigned alt)
 	/* we know alt == 0, so this is an activation or a reset */
 
 	if (intf == acm->ctrl_id) {
-		if (acm->notify->enabled) {
-			dev_vdbg(&cdev->gadget->dev,
-					"reset acm control interface %d\n", intf);
-			usb_ep_disable(acm->notify);
-		}
+		dev_vdbg(&cdev->gadget->dev,
+				"reset acm control interface %d\n", intf);
+		usb_ep_disable(acm->notify);
 
 		if (!acm->notify->desc)
 			if (config_ep_by_speed(cdev->gadget, f, acm->notify))
@@ -575,7 +573,7 @@ static void acm_connect(struct gserial *port)
 {
 	struct f_acm		*acm = port_to_acm(port);
 
-	acm->serial_state |= USB_CDC_SERIAL_STATE_DSR | USB_CDC_SERIAL_STATE_DCD;
+	acm->serial_state |= ACM_CTRL_DSR | ACM_CTRL_DCD;
 	acm_notify_serial_state(acm);
 }
 
@@ -583,7 +581,7 @@ static void acm_disconnect(struct gserial *port)
 {
 	struct f_acm		*acm = port_to_acm(port);
 
-	acm->serial_state &= ~(USB_CDC_SERIAL_STATE_DSR | USB_CDC_SERIAL_STATE_DCD);
+	acm->serial_state &= ~(ACM_CTRL_DSR | ACM_CTRL_DCD);
 	acm_notify_serial_state(acm);
 }
 
@@ -593,9 +591,9 @@ static int acm_send_break(struct gserial *port, int duration)
 	u16			state;
 
 	state = acm->serial_state;
-	state &= ~USB_CDC_SERIAL_STATE_BREAK;
+	state &= ~ACM_CTRL_BRK;
 	if (duration)
-		state |= USB_CDC_SERIAL_STATE_BREAK;
+		state |= ACM_CTRL_BRK;
 
 	acm->serial_state = state;
 	return acm_notify_serial_state(acm);
@@ -686,7 +684,7 @@ acm_bind(struct usb_configuration *c, struct usb_function *f)
 	acm_ss_out_desc.bEndpointAddress = acm_fs_out_desc.bEndpointAddress;
 
 	status = usb_assign_descriptors(f, acm_fs_function, acm_hs_function,
-			acm_ss_function, acm_ss_function);
+			acm_ss_function, NULL);
 	if (status)
 		goto fail;
 
@@ -725,20 +723,6 @@ static void acm_free_func(struct usb_function *f)
 	kfree(acm);
 }
 
-static void acm_resume(struct usb_function *f)
-{
-	struct f_acm *acm = func_to_acm(f);
-
-	gserial_resume(&acm->port);
-}
-
-static void acm_suspend(struct usb_function *f)
-{
-	struct f_acm *acm = func_to_acm(f);
-
-	gserial_suspend(&acm->port);
-}
-
 static struct usb_function *acm_alloc_func(struct usb_function_instance *fi)
 {
 	struct f_serial_opts *opts;
@@ -766,8 +750,6 @@ static struct usb_function *acm_alloc_func(struct usb_function_instance *fi)
 	acm->port_num = opts->port_num;
 	acm->port.func.unbind = acm_unbind;
 	acm->port.func.free_func = acm_free_func;
-	acm->port.func.resume = acm_resume;
-	acm->port.func.suspend = acm_suspend;
 
 	return &acm->port.func;
 }
@@ -789,24 +771,6 @@ static struct configfs_item_operations acm_item_ops = {
 	.release                = acm_attr_release,
 };
 
-#ifdef CONFIG_U_SERIAL_CONSOLE
-
-static ssize_t f_acm_console_store(struct config_item *item,
-		const char *page, size_t count)
-{
-	return gserial_set_console(to_f_serial_opts(item)->port_num,
-				   page, count);
-}
-
-static ssize_t f_acm_console_show(struct config_item *item, char *page)
-{
-	return gserial_get_console(to_f_serial_opts(item)->port_num, page);
-}
-
-CONFIGFS_ATTR(f_acm_, console);
-
-#endif /* CONFIG_U_SERIAL_CONSOLE */
-
 static ssize_t f_acm_port_num_show(struct config_item *item, char *page)
 {
 	return sprintf(page, "%u\n", to_f_serial_opts(item)->port_num);
@@ -815,9 +779,6 @@ static ssize_t f_acm_port_num_show(struct config_item *item, char *page)
 CONFIGFS_ATTR_RO(f_acm_, port_num);
 
 static struct configfs_attribute *acm_attrs[] = {
-#ifdef CONFIG_U_SERIAL_CONSOLE
-	&f_acm_attr_console,
-#endif
 	&f_acm_attr_port_num,
 	NULL,
 };

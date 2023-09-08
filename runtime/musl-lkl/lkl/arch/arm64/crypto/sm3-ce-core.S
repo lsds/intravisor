@@ -1,12 +1,14 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * sm3-ce-core.S - SM3 secure hash using ARMv8.2 Crypto Extensions
  *
  * Copyright (C) 2018 Linaro Ltd <ard.biesheuvel@linaro.org>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 
 #include <linux/linkage.h>
-#include <linux/cfi_types.h>
 #include <asm/assembler.h>
 
 	.irp		b, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12
@@ -74,7 +76,7 @@
 	 *                       int blocks)
 	 */
 	.text
-SYM_TYPED_FUNC_START(sm3_ce_transform)
+ENTRY(sm3_ce_transform)
 	/* load state */
 	ld1		{v8.4s-v9.4s}, [x0]
 	rev64		v8.4s, v8.4s
@@ -132,7 +134,7 @@ CPU_LE(	rev32		v3.16b, v3.16b		)
 	ext		v9.16b, v9.16b, v9.16b, #8
 	st1		{v8.4s-v9.4s}, [x0]
 	ret
-SYM_FUNC_END(sm3_ce_transform)
+ENDPROC(sm3_ce_transform)
 
 	.section	".rodata", "a"
 	.align		3

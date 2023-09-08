@@ -1,6 +1,6 @@
 Texas Instruments - tlv320aic3x Codec module
 
-The tlv320aic3x serial control bus communicates through both I2C and SPI bus protocols
+The tlv320aic3x serial control bus communicates through I2C protocols
 
 Required properties:
 
@@ -63,7 +63,7 @@ CODEC input pins for other compatible codecs:
 
 The pins can be used in referring sound node's audio-routing property.
 
-I2C example:
+Example:
 
 #include <dt-bindings/gpio/gpio.h>
 
@@ -77,21 +77,4 @@ tlv320aic3x: tlv320aic3x@1b {
 	IOVDD-supply = <&regulator>;
 	DRVDD-supply = <&regulator>;
 	DVDD-supply = <&regulator>;
-};
-
-SPI example:
-
-spi0: spi@f0000000 {
-	tlv320aic3x: codec@0 {
-		compatible = "ti,tlv320aic3x";
-		reg = <0>; /* CS number */
-		#sound-dai-cells = <0>;
-		spi-max-frequency = <1000000>;
-
-		AVDD-supply = <&regulator>;
-		IOVDD-supply = <&regulator>;
-		DRVDD-supply = <&regulator>;
-		DVDD-supply = <&regulator>;
-		ai3x-ocmv = <0>;
-	};
 };

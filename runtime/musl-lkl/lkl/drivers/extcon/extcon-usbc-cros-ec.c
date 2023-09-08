@@ -1,16 +1,25 @@
-// SPDX-License-Identifier: GPL-2.0
-// ChromeOS Embedded Controller extcon
-//
-// Copyright (C) 2017 Google, Inc.
-// Author: Benson Leung <bleung@chromium.org>
+/**
+ * drivers/extcon/extcon-usbc-cros-ec - ChromeOS Embedded Controller extcon
+ *
+ * Copyright (C) 2017 Google, Inc
+ * Author: Benson Leung <bleung@chromium.org>
+ *
+ * This software is licensed under the terms of the GNU General Public
+ * License version 2, as published by the Free Software Foundation, and
+ * may be copied, distributed, and modified under those terms.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ */
 
 #include <linux/extcon-provider.h>
 #include <linux/kernel.h>
+#include <linux/mfd/cros_ec.h>
 #include <linux/module.h>
 #include <linux/notifier.h>
 #include <linux/of.h>
-#include <linux/platform_data/cros_ec_commands.h>
-#include <linux/platform_data/cros_ec_proto.h>
 #include <linux/platform_device.h>
 #include <linux/slab.h>
 #include <linux/sched.h>
@@ -68,7 +77,7 @@ static int cros_ec_pd_command(struct cros_ec_extcon_info *info,
 	struct cros_ec_command *msg;
 	int ret;
 
-	msg = kzalloc(struct_size(msg, data, max(outsize, insize)), GFP_KERNEL);
+	msg = kzalloc(sizeof(*msg) + max(outsize, insize), GFP_KERNEL);
 	if (!msg)
 		return -ENOMEM;
 
@@ -539,4 +548,4 @@ module_platform_driver(extcon_cros_ec_driver);
 
 MODULE_DESCRIPTION("ChromeOS Embedded Controller extcon driver");
 MODULE_AUTHOR("Benson Leung <bleung@chromium.org>");
-MODULE_LICENSE("GPL v2");
+MODULE_LICENSE("GPL");

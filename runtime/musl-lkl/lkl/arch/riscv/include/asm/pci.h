@@ -1,10 +1,18 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (C) 2016 SiFive
+ *
+ *   This program is free software; you can redistribute it and/or
+ *   modify it under the terms of the GNU General Public License
+ *   as published by the Free Software Foundation, version 2.
+ *
+ *   This program is distributed in the hope that it will be useful,
+ *   but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *   GNU General Public License for more details.
  */
 
-#ifndef _ASM_RISCV_PCI_H
-#define _ASM_RISCV_PCI_H
+#ifndef __ASM_RISCV_PCI_H
+#define __ASM_RISCV_PCI_H
 
 #include <linux/types.h>
 #include <linux/slab.h>
@@ -12,22 +20,29 @@
 
 #include <asm/io.h>
 
-#define PCIBIOS_MIN_IO		4
-#define PCIBIOS_MIN_MEM		16
+#define PCIBIOS_MIN_IO		0
+#define PCIBIOS_MIN_MEM		0
 
-#if defined(CONFIG_PCI) && defined(CONFIG_NUMA)
-static inline int pcibus_to_node(struct pci_bus *bus)
+/* RISC-V shim does not initialize PCI bus */
+#define pcibios_assign_all_busses() 1
+
+/* We do not have an IOMMU */
+#define PCI_DMA_BUS_IS_PHYS 1
+
+extern int isa_dma_bridge_buggy;
+
+#ifdef CONFIG_PCI
+static inline int pci_get_legacy_ide_irq(struct pci_dev *dev, int channel)
 {
-	return dev_to_node(&bus->dev);
+	/* no legacy IRQ on risc-v */
+	return -ENODEV;
 }
-#ifndef cpumask_of_pcibus
-#define cpumask_of_pcibus(bus)	(pcibus_to_node(bus) == -1 ?		\
-				 cpu_all_mask :				\
-				 cpumask_of_node(pcibus_to_node(bus)))
-#endif
-#endif /* defined(CONFIG_PCI) && defined(CONFIG_NUMA) */
 
-/* Generic PCI */
-#include <asm-generic/pci.h>
+static inline int pci_proc_domain(struct pci_bus *bus)
+{
+	/* always show the domain in /proc */
+	return 1;
+}
+#endif  /* CONFIG_PCI */
 
-#endif  /* _ASM_RISCV_PCI_H */
+#endif  /* __ASM_PCI_H */

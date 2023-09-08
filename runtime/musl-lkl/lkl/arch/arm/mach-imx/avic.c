@@ -1,13 +1,25 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Copyright 2004-2007 Freescale Semiconductor, Inc. All Rights Reserved.
  * Copyright 2008 Juergen Beisert, kernel@pengutronix.de
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version 2
+ * of the License, or (at your option) any later version.
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston,
+ * MA  02110-1301, USA.
  */
 
 #include <linux/module.h>
 #include <linux/irq.h>
 #include <linux/irqdomain.h>
-#include <linux/irqchip.h>
 #include <linux/io.h>
 #include <linux/of.h>
 #include <linux/of_address.h>
@@ -154,7 +166,7 @@ static void __exception_irq_entry avic_handle_irq(struct pt_regs *regs)
 		if (nivector == 0xffff)
 			break;
 
-		generic_handle_domain_irq(domain, nivector);
+		handle_domain_irq(domain, nivector, regs);
 	} while (1);
 }
 
@@ -163,7 +175,7 @@ static void __exception_irq_entry avic_handle_irq(struct pt_regs *regs)
  * interrupts. It registers the interrupt enable and disable functions
  * to the kernel for each interrupt source.
  */
-static void __init mxc_init_irq(void __iomem *irqbase)
+void __init mxc_init_irq(void __iomem *irqbase)
 {
 	struct device_node *np;
 	int irq_base;
@@ -221,16 +233,3 @@ static void __init mxc_init_irq(void __iomem *irqbase)
 
 	printk(KERN_INFO "MXC IRQ initialized\n");
 }
-
-static int __init imx_avic_init(struct device_node *node,
-			       struct device_node *parent)
-{
-	void __iomem *avic_base;
-
-	avic_base = of_iomap(node, 0);
-	BUG_ON(!avic_base);
-	mxc_init_irq(avic_base);
-	return 0;
-}
-
-IRQCHIP_DECLARE(imx_avic, "fsl,avic", imx_avic_init);

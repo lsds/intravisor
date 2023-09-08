@@ -1,9 +1,18 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Auvitek AU8522 QAM/8VSB demodulator driver and video decoder
  *
  * Copyright (C) 2009 Devin Heitmueller <dheitmueller@linuxtv.org>
  * Copyright (C) 2005-2008 Auvitek International, Ltd.
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * As published by the Free Software Foundation; either version 2
+ * of the License, or (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
  */
 
 /* Developer notes:
@@ -271,12 +280,14 @@ static void setup_decoder_defaults(struct au8522_state *state, bool is_svideo)
 			AU8522_TOREGAAGC_REG0E5H_CVBS);
 	au8522_writereg(state, AU8522_REG016H, AU8522_REG016H_CVBS);
 
-	/*
-	 * Despite what the table says, for the HVR-950q we still need
-	 * to be in CVBS mode for the S-Video input (reason unknown).
-	 */
-	/* filter_coef_type = 3; */
-	filter_coef_type = 5;
+	if (is_svideo) {
+		/* Despite what the table says, for the HVR-950q we still need
+		   to be in CVBS mode for the S-Video input (reason unknown). */
+		/* filter_coef_type = 3; */
+		filter_coef_type = 5;
+	} else {
+		filter_coef_type = 5;
+	}
 
 	/* Load the Video Decoder Filter Coefficients */
 	for (i = 0; i < NUM_FILTER_COEF; i++) {
@@ -562,7 +573,7 @@ static int au8522_s_video_routing(struct v4l2_subdev *sd,
 {
 	struct au8522_state *state = to_state(sd);
 
-	switch (input) {
+	switch(input) {
 	case AU8522_COMPOSITE_CH1:
 	case AU8522_SVIDEO_CH13:
 	case AU8522_COMPOSITE_CH4_SIF:
@@ -709,12 +720,10 @@ static int au8522_probe(struct i2c_client *client,
 	v4l2_i2c_subdev_init(sd, client, &au8522_ops);
 #if defined(CONFIG_MEDIA_CONTROLLER)
 
-	state->pads[AU8522_PAD_IF_INPUT].flags = MEDIA_PAD_FL_SINK;
-	state->pads[AU8522_PAD_IF_INPUT].sig_type = PAD_SIGNAL_ANALOG;
-	state->pads[AU8522_PAD_VID_OUT].flags = MEDIA_PAD_FL_SOURCE;
-	state->pads[AU8522_PAD_VID_OUT].sig_type = PAD_SIGNAL_DV;
-	state->pads[AU8522_PAD_AUDIO_OUT].flags = MEDIA_PAD_FL_SOURCE;
-	state->pads[AU8522_PAD_AUDIO_OUT].sig_type = PAD_SIGNAL_AUDIO;
+	state->pads[DEMOD_PAD_IF_INPUT].flags = MEDIA_PAD_FL_SINK;
+	state->pads[DEMOD_PAD_VID_OUT].flags = MEDIA_PAD_FL_SOURCE;
+	state->pads[DEMOD_PAD_VBI_OUT].flags = MEDIA_PAD_FL_SOURCE;
+	state->pads[DEMOD_PAD_AUDIO_OUT].flags = MEDIA_PAD_FL_SOURCE;
 	sd->entity.function = MEDIA_ENT_F_ATV_DECODER;
 
 	ret = media_entity_pads_init(&sd->entity, ARRAY_SIZE(state->pads),
@@ -758,12 +767,13 @@ static int au8522_probe(struct i2c_client *client,
 	return 0;
 }
 
-static void au8522_remove(struct i2c_client *client)
+static int au8522_remove(struct i2c_client *client)
 {
 	struct v4l2_subdev *sd = i2c_get_clientdata(client);
 	v4l2_device_unregister_subdev(sd);
 	v4l2_ctrl_handler_free(sd->ctrl_handler);
 	au8522_release_state(to_state(sd));
+	return 0;
 }
 
 static const struct i2c_device_id au8522_id[] = {

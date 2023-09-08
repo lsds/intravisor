@@ -1,7 +1,6 @@
 #!/bin/bash
 # SPDX-License-Identifier: GPL-2.0
 
-ALL_TESTS="ping_ipv4 ping_ipv6 multipath_test"
 NUM_NETIFS=8
 source lib.sh
 
@@ -159,6 +158,45 @@ router2_destroy()
 	vrf_destroy "vrf-r2"
 }
 
+multipath_eval()
+{
+       local desc="$1"
+       local weight_rp12=$2
+       local weight_rp13=$3
+       local packets_rp12=$4
+       local packets_rp13=$5
+       local weights_ratio packets_ratio diff
+
+       RET=0
+
+       if [[ "$packets_rp12" -eq "0" || "$packets_rp13" -eq "0" ]]; then
+              check_err 1 "Packet difference is 0"
+              log_test "Multipath"
+              log_info "Expected ratio $weights_ratio"
+              return
+       fi
+
+       if [[ "$weight_rp12" -gt "$weight_rp13" ]]; then
+               weights_ratio=$(echo "scale=2; $weight_rp12 / $weight_rp13" \
+		       | bc -l)
+               packets_ratio=$(echo "scale=2; $packets_rp12 / $packets_rp13" \
+		       | bc -l)
+       else
+               weights_ratio=$(echo "scale=2; $weight_rp13 / $weight_rp12" | \
+		       bc -l)
+               packets_ratio=$(echo "scale=2; $packets_rp13 / $packets_rp12" | \
+		       bc -l)
+       fi
+
+       diff=$(echo $weights_ratio - $packets_ratio | bc -l)
+       diff=${diff#-}
+
+       test "$(echo "$diff / $weights_ratio > 0.1" | bc -l)" -eq 0
+       check_err $? "Too large discrepancy between expected and measured ratios"
+       log_test "$desc"
+       log_info "Expected ratio $weights_ratio Measured ratio $packets_ratio"
+}
+
 multipath4_test()
 {
        local desc="$1"
@@ -166,11 +204,13 @@ multipath4_test()
        local weight_rp13=$3
        local t0_rp12 t0_rp13 t1_rp12 t1_rp13
        local packets_rp12 packets_rp13
+       local hash_policy
 
        # Transmit multiple flows from h1 to h2 and make sure they are
        # distributed between both multipath links (rp12 and rp13)
        # according to the configured weights.
-       sysctl_set net.ipv4.fib_multipath_hash_policy 1
+       hash_policy=$(sysctl -n net.ipv4.fib_multipath_hash_policy)
+       sysctl -q -w net.ipv4.fib_multipath_hash_policy=1
        ip route replace 198.51.100.0/24 vrf vrf-r1 \
                nexthop via 169.254.2.22 dev $rp12 weight $weight_rp12 \
                nexthop via 169.254.3.23 dev $rp13 weight $weight_rp13
@@ -178,7 +218,7 @@ multipath4_test()
        t0_rp12=$(link_stats_tx_packets_get $rp12)
        t0_rp13=$(link_stats_tx_packets_get $rp13)
 
-       ip vrf exec vrf-h1 $MZ $h1 -q -p 64 -A 192.0.2.2 -B 198.51.100.2 \
+       ip vrf exec vrf-h1 $MZ -q -p 64 -A 192.0.2.2 -B 198.51.100.2 \
 	       -d 1msec -t udp "sp=1024,dp=0-32768"
 
        t1_rp12=$(link_stats_tx_packets_get $rp12)
@@ -192,7 +232,7 @@ multipath4_test()
        ip route replace 198.51.100.0/24 vrf vrf-r1 \
                nexthop via 169.254.2.22 dev $rp12 \
                nexthop via 169.254.3.23 dev $rp13
-       sysctl_restore net.ipv4.fib_multipath_hash_policy
+       sysctl -q -w net.ipv4.fib_multipath_hash_policy=$hash_policy
 }
 
 multipath6_l4_test()
@@ -202,11 +242,13 @@ multipath6_l4_test()
        local weight_rp13=$3
        local t0_rp12 t0_rp13 t1_rp12 t1_rp13
        local packets_rp12 packets_rp13
+       local hash_policy
 
        # Transmit multiple flows from h1 to h2 and make sure they are
        # distributed between both multipath links (rp12 and rp13)
        # according to the configured weights.
-       sysctl_set net.ipv6.fib_multipath_hash_policy 1
+       hash_policy=$(sysctl -n net.ipv6.fib_multipath_hash_policy)
+       sysctl -q -w net.ipv6.fib_multipath_hash_policy=1
 
        ip route replace 2001:db8:2::/64 vrf vrf-r1 \
 	       nexthop via fe80:2::22 dev $rp12 weight $weight_rp12 \
@@ -229,7 +271,7 @@ multipath6_l4_test()
 	       nexthop via fe80:2::22 dev $rp12 \
 	       nexthop via fe80:3::23 dev $rp13
 
-       sysctl_restore net.ipv6.fib_multipath_hash_policy
+       sysctl -q -w net.ipv6.fib_multipath_hash_policy=$hash_policy
 }
 
 multipath6_test()
@@ -322,21 +364,13 @@ cleanup()
 	vrf_cleanup
 }
 
-ping_ipv4()
-{
-	ping_test $h1 198.51.100.2
-}
-
-ping_ipv6()
-{
-	ping6_test $h1 2001:db8:2::2
-}
-
 trap cleanup EXIT
 
 setup_prepare
 setup_wait
 
-tests_run
+ping_test $h1 198.51.100.2
+ping6_test $h1 2001:db8:2::2
+multipath_test
 
 exit $EXIT_STATUS

@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * slip.c	This module implements the SLIP protocol for kernel-based
  *		devices like TTY.  It interfaces between a raw TTY, and the
@@ -62,7 +61,6 @@
  */
 
 #define SL_CHECK_TRANSMIT
-#include <linux/compat.h>
 #include <linux/module.h>
 #include <linux/moduleparam.h>
 
@@ -81,6 +79,7 @@
 #include <linux/rtnetlink.h>
 #include <linux/if_arp.h>
 #include <linux/if_slip.h>
+#include <linux/compat.h>
 #include <linux/delay.h>
 #include <linux/init.h>
 #include <linux/slab.h>
@@ -109,7 +108,7 @@ static void slip_unesc6(struct slip *sl, unsigned char c);
 #ifdef CONFIG_SLIP_SMART
 static void sl_keepalive(struct timer_list *t);
 static void sl_outfill(struct timer_list *t);
-static int sl_siocdevprivate(struct net_device *dev, struct ifreq *rq, void __user *data, int cmd);
+static int sl_ioctl(struct net_device *dev, struct ifreq *rq, int cmd);
 #endif
 
 /********************************
@@ -368,7 +367,7 @@ static void sl_bump(struct slip *sl)
 	skb_put_data(skb, sl->rbuff, count);
 	skb_reset_mac_header(skb);
 	skb->protocol = htons(ETH_P_IP);
-	netif_rx(skb);
+	netif_rx_ni(skb);
 	dev->stats.rx_packets++;
 }
 
@@ -453,23 +452,19 @@ static void slip_transmit(struct work_struct *work)
  */
 static void slip_write_wakeup(struct tty_struct *tty)
 {
-	struct slip *sl;
+	struct slip *sl = tty->disc_data;
 
-	rcu_read_lock();
-	sl = rcu_dereference(tty->disc_data);
-	if (sl)
-		schedule_work(&sl->tx_work);
-	rcu_read_unlock();
+	schedule_work(&sl->tx_work);
 }
 
-static void sl_tx_timeout(struct net_device *dev, unsigned int txqueue)
+static void sl_tx_timeout(struct net_device *dev)
 {
 	struct slip *sl = netdev_priv(dev);
 
 	spin_lock(&sl->lock);
 
 	if (netif_queue_stopped(dev)) {
-		if (!netif_running(dev) || !sl->tty)
+		if (!netif_running(dev))
 			goto out;
 
 		/* May be we must check transmitter timeout here ?
@@ -648,7 +643,7 @@ static const struct net_device_ops sl_netdev_ops = {
 	.ndo_change_mtu		= sl_change_mtu,
 	.ndo_tx_timeout		= sl_tx_timeout,
 #ifdef CONFIG_SLIP_SMART
-	.ndo_siocdevprivate	= sl_siocdevprivate,
+	.ndo_do_ioctl		= sl_ioctl,
 #endif
 };
 
@@ -686,7 +681,7 @@ static void sl_setup(struct net_device *dev)
  */
 
 static void slip_receive_buf(struct tty_struct *tty, const unsigned char *cp,
-		const char *fp, int count)
+							char *fp, int count)
 {
 	struct slip *sl = tty->disc_data;
 
@@ -860,11 +855,6 @@ err_free_chan:
 	sl->tty = NULL;
 	tty->disc_data = NULL;
 	clear_bit(SLF_INUSE, &sl->flags);
-	sl_free_netdev(sl->dev);
-	/* do not call free_netdev before rtnl_unlock */
-	rtnl_unlock();
-	free_netdev(sl->dev);
-	return err;
 
 err_exit:
 	rtnl_unlock();
@@ -890,11 +880,10 @@ static void slip_close(struct tty_struct *tty)
 		return;
 
 	spin_lock_bh(&sl->lock);
-	rcu_assign_pointer(tty->disc_data, NULL);
+	tty->disc_data = NULL;
 	sl->tty = NULL;
 	spin_unlock_bh(&sl->lock);
 
-	synchronize_rcu();
 	flush_work(&sl->tx_work);
 
 	/* VSV = very important to remove timers */
@@ -907,9 +896,10 @@ static void slip_close(struct tty_struct *tty)
 	/* This will complete via sl_free_netdev */
 }
 
-static void slip_hangup(struct tty_struct *tty)
+static int slip_hangup(struct tty_struct *tty)
 {
 	slip_close(tty);
+	return 0;
 }
  /************************************************************************
   *			STANDARD SLIP ENCAPSULATION		  	 *
@@ -1072,8 +1062,8 @@ static void slip_unesc6(struct slip *sl, unsigned char s)
 #endif /* CONFIG_SLIP_MODE_SLIP6 */
 
 /* Perform I/O control on an active SLIP channel. */
-static int slip_ioctl(struct tty_struct *tty, unsigned int cmd,
-		unsigned long arg)
+static int slip_ioctl(struct tty_struct *tty, struct file *file,
+					unsigned int cmd, unsigned long arg)
 {
 	struct slip *sl = tty->disc_data;
 	unsigned int tmp;
@@ -1173,27 +1163,44 @@ static int slip_ioctl(struct tty_struct *tty, unsigned int cmd,
 	/* VSV changes end */
 #endif
 	default:
-		return tty_mode_ioctl(tty, cmd, arg);
+		return tty_mode_ioctl(tty, file, cmd, arg);
 	}
 }
 
+#ifdef CONFIG_COMPAT
+static long slip_compat_ioctl(struct tty_struct *tty, struct file *file,
+					unsigned int cmd, unsigned long arg)
+{
+	switch (cmd) {
+	case SIOCGIFNAME:
+	case SIOCGIFENCAP:
+	case SIOCSIFENCAP:
+	case SIOCSIFHWADDR:
+	case SIOCSKEEPALIVE:
+	case SIOCGKEEPALIVE:
+	case SIOCSOUTFILL:
+	case SIOCGOUTFILL:
+		return slip_ioctl(tty, file, cmd,
+				  (unsigned long)compat_ptr(arg));
+	}
+
+	return -ENOIOCTLCMD;
+}
+#endif
+
 /* VSV changes start here */
 #ifdef CONFIG_SLIP_SMART
-/* function sl_siocdevprivate called from net/core/dev.c
+/* function do_ioctl called from net/core/dev.c
    to allow get/set outfill/keepalive parameter
    by ifconfig                                 */
 
-static int sl_siocdevprivate(struct net_device *dev, struct ifreq *rq,
-			     void __user *data, int cmd)
+static int sl_ioctl(struct net_device *dev, struct ifreq *rq, int cmd)
 {
 	struct slip *sl = netdev_priv(dev);
 	unsigned long *p = (unsigned long *)&rq->ifr_ifru;
 
 	if (sl == NULL)		/* Allocation failed ?? */
 		return -ENODEV;
-
-	if (in_compat_syscall())
-		return -EOPNOTSUPP;
 
 	spin_lock_bh(&sl->lock);
 
@@ -1267,12 +1274,15 @@ static int sl_siocdevprivate(struct net_device *dev, struct ifreq *rq,
 
 static struct tty_ldisc_ops sl_ldisc = {
 	.owner 		= THIS_MODULE,
-	.num		= N_SLIP,
+	.magic 		= TTY_LDISC_MAGIC,
 	.name 		= "slip",
 	.open 		= slip_open,
 	.close	 	= slip_close,
 	.hangup	 	= slip_hangup,
 	.ioctl		= slip_ioctl,
+#ifdef CONFIG_COMPAT
+	.compat_ioctl	= slip_compat_ioctl,
+#endif
 	.receive_buf	= slip_receive_buf,
 	.write_wakeup	= slip_write_wakeup,
 };
@@ -1297,13 +1307,13 @@ static int __init slip_init(void)
 	printk(KERN_INFO "SLIP linefill/keepalive option.\n");
 #endif
 
-	slip_devs = kcalloc(slip_maxdev, sizeof(struct net_device *),
+	slip_devs = kzalloc(sizeof(struct net_device *)*slip_maxdev,
 								GFP_KERNEL);
 	if (!slip_devs)
 		return -ENOMEM;
 
 	/* Fill in our line protocol discipline, and register it */
-	status = tty_register_ldisc(&sl_ldisc);
+	status = tty_register_ldisc(N_SLIP, &sl_ldisc);
 	if (status != 0) {
 		printk(KERN_ERR "SLIP: can't register line discipline (err = %d)\n", status);
 		kfree(slip_devs);
@@ -1364,7 +1374,9 @@ static void __exit slip_exit(void)
 	kfree(slip_devs);
 	slip_devs = NULL;
 
-	tty_unregister_ldisc(&sl_ldisc);
+	i = tty_unregister_ldisc(N_SLIP);
+	if (i != 0)
+		printk(KERN_ERR "SLIP: can't unregister line discipline (err = %d)\n", i);
 }
 
 module_init(slip_init);

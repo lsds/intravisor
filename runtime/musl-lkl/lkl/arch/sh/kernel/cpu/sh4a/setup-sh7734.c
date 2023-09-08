@@ -1,11 +1,14 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * arch/sh/kernel/cpu/sh4a/setup-sh7734.c
- *
+
  * SH7734 Setup
  *
  * Copyright (C) 2011,2012 Nobuhiro Iwamatsu <nobuhiro.iwamatsu.yj@renesas.com>
  * Copyright (C) 2011,2012 Renesas Solutions Corp.
+ *
+ * This file is subject to the terms and conditions of the GNU General Public
+ * License.  See the file "COPYING" in the main directory of this archive
+ * for more details.
  */
 
 #include <linux/platform_device.h>
@@ -18,7 +21,6 @@
 #include <linux/io.h>
 #include <asm/clock.h>
 #include <asm/irq.h>
-#include <asm/platform_early.h>
 #include <cpu/sh7734.h>
 
 /* SCIF */
@@ -281,7 +283,7 @@ static struct platform_device *sh7734_early_devices[] __initdata = {
 
 void __init plat_early_device_setup(void)
 {
-	sh_early_platform_add_devices(sh7734_early_devices,
+	early_platform_add_devices(sh7734_early_devices,
 		ARRAY_SIZE(sh7734_early_devices));
 }
 

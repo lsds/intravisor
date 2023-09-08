@@ -1,6 +1,10 @@
-// SPDX-License-Identifier: GPL-2.0
-//
-//Copyright (C) 2013 Freescale Semiconductor, Inc.
+/*
+ * Copyright (C) 2013 Freescale Semiconductor, Inc.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ */
 
 /dts-v1/;
 
@@ -12,12 +16,7 @@
 	model = "Freescale i.MX6 SoloLite EVK Board";
 	compatible = "fsl,imx6sl-evk", "fsl,imx6sl";
 
-	chosen {
-		stdout-path = &uart1;
-	};
-
 	memory@80000000 {
-		device_type = "memory";
 		reg = <0x80000000 0x40000000>;
 	};
 
@@ -78,8 +77,6 @@
 
 	reg_lcd_3v3: regulator-lcd-3v3 {
 		compatible = "regulator-fixed";
-		pinctrl-names = "default";
-		pinctrl-0 = <&pinctrl_reg_lcd_3v3>;
 		regulator-name = "lcd-3v3";
 		gpio = <&gpio4 3 GPIO_ACTIVE_HIGH>;
 		enable-active-high;
@@ -94,8 +91,6 @@
 
 	sound {
 		compatible = "fsl,imx6sl-evk-wm8962", "fsl,imx-audio-wm8962";
-		pinctrl-names = "default";
-		pinctrl-0 = <&pinctrl_hp>;
 		model = "wm8962-audio";
 		ssi-controller = <&ssi2>;
 		audio-codec = <&codec>;
@@ -108,7 +103,6 @@
 			"IN3R", "AMIC";
 		mux-int-port = <2>;
 		mux-ext-port = <3>;
-		hp-det-gpio = <&gpio4 19 GPIO_ACTIVE_LOW>;
 	};
 
 	panel {
@@ -132,12 +126,12 @@
 };
 
 &ecspi1 {
-	cs-gpios = <&gpio4 11 GPIO_ACTIVE_LOW>;
+	cs-gpios = <&gpio4 11 0>;
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_ecspi1>;
 	status = "okay";
 
-	flash: flash@0 {
+	flash: m25p80@0 {
 		#address-cells = <1>;
 		#size-cells = <1>;
 		compatible = "st,m25p32", "jedec,spi-nor";
@@ -205,7 +199,6 @@
 			sw4_reg: sw4 {
 				regulator-min-microvolt = <800000>;
 				regulator-max-microvolt = <3300000>;
-				regulator-always-on;
 			};
 
 			swbst_reg: swbst {
@@ -346,12 +339,6 @@
 			>;
 		};
 
-		pinctrl_hp: hpgrp {
-			fsl,pins = <
-				MX6SL_PAD_FEC_RX_ER__GPIO4_IO19	  0x1b0b0
-			>;
-		};
-
 		pinctrl_i2c1: i2c1grp {
 			fsl,pins = <
 				MX6SL_PAD_I2C1_SCL__I2C1_SCL	0x4001b8b1
@@ -420,12 +407,6 @@
 		pinctrl_pwm1: pwmgrp {
 			fsl,pins = <
 				MX6SL_PAD_PWM1__PWM1_OUT 0x110b0
-			>;
-		};
-
-		pinctrl_reg_lcd_3v3: reglcd3v3grp {
-			fsl,pins = <
-				MX6SL_PAD_KEY_ROW5__GPIO4_IO03    0x17059
 			>;
 		};
 
@@ -584,18 +565,9 @@
 };
 
 &pwm1 {
-	#pwm-cells = <2>;
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_pwm1>;
 	status = "okay";
-};
-
-&reg_vdd1p1 {
-	vin-supply = <&sw2_reg>;
-};
-
-&reg_vdd2p5 {
-	vin-supply = <&sw2_reg>;
 };
 
 &snvs_poweroff {

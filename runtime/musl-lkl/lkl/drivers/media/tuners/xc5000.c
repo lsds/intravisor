@@ -1,10 +1,20 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  *  Driver for Xceive XC5000 "QAM/8VSB single chip tuner"
  *
  *  Copyright (c) 2007 Xceive Corporation
  *  Copyright (c) 2007 Steven Toth <stoth@linuxtv.org>
  *  Copyright (c) 2009 Devin Heitmueller <dheitmueller@kernellabs.com>
+ *
+ *  This program is free software; you can redistribute it and/or modify
+ *  it under the terms of the GNU General Public License as published by
+ *  the Free Software Foundation; either version 2 of the License, or
+ *  (at your option) any later version.
+ *
+ *  This program is distributed in the hope that it will be useful,
+ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *
+ *  GNU General Public License for more details.
  */
 
 #include <linux/module.h>
@@ -450,8 +460,8 @@ static int xc_set_rf_frequency(struct xc5000_priv *priv, u32 freq_hz)
 
 	dprintk(1, "%s(%u)\n", __func__, freq_hz);
 
-	if ((freq_hz > xc5000_tuner_ops.info.frequency_max_hz) ||
-		(freq_hz < xc5000_tuner_ops.info.frequency_min_hz))
+	if ((freq_hz > xc5000_tuner_ops.info.frequency_max) ||
+		(freq_hz < xc5000_tuner_ops.info.frequency_min))
 		return -EINVAL;
 
 	freq_code = (u16)(freq_hz / 15625);
@@ -756,7 +766,7 @@ static int xc5000_set_digital_params(struct dvb_frontend *fe)
 		if (!bw)
 			bw = 6000000;
 		/* fall to OFDM handling */
-		fallthrough;
+		/* fall through */
 	case SYS_DMBTH:
 	case SYS_DVBT:
 	case SYS_DVBT2:
@@ -1340,10 +1350,10 @@ static int xc5000_set_config(struct dvb_frontend *fe, void *priv_cfg)
 
 static const struct dvb_tuner_ops xc5000_tuner_ops = {
 	.info = {
-		.name              = "Xceive XC5000",
-		.frequency_min_hz  =    1 * MHz,
-		.frequency_max_hz  = 1023 * MHz,
-		.frequency_step_hz =   50 * kHz,
+		.name           = "Xceive XC5000",
+		.frequency_min  =    1000000,
+		.frequency_max  = 1023000000,
+		.frequency_step =      50000,
 	},
 
 	.release	   = xc5000_release,

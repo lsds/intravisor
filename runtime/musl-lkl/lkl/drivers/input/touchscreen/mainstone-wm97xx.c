@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * mainstone-wm97xx.c  --  Mainstone Continuous Touch screen driver for
  *                         Wolfson WM97xx AC97 Codecs.
@@ -8,6 +7,11 @@
  * Parts Copyright : Ian Molton <spyro@f2s.com>
  *                   Andrew Zabolotny <zap@homelink.ru>
  *
+ *  This program is free software; you can redistribute  it and/or modify it
+ *  under  the terms of  the GNU General  Public License as published by the
+ *  Free Software Foundation;  either version 2 of the  License, or (at your
+ *  option) any later version.
+ *
  * Notes:
  *     This is a wm97xx extended touch driver to capture touch
  *     data in a continuous manner on the Intel XScale architecture
@@ -15,20 +19,20 @@
  *  Features:
  *       - codecs supported:- WM9705, WM9712, WM9713
  *       - processors supported:- Intel XScale PXA25x, PXA26x, PXA27x
+ *
  */
 
 #include <linux/module.h>
 #include <linux/moduleparam.h>
 #include <linux/kernel.h>
 #include <linux/delay.h>
-#include <linux/gpio/consumer.h>
 #include <linux/irq.h>
 #include <linux/interrupt.h>
-#include <linux/io.h>
-#include <linux/soc/pxa/cpu.h>
 #include <linux/wm97xx.h>
+#include <linux/io.h>
+#include <linux/gpio.h>
 
-#include <sound/pxa2xx-lib.h>
+#include <mach/regs-ac97.h>
 
 #include <asm/mach-types.h>
 
@@ -42,23 +46,24 @@ struct continuous {
 #define WM_READS(sp) ((sp / HZ) + 1)
 
 static const struct continuous cinfo[] = {
-	{ WM9705_ID2, 0, WM_READS(94),  94  },
-	{ WM9705_ID2, 1, WM_READS(188), 188 },
-	{ WM9705_ID2, 2, WM_READS(375), 375 },
-	{ WM9705_ID2, 3, WM_READS(750), 750 },
-	{ WM9712_ID2, 0, WM_READS(94),  94  },
-	{ WM9712_ID2, 1, WM_READS(188), 188 },
-	{ WM9712_ID2, 2, WM_READS(375), 375 },
-	{ WM9712_ID2, 3, WM_READS(750), 750 },
-	{ WM9713_ID2, 0, WM_READS(94),  94  },
-	{ WM9713_ID2, 1, WM_READS(120), 120 },
-	{ WM9713_ID2, 2, WM_READS(154), 154 },
-	{ WM9713_ID2, 3, WM_READS(188), 188 },
+	{WM9705_ID2, 0, WM_READS(94), 94},
+	{WM9705_ID2, 1, WM_READS(188), 188},
+	{WM9705_ID2, 2, WM_READS(375), 375},
+	{WM9705_ID2, 3, WM_READS(750), 750},
+	{WM9712_ID2, 0, WM_READS(94), 94},
+	{WM9712_ID2, 1, WM_READS(188), 188},
+	{WM9712_ID2, 2, WM_READS(375), 375},
+	{WM9712_ID2, 3, WM_READS(750), 750},
+	{WM9713_ID2, 0, WM_READS(94), 94},
+	{WM9713_ID2, 1, WM_READS(120), 120},
+	{WM9713_ID2, 2, WM_READS(154), 154},
+	{WM9713_ID2, 3, WM_READS(188), 188},
 };
 
 /* continuous speed index */
 static int sp_idx;
-static struct gpio_desc *gpiod_irq;
+static u16 last, tries;
+static int irq;
 
 /*
  * Pen sampling frequency (Hz) in continuous mode.
@@ -97,40 +102,44 @@ MODULE_PARM_DESC(ac97_touch_slot, "Touch screen data slot AC97 number");
 
 
 /* flush AC97 slot 5 FIFO on pxa machines */
+#ifdef CONFIG_PXA27x
+static void wm97xx_acc_pen_up(struct wm97xx *wm)
+{
+	schedule_timeout_uninterruptible(1);
+
+	while (MISR & (1 << 2))
+		MODR;
+}
+#else
 static void wm97xx_acc_pen_up(struct wm97xx *wm)
 {
 	unsigned int count;
 
-	msleep(1);
+	schedule_timeout_uninterruptible(1);
 
-	if (cpu_is_pxa27x()) {
-		while (pxa2xx_ac97_read_misr() & (1 << 2))
-			pxa2xx_ac97_read_modr();
-	} else if (cpu_is_pxa3xx()) {
-		for (count = 0; count < 16; count++)
-			pxa2xx_ac97_read_modr();
-	}
+	for (count = 0; count < 16; count++)
+		MODR;
 }
+#endif
 
 static int wm97xx_acc_pen_down(struct wm97xx *wm)
 {
 	u16 x, y, p = 0x100 | WM97XX_ADCSEL_PRES;
 	int reads = 0;
-	static u16 last, tries;
 
 	/* When the AC97 queue has been drained we need to allow time
 	 * to buffer up samples otherwise we end up spinning polling
 	 * for samples.  The controller can't have a suitably low
 	 * threshold set to use the notifications it gives.
 	 */
-	msleep(1);
+	schedule_timeout_uninterruptible(1);
 
 	if (tries > 5) {
 		tries = 0;
 		return RC_PENUP;
 	}
 
-	x = pxa2xx_ac97_read_modr();
+	x = MODR;
 	if (x == last) {
 		tries++;
 		return RC_AGAIN;
@@ -138,10 +147,10 @@ static int wm97xx_acc_pen_down(struct wm97xx *wm)
 	last = x;
 	do {
 		if (reads)
-			x = pxa2xx_ac97_read_modr();
-		y = pxa2xx_ac97_read_modr();
+			x = MODR;
+		y = MODR;
 		if (pressure)
-			p = pxa2xx_ac97_read_modr();
+			p = MODR;
 
 		dev_dbg(wm->dev, "Raw coordinates: x=%x, y=%x, p=%x\n",
 			x, y, p);
@@ -190,23 +199,28 @@ static int wm97xx_acc_startup(struct wm97xx *wm)
 	/* IRQ driven touchscreen is used on Palm hardware */
 	if (machine_is_palmt5() || machine_is_palmtx() || machine_is_palmld()) {
 		pen_int = 1;
+		irq = 27;
 		/* There is some obscure mutant of WM9712 interbred with WM9713
 		 * used on Palm HW */
 		wm->variant = WM97xx_WM1613;
-	} else if (machine_is_zylonite()) {
-		pen_int = 1;
-	}
+	} else if (machine_is_mainstone() && pen_int)
+		irq = 4;
 
-	if (pen_int) {
-		gpiod_irq = gpiod_get(wm->dev, "touch", GPIOD_IN);
-		if (IS_ERR(gpiod_irq))
-			pen_int = 0;
-	}
+	if (irq) {
+		ret = gpio_request(irq, "Touchscreen IRQ");
+		if (ret)
+			goto out;
 
-	if (pen_int) {
-		wm->pen_irq = gpiod_to_irq(gpiod_irq);
+		ret = gpio_direction_input(irq);
+		if (ret) {
+			gpio_free(irq);
+			goto out;
+		}
+
+		wm->pen_irq = gpio_to_irq(irq);
 		irq_set_irq_type(wm->pen_irq, IRQ_TYPE_EDGE_BOTH);
-	}
+	} else /* pen irq not supported */
+		pen_int = 0;
 
 	/* codec specific irq config */
 	if (pen_int) {
@@ -233,6 +247,7 @@ static int wm97xx_acc_startup(struct wm97xx *wm)
 		}
 	}
 
+out:
 	return ret;
 }
 
@@ -240,19 +255,28 @@ static void wm97xx_acc_shutdown(struct wm97xx *wm)
 {
 	/* codec specific deconfig */
 	if (pen_int) {
-		if (gpiod_irq)
-			gpiod_put(gpiod_irq);
+		if (irq)
+			gpio_free(irq);
 		wm->pen_irq = 0;
 	}
 }
 
+static void wm97xx_irq_enable(struct wm97xx *wm, int enable)
+{
+	if (enable)
+		enable_irq(wm->pen_irq);
+	else
+		disable_irq_nosync(wm->pen_irq);
+}
+
 static struct wm97xx_mach_ops mainstone_mach_ops = {
-	.acc_enabled	= 1,
-	.acc_pen_up	= wm97xx_acc_pen_up,
-	.acc_pen_down	= wm97xx_acc_pen_down,
-	.acc_startup	= wm97xx_acc_startup,
-	.acc_shutdown	= wm97xx_acc_shutdown,
-	.irq_gpio	= WM97XX_GPIO_2,
+	.acc_enabled = 1,
+	.acc_pen_up = wm97xx_acc_pen_up,
+	.acc_pen_down = wm97xx_acc_pen_down,
+	.acc_startup = wm97xx_acc_startup,
+	.acc_shutdown = wm97xx_acc_shutdown,
+	.irq_enable = wm97xx_irq_enable,
+	.irq_gpio = WM97XX_GPIO_2,
 };
 
 static int mainstone_wm97xx_probe(struct platform_device *pdev)
@@ -267,15 +291,14 @@ static int mainstone_wm97xx_remove(struct platform_device *pdev)
 	struct wm97xx *wm = platform_get_drvdata(pdev);
 
 	wm97xx_unregister_mach_ops(wm);
-
 	return 0;
 }
 
 static struct platform_driver mainstone_wm97xx_driver = {
-	.probe	= mainstone_wm97xx_probe,
-	.remove	= mainstone_wm97xx_remove,
-	.driver	= {
-		.name	= "wm97xx-touch",
+	.probe = mainstone_wm97xx_probe,
+	.remove = mainstone_wm97xx_remove,
+	.driver = {
+		.name = "wm97xx-touch",
 	},
 };
 module_platform_driver(mainstone_wm97xx_driver);

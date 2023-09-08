@@ -16,9 +16,10 @@
 
 #include "jsm.h"
 
-MODULE_AUTHOR("Digi International, https://www.digi.com");
+MODULE_AUTHOR("Digi International, http://www.digi.com");
 MODULE_DESCRIPTION("Driver for the Digi International Neo and Classic PCI based product line");
 MODULE_LICENSE("GPL");
+MODULE_SUPPORTED_DEVICE("jsm");
 
 #define JSM_DRIVER_NAME "jsm"
 #define NR_PORTS	32
@@ -211,8 +212,7 @@ static int jsm_probe_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 
 		break;
 	default:
-		rc = -ENXIO;
-		goto out_kfree_brd;
+		return -ENXIO;
 	}
 
 	rc = request_irq(brd->irq, brd->bd_ops->intr, IRQF_SHARED, "JSM", brd);

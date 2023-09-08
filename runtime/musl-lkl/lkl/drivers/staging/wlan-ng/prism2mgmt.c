@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: (GPL-2.0 OR MPL-1.1)
-/*
+/* src/prism2/driver/prism2mgmt.c
  *
  * Management request handler functions.
  *
@@ -85,21 +85,10 @@
 #include "prism2mgmt.h"
 
 /* Converts 802.11 format rate specifications to prism2 */
-static inline u16 p80211rate_to_p2bit(u32 rate)
-{
-	switch (rate & ~BIT(7)) {
-	case 2:
-		return BIT(0);
-	case 4:
-		return BIT(1);
-	case 11:
-		return BIT(2);
-	case 22:
-		return BIT(3);
-	default:
-		return 0;
-	}
-}
+#define p80211rate_to_p2bit(n)	((((n) & ~BIT(7)) == 2) ? BIT(0) :  \
+				 (((n) & ~BIT(7)) == 4) ? BIT(1) : \
+				 (((n) & ~BIT(7)) == 11) ? BIT(2) : \
+				 (((n) & ~BIT(7)) == 22) ? BIT(3) : 0)
 
 /*----------------------------------------------------------------
  * prism2mgmt_scan
@@ -228,8 +217,8 @@ int prism2mgmt_scan(struct wlandevice *wlandev, void *msgp)
 		__le16 wordbuf[17];
 
 		result = hfa384x_drvr_setconfig16(hw,
-						  HFA384x_RID_CNFROAMINGMODE,
-						  HFA384x_ROAMMODE_HOSTSCAN_HOSTROAM);
+					HFA384x_RID_CNFROAMINGMODE,
+					HFA384x_ROAMMODE_HOSTSCAN_HOSTROAM);
 		if (result) {
 			netdev_err(wlandev->netdev,
 				   "setconfig(ROAMINGMODE) failed. result=%d\n",
@@ -275,8 +264,8 @@ int prism2mgmt_scan(struct wlandevice *wlandev, void *msgp)
 		}
 		/* ibss options */
 		result = hfa384x_drvr_setconfig16(hw,
-						  HFA384x_RID_CREATEIBSS,
-						  HFA384x_CREATEIBSS_JOINCREATEIBSS);
+					HFA384x_RID_CREATEIBSS,
+					HFA384x_CREATEIBSS_JOINCREATEIBSS);
 		if (result) {
 			netdev_err(wlandev->netdev,
 				   "Failed to set CREATEIBSS.\n");
@@ -414,7 +403,7 @@ int prism2mgmt_scan_results(struct wlandevice *wlandev, void *msgp)
 		goto exit;
 	}
 
-	item = &hw->scanresults->info.hscanresult.result[req->bssindex.data];
+	item = &(hw->scanresults->info.hscanresult.result[req->bssindex.data]);
 	/* signal and noise */
 	req->signal.status = P80211ENUM_msgitem_status_data_ok;
 	req->noise.status = P80211ENUM_msgitem_status_data_ok;
@@ -439,7 +428,7 @@ int prism2mgmt_scan_results(struct wlandevice *wlandev, void *msgp)
 
 #define REQBASICRATE(N) \
 	do { \
-		if ((count >= (N)) && DOT11_RATE5_ISBASIC_GET(	\
+		if ((count >= N) && DOT11_RATE5_ISBASIC_GET( \
 			item->supprates[(N) - 1])) { \
 			req->basicrate ## N .data = item->supprates[(N) - 1]; \
 			req->basicrate ## N .status = \
@@ -458,7 +447,7 @@ int prism2mgmt_scan_results(struct wlandevice *wlandev, void *msgp)
 
 #define REQSUPPRATE(N) \
 	do { \
-		if (count >= (N)) {					\
+		if (count >= N) { \
 			req->supprate ## N .data = item->supprates[(N) - 1]; \
 			req->supprate ## N .status = \
 				P80211ENUM_msgitem_status_data_ok; \
@@ -959,7 +948,7 @@ int prism2mgmt_flashdl_state(struct wlandevice *wlandev, void *msgp)
 		}
 	}
 
-	return result;
+	return 0;
 }
 
 /*----------------------------------------------------------------
@@ -1075,7 +1064,7 @@ int prism2mgmt_autojoin(struct wlandevice *wlandev, void *msgp)
 
 	/* Set the ssid */
 	memset(bytebuf, 0, 256);
-	pstr = (struct p80211pstrd *)&msg->ssid.data;
+	pstr = (struct p80211pstrd *)&(msg->ssid.data);
 	prism2mgmt_pstr2bytestr(p2bytestr, pstr);
 	result = hfa384x_drvr_setconfig(hw, HFA384x_RID_CNFDESIREDSSID,
 					bytebuf,
@@ -1167,8 +1156,8 @@ int prism2mgmt_wlansniff(struct wlandevice *wlandev, void *msgp)
 		if (hw->presniff_port_type != 0) {
 			word = hw->presniff_port_type;
 			result = hfa384x_drvr_setconfig16(hw,
-							  HFA384x_RID_CNFPORTTYPE,
-							  word);
+						  HFA384x_RID_CNFPORTTYPE,
+						  word);
 			if (result) {
 				netdev_dbg
 				    (wlandev->netdev,
@@ -1198,8 +1187,8 @@ int prism2mgmt_wlansniff(struct wlandevice *wlandev, void *msgp)
 			if (wlandev->netdev->type == ARPHRD_ETHER) {
 				/* Save macport 0 state */
 				result = hfa384x_drvr_getconfig16(hw,
-								  HFA384x_RID_CNFPORTTYPE,
-								  &hw->presniff_port_type);
+						  HFA384x_RID_CNFPORTTYPE,
+						  &(hw->presniff_port_type));
 				if (result) {
 					netdev_dbg
 					(wlandev->netdev,
@@ -1209,8 +1198,8 @@ int prism2mgmt_wlansniff(struct wlandevice *wlandev, void *msgp)
 				}
 				/* Save the wepflags state */
 				result = hfa384x_drvr_getconfig16(hw,
-								  HFA384x_RID_CNFWEPFLAGS,
-								  &hw->presniff_wepflags);
+						  HFA384x_RID_CNFWEPFLAGS,
+						  &(hw->presniff_wepflags));
 				if (result) {
 					netdev_dbg
 					(wlandev->netdev,
@@ -1259,8 +1248,8 @@ int prism2mgmt_wlansniff(struct wlandevice *wlandev, void *msgp)
 			/* Set the port type to pIbss */
 			word = HFA384x_PORTTYPE_PSUEDOIBSS;
 			result = hfa384x_drvr_setconfig16(hw,
-							  HFA384x_RID_CNFPORTTYPE,
-							  word);
+						  HFA384x_RID_CNFPORTTYPE,
+						  word);
 			if (result) {
 				netdev_dbg
 				    (wlandev->netdev,
@@ -1269,15 +1258,16 @@ int prism2mgmt_wlansniff(struct wlandevice *wlandev, void *msgp)
 				goto failed;
 			}
 			if ((msg->keepwepflags.status ==
-			     P80211ENUM_msgitem_status_data_ok) &&
-			    (msg->keepwepflags.data != P80211ENUM_truth_true)) {
+			     P80211ENUM_msgitem_status_data_ok)
+			    && (msg->keepwepflags.data !=
+				P80211ENUM_truth_true)) {
 				/* Set the wepflags for no decryption */
 				word = HFA384x_WEPFLAGS_DISABLE_TXCRYPT |
 				    HFA384x_WEPFLAGS_DISABLE_RXCRYPT;
 				result =
 				    hfa384x_drvr_setconfig16(hw,
-							     HFA384x_RID_CNFWEPFLAGS,
-							     word);
+						     HFA384x_RID_CNFWEPFLAGS,
+						     word);
 			}
 
 			if (result) {
@@ -1290,9 +1280,8 @@ int prism2mgmt_wlansniff(struct wlandevice *wlandev, void *msgp)
 		}
 
 		/* Do we want to strip the FCS in monitor mode? */
-		if ((msg->stripfcs.status ==
-		     P80211ENUM_msgitem_status_data_ok) &&
-		    (msg->stripfcs.data == P80211ENUM_truth_true)) {
+		if ((msg->stripfcs.status == P80211ENUM_msgitem_status_data_ok)
+		    && (msg->stripfcs.data == P80211ENUM_truth_true)) {
 			hw->sniff_fcs = 0;
 		} else {
 			hw->sniff_fcs = 1;

@@ -1,15 +1,19 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * AK4104 ALSA SoC (ASoC) driver
  *
  * Copyright (c) 2009 Daniel Mack <daniel@caiaq.de>
+ *
+ *  This program is free software; you can redistribute  it and/or modify it
+ *  under the terms of  the GNU General  Public License as published by the
+ *  Free Software Foundation;  either version 2 of the  License, or (at your
+ *  option) any later version.
  */
 
 #include <linux/module.h>
 #include <linux/slab.h>
 #include <linux/spi/spi.h>
 #include <linux/of_device.h>
-#include <linux/gpio/consumer.h>
+#include <linux/of_gpio.h>
 #include <linux/regulator/consumer.h>
 #include <sound/asoundef.h>
 #include <sound/core.h>
@@ -81,8 +85,8 @@ static int ak4104_set_dai_fmt(struct snd_soc_dai *codec_dai,
 		return -EINVAL;
 	}
 
-	/* This device can only be consumer */
-	if ((format & SND_SOC_DAIFMT_CLOCK_PROVIDER_MASK) != SND_SOC_DAIFMT_CBC_CFC)
+	/* This device can only be slave */
+	if ((format & SND_SOC_DAIFMT_MASTER_MASK) != SND_SOC_DAIFMT_CBS_CFS)
 		return -EINVAL;
 
 	ret = regmap_update_bits(ak4104->regmap, AK4104_REG_CONTROL1,
@@ -248,6 +252,7 @@ static const struct snd_soc_component_driver soc_component_device_ak4104 = {
 	.idle_bias_on		= 1,
 	.use_pmdown_time	= 1,
 	.endianness		= 1,
+	.non_legacy_dai_naming	= 1,
 };
 
 static const struct regmap_config ak4104_regmap = {
@@ -263,8 +268,8 @@ static const struct regmap_config ak4104_regmap = {
 
 static int ak4104_spi_probe(struct spi_device *spi)
 {
+	struct device_node *np = spi->dev.of_node;
 	struct ak4104_private *ak4104;
-	struct gpio_desc *reset_gpiod;
 	unsigned int val;
 	int ret;
 
@@ -292,10 +297,19 @@ static int ak4104_spi_probe(struct spi_device *spi)
 		return ret;
 	}
 
-	reset_gpiod = devm_gpiod_get_optional(&spi->dev, "reset",
-					      GPIOD_OUT_HIGH);
-	if (PTR_ERR(reset_gpiod) == -EPROBE_DEFER)
-		return -EPROBE_DEFER;
+	if (np) {
+		enum of_gpio_flags flags;
+		int gpio = of_get_named_gpio_flags(np, "reset-gpio", 0, &flags);
+
+		if (gpio_is_valid(gpio)) {
+			ret = devm_gpio_request_one(&spi->dev, gpio,
+				     flags & OF_GPIO_ACTIVE_LOW ?
+					GPIOF_OUT_INIT_LOW : GPIOF_OUT_INIT_HIGH,
+				     "ak4104 reset");
+			if (ret < 0)
+				return ret;
+		}
+	}
 
 	/* read the 'reserved' register - according to the datasheet, it
 	 * should contain 0x5b. Not a good way to verify the presence of

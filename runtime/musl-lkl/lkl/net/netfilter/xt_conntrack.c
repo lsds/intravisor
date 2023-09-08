@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  *	xt_conntrack - Netfilter module to match connection tracking
  *	information. (Superset of Rusty's minimalistic state match.)
@@ -6,6 +5,10 @@
  *	(C) 2001  Marc Boucher (marc@mbsi.ca).
  *	(C) 2006-2012 Patrick McHardy <kaber@trash.net>
  *	Copyright © CC Computer Consultants GmbH, 2007 - 2008
+ *
+ *	This program is free software; you can redistribute it and/or modify
+ *	it under the terms of the GNU General Public License version 2 as
+ *	published by the Free Software Foundation.
  */
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 #include <linux/module.h>

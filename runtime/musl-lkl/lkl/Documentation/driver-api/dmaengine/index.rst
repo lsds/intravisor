@@ -5,8 +5,8 @@ DMAEngine documentation
 DMAEngine documentation provides documents for various aspects of DMAEngine
 framework.
 
-DMAEngine development documentation
------------------------------------
+DMAEngine documentation
+-----------------------
 
 This book helps with DMAengine internal APIs and guide for DMAEngine device
 driver writers.
@@ -47,7 +47,7 @@ This book adds some notes about PXA DMA
 
    pxa_dma
 
-.. only::  subproject and html
+.. only::  subproject
 
    Indices
    =======

@@ -32,14 +32,8 @@
  * (you will need to reboot afterwards) */
 /* #define BNX2X_STOP_ON_ERROR */
 
-/* FIXME: Delete the DRV_MODULE_VERSION below, but please be warned
- * that it is not an easy task because such change has all chances
- * to break this driver due to amount of abuse of in-kernel interfaces
- * between modules and FW.
- *
- * DO NOT UPDATE DRV_MODULE_VERSION below.
- */
-#define DRV_MODULE_VERSION      "1.713.36-0"
+#define DRV_MODULE_VERSION      "1.712.30-0"
+#define DRV_MODULE_RELDATE      "2014/02/10"
 #define BNX2X_BC_VER            0x040200
 
 #if defined(CONFIG_DCB)
@@ -1271,7 +1265,7 @@ struct bnx2x_fw_stats_data {
 	struct per_port_stats		port;
 	struct per_pf_stats		pf;
 	struct fcoe_statistics_params	fcoe;
-	struct per_queue_stats		queue_stats[];
+	struct per_queue_stats		queue_stats[1];
 };
 
 /* Public slow path states */
@@ -1287,7 +1281,7 @@ enum sp_rtnl_flag {
 	BNX2X_SP_RTNL_HYPERVISOR_VLAN,
 	BNX2X_SP_RTNL_TX_STOP,
 	BNX2X_SP_RTNL_GET_DRV_VERSION,
-	BNX2X_SP_RTNL_UPDATE_SVID,
+	BNX2X_SP_RTNL_CHANGE_UDP_PORT,
 };
 
 enum bnx2x_iov_flag {
@@ -1340,6 +1334,11 @@ enum bnx2x_udp_port_type {
 	BNX2X_UDP_PORT_VXLAN,
 	BNX2X_UDP_PORT_GENEVE,
 	BNX2X_UDP_PORT_MAX,
+};
+
+struct bnx2x_udp_tunnel {
+	u16 dst_port;
+	u8 count;
 };
 
 struct bnx2x {
@@ -1534,7 +1533,6 @@ struct bnx2x {
 	struct link_vars	link_vars;
 	u32			link_cnt;
 	struct bnx2x_link_report_data last_reported_link;
-	bool			force_link_down;
 
 	struct mdio_if_info	mdio;
 
@@ -1849,15 +1847,7 @@ struct bnx2x {
 	bool accept_any_vlan;
 
 	/* Vxlan/Geneve related information */
-	u16 udp_tunnel_ports[BNX2X_UDP_PORT_MAX];
-
-#define FW_CAP_INVALIDATE_VF_FP_HSI	BIT(0)
-	u32 fw_cap;
-
-	u32 fw_major;
-	u32 fw_minor;
-	u32 fw_rev;
-	u32 fw_eng;
+	struct bnx2x_udp_tunnel udp_tunnel_ports[BNX2X_UDP_PORT_MAX];
 };
 
 /* Tx queues may be less or equal to Rx queues */
@@ -1981,9 +1971,6 @@ struct bnx2x_func_init_params {
 
 #define skip_queue(bp, idx)	(NO_FCOE(bp) && IS_FCOE_IDX(idx))
 
-/*self test*/
-int bnx2x_idle_chk(struct bnx2x *bp);
-
 /**
  * bnx2x_set_mac_one - configure a single MAC address
  *
@@ -2002,7 +1989,7 @@ int bnx2x_idle_chk(struct bnx2x *bp);
  * operation has been successfully scheduled and a negative - if a requested
  * operations has failed.
  */
-int bnx2x_set_mac_one(struct bnx2x *bp, const u8 *mac,
+int bnx2x_set_mac_one(struct bnx2x *bp, u8 *mac,
 		      struct bnx2x_vlan_mac_obj *obj, bool set,
 		      int mac_type, unsigned long *ramrod_flags);
 
@@ -2092,7 +2079,7 @@ void bnx2x_igu_clear_sb_gen(struct bnx2x *bp, u8 func, u8 idu_sb_id,
 			    bool is_pf);
 
 #define BNX2X_ILT_ZALLOC(x, y, size)					\
-	x = dma_alloc_coherent(&bp->pdev->dev, size, y, GFP_KERNEL)
+	x = dma_zalloc_coherent(&bp->pdev->dev, size, y, GFP_KERNEL)
 
 #define BNX2X_ILT_FREE(x, y, size) \
 	do { \
@@ -2202,13 +2189,6 @@ void bnx2x_igu_clear_sb_gen(struct bnx2x *bp, u8 func, u8 idu_sb_id,
 					 BP_VN(bp))
 #define PMF_DMAE_C(bp)			(BP_PORT(bp) * MAX_DMAE_C_PER_PORT + \
 					 E1HVN_MAX)
-
-/* Following is the DMAE channel number allocation for the clients.
- *   MFW: OCBB/OCSD implementations use DMAE channels 14/15 respectively.
- *   Driver: 0-3 and 8-11 (for PF dmae operations)
- *           4 and 12 (for stats requests)
- */
-#define BNX2X_FW_DMAE_C                 13 /* Channel for FW DMAE operations */
 
 /* PCIE link and speed */
 #define PCICFG_LINK_WIDTH		0x1f00000
@@ -2415,6 +2395,7 @@ void bnx2x_igu_clear_sb_gen(struct bnx2x *bp, u8 func, u8 idu_sb_id,
 #define ETH_MAX_RX_CLIENTS_E2		ETH_MAX_RX_CLIENTS_E1H
 #endif
 
+#define BNX2X_VPD_LEN			128
 #define VENDOR_ID_LEN			4
 
 #define VF_ACQUIRE_THRESH		3
@@ -2433,6 +2414,13 @@ int bnx2x_compare_fw_ver(struct bnx2x *bp, u32 load_code, bool print_err);
 #define HC_SEG_ACCESS_DEF		0   /*Driver decision 0-3*/
 #define HC_SEG_ACCESS_ATTN		4
 #define HC_SEG_ACCESS_NORM		0   /*Driver decision 0-1*/
+
+static const u32 dmae_reg_go_c[] = {
+	DMAE_REG_GO_C0, DMAE_REG_GO_C1, DMAE_REG_GO_C2, DMAE_REG_GO_C3,
+	DMAE_REG_GO_C4, DMAE_REG_GO_C5, DMAE_REG_GO_C6, DMAE_REG_GO_C7,
+	DMAE_REG_GO_C8, DMAE_REG_GO_C9, DMAE_REG_GO_C10, DMAE_REG_GO_C11,
+	DMAE_REG_GO_C12, DMAE_REG_GO_C13, DMAE_REG_GO_C14, DMAE_REG_GO_C15
+};
 
 void bnx2x_set_ethtool_ops(struct bnx2x *bp, struct net_device *netdev);
 void bnx2x_notify_link_changed(struct bnx2x *bp);
@@ -2524,7 +2512,6 @@ void bnx2x_update_mfw_dump(struct bnx2x *bp);
 void bnx2x_init_ptp(struct bnx2x *bp);
 int bnx2x_configure_ptp_filters(struct bnx2x *bp);
 void bnx2x_set_rx_ts(struct bnx2x *bp, struct sk_buff *skb);
-void bnx2x_register_phc(struct bnx2x *bp);
 
 #define BNX2X_MAX_PHC_DRIFT 31000000
 #define BNX2X_PTP_TX_TIMEOUT
@@ -2533,4 +2520,5 @@ void bnx2x_register_phc(struct bnx2x *bp);
  * Meant for implicit re-load flows.
  */
 int bnx2x_vlan_reconfigure_vid(struct bnx2x *bp);
+
 #endif /* bnx2x.h */

@@ -1,6 +1,17 @@
-// SPDX-License-Identifier: ISC
 /*
  * Copyright (c) 2010 Broadcom Corporation
+ *
+ * Permission to use, copy, modify, and/or distribute this software for any
+ * purpose with or without fee is hereby granted, provided that the above
+ * copyright notice and this permission notice appear in all copies.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+ * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+ * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY
+ * SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+ * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION
+ * OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN
+ * CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
 #ifndef	BRCMFMAC_SDIO_H
@@ -66,7 +77,7 @@
 #define SBSDIO_GPIO_OUT			0x10006
 /* gpio enable */
 #define SBSDIO_GPIO_EN			0x10007
-/* rev < 7, watermark for sdio device TX path */
+/* rev < 7, watermark for sdio device */
 #define SBSDIO_WATERMARK		0x10008
 /* control busy signal generation */
 #define SBSDIO_DEVICE_CTL		0x10009
@@ -93,13 +104,6 @@
 #define SBSDIO_FUNC1_RFRAMEBCHI		0x1001C
 /* MesBusyCtl (rev 11) */
 #define SBSDIO_FUNC1_MESBUSYCTRL	0x1001D
-/* Watermark for sdio device RX path */
-#define SBSDIO_MESBUSY_RXFIFO_WM_MASK	0x7F
-#define SBSDIO_MESBUSY_RXFIFO_WM_SHIFT	0
-/* Enable busy capability for MES access */
-#define SBSDIO_MESBUSYCTRL_ENAB		0x80
-#define SBSDIO_MESBUSYCTRL_ENAB_SHIFT	7
-
 /* Sdio Core Rev 12 */
 #define SBSDIO_FUNC1_WAKEUPCTRL		0x1001E
 #define SBSDIO_FUNC1_WCTRL_ALPWAIT_MASK		0x1
@@ -178,6 +182,7 @@ struct brcmf_sdio_dev {
 	bool sd_irq_requested;
 	bool irq_en;			/* irq enable flags */
 	spinlock_t irq_en_lock;
+	bool irq_wake;			/* irq wake enable flags */
 	bool sg_support;
 	uint max_request_size;
 	ushort max_segment_count;
@@ -186,11 +191,9 @@ struct brcmf_sdio_dev {
 	struct sg_table sgtable;
 	char fw_name[BRCMF_FW_NAME_LEN];
 	char nvram_name[BRCMF_FW_NAME_LEN];
-	char clm_name[BRCMF_FW_NAME_LEN];
 	bool wowl_enabled;
 	enum brcmf_sdiod_state state;
 	struct brcmf_sdiod_freezer *freezer;
-	const struct firmware *clm_fw;
 };
 
 /* sdio core registers */
@@ -348,17 +351,30 @@ int brcmf_sdiod_abort(struct brcmf_sdio_dev *sdiodev, struct sdio_func *func);
 void brcmf_sdiod_sgtable_alloc(struct brcmf_sdio_dev *sdiodev);
 void brcmf_sdiod_change_state(struct brcmf_sdio_dev *sdiodev,
 			      enum brcmf_sdiod_state state);
+#ifdef CONFIG_PM_SLEEP
 bool brcmf_sdiod_freezing(struct brcmf_sdio_dev *sdiodev);
 void brcmf_sdiod_try_freeze(struct brcmf_sdio_dev *sdiodev);
 void brcmf_sdiod_freezer_count(struct brcmf_sdio_dev *sdiodev);
 void brcmf_sdiod_freezer_uncount(struct brcmf_sdio_dev *sdiodev);
-
-int brcmf_sdiod_probe(struct brcmf_sdio_dev *sdiodev);
-int brcmf_sdiod_remove(struct brcmf_sdio_dev *sdiodev);
+#else
+static inline bool brcmf_sdiod_freezing(struct brcmf_sdio_dev *sdiodev)
+{
+	return false;
+}
+static inline void brcmf_sdiod_try_freeze(struct brcmf_sdio_dev *sdiodev)
+{
+}
+static inline void brcmf_sdiod_freezer_count(struct brcmf_sdio_dev *sdiodev)
+{
+}
+static inline void brcmf_sdiod_freezer_uncount(struct brcmf_sdio_dev *sdiodev)
+{
+}
+#endif /* CONFIG_PM_SLEEP */
 
 struct brcmf_sdio *brcmf_sdio_probe(struct brcmf_sdio_dev *sdiodev);
 void brcmf_sdio_remove(struct brcmf_sdio *bus);
-void brcmf_sdio_isr(struct brcmf_sdio *bus, bool in_isr);
+void brcmf_sdio_isr(struct brcmf_sdio *bus);
 
 void brcmf_sdio_wd_timer(struct brcmf_sdio *bus, bool active);
 void brcmf_sdio_wowl_config(struct device *dev, bool enabled);

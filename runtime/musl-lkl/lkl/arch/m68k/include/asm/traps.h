@@ -267,10 +267,6 @@ struct frame {
     } un;
 };
 
-#ifdef CONFIG_M68040
-asmlinkage void berr_040cleanup(struct frame *fp);
-#endif
-
 #endif /* __ASSEMBLY__ */
 
 #endif /* _M68K_TRAPS_H */

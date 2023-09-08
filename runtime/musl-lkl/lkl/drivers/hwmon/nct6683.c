@@ -1,19 +1,26 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * nct6683 - Driver for the hardware monitoring functionality of
- *	     Nuvoton NCT6683D/NCT6686D/NCT6687D eSIO
+ *	     Nuvoton NCT6683D eSIO
  *
  * Copyright (C) 2013  Guenter Roeck <linux@roeck-us.net>
  *
  * Derived from nct6775 driver
  * Copyright (C) 2012, 2013  Guenter Roeck <linux@roeck-us.net>
  *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
  * Supports the following chips:
  *
  * Chip        #vin    #fan    #pwm    #temp  chip ID
  * nct6683d     21(1)   16      8       32(1) 0xc730
- * nct6686d     21(1)   16      8       32(1) 0xd440
- * nct6687d     21(1)   16      8       32(1) 0xd590
  *
  * Notes:
  *	(1) Total number of vin and temp inputs is 32.
@@ -34,7 +41,7 @@
 #include <linux/platform_device.h>
 #include <linux/slab.h>
 
-enum kinds { nct6683, nct6686, nct6687 };
+enum kinds { nct6683 };
 
 static bool force;
 module_param(force, bool, 0);
@@ -42,14 +49,10 @@ MODULE_PARM_DESC(force, "Set to one to enable support for unknown vendors");
 
 static const char * const nct6683_device_names[] = {
 	"nct6683",
-	"nct6686",
-	"nct6687",
 };
 
 static const char * const nct6683_chip_names[] = {
 	"NCT6683D",
-	"NCT6686D",
-	"NCT6687D",
 };
 
 #define DRVNAME "nct6683"
@@ -69,8 +72,6 @@ static const char * const nct6683_chip_names[] = {
 
 #define SIO_NCT6681_ID		0xb270	/* for later */
 #define SIO_NCT6683_ID		0xc730
-#define SIO_NCT6686_ID		0xd440
-#define SIO_NCT6687_ID		0xd590
 #define SIO_ID_MASK		0xFFF0
 
 static inline void
@@ -172,9 +173,6 @@ superio_exit(int ioreg)
 #define NCT6683_REG_CUSTOMER_ID		0x602
 #define NCT6683_CUSTOMER_ID_INTEL	0x805
 #define NCT6683_CUSTOMER_ID_MITAC	0xa0e
-#define NCT6683_CUSTOMER_ID_MSI		0x201
-#define NCT6683_CUSTOMER_ID_ASROCK		0xe2c
-#define NCT6683_CUSTOMER_ID_ASROCK2	0xe1b
 
 #define NCT6683_REG_BUILD_YEAR		0x604
 #define NCT6683_REG_BUILD_MONTH		0x605
@@ -412,7 +410,7 @@ nct6683_create_attr_group(struct device *dev,
 	struct sensor_device_attr_u *su;
 	struct attribute_group *group;
 	struct attribute **attrs;
-	int i, count;
+	int i, j, count;
 
 	if (repeat <= 0)
 		return ERR_PTR(-EINVAL);
@@ -428,12 +426,12 @@ nct6683_create_attr_group(struct device *dev,
 	if (group == NULL)
 		return ERR_PTR(-ENOMEM);
 
-	attrs = devm_kcalloc(dev, repeat * count + 1, sizeof(*attrs),
+	attrs = devm_kzalloc(dev, sizeof(*attrs) * (repeat * count + 1),
 			     GFP_KERNEL);
 	if (attrs == NULL)
 		return ERR_PTR(-ENOMEM);
 
-	su = devm_kzalloc(dev, array3_size(repeat, count, sizeof(*su)),
+	su = devm_kzalloc(dev, sizeof(*su) * repeat * count,
 			  GFP_KERNEL);
 	if (su == NULL)
 		return ERR_PTR(-ENOMEM);
@@ -443,7 +441,7 @@ nct6683_create_attr_group(struct device *dev,
 
 	for (i = 0; i < repeat; i++) {
 		t = tg->templates;
-		while (*t) {
+		for (j = 0; *t != NULL; j++) {
 			snprintf(su->name, sizeof(su->name),
 				 (*t)->dev_attr.attr.name, tg->base + i);
 			if ((*t)->s2) {
@@ -491,6 +489,17 @@ static inline long in_from_reg(u16 reg, u8 src)
 	    src == MON_SRC_VBAT)
 		scale <<= 1;
 	return reg * scale;
+}
+
+static inline u16 in_to_reg(u32 val, u8 src)
+{
+	int scale = 16;
+
+	if (src == MON_SRC_VCC || src == MON_SRC_VSB || src == MON_SRC_AVSB ||
+	    src == MON_SRC_VBAT)
+		scale <<= 1;
+
+	return clamp_val(DIV_ROUND_CLOSEST(val, scale), 0, 127);
 }
 
 static u16 nct6683_read(struct nct6683_data *data, u16 reg)
@@ -674,7 +683,7 @@ show_in_reg(struct device *dev, struct device_attribute *attr, char *buf)
 static umode_t nct6683_in_is_visible(struct kobject *kobj,
 				     struct attribute *attr, int index)
 {
-	struct device *dev = kobj_to_dev(kobj);
+	struct device *dev = container_of(kobj, struct device, kobj);
 	struct nct6683_data *data = dev_get_drvdata(dev);
 	int nr = index % 4;	/* attribute */
 
@@ -739,7 +748,7 @@ show_fan_pulses(struct device *dev, struct device_attribute *attr, char *buf)
 static umode_t nct6683_fan_is_visible(struct kobject *kobj,
 				      struct attribute *attr, int index)
 {
-	struct device *dev = kobj_to_dev(kobj);
+	struct device *dev = container_of(kobj, struct device, kobj);
 	struct nct6683_data *data = dev_get_drvdata(dev);
 	int fan = index / 3;	/* fan index */
 	int nr = index % 3;	/* attribute index */
@@ -857,7 +866,7 @@ show_temp_type(struct device *dev, struct device_attribute *attr, char *buf)
 static umode_t nct6683_temp_is_visible(struct kobject *kobj,
 				       struct attribute *attr, int index)
 {
-	struct device *dev = kobj_to_dev(kobj);
+	struct device *dev = container_of(kobj, struct device, kobj);
 	struct nct6683_data *data = dev_get_drvdata(dev);
 	int temp = index / 7;	/* temp index */
 	int nr = index % 7;	/* attribute index */
@@ -944,7 +953,7 @@ SENSOR_TEMPLATE(pwm, "pwm%d", S_IRUGO, show_pwm, store_pwm, 0);
 static umode_t nct6683_pwm_is_visible(struct kobject *kobj,
 				      struct attribute *attr, int index)
 {
-	struct device *dev = kobj_to_dev(kobj);
+	struct device *dev = container_of(kobj, struct device, kobj);
 	struct nct6683_data *data = dev_get_drvdata(dev);
 	int pwm = index;	/* pwm index */
 
@@ -1218,12 +1227,6 @@ static int nct6683_probe(struct platform_device *pdev)
 		break;
 	case NCT6683_CUSTOMER_ID_MITAC:
 		break;
-	case NCT6683_CUSTOMER_ID_MSI:
-		break;
-	case NCT6683_CUSTOMER_ID_ASROCK:
-		break;
-	case NCT6683_CUSTOMER_ID_ASROCK2:
-		break;
 	default:
 		if (!force)
 			return -ENODEV;
@@ -1357,12 +1360,6 @@ static int __init nct6683_find(int sioaddr, struct nct6683_sio_data *sio_data)
 	switch (val & SIO_ID_MASK) {
 	case SIO_NCT6683_ID:
 		sio_data->kind = nct6683;
-		break;
-	case SIO_NCT6686_ID:
-		sio_data->kind = nct6686;
-		break;
-	case SIO_NCT6687_ID:
-		sio_data->kind = nct6687;
 		break;
 	default:
 		if (val != 0xffff)

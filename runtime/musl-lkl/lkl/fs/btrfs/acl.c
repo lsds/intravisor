@@ -9,22 +9,18 @@
 #include <linux/posix_acl_xattr.h>
 #include <linux/posix_acl.h>
 #include <linux/sched.h>
-#include <linux/sched/mm.h>
 #include <linux/slab.h>
 
 #include "ctree.h"
 #include "btrfs_inode.h"
 #include "xattr.h"
 
-struct posix_acl *btrfs_get_acl(struct inode *inode, int type, bool rcu)
+struct posix_acl *btrfs_get_acl(struct inode *inode, int type)
 {
 	int size;
 	const char *name;
 	char *value = NULL;
 	struct posix_acl *acl;
-
-	if (rcu)
-		return ERR_PTR(-ECHILD);
 
 	switch (type) {
 	case ACL_TYPE_ACCESS:
@@ -34,29 +30,30 @@ struct posix_acl *btrfs_get_acl(struct inode *inode, int type, bool rcu)
 		name = XATTR_NAME_POSIX_ACL_DEFAULT;
 		break;
 	default:
-		return ERR_PTR(-EINVAL);
+		BUG();
 	}
 
-	size = btrfs_getxattr(inode, name, NULL, 0);
+	size = btrfs_getxattr(inode, name, "", 0);
 	if (size > 0) {
 		value = kzalloc(size, GFP_KERNEL);
 		if (!value)
 			return ERR_PTR(-ENOMEM);
 		size = btrfs_getxattr(inode, name, value, size);
 	}
-	if (size > 0)
+	if (size > 0) {
 		acl = posix_acl_from_xattr(&init_user_ns, value, size);
-	else if (size == -ENODATA || size == 0)
+	} else if (size == -ERANGE || size == -ENODATA || size == 0) {
 		acl = NULL;
-	else
-		acl = ERR_PTR(size);
+	} else {
+		acl = ERR_PTR(-EIO);
+	}
 	kfree(value);
 
 	return acl;
 }
 
-int __btrfs_set_acl(struct btrfs_trans_handle *trans, struct inode *inode,
-		    struct posix_acl *acl, int type)
+static int __btrfs_set_acl(struct btrfs_trans_handle *trans,
+			 struct inode *inode, struct posix_acl *acl, int type)
 {
 	int ret, size = 0;
 	const char *name;
@@ -76,16 +73,8 @@ int __btrfs_set_acl(struct btrfs_trans_handle *trans, struct inode *inode,
 	}
 
 	if (acl) {
-		unsigned int nofs_flag;
-
 		size = posix_acl_xattr_size(acl->a_count);
-		/*
-		 * We're holding a transaction handle, so use a NOFS memory
-		 * allocation context to avoid deadlock if reclaim happens.
-		 */
-		nofs_flag = memalloc_nofs_save();
 		value = kmalloc(size, GFP_KERNEL);
-		memalloc_nofs_restore(nofs_flag);
 		if (!value) {
 			ret = -ENOMEM;
 			goto out;
@@ -96,11 +85,7 @@ int __btrfs_set_acl(struct btrfs_trans_handle *trans, struct inode *inode,
 			goto out;
 	}
 
-	if (trans)
-		ret = btrfs_setxattr(trans, inode, name, value, size, 0);
-	else
-		ret = btrfs_setxattr_trans(inode, name, value, size, 0);
-
+	ret = btrfs_setxattr(trans, inode, name, value, size, 0);
 out:
 	kfree(value);
 
@@ -110,20 +95,50 @@ out:
 	return ret;
 }
 
-int btrfs_set_acl(struct user_namespace *mnt_userns, struct inode *inode,
-		  struct posix_acl *acl, int type)
+int btrfs_set_acl(struct inode *inode, struct posix_acl *acl, int type)
 {
 	int ret;
 	umode_t old_mode = inode->i_mode;
 
 	if (type == ACL_TYPE_ACCESS && acl) {
-		ret = posix_acl_update_mode(mnt_userns, inode,
-					    &inode->i_mode, &acl);
+		ret = posix_acl_update_mode(inode, &inode->i_mode, &acl);
 		if (ret)
 			return ret;
 	}
 	ret = __btrfs_set_acl(NULL, inode, acl, type);
 	if (ret)
 		inode->i_mode = old_mode;
+	return ret;
+}
+
+int btrfs_init_acl(struct btrfs_trans_handle *trans,
+		   struct inode *inode, struct inode *dir)
+{
+	struct posix_acl *default_acl, *acl;
+	int ret = 0;
+
+	/* this happens with subvols */
+	if (!dir)
+		return 0;
+
+	ret = posix_acl_create(dir, &inode->i_mode, &default_acl, &acl);
+	if (ret)
+		return ret;
+
+	if (default_acl) {
+		ret = __btrfs_set_acl(trans, inode, default_acl,
+				      ACL_TYPE_DEFAULT);
+		posix_acl_release(default_acl);
+	}
+
+	if (acl) {
+		if (!ret)
+			ret = __btrfs_set_acl(trans, inode, acl,
+					      ACL_TYPE_ACCESS);
+		posix_acl_release(acl);
+	}
+
+	if (!default_acl && !acl)
+		cache_no_acl(inode);
 	return ret;
 }

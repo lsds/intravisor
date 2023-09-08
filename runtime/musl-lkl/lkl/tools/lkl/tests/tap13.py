@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -11,6 +11,7 @@
 # Copyright 2013, Red Hat, Inc.
 # Author: Josef Skladanka <jskladan@redhat.com>
 #
+from __future__ import print_function
 
 import re
 import sys
@@ -162,7 +163,7 @@ class Parser(object):
     def parse(self, source):
         # to avoid input buffering
         while True:
-            line = source.readline().decode('ascii')
+            line = source.readline()
             if not line:
                 break
 

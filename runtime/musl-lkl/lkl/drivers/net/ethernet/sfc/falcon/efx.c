@@ -1,8 +1,11 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /****************************************************************************
  * Driver for Solarflare network controllers and boards
  * Copyright 2005-2006 Fen Systems Ltd.
  * Copyright 2005-2013 Solarflare Communications Inc.
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License version 2 as published
+ * by the Free Software Foundation, incorporated herein by reference.
  */
 
 #include <linux/module.h>
@@ -111,6 +114,11 @@ bool ef4_separate_tx_channels;
 module_param(ef4_separate_tx_channels, bool, 0444);
 MODULE_PARM_DESC(ef4_separate_tx_channels,
 		 "Use separate channels for TX and RX");
+
+/* This is the weight assigned to each of the (per-channel) virtual
+ * NAPI devices.
+ */
+static int napi_weight = 64;
 
 /* This is the time (in jiffies) between invocations of the hardware
  * monitor.
@@ -812,7 +820,9 @@ ef4_realloc_channels(struct ef4_nic *efx, u32 rxq_entries, u32 txq_entries)
 	efx->rxq_entries = rxq_entries;
 	efx->txq_entries = txq_entries;
 	for (i = 0; i < efx->n_channels; i++) {
-		swap(efx->channel[i], other_channel[i]);
+		channel = efx->channel[i];
+		efx->channel[i] = other_channel[i];
+		other_channel[i] = channel;
 	}
 
 	/* Restart buffer table allocation */
@@ -856,7 +866,9 @@ rollback:
 	efx->rxq_entries = old_rxq_entries;
 	efx->txq_entries = old_txq_entries;
 	for (i = 0; i < efx->n_channels; i++) {
-		swap(efx->channel[i], other_channel[i]);
+		channel = efx->channel[i];
+		efx->channel[i] = other_channel[i];
+		other_channel[i] = channel;
 	}
 	goto out;
 }
@@ -1035,7 +1047,7 @@ static int ef4_probe_port(struct ef4_nic *efx)
 		return rc;
 
 	/* Initialise MAC address to permanent address */
-	eth_hw_addr_set(efx->net_dev, efx->net_dev->perm_addr);
+	ether_addr_copy(efx->net_dev->dev_addr, efx->net_dev->perm_addr);
 
 	return 0;
 }
@@ -1230,8 +1242,9 @@ static int ef4_init_io(struct ef4_nic *efx)
 
 	pci_set_master(pci_dev);
 
-	/* Set the PCI DMA mask.  Try all possibilities from our genuine mask
-	 * down to 32 bits, because some architectures will allow 40 bit
+	/* Set the PCI DMA mask.  Try all possibilities from our
+	 * genuine mask down to 32 bits, because some architectures
+	 * (e.g. x86_64 with iommu_sac_force set) will allow 40 bit
 	 * masks event though they reject 46 bit masks.
 	 */
 	while (dma_mask > 0x7fffffffUL) {
@@ -1256,7 +1269,7 @@ static int ef4_init_io(struct ef4_nic *efx)
 		rc = -EIO;
 		goto fail3;
 	}
-	efx->membase = ioremap(efx->membase_phys, mem_map_size);
+	efx->membase = ioremap_nocache(efx->membase_phys, mem_map_size);
 	if (!efx->membase) {
 		netif_err(efx, probe, efx->net_dev,
 			  "could not map memory BAR at %llx+%x\n",
@@ -2012,7 +2025,8 @@ static void ef4_init_napi_channel(struct ef4_channel *channel)
 	struct ef4_nic *efx = channel->efx;
 
 	channel->napi_dev = efx->net_dev;
-	netif_napi_add(channel->napi_dev, &channel->napi_str, ef4_poll);
+	netif_napi_add(channel->napi_dev, &channel->napi_str,
+		       ef4_poll, napi_weight);
 }
 
 static void ef4_init_napi(struct ef4_nic *efx)
@@ -2038,6 +2052,29 @@ static void ef4_fini_napi(struct ef4_nic *efx)
 	ef4_for_each_channel(channel, efx)
 		ef4_fini_napi_channel(channel);
 }
+
+/**************************************************************************
+ *
+ * Kernel netpoll interface
+ *
+ *************************************************************************/
+
+#ifdef CONFIG_NET_POLL_CONTROLLER
+
+/* Although in the common case interrupts will be disabled, this is not
+ * guaranteed. However, all our work happens inside the NAPI callback,
+ * so no locking is required.
+ */
+static void ef4_netpoll(struct net_device *net_dev)
+{
+	struct ef4_nic *efx = netdev_priv(net_dev);
+	struct ef4_channel *channel;
+
+	ef4_for_each_channel(channel, efx)
+		ef4_schedule_channel(channel);
+}
+
+#endif
 
 /**************************************************************************
  *
@@ -2098,7 +2135,7 @@ static void ef4_net_stats(struct net_device *net_dev,
 }
 
 /* Context: netif_tx_lock held, BHs disabled. */
-static void ef4_watchdog(struct net_device *net_dev, unsigned int txqueue)
+static void ef4_watchdog(struct net_device *net_dev)
 {
 	struct ef4_nic *efx = netdev_priv(net_dev);
 
@@ -2152,11 +2189,11 @@ static int ef4_set_mac_address(struct net_device *net_dev, void *data)
 
 	/* save old address */
 	ether_addr_copy(old_addr, net_dev->dev_addr);
-	eth_hw_addr_set(net_dev, new_addr);
+	ether_addr_copy(net_dev->dev_addr, new_addr);
 	if (efx->type->set_mac_address) {
 		rc = efx->type->set_mac_address(efx);
 		if (rc) {
-			eth_hw_addr_set(net_dev, old_addr);
+			ether_addr_copy(net_dev->dev_addr, old_addr);
 			return rc;
 		}
 	}
@@ -2209,11 +2246,14 @@ static const struct net_device_ops ef4_netdev_ops = {
 	.ndo_tx_timeout		= ef4_watchdog,
 	.ndo_start_xmit		= ef4_hard_start_xmit,
 	.ndo_validate_addr	= eth_validate_addr,
-	.ndo_eth_ioctl		= ef4_ioctl,
+	.ndo_do_ioctl		= ef4_ioctl,
 	.ndo_change_mtu		= ef4_change_mtu,
 	.ndo_set_mac_address	= ef4_set_mac_address,
 	.ndo_set_rx_mode	= ef4_set_rx_mode,
 	.ndo_set_features	= ef4_set_features,
+#ifdef CONFIG_NET_POLL_CONTROLLER
+	.ndo_poll_controller = ef4_netpoll,
+#endif
 	.ndo_setup_tc		= ef4_setup_tc,
 #ifdef CONFIG_RFS_ACCEL
 	.ndo_rx_flow_steer	= ef4_filter_rfs,
@@ -2244,12 +2284,12 @@ static struct notifier_block ef4_netdev_notifier = {
 };
 
 static ssize_t
-phy_type_show(struct device *dev, struct device_attribute *attr, char *buf)
+show_phy_type(struct device *dev, struct device_attribute *attr, char *buf)
 {
-	struct ef4_nic *efx = dev_get_drvdata(dev);
+	struct ef4_nic *efx = pci_get_drvdata(to_pci_dev(dev));
 	return sprintf(buf, "%d\n", efx->phy_type);
 }
-static DEVICE_ATTR_RO(phy_type);
+static DEVICE_ATTR(phy_type, 0444, show_phy_type, NULL);
 
 static int ef4_register_netdev(struct ef4_nic *efx)
 {
@@ -2261,7 +2301,7 @@ static int ef4_register_netdev(struct ef4_nic *efx)
 	net_dev->irq = efx->pci_dev->irq;
 	net_dev->netdev_ops = &ef4_netdev_ops;
 	net_dev->ethtool_ops = &ef4_ethtool_ops;
-	netif_set_tso_max_segs(net_dev, EF4_TSO_MAX_SEGS);
+	net_dev->gso_max_segs = EF4_TSO_MAX_SEGS;
 	net_dev->min_mtu = EF4_MIN_MTU;
 	net_dev->max_mtu = EF4_MAX_MTU;
 
@@ -2329,7 +2369,7 @@ static void ef4_unregister_netdev(struct ef4_nic *efx)
 	BUG_ON(netdev_priv(efx->net_dev) != efx);
 
 	if (ef4_dev_registered(efx)) {
-		strscpy(efx->name, pci_name(efx->pci_dev), sizeof(efx->name));
+		strlcpy(efx->name, pci_name(efx->pci_dev), sizeof(efx->name));
 		device_remove_file(&efx->pci_dev->dev, &dev_attr_phy_type);
 		unregister_netdev(efx->net_dev);
 	}
@@ -2640,7 +2680,7 @@ static int ef4_init_struct(struct ef4_nic *efx,
 	efx->pci_dev = pci_dev;
 	efx->msg_enable = debug;
 	efx->state = STATE_UNINIT;
-	strscpy(efx->name, pci_name(pci_dev), sizeof(efx->name));
+	strlcpy(efx->name, pci_name(pci_dev), sizeof(efx->name));
 
 	efx->net_dev = net_dev;
 	efx->rx_prefix_size = efx->type->rx_prefix_size;
@@ -2770,36 +2810,75 @@ static void ef4_pci_remove(struct pci_dev *pci_dev)
 };
 
 /* NIC VPD information
- * Called during probe to display the part number of the installed NIC.
+ * Called during probe to display the part number of the
+ * installed NIC.  VPD is potentially very large but this should
+ * always appear within the first 512 bytes.
  */
+#define SFC_VPD_LEN 512
 static void ef4_probe_vpd_strings(struct ef4_nic *efx)
 {
 	struct pci_dev *dev = efx->pci_dev;
-	unsigned int vpd_size, kw_len;
-	u8 *vpd_data;
-	int start;
+	char vpd_data[SFC_VPD_LEN];
+	ssize_t vpd_size;
+	int ro_start, ro_size, i, j;
 
-	vpd_data = pci_vpd_alloc(dev, &vpd_size);
-	if (IS_ERR(vpd_data)) {
-		pci_warn(dev, "Unable to read VPD\n");
+	/* Get the vpd data from the device */
+	vpd_size = pci_read_vpd(dev, 0, sizeof(vpd_data), vpd_data);
+	if (vpd_size <= 0) {
+		netif_err(efx, drv, efx->net_dev, "Unable to read VPD\n");
 		return;
 	}
 
-	start = pci_vpd_find_ro_info_keyword(vpd_data, vpd_size,
-					     PCI_VPD_RO_KEYWORD_PARTNO, &kw_len);
-	if (start < 0)
-		pci_warn(dev, "Part number not found or incomplete\n");
-	else
-		pci_info(dev, "Part Number : %.*s\n", kw_len, vpd_data + start);
+	/* Get the Read only section */
+	ro_start = pci_vpd_find_tag(vpd_data, 0, vpd_size, PCI_VPD_LRDT_RO_DATA);
+	if (ro_start < 0) {
+		netif_err(efx, drv, efx->net_dev, "VPD Read-only not found\n");
+		return;
+	}
 
-	start = pci_vpd_find_ro_info_keyword(vpd_data, vpd_size,
-					     PCI_VPD_RO_KEYWORD_SERIALNO, &kw_len);
-	if (start < 0)
-		pci_warn(dev, "Serial number not found or incomplete\n");
-	else
-		efx->vpd_sn = kmemdup_nul(vpd_data + start, kw_len, GFP_KERNEL);
+	ro_size = pci_vpd_lrdt_size(&vpd_data[ro_start]);
+	j = ro_size;
+	i = ro_start + PCI_VPD_LRDT_TAG_SIZE;
+	if (i + j > vpd_size)
+		j = vpd_size - i;
 
-	kfree(vpd_data);
+	/* Get the Part number */
+	i = pci_vpd_find_info_keyword(vpd_data, i, j, "PN");
+	if (i < 0) {
+		netif_err(efx, drv, efx->net_dev, "Part number not found\n");
+		return;
+	}
+
+	j = pci_vpd_info_field_size(&vpd_data[i]);
+	i += PCI_VPD_INFO_FLD_HDR_SIZE;
+	if (i + j > vpd_size) {
+		netif_err(efx, drv, efx->net_dev, "Incomplete part number\n");
+		return;
+	}
+
+	netif_info(efx, drv, efx->net_dev,
+		   "Part Number : %.*s\n", j, &vpd_data[i]);
+
+	i = ro_start + PCI_VPD_LRDT_TAG_SIZE;
+	j = ro_size;
+	i = pci_vpd_find_info_keyword(vpd_data, i, j, "SN");
+	if (i < 0) {
+		netif_err(efx, drv, efx->net_dev, "Serial number not found\n");
+		return;
+	}
+
+	j = pci_vpd_info_field_size(&vpd_data[i]);
+	i += PCI_VPD_INFO_FLD_HDR_SIZE;
+	if (i + j > vpd_size) {
+		netif_err(efx, drv, efx->net_dev, "Incomplete serial number\n");
+		return;
+	}
+
+	efx->vpd_sn = kmalloc(j + 1, GFP_KERNEL);
+	if (!efx->vpd_sn)
+		return;
+
+	snprintf(efx->vpd_sn, j + 1, "%s", &vpd_data[i]);
 }
 
 
@@ -2950,7 +3029,7 @@ static int ef4_pci_probe(struct pci_dev *pci_dev,
 
 static int ef4_pm_freeze(struct device *dev)
 {
-	struct ef4_nic *efx = dev_get_drvdata(dev);
+	struct ef4_nic *efx = pci_get_drvdata(to_pci_dev(dev));
 
 	rtnl_lock();
 
@@ -2971,7 +3050,7 @@ static int ef4_pm_freeze(struct device *dev)
 static int ef4_pm_thaw(struct device *dev)
 {
 	int rc;
-	struct ef4_nic *efx = dev_get_drvdata(dev);
+	struct ef4_nic *efx = pci_get_drvdata(to_pci_dev(dev));
 
 	rtnl_lock();
 
@@ -3069,7 +3148,7 @@ static const struct dev_pm_ops ef4_pm_ops = {
  * Stop the software path and request a slot reset.
  */
 static pci_ers_result_t ef4_io_error_detected(struct pci_dev *pdev,
-					      pci_channel_state_t state)
+					      enum pci_channel_state state)
 {
 	pci_ers_result_t status = PCI_ERS_RESULT_RECOVERED;
 	struct ef4_nic *efx = pci_get_drvdata(pdev);
@@ -3108,11 +3187,19 @@ static pci_ers_result_t ef4_io_slot_reset(struct pci_dev *pdev)
 {
 	struct ef4_nic *efx = pci_get_drvdata(pdev);
 	pci_ers_result_t status = PCI_ERS_RESULT_RECOVERED;
+	int rc;
 
 	if (pci_enable_device(pdev)) {
 		netif_err(efx, hw, efx->net_dev,
 			  "Cannot re-enable PCI device after reset.\n");
 		status =  PCI_ERS_RESULT_DISCONNECT;
+	}
+
+	rc = pci_cleanup_aer_uncorrect_error_status(pdev);
+	if (rc) {
+		netif_err(efx, hw, efx->net_dev,
+		"pci_cleanup_aer_uncorrect_error_status failed (%d)\n", rc);
+		/* Non-fatal error. Continue. */
 	}
 
 	return status;

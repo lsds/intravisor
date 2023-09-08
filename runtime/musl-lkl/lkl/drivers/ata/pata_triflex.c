@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * pata_triflex.c 	- Compaq PATA for new ATA layer
  *			  (C) 2005 Red Hat Inc
@@ -14,6 +13,19 @@
  *
  * Copyright (C) 2002 Hewlett-Packard Development Group, L.P.
  * Author: Torben Mathiasen <torben.mathiasen@hp.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
  * Loosely based on the piix & svwks drivers.
  *
@@ -129,7 +141,7 @@ static void triflex_set_piomode(struct ata_port *ap, struct ata_device *adev)
 }
 
 /**
- *	triflex_bmdma_start	-	DMA start callback
+ *	triflex_dma_start	-	DMA start callback
  *	@qc: Command in progress
  *
  *	Usually drivers set the DMA timing at the point the set_dmamode call
@@ -146,8 +158,9 @@ static void triflex_bmdma_start(struct ata_queued_cmd *qc)
 }
 
 /**
- *	triflex_bmdma_stop	-	DMA stop callback
- *	@qc: ATA command
+ *	triflex_dma_stop	-	DMA stop callback
+ *	@ap: ATA interface
+ *	@adev: ATA device
  *
  *	We loaded new timings in dma_start, as a result we need to restore
  *	the PIO timings in dma_stop so that the next command issue gets the
@@ -198,8 +211,11 @@ static const struct pci_device_id triflex[] = {
 static int triflex_ata_pci_device_suspend(struct pci_dev *pdev, pm_message_t mesg)
 {
 	struct ata_host *host = pci_get_drvdata(pdev);
+	int rc = 0;
 
-	ata_host_suspend(host, mesg);
+	rc = ata_host_suspend(host, mesg);
+	if (rc)
+		return rc;
 
 	/*
 	 * We must not disable or powerdown the device.

@@ -14,7 +14,7 @@
 	#address-cells = <1>;
 	#size-cells = <1>;
 
-	memory@0 { /* 128 MB */
+	memory { /* 128 MB */
 		device_type = "memory";
 		reg = <0x00000000 0x8000000>;
 	};
@@ -26,9 +26,11 @@
 
 	gpio_keys {
 		compatible = "gpio-keys";
+		#address-cells = <1>;
+		#size-cells = <0>;
 
-		button-setup {
-			debounce-interval = <100>;
+		button@28 {
+			debounce_interval = <50>;
 			wakeup-source;
 			linux,code = <KEY_SETUP>;
 			label = "Reset to defaults";
@@ -39,14 +41,14 @@
 
 	leds {
 		compatible = "gpio-leds";
-		led-gsm {
+		led@7 {
 			/* FIXME: add the LED color */
 			label = "rut1xx::gsm";
 			/* Conflict with ICE */
 			gpios = <&gpio0 7 GPIO_ACTIVE_HIGH>;
 			default-state = "on";
 		};
-		led-power {
+		led@31 {
 			/* FIXME: add the LED color */
 			label = "rut1xx::power";
 			/* Conflict with NAND CE0 */
@@ -56,7 +58,7 @@
 		};
 	};
 
-	mdio0: mdio {
+	mdio0: ethernet-phy {
 		compatible = "virtual,mdio-gpio";
 		gpios = <&gpio0 22 GPIO_ACTIVE_HIGH>, /* MDC */
 			<&gpio0 21 GPIO_ACTIVE_HIGH>; /* MDIO */
@@ -123,14 +125,6 @@
 			ethernet-port@1 {
 				/* Not used in this platform */
 			};
-		};
-
-		usb@68000000 {
-			status = "okay";
-		};
-
-		usb@69000000 {
-			status = "okay";
 		};
 	};
 };

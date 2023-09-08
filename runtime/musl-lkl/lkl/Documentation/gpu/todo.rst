@@ -7,39 +7,43 @@ TODO list
 This section contains a list of smaller janitorial tasks in the kernel DRM
 graphics subsystem useful as newbie projects. Or for slow rainy days.
 
-Difficulty
-----------
-
-To make it easier task are categorized into different levels:
-
-Starter: Good tasks to get started with the DRM subsystem.
-
-Intermediate: Tasks which need some experience with working in the DRM
-subsystem, or some specific GPU/display graphics knowledge. For debugging issue
-it's good to have the relevant hardware (or a virtual driver set up) available
-for testing.
-
-Advanced: Tricky tasks that need fairly good understanding of the DRM subsystem
-and graphics topics. Generally need the relevant hardware for development and
-testing.
-
-Expert: Only attempt these if you've successfully completed some tricky
-refactorings already and are an expert in the specific area
-
 Subsystem-wide refactorings
 ===========================
 
-Remove custom dumb_map_offset implementations
----------------------------------------------
+De-midlayer drivers
+-------------------
 
-All GEM based drivers should be using drm_gem_create_mmap_offset() instead.
-Audit each individual driver, make sure it'll work with the generic
-implementation (there's lots of outdated locking leftovers in various
-implementations), and then remove it.
+With the recent ``drm_bus`` cleanup patches for 3.17 it is no longer required
+to have a ``drm_bus`` structure set up. Drivers can directly set up the
+``drm_device`` structure instead of relying on bus methods in ``drm_usb.c``
+and ``drm_pci.c``. The goal is to get rid of the driver's ``->load`` /
+``->unload`` callbacks and open-code the load/unload sequence properly, using
+the new two-stage ``drm_device`` setup/teardown.
 
-Contact: Daniel Vetter, respective driver maintainers
+Once all existing drivers are converted we can also remove those bus support
+files for USB and platform devices.
 
-Level: Intermediate
+All you need is a GPU for a non-converted driver (currently almost all of
+them, but also all the virtual ones used by KVM, so everyone qualifies).
+
+Contact: Daniel Vetter, Thierry Reding, respective driver maintainers
+
+Switch from reference/unreference to get/put
+--------------------------------------------
+
+For some reason DRM core uses ``reference``/``unreference`` suffixes for
+refcounting functions, but kernel uses ``get``/``put`` (e.g.
+``kref_get``/``put()``). It would be good to switch over for consistency, and
+it's shorter. Needs to be done in 3 steps for each pair of functions:
+
+* Create new ``get``/``put`` functions, define the old names as compatibility
+  wrappers
+* Switch over each file/driver using a cocci-generated spatch.
+* Once all users of the old names are gone, remove them.
+
+This way drivers/patches in the progress of getting merged won't break.
+
+Contact: Daniel Vetter
 
 Convert existing KMS drivers to atomic modesetting
 --------------------------------------------------
@@ -59,8 +63,6 @@ do by directly using the new atomic helper driver callbacks.
 
 Contact: Daniel Vetter, respective driver maintainers
 
-Level: Advanced
-
 Clean up the clipped coordination confusion around planes
 ---------------------------------------------------------
 
@@ -73,30 +75,6 @@ helpers.
 
 Contact: Ville Syrjälä, Daniel Vetter, driver maintainers
 
-Level: Advanced
-
-Improve plane atomic_check helpers
-----------------------------------
-
-Aside from the clipped coordinates right above there's a few suboptimal things
-with the current helpers:
-
-- drm_plane_helper_funcs->atomic_check gets called for enabled or disabled
-  planes. At best this seems to confuse drivers, worst it means they blow up
-  when the plane is disabled without the CRTC. The only special handling is
-  resetting values in the plane state structures, which instead should be moved
-  into the drm_plane_funcs->atomic_duplicate_state functions.
-
-- Once that's done, helpers could stop calling ->atomic_check for disabled
-  planes.
-
-- Then we could go through all the drivers and remove the more-or-less confused
-  checks for plane_state->fb and plane_state->crtc.
-
-Contact: Daniel Vetter
-
-Level: Advanced
-
 Convert early atomic drivers to async commit helpers
 ----------------------------------------------------
 
@@ -108,13 +86,31 @@ converted over to the new infrastructure.
 One issue with the helpers is that they require that drivers handle completion
 events for atomic commits correctly. But fixing these bugs is good anyway.
 
-Somewhat related is the legacy_cursor_update hack, which should be replaced with
-the new atomic_async_check/commit functionality in the helpers in drivers that
-still look at that flag.
-
 Contact: Daniel Vetter, respective driver maintainers
 
-Level: Advanced
+Better manual-upload support for atomic
+---------------------------------------
+
+This would be especially useful for tinydrm:
+
+- Add a struct drm_rect dirty_clip to drm_crtc_state. When duplicating the
+  crtc state, clear that to the max values, x/y = 0 and w/h = MAX_INT, in
+  __drm_atomic_helper_crtc_duplicate_state().
+
+- Move tinydrm_merge_clips into drm_framebuffer.c, dropping the tinydrm\_
+  prefix ofc and using drm_fb\_. drm_framebuffer.c makes sense since this
+  is a function useful to implement the fb->dirty function.
+
+- Create a new drm_fb_dirty function which does essentially what e.g.
+  mipi_dbi_fb_dirty does. You can use e.g. drm_atomic_helper_update_plane as the
+  template. But instead of doing a simple full-screen plane update, this new
+  helper also sets crtc_state->dirty_clip to the right coordinates. And of
+  course it needs to check whether the fb is actually active (and maybe where),
+  so there's some book-keeping involved. There's also some good fun involved in
+  scaling things appropriately. For that case we might simply give up and
+  declare the entire area covered by the plane as dirty.
+
+Contact: Noralf Trønnes, Daniel Vetter
 
 Fallout from atomic KMS
 -----------------------
@@ -131,8 +127,7 @@ interfaces to fix these issues:
   the acquire context explicitly on stack and then also pass it down into
   drivers explicitly so that the legacy-on-atomic functions can use them.
 
-  Except for some driver code this is done. This task should be finished by
-  adding WARN_ON(!drm_drv_uses_atomic_modeset) in drm_modeset_lock_all().
+  Except for some driver code this is done.
 
 * A bunch of the vtable hooks are now in the wrong place: DRM has a split
   between core vfunc tables (named ``drm_foo_funcs``), which are used to
@@ -142,9 +137,14 @@ interfaces to fix these issues:
   ``_helper_funcs`` since they are not part of the core ABI. There's a
   ``FIXME`` comment in the kerneldoc for each such case in ``drm_crtc.h``.
 
-Contact: Daniel Vetter
+* There's a new helper ``drm_atomic_helper_best_encoder()`` which could be
+  used by all atomic drivers which don't select the encoder for a given
+  connector at runtime. That's almost all of them, and would allow us to get
+  rid of a lot of ``best_encoder`` boilerplate in drivers.
 
-Level: Intermediate
+  This was almost done, but new drivers added a few more cases again.
+
+Contact: Daniel Vetter
 
 Get rid of dev->struct_mutex from GEM drivers
 ---------------------------------------------
@@ -156,7 +156,7 @@ have to keep track of that lock and either call ``unreference`` or
 ``unreference_locked`` depending upon context.
 
 Core GEM doesn't have a need for ``struct_mutex`` any more since kernel 4.8,
-and there's a GEM object ``free`` callback for any drivers which are
+and there's a ``gem_free_object_unlocked`` callback for any drivers which are
 entirely ``struct_mutex`` free.
 
 For drivers that need ``struct_mutex`` it should be replaced with a driver-
@@ -164,37 +164,20 @@ private lock. The tricky part is the BO free functions, since those can't
 reliably take that lock any more. Instead state needs to be protected with
 suitable subordinate locks or some cleanup work pushed to a worker thread. For
 performance-critical drivers it might also be better to go with a more
-fine-grained per-buffer object and per-context lockings scheme. Currently only
-the ``msm`` and `i915` drivers use ``struct_mutex``.
+fine-grained per-buffer object and per-context lockings scheme. Currently the
+following drivers still use ``struct_mutex``: ``msm``, ``omapdrm`` and
+``udl``.
 
 Contact: Daniel Vetter, respective driver maintainers
 
-Level: Advanced
-
-Move Buffer Object Locking to dma_resv_lock()
----------------------------------------------
-
-Many drivers have their own per-object locking scheme, usually using
-mutex_lock(). This causes all kinds of trouble for buffer sharing, since
-depending which driver is the exporter and importer, the locking hierarchy is
-reversed.
-
-To solve this we need one standard per-object locking mechanism, which is
-dma_resv_lock(). This lock needs to be called as the outermost lock, with all
-other driver specific per-object locks removed. The problem is tha rolling out
-the actual change to the locking contract is a flag day, due to struct dma_buf
-buffer sharing.
-
-Level: Expert
-
-Convert logging to drm_* functions with drm_device paramater
-------------------------------------------------------------
+Convert instances of dev_info/dev_err/dev_warn to their DRM_DEV_* equivalent
+----------------------------------------------------------------------------
 
 For drivers which could have multiple instances, it is necessary to
 differentiate between which is which in the logs. Since DRM_INFO/WARN/ERROR
 don't do this, drivers used dev_info/warn/err to make this differentiation. We
-now have drm_* variants of the drm print functions, so we can start to convert
-those drivers back to using drm-formatted specific log messages.
+now have DRM_DEV_* variants of the drm print macros, so we can start to convert
+those drivers back to using drm-formwatted specific log messages.
 
 Before you start this conversion please contact the relevant maintainers to make
 sure your work will be merged - not everyone agrees that the DRM dmesg macros
@@ -202,262 +185,100 @@ are better.
 
 Contact: Sean Paul, Maintainer of the driver you plan to convert
 
-Level: Starter
-
 Convert drivers to use simple modeset suspend/resume
 ----------------------------------------------------
 
 Most drivers (except i915 and nouveau) that use
 drm_atomic_helper_suspend/resume() can probably be converted to use
-drm_mode_config_helper_suspend/resume(). Also there's still open-coded version
-of the atomic suspend/resume code in older atomic modeset drivers.
+drm_mode_config_helper_suspend/resume().
 
 Contact: Maintainer of the driver you plan to convert
 
-Level: Intermediate
+Convert drivers to use drm_fb_helper_fbdev_setup/teardown()
+-----------------------------------------------------------
 
-Convert drivers to use drm_fbdev_generic_setup()
-------------------------------------------------
+Most drivers can use drm_fb_helper_fbdev_setup() except maybe:
 
-Most drivers can use drm_fbdev_generic_setup(). Driver have to implement
-atomic modesetting and GEM vmap support. Historically, generic fbdev emulation
-expected the framebuffer in system memory or system-like memory. By employing
-struct iosys_map, drivers with frambuffers in I/O memory can be supported
-as well.
+- amdgpu which has special logic to decide whether to call
+  drm_helper_disable_unused_functions()
+
+- armada which isn't atomic and doesn't call
+  drm_helper_disable_unused_functions()
+
+- i915 which calls drm_fb_helper_initial_config() in a worker
+
+Drivers that use drm_framebuffer_remove() to clean up the fbdev framebuffer can
+probably use drm_fb_helper_fbdev_teardown().
 
 Contact: Maintainer of the driver you plan to convert
 
-Level: Intermediate
+idr_init_base()
+---------------
 
-Reimplement functions in drm_fbdev_fb_ops without fbdev
--------------------------------------------------------
-
-A number of callback functions in drm_fbdev_fb_ops could benefit from
-being rewritten without dependencies on the fbdev module. Some of the
-helpers could further benefit from using struct iosys_map instead of
-raw pointers.
-
-Contact: Thomas Zimmermann <tzimmermann@suse.de>, Daniel Vetter
-
-Level: Advanced
-
-Benchmark and optimize blitting and format-conversion function
---------------------------------------------------------------
-
-Drawing to dispay memory quickly is crucial for many applications'
-performance.
-
-On at least x86-64, sys_imageblit() is significantly slower than
-cfb_imageblit(), even though both use the same blitting algorithm and
-the latter is written for I/O memory. It turns out that cfb_imageblit()
-uses movl instructions, while sys_imageblit apparently does not. This
-seems to be a problem with gcc's optimizer. DRM's format-conversion
-helpers might be subject to similar issues.
-
-Benchmark and optimize fbdev's sys_() helpers and DRM's format-conversion
-helpers. In cases that can be further optimized, maybe implement a different
-algorithm. For micro-optimizations, use movl/movq instructions explicitly.
-That might possibly require architecture-specific helpers (e.g., storel()
-storeq()).
-
-Contact: Thomas Zimmermann <tzimmermann@suse.de>
-
-Level: Intermediate
-
-drm_framebuffer_funcs and drm_mode_config_funcs.fb_create cleanup
------------------------------------------------------------------
-
-A lot more drivers could be switched over to the drm_gem_framebuffer helpers.
-Various hold-ups:
-
-- Need to switch over to the generic dirty tracking code using
-  drm_atomic_helper_dirtyfb first (e.g. qxl).
-
-- Need to switch to drm_fbdev_generic_setup(), otherwise a lot of the custom fb
-  setup code can't be deleted.
-
-- Many drivers wrap drm_gem_fb_create() only to check for valid formats. For
-  atomic drivers we could check for valid formats by calling
-  drm_plane_check_pixel_format() against all planes, and pass if any plane
-  supports the format. For non-atomic that's not possible since like the format
-  list for the primary plane is fake and we'd therefor reject valid formats.
-
-- Many drivers subclass drm_framebuffer, we'd need a embedding compatible
-  version of the varios drm_gem_fb_create functions. Maybe called
-  drm_gem_fb_create/_with_dirty/_with_funcs as needed.
+DRM core&drivers uses a lot of idr (integer lookup directories) for mapping
+userspace IDs to internal objects, and in most places ID=0 means NULL and hence
+is never used. Switching to idr_init_base() for these would make the idr more
+efficient.
 
 Contact: Daniel Vetter
-
-Level: Intermediate
-
-Generic fbdev defio support
----------------------------
-
-The defio support code in the fbdev core has some very specific requirements,
-which means drivers need to have a special framebuffer for fbdev. The main
-issue is that it uses some fields in struct page itself, which breaks shmem
-gem objects (and other things). To support defio, affected drivers require
-the use of a shadow buffer, which may add CPU and memory overhead.
-
-Possible solution would be to write our own defio mmap code in the drm fbdev
-emulation. It would need to fully wrap the existing mmap ops, forwarding
-everything after it has done the write-protect/mkwrite trickery:
-
-- In the drm_fbdev_fb_mmap helper, if we need defio, change the
-  default page prots to write-protected with something like this::
-
-      vma->vm_page_prot = pgprot_wrprotect(vma->vm_page_prot);
-
-- Set the mkwrite and fsync callbacks with similar implementions to the core
-  fbdev defio stuff. These should all work on plain ptes, they don't actually
-  require a struct page.  uff. These should all work on plain ptes, they don't
-  actually require a struct page.
-
-- Track the dirty pages in a separate structure (bitfield with one bit per page
-  should work) to avoid clobbering struct page.
-
-Might be good to also have some igt testcases for this.
-
-Contact: Daniel Vetter, Noralf Tronnes
-
-Level: Advanced
-
-struct drm_gem_object_funcs
----------------------------
-
-GEM objects can now have a function table instead of having the callbacks on the
-DRM driver struct. This is now the preferred way. Callbacks in drivers have been
-converted, except for struct drm_driver.gem_prime_mmap.
-
-Level: Intermediate
-
-connector register/unregister fixes
------------------------------------
-
-- For most connectors it's a no-op to call drm_connector_register/unregister
-  directly from driver code, drm_dev_register/unregister take care of this
-  already. We can remove all of them.
-
-- For dp drivers it's a bit more a mess, since we need the connector to be
-  registered when calling drm_dp_aux_register. Fix this by instead calling
-  drm_dp_aux_init, and moving the actual registering into a late_register
-  callback as recommended in the kerneldoc.
-
-Level: Intermediate
-
-Remove load/unload callbacks from all non-DRIVER_LEGACY drivers
----------------------------------------------------------------
-
-The load/unload callbacks in struct &drm_driver are very much midlayers, plus
-for historical reasons they get the ordering wrong (and we can't fix that)
-between setting up the &drm_driver structure and calling drm_dev_register().
-
-- Rework drivers to no longer use the load/unload callbacks, directly coding the
-  load/unload sequence into the driver's probe function.
-
-- Once all non-DRIVER_LEGACY drivers are converted, disallow the load/unload
-  callbacks for all modern drivers.
-
-Contact: Daniel Vetter
-
-Level: Intermediate
-
-Replace drm_detect_hdmi_monitor() with drm_display_info.is_hdmi
----------------------------------------------------------------
-
-Once EDID is parsed, the monitor HDMI support information is available through
-drm_display_info.is_hdmi. Many drivers still call drm_detect_hdmi_monitor() to
-retrieve the same information, which is less efficient.
-
-Audit each individual driver calling drm_detect_hdmi_monitor() and switch to
-drm_display_info.is_hdmi if applicable.
-
-Contact: Laurent Pinchart, respective driver maintainers
-
-Level: Intermediate
-
-Consolidate custom driver modeset properties
---------------------------------------------
-
-Before atomic modeset took place, many drivers where creating their own
-properties. Among other things, atomic brought the requirement that custom,
-driver specific properties should not be used.
-
-For this task, we aim to introduce core helpers or reuse the existing ones
-if available:
-
-A quick, unconfirmed, examples list.
-
-Introduce core helpers:
-- audio (amdgpu, intel, gma500, radeon)
-- brightness, contrast, etc (armada, nouveau) - overlay only (?)
-- broadcast rgb (gma500, intel)
-- colorkey (armada, nouveau, rcar) - overlay only (?)
-- dither (amdgpu, nouveau, radeon) - varies across drivers
-- underscan family (amdgpu, radeon, nouveau)
-
-Already in core:
-- colorspace (sti)
-- tv format names, enhancements (gma500, intel)
-- tv overscan, margins, etc. (gma500, intel)
-- zorder (omapdrm) - same as zpos (?)
-
-
-Contact: Emil Velikov, respective driver maintainers
-
-Level: Intermediate
-
-Use struct iosys_map throughout codebase
-----------------------------------------
-
-Pointers to shared device memory are stored in struct iosys_map. Each
-instance knows whether it refers to system or I/O memory. Most of the DRM-wide
-interface have been converted to use struct iosys_map, but implementations
-often still use raw pointers.
-
-The task is to use struct iosys_map where it makes sense.
-
-* Memory managers should use struct iosys_map for dma-buf-imported buffers.
-* TTM might benefit from using struct iosys_map internally.
-* Framebuffer copying and blitting helpers should operate on struct iosys_map.
-
-Contact: Thomas Zimmermann <tzimmermann@suse.de>, Christian König, Daniel Vetter
-
-Level: Intermediate
-
-Review all drivers for setting struct drm_mode_config.{max_width,max_height} correctly
---------------------------------------------------------------------------------------
-
-The values in struct drm_mode_config.{max_width,max_height} describe the
-maximum supported framebuffer size. It's the virtual screen size, but many
-drivers treat it like limitations of the physical resolution.
-
-The maximum width depends on the hardware's maximum scanline pitch. The
-maximum height depends on the amount of addressable video memory. Review all
-drivers to initialize the fields to the correct values.
-
-Contact: Thomas Zimmermann <tzimmermann@suse.de>
-
-Level: Intermediate
-
-Request memory regions in all drivers
--------------------------------------
-
-Go through all drivers and add code to request the memory regions that the
-driver uses. This requires adding calls to request_mem_region(),
-pci_request_region() or similar functions. Use helpers for managed cleanup
-where possible.
-
-Drivers are pretty bad at doing this and there used to be conflicts among
-DRM and fbdev drivers. Still, it's the correct thing to do.
-
-Contact: Thomas Zimmermann <tzimmermann@suse.de>
-
-Level: Starter
-
 
 Core refactorings
 =================
+
+Clean up the DRM header mess
+----------------------------
+
+Currently the DRM subsystem has only one global header, ``drmP.h``. This is
+used both for functions exported to helper libraries and drivers and functions
+only used internally in the ``drm.ko`` module. The goal would be to move all
+header declarations not needed outside of ``drm.ko`` into
+``drivers/gpu/drm/drm_*_internal.h`` header files. ``EXPORT_SYMBOL`` also
+needs to be dropped for these functions.
+
+This would nicely tie in with the below task to create kerneldoc after the API
+is cleaned up. Or with the "hide legacy cruft better" task.
+
+Note that this is well in progress, but ``drmP.h`` is still huge. The updated
+plan is to switch to per-file driver API headers, which will also structure
+the kerneldoc better. This should also allow more fine-grained ``#include``
+directives.
+
+In the end no .c file should need to include ``drmP.h`` anymore.
+
+Contact: Daniel Vetter
+
+Add missing kerneldoc for exported functions
+--------------------------------------------
+
+The DRM reference documentation is still lacking kerneldoc in a few areas. The
+task would be to clean up interfaces like moving functions around between
+files to better group them and improving the interfaces like dropping return
+values for functions that never fail. Then write kerneldoc for all exported
+functions and an overview section and integrate it all into the drm book.
+
+See https://dri.freedesktop.org/docs/drm/ for what's there already.
+
+Contact: Daniel Vetter
+
+Hide legacy cruft better
+------------------------
+
+Way back DRM supported only drivers which shadow-attached to PCI devices with
+userspace or fbdev drivers setting up outputs. Modern DRM drivers take charge
+of the entire device, you can spot them with the DRIVER_MODESET flag.
+
+Unfortunately there's still large piles of legacy code around which needs to
+be hidden so that driver writers don't accidentally end up using it. And to
+prevent security issues in those legacy IOCTLs from being exploited on modern
+drivers. This has multiple possible subtasks:
+
+* Extract support code for legacy features into a ``drm-legacy.ko`` kernel
+  module and compile it only when one of the legacy drivers is enabled.
+
+This is mostly done, the only thing left is to split up ``drm_irq.c`` into
+legacy cruft and the parts needed by modern KMS drivers.
+
+Contact: Daniel Vetter
 
 Make panic handling work
 ------------------------
@@ -472,12 +293,8 @@ This is a really varied tasks with lots of little bits and pieces:
   achieved by using an IPI to the local processor.
 
 * There's a massive confusion of different panic handlers. DRM fbdev emulation
-  helpers had their own (long removed), but on top of that the fbcon code itself
-  also has one. We need to make sure that they stop fighting over each other.
-  This is worked around by checking ``oops_in_progress`` at various entry points
-  into the DRM fbdev emulation helpers. A much cleaner approach here would be to
-  switch fbcon to the `threaded printk support
-  <https://lwn.net/Articles/800946/>`_.
+  helpers have one, but on top of that the fbcon code itself also has one. We
+  need to make sure that they stop fighting over each another.
 
 * ``drm_can_sleep()`` is a mess. It hides real bugs in normal operations and
   isn't a full solution for panic paths. We need to make sure that it only
@@ -489,19 +306,18 @@ This is a really varied tasks with lots of little bits and pieces:
   even spinlocks (because NMI and hardirq can panic too). We need to either
   make sure to not call such paths, or trylock everything. Really tricky.
 
-* A clean solution would be an entirely separate panic output support in KMS,
-  bypassing the current fbcon support. See `[PATCH v2 0/3] drm: Add panic handling
-  <https://lore.kernel.org/dri-devel/20190311174218.51899-1-noralf@tronnes.org/>`_.
+* For the above locking troubles reasons it's pretty much impossible to
+  attempt a synchronous modeset from panic handlers. The only thing we could
+  try to achive is an atomic ``set_base`` of the primary plane, and hope that
+  it shows up. Everything else probably needs to be delayed to some worker or
+  something else which happens later on. Otherwise it just kills the box
+  harder, prevent the panic from going out on e.g. netconsole.
 
-* Encoding the actual oops and preceding dmesg in a QR might help with the
-  dread "important stuff scrolled away" problem. See `[RFC][PATCH] Oops messages
-  transfer using QR codes
-  <https://lore.kernel.org/lkml/1446217392-11981-1-git-send-email-alexandru.murtaza@intel.com/>`_
-  for some example code that could be reused.
+* There's also proposal for a simplied DRM console instead of the full-blown
+  fbcon and DRM fbdev emulation. Any kind of panic handling tricks should
+  obviously work for both console, in case we ever get kmslog merged.
 
 Contact: Daniel Vetter
-
-Level: Advanced
 
 Clean up the debugfs support
 ----------------------------
@@ -527,77 +343,27 @@ There's a bunch of issues with it:
   this (together with the drm_minor->drm_device move) would allow us to remove
   debugfs_init.
 
-Previous RFC that hasn't landed yet: https://lore.kernel.org/dri-devel/20200513114130.28641-2-wambui.karugax@gmail.com/
-
 Contact: Daniel Vetter
 
-Level: Intermediate
+KMS cleanups
+------------
 
-Object lifetime fixes
----------------------
+Some of these date from the very introduction of KMS in 2008 ...
 
-There's two related issues here
+- drm_mode_config.crtc_idr is misnamed, since it contains all KMS object. Should
+  be renamed to drm_mode_config.object_idr.
 
-- Cleanup up the various ->destroy callbacks, which often are all the same
-  simple code.
-
-- Lots of drivers erroneously allocate DRM modeset objects using devm_kzalloc,
-  which results in use-after free issues on driver unload. This can be serious
-  trouble even for drivers for hardware integrated on the SoC due to
-  EPROBE_DEFERRED backoff.
-
-Both these problems can be solved by switching over to drmm_kzalloc(), and the
-various convenience wrappers provided, e.g. drmm_crtc_alloc_with_planes(),
-drmm_universal_plane_alloc(), ... and so on.
-
-Contact: Daniel Vetter
-
-Level: Intermediate
-
-Remove automatic page mapping from dma-buf importing
-----------------------------------------------------
-
-When importing dma-bufs, the dma-buf and PRIME frameworks automatically map
-imported pages into the importer's DMA area. drm_gem_prime_fd_to_handle() and
-drm_gem_prime_handle_to_fd() require that importers call dma_buf_attach()
-even if they never do actual device DMA, but only CPU access through
-dma_buf_vmap(). This is a problem for USB devices, which do not support DMA
-operations.
-
-To fix the issue, automatic page mappings should be removed from the
-buffer-sharing code. Fixing this is a bit more involved, since the import/export
-cache is also tied to &drm_gem_object.import_attach. Meanwhile we paper over
-this problem for USB devices by fishing out the USB host controller device, as
-long as that supports DMA. Otherwise importing can still needlessly fail.
-
-Contact: Thomas Zimmermann <tzimmermann@suse.de>, Daniel Vetter
-
-Level: Advanced
-
+- drm_display_mode doesn't need to be derived from drm_mode_object. That's
+  leftovers from older (never merged into upstream) KMS designs where modes
+  where set using their ID, including support to add/remove modes.
 
 Better Testing
 ==============
-
-Add unit tests using the Kernel Unit Testing (KUnit) framework
---------------------------------------------------------------
-
-The `KUnit <https://www.kernel.org/doc/html/latest/dev-tools/kunit/index.html>`_
-provides a common framework for unit tests within the Linux kernel. Having a
-test suite would allow to identify regressions earlier.
-
-A good candidate for the first unit tests are the format-conversion helpers in
-``drm_format_helper.c``.
-
-Contact: Javier Martinez Canillas <javierm@redhat.com>
-
-Level: Intermediate
 
 Enable trinity for DRM
 ----------------------
 
 And fix up the fallout. Should be really interesting ...
-
-Level: Advanced
 
 Make KMS tests in i-g-t generic
 -------------------------------
@@ -612,34 +378,67 @@ converting things over. For modeset tests we also first need a bit of
 infrastructure to use dumb buffers for untiled buffers, to be able to run all
 the non-i915 specific modeset tests.
 
-Level: Advanced
+Contact: Daniel Vetter
 
-Extend virtual test driver (VKMS)
----------------------------------
+Create a virtual KMS driver for testing (vkms)
+----------------------------------------------
 
-See the documentation of :ref:`VKMS <vkms>` for more details. This is an ideal
-internship task, since it only requires a virtual machine and can be sized to
-fit the available time.
+With all the latest helpers it should be fairly simple to create a virtual KMS
+driver useful for testing, or for running X or similar on headless machines
+(to be able to still use the GPU). This would be similar to vgem, but aimed at
+the modeset side.
 
-Level: See details
-
-Backlight Refactoring
----------------------
-
-Backlight drivers have a triple enable/disable state, which is a bit overkill.
-Plan to fix this:
-
-1. Roll out backlight_enable() and backlight_disable() helpers everywhere. This
-   has started already.
-2. In all, only look at one of the three status bits set by the above helpers.
-3. Remove the other two status bits.
+Once the basics are there there's tons of possibilities to extend it.
 
 Contact: Daniel Vetter
 
-Level: Intermediate
-
 Driver Specific
 ===============
+
+tinydrm
+-------
+
+Tinydrm is the helper driver for really simple fb drivers. The goal is to make
+those drivers as simple as possible, so lots of room for refactoring:
+
+- backlight helpers, probably best to put them into a new drm_backlight.c.
+  This is because drivers/video is de-facto unmaintained. We could also
+  move drivers/video/backlight to drivers/gpu/backlight and take it all
+  over within drm-misc, but that's more work. Backlight helpers require a fair
+  bit of reworking and refactoring. A simple example is the enabling of a backlight.
+  Tinydrm has helpers for this. It would be good if other drivers can also use the
+  helper. However, there are various cases we need to consider i.e different
+  drivers seem to have different ways of enabling/disabling a backlight.
+  We also need to consider the backlight drivers (like gpio_backlight). The situation
+  is further complicated by the fact that the backlight is tied to fbdev
+  via fb_notifier_callback() which has complicated logic. For further details, refer
+  to the following discussion thread:
+  https://groups.google.com/forum/#!topic/outreachy-kernel/8rBe30lwtdA
+
+- spi helpers, probably best put into spi core/helper code. Thierry said
+  the spi maintainer is fast&reactive, so shouldn't be a big issue.
+
+- extract the mipi-dbi helper (well, the non-tinydrm specific parts at
+  least) into a separate helper, like we have for mipi-dsi already. Or follow
+  one of the ideas for having a shared dsi/dbi helper, abstracting away the
+  transport details more.
+
+- tinydrm_gem_cma_prime_import_sg_table should probably go into the cma
+  helpers, as a _vmapped variant (since not every driver needs the vmap).
+  And tinydrm_gem_cma_free_object could the be merged into
+  drm_gem_cma_free_object().
+
+- tinydrm_fb_create we could move into drm_simple_pipe, only need to add
+  the fb_create hook to drm_simple_pipe_funcs, which would again simplify a
+  bunch of things (since it gives you a one-stop vfunc for simple drivers).
+
+- Quick aside: The unregister devm stuff is kinda getting the lifetimes of
+  a drm_device wrong. Doesn't matter, since everyone else gets it wrong
+  too :-)
+
+- also rework the drm_framebuffer_funcs->dirty hook wire-up, see above.
+
+Contact: Noralf Trønnes, Daniel Vetter
 
 AMD DC Display Driver
 ---------------------
@@ -651,130 +450,12 @@ See drivers/gpu/drm/amd/display/TODO for tasks.
 
 Contact: Harry Wentland, Alex Deucher
 
-vmwgfx: Replace hashtable with Linux' implementation
-----------------------------------------------------
+i915
+----
 
-The vmwgfx driver uses its own hashtable implementation. Replace the
-code with Linux' implementation and update the callers. It's mostly a
-refactoring task, but the interfaces are different.
-
-Contact: Zack Rusin, Thomas Zimmermann <tzimmermann@suse.de>
-
-Level: Intermediate
-
-Bootsplash
-==========
-
-There is support in place now for writing internal DRM clients making it
-possible to pick up the bootsplash work that was rejected because it was written
-for fbdev.
-
-- [v6,8/8] drm/client: Hack: Add bootsplash example
-  https://patchwork.freedesktop.org/patch/306579/
-
-- [RFC PATCH v2 00/13] Kernel based bootsplash
-  https://lore.kernel.org/r/20171213194755.3409-1-mstaudt@suse.de
-
-Contact: Sam Ravnborg
-
-Level: Advanced
-
-Brightness handling on devices with multiple internal panels
-============================================================
-
-On x86/ACPI devices there can be multiple backlight firmware interfaces:
-(ACPI) video, vendor specific and others. As well as direct/native (PWM)
-register programming by the KMS driver.
-
-To deal with this backlight drivers used on x86/ACPI call
-acpi_video_get_backlight_type() which has heuristics (+quirks) to select
-which backlight interface to use; and backlight drivers which do not match
-the returned type will not register themselves, so that only one backlight
-device gets registered (in a single GPU setup, see below).
-
-At the moment this more or less assumes that there will only
-be 1 (internal) panel on a system.
-
-On systems with 2 panels this may be a problem, depending on
-what interface acpi_video_get_backlight_type() selects:
-
-1. native: in this case the KMS driver is expected to know which backlight
-   device belongs to which output so everything should just work.
-2. video: this does support controlling multiple backlights, but some work
-   will need to be done to get the output <-> backlight device mapping
-
-The above assumes both panels will require the same backlight interface type.
-Things will break on systems with multiple panels where the 2 panels need
-a different type of control. E.g. one panel needs ACPI video backlight control,
-where as the other is using native backlight control. Currently in this case
-only one of the 2 required backlight devices will get registered, based on
-the acpi_video_get_backlight_type() return value.
-
-If this (theoretical) case ever shows up, then supporting this will need some
-work. A possible solution here would be to pass a device and connector-name
-to acpi_video_get_backlight_type() so that it can deal with this.
-
-Note in a way we already have a case where userspace sees 2 panels,
-in dual GPU laptop setups with a mux. On those systems we may see
-either 2 native backlight devices; or 2 native backlight devices.
-
-Userspace already has code to deal with this by detecting if the related
-panel is active (iow which way the mux between the GPU and the panels
-points) and then uses that backlight device. Userspace here very much
-assumes a single panel though. It picks only 1 of the 2 backlight devices
-and then only uses that one.
-
-Note that all userspace code (that I know off) is currently hardcoded
-to assume a single panel.
-
-Before the recent changes to not register multiple (e.g. video + native)
-/sys/class/backlight devices for a single panel (on a single GPU laptop),
-userspace would see multiple backlight devices all controlling the same
-backlight.
-
-To deal with this userspace had to always picks one preferred device under
-/sys/class/backlight and will ignore the others. So to support brightness
-control on multiple panels userspace will need to be updated too.
-
-There are plans to allow brightness control through the KMS API by adding
-a "display brightness" property to drm_connector objects for panels. This
-solves a number of issues with the /sys/class/backlight API, including not
-being able to map a sysfs backlight device to a specific connector. Any
-userspace changes to add support for brightness control on devices with
-multiple panels really should build on top of this new KMS property.
-
-Contact: Hans de Goede
-
-Level: Advanced
+- Our early/late pm callbacks could be removed in favour of using
+  device_link_add to model the dependency between i915 and snd_had. See
+  https://dri.freedesktop.org/docs/drm/driver-api/device_link.html
 
 Outside DRM
 ===========
-
-Convert fbdev drivers to DRM
-----------------------------
-
-There are plenty of fbdev drivers for older hardware. Some hardware has
-become obsolete, but some still provides good(-enough) framebuffers. The
-drivers that are still useful should be converted to DRM and afterwards
-removed from fbdev.
-
-Very simple fbdev drivers can best be converted by starting with a new
-DRM driver. Simple KMS helpers and SHMEM should be able to handle any
-existing hardware. The new driver's call-back functions are filled from
-existing fbdev code.
-
-More complex fbdev drivers can be refactored step-by-step into a DRM
-driver with the help of the DRM fbconv helpers. [1] These helpers provide
-the transition layer between the DRM core infrastructure and the fbdev
-driver interface. Create a new DRM driver on top of the fbconv helpers,
-copy over the fbdev driver, and hook it up to the DRM code. Examples for
-several fbdev drivers are available at [1] and a tutorial of this process
-available at [2]. The result is a primitive DRM driver that can run X11
-and Weston.
-
- - [1] https://gitlab.freedesktop.org/tzimmermann/linux/tree/fbconv
- - [2] https://gitlab.freedesktop.org/tzimmermann/linux/blob/fbconv/drivers/gpu/drm/drm_fbconv_helper.c
-
-Contact: Thomas Zimmermann <tzimmermann@suse.de>
-
-Level: Advanced

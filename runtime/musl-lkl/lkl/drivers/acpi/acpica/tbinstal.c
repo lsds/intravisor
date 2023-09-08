@@ -3,7 +3,7 @@
  *
  * Module Name: tbinstal - ACPI table installation and removal
  *
- * Copyright (C) 2000 - 2022, Intel Corp.
+ * Copyright (C) 2000 - 2018, Intel Corp.
  *
  *****************************************************************************/
 
@@ -79,8 +79,6 @@ acpi_tb_install_table_with_override(struct acpi_table_desc *new_table_desc,
  * PARAMETERS:  address             - Address of the table (might be a virtual
  *                                    address depending on the table_flags)
  *              flags               - Flags for the table
- *              table               - Pointer to the table (required for virtual
- *                                    origins, optional for physical)
  *              reload              - Whether reload should be performed
  *              override            - Whether override should be performed
  *              table_index         - Where the table index is returned
@@ -90,7 +88,7 @@ acpi_tb_install_table_with_override(struct acpi_table_desc *new_table_desc,
  * DESCRIPTION: This function is called to verify and install an ACPI table.
  *              When this function is called by "Load" or "LoadTable" opcodes,
  *              or by acpi_load_table() API, the "Reload" parameter is set.
- *              After successfully returning from this function, table is
+ *              After sucessfully returning from this function, table is
  *              "INSTALLED" but not "VALIDATED".
  *
  ******************************************************************************/
@@ -98,7 +96,6 @@ acpi_tb_install_table_with_override(struct acpi_table_desc *new_table_desc,
 acpi_status
 acpi_tb_install_standard_table(acpi_physical_address address,
 			       u8 flags,
-			       struct acpi_table_header *table,
 			       u8 reload, u8 override, u32 *table_index)
 {
 	u32 i;
@@ -109,8 +106,7 @@ acpi_tb_install_standard_table(acpi_physical_address address,
 
 	/* Acquire a temporary table descriptor for validation */
 
-	status =
-	    acpi_tb_acquire_temp_table(&new_table_desc, address, flags, table);
+	status = acpi_tb_acquire_temp_table(&new_table_desc, address, flags);
 	if (ACPI_FAILURE(status)) {
 		ACPI_ERROR((AE_INFO,
 			    "Could not acquire table length at %8.8X%8.8X",
@@ -124,7 +120,7 @@ acpi_tb_install_standard_table(acpi_physical_address address,
 	 */
 	if (!reload &&
 	    acpi_gbl_disable_ssdt_table_install &&
-	    ACPI_COMPARE_NAMESEG(&new_table_desc.signature, ACPI_SIG_SSDT)) {
+	    ACPI_COMPARE_NAME(&new_table_desc.signature, ACPI_SIG_SSDT)) {
 		ACPI_INFO(("Ignoring installation of %4.4s at %8.8X%8.8X",
 			   new_table_desc.signature.ascii,
 			   ACPI_FORMAT_UINT64(address)));
@@ -213,8 +209,7 @@ void acpi_tb_override_table(struct acpi_table_desc *old_table_desc)
 	if (ACPI_SUCCESS(status) && table) {
 		acpi_tb_acquire_temp_table(&new_table_desc,
 					   ACPI_PTR_TO_PHYSADDR(table),
-					   ACPI_TABLE_ORIGIN_EXTERNAL_VIRTUAL,
-					   table);
+					   ACPI_TABLE_ORIGIN_EXTERNAL_VIRTUAL);
 		ACPI_ERROR_ONLY(override_type = "Logical");
 		goto finish_override;
 	}
@@ -225,8 +220,7 @@ void acpi_tb_override_table(struct acpi_table_desc *old_table_desc)
 						 &address, &length);
 	if (ACPI_SUCCESS(status) && address && length) {
 		acpi_tb_acquire_temp_table(&new_table_desc, address,
-					   ACPI_TABLE_ORIGIN_INTERNAL_PHYSICAL,
-					   NULL);
+					   ACPI_TABLE_ORIGIN_INTERNAL_PHYSICAL);
 		ACPI_ERROR_ONLY(override_type = "Physical");
 		goto finish_override;
 	}
@@ -295,8 +289,7 @@ void acpi_tb_uninstall_table(struct acpi_table_desc *table_desc)
 
 	if ((table_desc->flags & ACPI_TABLE_ORIGIN_MASK) ==
 	    ACPI_TABLE_ORIGIN_INTERNAL_VIRTUAL) {
-		ACPI_FREE(table_desc->pointer);
-		table_desc->pointer = NULL;
+		ACPI_FREE(ACPI_PHYSADDR_TO_PTR(table_desc->address));
 	}
 
 	table_desc->address = ACPI_PTR_TO_PHYSADDR(NULL);

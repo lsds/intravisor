@@ -2,8 +2,6 @@
 #ifndef __ACPI_BATTERY_H
 #define __ACPI_BATTERY_H
 
-#include <linux/power_supply.h>
-
 #define ACPI_BATTERY_CLASS "battery"
 
 #define ACPI_BATTERY_NOTIFY_STATUS	0x80

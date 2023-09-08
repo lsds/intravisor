@@ -31,7 +31,6 @@
 #include <linux/lockd/nlm.h>
 #include <linux/lockd/lockd.h>
 #include <linux/kthread.h>
-#include <linux/exportfs.h>
 
 #define NLMDBG_FACILITY		NLMDBG_SVCLOCK
 
@@ -277,7 +276,7 @@ static int nlmsvc_unlink_block(struct nlm_block *block)
 	dprintk("lockd: unlinking block %p...\n", block);
 
 	/* Remove block from list */
-	status = locks_delete_block(&block->b_call->a_args.lock.fl);
+	status = posix_unblock_lock(&block->b_call->a_args.lock.fl);
 	nlmsvc_remove_block(block);
 	return status;
 }
@@ -333,75 +332,6 @@ restart:
 	mutex_unlock(&file->f_mutex);
 }
 
-static struct nlm_lockowner *
-nlmsvc_get_lockowner(struct nlm_lockowner *lockowner)
-{
-	refcount_inc(&lockowner->count);
-	return lockowner;
-}
-
-void nlmsvc_put_lockowner(struct nlm_lockowner *lockowner)
-{
-	if (!refcount_dec_and_lock(&lockowner->count, &lockowner->host->h_lock))
-		return;
-	list_del(&lockowner->list);
-	spin_unlock(&lockowner->host->h_lock);
-	nlmsvc_release_host(lockowner->host);
-	kfree(lockowner);
-}
-
-static struct nlm_lockowner *__nlmsvc_find_lockowner(struct nlm_host *host, pid_t pid)
-{
-	struct nlm_lockowner *lockowner;
-	list_for_each_entry(lockowner, &host->h_lockowners, list) {
-		if (lockowner->pid != pid)
-			continue;
-		return nlmsvc_get_lockowner(lockowner);
-	}
-	return NULL;
-}
-
-static struct nlm_lockowner *nlmsvc_find_lockowner(struct nlm_host *host, pid_t pid)
-{
-	struct nlm_lockowner *res, *new = NULL;
-
-	spin_lock(&host->h_lock);
-	res = __nlmsvc_find_lockowner(host, pid);
-
-	if (res == NULL) {
-		spin_unlock(&host->h_lock);
-		new = kmalloc(sizeof(*res), GFP_KERNEL);
-		spin_lock(&host->h_lock);
-		res = __nlmsvc_find_lockowner(host, pid);
-		if (res == NULL && new != NULL) {
-			res = new;
-			/* fs/locks.c will manage the refcount through lock_ops */
-			refcount_set(&new->count, 1);
-			new->pid = pid;
-			new->host = nlm_get_host(host);
-			list_add(&new->list, &host->h_lockowners);
-			new = NULL;
-		}
-	}
-
-	spin_unlock(&host->h_lock);
-	kfree(new);
-	return res;
-}
-
-void
-nlmsvc_release_lockowner(struct nlm_lock *lock)
-{
-	if (lock->fl.fl_owner)
-		nlmsvc_put_lockowner(lock->fl.fl_owner);
-}
-
-void nlmsvc_locks_init_private(struct file_lock *fl, struct nlm_host *host,
-						pid_t pid)
-{
-	fl->fl_owner = nlmsvc_find_lockowner(host, pid);
-}
-
 /*
  * Initialize arguments for GRANTED call. The nlm_rqst structure
  * has been cleared already.
@@ -415,7 +345,7 @@ static int nlmsvc_setgrantargs(struct nlm_rqst *call, struct nlm_lock *lock)
 
 	/* set default data area */
 	call->a_args.lock.oh.data = call->a_owner;
-	call->a_args.lock.svid = ((struct nlm_lockowner *)lock->fl.fl_owner)->pid;
+	call->a_args.lock.svid = lock->fl.fl_pid;
 
 	if (lock->oh.len > NLMCLNT_OHSIZE) {
 		void *data = kmalloc(lock->oh.len, GFP_KERNEL);
@@ -470,26 +400,17 @@ nlmsvc_lock(struct svc_rqst *rqstp, struct nlm_file *file,
 	    struct nlm_host *host, struct nlm_lock *lock, int wait,
 	    struct nlm_cookie *cookie, int reclaim)
 {
-#if IS_ENABLED(CONFIG_SUNRPC_DEBUG)
-	struct inode		*inode = nlmsvc_file_inode(file);
-#endif
 	struct nlm_block	*block = NULL;
 	int			error;
-	int			mode;
-	int			async_block = 0;
 	__be32			ret;
 
 	dprintk("lockd: nlmsvc_lock(%s/%ld, ty=%d, pi=%d, %Ld-%Ld, bl=%d)\n",
-				inode->i_sb->s_id, inode->i_ino,
+				file_inode(file->f_file)->i_sb->s_id,
+				file_inode(file->f_file)->i_ino,
 				lock->fl.fl_type, lock->fl.fl_pid,
 				(long long)lock->fl.fl_start,
 				(long long)lock->fl.fl_end,
 				wait);
-
-	if (nlmsvc_file_file(file)->f_op->lock) {
-		async_block = wait;
-		wait = 0;
-	}
 
 	/* Lock file against concurrent access */
 	mutex_lock(&file->f_mutex);
@@ -534,8 +455,7 @@ nlmsvc_lock(struct svc_rqst *rqstp, struct nlm_file *file,
 
 	if (!wait)
 		lock->fl.fl_flags &= ~FL_SLEEP;
-	mode = lock_to_openmode(&lock->fl);
-	error = vfs_lock_file(file->f_file[mode], F_SETLK, &lock->fl, NULL);
+	error = vfs_lock_file(file->f_file, F_SETLK, &lock->fl, NULL);
 	lock->fl.fl_flags &= ~FL_SLEEP;
 
 	dprintk("lockd: vfs_lock_file returned %d\n", error);
@@ -551,7 +471,7 @@ nlmsvc_lock(struct svc_rqst *rqstp, struct nlm_file *file,
 			 */
 			if (wait)
 				break;
-			ret = async_block ? nlm_lck_blocked : nlm_lck_denied;
+			ret = nlm_lck_denied;
 			goto out;
 		case FILE_LOCK_DEFERRED:
 			if (wait)
@@ -588,12 +508,11 @@ nlmsvc_testlock(struct svc_rqst *rqstp, struct nlm_file *file,
 		struct nlm_lock *conflock, struct nlm_cookie *cookie)
 {
 	int			error;
-	int			mode;
 	__be32			ret;
 
 	dprintk("lockd: nlmsvc_testlock(%s/%ld, ty=%d, %Ld-%Ld)\n",
-				nlmsvc_file_inode(file)->i_sb->s_id,
-				nlmsvc_file_inode(file)->i_ino,
+				file_inode(file->f_file)->i_sb->s_id,
+				file_inode(file->f_file)->i_ino,
 				lock->fl.fl_type,
 				(long long)lock->fl.fl_start,
 				(long long)lock->fl.fl_end);
@@ -603,8 +522,7 @@ nlmsvc_testlock(struct svc_rqst *rqstp, struct nlm_file *file,
 		goto out;
 	}
 
-	mode = lock_to_openmode(&lock->fl);
-	error = vfs_test_lock(file->f_file[mode], &lock->fl);
+	error = vfs_test_lock(file->f_file, &lock->fl);
 	if (error) {
 		/* We can't currently deal with deferred test requests */
 		if (error == FILE_LOCK_DEFERRED)
@@ -630,7 +548,6 @@ nlmsvc_testlock(struct svc_rqst *rqstp, struct nlm_file *file,
 	conflock->fl.fl_start = lock->fl.fl_start;
 	conflock->fl.fl_end = lock->fl.fl_end;
 	locks_release_private(&lock->fl);
-
 	ret = nlm_lck_denied;
 out:
 	return ret;
@@ -646,11 +563,11 @@ out:
 __be32
 nlmsvc_unlock(struct net *net, struct nlm_file *file, struct nlm_lock *lock)
 {
-	int	error = 0;
+	int	error;
 
 	dprintk("lockd: nlmsvc_unlock(%s/%ld, pi=%d, %Ld-%Ld)\n",
-				nlmsvc_file_inode(file)->i_sb->s_id,
-				nlmsvc_file_inode(file)->i_ino,
+				file_inode(file->f_file)->i_sb->s_id,
+				file_inode(file->f_file)->i_ino,
 				lock->fl.fl_pid,
 				(long long)lock->fl.fl_start,
 				(long long)lock->fl.fl_end);
@@ -659,12 +576,7 @@ nlmsvc_unlock(struct net *net, struct nlm_file *file, struct nlm_lock *lock)
 	nlmsvc_cancel_blocked(net, file, lock);
 
 	lock->fl.fl_type = F_UNLCK;
-	if (file->f_file[O_RDONLY])
-		error = vfs_lock_file(file->f_file[O_RDONLY], F_SETLK,
-					&lock->fl, NULL);
-	if (file->f_file[O_WRONLY])
-		error = vfs_lock_file(file->f_file[O_WRONLY], F_SETLK,
-					&lock->fl, NULL);
+	error = vfs_lock_file(file->f_file, F_SETLK, &lock->fl, NULL);
 
 	return (error < 0)? nlm_lck_denied_nolocks : nlm_granted;
 }
@@ -681,11 +593,10 @@ nlmsvc_cancel_blocked(struct net *net, struct nlm_file *file, struct nlm_lock *l
 {
 	struct nlm_block	*block;
 	int status = 0;
-	int mode;
 
 	dprintk("lockd: nlmsvc_cancel(%s/%ld, pi=%d, %Ld-%Ld)\n",
-				nlmsvc_file_inode(file)->i_sb->s_id,
-				nlmsvc_file_inode(file)->i_ino,
+				file_inode(file->f_file)->i_sb->s_id,
+				file_inode(file->f_file)->i_ino,
 				lock->fl.fl_pid,
 				(long long)lock->fl.fl_start,
 				(long long)lock->fl.fl_end);
@@ -697,8 +608,7 @@ nlmsvc_cancel_blocked(struct net *net, struct nlm_file *file, struct nlm_lock *l
 	block = nlmsvc_lookup_block(file, lock);
 	mutex_unlock(&file->f_mutex);
 	if (block != NULL) {
-		mode = lock_to_openmode(&lock->fl);
-		vfs_cancel_lock(block->b_file->f_file[mode],
+		vfs_cancel_lock(block->b_file->f_file,
 				&block->b_call->a_args.lock.fl);
 		status = nlmsvc_unlink_block(block);
 		nlmsvc_release_block(block);
@@ -782,21 +692,27 @@ nlmsvc_notify_blocked(struct file_lock *fl)
 	printk(KERN_WARNING "lockd: notification for unknown block!\n");
 }
 
-static fl_owner_t nlmsvc_get_owner(fl_owner_t owner)
+static int nlmsvc_same_owner(struct file_lock *fl1, struct file_lock *fl2)
 {
-	return nlmsvc_get_lockowner(owner);
+	return fl1->fl_owner == fl2->fl_owner && fl1->fl_pid == fl2->fl_pid;
 }
 
-static void nlmsvc_put_owner(fl_owner_t owner)
+/*
+ * Since NLM uses two "keys" for tracking locks, we need to hash them down
+ * to one for the blocked_hash. Here, we're just xor'ing the host address
+ * with the pid in order to create a key value for picking a hash bucket.
+ */
+static unsigned long
+nlmsvc_owner_key(struct file_lock *fl)
 {
-	nlmsvc_put_lockowner(owner);
+	return (unsigned long)fl->fl_owner ^ (unsigned long)fl->fl_pid;
 }
 
 const struct lock_manager_operations nlmsvc_lock_operations = {
+	.lm_compare_owner = nlmsvc_same_owner,
+	.lm_owner_key = nlmsvc_owner_key,
 	.lm_notify = nlmsvc_notify_blocked,
 	.lm_grant = nlmsvc_grant_deferred,
-	.lm_get_owner = nlmsvc_get_owner,
-	.lm_put_owner = nlmsvc_put_owner,
 };
 
 /*
@@ -815,7 +731,6 @@ nlmsvc_grant_blocked(struct nlm_block *block)
 {
 	struct nlm_file		*file = block->b_file;
 	struct nlm_lock		*lock = &block->b_call->a_args.lock;
-	int			mode;
 	int			error;
 	loff_t			fl_start, fl_end;
 
@@ -841,8 +756,7 @@ nlmsvc_grant_blocked(struct nlm_block *block)
 	lock->fl.fl_flags |= FL_SLEEP;
 	fl_start = lock->fl.fl_start;
 	fl_end = lock->fl.fl_end;
-	mode = lock_to_openmode(&lock->fl);
-	error = vfs_lock_file(file->f_file[mode], F_SETLK, &lock->fl, NULL);
+	error = vfs_lock_file(file->f_file, F_SETLK, &lock->fl, NULL);
 	lock->fl.fl_flags &= ~FL_SLEEP;
 	lock->fl.fl_start = fl_start;
 	lock->fl.fl_end = fl_end;

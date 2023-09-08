@@ -1,21 +1,26 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /* (C) 1999 Jérôme de Vivie <devivie@info.enserb.u-bordeaux.fr>
  * (C) 1999 Hervé Eychenne <eychenne@info.enserb.u-bordeaux.fr>
  * (C) 2006-2012 Patrick McHardy <kaber@trash.net>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
 #include <linux/slab.h>
 #include <linux/module.h>
 #include <linux/skbuff.h>
+#include <linux/spinlock.h>
 #include <linux/interrupt.h>
 
 #include <linux/netfilter/x_tables.h>
 #include <linux/netfilter/xt_limit.h>
 
 struct xt_limit_priv {
+	spinlock_t lock;
 	unsigned long prev;
-	u32 credit;
+	uint32_t credit;
 };
 
 MODULE_LICENSE("GPL");
@@ -64,31 +69,22 @@ limit_mt(const struct sk_buff *skb, struct xt_action_param *par)
 {
 	const struct xt_rateinfo *r = par->matchinfo;
 	struct xt_limit_priv *priv = r->master;
-	unsigned long now;
-	u32 old_credit, new_credit, credit_increase = 0;
-	bool ret;
+	unsigned long now = jiffies;
 
-	/* fastpath if there is nothing to update */
-	if ((READ_ONCE(priv->credit) < r->cost) && (READ_ONCE(priv->prev) == jiffies))
-		return false;
+	spin_lock_bh(&priv->lock);
+	priv->credit += (now - xchg(&priv->prev, now)) * CREDITS_PER_JIFFY;
+	if (priv->credit > r->credit_cap)
+		priv->credit = r->credit_cap;
 
-	do {
-		now = jiffies;
-		credit_increase += (now - xchg(&priv->prev, now)) * CREDITS_PER_JIFFY;
-		old_credit = READ_ONCE(priv->credit);
-		new_credit = old_credit;
-		new_credit += credit_increase;
-		if (new_credit > r->credit_cap)
-			new_credit = r->credit_cap;
-		if (new_credit >= r->cost) {
-			ret = true;
-			new_credit -= r->cost;
-		} else {
-			ret = false;
-		}
-	} while (cmpxchg(&priv->credit, old_credit, new_credit) != old_credit);
+	if (priv->credit >= r->cost) {
+		/* We're not limited. */
+		priv->credit -= r->cost;
+		spin_unlock_bh(&priv->lock);
+		return true;
+	}
 
-	return ret;
+	spin_unlock_bh(&priv->lock);
+	return false;
 }
 
 /* Precision saver. */
@@ -129,6 +125,7 @@ static int limit_mt_check(const struct xt_mtchk_param *par)
 		r->credit_cap = priv->credit; /* Credits full. */
 		r->cost = user2credits(r->avg);
 	}
+	spin_lock_init(&priv->lock);
 
 	return 0;
 }
@@ -140,7 +137,7 @@ static void limit_mt_destroy(const struct xt_mtdtor_param *par)
 	kfree(info->master);
 }
 
-#ifdef CONFIG_NETFILTER_XTABLES_COMPAT
+#ifdef CONFIG_COMPAT
 struct compat_xt_rateinfo {
 	u_int32_t avg;
 	u_int32_t burst;
@@ -182,7 +179,7 @@ static int limit_mt_compat_to_user(void __user *dst, const void *src)
 	};
 	return copy_to_user(dst, &cm, sizeof(cm)) ? -EFAULT : 0;
 }
-#endif /* CONFIG_NETFILTER_XTABLES_COMPAT */
+#endif /* CONFIG_COMPAT */
 
 static struct xt_match limit_mt_reg __read_mostly = {
 	.name             = "limit",
@@ -192,7 +189,7 @@ static struct xt_match limit_mt_reg __read_mostly = {
 	.checkentry       = limit_mt_check,
 	.destroy          = limit_mt_destroy,
 	.matchsize        = sizeof(struct xt_rateinfo),
-#ifdef CONFIG_NETFILTER_XTABLES_COMPAT
+#ifdef CONFIG_COMPAT
 	.compatsize       = sizeof(struct compat_xt_rateinfo),
 	.compat_from_user = limit_mt_compat_from_user,
 	.compat_to_user   = limit_mt_compat_to_user,

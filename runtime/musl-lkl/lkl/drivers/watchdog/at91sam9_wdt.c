@@ -327,6 +327,7 @@ static inline int of_at91wdt_init(struct device_node *np, struct at91wdt *wdt)
 
 static int __init at91wdt_probe(struct platform_device *pdev)
 {
+	struct resource	*r;
 	int err;
 	struct at91wdt *wdt;
 
@@ -345,7 +346,8 @@ static int __init at91wdt_probe(struct platform_device *pdev)
 	wdt->wdd.min_timeout = 1;
 	wdt->wdd.max_timeout = 0xFFFF;
 
-	wdt->base = devm_platform_ioremap_resource(pdev, 0);
+	r = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	wdt->base = devm_ioremap_resource(&pdev->dev, r);
 	if (IS_ERR(wdt->base))
 		return PTR_ERR(wdt->base);
 

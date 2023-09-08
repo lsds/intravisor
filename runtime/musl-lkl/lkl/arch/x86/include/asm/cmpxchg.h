@@ -7,7 +7,7 @@
 #include <asm/alternative.h> /* Provides LOCK_PREFIX */
 
 /*
- * Non-existent functions to indicate usage errors at link time
+ * Non-existant functions to indicate usage errors at link time
  * (or compile-time if the compiler implements __compiletime_error().
  */
 extern void __xchg_wrong_size(void)
@@ -22,7 +22,7 @@ extern void __add_wrong_size(void)
 /*
  * Constants for operation sizes. On 32-bit, the 64-bit size it set to
  * -1 because sizeof will never return -1, thereby making those switch
- * case statements guaranteed dead code which the compiler will
+ * case statements guaranteeed dead code which the compiler will
  * eliminate, and allowing the "missing symbol in the default case" to
  * indicate a usage error.
  */
@@ -75,7 +75,7 @@ extern void __add_wrong_size(void)
  * use "asm volatile" and "memory" clobbers to prevent gcc from moving
  * information around.
  */
-#define arch_xchg(ptr, v)	__xchg_op((ptr), (v), xchg, "")
+#define xchg(ptr, v)	__xchg_op((ptr), (v), xchg, "")
 
 /*
  * Atomic compare and exchange.  Compare OLD with MEM, if identical,
@@ -221,7 +221,7 @@ extern void __add_wrong_size(void)
 #define __try_cmpxchg(ptr, pold, new, size)				\
 	__raw_try_cmpxchg((ptr), (pold), (new), (size), LOCK_PREFIX)
 
-#define arch_try_cmpxchg(ptr, pold, new) 				\
+#define try_cmpxchg(ptr, pold, new) 					\
 	__try_cmpxchg((ptr), (pold), (new), sizeof(*(ptr)))
 
 /*
@@ -242,12 +242,10 @@ extern void __add_wrong_size(void)
 	BUILD_BUG_ON(sizeof(*(p2)) != sizeof(long));			\
 	VM_BUG_ON((unsigned long)(p1) % (2 * sizeof(long)));		\
 	VM_BUG_ON((unsigned long)((p1) + 1) != (unsigned long)(p2));	\
-	asm volatile(pfx "cmpxchg%c5b %1"				\
-		     CC_SET(e)						\
-		     : CC_OUT(e) (__ret),				\
-		       "+m" (*(p1)), "+m" (*(p2)),			\
-		       "+a" (__old1), "+d" (__old2)			\
-		     : "i" (2 * sizeof(long)),				\
+	asm volatile(pfx "cmpxchg%c4b %2; sete %0"			\
+		     : "=a" (__ret), "+d" (__old2),			\
+		       "+m" (*(p1)), "+m" (*(p2))			\
+		     : "i" (2 * sizeof(long)), "a" (__old1),		\
 		       "b" (__new1), "c" (__new2));			\
 	__ret;								\
 })

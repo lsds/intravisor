@@ -80,7 +80,6 @@ static void ext2_release_inode(struct super_block *sb, int group, int dir)
 	if (dir)
 		le16_add_cpu(&desc->bg_used_dirs_count, -1);
 	spin_unlock(sb_bgl_lock(EXT2_SB(sb), group));
-	percpu_counter_inc(&EXT2_SB(sb)->s_freeinodes_counter);
 	if (dir)
 		percpu_counter_dec(&EXT2_SB(sb)->s_dirs_counter);
 	mark_buffer_dirty(bh);
@@ -170,6 +169,13 @@ static void ext2_preread_inode(struct inode *inode)
 	unsigned long offset;
 	unsigned long block;
 	struct ext2_group_desc * gdp;
+	struct backing_dev_info *bdi;
+
+	bdi = inode_to_bdi(inode);
+	if (bdi_read_congested(bdi))
+		return;
+	if (bdi_write_congested(bdi))
+		return;
 
 	block_group = (inode->i_ino - 1) / EXT2_INODES_PER_GROUP(inode->i_sb);
 	gdp = ext2_get_group_desc(inode->i_sb, block_group, NULL);
@@ -216,6 +222,8 @@ static int find_group_dir(struct super_block *sb, struct inode *parent)
 			best_desc = desc;
 		}
 	}
+	if (!best_desc)
+		return -1;
 
 	return best_group;
 }
@@ -277,7 +285,8 @@ static int find_group_orlov(struct super_block *sb, struct inode *parent)
 		int best_ndir = inodes_per_group;
 		int best_group = -1;
 
-		parent_group = prandom_u32_max(ngroups);
+		group = prandom_u32();
+		parent_group = (unsigned)group % ngroups;
 		for (i = 0; i < ngroups; i++) {
 			group = (parent_group + i) % ngroups;
 			desc = ext2_get_group_desc (sb, group, NULL);
@@ -504,7 +513,6 @@ repeat_in_this_group:
 	/*
 	 * Scanned all blockgroups.
 	 */
-	brelse(bitmap_bh);
 	err = -ENOSPC;
 	goto fail;
 got:
@@ -523,7 +531,7 @@ got:
 		goto fail;
 	}
 
-	percpu_counter_dec(&sbi->s_freeinodes_counter);
+	percpu_counter_add(&sbi->s_freeinodes_counter, -1);
 	if (S_ISDIR(mode))
 		percpu_counter_inc(&sbi->s_dirs_counter);
 
@@ -545,7 +553,7 @@ got:
 		inode->i_uid = current_fsuid();
 		inode->i_gid = dir->i_gid;
 	} else
-		inode_init_owner(&init_user_ns, inode, dir, mode);
+		inode_init_owner(inode, dir, mode);
 
 	inode->i_ino = ino;
 	inode->i_blocks = 0;
@@ -603,7 +611,8 @@ fail_drop:
 	dquot_drop(inode);
 	inode->i_flags |= S_NOQUOTA;
 	clear_nlink(inode);
-	discard_new_inode(inode);
+	unlock_new_inode(inode);
+	iput(inode);
 	return ERR_PTR(err);
 
 fail:

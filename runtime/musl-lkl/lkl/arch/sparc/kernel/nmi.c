@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /* Pseudo NMI support on sparc64 systems.
  *
  * Copyright (C) 2009 David S. Miller <davem@davemloft.net>
@@ -167,8 +166,7 @@ static int __init check_nmi_watchdog(void)
 	if (!atomic_read(&nmi_active))
 		return 0;
 
-	prev_nmi_count = kmalloc_array(nr_cpu_ids, sizeof(unsigned int),
-				       GFP_KERNEL);
+	prev_nmi_count = kmalloc(nr_cpu_ids * sizeof(unsigned int), GFP_KERNEL);
 	if (!prev_nmi_count) {
 		err = -ENOMEM;
 		goto error;

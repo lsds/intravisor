@@ -59,16 +59,12 @@
 #define TUNGETVNETBE _IOR('T', 223, int)
 #define TUNSETSTEERINGEBPF _IOR('T', 224, int)
 #define TUNSETFILTEREBPF _IOR('T', 225, int)
-#define TUNSETCARRIER _IOW('T', 226, int)
-#define TUNGETDEVNETNS _IO('T', 227)
 
 /* TUNSETIFF ifr flags */
 #define IFF_TUN		0x0001
 #define IFF_TAP		0x0002
 #define IFF_NAPI	0x0010
 #define IFF_NAPI_FRAGS	0x0020
-/* Used in TUNSETIFF to bring up tun/tap without carrier */
-#define IFF_NO_CARRIER	0x0040
 #define IFF_NO_PI	0x1000
 /* This flag has no real effect */
 #define IFF_ONE_QUEUE	0x2000
@@ -110,7 +106,7 @@ struct tun_pi {
 struct tun_filter {
 	__u16  flags; /* TUN_FLT_ flags see above */
 	__u16  count; /* Number of addresses */
-	__u8   addr[][ETH_ALEN];
+	__u8   addr[0][ETH_ALEN];
 };
 
 #endif /* _UAPI__IF_TUN_H */

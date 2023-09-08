@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*  linux/arch/arm/mach-pxa/xcep.c
  *
  *  Support for the Iskratel Electronics XCEP platform as used in
@@ -9,6 +8,10 @@
  *  Contributions by: Matej Kenda <matej.kenda@i-tech.si>
  *  Created:    June 2006
  *  Copyright:  (C) 2006-2009 Instrumentation Technologies
+ *
+ *  This program is free software; you can redistribute it and/or modify
+ *  it under the terms of the GNU General Public License version 2 as
+ *  published by the Free Software Foundation.
  */
 
 #include <linux/platform_device.h>
@@ -24,9 +27,9 @@
 #include <asm/mach/irq.h>
 #include <asm/mach/map.h>
 
+#include <mach/hardware.h>
 #include "pxa25x.h"
-#include "addr-map.h"
-#include "smemc.h"
+#include <mach/smemc.h>
 
 #include "generic.h"
 #include "devices.h"

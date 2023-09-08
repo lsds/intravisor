@@ -1,9 +1,12 @@
-// SPDX-License-Identifier: GPL-2.0
-//
-// ctu.c
-//
-// Copyright (c) 2015 Kuninori Morimoto <kuninori.morimoto.gx@renesas.com>
-
+/*
+ * ctu.c
+ *
+ * Copyright (c) 2015 Kuninori Morimoto <kuninori.morimoto.gx@renesas.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ */
 #include "rsnd.h"
 
 #define CTU_NAME_SIZE	16
@@ -72,7 +75,10 @@
 struct rsnd_ctu {
 	struct rsnd_mod mod;
 	struct rsnd_kctrl_cfg_m pass;
-	struct rsnd_kctrl_cfg_m sv[4];
+	struct rsnd_kctrl_cfg_m sv0;
+	struct rsnd_kctrl_cfg_m sv1;
+	struct rsnd_kctrl_cfg_m sv2;
+	struct rsnd_kctrl_cfg_m sv3;
 	struct rsnd_kctrl_cfg_s reset;
 	int channels;
 	u32 flags;
@@ -104,11 +110,18 @@ static void rsnd_ctu_halt(struct rsnd_mod *mod)
 	rsnd_mod_write(mod, CTU_SWRSR, 0);
 }
 
+int rsnd_ctu_converted_channel(struct rsnd_mod *mod)
+{
+	struct rsnd_ctu *ctu = rsnd_mod_to_ctu(mod);
+
+	return ctu->channels;
+}
+
 static int rsnd_ctu_probe_(struct rsnd_mod *mod,
 			   struct rsnd_dai_stream *io,
 			   struct rsnd_priv *priv)
 {
-	return rsnd_cmd_attach(io, rsnd_mod_id(mod));
+	return rsnd_cmd_attach(io, rsnd_mod_id(mod) / 4);
 }
 
 static void rsnd_ctu_value_init(struct rsnd_dai_stream *io,
@@ -117,7 +130,7 @@ static void rsnd_ctu_value_init(struct rsnd_dai_stream *io,
 	struct rsnd_ctu *ctu = rsnd_mod_to_ctu(mod);
 	u32 cpmdr = 0;
 	u32 scmdr = 0;
-	int i, j;
+	int i;
 
 	for (i = 0; i < RSND_MAX_CHANNELS; i++) {
 		u32 val = rsnd_kctrl_valm(ctu->pass, i);
@@ -136,13 +149,45 @@ static void rsnd_ctu_value_init(struct rsnd_dai_stream *io,
 
 	rsnd_mod_write(mod, CTU_SCMDR, scmdr);
 
-	for (i = 0; i < 4; i++) {
-
-		if (i >= scmdr)
-			break;
-
-		for (j = 0; j < RSND_MAX_CHANNELS; j++)
-			rsnd_mod_write(mod, CTU_SVxxR(i, j), rsnd_kctrl_valm(ctu->sv[i], j));
+	if (scmdr > 0) {
+		rsnd_mod_write(mod, CTU_SV00R, rsnd_kctrl_valm(ctu->sv0, 0));
+		rsnd_mod_write(mod, CTU_SV01R, rsnd_kctrl_valm(ctu->sv0, 1));
+		rsnd_mod_write(mod, CTU_SV02R, rsnd_kctrl_valm(ctu->sv0, 2));
+		rsnd_mod_write(mod, CTU_SV03R, rsnd_kctrl_valm(ctu->sv0, 3));
+		rsnd_mod_write(mod, CTU_SV04R, rsnd_kctrl_valm(ctu->sv0, 4));
+		rsnd_mod_write(mod, CTU_SV05R, rsnd_kctrl_valm(ctu->sv0, 5));
+		rsnd_mod_write(mod, CTU_SV06R, rsnd_kctrl_valm(ctu->sv0, 6));
+		rsnd_mod_write(mod, CTU_SV07R, rsnd_kctrl_valm(ctu->sv0, 7));
+	}
+	if (scmdr > 1) {
+		rsnd_mod_write(mod, CTU_SV10R, rsnd_kctrl_valm(ctu->sv1, 0));
+		rsnd_mod_write(mod, CTU_SV11R, rsnd_kctrl_valm(ctu->sv1, 1));
+		rsnd_mod_write(mod, CTU_SV12R, rsnd_kctrl_valm(ctu->sv1, 2));
+		rsnd_mod_write(mod, CTU_SV13R, rsnd_kctrl_valm(ctu->sv1, 3));
+		rsnd_mod_write(mod, CTU_SV14R, rsnd_kctrl_valm(ctu->sv1, 4));
+		rsnd_mod_write(mod, CTU_SV15R, rsnd_kctrl_valm(ctu->sv1, 5));
+		rsnd_mod_write(mod, CTU_SV16R, rsnd_kctrl_valm(ctu->sv1, 6));
+		rsnd_mod_write(mod, CTU_SV17R, rsnd_kctrl_valm(ctu->sv1, 7));
+	}
+	if (scmdr > 2) {
+		rsnd_mod_write(mod, CTU_SV20R, rsnd_kctrl_valm(ctu->sv2, 0));
+		rsnd_mod_write(mod, CTU_SV21R, rsnd_kctrl_valm(ctu->sv2, 1));
+		rsnd_mod_write(mod, CTU_SV22R, rsnd_kctrl_valm(ctu->sv2, 2));
+		rsnd_mod_write(mod, CTU_SV23R, rsnd_kctrl_valm(ctu->sv2, 3));
+		rsnd_mod_write(mod, CTU_SV24R, rsnd_kctrl_valm(ctu->sv2, 4));
+		rsnd_mod_write(mod, CTU_SV25R, rsnd_kctrl_valm(ctu->sv2, 5));
+		rsnd_mod_write(mod, CTU_SV26R, rsnd_kctrl_valm(ctu->sv2, 6));
+		rsnd_mod_write(mod, CTU_SV27R, rsnd_kctrl_valm(ctu->sv2, 7));
+	}
+	if (scmdr > 3) {
+		rsnd_mod_write(mod, CTU_SV30R, rsnd_kctrl_valm(ctu->sv3, 0));
+		rsnd_mod_write(mod, CTU_SV31R, rsnd_kctrl_valm(ctu->sv3, 1));
+		rsnd_mod_write(mod, CTU_SV32R, rsnd_kctrl_valm(ctu->sv3, 2));
+		rsnd_mod_write(mod, CTU_SV33R, rsnd_kctrl_valm(ctu->sv3, 3));
+		rsnd_mod_write(mod, CTU_SV34R, rsnd_kctrl_valm(ctu->sv3, 4));
+		rsnd_mod_write(mod, CTU_SV35R, rsnd_kctrl_valm(ctu->sv3, 5));
+		rsnd_mod_write(mod, CTU_SV36R, rsnd_kctrl_valm(ctu->sv3, 6));
+		rsnd_mod_write(mod, CTU_SV37R, rsnd_kctrl_valm(ctu->sv3, 7));
 	}
 
 	rsnd_mod_write(mod, CTU_CTUIR, 0);
@@ -159,10 +204,10 @@ static void rsnd_ctu_value_reset(struct rsnd_dai_stream *io,
 
 	for (i = 0; i < RSND_MAX_CHANNELS; i++) {
 		rsnd_kctrl_valm(ctu->pass, i) = 0;
-		rsnd_kctrl_valm(ctu->sv[0],  i) = 0;
-		rsnd_kctrl_valm(ctu->sv[1],  i) = 0;
-		rsnd_kctrl_valm(ctu->sv[2],  i) = 0;
-		rsnd_kctrl_valm(ctu->sv[3],  i) = 0;
+		rsnd_kctrl_valm(ctu->sv0,  i) = 0;
+		rsnd_kctrl_valm(ctu->sv1,  i) = 0;
+		rsnd_kctrl_valm(ctu->sv2,  i) = 0;
+		rsnd_kctrl_valm(ctu->sv3,  i) = 0;
 	}
 	rsnd_kctrl_vals(ctu->reset) = 0;
 }
@@ -171,11 +216,7 @@ static int rsnd_ctu_init(struct rsnd_mod *mod,
 			 struct rsnd_dai_stream *io,
 			 struct rsnd_priv *priv)
 {
-	int ret;
-
-	ret = rsnd_mod_power_on(mod);
-	if (ret < 0)
-		return ret;
+	rsnd_mod_power_on(mod);
 
 	rsnd_ctu_activation(mod);
 
@@ -191,6 +232,43 @@ static int rsnd_ctu_quit(struct rsnd_mod *mod,
 	rsnd_ctu_halt(mod);
 
 	rsnd_mod_power_off(mod);
+
+	return 0;
+}
+
+static int rsnd_ctu_hw_params(struct rsnd_mod *mod,
+			      struct rsnd_dai_stream *io,
+			      struct snd_pcm_substream *substream,
+			      struct snd_pcm_hw_params *fe_params)
+{
+	struct rsnd_ctu *ctu = rsnd_mod_to_ctu(mod);
+	struct snd_soc_pcm_runtime *fe = substream->private_data;
+
+	/*
+	 * CTU assumes that it is used under DPCM if user want to use
+	 * channel transfer. Then, CTU should be FE.
+	 * And then, this function will be called *after* BE settings.
+	 * this means, each BE already has fixuped hw_params.
+	 * see
+	 *	dpcm_fe_dai_hw_params()
+	 *	dpcm_be_dai_hw_params()
+	 */
+	ctu->channels = 0;
+	if (fe->dai_link->dynamic) {
+		struct rsnd_priv *priv = rsnd_mod_to_priv(mod);
+		struct device *dev = rsnd_priv_to_dev(priv);
+		struct snd_soc_dpcm *dpcm;
+		struct snd_pcm_hw_params *be_params;
+		int stream = substream->stream;
+
+		list_for_each_entry(dpcm, &fe->dpcm[stream].be_clients, list_be) {
+			be_params = &dpcm->hw_params;
+			if (params_channels(fe_params) != params_channels(be_params))
+				ctu->channels = params_channels(be_params);
+		}
+
+		dev_dbg(dev, "CTU convert channels %d\n", ctu->channels);
+	}
 
 	return 0;
 }
@@ -211,14 +289,12 @@ static int rsnd_ctu_pcm_new(struct rsnd_mod *mod,
 			       NULL,
 			       &ctu->pass, RSND_MAX_CHANNELS,
 			       0xC);
-	if (ret < 0)
-		return ret;
 
 	/* ROW0 */
 	ret = rsnd_kctrl_new_m(mod, io, rtd, "CTU SV0",
 			       rsnd_kctrl_accept_anytime,
 			       NULL,
-			       &ctu->sv[0], RSND_MAX_CHANNELS,
+			       &ctu->sv0, RSND_MAX_CHANNELS,
 			       0x00FFFFFF);
 	if (ret < 0)
 		return ret;
@@ -227,7 +303,7 @@ static int rsnd_ctu_pcm_new(struct rsnd_mod *mod,
 	ret = rsnd_kctrl_new_m(mod, io, rtd, "CTU SV1",
 			       rsnd_kctrl_accept_anytime,
 			       NULL,
-			       &ctu->sv[1], RSND_MAX_CHANNELS,
+			       &ctu->sv1, RSND_MAX_CHANNELS,
 			       0x00FFFFFF);
 	if (ret < 0)
 		return ret;
@@ -236,7 +312,7 @@ static int rsnd_ctu_pcm_new(struct rsnd_mod *mod,
 	ret = rsnd_kctrl_new_m(mod, io, rtd, "CTU SV2",
 			       rsnd_kctrl_accept_anytime,
 			       NULL,
-			       &ctu->sv[2], RSND_MAX_CHANNELS,
+			       &ctu->sv2, RSND_MAX_CHANNELS,
 			       0x00FFFFFF);
 	if (ret < 0)
 		return ret;
@@ -245,7 +321,7 @@ static int rsnd_ctu_pcm_new(struct rsnd_mod *mod,
 	ret = rsnd_kctrl_new_m(mod, io, rtd, "CTU SV3",
 			       rsnd_kctrl_accept_anytime,
 			       NULL,
-			       &ctu->sv[3], RSND_MAX_CHANNELS,
+			       &ctu->sv3, RSND_MAX_CHANNELS,
 			       0x00FFFFFF);
 	if (ret < 0)
 		return ret;
@@ -261,48 +337,13 @@ static int rsnd_ctu_pcm_new(struct rsnd_mod *mod,
 	return ret;
 }
 
-static int rsnd_ctu_id(struct rsnd_mod *mod)
-{
-	/*
-	 * ctu00: -> 0, ctu01: -> 0, ctu02: -> 0, ctu03: -> 0
-	 * ctu10: -> 1, ctu11: -> 1, ctu12: -> 1, ctu13: -> 1
-	 */
-	return mod->id / 4;
-}
-
-static int rsnd_ctu_id_sub(struct rsnd_mod *mod)
-{
-	/*
-	 * ctu00: -> 0, ctu01: -> 1, ctu02: -> 2, ctu03: -> 3
-	 * ctu10: -> 0, ctu11: -> 1, ctu12: -> 2, ctu13: -> 3
-	 */
-	return mod->id % 4;
-}
-
-#ifdef CONFIG_DEBUG_FS
-static void rsnd_ctu_debug_info(struct seq_file *m,
-				struct rsnd_dai_stream *io,
-				struct rsnd_mod *mod)
-{
-	rsnd_debugfs_mod_reg_show(m, mod, RSND_GEN2_SCU,
-				  0x500 + rsnd_mod_id_raw(mod) * 0x100, 0x100);
-}
-#define DEBUG_INFO .debug_info = rsnd_ctu_debug_info
-#else
-#define DEBUG_INFO
-#endif
-
 static struct rsnd_mod_ops rsnd_ctu_ops = {
 	.name		= CTU_NAME,
 	.probe		= rsnd_ctu_probe_,
 	.init		= rsnd_ctu_init,
 	.quit		= rsnd_ctu_quit,
+	.hw_params	= rsnd_ctu_hw_params,
 	.pcm_new	= rsnd_ctu_pcm_new,
-	.get_status	= rsnd_mod_get_status,
-	.id		= rsnd_ctu_id,
-	.id_sub		= rsnd_ctu_id_sub,
-	.id_cmd		= rsnd_mod_id_raw,
-	DEBUG_INFO
 };
 
 struct rsnd_mod *rsnd_ctu_mod_get(struct rsnd_priv *priv, int id)
@@ -337,7 +378,7 @@ int rsnd_ctu_probe(struct rsnd_priv *priv)
 		goto rsnd_ctu_probe_done;
 	}
 
-	ctu = devm_kcalloc(dev, nr, sizeof(*ctu), GFP_KERNEL);
+	ctu = devm_kzalloc(dev, sizeof(*ctu) * nr, GFP_KERNEL);
 	if (!ctu) {
 		ret = -ENOMEM;
 		goto rsnd_ctu_probe_done;
@@ -366,7 +407,7 @@ int rsnd_ctu_probe(struct rsnd_priv *priv)
 		}
 
 		ret = rsnd_mod_init(priv, rsnd_mod_get(ctu), &rsnd_ctu_ops,
-				    clk, RSND_MOD_CTU, i);
+				    clk, rsnd_mod_get_status, RSND_MOD_CTU, i);
 		if (ret) {
 			of_node_put(np);
 			goto rsnd_ctu_probe_done;

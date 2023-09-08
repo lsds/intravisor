@@ -1,4 +1,8 @@
-// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ */
 
 #include <linux/kernel.h>
 #include <linux/init.h>
@@ -54,6 +58,11 @@ void nft_fib4_eval_type(const struct nft_expr *expr, struct nft_regs *regs,
 }
 EXPORT_SYMBOL_GPL(nft_fib4_eval_type);
 
+static int get_ifindex(const struct net_device *dev)
+{
+	return dev ? dev->ifindex : 0;
+}
+
 void nft_fib4_eval(const struct nft_expr *expr, struct nft_regs *regs,
 		   const struct nft_pktinfo *pkt)
 {
@@ -65,10 +74,12 @@ void nft_fib4_eval(const struct nft_expr *expr, struct nft_regs *regs,
 	struct flowi4 fl4 = {
 		.flowi4_scope = RT_SCOPE_UNIVERSE,
 		.flowi4_iif = LOOPBACK_IFINDEX,
-		.flowi4_uid = sock_net_uid(nft_net(pkt), NULL),
 	};
 	const struct net_device *oif;
-	const struct net_device *found;
+	struct net_device *found;
+#ifdef CONFIG_IP_ROUTE_MULTIPATH
+	int i;
+#endif
 
 	/*
 	 * Do not set flowi4_oif, it restricts results (for example, asking
@@ -84,12 +95,10 @@ void nft_fib4_eval(const struct nft_expr *expr, struct nft_regs *regs,
 	else
 		oif = NULL;
 
-	if (priv->flags & NFTA_FIB_F_IIF)
-		fl4.flowi4_l3mdev = l3mdev_master_ifindex_rcu(oif);
-
 	if (nft_hook(pkt) == NF_INET_PRE_ROUTING &&
 	    nft_fib_is_loopback(pkt->skb, nft_in(pkt))) {
-		nft_fib_store_result(dest, priv, nft_in(pkt));
+		nft_fib_store_result(dest, priv, pkt,
+				     nft_in(pkt)->ifindex);
 		return;
 	}
 
@@ -102,7 +111,8 @@ void nft_fib4_eval(const struct nft_expr *expr, struct nft_regs *regs,
 	if (ipv4_is_zeronet(iph->saddr)) {
 		if (ipv4_is_lbcast(iph->daddr) ||
 		    ipv4_is_local_multicast(iph->daddr)) {
-			nft_fib_store_result(dest, priv, pkt->skb->dev);
+			nft_fib_store_result(dest, priv, pkt,
+					     get_ifindex(pkt->skb->dev));
 			return;
 		}
 	}
@@ -116,10 +126,6 @@ void nft_fib4_eval(const struct nft_expr *expr, struct nft_regs *regs,
 		fl4.daddr = iph->daddr;
 		fl4.saddr = get_saddr(iph->saddr);
 	} else {
-		if (nft_hook(pkt) == NF_INET_FORWARD &&
-		    priv->flags & NFTA_FIB_F_IIF)
-			fl4.flowi4_iif = nft_out(pkt)->ifindex;
-
 		fl4.daddr = iph->saddr;
 		fl4.saddr = get_saddr(iph->daddr);
 	}
@@ -140,14 +146,36 @@ void nft_fib4_eval(const struct nft_expr *expr, struct nft_regs *regs,
 
        if (!oif) {
                found = FIB_RES_DEV(res);
-	} else {
-		if (!fib_info_nh_uses_dev(res.fi, oif))
-			return;
+               goto ok;
+       }
 
-		found = oif;
+#ifdef CONFIG_IP_ROUTE_MULTIPATH
+	for (i = 0; i < res.fi->fib_nhs; i++) {
+		struct fib_nh *nh = &res.fi->fib_nh[i];
+
+		if (nh->nh_dev == oif) {
+			found = nh->nh_dev;
+			goto ok;
+		}
 	}
-
-	nft_fib_store_result(dest, priv, found);
+	return;
+#else
+	found = FIB_RES_DEV(res);
+	if (found != oif)
+		return;
+#endif
+ok:
+	switch (priv->result) {
+	case NFT_FIB_RESULT_OIF:
+		*dest = found->ifindex;
+		break;
+	case NFT_FIB_RESULT_OIFNAME:
+		strncpy((char *)dest, found->name, IFNAMSIZ);
+		break;
+	default:
+		WARN_ON_ONCE(1);
+		break;
+	}
 }
 EXPORT_SYMBOL_GPL(nft_fib4_eval);
 
@@ -160,7 +188,6 @@ static const struct nft_expr_ops nft_fib4_type_ops = {
 	.init		= nft_fib_init,
 	.dump		= nft_fib_dump,
 	.validate	= nft_fib_validate,
-	.reduce		= nft_fib_reduce,
 };
 
 static const struct nft_expr_ops nft_fib4_ops = {
@@ -170,7 +197,6 @@ static const struct nft_expr_ops nft_fib4_ops = {
 	.init		= nft_fib_init,
 	.dump		= nft_fib_dump,
 	.validate	= nft_fib_validate,
-	.reduce		= nft_fib_reduce,
 };
 
 static const struct nft_expr_ops *
@@ -220,4 +246,3 @@ module_exit(nft_fib4_module_exit);
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Florian Westphal <fw@strlen.de>");
 MODULE_ALIAS_NFT_AF_EXPR(2, "fib");
-MODULE_DESCRIPTION("nftables fib / ip route lookup support");

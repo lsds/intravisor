@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  *   Sharp VA3A5JZ921 One Seg Broadcast Module driver
  *   This device is labeled as just S. 921 at the top of the frontend can
@@ -12,6 +11,15 @@
  *	the old s921 driver.
  *
  *   FIXME: Need to port to DVB v5.2 API
+ *
+ *   This program is free software; you can redistribute it and/or
+ *   modify it under the terms of the GNU General Public License as
+ *   published by the Free Software Foundation version 2.
+ *
+ *   This program is distributed in the hope that it will be useful,
+ *   but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ *   General Public License for more details.
  */
 
 #include <linux/kernel.h>
@@ -456,7 +464,7 @@ static int s921_tune(struct dvb_frontend *fe,
 	return rc;
 }
 
-static enum dvbfe_algo s921_get_algo(struct dvb_frontend *fe)
+static int s921_get_algo(struct dvb_frontend *fe)
 {
 	return DVBFE_ALGO_HW;
 }
@@ -502,14 +510,15 @@ static const struct dvb_frontend_ops s921_ops = {
 	/* Use dib8000 values per default */
 	.info = {
 		.name = "Sharp S921",
-		.frequency_min_hz = 470 * MHz,
+		.frequency_min = 470000000,
 		/*
 		 * Max should be 770MHz instead, according with Sharp docs,
 		 * but Leadership doc says it works up to 806 MHz. This is
 		 * required to get channel 69, used in Brazil
 		 */
-		.frequency_max_hz = 806 * MHz,
-		.caps =  FE_CAN_INVERSION_AUTO |
+		.frequency_max = 806000000,
+		.frequency_tolerance = 0,
+		 .caps = FE_CAN_INVERSION_AUTO |
 			 FE_CAN_FEC_1_2  | FE_CAN_FEC_2_3 | FE_CAN_FEC_3_4 |
 			 FE_CAN_FEC_5_6  | FE_CAN_FEC_7_8 | FE_CAN_FEC_AUTO |
 			 FE_CAN_QPSK     | FE_CAN_QAM_16 | FE_CAN_QAM_64 |

@@ -1,20 +1,27 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * SMBus driver for ACPI SMBus CMI
  *
  * Copyright (C) 2009 Crane Cai <crane.cai@amd.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation version 2.
  */
 
 #include <linux/module.h>
-#include <linux/platform_device.h>
 #include <linux/slab.h>
 #include <linux/kernel.h>
 #include <linux/stddef.h>
 #include <linux/i2c.h>
 #include <linux/acpi.h>
 
+#define ACPI_SMBUS_HC_CLASS		"smbus"
+#define ACPI_SMBUS_HC_DEVICE_NAME	"cmi"
+
 /* SMBUS HID definition as supported by Microsoft Windows */
 #define ACPI_SMBUS_MS_HID		"SMB0001"
+
+ACPI_MODULE_NAME("smbus_cmi");
 
 struct smbus_methods_t {
 	char *mt_info;
@@ -28,7 +35,7 @@ struct acpi_smbus_cmi {
 	u8 cap_info:1;
 	u8 cap_read:1;
 	u8 cap_write:1;
-	const struct smbus_methods_t *methods;
+	struct smbus_methods_t *methods;
 };
 
 static const struct smbus_methods_t smbus_methods = {
@@ -145,7 +152,6 @@ acpi_smbus_cmi_access(struct i2c_adapter *adap, u16 addr, unsigned short flags,
 			mt_params[3].type = ACPI_TYPE_INTEGER;
 			mt_params[3].integer.value = len;
 			mt_params[4].type = ACPI_TYPE_BUFFER;
-			mt_params[4].buffer.length = len;
 			mt_params[4].buffer.pointer = data->block + 1;
 		}
 		break;
@@ -356,43 +362,44 @@ static acpi_status acpi_smbus_cmi_query_methods(acpi_handle handle, u32 level,
 	return AE_OK;
 }
 
-static int smbus_cmi_probe(struct platform_device *device)
+static int acpi_smbus_cmi_add(struct acpi_device *device)
 {
-	struct device *dev = &device->dev;
 	struct acpi_smbus_cmi *smbus_cmi;
-	int ret;
+	const struct acpi_device_id *id;
 
 	smbus_cmi = kzalloc(sizeof(struct acpi_smbus_cmi), GFP_KERNEL);
 	if (!smbus_cmi)
 		return -ENOMEM;
 
-	smbus_cmi->handle = ACPI_HANDLE(dev);
-	smbus_cmi->methods = device_get_match_data(dev);
-
-	platform_set_drvdata(device, smbus_cmi);
-
+	smbus_cmi->handle = device->handle;
+	strcpy(acpi_device_name(device), ACPI_SMBUS_HC_DEVICE_NAME);
+	strcpy(acpi_device_class(device), ACPI_SMBUS_HC_CLASS);
+	device->driver_data = smbus_cmi;
 	smbus_cmi->cap_info = 0;
 	smbus_cmi->cap_read = 0;
 	smbus_cmi->cap_write = 0;
 
+	for (id = acpi_smbus_cmi_ids; id->id[0]; id++)
+		if (!strcmp(id->id, acpi_device_hid(device)))
+			smbus_cmi->methods =
+				(struct smbus_methods_t *) id->driver_data;
+
 	acpi_walk_namespace(ACPI_TYPE_METHOD, smbus_cmi->handle, 1,
 			    acpi_smbus_cmi_query_methods, NULL, smbus_cmi, NULL);
 
-	if (smbus_cmi->cap_info == 0) {
-		ret = -ENODEV;
+	if (smbus_cmi->cap_info == 0)
 		goto err;
-	}
 
 	snprintf(smbus_cmi->adapter.name, sizeof(smbus_cmi->adapter.name),
-		 "SMBus CMI adapter %s", dev_name(dev));
+		"SMBus CMI adapter %s",
+		acpi_device_name(device));
 	smbus_cmi->adapter.owner = THIS_MODULE;
 	smbus_cmi->adapter.algo = &acpi_smbus_cmi_algorithm;
 	smbus_cmi->adapter.algo_data = smbus_cmi;
 	smbus_cmi->adapter.class = I2C_CLASS_HWMON | I2C_CLASS_SPD;
 	smbus_cmi->adapter.dev.parent = &device->dev;
 
-	ret = i2c_add_adapter(&smbus_cmi->adapter);
-	if (ret) {
+	if (i2c_add_adapter(&smbus_cmi->adapter)) {
 		dev_err(&device->dev, "Couldn't register adapter!\n");
 		goto err;
 	}
@@ -401,28 +408,31 @@ static int smbus_cmi_probe(struct platform_device *device)
 
 err:
 	kfree(smbus_cmi);
-	return ret;
+	device->driver_data = NULL;
+	return -EIO;
 }
 
-static int smbus_cmi_remove(struct platform_device *device)
+static int acpi_smbus_cmi_remove(struct acpi_device *device)
 {
-	struct acpi_smbus_cmi *smbus_cmi = platform_get_drvdata(device);
+	struct acpi_smbus_cmi *smbus_cmi = acpi_driver_data(device);
 
 	i2c_del_adapter(&smbus_cmi->adapter);
 	kfree(smbus_cmi);
+	device->driver_data = NULL;
 
 	return 0;
 }
 
-static struct platform_driver smbus_cmi_driver = {
-	.probe = smbus_cmi_probe,
-	.remove = smbus_cmi_remove,
-	.driver = {
-		.name   = "smbus_cmi",
-		.acpi_match_table = acpi_smbus_cmi_ids,
+static struct acpi_driver acpi_smbus_cmi_driver = {
+	.name = ACPI_SMBUS_HC_DEVICE_NAME,
+	.class = ACPI_SMBUS_HC_CLASS,
+	.ids = acpi_smbus_cmi_ids,
+	.ops = {
+		.add = acpi_smbus_cmi_add,
+		.remove = acpi_smbus_cmi_remove,
 	},
 };
-module_platform_driver(smbus_cmi_driver);
+module_acpi_driver(acpi_smbus_cmi_driver);
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Crane Cai <crane.cai@amd.com>");

@@ -1,9 +1,17 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * CAN driver for PEAK System micro-CAN based adapters
  *
  * Copyright (C) 2003-2011 PEAK System-Technik GmbH
  * Copyright (C) 2011-2013 Stephane Grosjean <s.grosjean@peak-system.com>
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License as published
+ * by the Free Software Foundation; version 2 of the License.
+ *
+ * This program is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * General Public License for more details.
  */
 #ifndef PUCAN_H
 #define PUCAN_H
@@ -189,7 +197,7 @@ struct __packed pucan_rx_msg {
 	u8	client;
 	__le16	flags;
 	__le32	can_id;
-	u8	d[];
+	u8	d[0];
 };
 
 /* uCAN error types */
@@ -266,7 +274,7 @@ struct __packed pucan_tx_msg {
 	u8	client;
 	__le16	flags;
 	__le32	can_id;
-	u8	d[];
+	u8	d[0];
 };
 
 /* build the cmd opcode_channel field with respect to the correct endianness */
@@ -282,7 +290,7 @@ static inline int pucan_msg_get_channel(const struct pucan_rx_msg *msg)
 }
 
 /* return the dlc value from any received message channel_dlc field */
-static inline u8 pucan_msg_get_dlc(const struct pucan_rx_msg *msg)
+static inline int pucan_msg_get_dlc(const struct pucan_rx_msg *msg)
 {
 	return msg->channel_dlc >> 4;
 }

@@ -24,8 +24,6 @@ static inline struct task_struct *get_current(void)
 
 #define	current	get_current()
 
-#endif /* CONFIG_MMU */
-
-register unsigned long current_stack_pointer __asm__("sp");
+#endif /* CONFNIG_MMU */
 
 #endif /* !(_M68K_CURRENT_H) */

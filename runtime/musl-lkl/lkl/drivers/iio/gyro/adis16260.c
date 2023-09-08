@@ -1,16 +1,22 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * ADIS16260/ADIS16265 Programmable Digital Gyroscope Sensor Driver
  *
  * Copyright 2010 Analog Devices Inc.
+ *
+ * Licensed under the GPL-2 or later.
  */
 
+#include <linux/interrupt.h>
+#include <linux/mutex.h>
 #include <linux/device.h>
 #include <linux/kernel.h>
 #include <linux/spi/spi.h>
+#include <linux/sysfs.h>
 #include <linux/module.h>
 
 #include <linux/iio/iio.h>
+#include <linux/iio/sysfs.h>
+#include <linux/iio/buffer.h>
 #include <linux/iio/imu/adis.h>
 
 #define ADIS16260_STARTUP_DELAY	220 /* ms */
@@ -288,7 +294,7 @@ static int adis16260_write_raw(struct iio_dev *indio_dev,
 		addr = adis16260_addresses[chan->scan_index][1];
 		return adis_write_reg_16(adis, addr, val);
 	case IIO_CHAN_INFO_SAMP_FREQ:
-		adis_dev_lock(adis);
+		mutex_lock(&indio_dev->mlock);
 		if (spi_get_device_id(adis->spi)->driver_data)
 			t = 256 / val;
 		else
@@ -303,9 +309,9 @@ static int adis16260_write_raw(struct iio_dev *indio_dev,
 			adis->spi->max_speed_hz = ADIS16260_SPI_SLOW;
 		else
 			adis->spi->max_speed_hz = ADIS16260_SPI_FAST;
-		ret = __adis_write_reg_8(adis, ADIS16260_SMPL_PRD, t);
+		ret = adis_write_reg_8(adis, ADIS16260_SMPL_PRD, t);
 
-		adis_dev_unlock(adis);
+		mutex_unlock(&indio_dev->mlock);
 		return ret;
 	}
 	return -EINVAL;
@@ -327,12 +333,6 @@ static const char * const adis1620_status_error_msgs[] = {
 	[ADIS16260_DIAG_STAT_POWER_LOW_BIT] = "Power supply below 4.75",
 };
 
-static const struct adis_timeout adis16260_timeouts = {
-	.reset_ms = ADIS16260_STARTUP_DELAY,
-	.sw_reset_ms = ADIS16260_STARTUP_DELAY,
-	.self_test_ms = ADIS16260_STARTUP_DELAY,
-};
-
 static const struct adis_data adis16260_data = {
 	.write_delay = 30,
 	.read_delay = 30,
@@ -341,8 +341,7 @@ static const struct adis_data adis16260_data = {
 	.diag_stat_reg = ADIS16260_DIAG_STAT,
 
 	.self_test_mask = ADIS16260_MSC_CTRL_MEM_TEST,
-	.self_test_reg = ADIS16260_MSC_CTRL,
-	.timeouts = &adis16260_timeouts,
+	.startup_delay = ADIS16260_STARTUP_DELAY,
 
 	.status_error_msgs = adis1620_status_error_msgs,
 	.status_error_mask = BIT(ADIS16260_DIAG_STAT_FLASH_CHK_BIT) |
@@ -353,11 +352,6 @@ static const struct adis_data adis16260_data = {
 		BIT(ADIS16260_DIAG_STAT_POWER_HIGH_BIT) |
 		BIT(ADIS16260_DIAG_STAT_POWER_LOW_BIT),
 };
-
-static void adis16260_stop(void *data)
-{
-	adis16260_stop_device(data);
-}
 
 static int adis16260_probe(struct spi_device *spi)
 {
@@ -381,6 +375,7 @@ static int adis16260_probe(struct spi_device *spi)
 	adis16260->info = &adis16260_chip_info_table[id->driver_data];
 
 	indio_dev->name = id->name;
+	indio_dev->dev.parent = &spi->dev;
 	indio_dev->info = &adis16260_info;
 	indio_dev->channels = adis16260->info->channels;
 	indio_dev->num_channels = adis16260->info->num_channels;
@@ -390,20 +385,35 @@ static int adis16260_probe(struct spi_device *spi)
 	if (ret)
 		return ret;
 
-	ret = devm_adis_setup_buffer_and_trigger(&adis16260->adis, indio_dev, NULL);
+	ret = adis_setup_buffer_and_trigger(&adis16260->adis, indio_dev, NULL);
 	if (ret)
 		return ret;
 
 	/* Get the device into a sane initial state */
 	ret = adis_initial_startup(&adis16260->adis);
 	if (ret)
-		return ret;
-
-	ret = devm_add_action_or_reset(&spi->dev, adis16260_stop, indio_dev);
+		goto error_cleanup_buffer_trigger;
+	ret = iio_device_register(indio_dev);
 	if (ret)
-		return ret;
+		goto error_cleanup_buffer_trigger;
 
-	return devm_iio_device_register(&spi->dev, indio_dev);
+	return 0;
+
+error_cleanup_buffer_trigger:
+	adis_cleanup_buffer_and_trigger(&adis16260->adis, indio_dev);
+	return ret;
+}
+
+static int adis16260_remove(struct spi_device *spi)
+{
+	struct iio_dev *indio_dev = spi_get_drvdata(spi);
+	struct adis16260 *adis16260 = iio_priv(indio_dev);
+
+	iio_device_unregister(indio_dev);
+	adis16260_stop_device(indio_dev);
+	adis_cleanup_buffer_and_trigger(&adis16260->adis, indio_dev);
+
+	return 0;
 }
 
 /*
@@ -426,6 +436,7 @@ static struct spi_driver adis16260_driver = {
 		.name = "adis16260",
 	},
 	.probe = adis16260_probe,
+	.remove = adis16260_remove,
 	.id_table = adis16260_id,
 };
 module_spi_driver(adis16260_driver);
@@ -433,4 +444,3 @@ module_spi_driver(adis16260_driver);
 MODULE_AUTHOR("Barry Song <21cnbao@gmail.com>");
 MODULE_DESCRIPTION("Analog Devices ADIS16260/5 Digital Gyroscope Sensor");
 MODULE_LICENSE("GPL v2");
-MODULE_IMPORT_NS(IIO_ADISLIB);

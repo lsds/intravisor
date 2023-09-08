@@ -26,9 +26,11 @@
 
 	gpio-keys {
 		compatible = "gpio-keys";
+		#address-cells = <1>;
+		#size-cells = <0>;
 		autorepeat;
 
-		key-back {
+		back {
 			gpios = <&gpio4 26 GPIO_ACTIVE_LOW>;
 			linux,code = <KEY_BACK>;
 			label = "Key Back";
@@ -37,7 +39,7 @@
 			wakeup-source;
 		};
 
-		key-home {
+		home {
 			gpios = <&gpio5 11 GPIO_ACTIVE_LOW>;
 			linux,code = <KEY_HOME>;
 			label = "Key Home";
@@ -46,7 +48,7 @@
 			wakeup-source;
 		};
 
-		key-menu {
+		menu {
 			gpios = <&gpio4 25 GPIO_ACTIVE_LOW>;
 			linux,code = <KEY_MENU>;
 			label = "Key Menu";
@@ -144,8 +146,8 @@
 };
 
 &ecspi1 {
-	cs-gpios = <&gpio4 9 GPIO_ACTIVE_LOW>,
-		   <&gpio4 10 GPIO_ACTIVE_LOW>;
+	cs-gpios = <&gpio4 9 GPIO_ACTIVE_HIGH>,
+		   <&gpio4 10 GPIO_ACTIVE_HIGH>;
 	status = "okay";
 };
 
@@ -177,7 +179,6 @@
 		touchscreen-size-y = <480>;
 		touchscreen-inverted-x;
 		touchscreen-inverted-y;
-		wakeup-source;
 	};
 
 	rtc@68 {
@@ -203,7 +204,6 @@
 };
 
 &pwm2 {
-	#pwm-cells = <2>;
 	status = "okay";
 };
 

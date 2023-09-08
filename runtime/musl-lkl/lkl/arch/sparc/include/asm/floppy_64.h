@@ -47,9 +47,8 @@ unsigned long fdc_status;
 static struct platform_device *floppy_op = NULL;
 
 struct sun_floppy_ops {
-	unsigned char	(*fd_inb) (unsigned long port, unsigned int reg);
-	void		(*fd_outb) (unsigned char value, unsigned long base,
-				    unsigned int reg);
+	unsigned char	(*fd_inb) (unsigned long port);
+	void		(*fd_outb) (unsigned char value, unsigned long port);
 	void		(*fd_enable_dma) (void);
 	void		(*fd_disable_dma) (void);
 	void		(*fd_set_dma_mode) (int);
@@ -63,8 +62,8 @@ struct sun_floppy_ops {
 
 static struct sun_floppy_ops sun_fdops;
 
-#define fd_inb(base, reg)         sun_fdops.fd_inb(base, reg)
-#define fd_outb(value, base, reg) sun_fdops.fd_outb(value, base, reg)
+#define fd_inb(port)              sun_fdops.fd_inb(port)
+#define fd_outb(value,port)       sun_fdops.fd_outb(value,port)
 #define fd_enable_dma()           sun_fdops.fd_enable_dma()
 #define fd_disable_dma()          sun_fdops.fd_disable_dma()
 #define fd_request_dma()          (0) /* nothing... */
@@ -98,43 +97,42 @@ static int sun_floppy_types[2] = { 0, 0 };
 /* No 64k boundary crossing problems on the Sparc. */
 #define CROSS_64KB(a,s) (0)
 
-static unsigned char sun_82077_fd_inb(unsigned long base, unsigned int reg)
+static unsigned char sun_82077_fd_inb(unsigned long port)
 {
 	udelay(5);
-	switch (reg) {
+	switch(port & 7) {
 	default:
-		printk("floppy: Asked to read unknown port %x\n", reg);
+		printk("floppy: Asked to read unknown port %lx\n", port);
 		panic("floppy: Port bolixed.");
-	case FD_STATUS:
+	case 4: /* FD_STATUS */
 		return sbus_readb(&sun_fdc->status_82077) & ~STATUS_DMA;
-	case FD_DATA:
+	case 5: /* FD_DATA */
 		return sbus_readb(&sun_fdc->data_82077);
-	case FD_DIR:
+	case 7: /* FD_DIR */
 		/* XXX: Is DCL on 0x80 in sun4m? */
 		return sbus_readb(&sun_fdc->dir_82077);
 	}
 	panic("sun_82072_fd_inb: How did I get here?");
 }
 
-static void sun_82077_fd_outb(unsigned char value, unsigned long base,
-			      unsigned int reg)
+static void sun_82077_fd_outb(unsigned char value, unsigned long port)
 {
 	udelay(5);
-	switch (reg) {
+	switch(port & 7) {
 	default:
-		printk("floppy: Asked to write to unknown port %x\n", reg);
+		printk("floppy: Asked to write to unknown port %lx\n", port);
 		panic("floppy: Port bolixed.");
-	case FD_DOR:
+	case 2: /* FD_DOR */
 		/* Happily, the 82077 has a real DOR register. */
 		sbus_writeb(value, &sun_fdc->dor_82077);
 		break;
-	case FD_DATA:
+	case 5: /* FD_DATA */
 		sbus_writeb(value, &sun_fdc->data_82077);
 		break;
-	case FD_DCR:
+	case 7: /* FD_DCR */
 		sbus_writeb(value, &sun_fdc->dcr_82077);
 		break;
-	case FD_DSR:
+	case 4: /* FD_STATUS */
 		sbus_writeb(value, &sun_fdc->status_82077);
 		break;
 	}
@@ -300,21 +298,19 @@ static struct sun_pci_dma_op sun_pci_dma_pending = { -1U, 0, 0, NULL};
 
 irqreturn_t floppy_interrupt(int irq, void *dev_id);
 
-static unsigned char sun_pci_fd_inb(unsigned long base, unsigned int reg)
+static unsigned char sun_pci_fd_inb(unsigned long port)
 {
 	udelay(5);
-	return inb(base + reg);
+	return inb(port);
 }
 
-static void sun_pci_fd_outb(unsigned char val, unsigned long base,
-			    unsigned int reg)
+static void sun_pci_fd_outb(unsigned char val, unsigned long port)
 {
 	udelay(5);
-	outb(val, base + reg);
+	outb(val, port);
 }
 
-static void sun_pci_fd_broken_outb(unsigned char val, unsigned long base,
-				   unsigned int reg)
+static void sun_pci_fd_broken_outb(unsigned char val, unsigned long port)
 {
 	udelay(5);
 	/*
@@ -324,17 +320,16 @@ static void sun_pci_fd_broken_outb(unsigned char val, unsigned long base,
 	 *      this does not hurt correct hardware like the AXmp.
 	 *      (Eddie, Sep 12 1998).
 	 */
-	if (reg == FD_DOR) {
+	if (port == ((unsigned long)sun_fdc) + 2) {
 		if (((val & 0x03) == sun_pci_broken_drive) && (val & 0x20)) {
 			val |= 0x10;
 		}
 	}
-	outb(val, base + reg);
+	outb(val, port);
 }
 
 #ifdef PCI_FDC_SWAP_DRIVES
-static void sun_pci_fd_lde_broken_outb(unsigned char val, unsigned long base,
-				       unsigned int reg)
+static void sun_pci_fd_lde_broken_outb(unsigned char val, unsigned long port)
 {
 	udelay(5);
 	/*
@@ -344,13 +339,13 @@ static void sun_pci_fd_lde_broken_outb(unsigned char val, unsigned long base,
 	 *      this does not hurt correct hardware like the AXmp.
 	 *      (Eddie, Sep 12 1998).
 	 */
-	if (reg == FD_DOR) {
+	if (port == ((unsigned long)sun_fdc) + 2) {
 		if (((val & 0x03) == sun_pci_broken_drive) && (val & 0x10)) {
 			val &= ~(0x03);
 			val |= 0x21;
 		}
 	}
-	outb(val, base + reg);
+	outb(val, port);
 }
 #endif /* PCI_FDC_SWAP_DRIVES */
 
@@ -533,9 +528,9 @@ static int sun_pci_fd_test_drive(unsigned long port, int drive)
 
 static int __init ebus_fdthree_p(struct device_node *dp)
 {
-	if (of_node_name_eq(dp, "fdthree"))
+	if (!strcmp(dp->name, "fdthree"))
 		return 1;
-	if (of_node_name_eq(dp, "floppy")) {
+	if (!strcmp(dp->name, "floppy")) {
 		const char *compat;
 
 		compat = of_get_property(dp, "compatible", NULL);
@@ -560,7 +555,7 @@ static unsigned long __init sun_floppy_init(void)
 	op = NULL;
 
 	for_each_node_by_name(dp, "SUNW,fdtwo") {
-		if (!of_node_name_eq(dp->parent, "sbus"))
+		if (strcmp(dp->parent->name, "sbus"))
 			continue;
 		op = of_find_device_by_node(dp);
 		if (op)
@@ -661,7 +656,7 @@ static unsigned long __init sun_floppy_init(void)
 		 */
 		config = 0;
 		for (dp = ebus_dp->child; dp; dp = dp->sibling) {
-			if (of_node_name_eq(dp, "ecpp")) {
+			if (!strcmp(dp->name, "ecpp")) {
 				struct platform_device *ecpp_op;
 
 				ecpp_op = of_find_device_by_node(dp);

@@ -60,7 +60,7 @@ static DEFINE_MUTEX(misc_mtx);
 /*
  * Assigned numbers, used for dynamic minors
  */
-#define DYNAMIC_MINORS 128 /* like dynamic majors */
+#define DYNAMIC_MINORS 64 /* like dynamic majors */
 static DECLARE_BITMAP(misc_minors, DYNAMIC_MINORS);
 
 #ifdef CONFIG_PROC_FS
@@ -95,23 +95,35 @@ static const struct seq_operations misc_seq_ops = {
 	.stop  = misc_seq_stop,
 	.show  = misc_seq_show,
 };
+
+static int misc_seq_open(struct inode *inode, struct file *file)
+{
+	return seq_open(file, &misc_seq_ops);
+}
+
+static const struct file_operations misc_proc_fops = {
+	.owner	 = THIS_MODULE,
+	.open    = misc_seq_open,
+	.read    = seq_read,
+	.llseek  = seq_lseek,
+	.release = seq_release,
+};
 #endif
 
 static int misc_open(struct inode *inode, struct file *file)
 {
 	int minor = iminor(inode);
-	struct miscdevice *c = NULL, *iter;
+	struct miscdevice *c;
 	int err = -ENODEV;
 	const struct file_operations *new_fops = NULL;
 
 	mutex_lock(&misc_mtx);
 
-	list_for_each_entry(iter, &misc_list, list) {
-		if (iter->minor != minor)
-			continue;
-		c = iter;
-		new_fops = fops_get(iter->fops);
-		break;
+	list_for_each_entry(c, &misc_list, list) {
+		if (c->minor == minor) {
+			new_fops = fops_get(c->fops);
+			break;
+		}
 	}
 
 	if (!new_fops) {
@@ -119,12 +131,11 @@ static int misc_open(struct inode *inode, struct file *file)
 		request_module("char-major-%d-%d", MISC_MAJOR, minor);
 		mutex_lock(&misc_mtx);
 
-		list_for_each_entry(iter, &misc_list, list) {
-			if (iter->minor != minor)
-				continue;
-			c = iter;
-			new_fops = fops_get(iter->fops);
-			break;
+		list_for_each_entry(c, &misc_list, list) {
+			if (c->minor == minor) {
+				new_fops = fops_get(c->fops);
+				break;
+			}
 		}
 		if (!new_fops)
 			goto fail;
@@ -228,7 +239,6 @@ int misc_register(struct miscdevice *misc)
 	mutex_unlock(&misc_mtx);
 	return err;
 }
-EXPORT_SYMBOL(misc_register);
 
 /**
  *	misc_deregister - unregister a miscellaneous device
@@ -252,6 +262,8 @@ void misc_deregister(struct miscdevice *misc)
 		clear_bit(i, misc_minors);
 	mutex_unlock(&misc_mtx);
 }
+
+EXPORT_SYMBOL(misc_register);
 EXPORT_SYMBOL(misc_deregister);
 
 static char *misc_devnode(struct device *dev, umode_t *mode)
@@ -270,7 +282,7 @@ static int __init misc_init(void)
 	int err;
 	struct proc_dir_entry *ret;
 
-	ret = proc_create_seq("misc", 0, NULL, &misc_seq_ops);
+	ret = proc_create("misc", 0, NULL, &misc_proc_fops);
 	misc_class = class_create(THIS_MODULE, "misc");
 	err = PTR_ERR(misc_class);
 	if (IS_ERR(misc_class))

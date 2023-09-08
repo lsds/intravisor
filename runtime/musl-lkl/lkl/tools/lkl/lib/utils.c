@@ -159,32 +159,8 @@ void lkl_perror(char *msg, int err)
 	lkl_printf("%s: %s\n", msg, err_msg);
 }
 
-#if 0
-static int lkl_vprintf(const char *fmt, va_list args)
-{
-	int n;
-	char *buffer;
-	va_list copy;
 
-	if (!lkl_host_ops.print)
-		return 0;
 
-	va_copy(copy, args);
-	n = vsnprintf(NULL, 0, fmt, copy);
-	va_end(copy);
-
-	buffer = lkl_host_ops.mem_alloc(n + 1);
-	if (!buffer)
-		return -1;
-
-	vsnprintf(buffer, n + 1, fmt, args);
-
-	lkl_host_ops.print(buffer, n);
-	lkl_host_ops.mem_free(buffer);
-
-	return n;
-}
-#else
 static int lkl_vprintf(const char *fmt, va_list args)
 {
 #define BSIZE	4096*4
@@ -221,8 +197,6 @@ static int lkl_vprintf(const char *fmt, va_list args)
 
 	return n;
 }
-
-#endif
 
 int lkl_printf(const char *fmt, ...)
 {

@@ -40,10 +40,53 @@
 static void __qib_release_user_pages(struct page **p, size_t num_pages,
 				     int dirty)
 {
-	unpin_user_pages_dirty_lock(p, num_pages, dirty);
+	size_t i;
+
+	for (i = 0; i < num_pages; i++) {
+		if (dirty)
+			set_page_dirty_lock(p[i]);
+		put_page(p[i]);
+	}
 }
 
 /*
+ * Call with current->mm->mmap_sem held.
+ */
+static int __qib_get_user_pages(unsigned long start_page, size_t num_pages,
+				struct page **p)
+{
+	unsigned long lock_limit;
+	size_t got;
+	int ret;
+
+	lock_limit = rlimit(RLIMIT_MEMLOCK) >> PAGE_SHIFT;
+
+	if (num_pages > lock_limit && !capable(CAP_IPC_LOCK)) {
+		ret = -ENOMEM;
+		goto bail;
+	}
+
+	for (got = 0; got < num_pages; got += ret) {
+		ret = get_user_pages(start_page + got * PAGE_SIZE,
+				     num_pages - got,
+				     FOLL_WRITE | FOLL_FORCE,
+				     p + got, NULL);
+		if (ret < 0)
+			goto bail_release;
+	}
+
+	current->mm->pinned_vm += num_pages;
+
+	ret = 0;
+	goto bail;
+
+bail_release:
+	__qib_release_user_pages(p, got, 0);
+bail:
+	return ret;
+}
+
+/**
  * qib_map_page - a safety wrapper around pci_map_page()
  *
  * A dma_addr of all 0's is interpreted by the chip as "disabled".
@@ -56,27 +99,23 @@ static void __qib_release_user_pages(struct page **p, size_t num_pages,
  *
  * I'm sure we won't be so lucky with other iommu's, so FIXME.
  */
-int qib_map_page(struct pci_dev *hwdev, struct page *page, dma_addr_t *daddr)
+dma_addr_t qib_map_page(struct pci_dev *hwdev, struct page *page,
+			unsigned long offset, size_t size, int direction)
 {
 	dma_addr_t phys;
 
-	phys = dma_map_page(&hwdev->dev, page, 0, PAGE_SIZE, DMA_FROM_DEVICE);
-	if (dma_mapping_error(&hwdev->dev, phys))
-		return -ENOMEM;
+	phys = pci_map_page(hwdev, page, offset, size, direction);
 
-	if (!phys) {
-		dma_unmap_page(&hwdev->dev, phys, PAGE_SIZE, DMA_FROM_DEVICE);
-		phys = dma_map_page(&hwdev->dev, page, 0, PAGE_SIZE,
-				    DMA_FROM_DEVICE);
-		if (dma_mapping_error(&hwdev->dev, phys))
-			return -ENOMEM;
+	if (phys == 0) {
+		pci_unmap_page(hwdev, phys, size, direction);
+		phys = pci_map_page(hwdev, page, offset, size, direction);
 		/*
 		 * FIXME: If we get 0 again, we should keep this page,
 		 * map another, then free the 0 page.
 		 */
 	}
-	*daddr = phys;
-	return 0;
+
+	return phys;
 }
 
 /**
@@ -94,44 +133,26 @@ int qib_map_page(struct pci_dev *hwdev, struct page *page, dma_addr_t *daddr)
 int qib_get_user_pages(unsigned long start_page, size_t num_pages,
 		       struct page **p)
 {
-	unsigned long locked, lock_limit;
-	size_t got;
 	int ret;
 
-	lock_limit = rlimit(RLIMIT_MEMLOCK) >> PAGE_SHIFT;
-	locked = atomic64_add_return(num_pages, &current->mm->pinned_vm);
+	down_write(&current->mm->mmap_sem);
 
-	if (locked > lock_limit && !capable(CAP_IPC_LOCK)) {
-		ret = -ENOMEM;
-		goto bail;
-	}
+	ret = __qib_get_user_pages(start_page, num_pages, p);
 
-	mmap_read_lock(current->mm);
-	for (got = 0; got < num_pages; got += ret) {
-		ret = pin_user_pages(start_page + got * PAGE_SIZE,
-				     num_pages - got,
-				     FOLL_LONGTERM | FOLL_WRITE | FOLL_FORCE,
-				     p + got, NULL);
-		if (ret < 0) {
-			mmap_read_unlock(current->mm);
-			goto bail_release;
-		}
-	}
-	mmap_read_unlock(current->mm);
+	up_write(&current->mm->mmap_sem);
 
-	return 0;
-bail_release:
-	__qib_release_user_pages(p, got, 0);
-bail:
-	atomic64_sub(num_pages, &current->mm->pinned_vm);
 	return ret;
 }
 
 void qib_release_user_pages(struct page **p, size_t num_pages)
 {
+	if (current->mm) /* during close after signal, mm can be NULL */
+		down_write(&current->mm->mmap_sem);
+
 	__qib_release_user_pages(p, num_pages, 1);
 
-	/* during close after signal, mm can be NULL */
-	if (current->mm)
-		atomic64_sub(num_pages, &current->mm->pinned_vm);
+	if (current->mm) {
+		current->mm->pinned_vm -= num_pages;
+		up_write(&current->mm->mmap_sem);
+	}
 }

@@ -32,13 +32,14 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/wait.h>
 #include "../kselftest.h"
 
 #define NSEC_PER_SEC 1000000000LL
 
-int main(int argc, char **argv)
+int main(int argv, char **argc)
 {
 	struct timex tx;
 	int ret, ppm;

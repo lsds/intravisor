@@ -30,6 +30,7 @@ int pnp_is_active(struct pnp_dev *dev)
 	else
 		return 1;
 }
+
 EXPORT_SYMBOL(pnp_is_active);
 
 /*

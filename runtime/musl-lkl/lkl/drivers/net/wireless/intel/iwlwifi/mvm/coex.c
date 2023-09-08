@@ -1,8 +1,68 @@
-// SPDX-License-Identifier: GPL-2.0 OR BSD-3-Clause
-/*
- * Copyright (C) 2013-2014, 2018-2020, 2022 Intel Corporation
- * Copyright (C) 2013-2015 Intel Mobile Communications GmbH
- */
+/******************************************************************************
+ *
+ * This file is provided under a dual BSD/GPLv2 license.  When using or
+ * redistributing this file, you may do so under either license.
+ *
+ * GPL LICENSE SUMMARY
+ *
+ * Copyright(c) 2013 - 2014 Intel Corporation. All rights reserved.
+ * Copyright(c) 2013 - 2015 Intel Mobile Communications GmbH
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of version 2 of the GNU General Public License as
+ * published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110,
+ * USA
+ *
+ * The full GNU General Public License is included in this distribution
+ * in the file called COPYING.
+ *
+ * Contact Information:
+ *  Intel Linux Wireless <linuxwifi@intel.com>
+ * Intel Corporation, 5200 N.E. Elam Young Parkway, Hillsboro, OR 97124-6497
+ *
+ * BSD LICENSE
+ *
+ * Copyright(c) 2013 - 2014 Intel Corporation. All rights reserved.
+ * Copyright(c) 2013 - 2015 Intel Mobile Communications GmbH
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ *
+ *  * Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ *  * Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in
+ *    the documentation and/or other materials provided with the
+ *    distribution.
+ *  * Neither the name Intel Corporation nor the names of its
+ *    contributors may be used to endorse or promote products derived
+ *    from this software without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+ * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+ * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+ * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ *
+ *****************************************************************************/
+
 #include <linux/ieee80211.h>
 #include <linux/etherdevice.h>
 #include <net/mac80211.h>
@@ -106,7 +166,7 @@ iwl_get_coex_type(struct iwl_mvm *mvm, const struct ieee80211_vif *vif)
 
 	rcu_read_lock();
 
-	chanctx_conf = rcu_dereference(vif->bss_conf.chanctx_conf);
+	chanctx_conf = rcu_dereference(vif->chanctx_conf);
 
 	if (!chanctx_conf ||
 	     chanctx_conf->def.chan->band != NL80211_BAND_2GHZ) {
@@ -161,7 +221,8 @@ int iwl_mvm_send_bt_init_conf(struct iwl_mvm *mvm)
 		goto send_cmd;
 	}
 
-	bt_cmd.mode = cpu_to_le32(BT_COEX_NW);
+	mode = iwlwifi_mod_params.bt_coex_active ? BT_COEX_NW : BT_COEX_DISABLE;
+	bt_cmd.mode = cpu_to_le32(mode);
 
 	if (IWL_MVM_BT_COEX_SYNC2SCO)
 		bt_cmd.enabled_modules |=
@@ -185,6 +246,7 @@ static int iwl_mvm_bt_coex_reduced_txp(struct iwl_mvm *mvm, u8 sta_id,
 	struct iwl_bt_coex_reduced_txp_update_cmd cmd = {};
 	struct iwl_mvm_sta *mvmsta;
 	u32 value;
+	int ret;
 
 	mvmsta = iwl_mvm_sta_from_staid_protected(mvm, sta_id);
 	if (!mvmsta)
@@ -205,8 +267,10 @@ static int iwl_mvm_bt_coex_reduced_txp(struct iwl_mvm *mvm, u8 sta_id,
 	cmd.reduced_txp = cpu_to_le32(value);
 	mvmsta->bt_reduced_txpower = enable;
 
-	return iwl_mvm_send_cmd_pdu(mvm, BT_COEX_UPDATE_REDUCED_TXP,
-				    CMD_ASYNC, sizeof(cmd), &cmd);
+	ret = iwl_mvm_send_cmd_pdu(mvm, BT_COEX_UPDATE_REDUCED_TXP, CMD_ASYNC,
+				   sizeof(cmd), &cmd);
+
+	return ret;
 }
 
 struct iwl_bt_iterator_data {
@@ -215,8 +279,6 @@ struct iwl_bt_iterator_data {
 	struct ieee80211_chanctx_conf *primary;
 	struct ieee80211_chanctx_conf *secondary;
 	bool primary_ll;
-	u8 primary_load;
-	u8 secondary_load;
 };
 
 static inline
@@ -233,30 +295,6 @@ void iwl_mvm_bt_coex_enable_rssi_event(struct iwl_mvm *mvm,
 		enable ? -IWL_MVM_BT_COEX_DIS_RED_TXP_THRESH : 0;
 }
 
-#define MVM_COEX_TCM_PERIOD (HZ * 10)
-
-static void iwl_mvm_bt_coex_tcm_based_ci(struct iwl_mvm *mvm,
-					 struct iwl_bt_iterator_data *data)
-{
-	unsigned long now = jiffies;
-
-	if (!time_after(now, mvm->bt_coex_last_tcm_ts + MVM_COEX_TCM_PERIOD))
-		return;
-
-	mvm->bt_coex_last_tcm_ts = now;
-
-	/* We assume here that we don't have more than 2 vifs on 2.4GHz */
-
-	/* if the primary is low latency, it will stay primary */
-	if (data->primary_ll)
-		return;
-
-	if (data->primary_load >= data->secondary_load)
-		return;
-
-	swap(data->primary, data->secondary);
-}
-
 /* must be called under rcu_read_lock */
 static void iwl_mvm_bt_notif_iterator(void *_data, u8 *mac,
 				      struct ieee80211_vif *vif)
@@ -267,7 +305,7 @@ static void iwl_mvm_bt_notif_iterator(void *_data, u8 *mac,
 	struct ieee80211_chanctx_conf *chanctx_conf;
 	/* default smps_mode is AUTOMATIC - only used for client modes */
 	enum ieee80211_smps_mode smps_mode = IEEE80211_SMPS_AUTOMATIC;
-	u32 bt_activity_grading, min_ag_for_static_smps;
+	u32 bt_activity_grading;
 	int ave_rssi;
 
 	lockdep_assert_held(&mvm->mutex);
@@ -283,7 +321,7 @@ static void iwl_mvm_bt_notif_iterator(void *_data, u8 *mac,
 		return;
 	}
 
-	chanctx_conf = rcu_dereference(vif->bss_conf.chanctx_conf);
+	chanctx_conf = rcu_dereference(vif->chanctx_conf);
 
 	/* If channel context is invalid or not on 2.4GHz .. */
 	if ((!chanctx_conf ||
@@ -299,19 +337,14 @@ static void iwl_mvm_bt_notif_iterator(void *_data, u8 *mac,
 		return;
 	}
 
-	if (fw_has_capa(&mvm->fw->ucode_capa, IWL_UCODE_TLV_CAPA_COEX_SCHEMA_2))
-		min_ag_for_static_smps = BT_VERY_HIGH_TRAFFIC;
-	else
-		min_ag_for_static_smps = BT_HIGH_TRAFFIC;
-
 	bt_activity_grading = le32_to_cpu(data->notif->bt_activity_grading);
-	if (bt_activity_grading >= min_ag_for_static_smps)
+	if (bt_activity_grading >= BT_HIGH_TRAFFIC)
 		smps_mode = IEEE80211_SMPS_STATIC;
 	else if (bt_activity_grading >= BT_LOW_TRAFFIC)
 		smps_mode = IEEE80211_SMPS_DYNAMIC;
 
 	/* relax SMPS constraints for next association */
-	if (!vif->cfg.assoc)
+	if (!vif->bss_conf.assoc)
 		smps_mode = IEEE80211_SMPS_AUTOMATIC;
 
 	if (mvmvif->phy_ctxt &&
@@ -352,11 +385,6 @@ static void iwl_mvm_bt_notif_iterator(void *_data, u8 *mac,
 			/* there is low latency vif - we will be secondary */
 			data->secondary = chanctx_conf;
 		}
-
-		if (data->primary == chanctx_conf)
-			data->primary_load = mvm->tcm.result.load[mvmvif->id];
-		else if (data->secondary == chanctx_conf)
-			data->secondary_load = mvm->tcm.result.load[mvmvif->id];
 		return;
 	}
 
@@ -370,10 +398,6 @@ static void iwl_mvm_bt_notif_iterator(void *_data, u8 *mac,
 		/* if secondary is not NULL, it might be a GO */
 		data->secondary = chanctx_conf;
 
-	if (data->primary == chanctx_conf)
-		data->primary_load = mvm->tcm.result.load[mvmvif->id];
-	else if (data->secondary == chanctx_conf)
-		data->secondary_load = mvm->tcm.result.load[mvmvif->id];
 	/*
 	 * don't reduce the Tx power if one of these is true:
 	 *  we are in LOOSE
@@ -382,7 +406,7 @@ static void iwl_mvm_bt_notif_iterator(void *_data, u8 *mac,
 	 *  we are not associated
 	 */
 	if (iwl_get_coex_type(mvm, vif) == BT_COEX_LOOSE_LUT ||
-	    mvm->cfg->bt_shared_single_ant || !vif->cfg.assoc ||
+	    mvm->cfg->bt_shared_single_ant || !vif->bss_conf.assoc ||
 	    le32_to_cpu(mvm->last_bt_notif.bt_activity_grading) == BT_OFF) {
 		iwl_mvm_bt_coex_reduced_txp(mvm, mvmvif->ap_sta_id, false);
 		iwl_mvm_bt_coex_enable_rssi_event(mvm, vif, false, 0);
@@ -424,8 +448,6 @@ static void iwl_mvm_bt_coex_notif_handle(struct iwl_mvm *mvm)
 	ieee80211_iterate_active_interfaces_atomic(
 					mvm->hw, IEEE80211_IFACE_ITER_NORMAL,
 					iwl_mvm_bt_notif_iterator, &data);
-
-	iwl_mvm_bt_coex_tcm_based_ci(mvm, &data);
 
 	if (data.primary) {
 		struct ieee80211_chanctx_conf *chan = data.primary;
@@ -630,15 +652,6 @@ bool iwl_mvm_bt_coex_is_tpc_allowed(struct iwl_mvm *mvm,
 		return false;
 
 	return bt_activity >= BT_LOW_TRAFFIC;
-}
-
-u8 iwl_mvm_bt_coex_get_single_ant_msk(struct iwl_mvm *mvm, u8 enabled_ants)
-{
-	if (fw_has_capa(&mvm->fw->ucode_capa, IWL_UCODE_TLV_CAPA_COEX_SCHEMA_2) &&
-	    (mvm->cfg->non_shared_ant & enabled_ants))
-		return mvm->cfg->non_shared_ant;
-
-	return first_antenna(enabled_ants);
 }
 
 u8 iwl_mvm_bt_coex_tx_prio(struct iwl_mvm *mvm, struct ieee80211_hdr *hdr,

@@ -1,18 +1,23 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /* linux/arch/arm/mach-exynos4/mct.c
  *
  * Copyright (c) 2011 Samsung Electronics Co., Ltd.
  *		http://www.samsung.com
  *
- * Exynos4 MCT(Multi-Core Timer) support
+ * EXYNOS4 MCT(Multi-Core Timer) support
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
 */
 
+#include <linux/sched.h>
 #include <linux/interrupt.h>
 #include <linux/irq.h>
 #include <linux/err.h>
 #include <linux/clk.h>
 #include <linux/clockchips.h>
 #include <linux/cpu.h>
+#include <linux/platform_device.h>
 #include <linux/delay.h>
 #include <linux/percpu.h>
 #include <linux/of.h>
@@ -33,7 +38,7 @@
 #define EXYNOS4_MCT_G_INT_ENB		EXYNOS4_MCTREG(0x248)
 #define EXYNOS4_MCT_G_WSTAT		EXYNOS4_MCTREG(0x24C)
 #define _EXYNOS4_MCT_L_BASE		EXYNOS4_MCTREG(0x300)
-#define EXYNOS4_MCT_L_BASE(x)		(_EXYNOS4_MCT_L_BASE + (0x100 * (x)))
+#define EXYNOS4_MCT_L_BASE(x)		(_EXYNOS4_MCT_L_BASE + (0x100 * x))
 #define EXYNOS4_MCT_L_MASK		(0xffffff00)
 
 #define MCT_L_TCNTB_OFFSET		(0x00)
@@ -51,27 +56,25 @@
 
 #define TICK_BASE_CNT	1
 
-#ifdef CONFIG_ARM
-/* Use values higher than ARM arch timer. See 6282edb72bed. */
-#define MCT_CLKSOURCE_RATING		450
-#define MCT_CLKEVENTS_RATING		500
-#else
-#define MCT_CLKSOURCE_RATING		350
-#define MCT_CLKEVENTS_RATING		350
-#endif
-
-/* There are four Global timers starting with 0 offset */
-#define MCT_G0_IRQ	0
-/* Local timers count starts after global timer count */
-#define MCT_L0_IRQ	4
-/* Max number of IRQ as per DT binding document */
-#define MCT_NR_IRQS	20
-/* Max number of local timers */
-#define MCT_NR_LOCAL	(MCT_NR_IRQS - MCT_L0_IRQ)
-
 enum {
 	MCT_INT_SPI,
 	MCT_INT_PPI
+};
+
+enum {
+	MCT_G0_IRQ,
+	MCT_G1_IRQ,
+	MCT_G2_IRQ,
+	MCT_G3_IRQ,
+	MCT_L0_IRQ,
+	MCT_L1_IRQ,
+	MCT_L2_IRQ,
+	MCT_L3_IRQ,
+	MCT_L4_IRQ,
+	MCT_L5_IRQ,
+	MCT_L6_IRQ,
+	MCT_L7_IRQ,
+	MCT_NR_IRQS,
 };
 
 static void __iomem *reg_base;
@@ -82,11 +85,7 @@ static int mct_irqs[MCT_NR_IRQS];
 struct mct_clock_event_device {
 	struct clock_event_device evt;
 	unsigned long base;
-	/**
-	 *  The length of the name must be adjusted if number of
-	 *  local timer interrupts grow over two digits
-	 */
-	char name[11];
+	char name[10];
 };
 
 static void exynos4_mct_write(unsigned int value, unsigned long offset)
@@ -212,7 +211,7 @@ static void exynos4_frc_resume(struct clocksource *cs)
 
 static struct clocksource mct_frc = {
 	.name		= "mct-frc",
-	.rating		= MCT_CLKSOURCE_RATING,
+	.rating		= 400,
 	.read		= exynos4_frc_read,
 	.mask		= CLOCKSOURCE_MASK(32),
 	.flags		= CLOCK_SOURCE_IS_CONTINUOUS,
@@ -235,16 +234,9 @@ static cycles_t exynos4_read_current_timer(void)
 }
 #endif
 
-static int __init exynos4_clocksource_init(bool frc_shared)
+static int __init exynos4_clocksource_init(void)
 {
-	/*
-	 * When the frc is shared, the main processer should have already
-	 * turned it on and we shouldn't be writing to TCON.
-	 */
-	if (frc_shared)
-		mct_frc.resume = NULL;
-	else
-		exynos4_mct_frc_start();
+	exynos4_mct_frc_start();
 
 #if defined(CONFIG_ARM)
 	exynos4_delay_timer.read_current_timer = &exynos4_read_current_timer;
@@ -342,15 +334,19 @@ static irqreturn_t exynos4_mct_comp_isr(int irq, void *dev_id)
 	return IRQ_HANDLED;
 }
 
+static struct irqaction mct_comp_event_irq = {
+	.name		= "mct_comp_irq",
+	.flags		= IRQF_TIMER | IRQF_IRQPOLL,
+	.handler	= exynos4_mct_comp_isr,
+	.dev_id		= &mct_comp_device,
+};
+
 static int exynos4_clockevent_init(void)
 {
 	mct_comp_device.cpumask = cpumask_of(0);
 	clockevents_config_and_register(&mct_comp_device, clk_rate,
 					0xf, 0xffffffff);
-	if (request_irq(mct_irqs[MCT_G0_IRQ], exynos4_mct_comp_isr,
-			IRQF_TIMER | IRQF_IRQPOLL, "mct_comp_irq",
-			&mct_comp_device))
-		pr_err("%s: request_irq() failed\n", "mct_comp_irq");
+	setup_irq(mct_irqs[MCT_G0_IRQ], &mct_comp_event_irq);
 
 	return 0;
 }
@@ -392,13 +388,6 @@ static void exynos4_mct_tick_start(unsigned long cycles,
 	exynos4_mct_write(tmp, mevt->base + MCT_L_TCON_OFFSET);
 }
 
-static void exynos4_mct_tick_clear(struct mct_clock_event_device *mevt)
-{
-	/* Clear the MCT tick interrupt */
-	if (readl_relaxed(reg_base + mevt->base + MCT_L_INT_CSTAT_OFFSET) & 1)
-		exynos4_mct_write(0x1, mevt->base + MCT_L_INT_CSTAT_OFFSET);
-}
-
 static int exynos4_tick_set_next_event(unsigned long cycles,
 				       struct clock_event_device *evt)
 {
@@ -415,7 +404,6 @@ static int set_state_shutdown(struct clock_event_device *evt)
 
 	mevt = container_of(evt, struct mct_clock_event_device, evt);
 	exynos4_mct_tick_stop(mevt);
-	exynos4_mct_tick_clear(mevt);
 	return 0;
 }
 
@@ -432,11 +420,8 @@ static int set_state_periodic(struct clock_event_device *evt)
 	return 0;
 }
 
-static irqreturn_t exynos4_mct_tick_isr(int irq, void *dev_id)
+static void exynos4_mct_tick_clear(struct mct_clock_event_device *mevt)
 {
-	struct mct_clock_event_device *mevt = dev_id;
-	struct clock_event_device *evt = &mevt->evt;
-
 	/*
 	 * This is for supporting oneshot mode.
 	 * Mct would generate interrupt periodically
@@ -444,6 +429,16 @@ static irqreturn_t exynos4_mct_tick_isr(int irq, void *dev_id)
 	 */
 	if (!clockevent_state_periodic(&mevt->evt))
 		exynos4_mct_tick_stop(mevt);
+
+	/* Clear the MCT tick interrupt */
+	if (readl_relaxed(reg_base + mevt->base + MCT_L_INT_CSTAT_OFFSET) & 1)
+		exynos4_mct_write(0x1, mevt->base + MCT_L_INT_CSTAT_OFFSET);
+}
+
+static irqreturn_t exynos4_mct_tick_isr(int irq, void *dev_id)
+{
+	struct mct_clock_event_device *mevt = dev_id;
+	struct clock_event_device *evt = &mevt->evt;
 
 	exynos4_mct_tick_clear(mevt);
 
@@ -458,6 +453,7 @@ static int exynos4_mct_starting_cpu(unsigned int cpu)
 		per_cpu_ptr(&percpu_mct_tick, cpu);
 	struct clock_event_device *evt = &mevt->evt;
 
+	mevt->base = EXYNOS4_MCT_L_BASE(cpu);
 	snprintf(mevt->name, sizeof(mevt->name), "mct_tick%d", cpu);
 
 	evt->name = mevt->name;
@@ -468,9 +464,8 @@ static int exynos4_mct_starting_cpu(unsigned int cpu)
 	evt->set_state_oneshot = set_state_shutdown;
 	evt->set_state_oneshot_stopped = set_state_shutdown;
 	evt->tick_resume = set_state_shutdown;
-	evt->features = CLOCK_EVT_FEAT_PERIODIC | CLOCK_EVT_FEAT_ONESHOT |
-			CLOCK_EVT_FEAT_PERCPU;
-	evt->rating = MCT_CLKEVENTS_RATING;
+	evt->features = CLOCK_EVT_FEAT_PERIODIC | CLOCK_EVT_FEAT_ONESHOT;
+	evt->rating = 450;
 
 	exynos4_mct_write(TICK_BASE_CNT, mevt->base + MCT_L_TCNTB_OFFSET);
 
@@ -507,59 +502,25 @@ static int exynos4_mct_dying_cpu(unsigned int cpu)
 	return 0;
 }
 
-static int __init exynos4_timer_resources(struct device_node *np)
+static int __init exynos4_timer_resources(struct device_node *np, void __iomem *base)
 {
+	int err, cpu;
 	struct clk *mct_clk, *tick_clk;
 
-	reg_base = of_iomap(np, 0);
-	if (!reg_base)
-		panic("%s: unable to ioremap mct address space\n", __func__);
-
-	tick_clk = of_clk_get_by_name(np, "fin_pll");
+	tick_clk = np ? of_clk_get_by_name(np, "fin_pll") :
+				clk_get(NULL, "fin_pll");
 	if (IS_ERR(tick_clk))
 		panic("%s: unable to determine tick clock rate\n", __func__);
 	clk_rate = clk_get_rate(tick_clk);
 
-	mct_clk = of_clk_get_by_name(np, "mct");
+	mct_clk = np ? of_clk_get_by_name(np, "mct") : clk_get(NULL, "mct");
 	if (IS_ERR(mct_clk))
 		panic("%s: unable to retrieve mct clock instance\n", __func__);
 	clk_prepare_enable(mct_clk);
 
-	return 0;
-}
-
-/**
- * exynos4_timer_interrupts - initialize MCT interrupts
- * @np: device node for MCT
- * @int_type: interrupt type, MCT_INT_PPI or MCT_INT_SPI
- * @local_idx: array mapping CPU numbers to local timer indices
- * @nr_local: size of @local_idx array
- */
-static int __init exynos4_timer_interrupts(struct device_node *np,
-					   unsigned int int_type,
-					   const u32 *local_idx,
-					   size_t nr_local)
-{
-	int nr_irqs, i, err, cpu;
-
-	mct_int_type = int_type;
-
-	/* This driver uses only one global timer interrupt */
-	mct_irqs[MCT_G0_IRQ] = irq_of_parse_and_map(np, MCT_G0_IRQ);
-
-	/*
-	 * Find out the number of local irqs specified. The local
-	 * timer irqs are specified after the four global timer
-	 * irqs are specified.
-	 */
-	nr_irqs = of_irq_count(np);
-	if (nr_irqs > ARRAY_SIZE(mct_irqs)) {
-		pr_err("exynos-mct: too many (%d) interrupts configured in DT\n",
-			nr_irqs);
-		nr_irqs = ARRAY_SIZE(mct_irqs);
-	}
-	for (i = MCT_L0_IRQ; i < nr_irqs; i++)
-		mct_irqs[i] = irq_of_parse_and_map(np, i);
+	reg_base = base;
+	if (!reg_base)
+		panic("%s: unable to ioremap mct address space\n", __func__);
 
 	if (mct_int_type == MCT_INT_PPI) {
 
@@ -570,22 +531,11 @@ static int __init exynos4_timer_interrupts(struct device_node *np,
 		     mct_irqs[MCT_L0_IRQ], err);
 	} else {
 		for_each_possible_cpu(cpu) {
-			int mct_irq;
-			unsigned int irq_idx;
+			int mct_irq = mct_irqs[MCT_L0_IRQ + cpu];
 			struct mct_clock_event_device *pcpu_mevt =
 				per_cpu_ptr(&percpu_mct_tick, cpu);
 
-			if (cpu >= nr_local) {
-				err = -EINVAL;
-				goto out_irq;
-			}
-
-			irq_idx = MCT_L0_IRQ + local_idx[cpu];
-
 			pcpu_mevt->evt.irq = -1;
-			if (irq_idx >= ARRAY_SIZE(mct_irqs))
-				break;
-			mct_irq = mct_irqs[irq_idx];
 
 			irq_set_status_flags(mct_irq, IRQ_NOAUTOEN);
 			if (request_irq(mct_irq,
@@ -601,17 +551,6 @@ static int __init exynos4_timer_interrupts(struct device_node *np,
 		}
 	}
 
-	for_each_possible_cpu(cpu) {
-		struct mct_clock_event_device *mevt = per_cpu_ptr(&percpu_mct_tick, cpu);
-
-		if (cpu >= nr_local) {
-			err = -EINVAL;
-			goto out_irq;
-		}
-
-		mevt->base = EXYNOS4_MCT_L_BASE(local_idx[cpu]);
-	}
-
 	/* Install hotplug callbacks which configure the timer on this CPU */
 	err = cpuhp_setup_state(CPUHP_AP_EXYNOS4_MCT_TIMER_STARTING,
 				"clockevents/exynos4/mct_timer:starting",
@@ -623,65 +562,39 @@ static int __init exynos4_timer_interrupts(struct device_node *np,
 	return 0;
 
 out_irq:
-	if (mct_int_type == MCT_INT_PPI) {
-		free_percpu_irq(mct_irqs[MCT_L0_IRQ], &percpu_mct_tick);
-	} else {
-		for_each_possible_cpu(cpu) {
-			struct mct_clock_event_device *pcpu_mevt =
-				per_cpu_ptr(&percpu_mct_tick, cpu);
-
-			if (pcpu_mevt->evt.irq != -1) {
-				free_irq(pcpu_mevt->evt.irq, pcpu_mevt);
-				pcpu_mevt->evt.irq = -1;
-			}
-		}
-	}
+	free_percpu_irq(mct_irqs[MCT_L0_IRQ], &percpu_mct_tick);
 	return err;
 }
 
 static int __init mct_init_dt(struct device_node *np, unsigned int int_type)
 {
-	bool frc_shared = of_property_read_bool(np, "samsung,frc-shared");
-	u32 local_idx[MCT_NR_LOCAL] = {0};
-	int nr_local;
+	u32 nr_irqs, i;
 	int ret;
 
-	nr_local = of_property_count_u32_elems(np, "samsung,local-timers");
-	if (nr_local == 0)
-		return -EINVAL;
-	if (nr_local > 0) {
-		if (nr_local > ARRAY_SIZE(local_idx))
-			return -EINVAL;
+	mct_int_type = int_type;
 
-		ret = of_property_read_u32_array(np, "samsung,local-timers",
-						 local_idx, nr_local);
-		if (ret)
-			return ret;
-	} else {
-		int i;
-
-		nr_local = ARRAY_SIZE(local_idx);
-		for (i = 0; i < nr_local; i++)
-			local_idx[i] = i;
-	}
-
-	ret = exynos4_timer_resources(np);
-	if (ret)
-		return ret;
-
-	ret = exynos4_timer_interrupts(np, int_type, local_idx, nr_local);
-	if (ret)
-		return ret;
-
-	ret = exynos4_clocksource_init(frc_shared);
-	if (ret)
-		return ret;
+	/* This driver uses only one global timer interrupt */
+	mct_irqs[MCT_G0_IRQ] = irq_of_parse_and_map(np, MCT_G0_IRQ);
 
 	/*
-	 * When the FRC is shared with a main processor, this secondary
-	 * processor cannot use the global comparator.
+	 * Find out the number of local irqs specified. The local
+	 * timer irqs are specified after the four global timer
+	 * irqs are specified.
 	 */
-	if (frc_shared)
+#ifdef CONFIG_OF
+	nr_irqs = of_irq_count(np);
+#else
+	nr_irqs = 0;
+#endif
+	for (i = MCT_L0_IRQ; i < nr_irqs; i++)
+		mct_irqs[i] = irq_of_parse_and_map(np, i);
+
+	ret = exynos4_timer_resources(np, of_iomap(np, 0));
+	if (ret)
+		return ret;
+
+	ret = exynos4_clocksource_init();
+	if (ret)
 		return ret;
 
 	return exynos4_clockevent_init();

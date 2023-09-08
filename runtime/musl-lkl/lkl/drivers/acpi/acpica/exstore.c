@@ -3,7 +3,7 @@
  *
  * Module Name: exstore - AML Interpreter object store support
  *
- * Copyright (C) 2000 - 2022, Intel Corp.
+ * Copyright (C) 2000 - 2018, Intel Corp.
  *
  *****************************************************************************/
 
@@ -96,7 +96,7 @@ acpi_ex_store(union acpi_operand_object *source_desc,
 			return_ACPI_STATUS(AE_OK);
 		}
 
-		ACPI_FALLTHROUGH;
+		/*lint -fallthrough */
 
 	default:
 
@@ -422,7 +422,7 @@ acpi_ex_store_object_to_node(union acpi_operand_object *source_desc,
 				break;
 			}
 
-			ACPI_FALLTHROUGH;
+			/* Fallthrough */
 
 		case ACPI_TYPE_DEVICE:
 		case ACPI_TYPE_EVENT:

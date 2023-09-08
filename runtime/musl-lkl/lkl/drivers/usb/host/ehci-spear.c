@@ -24,6 +24,8 @@
 
 #define DRIVER_DESC "EHCI SPEAr driver"
 
+static const char hcd_name[] = "SPEAr-ehci";
+
 struct spear_ehci {
 	struct clk *clk;
 };
@@ -32,7 +34,8 @@ struct spear_ehci {
 
 static struct hc_driver __read_mostly ehci_spear_hc_driver;
 
-static int __maybe_unused ehci_spear_drv_suspend(struct device *dev)
+#ifdef CONFIG_PM_SLEEP
+static int ehci_spear_drv_suspend(struct device *dev)
 {
 	struct usb_hcd *hcd = dev_get_drvdata(dev);
 	bool do_wakeup = device_may_wakeup(dev);
@@ -40,13 +43,14 @@ static int __maybe_unused ehci_spear_drv_suspend(struct device *dev)
 	return ehci_suspend(hcd, do_wakeup);
 }
 
-static int __maybe_unused ehci_spear_drv_resume(struct device *dev)
+static int ehci_spear_drv_resume(struct device *dev)
 {
 	struct usb_hcd *hcd = dev_get_drvdata(dev);
 
 	ehci_resume(hcd, false);
 	return 0;
 }
+#endif /* CONFIG_PM_SLEEP */
 
 static SIMPLE_DEV_PM_OPS(ehci_spear_pm_ops, ehci_spear_drv_suspend,
 		ehci_spear_drv_resume);
@@ -151,7 +155,7 @@ static struct platform_driver spear_ehci_hcd_driver = {
 	.driver		= {
 		.name = "spear-ehci",
 		.bus = &platform_bus_type,
-		.pm = pm_ptr(&ehci_spear_pm_ops),
+		.pm = &ehci_spear_pm_ops,
 		.of_match_table = spear_ehci_id_table,
 	}
 };
@@ -164,6 +168,8 @@ static int __init ehci_spear_init(void)
 {
 	if (usb_disabled())
 		return -ENODEV;
+
+	pr_info("%s: " DRIVER_DESC "\n", hcd_name);
 
 	ehci_init_driver(&ehci_spear_hc_driver, &spear_overrides);
 	return platform_driver_register(&spear_ehci_hcd_driver);

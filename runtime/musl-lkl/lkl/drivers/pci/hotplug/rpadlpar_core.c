@@ -15,7 +15,6 @@
 
 #include <linux/init.h>
 #include <linux/module.h>
-#include <linux/of.h>
 #include <linux/pci.h>
 #include <linux/string.h>
 #include <linux/vmalloc.h>
@@ -41,18 +40,17 @@ static DEFINE_MUTEX(rpadlpar_mutex);
 static struct device_node *find_vio_slot_node(char *drc_name)
 {
 	struct device_node *parent = of_find_node_by_name(NULL, "vdevice");
-	struct device_node *dn;
+	struct device_node *dn = NULL;
 	int rc;
 
 	if (!parent)
 		return NULL;
 
-	for_each_child_of_node(parent, dn) {
+	while ((dn = of_get_next_child(parent, dn))) {
 		rc = rpaphp_check_drc_props(dn, drc_name, NULL);
 		if (rc == 0)
 			break;
 	}
-	of_node_put(parent);
 
 	return dn;
 }
@@ -61,10 +59,10 @@ static struct device_node *find_vio_slot_node(char *drc_name)
 static struct device_node *find_php_slot_pci_node(char *drc_name,
 						  char *drc_type)
 {
-	struct device_node *np;
+	struct device_node *np = NULL;
 	int rc;
 
-	for_each_node_by_name(np, "pci") {
+	while ((np = of_find_node_by_name(np, "pci"))) {
 		rc = rpaphp_check_drc_props(np, drc_name, drc_type);
 		if (rc == 0)
 			break;
@@ -73,7 +71,6 @@ static struct device_node *find_php_slot_pci_node(char *drc_name,
 	return np;
 }
 
-/* Returns a device_node with its reference count incremented */
 static struct device_node *find_dlpar_node(char *drc_name, int *node_type)
 {
 	struct device_node *dn;
@@ -141,7 +138,7 @@ static void dlpar_pci_add_bus(struct device_node *dn)
 	struct pci_controller *phb = pdn->phb;
 	struct pci_dev *dev = NULL;
 
-	pseries_eeh_init_edev_recursive(pdn);
+	eeh_add_device_tree_early(pdn);
 
 	/* Add EADS device to PHB bus, adding new entry to bus->devices */
 	dev = of_create_pci_dev(dn, phb->bus, pdn->devfn);
@@ -309,7 +306,6 @@ int dlpar_add_slot(char *drc_name)
 			rc = dlpar_add_phb(drc_name, dn);
 			break;
 	}
-	of_node_put(dn);
 
 	printk(KERN_INFO "%s: slot %s added\n", DLPAR_MODULE_NAME, drc_name);
 exit:
@@ -353,7 +349,7 @@ static int dlpar_remove_vio_slot(char *drc_name, struct device_node *dn)
  * -ENODEV		Not a valid drc_name
  * -EIO			Internal PCI Error
  */
-static int dlpar_remove_pci_slot(char *drc_name, struct device_node *dn)
+int dlpar_remove_pci_slot(char *drc_name, struct device_node *dn)
 {
 	struct pci_bus *bus;
 	struct slot *slot;
@@ -443,7 +439,6 @@ int dlpar_remove_slot(char *drc_name)
 			rc = dlpar_remove_pci_slot(drc_name, dn);
 			break;
 	}
-	of_node_put(dn);
 	vm_unmap_aliases();
 
 	printk(KERN_INFO "%s: slot %s removed\n", DLPAR_MODULE_NAME, drc_name);
@@ -459,7 +454,7 @@ static inline int is_dlpar_capable(void)
 	return (int) (rc != RTAS_UNKNOWN_SERVICE);
 }
 
-static int __init rpadlpar_io_init(void)
+int __init rpadlpar_io_init(void)
 {
 
 	if (!is_dlpar_capable()) {
@@ -471,12 +466,12 @@ static int __init rpadlpar_io_init(void)
 	return dlpar_sysfs_init();
 }
 
-static void __exit rpadlpar_io_exit(void)
+void rpadlpar_io_exit(void)
 {
 	dlpar_sysfs_exit();
+	return;
 }
 
 module_init(rpadlpar_io_init);
 module_exit(rpadlpar_io_exit);
 MODULE_LICENSE("GPL");
-MODULE_DESCRIPTION("RPA Dynamic Logical Partitioning driver for I/O slots");

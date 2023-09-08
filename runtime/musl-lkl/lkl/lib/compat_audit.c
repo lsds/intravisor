@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 #include <linux/init.h>
 #include <linux/types.h>
-#include <linux/audit_arch.h>
 #include <asm/unistd32.h>
 
 unsigned compat_dir_class[] = {
@@ -34,23 +33,19 @@ int audit_classify_compat_syscall(int abi, unsigned syscall)
 	switch (syscall) {
 #ifdef __NR_open
 	case __NR_open:
-		return AUDITSC_OPEN;
+		return 2;
 #endif
 #ifdef __NR_openat
 	case __NR_openat:
-		return AUDITSC_OPENAT;
+		return 3;
 #endif
 #ifdef __NR_socketcall
 	case __NR_socketcall:
-		return AUDITSC_SOCKETCALL;
+		return 4;
 #endif
 	case __NR_execve:
-		return AUDITSC_EXECVE;
-#ifdef __NR_openat2
-	case __NR_openat2:
-		return AUDITSC_OPENAT2;
-#endif
+		return 5;
 	default:
-		return AUDITSC_COMPAT;
+		return 1;
 	}
 }

@@ -146,10 +146,9 @@ static const struct net_device_ops mlx5i_pkey_netdev_ops = {
 	.ndo_open                = mlx5i_pkey_open,
 	.ndo_stop                = mlx5i_pkey_close,
 	.ndo_init                = mlx5i_pkey_dev_init,
-	.ndo_get_stats64         = mlx5i_get_stats,
 	.ndo_uninit              = mlx5i_pkey_dev_cleanup,
 	.ndo_change_mtu          = mlx5i_pkey_change_mtu,
-	.ndo_eth_ioctl            = mlx5i_pkey_ioctl,
+	.ndo_do_ioctl            = mlx5i_pkey_ioctl,
 };
 
 /* Child NDOs */
@@ -204,13 +203,13 @@ static int mlx5i_pkey_open(struct net_device *netdev)
 		goto err_release_lock;
 	}
 
-	err = mlx5_fs_add_rx_underlay_qpn(mdev, ipriv->qpn);
+	err = mlx5_fs_add_rx_underlay_qpn(mdev, ipriv->qp.qpn);
 	if (err) {
 		mlx5_core_warn(mdev, "attach child underlay qp to ft failed, %d\n", err);
 		goto err_unint_underlay_qp;
 	}
 
-	err = mlx5i_create_tis(mdev, ipriv->qpn, &epriv->tisn[0][0]);
+	err = mlx5e_create_tis(mdev, 0 /* tc */, ipriv->qp.qpn, &epriv->tisn[0]);
 	if (err) {
 		mlx5_core_warn(mdev, "create child tis failed, %d\n", err);
 		goto err_remove_rx_uderlay_qp;
@@ -221,16 +220,16 @@ static int mlx5i_pkey_open(struct net_device *netdev)
 		mlx5_core_warn(mdev, "opening child channels failed, %d\n", err);
 		goto err_clear_state_opened_flag;
 	}
-	epriv->profile->update_rx(epriv);
+	mlx5e_refresh_tirs(epriv, false);
 	mlx5e_activate_priv_channels(epriv);
 	mutex_unlock(&epriv->state_lock);
 
 	return 0;
 
 err_clear_state_opened_flag:
-	mlx5e_destroy_tis(mdev, epriv->tisn[0][0]);
+	mlx5e_destroy_tis(mdev, epriv->tisn[0]);
 err_remove_rx_uderlay_qp:
-	mlx5_fs_remove_rx_underlay_qpn(mdev, ipriv->qpn);
+	mlx5_fs_remove_rx_underlay_qpn(mdev, ipriv->qp.qpn);
 err_unint_underlay_qp:
 	mlx5i_uninit_underlay_qp(epriv);
 err_release_lock:
@@ -253,11 +252,11 @@ static int mlx5i_pkey_close(struct net_device *netdev)
 	clear_bit(MLX5E_STATE_OPENED, &priv->state);
 
 	netif_carrier_off(priv->netdev);
-	mlx5_fs_remove_rx_underlay_qpn(mdev, ipriv->qpn);
+	mlx5_fs_remove_rx_underlay_qpn(mdev, ipriv->qp.qpn);
 	mlx5i_uninit_underlay_qp(priv);
 	mlx5e_deactivate_priv_channels(priv);
 	mlx5e_close_channels(&priv->channels);
-	mlx5e_destroy_tis(mdev, priv->tisn[0][0]);
+	mlx5e_destroy_tis(mdev, priv->tisn[0]);
 unlock:
 	mutex_unlock(&priv->state_lock);
 	return 0;
@@ -275,15 +274,14 @@ static int mlx5i_pkey_change_mtu(struct net_device *netdev, int new_mtu)
 }
 
 /* Called directly after IPoIB netdevice was created to initialize SW structs */
-static int mlx5i_pkey_init(struct mlx5_core_dev *mdev,
-			   struct net_device *netdev)
+static void mlx5i_pkey_init(struct mlx5_core_dev *mdev,
+			     struct net_device *netdev,
+			     const struct mlx5e_profile *profile,
+			     void *ppriv)
 {
 	struct mlx5e_priv *priv  = mlx5i_epriv(netdev);
-	int err;
 
-	err = mlx5i_init(mdev, netdev);
-	if (err)
-		return err;
+	mlx5i_init(mdev, netdev, profile, ppriv);
 
 	/* Override parent ndo */
 	netdev->netdev_ops = &mlx5i_pkey_netdev_ops;
@@ -293,32 +291,33 @@ static int mlx5i_pkey_init(struct mlx5_core_dev *mdev,
 
 	/* Use dummy rqs */
 	priv->channels.params.log_rq_mtu_frames = MLX5E_PARAMS_MINIMUM_LOG_RQ_SIZE;
-
-	return 0;
 }
 
 /* Called directly before IPoIB netdevice is destroyed to cleanup SW structs */
 static void mlx5i_pkey_cleanup(struct mlx5e_priv *priv)
 {
-	mlx5i_cleanup(priv);
+	/* Do nothing .. */
 }
 
 static int mlx5i_pkey_init_tx(struct mlx5e_priv *priv)
 {
+	struct mlx5i_priv *ipriv = priv->ppriv;
 	int err;
 
-	err = mlx5i_create_underlay_qp(priv);
-	if (err)
+	err = mlx5i_create_underlay_qp(priv->mdev, &ipriv->qp);
+	if (err) {
 		mlx5_core_warn(priv->mdev, "create child underlay QP failed, %d\n", err);
+		return err;
+	}
 
-	return err;
+	return 0;
 }
 
 static void mlx5i_pkey_cleanup_tx(struct mlx5e_priv *priv)
 {
 	struct mlx5i_priv *ipriv = priv->ppriv;
 
-	mlx5i_destroy_underlay_qp(priv->mdev, ipriv->qpn);
+	mlx5i_destroy_underlay_qp(priv->mdev, &ipriv->qp);
 }
 
 static int mlx5i_pkey_init_rx(struct mlx5e_priv *priv)
@@ -345,9 +344,10 @@ static const struct mlx5e_profile mlx5i_pkey_nic_profile = {
 	.cleanup_rx	   = mlx5i_pkey_cleanup_rx,
 	.enable		   = NULL,
 	.disable	   = NULL,
-	.update_rx	   = mlx5i_update_nic_rx,
 	.update_stats	   = NULL,
-	.rx_handlers       = &mlx5i_rx_handlers,
+	.max_nch	   = mlx5e_get_max_num_channels,
+	.rx_handlers.handle_rx_cqe       = mlx5i_handle_rx_cqe,
+	.rx_handlers.handle_rx_cqe_mpwqe = NULL, /* Not supported */
 	.max_tc		   = MLX5I_MAX_NUM_TC,
 };
 

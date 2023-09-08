@@ -6,7 +6,6 @@
 
 #include <linux/kernel.h>
 #include <linux/notifier.h>
-#include <linux/panic_notifier.h>
 #include <linux/reboot.h>
 #include <linux/init.h>
 

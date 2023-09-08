@@ -2,9 +2,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <linux/kernel.h>
-#include <linux/string.h>
+#include <pthread.h>
 
+#include "../../util/debug.h"
 #include "../helpline.h"
 #include "../ui.h"
 #include "../libslang.h"
@@ -24,7 +24,7 @@ static void tui_helpline__push(const char *msg)
 	SLsmg_set_color(0);
 	SLsmg_write_nstring((char *)msg, SLtt_Screen_Cols);
 	SLsmg_refresh();
-	strlcpy(ui_helpline__current, msg, sz);
+	strncpy(ui_helpline__current, msg, sz)[sz - 1] = '\0';
 }
 
 static int tui_helpline__show(const char *format, va_list ap)
@@ -32,7 +32,7 @@ static int tui_helpline__show(const char *format, va_list ap)
 	int ret;
 	static int backlog;
 
-	mutex_lock(&ui__lock);
+	pthread_mutex_lock(&ui__lock);
 	ret = vscnprintf(ui_helpline__last_msg + backlog,
 			sizeof(ui_helpline__last_msg) - backlog, format, ap);
 	backlog += ret;
@@ -44,7 +44,7 @@ static int tui_helpline__show(const char *format, va_list ap)
 		SLsmg_refresh();
 		backlog = 0;
 	}
-	mutex_unlock(&ui__lock);
+	pthread_mutex_unlock(&ui__lock);
 
 	return ret;
 }

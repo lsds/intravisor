@@ -19,12 +19,13 @@
 #include <linux/console.h>
 #include <linux/sysrq.h>
 #include <linux/device.h>
-#include <linux/memblock.h>
+#include <linux/bootmem.h>
 #include <linux/dma-mapping.h>
 
 #include <asm/io.h>
 #include <asm/irq.h>
 #include <asm/fs_pd.h>
+#include <asm/prom.h>
 
 #include <linux/serial_core.h>
 #include <linux/kernel.h>

@@ -1,6 +1,9 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * PCM timer handling on ctxfi
+ *
+ * This source file is released under GPL v2 license (no other versions).
+ * See the COPYING file included in the main directory of this source
+ * distribution for the license terms and conditions.
  */
 
 #include <linux/slab.h>
@@ -14,7 +17,7 @@
 
 static bool use_system_timer;
 MODULE_PARM_DESC(use_system_timer, "Force to use system-timer");
-module_param(use_system_timer, bool, 0444);
+module_param(use_system_timer, bool, S_IRUGO);
 
 struct ct_timer_ops {
 	void (*init)(struct ct_timer_instance *);

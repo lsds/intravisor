@@ -1,7 +1,20 @@
-/* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
  * (c) Copyright 2006 Benjamin Herrenschmidt, IBM Corp.
  *                    <benh@kernel.crashing.org>
+ *
+ *   This program is free software;  you can redistribute it and/or modify
+ *   it under the terms of the GNU General Public License as published by
+ *   the Free Software Foundation; either version 2 of the License, or
+ *   (at your option) any later version.
+ *
+ *   This program is distributed in the hope that it will be useful,
+ *   but WITHOUT ANY WARRANTY;  without even the implied warranty of
+ *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See
+ *   the GNU General Public License for more details.
+ *
+ *   You should have received a copy of the GNU General Public License
+ *   along with this program;  if not, write to the Free Software
+ *   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
  */
 
 #ifndef _ASM_POWERPC_DCR_NATIVE_H
@@ -12,7 +25,6 @@
 #include <linux/spinlock.h>
 #include <asm/cputable.h>
 #include <asm/cpu_has_feature.h>
-#include <linux/stringify.h>
 
 typedef struct {
 	unsigned int base;
@@ -53,8 +65,8 @@ static inline void mtdcrx(unsigned int reg, unsigned int val)
 #define mfdcr(rn)						\
 	({unsigned int rval;					\
 	if (__builtin_constant_p(rn) && rn < 1024)		\
-		asm volatile("mfdcr %0, %1" : "=r" (rval)	\
-			      : "n" (rn));			\
+		asm volatile("mfdcr %0," __stringify(rn)	\
+		              : "=r" (rval));			\
 	else if (likely(cpu_has_feature(CPU_FTR_INDEXED_DCR)))	\
 		rval = mfdcrx(rn);				\
 	else							\
@@ -64,8 +76,8 @@ static inline void mtdcrx(unsigned int reg, unsigned int val)
 #define mtdcr(rn, v)						\
 do {								\
 	if (__builtin_constant_p(rn) && rn < 1024)		\
-		asm volatile("mtdcr %0, %1"			\
-			      : : "n" (rn), "r" (v));		\
+		asm volatile("mtdcr " __stringify(rn) ",%0"	\
+			      : : "r" (v)); 			\
 	else if (likely(cpu_has_feature(CPU_FTR_INDEXED_DCR)))	\
 		mtdcrx(rn, v);					\
 	else							\

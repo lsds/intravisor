@@ -1077,3 +1077,19 @@ AArch64-native-ORC-hello:
     - git config --global --add safe.directory /builds/gitlab/cloudcap/intravisor
     - make -C runtime/native/orc-hello/
     - make -C runtime/native/orc-hello/ install INSTALL_PATH=/opt/share/AArch64-native-ORC/
+
+
+AArch64-musl-uni-sqlite-x5:
+  stage: build_runtime
+  needs: ["AArch64-pure_cap-intravisor-ORC"]
+  artifacts:
+    when: always
+    paths:
+#      - extras/default.xml
+#      - extras/default.txt
+    reports:
+#      junit: extras/default.xml
+  script:
+    - git config --global --add safe.directory /builds/gitlab/cloudcap/intravisor
+    - make -C runtime/musl-uni/multi/sqlite/x5/
+    - make -C runtime/musl-uni/multi/sqlite/x5/ install INSTALL_PATH=/opt/share/AArch64-native-ORC/

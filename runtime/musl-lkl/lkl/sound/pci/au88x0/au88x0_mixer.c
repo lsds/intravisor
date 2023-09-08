@@ -25,13 +25,12 @@ static int snd_vortex_mixer(vortex_t *vortex)
 	struct snd_ac97_bus *pbus;
 	struct snd_ac97_template ac97;
 	int err;
-	static const struct snd_ac97_bus_ops ops = {
+	static struct snd_ac97_bus_ops ops = {
 		.write = vortex_codec_write,
 		.read = vortex_codec_read,
 	};
 
-	err = snd_ac97_bus(vortex->card, 0, &ops, NULL, &pbus);
-	if (err < 0)
+	if ((err = snd_ac97_bus(vortex->card, 0, &ops, NULL, &pbus)) < 0)
 		return err;
 	memset(&ac97, 0, sizeof(ac97));
 	// Initialize AC97 codec stuff.

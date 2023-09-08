@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Driver for the Diolan u2c-12 USB-I2C adapter
  *
@@ -7,6 +6,10 @@
  * Derived from:
  *  i2c-tiny-usb.c
  *  Copyright (C) 2006-2007 Till Harbaum (Till@Harbaum.org)
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License as
+ * published by the Free Software Foundation, version 2.
  */
 
 #include <linux/kernel.h>
@@ -64,6 +67,8 @@
 #define U2C_I2C_SPEED_2KHZ	242	/* 2 kHz, minimum speed */
 #define U2C_I2C_SPEED(f)	((DIV_ROUND_UP(1000000, (f)) - 10) / 2 + 1)
 
+#define U2C_I2C_FREQ_FAST	400000
+#define U2C_I2C_FREQ_STD	100000
 #define U2C_I2C_FREQ(s)		(1000000 / (2 * (s - 1) + 10))
 
 #define DIOLAN_USB_TIMEOUT	100	/* in ms */
@@ -85,7 +90,7 @@ struct i2c_diolan_u2c {
 	int ocount;			/* Number of enqueued messages */
 };
 
-static uint frequency = I2C_MAX_STANDARD_MODE_FREQ;	/* I2C clock frequency in Hz */
+static uint frequency = U2C_I2C_FREQ_STD;	/* I2C clock frequency in Hz */
 
 module_param(frequency, uint, S_IRUGO | S_IWUSR);
 MODULE_PARM_DESC(frequency, "I2C clock frequency in hertz");
@@ -297,12 +302,12 @@ static int diolan_init(struct i2c_diolan_u2c *dev)
 {
 	int speed, ret;
 
-	if (frequency >= 2 * I2C_MAX_STANDARD_MODE_FREQ) {
+	if (frequency >= 200000) {
 		speed = U2C_I2C_SPEED_FAST;
-		frequency = I2C_MAX_FAST_MODE_FREQ;
-	} else if (frequency >= I2C_MAX_STANDARD_MODE_FREQ || frequency == 0) {
+		frequency = U2C_I2C_FREQ_FAST;
+	} else if (frequency >= 100000 || frequency == 0) {
 		speed = U2C_I2C_SPEED_STD;
-		frequency = I2C_MAX_STANDARD_MODE_FREQ;
+		frequency = U2C_I2C_FREQ_STD;
 	} else {
 		speed = U2C_I2C_SPEED(frequency);
 		if (speed > U2C_I2C_SPEED_2KHZ)
@@ -355,11 +360,11 @@ static int diolan_usb_xfer(struct i2c_adapter *adapter, struct i2c_msg *msgs,
 			if (ret < 0)
 				goto abort;
 		}
-		ret = diolan_i2c_put_byte_ack(dev,
-					      i2c_8bit_addr_from_msg(pmsg));
-		if (ret < 0)
-			goto abort;
 		if (pmsg->flags & I2C_M_RD) {
+			ret =
+			    diolan_i2c_put_byte_ack(dev, (pmsg->addr << 1) | 1);
+			if (ret < 0)
+				goto abort;
 			for (j = 0; j < pmsg->len; j++) {
 				u8 byte;
 				bool ack = j < pmsg->len - 1;
@@ -388,6 +393,9 @@ static int diolan_usb_xfer(struct i2c_adapter *adapter, struct i2c_msg *msgs,
 				pmsg->buf[j] = byte;
 			}
 		} else {
+			ret = diolan_i2c_put_byte_ack(dev, pmsg->addr << 1);
+			if (ret < 0)
+				goto abort;
 			for (j = 0; j < pmsg->len; j++) {
 				ret = diolan_i2c_put_byte_ack(dev,
 							      pmsg->buf[j]);

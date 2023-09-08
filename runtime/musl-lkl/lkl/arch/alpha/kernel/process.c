@@ -37,6 +37,7 @@
 #include <asm/reg.h>
 #include <linux/uaccess.h>
 #include <asm/io.h>
+#include <asm/pgtable.h>
 #include <asm/hwrpb.h>
 #include <asm/fpu.h>
 
@@ -57,7 +58,7 @@ EXPORT_SYMBOL(pm_power_off);
 void arch_cpu_idle(void)
 {
 	wtint(0);
-	raw_local_irq_enable();
+	local_irq_enable();
 }
 
 void arch_cpu_idle_dead(void)
@@ -125,7 +126,7 @@ common_shutdown_1(void *generic_ptr)
 	/* Wait for the secondaries to halt. */
 	set_cpu_present(boot_cpuid, false);
 	set_cpu_possible(boot_cpuid, false);
-	while (!cpumask_empty(cpu_present_mask))
+	while (cpumask_weight(cpu_present_mask))
 		barrier();
 #endif
 
@@ -134,7 +135,7 @@ common_shutdown_1(void *generic_ptr)
 #ifdef CONFIG_DUMMY_CONSOLE
 		/* If we've gotten here after SysRq-b, leave interrupt
 		   context before taking over the console. */
-		if (in_irq())
+		if (in_interrupt())
 			irq_exit();
 		/* This has the effect of resetting the VGA video origin.  */
 		console_lock();
@@ -225,14 +226,19 @@ flush_thread(void)
 	current_thread_info()->pcb.unique = 0;
 }
 
+void
+release_thread(struct task_struct *dead_task)
+{
+}
+
 /*
  * Copy architecture-specific thread state
  */
-int copy_thread(struct task_struct *p, const struct kernel_clone_args *args)
+int
+copy_thread(unsigned long clone_flags, unsigned long usp,
+	    unsigned long kthread_arg,
+	    struct task_struct *p)
 {
-	unsigned long clone_flags = args->flags;
-	unsigned long usp = args->stack;
-	unsigned long tls = args->tls;
 	extern void ret_from_fork(void);
 	extern void ret_from_kernel_thread(void);
 
@@ -245,14 +251,14 @@ int copy_thread(struct task_struct *p, const struct kernel_clone_args *args)
 	childti->pcb.ksp = (unsigned long) childstack;
 	childti->pcb.flags = 1;	/* set FEN, clear everything else */
 
-	if (unlikely(args->fn)) {
+	if (unlikely(p->flags & PF_KTHREAD)) {
 		/* kernel thread */
 		memset(childstack, 0,
 			sizeof(struct switch_stack) + sizeof(struct pt_regs));
 		childstack->r26 = (unsigned long) ret_from_kernel_thread;
-		childstack->r9 = (unsigned long) args->fn;
-		childstack->r10 = (unsigned long) args->fn_arg;
-		childregs->hae = alpha_mv.hae_cache;
+		childstack->r9 = usp;	/* function */
+		childstack->r10 = kthread_arg;
+		childregs->hae = alpha_mv.hae_cache,
 		childti->pcb.usp = 0;
 		return 0;
 	}
@@ -262,7 +268,7 @@ int copy_thread(struct task_struct *p, const struct kernel_clone_args *args)
 	   required for proper operation in the case of a threaded
 	   application calling fork.  */
 	if (clone_flags & CLONE_SETTLS)
-		childti->pcb.unique = tls;
+		childti->pcb.unique = regs->r20;
 	else
 		regs->r20 = 0;	/* OSF/1 has some strange fork() semantics.  */
 	childti->pcb.usp = usp ?: rdusp();
@@ -372,11 +378,12 @@ thread_saved_pc(struct task_struct *t)
 }
 
 unsigned long
-__get_wchan(struct task_struct *p)
+get_wchan(struct task_struct *p)
 {
 	unsigned long schedule_frame;
 	unsigned long pc;
-
+	if (!p || p == current || p->state == TASK_RUNNING)
+		return 0;
 	/*
 	 * This one depends on the frame size of schedule().  Do a
 	 * "disass schedule" in gdb to find the frame size.  Also, the

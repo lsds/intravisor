@@ -19,6 +19,8 @@
 #include <linux/time.h>
 #include <linux/uidgid.h>
 
+#define KSTAT_QUERY_FLAGS (AT_STATX_SYNC_TYPE)
+
 struct kstat {
 	u32		result_mask;	/* What fields the user got */
 	umode_t		mode;
@@ -31,27 +33,19 @@ struct kstat {
 	 STATX_ATTR_IMMUTABLE |				\
 	 STATX_ATTR_APPEND |				\
 	 STATX_ATTR_NODUMP |				\
-	 STATX_ATTR_ENCRYPTED |				\
-	 STATX_ATTR_VERITY				\
+	 STATX_ATTR_ENCRYPTED				\
 	 )/* Attrs corresponding to FS_*_FL flags */
-#define KSTAT_ATTR_VFS_FLAGS				\
-	(STATX_ATTR_IMMUTABLE |				\
-	 STATX_ATTR_APPEND				\
-	 ) /* Attrs corresponding to S_* flags that are enforced by the VFS */
 	u64		ino;
 	dev_t		dev;
 	dev_t		rdev;
 	kuid_t		uid;
 	kgid_t		gid;
 	loff_t		size;
-	struct timespec64 atime;
-	struct timespec64 mtime;
-	struct timespec64 ctime;
-	struct timespec64 btime;			/* File creation time */
+	struct timespec	atime;
+	struct timespec	mtime;
+	struct timespec	ctime;
+	struct timespec	btime;			/* File creation time */
 	u64		blocks;
-	u64		mnt_id;
-	u32		dio_mem_align;
-	u32		dio_offset_align;
 };
 
 #endif

@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Fitipower FC0011 tuner driver
  *
@@ -6,6 +5,16 @@
  *
  * Derived from FC0012 tuner driver:
  * Copyright (C) 2012 Hans-Frieder Vogt <hfvogt@gmx.net>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
  */
 
 #include "fc0011.h"
@@ -250,7 +259,7 @@ static int fc0011_set_params(struct dvb_frontend *fe)
 		dev_warn(&priv->i2c->dev, "Unsupported bandwidth %u kHz. Using 6000 kHz.\n",
 			 bandwidth);
 		bandwidth = 6000;
-		fallthrough;
+		/* fallthrough */
 	case 6000:
 		regs[FC11_REG_VCOSEL] |= FC11_VCOSEL_BW6M;
 		break;
@@ -463,10 +472,10 @@ static int fc0011_get_bandwidth(struct dvb_frontend *fe, u32 *bandwidth)
 
 static const struct dvb_tuner_ops fc0011_tuner_ops = {
 	.info = {
-		.name		  = "Fitipower FC0011",
+		.name		= "Fitipower FC0011",
 
-		.frequency_min_hz =   45 * MHz,
-		.frequency_max_hz = 1000 * MHz,
+		.frequency_min	= 45000000,
+		.frequency_max	= 1000000000,
 	},
 
 	.release		= fc0011_release,

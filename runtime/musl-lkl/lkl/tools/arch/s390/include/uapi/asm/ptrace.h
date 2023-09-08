@@ -179,9 +179,8 @@
 #define ACR_SIZE	4
 
 
-#define PTRACE_OLDSETOPTIONS		21
-#define PTRACE_SYSEMU			31
-#define PTRACE_SYSEMU_SINGLESTEP	32
+#define PTRACE_OLDSETOPTIONS	     21
+
 #ifndef __ASSEMBLY__
 #include <linux/stddef.h>
 #include <linux/types.h>

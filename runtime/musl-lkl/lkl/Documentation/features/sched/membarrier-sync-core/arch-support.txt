@@ -5,10 +5,10 @@
 #
 # Architecture requirements
 #
-# * arm/arm64/powerpc
+# * arm64
 #
-# Rely on implicit context synchronization as a result of exception return
-# when returning from IPI handler, and when returning to user-space.
+# Rely on eret context synchronization when returning from IPI handler, and
+# when returning to user-space.
 #
 # * x86
 #
@@ -31,24 +31,24 @@
     -----------------------
     |       alpha: | TODO |
     |         arc: | TODO |
-    |         arm: |  ok  |
+    |         arm: | TODO |
     |       arm64: |  ok  |
-    |        csky: | TODO |
+    |         c6x: | TODO |
+    |       h8300: | TODO |
     |     hexagon: | TODO |
     |        ia64: | TODO |
-    |       loong: | TODO |
     |        m68k: | TODO |
     |  microblaze: | TODO |
     |        mips: | TODO |
     |       nios2: | TODO |
     |    openrisc: | TODO |
     |      parisc: | TODO |
-    |     powerpc: |  ok  |
-    |       riscv: | TODO |
+    |     powerpc: | TODO |
     |        s390: | TODO |
     |          sh: | TODO |
     |       sparc: | TODO |
     |          um: | TODO |
+    |   unicore32: | TODO |
     |         x86: |  ok  |
     |      xtensa: | TODO |
     -----------------------

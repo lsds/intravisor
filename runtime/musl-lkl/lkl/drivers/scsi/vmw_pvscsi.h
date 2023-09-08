@@ -17,6 +17,8 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301 USA.
  *
+ * Maintained by: Jim Gill <jgill@vmware.com>
+ *
  */
 
 #ifndef _VMW_PVSCSI_H_
@@ -331,8 +333,8 @@ struct PVSCSIRingReqDesc {
 	u8	tag;
 	u8	bus;
 	u8	target;
-	u16	vcpuHint;
-	u8	unused[58];
+	u8	vcpuHint;
+	u8	unused[59];
 } __packed;
 
 /*

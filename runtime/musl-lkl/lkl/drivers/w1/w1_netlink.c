@@ -1,6 +1,15 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Copyright (c) 2003 Evgeniy Polyakov <zbr@ioremap.net>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
  */
 
 #include <linux/slab.h>
@@ -611,8 +620,7 @@ static void w1_cn_callback(struct cn_msg *cn, struct netlink_skb_parms *nsp)
 		}
 		atomic_set(&block->refcnt, 1);
 		block->portid = nsp->portid;
-		block->request_cn = *cn;
-		memcpy(block->request_cn.data, cn->data, cn->len);
+		memcpy(&block->request_cn, cn, sizeof(*cn) + cn->len);
 		node = (struct w1_cb_node *)(block->request_cn.data + cn->len);
 
 		/* Sneeky, when not bundling, reply_size is the allocated space

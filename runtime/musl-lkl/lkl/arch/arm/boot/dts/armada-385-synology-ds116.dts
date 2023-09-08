@@ -139,7 +139,7 @@
 					      3700 5
 					      3900 6
 					      4000 7>;
-			#cooling-cells = <2>;
+			cooling-cells = <2>;
 		};
 
 		gpio-leds {
@@ -223,7 +223,7 @@
 	pinctrl-0 = <&spi0_pins>;
 	status = "okay";
 
-	flash@0 {
+	spi-flash@0 {
 		#address-cells = <1>;
 		#size-cells = <1>;
 		compatible = "macronix,mx25l6405d", "jedec,spi-nor";

@@ -1,8 +1,13 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Driver for the 1250-EV1 audio I/O module
  *
  * Copyright 2011 Wolfson Microelectronics plc
+ *
+ *  This program is free software; you can redistribute  it and/or modify it
+ *  under  the terms of  the GNU General  Public License as published by the
+ *  Free Software Foundation;  either version 2 of the  License, or (at your
+ *  option) any later version.
+ *
  */
 
 #include <linux/init.h>
@@ -144,6 +149,7 @@ static const struct snd_soc_component_driver soc_component_dev_wm1250_ev1 = {
 	.set_bias_level		= wm1250_ev1_set_bias_level,
 	.use_pmdown_time	= 1,
 	.endianness		= 1,
+	.non_legacy_dai_naming	= 1,
 };
 
 static int wm1250_ev1_pdata(struct i2c_client *i2c)
@@ -191,7 +197,8 @@ static void wm1250_ev1_free(struct i2c_client *i2c)
 		gpio_free_array(wm1250->gpios, ARRAY_SIZE(wm1250->gpios));
 }
 
-static int wm1250_ev1_probe(struct i2c_client *i2c)
+static int wm1250_ev1_probe(struct i2c_client *i2c,
+			    const struct i2c_device_id *i2c_id)
 {
 	int id, board, rev, ret;
 
@@ -228,9 +235,11 @@ static int wm1250_ev1_probe(struct i2c_client *i2c)
 	return 0;
 }
 
-static void wm1250_ev1_remove(struct i2c_client *i2c)
+static int wm1250_ev1_remove(struct i2c_client *i2c)
 {
 	wm1250_ev1_free(i2c);
+
+	return 0;
 }
 
 static const struct i2c_device_id wm1250_ev1_i2c_id[] = {
@@ -243,7 +252,7 @@ static struct i2c_driver wm1250_ev1_i2c_driver = {
 	.driver = {
 		.name = "wm1250-ev1",
 	},
-	.probe_new = wm1250_ev1_probe,
+	.probe =    wm1250_ev1_probe,
 	.remove =   wm1250_ev1_remove,
 	.id_table = wm1250_ev1_i2c_id,
 };

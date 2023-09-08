@@ -1,8 +1,16 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  *  Copyright (c) 2009, Citrix Systems, Inc.
  *  Copyright (c) 2010, Microsoft Corporation.
  *  Copyright (c) 2011, Novell Inc.
+ *
+ *  This program is free software; you can redistribute it and/or modify it
+ *  under the terms and conditions of the GNU General Public License,
+ *  version 2, as published by the Free Software Foundation.
+ *
+ *  This program is distributed in the hope it will be useful, but WITHOUT
+ *  ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ *  FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+ *  more details.
  */
 #include <linux/init.h>
 #include <linux/module.h>
@@ -104,8 +112,8 @@ struct synthhid_input_report {
 
 #pragma pack(pop)
 
-#define INPUTVSC_SEND_RING_BUFFER_SIZE	VMBUS_RING_SIZE(36 * 1024)
-#define INPUTVSC_RECV_RING_BUFFER_SIZE	VMBUS_RING_SIZE(36 * 1024)
+#define INPUTVSC_SEND_RING_BUFFER_SIZE		(10*PAGE_SIZE)
+#define INPUTVSC_RECV_RING_BUFFER_SIZE		(10*PAGE_SIZE)
 
 
 enum pipe_prot_msg_type {
@@ -192,22 +200,17 @@ static void mousevsc_on_receive_device_info(struct mousevsc_dev *input_device,
 	if (desc->bLength == 0)
 		goto cleanup;
 
-	/* The pointer is not NULL when we resume from hibernation */
-	kfree(input_device->hid_desc);
 	input_device->hid_desc = kmemdup(desc, desc->bLength, GFP_ATOMIC);
 
 	if (!input_device->hid_desc)
 		goto cleanup;
 
-	input_device->report_desc_size = le16_to_cpu(
-					desc->desc[0].wDescriptorLength);
+	input_device->report_desc_size = desc->desc[0].wDescriptorLength;
 	if (input_device->report_desc_size == 0) {
 		input_device->dev_info_status = -EINVAL;
 		goto cleanup;
 	}
 
-	/* The pointer is not NULL when we resume from hibernation */
-	kfree(input_device->report_desc);
 	input_device->report_desc = kzalloc(input_device->report_desc_size,
 					  GFP_ATOMIC);
 
@@ -218,7 +221,7 @@ static void mousevsc_on_receive_device_info(struct mousevsc_dev *input_device,
 
 	memcpy(input_device->report_desc,
 	       ((unsigned char *)desc) + desc->bLength,
-	       le16_to_cpu(desc->desc[0].wDescriptorLength));
+	       desc->desc[0].wDescriptorLength);
 
 	/* Send the ack */
 	memset(&ack, 0, sizeof(struct mousevsc_prt_msg));
@@ -306,7 +309,7 @@ static void mousevsc_on_receive(struct hv_device *device,
 		hid_input_report(input_dev->hid_device, HID_INPUT_REPORT,
 				 input_dev->input_buf, len, 1);
 
-		pm_wakeup_hard_event(&input_dev->device->device);
+		pm_wakeup_event(&input_dev->device->device, 0);
 
 		break;
 	default:
@@ -319,24 +322,60 @@ static void mousevsc_on_receive(struct hv_device *device,
 
 static void mousevsc_on_channel_callback(void *context)
 {
+	const int packet_size = 0x100;
+	int ret;
 	struct hv_device *device = context;
+	u32 bytes_recvd;
+	u64 req_id;
 	struct vmpacket_descriptor *desc;
+	unsigned char	*buffer;
+	int	bufferlen = packet_size;
 
-	foreach_vmbus_pkt(desc, device->channel) {
-		switch (desc->type) {
-		case VM_PKT_COMP:
+	buffer = kmalloc(bufferlen, GFP_ATOMIC);
+	if (!buffer)
+		return;
+
+	do {
+		ret = vmbus_recvpacket_raw(device->channel, buffer,
+					bufferlen, &bytes_recvd, &req_id);
+
+		switch (ret) {
+		case 0:
+			if (bytes_recvd <= 0) {
+				kfree(buffer);
+				return;
+			}
+			desc = (struct vmpacket_descriptor *)buffer;
+
+			switch (desc->type) {
+			case VM_PKT_COMP:
+				break;
+
+			case VM_PKT_DATA_INBAND:
+				mousevsc_on_receive(device, desc);
+				break;
+
+			default:
+				pr_err("unhandled packet type %d, tid %llx len %d\n",
+					desc->type, req_id, bytes_recvd);
+				break;
+			}
+
 			break;
 
-		case VM_PKT_DATA_INBAND:
-			mousevsc_on_receive(device, desc);
-			break;
+		case -ENOBUFS:
+			kfree(buffer);
+			/* Handle large packet */
+			bufferlen = bytes_recvd;
+			buffer = kmalloc(bytes_recvd, GFP_ATOMIC);
 
-		default:
-			pr_err("Unhandled packet type %d, tid %llx len %d\n",
-			       desc->type, desc->trans_id, desc->len8 * 8);
+			if (!buffer)
+				return;
+
 			break;
 		}
-	}
+	} while (1);
+
 }
 
 static int mousevsc_connect_to_vsp(struct hv_device *device)
@@ -346,8 +385,6 @@ static int mousevsc_connect_to_vsp(struct hv_device *device)
 	struct mousevsc_dev *input_dev = hv_get_drvdata(device);
 	struct mousevsc_prt_msg *request;
 	struct mousevsc_prt_msg *response;
-
-	reinit_completion(&input_dev->wait_event);
 
 	request = &input_dev->protocol_req;
 	memset(request, 0, sizeof(struct mousevsc_prt_msg));
@@ -499,7 +536,7 @@ static int mousevsc_probe(struct hv_device *device,
 
 	ret = hid_add_device(hid_dev);
 	if (ret)
-		goto probe_err2;
+		goto probe_err1;
 
 
 	ret = hid_parse(hid_dev);
@@ -548,30 +585,6 @@ static int mousevsc_remove(struct hv_device *dev)
 	return 0;
 }
 
-static int mousevsc_suspend(struct hv_device *dev)
-{
-	vmbus_close(dev->channel);
-
-	return 0;
-}
-
-static int mousevsc_resume(struct hv_device *dev)
-{
-	int ret;
-
-	ret = vmbus_open(dev->channel,
-			 INPUTVSC_SEND_RING_BUFFER_SIZE,
-			 INPUTVSC_RECV_RING_BUFFER_SIZE,
-			 NULL, 0,
-			 mousevsc_on_channel_callback,
-			 dev);
-	if (ret)
-		return ret;
-
-	ret = mousevsc_connect_to_vsp(dev);
-	return ret;
-}
-
 static const struct hv_vmbus_device_id id_table[] = {
 	/* Mouse guid */
 	{ HV_MOUSE_GUID, },
@@ -585,11 +598,6 @@ static struct  hv_driver mousevsc_drv = {
 	.id_table = id_table,
 	.probe = mousevsc_probe,
 	.remove = mousevsc_remove,
-	.suspend = mousevsc_suspend,
-	.resume = mousevsc_resume,
-	.driver = {
-		.probe_type = PROBE_PREFER_ASYNCHRONOUS,
-	},
 };
 
 static int __init mousevsc_init(void)
@@ -603,7 +611,5 @@ static void __exit mousevsc_exit(void)
 }
 
 MODULE_LICENSE("GPL");
-MODULE_DESCRIPTION("Microsoft Hyper-V Synthetic HID Driver");
-
 module_init(mousevsc_init);
 module_exit(mousevsc_exit);

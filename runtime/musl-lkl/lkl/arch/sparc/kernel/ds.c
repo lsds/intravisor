@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /* ds.c: Domain Services driver for Logical Domains
  *
  * Copyright (C) 2007, 2008 David S. Miller <davem@davemloft.net>
@@ -87,7 +86,7 @@ struct ds_reg_req {
 	__u64			handle;
 	__u16			major;
 	__u16			minor;
-	char			svc_id[];
+	char			svc_id[0];
 };
 
 struct ds_reg_ack {
@@ -555,7 +554,7 @@ static int dr_cpu_configure(struct ds_info *dp, struct ds_cap_state *cp,
 
 		printk(KERN_INFO "ds-%llu: Starting cpu %d...\n",
 		       dp->id, cpu);
-		err = add_cpu(cpu);
+		err = cpu_up(cpu);
 		if (err) {
 			__u32 res = DR_CPU_RES_FAILURE;
 			__u32 stat = DR_CPU_STAT_UNCONFIGURED;
@@ -611,7 +610,7 @@ static int dr_cpu_unconfigure(struct ds_info *dp,
 
 		printk(KERN_INFO "ds-%llu: Shutting down cpu %d...\n",
 		       dp->id, cpu);
-		err = remove_cpu(cpu);
+		err = cpu_down(cpu);
 		if (err)
 			dr_cpu_mark(resp, cpu, ncpus,
 				    DR_CPU_RES_FAILURE,
@@ -701,12 +700,12 @@ struct ds_var_hdr {
 
 struct ds_var_set_msg {
 	struct ds_var_hdr		hdr;
-	char				name_and_value[];
+	char				name_and_value[0];
 };
 
 struct ds_var_delete_msg {
 	struct ds_var_hdr		hdr;
-	char				name[];
+	char				name[0];
 };
 
 struct ds_var_resp {
@@ -877,7 +876,7 @@ void ldom_power_off(void)
 
 static void ds_conn_reset(struct ds_info *dp)
 {
-	printk(KERN_ERR "ds-%llu: ds_conn_reset() from %ps\n",
+	printk(KERN_ERR "ds-%llu: ds_conn_reset() from %pf\n",
 	       dp->id, __builtin_return_address(0));
 }
 
@@ -989,7 +988,7 @@ struct ds_queue_entry {
 	struct ds_info			*dp;
 	int				req_len;
 	int				__pad;
-	u64				req[];
+	u64				req[0];
 };
 
 static void process_ds_work(void)
@@ -1236,6 +1235,11 @@ out_err:
 	return err;
 }
 
+static int ds_remove(struct vio_dev *vdev)
+{
+	return 0;
+}
+
 static const struct vio_device_id ds_match[] = {
 	{
 		.type = "domain-services-port",
@@ -1246,6 +1250,7 @@ static const struct vio_device_id ds_match[] = {
 static struct vio_driver ds_driver = {
 	.id_table	= ds_match,
 	.probe		= ds_probe,
+	.remove		= ds_remove,
 	.name		= "ds",
 };
 

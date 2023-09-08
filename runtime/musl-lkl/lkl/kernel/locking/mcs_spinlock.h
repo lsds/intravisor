@@ -7,7 +7,7 @@
  * The MCS lock (proposed by Mellor-Crummey and Scott) is a simple spin-lock
  * with the desirable properties of being fair, and with each cpu trying
  * to acquire the lock spinning on a local variable.
- * It avoids expensive cache bounces that common test-and-set spin-lock
+ * It avoids expensive cache bouncings that common test-and-set spin-lock
  * implementations incur.
  */
 #ifndef __LINUX_MCS_SPINLOCK_H
@@ -23,15 +23,13 @@ struct mcs_spinlock {
 
 #ifndef arch_mcs_spin_lock_contended
 /*
- * Using smp_cond_load_acquire() provides the acquire semantics
- * required so that subsequent operations happen after the
- * lock is acquired. Additionally, some architectures such as
- * ARM64 would like to do spin-waiting instead of purely
- * spinning, and smp_cond_load_acquire() provides that behavior.
+ * Using smp_load_acquire() provides a memory barrier that ensures
+ * subsequent operations happen after the lock is acquired.
  */
 #define arch_mcs_spin_lock_contended(l)					\
 do {									\
-	smp_cond_load_acquire(l, VAL);					\
+	while (!(smp_load_acquire(l)))					\
+		cpu_relax();						\
 } while (0)
 #endif
 

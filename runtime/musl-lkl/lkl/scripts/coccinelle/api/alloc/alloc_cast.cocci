@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /// Remove casting the values returned by memory allocation functions
 /// like kmalloc, kzalloc, kmem_cache_alloc, kmem_cache_zalloc etc.
 ///
@@ -9,8 +8,8 @@
 //# need some reformatting.
 //
 // Confidence: High
-// Copyright: (C) 2014 Himangi Saraogi
-// Copyright: (C) 2017 Himanshu Jha
+// Copyright: (C) 2014 Himangi Saraogi GPLv2.
+// Copyright: (C) 2017 Himanshu Jha GPLv2.
 // Comments:
 // Options: --no-includes --include-headers
 //
@@ -33,7 +32,7 @@ type T;
   (T *)
   \(kmalloc\|kzalloc\|kcalloc\|kmem_cache_alloc\|kmem_cache_zalloc\|
    kmem_cache_alloc_node\|kmalloc_node\|kzalloc_node\|vmalloc\|vzalloc\|
-   dma_alloc_coherent\|devm_kmalloc\|devm_kzalloc\|
+   dma_alloc_coherent\|dma_zalloc_coherent\|devm_kmalloc\|devm_kzalloc\|
    kvmalloc\|kvzalloc\|kvmalloc_node\|kvzalloc_node\|pci_alloc_consistent\|
    pci_zalloc_consistent\|kmem_alloc\|kmem_zalloc\|kmem_zone_alloc\|
    kmem_zone_zalloc\|vmalloc_node\|vzalloc_node\)(...)
@@ -56,7 +55,7 @@ type r1.T;
 * (T *)
   \(kmalloc\|kzalloc\|kcalloc\|kmem_cache_alloc\|kmem_cache_zalloc\|
    kmem_cache_alloc_node\|kmalloc_node\|kzalloc_node\|vmalloc\|vzalloc\|
-   dma_alloc_coherent\|devm_kmalloc\|devm_kzalloc\|
+   dma_alloc_coherent\|dma_zalloc_coherent\|devm_kmalloc\|devm_kzalloc\|
    kvmalloc\|kvzalloc\|kvmalloc_node\|kvzalloc_node\|pci_alloc_consistent\|
    pci_zalloc_consistent\|kmem_alloc\|kmem_zalloc\|kmem_zone_alloc\|
    kmem_zone_zalloc\|vmalloc_node\|vzalloc_node\)(...)
@@ -79,7 +78,7 @@ type r1.T;
 - (T *)
   \(kmalloc\|kzalloc\|kcalloc\|kmem_cache_alloc\|kmem_cache_zalloc\|
    kmem_cache_alloc_node\|kmalloc_node\|kzalloc_node\|vmalloc\|vzalloc\|
-   dma_alloc_coherent\|devm_kmalloc\|devm_kzalloc\|
+   dma_alloc_coherent\|dma_zalloc_coherent\|devm_kmalloc\|devm_kzalloc\|
    kvmalloc\|kvzalloc\|kvmalloc_node\|kvzalloc_node\|pci_alloc_consistent\|
    pci_zalloc_consistent\|kmem_alloc\|kmem_zalloc\|kmem_zone_alloc\|
    kmem_zone_zalloc\|vmalloc_node\|vzalloc_node\)(...)
@@ -96,7 +95,7 @@ position p;
  (T@p *)
   \(kmalloc\|kzalloc\|kcalloc\|kmem_cache_alloc\|kmem_cache_zalloc\|
    kmem_cache_alloc_node\|kmalloc_node\|kzalloc_node\|vmalloc\|vzalloc\|
-   dma_alloc_coherent\|devm_kmalloc\|devm_kzalloc\|
+   dma_alloc_coherent\|dma_zalloc_coherent\|devm_kmalloc\|devm_kzalloc\|
    kvmalloc\|kvzalloc\|kvmalloc_node\|kvzalloc_node\|pci_alloc_consistent\|
    pci_zalloc_consistent\|kmem_alloc\|kmem_zalloc\|kmem_zone_alloc\|
    kmem_zone_zalloc\|vmalloc_node\|vzalloc_node\)(...)

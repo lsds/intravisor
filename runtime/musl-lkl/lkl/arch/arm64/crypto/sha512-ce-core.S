@@ -106,7 +106,7 @@
 	 *			  int blocks)
 	 */
 	.text
-SYM_FUNC_START(sha512_ce_transform)
+ENTRY(sha512_ce_transform)
 	/* load state */
 	ld1		{v8.2d-v11.2d}, [x0]
 
@@ -195,12 +195,10 @@ CPU_LE(	rev64		v19.16b, v19.16b	)
 	add		v10.2d, v10.2d, v2.2d
 	add		v11.2d, v11.2d, v3.2d
 
-	cond_yield	3f, x4, x5
 	/* handled all input blocks? */
 	cbnz		w2, 0b
 
 	/* store new state */
 3:	st1		{v8.2d-v11.2d}, [x0]
-	mov		w0, w2
 	ret
-SYM_FUNC_END(sha512_ce_transform)
+ENDPROC(sha512_ce_transform)

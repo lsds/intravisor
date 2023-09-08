@@ -1,6 +1,9 @@
-// SPDX-License-Identifier: GPL-2.0-only
-/*
+/**
  * Copyright (C) 2016 Linaro Ltd
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 #include <linux/module.h>
 #include <linux/ulpi/driver.h>
@@ -54,10 +57,8 @@ static int qcom_usb_hsic_phy_power_on(struct phy *phy)
 
 	/* Configure pins for HSIC functionality */
 	pins_default = pinctrl_lookup_state(uphy->pctl, PINCTRL_STATE_DEFAULT);
-	if (IS_ERR(pins_default)) {
-		ret = PTR_ERR(pins_default);
-		goto err_ulpi;
-	}
+	if (IS_ERR(pins_default))
+		return PTR_ERR(pins_default);
 
 	ret = pinctrl_select_state(uphy->pctl, pins_default);
 	if (ret)

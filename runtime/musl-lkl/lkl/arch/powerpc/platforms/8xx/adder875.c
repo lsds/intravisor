@@ -1,9 +1,12 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /* Analogue & Micro Adder MPC875 board support
  *
  * Author: Scott Wood <scottwood@freescale.com>
  *
  * Copyright (c) 2007 Freescale Semiconductor, Inc.
+ *
+ * This program is free software; you can redistribute  it and/or modify
+ * it under the terms of the GNU General Public License, version 2, as
+ * published by the Free Software Foundation.
  */
 
 #include <linux/init.h>
@@ -15,9 +18,9 @@
 #include <asm/cpm1.h>
 #include <asm/fs_pd.h>
 #include <asm/udbg.h>
+#include <asm/prom.h>
 
 #include "mpc8xx.h"
-#include "pic.h"
 
 struct cpm_pin {
 	int port, pin, flags;
@@ -104,9 +107,11 @@ define_machine(adder875) {
 	.name = "Adder MPC875",
 	.probe = adder875_probe,
 	.setup_arch = adder875_setup,
-	.init_IRQ = mpc8xx_pic_init,
+	.init_IRQ = mpc8xx_pics_init,
 	.get_irq = mpc8xx_get_irq,
 	.restart = mpc8xx_restart,
 	.calibrate_decr = generic_calibrate_decr,
+	.set_rtc_time = mpc8xx_set_rtc_time,
+	.get_rtc_time = mpc8xx_get_rtc_time,
 	.progress = udbg_progress,
 };

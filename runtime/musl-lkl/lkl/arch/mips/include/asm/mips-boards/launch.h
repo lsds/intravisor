@@ -3,9 +3,6 @@
  *
  */
 
-#ifndef _ASM_MIPS_BOARDS_LAUNCH_H
-#define _ASM_MIPS_BOARDS_LAUNCH_H
-
 #ifndef _ASSEMBLER_
 
 struct cpulaunch {
@@ -37,5 +34,3 @@ struct cpulaunch {
 
 /* Polling period in count cycles for secondary CPU's */
 #define LAUNCHPERIOD	10000
-
-#endif /* _ASM_MIPS_BOARDS_LAUNCH_H */

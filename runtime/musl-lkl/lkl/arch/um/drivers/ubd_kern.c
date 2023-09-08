@@ -1,8 +1,7 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
- * Copyright (C) 2018 Cambridge Greys Ltd
  * Copyright (C) 2015-2016 Anton Ivanov (aivanov@brocade.com)
  * Copyright (C) 2000 Jeff Dike (jdike@karaya.com)
+ * Licensed under the GPL
  */
 
 /* 2001-09-28...2002-04-17
@@ -24,10 +23,8 @@
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/blkdev.h>
-#include <linux/blk-mq.h>
 #include <linux/ata.h>
 #include <linux/hdreg.h>
-#include <linux/major.h>
 #include <linux/cdrom.h>
 #include <linux/proc_fs.h>
 #include <linux/seq_file.h>
@@ -45,28 +42,21 @@
 #include <os.h>
 #include "cow.h"
 
-/* Max request size is determined by sector mask - 32K */
-#define UBD_MAX_REQUEST (8 * sizeof(long))
-
-struct io_desc {
-	char *buffer;
-	unsigned long length;
-	unsigned long sector_mask;
-	unsigned long long cow_offset;
-	unsigned long bitmap_words[2];
-};
+enum ubd_req { UBD_READ, UBD_WRITE, UBD_FLUSH };
 
 struct io_thread_req {
 	struct request *req;
+	enum ubd_req op;
 	int fds[2];
 	unsigned long offsets[2];
 	unsigned long long offset;
+	unsigned long length;
+	char *buffer;
 	int sectorsize;
+	unsigned long sector_mask;
+	unsigned long long cow_offset;
+	unsigned long bitmap_words[2];
 	int error;
-
-	int desc_cnt;
-	/* io_desc has to be the last element of the struct */
-	struct io_desc io_desc[];
 };
 
 
@@ -121,12 +111,13 @@ static const struct block_device_operations ubd_blops = {
         .open		= ubd_open,
         .release	= ubd_release,
         .ioctl		= ubd_ioctl,
-        .compat_ioctl	= blkdev_compat_ptr_ioctl,
 	.getgeo		= ubd_getgeo,
 };
 
 /* Protected by ubd_lock */
+static int fake_major = UBD_MAJOR;
 static struct gendisk *ubd_gendisk[MAX_DEV];
+static struct gendisk *fake_gendisk[MAX_DEV];
 
 #ifdef CONFIG_BLK_DEV_UBD_SYNC
 #define OPEN_FLAGS ((struct openflags) { .r = 1, .w = 1, .s = 1, .c = 0, \
@@ -151,10 +142,10 @@ struct cow {
 #define MAX_SG 64
 
 struct ubd {
+	struct list_head restart;
 	/* name (and fd, below) of the file opened for writing, either the
 	 * backing or the cow file. */
 	char *file;
-	char *serial;
 	int count;
 	int fd;
 	__u64 size;
@@ -162,12 +153,14 @@ struct ubd {
 	struct openflags openflags;
 	unsigned shared:1;
 	unsigned no_cow:1;
-	unsigned no_trim:1;
 	struct cow cow;
 	struct platform_device pdev;
 	struct request_queue *queue;
-	struct blk_mq_tag_set tag_set;
 	spinlock_t lock;
+	struct scatterlist sg[MAX_SG];
+	struct request *request;
+	int start_sg, end_sg;
+	sector_t rq_pos;
 };
 
 #define DEFAULT_COW { \
@@ -180,35 +173,81 @@ struct ubd {
 
 #define DEFAULT_UBD { \
 	.file = 		NULL, \
-	.serial =		NULL, \
 	.count =		0, \
 	.fd =			-1, \
 	.size =			-1, \
 	.boot_openflags =	OPEN_FLAGS, \
 	.openflags =		OPEN_FLAGS, \
 	.no_cow =               0, \
-	.no_trim =		0, \
 	.shared =		0, \
 	.cow =			DEFAULT_COW, \
 	.lock =			__SPIN_LOCK_UNLOCKED(ubd_devs.lock), \
+	.request =		NULL, \
+	.start_sg =		0, \
+	.end_sg =		0, \
+	.rq_pos =		0, \
 }
 
 /* Protected by ubd_lock */
 static struct ubd ubd_devs[MAX_DEV] = { [0 ... MAX_DEV - 1] = DEFAULT_UBD };
 
-static blk_status_t ubd_queue_rq(struct blk_mq_hw_ctx *hctx,
-				 const struct blk_mq_queue_data *bd);
+/* Only changed by fake_ide_setup which is a setup */
+static int fake_ide = 0;
+static struct proc_dir_entry *proc_ide_root = NULL;
+static struct proc_dir_entry *proc_ide = NULL;
+
+static void make_proc_ide(void)
+{
+	proc_ide_root = proc_mkdir("ide", NULL);
+	proc_ide = proc_mkdir("ide0", proc_ide_root);
+}
+
+static int fake_ide_media_proc_show(struct seq_file *m, void *v)
+{
+	seq_puts(m, "disk\n");
+	return 0;
+}
+
+static int fake_ide_media_proc_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, fake_ide_media_proc_show, NULL);
+}
+
+static const struct file_operations fake_ide_media_proc_fops = {
+	.owner		= THIS_MODULE,
+	.open		= fake_ide_media_proc_open,
+	.read		= seq_read,
+	.llseek		= seq_lseek,
+	.release	= single_release,
+};
+
+static void make_ide_entries(const char *dev_name)
+{
+	struct proc_dir_entry *dir, *ent;
+	char name[64];
+
+	if(proc_ide_root == NULL) make_proc_ide();
+
+	dir = proc_mkdir(dev_name, proc_ide);
+	if(!dir) return;
+
+	ent = proc_create("media", S_IRUGO, dir, &fake_ide_media_proc_fops);
+	if(!ent) return;
+	snprintf(name, sizeof(name), "ide0/%s", dev_name);
+	proc_symlink(dev_name, proc_ide_root, name);
+}
 
 static int fake_ide_setup(char *str)
 {
-	pr_warn("The fake_ide option has been removed\n");
+	fake_ide = 1;
 	return 1;
 }
+
 __setup("fake_ide", fake_ide_setup);
 
 __uml_help(fake_ide_setup,
 "fake_ide\n"
-"    Obsolete stub.\n\n"
+"    Create ide0 entries that map onto ubd devices.\n\n"
 );
 
 static int parse_unit(char **ptr)
@@ -238,20 +277,42 @@ static int ubd_setup_common(char *str, int *index_out, char **error_out)
 {
 	struct ubd *ubd_dev;
 	struct openflags flags = global_openflags;
-	char *file, *backing_file, *serial;
+	char *backing_file;
 	int n, err = 0, i;
 
 	if(index_out) *index_out = -1;
 	n = *str;
 	if(n == '='){
+		char *end;
+		int major;
+
 		str++;
 		if(!strcmp(str, "sync")){
 			global_openflags = of_sync(global_openflags);
-			return err;
+			goto out1;
 		}
 
-		pr_warn("fake major not supported any more\n");
-		return 0;
+		err = -EINVAL;
+		major = simple_strtoul(str, &end, 0);
+		if((*end != '\0') || (end == str)){
+			*error_out = "Didn't parse major number";
+			goto out1;
+		}
+
+		mutex_lock(&ubd_lock);
+		if (fake_major != UBD_MAJOR) {
+			*error_out = "Can't assign a fake major twice";
+			goto out1;
+		}
+
+		fake_major = major;
+
+		printk(KERN_INFO "Setting extra ubd major number to %d\n",
+		       major);
+		err = 0;
+	out1:
+		mutex_unlock(&ubd_lock);
+		return err;
 	}
 
 	n = parse_unit(&str);
@@ -277,7 +338,7 @@ static int ubd_setup_common(char *str, int *index_out, char **error_out)
 		*index_out = n;
 
 	err = -EINVAL;
-	for (i = 0; i < sizeof("rscdt="); i++) {
+	for (i = 0; i < sizeof("rscd="); i++) {
 		switch (*str) {
 		case 'r':
 			flags.w = 0;
@@ -291,15 +352,12 @@ static int ubd_setup_common(char *str, int *index_out, char **error_out)
 		case 'c':
 			ubd_dev->shared = 1;
 			break;
-		case 't':
-			ubd_dev->no_trim = 1;
-			break;
 		case '=':
 			str++;
 			goto break_loop;
 		default:
 			*error_out = "Expected '=' or flag letter "
-				"(r, s, c, t or d)";
+				"(r, s, c, or d)";
 			goto out;
 		}
 		str++;
@@ -312,27 +370,24 @@ static int ubd_setup_common(char *str, int *index_out, char **error_out)
 	goto out;
 
 break_loop:
-	file = strsep(&str, ",:");
-	if (*file == '\0')
-		file = NULL;
+	backing_file = strchr(str, ',');
 
-	backing_file = strsep(&str, ",:");
-	if (backing_file && *backing_file == '\0')
-		backing_file = NULL;
+	if (backing_file == NULL)
+		backing_file = strchr(str, ':');
 
-	serial = strsep(&str, ",:");
-	if (serial && *serial == '\0')
-		serial = NULL;
-
-	if (backing_file && ubd_dev->no_cow) {
-		*error_out = "Can't specify both 'd' and a cow file";
-		goto out;
+	if(backing_file != NULL){
+		if(ubd_dev->no_cow){
+			*error_out = "Can't specify both 'd' and a cow file";
+			goto out;
+		}
+		else {
+			*backing_file = '\0';
+			backing_file++;
+		}
 	}
-
 	err = 0;
-	ubd_dev->file = file;
+	ubd_dev->file = str;
 	ubd_dev->cow.file = backing_file;
-	ubd_dev->serial = serial;
 	ubd_dev->boot_openflags = flags;
 out:
 	mutex_unlock(&ubd_lock);
@@ -353,7 +408,7 @@ static int ubd_setup(char *str)
 
 __setup("ubd", ubd_setup);
 __uml_help(ubd_setup,
-"ubd<n><flags>=<filename>[(:|,)<filename2>][(:|,)<serial>]\n"
+"ubd<n><flags>=<filename>[(:|,)<filename2>]\n"
 "    This is used to associate a device with a file in the underlying\n"
 "    filesystem. When specifying two filenames, the first one is the\n"
 "    COW name and the second is the backing file name. As separator you can\n"
@@ -375,13 +430,6 @@ __uml_help(ubd_setup,
 "    'c' will cause the device to be treated as being shared between multiple\n"
 "    UMLs and file locking will be turned off - this is appropriate for a\n"
 "    cluster filesystem and inappropriate at almost all other times.\n\n"
-"    't' will disable trim/discard support on the device (enabled by default).\n\n"
-"    An optional device serial number can be exposed using the serial parameter\n"
-"    on the cmdline which is exposed as a sysfs entry. This is particularly\n"
-"    useful when a unique number should be given to the device. Note when\n"
-"    specifying a label, the filename2 must be also presented. It can be\n"
-"    an empty string, in which case the backing file is not used:\n"
-"       ubd0=File,,Serial\n"
 );
 
 static int udb_setup(char *str)
@@ -400,8 +448,11 @@ __uml_help(udb_setup,
 "    in the boot output.\n\n"
 );
 
+static void do_ubd_request(struct request_queue * q);
+
 /* Only changed by ubd_init, which is an initcall. */
 static int thread_fd = -1;
+static LIST_HEAD(restart);
 
 /* Function to read several request pointers at a time
 * handling fractional reads if (and as) needed
@@ -459,6 +510,9 @@ static int bulk_req_safe_read(
 /* Called without dev->lock held, and only in interrupt context. */
 static void ubd_handler(void)
 {
+	struct ubd *ubd;
+	struct list_head *list, *next_ele;
+	unsigned long flags;
 	int n;
 	int count;
 
@@ -478,15 +532,22 @@ static void ubd_handler(void)
 			return;
 		}
 		for (count = 0; count < n/sizeof(struct io_thread_req *); count++) {
-			struct io_thread_req *io_req = (*irq_req_buffer)[count];
-
-			if ((io_req->error == BLK_STS_NOTSUPP) && (req_op(io_req->req) == REQ_OP_DISCARD)) {
-				blk_queue_max_discard_sectors(io_req->req->q, 0);
-				blk_queue_max_write_zeroes_sectors(io_req->req->q, 0);
-			}
-			blk_mq_end_request(io_req->req, io_req->error);
-			kfree(io_req);
+			blk_end_request(
+				(*irq_req_buffer)[count]->req,
+				BLK_STS_OK,
+				(*irq_req_buffer)[count]->length
+			);
+			kfree((*irq_req_buffer)[count]);
 		}
+	}
+	reactivate_fd(thread_fd, UBD_IRQ);
+
+	list_for_each_safe(list, next_ele, &restart){
+		ubd = container_of(list, struct ubd, restart);
+		list_del_init(&ubd->restart);
+		spin_lock_irqsave(&ubd->lock, flags);
+		do_ubd_request(ubd->queue);
+		spin_unlock_irqrestore(&ubd->lock, flags);
 	}
 }
 
@@ -516,7 +577,7 @@ static inline int ubd_file_size(struct ubd *ubd_dev, __u64 *size_out)
 	__u32 version;
 	__u32 align;
 	char *backing_file;
-	time64_t mtime;
+	time_t mtime;
 	unsigned long long size;
 	int sector_size;
 	int bitmap_offset;
@@ -555,9 +616,9 @@ static int read_cow_bitmap(int fd, void *buf, int offset, int len)
 	return 0;
 }
 
-static int backing_file_mismatch(char *file, __u64 size, time64_t mtime)
+static int backing_file_mismatch(char *file, __u64 size, time_t mtime)
 {
-	time64_t modtime;
+	unsigned long modtime;
 	unsigned long long actual;
 	int err;
 
@@ -583,7 +644,7 @@ static int backing_file_mismatch(char *file, __u64 size, time64_t mtime)
 		return -EINVAL;
 	}
 	if (modtime != mtime) {
-		printk(KERN_ERR "mtime mismatch (%lld vs %lld) of COW header vs "
+		printk(KERN_ERR "mtime mismatch (%ld vs %ld) of COW header vs "
 		       "backing file\n", mtime, modtime);
 		return -EINVAL;
 	}
@@ -626,7 +687,7 @@ static int open_ubd_file(char *file, struct openflags *openflags, int shared,
 		  unsigned long *bitmap_len_out, int *data_offset_out,
 		  int *create_cow_out)
 {
-	time64_t mtime;
+	time_t mtime;
 	unsigned long long size;
 	__u32 version, align;
 	char *backing_file;
@@ -756,7 +817,7 @@ static int ubd_open_dev(struct ubd *ubd_dev)
 
 	if((fd == -ENOENT) && create_cow){
 		fd = create_cow_file(ubd_dev->file, ubd_dev->cow.file,
-					  ubd_dev->openflags, SECTOR_SIZE, PAGE_SIZE,
+					  ubd_dev->openflags, 1 << 9, PAGE_SIZE,
 					  &ubd_dev->cow.bitmap_offset,
 					  &ubd_dev->cow.bitmap_len,
 					  &ubd_dev->cow.data_offset);
@@ -797,12 +858,6 @@ static int ubd_open_dev(struct ubd *ubd_dev)
 		if(err < 0) goto error;
 		ubd_dev->cow.fd = err;
 	}
-	if (ubd_dev->no_trim == 0) {
-		ubd_dev->queue->limits.discard_granularity = SECTOR_SIZE;
-		blk_queue_max_discard_sectors(ubd_dev->queue, UBD_MAX_REQUEST);
-		blk_queue_max_write_zeroes_sectors(ubd_dev->queue, UBD_MAX_REQUEST);
-	}
-	blk_queue_flag_set(QUEUE_FLAG_NONROT, ubd_dev->queue);
 	return 0;
  error:
 	os_close_file(ubd_dev->fd);
@@ -813,76 +868,52 @@ static void ubd_device_release(struct device *dev)
 {
 	struct ubd *ubd_dev = dev_get_drvdata(dev);
 
-	blk_mq_free_tag_set(&ubd_dev->tag_set);
+	blk_cleanup_queue(ubd_dev->queue);
 	*ubd_dev = ((struct ubd) DEFAULT_UBD);
 }
 
-static ssize_t serial_show(struct device *dev,
-			   struct device_attribute *attr, char *buf)
-{
-	struct gendisk *disk = dev_to_disk(dev);
-	struct ubd *ubd_dev = disk->private_data;
-
-	if (!ubd_dev)
-		return 0;
-
-	return sprintf(buf, "%s", ubd_dev->serial);
-}
-
-static DEVICE_ATTR_RO(serial);
-
-static struct attribute *ubd_attrs[] = {
-	&dev_attr_serial.attr,
-	NULL,
-};
-
-static umode_t ubd_attrs_are_visible(struct kobject *kobj,
-				     struct attribute *a, int n)
-{
-	return a->mode;
-}
-
-static const struct attribute_group ubd_attr_group = {
-	.attrs = ubd_attrs,
-	.is_visible = ubd_attrs_are_visible,
-};
-
-static const struct attribute_group *ubd_attr_groups[] = {
-	&ubd_attr_group,
-	NULL,
-};
-
 static int ubd_disk_register(int major, u64 size, int unit,
-			     struct gendisk *disk)
+			     struct gendisk **disk_out)
 {
+	struct device *parent = NULL;
+	struct gendisk *disk;
+
+	disk = alloc_disk(1 << UBD_SHIFT);
+	if(disk == NULL)
+		return -ENOMEM;
+
 	disk->major = major;
 	disk->first_minor = unit << UBD_SHIFT;
-	disk->minors = 1 << UBD_SHIFT;
 	disk->fops = &ubd_blops;
 	set_capacity(disk, size / 512);
-	sprintf(disk->disk_name, "ubd%c", 'a' + unit);
+	if (major == UBD_MAJOR)
+		sprintf(disk->disk_name, "ubd%c", 'a' + unit);
+	else
+		sprintf(disk->disk_name, "ubd_fake%d", unit);
 
-	ubd_devs[unit].pdev.id   = unit;
-	ubd_devs[unit].pdev.name = DRIVER_NAME;
-	ubd_devs[unit].pdev.dev.release = ubd_device_release;
-	dev_set_drvdata(&ubd_devs[unit].pdev.dev, &ubd_devs[unit]);
-	platform_device_register(&ubd_devs[unit].pdev);
+	/* sysfs register (not for ide fake devices) */
+	if (major == UBD_MAJOR) {
+		ubd_devs[unit].pdev.id   = unit;
+		ubd_devs[unit].pdev.name = DRIVER_NAME;
+		ubd_devs[unit].pdev.dev.release = ubd_device_release;
+		dev_set_drvdata(&ubd_devs[unit].pdev.dev, &ubd_devs[unit]);
+		platform_device_register(&ubd_devs[unit].pdev);
+		parent = &ubd_devs[unit].pdev.dev;
+	}
 
 	disk->private_data = &ubd_devs[unit];
 	disk->queue = ubd_devs[unit].queue;
-	return device_add_disk(&ubd_devs[unit].pdev.dev, disk, ubd_attr_groups);
+	device_add_disk(parent, disk);
+
+	*disk_out = disk;
+	return 0;
 }
 
-#define ROUND_BLOCK(n) ((n + (SECTOR_SIZE - 1)) & (-SECTOR_SIZE))
-
-static const struct blk_mq_ops ubd_mq_ops = {
-	.queue_rq = ubd_queue_rq,
-};
+#define ROUND_BLOCK(n) ((n + ((1 << 9) - 1)) & (-1 << 9))
 
 static int ubd_add(int n, char **error_out)
 {
 	struct ubd *ubd_dev = &ubd_devs[n];
-	struct gendisk *disk;
 	int err = 0;
 
 	if(ubd_dev->file == NULL)
@@ -896,40 +927,43 @@ static int ubd_add(int n, char **error_out)
 
 	ubd_dev->size = ROUND_BLOCK(ubd_dev->size);
 
-	ubd_dev->tag_set.ops = &ubd_mq_ops;
-	ubd_dev->tag_set.queue_depth = 64;
-	ubd_dev->tag_set.numa_node = NUMA_NO_NODE;
-	ubd_dev->tag_set.flags = BLK_MQ_F_SHOULD_MERGE;
-	ubd_dev->tag_set.driver_data = ubd_dev;
-	ubd_dev->tag_set.nr_hw_queues = 1;
+	INIT_LIST_HEAD(&ubd_dev->restart);
+	sg_init_table(ubd_dev->sg, MAX_SG);
 
-	err = blk_mq_alloc_tag_set(&ubd_dev->tag_set);
-	if (err)
+	err = -ENOMEM;
+	ubd_dev->queue = blk_init_queue(do_ubd_request, &ubd_dev->lock);
+	if (ubd_dev->queue == NULL) {
+		*error_out = "Failed to initialize device queue";
 		goto out;
-
-	disk = blk_mq_alloc_disk(&ubd_dev->tag_set, ubd_dev);
-	if (IS_ERR(disk)) {
-		err = PTR_ERR(disk);
-		goto out_cleanup_tags;
 	}
-	ubd_dev->queue = disk->queue;
-
+	ubd_dev->queue->queuedata = ubd_dev;
 	blk_queue_write_cache(ubd_dev->queue, true, false);
+
 	blk_queue_max_segments(ubd_dev->queue, MAX_SG);
-	blk_queue_segment_boundary(ubd_dev->queue, PAGE_SIZE - 1);
-	err = ubd_disk_register(UBD_MAJOR, ubd_dev->size, n, disk);
-	if (err)
-		goto out_cleanup_disk;
+	err = ubd_disk_register(UBD_MAJOR, ubd_dev->size, n, &ubd_gendisk[n]);
+	if(err){
+		*error_out = "Failed to register device";
+		goto out_cleanup;
+	}
 
-	ubd_gendisk[n] = disk;
-	return 0;
+	if (fake_major != UBD_MAJOR)
+		ubd_disk_register(fake_major, ubd_dev->size, n,
+				  &fake_gendisk[n]);
 
-out_cleanup_disk:
-	put_disk(disk);
-out_cleanup_tags:
-	blk_mq_free_tag_set(&ubd_dev->tag_set);
+	/*
+	 * Perhaps this should also be under the "if (fake_major)" above
+	 * using the fake_disk->disk_name
+	 */
+	if (fake_ide)
+		make_ide_entries(ubd_gendisk[n]->disk_name);
+
+	err = 0;
 out:
 	return err;
+
+out_cleanup:
+	blk_cleanup_queue(ubd_dev->queue);
+	goto out;
 }
 
 static int ubd_config(char *str, char **error_out)
@@ -1035,6 +1069,12 @@ static int ubd_remove(int n, char **error_out)
 		put_disk(disk);
 	}
 
+	if(fake_gendisk[n] != NULL){
+		del_gendisk(fake_gendisk[n]);
+		put_disk(fake_gendisk[n]);
+		fake_gendisk[n] = NULL;
+	}
+
 	err = 0;
 	platform_device_unregister(&ubd_dev->pdev);
 out:
@@ -1091,9 +1131,17 @@ static int __init ubd_init(void)
 	if (register_blkdev(UBD_MAJOR, "ubd"))
 		return -1;
 
-	irq_req_buffer = kmalloc_array(UBD_REQ_BUFFER_SIZE,
-				       sizeof(struct io_thread_req *),
-				       GFP_KERNEL
+	if (fake_major != UBD_MAJOR) {
+		char name[sizeof("ubd_nnn\0")];
+
+		snprintf(name, sizeof(name), "ubd_%d", fake_major);
+		if (register_blkdev(fake_major, "ubd"))
+			return -1;
+	}
+
+	irq_req_buffer = kmalloc(
+			sizeof(struct io_thread_req *) * UBD_REQ_BUFFER_SIZE,
+			GFP_KERNEL
 		);
 	irq_remainder = 0;
 
@@ -1101,9 +1149,9 @@ static int __init ubd_init(void)
 		printk(KERN_ERR "Failed to initialize ubd buffering\n");
 		return -1;
 	}
-	io_req_buffer = kmalloc_array(UBD_REQ_BUFFER_SIZE,
-				      sizeof(struct io_thread_req *),
-				      GFP_KERNEL
+	io_req_buffer = kmalloc(
+			sizeof(struct io_thread_req *) * UBD_REQ_BUFFER_SIZE,
+			GFP_KERNEL
 		);
 
 	io_remainder = 0;
@@ -1137,7 +1185,8 @@ static int __init ubd_driver_init(void){
 		 * enough. So use anyway the io thread. */
 	}
 	stack = alloc_stack(0, 0);
-	io_pid = start_io_thread(stack + PAGE_SIZE, &thread_fd);
+	io_pid = start_io_thread(stack + PAGE_SIZE - sizeof(void *),
+				 &thread_fd);
 	if(io_pid < 0){
 		printk(KERN_ERR
 		       "ubd : Failed to start I/O thread (errno = %d) - "
@@ -1147,7 +1196,7 @@ static int __init ubd_driver_init(void){
 	}
 	err = um_request_irq(UBD_IRQ, thread_fd, IRQ_READ, ubd_intr,
 			     0, "ubd", ubd_devs);
-	if(err < 0)
+	if(err != 0)
 		printk(KERN_ERR "um_request_irq failed - errno = %d\n", -err);
 	return 0;
 }
@@ -1198,10 +1247,10 @@ static void cowify_bitmap(__u64 io_offset, int length, unsigned long *cow_mask,
 			  __u64 bitmap_offset, unsigned long *bitmap_words,
 			  __u64 bitmap_len)
 {
-	__u64 sector = io_offset >> SECTOR_SHIFT;
+	__u64 sector = io_offset >> 9;
 	int i, update_bitmap = 0;
 
-	for (i = 0; i < length >> SECTOR_SHIFT; i++) {
+	for(i = 0; i < length >> 9; i++){
 		if(cow_mask != NULL)
 			ubd_set_bit(i, (unsigned char *) cow_mask);
 		if(ubd_test_bit(sector + i, (unsigned char *) bitmap))
@@ -1232,159 +1281,144 @@ static void cowify_bitmap(__u64 io_offset, int length, unsigned long *cow_mask,
 	*cow_offset += bitmap_offset;
 }
 
-static void cowify_req(struct io_thread_req *req, struct io_desc *segment,
-		       unsigned long offset, unsigned long *bitmap,
+static void cowify_req(struct io_thread_req *req, unsigned long *bitmap,
 		       __u64 bitmap_offset, __u64 bitmap_len)
 {
-	__u64 sector = offset >> SECTOR_SHIFT;
+	__u64 sector = req->offset >> 9;
 	int i;
 
-	if (segment->length > (sizeof(segment->sector_mask) * 8) << SECTOR_SHIFT)
+	if(req->length > (sizeof(req->sector_mask) * 8) << 9)
 		panic("Operation too long");
 
-	if (req_op(req->req) == REQ_OP_READ) {
-		for (i = 0; i < segment->length >> SECTOR_SHIFT; i++) {
+	if(req->op == UBD_READ) {
+		for(i = 0; i < req->length >> 9; i++){
 			if(ubd_test_bit(sector + i, (unsigned char *) bitmap))
 				ubd_set_bit(i, (unsigned char *)
-					    &segment->sector_mask);
+					    &req->sector_mask);
 		}
-	} else {
-		cowify_bitmap(offset, segment->length, &segment->sector_mask,
-			      &segment->cow_offset, bitmap, bitmap_offset,
-			      segment->bitmap_words, bitmap_len);
 	}
+	else cowify_bitmap(req->offset, req->length, &req->sector_mask,
+			   &req->cow_offset, bitmap, bitmap_offset,
+			   req->bitmap_words, bitmap_len);
 }
 
-static void ubd_map_req(struct ubd *dev, struct io_thread_req *io_req,
-			struct request *req)
+/* Called with dev->lock held */
+static void prepare_request(struct request *req, struct io_thread_req *io_req,
+			    unsigned long long offset, int page_offset,
+			    int len, struct page *page)
 {
-	struct bio_vec bvec;
-	struct req_iterator iter;
-	int i = 0;
-	unsigned long byte_offset = io_req->offset;
-	enum req_op op = req_op(req);
-
-	if (op == REQ_OP_WRITE_ZEROES || op == REQ_OP_DISCARD) {
-		io_req->io_desc[0].buffer = NULL;
-		io_req->io_desc[0].length = blk_rq_bytes(req);
-	} else {
-		rq_for_each_segment(bvec, req, iter) {
-			BUG_ON(i >= io_req->desc_cnt);
-
-			io_req->io_desc[i].buffer = bvec_virt(&bvec);
-			io_req->io_desc[i].length = bvec.bv_len;
-			i++;
-		}
-	}
-
-	if (dev->cow.file) {
-		for (i = 0; i < io_req->desc_cnt; i++) {
-			cowify_req(io_req, &io_req->io_desc[i], byte_offset,
-				   dev->cow.bitmap, dev->cow.bitmap_offset,
-				   dev->cow.bitmap_len);
-			byte_offset += io_req->io_desc[i].length;
-		}
-
-	}
-}
-
-static struct io_thread_req *ubd_alloc_req(struct ubd *dev, struct request *req,
-					   int desc_cnt)
-{
-	struct io_thread_req *io_req;
-	int i;
-
-	io_req = kmalloc(sizeof(*io_req) +
-			 (desc_cnt * sizeof(struct io_desc)),
-			 GFP_ATOMIC);
-	if (!io_req)
-		return NULL;
+	struct gendisk *disk = req->rq_disk;
+	struct ubd *ubd_dev = disk->private_data;
 
 	io_req->req = req;
-	if (dev->cow.file)
-		io_req->fds[0] = dev->cow.fd;
-	else
-		io_req->fds[0] = dev->fd;
+	io_req->fds[0] = (ubd_dev->cow.file != NULL) ? ubd_dev->cow.fd :
+		ubd_dev->fd;
+	io_req->fds[1] = ubd_dev->fd;
+	io_req->cow_offset = -1;
+	io_req->offset = offset;
+	io_req->length = len;
 	io_req->error = 0;
-	io_req->sectorsize = SECTOR_SIZE;
-	io_req->fds[1] = dev->fd;
-	io_req->offset = (u64) blk_rq_pos(req) << SECTOR_SHIFT;
+	io_req->sector_mask = 0;
+
+	io_req->op = (rq_data_dir(req) == READ) ? UBD_READ : UBD_WRITE;
 	io_req->offsets[0] = 0;
-	io_req->offsets[1] = dev->cow.data_offset;
+	io_req->offsets[1] = ubd_dev->cow.data_offset;
+	io_req->buffer = page_address(page) + page_offset;
+	io_req->sectorsize = 1 << 9;
 
-	for (i = 0 ; i < desc_cnt; i++) {
-		io_req->io_desc[i].sector_mask = 0;
-		io_req->io_desc[i].cow_offset = -1;
-	}
+	if(ubd_dev->cow.file != NULL)
+		cowify_req(io_req, ubd_dev->cow.bitmap,
+			   ubd_dev->cow.bitmap_offset, ubd_dev->cow.bitmap_len);
 
-	return io_req;
 }
 
-static int ubd_submit_request(struct ubd *dev, struct request *req)
+/* Called with dev->lock held */
+static void prepare_flush_request(struct request *req,
+				  struct io_thread_req *io_req)
 {
-	int segs = 0;
-	struct io_thread_req *io_req;
-	int ret;
-	enum req_op op = req_op(req);
+	struct gendisk *disk = req->rq_disk;
+	struct ubd *ubd_dev = disk->private_data;
 
-	if (op == REQ_OP_FLUSH)
-		segs = 0;
-	else if (op == REQ_OP_WRITE_ZEROES || op == REQ_OP_DISCARD)
-		segs = 1;
-	else
-		segs = blk_rq_nr_phys_segments(req);
+	io_req->req = req;
+	io_req->fds[0] = (ubd_dev->cow.file != NULL) ? ubd_dev->cow.fd :
+		ubd_dev->fd;
+	io_req->op = UBD_FLUSH;
+}
 
-	io_req = ubd_alloc_req(dev, req, segs);
-	if (!io_req)
-		return -ENOMEM;
+static bool submit_request(struct io_thread_req *io_req, struct ubd *dev)
+{
+	int n = os_write_file(thread_fd, &io_req,
+			     sizeof(io_req));
+	if (n != sizeof(io_req)) {
+		if (n != -EAGAIN)
+			printk("write to io thread failed, "
+			       "errno = %d\n", -n);
+		else if (list_empty(&dev->restart))
+			list_add(&dev->restart, &restart);
 
-	io_req->desc_cnt = segs;
-	if (segs)
-		ubd_map_req(dev, io_req, req);
-
-	ret = os_write_file(thread_fd, &io_req, sizeof(io_req));
-	if (ret != sizeof(io_req)) {
-		if (ret != -EAGAIN)
-			pr_err("write to io thread failed: %d\n", -ret);
 		kfree(io_req);
+		return false;
 	}
-	return ret;
+	return true;
 }
 
-static blk_status_t ubd_queue_rq(struct blk_mq_hw_ctx *hctx,
-				 const struct blk_mq_queue_data *bd)
+/* Called with dev->lock held */
+static void do_ubd_request(struct request_queue *q)
 {
-	struct ubd *ubd_dev = hctx->queue->queuedata;
-	struct request *req = bd->rq;
-	int ret = 0, res = BLK_STS_OK;
+	struct io_thread_req *io_req;
+	struct request *req;
 
-	blk_mq_start_request(req);
+	while(1){
+		struct ubd *dev = q->queuedata;
+		if(dev->request == NULL){
+			struct request *req = blk_fetch_request(q);
+			if(req == NULL)
+				return;
 
-	spin_lock_irq(&ubd_dev->lock);
+			dev->request = req;
+			dev->rq_pos = blk_rq_pos(req);
+			dev->start_sg = 0;
+			dev->end_sg = blk_rq_map_sg(q, req, dev->sg);
+		}
 
-	switch (req_op(req)) {
-	case REQ_OP_FLUSH:
-	case REQ_OP_READ:
-	case REQ_OP_WRITE:
-	case REQ_OP_DISCARD:
-	case REQ_OP_WRITE_ZEROES:
-		ret = ubd_submit_request(ubd_dev, req);
-		break;
-	default:
-		WARN_ON_ONCE(1);
-		res = BLK_STS_NOTSUPP;
+		req = dev->request;
+
+		if (req_op(req) == REQ_OP_FLUSH) {
+			io_req = kmalloc(sizeof(struct io_thread_req),
+					 GFP_ATOMIC);
+			if (io_req == NULL) {
+				if (list_empty(&dev->restart))
+					list_add(&dev->restart, &restart);
+				return;
+			}
+			prepare_flush_request(req, io_req);
+			if (submit_request(io_req, dev) == false)
+				return;
+		}
+
+		while(dev->start_sg < dev->end_sg){
+			struct scatterlist *sg = &dev->sg[dev->start_sg];
+
+			io_req = kmalloc(sizeof(struct io_thread_req),
+					 GFP_ATOMIC);
+			if(io_req == NULL){
+				if(list_empty(&dev->restart))
+					list_add(&dev->restart, &restart);
+				return;
+			}
+			prepare_request(req, io_req,
+					(unsigned long long)dev->rq_pos << 9,
+					sg->offset, sg->length, sg_page(sg));
+
+			if (submit_request(io_req, dev) == false)
+				return;
+
+			dev->rq_pos += sg->length >> 9;
+			dev->start_sg++;
+		}
+		dev->end_sg = 0;
+		dev->request = NULL;
 	}
-
-	spin_unlock_irq(&ubd_dev->lock);
-
-	if (ret < 0) {
-		if (ret == -ENOMEM)
-			res = BLK_STS_RESOURCE;
-		else
-			res = BLK_STS_DEV_RESOURCE;
-	}
-
-	return res;
 }
 
 static int ubd_getgeo(struct block_device *bdev, struct hd_geometry *geo)
@@ -1429,124 +1463,85 @@ static int ubd_ioctl(struct block_device *bdev, fmode_t mode,
 	return -EINVAL;
 }
 
-static int map_error(int error_code)
-{
-	switch (error_code) {
-	case 0:
-		return BLK_STS_OK;
-	case ENOSYS:
-	case EOPNOTSUPP:
-		return BLK_STS_NOTSUPP;
-	case ENOSPC:
-		return BLK_STS_NOSPC;
-	}
-	return BLK_STS_IOERR;
-}
-
-/*
- * Everything from here onwards *IS NOT PART OF THE KERNEL*
- *
- * The following functions are part of UML hypervisor code.
- * All functions from here onwards are executed as a helper
- * thread and are not allowed to execute any kernel functions.
- *
- * Any communication must occur strictly via shared memory and IPC.
- *
- * Do not add printks, locks, kernel memory operations, etc - it
- * will result in unpredictable behaviour and/or crashes.
- */
-
-static int update_bitmap(struct io_thread_req *req, struct io_desc *segment)
+static int update_bitmap(struct io_thread_req *req)
 {
 	int n;
 
-	if (segment->cow_offset == -1)
-		return map_error(0);
+	if(req->cow_offset == -1)
+		return 0;
 
-	n = os_pwrite_file(req->fds[1], &segment->bitmap_words,
-			  sizeof(segment->bitmap_words), segment->cow_offset);
-	if (n != sizeof(segment->bitmap_words))
-		return map_error(-n);
+	n = os_pwrite_file(req->fds[1], &req->bitmap_words,
+			  sizeof(req->bitmap_words), req->cow_offset);
+	if(n != sizeof(req->bitmap_words)){
+		printk("do_io - bitmap update failed, err = %d fd = %d\n", -n,
+		       req->fds[1]);
+		return 1;
+	}
 
-	return map_error(0);
+	return 0;
 }
 
-static void do_io(struct io_thread_req *req, struct io_desc *desc)
+static void do_io(struct io_thread_req *req)
 {
-	char *buf = NULL;
+	char *buf;
 	unsigned long len;
 	int n, nsectors, start, end, bit;
 	__u64 off;
 
-	/* FLUSH is really a special case, we cannot "case" it with others */
-
-	if (req_op(req->req) == REQ_OP_FLUSH) {
+	if (req->op == UBD_FLUSH) {
 		/* fds[0] is always either the rw image or our cow file */
-		req->error = map_error(-os_sync_file(req->fds[0]));
+		n = os_sync_file(req->fds[0]);
+		if (n != 0) {
+			printk("do_io - sync failed err = %d "
+			       "fd = %d\n", -n, req->fds[0]);
+			req->error = 1;
+		}
 		return;
 	}
 
-	nsectors = desc->length / req->sectorsize;
+	nsectors = req->length / req->sectorsize;
 	start = 0;
 	do {
-		bit = ubd_test_bit(start, (unsigned char *) &desc->sector_mask);
+		bit = ubd_test_bit(start, (unsigned char *) &req->sector_mask);
 		end = start;
 		while((end < nsectors) &&
-		      (ubd_test_bit(end, (unsigned char *) &desc->sector_mask) == bit))
+		      (ubd_test_bit(end, (unsigned char *)
+				    &req->sector_mask) == bit))
 			end++;
 
 		off = req->offset + req->offsets[bit] +
 			start * req->sectorsize;
 		len = (end - start) * req->sectorsize;
-		if (desc->buffer != NULL)
-			buf = &desc->buffer[start * req->sectorsize];
+		buf = &req->buffer[start * req->sectorsize];
 
-		switch (req_op(req->req)) {
-		case REQ_OP_READ:
+		if(req->op == UBD_READ){
 			n = 0;
 			do {
 				buf = &buf[n];
 				len -= n;
 				n = os_pread_file(req->fds[bit], buf, len, off);
 				if (n < 0) {
-					req->error = map_error(-n);
+					printk("do_io - read failed, err = %d "
+					       "fd = %d\n", -n, req->fds[bit]);
+					req->error = 1;
 					return;
 				}
 			} while((n < len) && (n != 0));
 			if (n < len) memset(&buf[n], 0, len - n);
-			break;
-		case REQ_OP_WRITE:
+		} else {
 			n = os_pwrite_file(req->fds[bit], buf, len, off);
 			if(n != len){
-				req->error = map_error(-n);
+				printk("do_io - write failed err = %d "
+				       "fd = %d\n", -n, req->fds[bit]);
+				req->error = 1;
 				return;
 			}
-			break;
-		case REQ_OP_DISCARD:
-			n = os_falloc_punch(req->fds[bit], off, len);
-			if (n) {
-				req->error = map_error(-n);
-				return;
-			}
-			break;
-		case REQ_OP_WRITE_ZEROES:
-			n = os_falloc_zeroes(req->fds[bit], off, len);
-			if (n) {
-				req->error = map_error(-n);
-				return;
-			}
-			break;
-		default:
-			WARN_ON_ONCE(1);
-			req->error = BLK_STS_NOTSUPP;
-			return;
 		}
 
 		start = end;
 	} while(start < nsectors);
 
-	req->offset += len;
-	req->error = update_bitmap(req, desc);
+	req->error = update_bitmap(req);
 }
 
 /* Changed in start_io_thread, which is serialized by being called only
@@ -1555,7 +1550,7 @@ static void do_io(struct io_thread_req *req, struct io_desc *desc)
 int kernel_fd = -1;
 
 /* Only changed by the io thread. XXX: currently unused. */
-static int io_count;
+static int io_count = 0;
 
 int io_thread(void *arg)
 {
@@ -1571,31 +1566,34 @@ int io_thread(void *arg)
 			&io_remainder_size,
 			UBD_REQ_BUFFER_SIZE
 		);
-		if (n <= 0) {
-			if (n == -EAGAIN)
+		if (n < 0) {
+			if (n == -EAGAIN) {
 				ubd_read_poll(-1);
-
-			continue;
+				continue;
+			} else {
+				printk("io_thread - read failed, fd = %d, "
+				       "err = %d,"
+				       "reminder = %d\n",
+				       kernel_fd, -n, io_remainder_size);
+			}
 		}
 
 		for (count = 0; count < n/sizeof(struct io_thread_req *); count++) {
-			struct io_thread_req *req = (*io_req_buffer)[count];
-			int i;
-
 			io_count++;
-			for (i = 0; !req->error && i < req->desc_cnt; i++)
-				do_io(req, &(req->io_desc[i]));
-
+			do_io((*io_req_buffer)[count]);
 		}
 
 		written = 0;
 
 		do {
-			res = os_write_file(kernel_fd,
-					    ((char *) io_req_buffer) + written,
-					    n - written);
+			res = os_write_file(kernel_fd, ((char *) io_req_buffer) + written, n);
 			if (res >= 0) {
 				written += res;
+			} else {
+				if (res != -EAGAIN) {
+					printk("io_thread - write failed, fd = %d, "
+					       "err = %d\n", kernel_fd, -n);
+				}
 			}
 			if (written < n) {
 				ubd_write_poll(-1);

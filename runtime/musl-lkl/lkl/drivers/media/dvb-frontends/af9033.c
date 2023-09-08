@@ -1,9 +1,18 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Afatech AF9033 demodulator driver
  *
  * Copyright (C) 2009 Antti Palosaari <crope@iki.fi>
  * Copyright (C) 2012 Antti Palosaari <crope@iki.fi>
+ *
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
  */
 
 #include "af9033_priv.h"
@@ -125,7 +134,6 @@ static int af9033_init(struct dvb_frontend *fe)
 	if (i == ARRAY_SIZE(clock_adc_lut)) {
 		dev_err(&client->dev, "Couldn't find ADC config for clock %d\n",
 			dev->cfg.clock);
-		ret = -ENODEV;
 		goto err;
 	}
 
@@ -853,7 +861,6 @@ static int af9033_read_snr(struct dvb_frontend *fe, u16 *snr)
 				*snr = *snr * 0xffff / 32;
 				break;
 			default:
-				ret = -EINVAL;
 				goto err;
 			}
 		}
@@ -1013,9 +1020,10 @@ static const struct dvb_frontend_ops af9033_ops = {
 	.delsys = {SYS_DVBT},
 	.info = {
 		.name = "Afatech AF9033 (DVB-T)",
-		.frequency_min_hz = 174 * MHz,
-		.frequency_max_hz = 862 * MHz,
-		.frequency_stepsize_hz = 250 * kHz,
+		.frequency_min = 174000000,
+		.frequency_max = 862000000,
+		.frequency_stepsize = 250000,
+		.frequency_tolerance = 0,
 		.caps =	FE_CAN_FEC_1_2 |
 			FE_CAN_FEC_2_3 |
 			FE_CAN_FEC_3_4 |
@@ -1130,8 +1138,16 @@ static int af9033_probe(struct i2c_client *client,
 		 buf[4], buf[5], buf[6], buf[7]);
 
 	/* Sleep as chip seems to be partly active by default */
-	/* IT9135 did not like to sleep at that early */
-	if (dev->is_af9035) {
+	switch (dev->cfg.tuner) {
+	case AF9033_TUNER_IT9135_38:
+	case AF9033_TUNER_IT9135_51:
+	case AF9033_TUNER_IT9135_52:
+	case AF9033_TUNER_IT9135_60:
+	case AF9033_TUNER_IT9135_61:
+	case AF9033_TUNER_IT9135_62:
+		/* IT9135 did not like to sleep at that early */
+		break;
+	default:
 		ret = regmap_write(dev->regmap, 0x80004c, 0x01);
 		if (ret)
 			goto err_regmap_exit;
@@ -1163,7 +1179,7 @@ err:
 	return ret;
 }
 
-static void af9033_remove(struct i2c_client *client)
+static int af9033_remove(struct i2c_client *client)
 {
 	struct af9033_dev *dev = i2c_get_clientdata(client);
 
@@ -1171,6 +1187,8 @@ static void af9033_remove(struct i2c_client *client)
 
 	regmap_exit(dev->regmap);
 	kfree(dev);
+
+	return 0;
 }
 
 static const struct i2c_device_id af9033_id_table[] = {

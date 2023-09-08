@@ -16,9 +16,6 @@
 #ifndef __PINCTRL_SAMSUNG_EXYNOS_H
 #define __PINCTRL_SAMSUNG_EXYNOS_H
 
-/* Values for the pin CON register */
-#define EXYNOS_PIN_CON_FUNC_EINT	0xf
-
 /* External GPIO and wakeup interrupt related definitions */
 #define EXYNOS_GPIO_ECON_OFFSET		0x700
 #define EXYNOS_GPIO_EFLTCON_OFFSET	0x800
@@ -102,7 +99,7 @@
 
 #define EXYNOS5433_PIN_BANK_EINTW_EXT(pins, reg, id, offs, pctl_idx) \
 	{							\
-		.type           = &exynos5433_bank_type_off,	\
+		.type           = &exynos5433_bank_type_alive,	\
 		.pctl_offset    = reg,				\
 		.nr_pins        = pins,				\
 		.eint_type      = EINT_TYPE_WKUP,		\
@@ -110,35 +107,6 @@
 		.name           = id,				\
 		.pctl_res_idx   = pctl_idx,			\
 	}							\
-
-#define EXYNOS850_PIN_BANK_EINTN(pins, reg, id)			\
-	{							\
-		.type		= &exynos850_bank_type_alive,	\
-		.pctl_offset	= reg,				\
-		.nr_pins	= pins,				\
-		.eint_type	= EINT_TYPE_NONE,		\
-		.name		= id				\
-	}
-
-#define EXYNOS850_PIN_BANK_EINTG(pins, reg, id, offs)		\
-	{							\
-		.type		= &exynos850_bank_type_off,	\
-		.pctl_offset	= reg,				\
-		.nr_pins	= pins,				\
-		.eint_type	= EINT_TYPE_GPIO,		\
-		.eint_offset	= offs,				\
-		.name		= id				\
-	}
-
-#define EXYNOS850_PIN_BANK_EINTW(pins, reg, id, offs)		\
-	{							\
-		.type		= &exynos850_bank_type_alive,	\
-		.pctl_offset	= reg,				\
-		.nr_pins	= pins,				\
-		.eint_type	= EINT_TYPE_WKUP,		\
-		.eint_offset	= offs,				\
-		.name		= id				\
-	}
 
 /**
  * struct exynos_weint_data: irq specific data for all the wakeup interrupts

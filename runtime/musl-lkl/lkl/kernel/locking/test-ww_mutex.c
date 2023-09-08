@@ -1,6 +1,19 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Module-based API test facility for ww_mutexes
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, you can access it online at
+ * http://www.gnu.org/licenses/gpl-2.0.html.
  */
 
 #include <linux/kernel.h>
@@ -13,17 +26,8 @@
 #include <linux/slab.h>
 #include <linux/ww_mutex.h>
 
-static DEFINE_WD_CLASS(ww_class);
+static DEFINE_WW_CLASS(ww_class);
 struct workqueue_struct *wq;
-
-#ifdef CONFIG_DEBUG_WW_MUTEX_SLOWPATH
-#define ww_acquire_init_noinject(a, b) do { \
-		ww_acquire_init((a), (b)); \
-		(a)->deadlock_inject_countdown = ~0U; \
-	} while (0)
-#else
-#define ww_acquire_init_noinject(a, b) ww_acquire_init((a), (b))
-#endif
 
 struct test_mutex {
 	struct work_struct work;
@@ -45,7 +49,7 @@ static void test_mutex_work(struct work_struct *work)
 	wait_for_completion(&mtx->go);
 
 	if (mtx->flags & TEST_MTX_TRY) {
-		while (!ww_mutex_trylock(&mtx->mutex, NULL))
+		while (!ww_mutex_trylock(&mtx->mutex))
 			cond_resched();
 	} else {
 		ww_mutex_lock(&mtx->mutex, NULL);
@@ -118,39 +122,19 @@ static int test_mutex(void)
 	return 0;
 }
 
-static int test_aa(bool trylock)
+static int test_aa(void)
 {
 	struct ww_mutex mutex;
 	struct ww_acquire_ctx ctx;
 	int ret;
-	const char *from = trylock ? "trylock" : "lock";
 
 	ww_mutex_init(&mutex, &ww_class);
 	ww_acquire_init(&ctx, &ww_class);
 
-	if (!trylock) {
-		ret = ww_mutex_lock(&mutex, &ctx);
-		if (ret) {
-			pr_err("%s: initial lock failed!\n", __func__);
-			goto out;
-		}
-	} else {
-		ret = !ww_mutex_trylock(&mutex, &ctx);
-		if (ret) {
-			pr_err("%s: initial trylock failed!\n", __func__);
-			goto out;
-		}
-	}
+	ww_mutex_lock(&mutex, &ctx);
 
-	if (ww_mutex_trylock(&mutex, NULL))  {
-		pr_err("%s: trylocked itself without context from %s!\n", __func__, from);
-		ww_mutex_unlock(&mutex);
-		ret = -EINVAL;
-		goto out;
-	}
-
-	if (ww_mutex_trylock(&mutex, &ctx))  {
-		pr_err("%s: trylocked itself with context from %s!\n", __func__, from);
+	if (ww_mutex_trylock(&mutex))  {
+		pr_err("%s: trylocked itself!\n", __func__);
 		ww_mutex_unlock(&mutex);
 		ret = -EINVAL;
 		goto out;
@@ -158,17 +142,17 @@ static int test_aa(bool trylock)
 
 	ret = ww_mutex_lock(&mutex, &ctx);
 	if (ret != -EALREADY) {
-		pr_err("%s: missed deadlock for recursing, ret=%d from %s\n",
-		       __func__, ret, from);
+		pr_err("%s: missed deadlock for recursing, ret=%d\n",
+		       __func__, ret);
 		if (!ret)
 			ww_mutex_unlock(&mutex);
 		ret = -EINVAL;
 		goto out;
 	}
 
-	ww_mutex_unlock(&mutex);
 	ret = 0;
 out:
+	ww_mutex_unlock(&mutex);
 	ww_acquire_fini(&ctx);
 	return ret;
 }
@@ -179,7 +163,7 @@ struct test_abba {
 	struct ww_mutex b_mutex;
 	struct completion a_ready;
 	struct completion b_ready;
-	bool resolve, trylock;
+	bool resolve;
 	int result;
 };
 
@@ -189,13 +173,8 @@ static void test_abba_work(struct work_struct *work)
 	struct ww_acquire_ctx ctx;
 	int err;
 
-	ww_acquire_init_noinject(&ctx, &ww_class);
-	if (!abba->trylock)
-		ww_mutex_lock(&abba->b_mutex, &ctx);
-	else
-		WARN_ON(!ww_mutex_trylock(&abba->b_mutex, &ctx));
-
-	WARN_ON(READ_ONCE(abba->b_mutex.ctx) != &ctx);
+	ww_acquire_init(&ctx, &ww_class);
+	ww_mutex_lock(&abba->b_mutex, &ctx);
 
 	complete(&abba->b_ready);
 	wait_for_completion(&abba->a_ready);
@@ -215,7 +194,7 @@ static void test_abba_work(struct work_struct *work)
 	abba->result = err;
 }
 
-static int test_abba(bool trylock, bool resolve)
+static int test_abba(bool resolve)
 {
 	struct test_abba abba;
 	struct ww_acquire_ctx ctx;
@@ -226,18 +205,12 @@ static int test_abba(bool trylock, bool resolve)
 	INIT_WORK_ONSTACK(&abba.work, test_abba_work);
 	init_completion(&abba.a_ready);
 	init_completion(&abba.b_ready);
-	abba.trylock = trylock;
 	abba.resolve = resolve;
 
 	schedule_work(&abba.work);
 
-	ww_acquire_init_noinject(&ctx, &ww_class);
-	if (!trylock)
-		ww_mutex_lock(&abba.a_mutex, &ctx);
-	else
-		WARN_ON(!ww_mutex_trylock(&abba.a_mutex, &ctx));
-
-	WARN_ON(READ_ONCE(abba.a_mutex.ctx) != &ctx);
+	ww_acquire_init(&ctx, &ww_class);
+	ww_mutex_lock(&abba.a_mutex, &ctx);
 
 	complete(&abba.a_ready);
 	wait_for_completion(&abba.b_ready);
@@ -287,9 +260,9 @@ static void test_cycle_work(struct work_struct *work)
 {
 	struct test_cycle *cycle = container_of(work, typeof(*cycle), work);
 	struct ww_acquire_ctx ctx;
-	int err, erra = 0;
+	int err;
 
-	ww_acquire_init_noinject(&ctx, &ww_class);
+	ww_acquire_init(&ctx, &ww_class);
 	ww_mutex_lock(&cycle->a_mutex, &ctx);
 
 	complete(cycle->a_signal);
@@ -297,19 +270,17 @@ static void test_cycle_work(struct work_struct *work)
 
 	err = ww_mutex_lock(cycle->b_mutex, &ctx);
 	if (err == -EDEADLK) {
-		err = 0;
 		ww_mutex_unlock(&cycle->a_mutex);
 		ww_mutex_lock_slow(cycle->b_mutex, &ctx);
-		erra = ww_mutex_lock(&cycle->a_mutex, &ctx);
+		err = ww_mutex_lock(&cycle->a_mutex, &ctx);
 	}
 
 	if (!err)
 		ww_mutex_unlock(cycle->b_mutex);
-	if (!erra)
-		ww_mutex_unlock(&cycle->a_mutex);
+	ww_mutex_unlock(&cycle->a_mutex);
 	ww_acquire_fini(&ctx);
 
-	cycle->result = err ?: erra;
+	cycle->result = err;
 }
 
 static int __test_cycle(unsigned int nthreads)
@@ -353,7 +324,7 @@ static int __test_cycle(unsigned int nthreads)
 		if (!cycle->result)
 			continue;
 
-		pr_err("cyclic deadlock not resolved, ret[%d/%d] = %d\n",
+		pr_err("cylic deadlock not resolved, ret[%d/%d] = %d\n",
 		       n, nthreads, cycle->result);
 		ret = -EINVAL;
 		break;
@@ -399,7 +370,7 @@ static int *get_random_order(int count)
 		order[n] = n;
 
 	for (n = count - 1; n > 1; n--) {
-		r = prandom_u32_max(n + 1);
+		r = get_random_int() % (n + 1);
 		if (r != n) {
 			tmp = order[n];
 			order[n] = order[r];
@@ -538,7 +509,7 @@ static void stress_one_work(struct work_struct *work)
 {
 	struct stress *stress = container_of(work, typeof(*stress), work);
 	const int nlocks = stress->nlocks;
-	struct ww_mutex *lock = stress->locks + prandom_u32_max(nlocks);
+	struct ww_mutex *lock = stress->locks + (get_random_int() % nlocks);
 	int err;
 
 	do {
@@ -621,9 +592,7 @@ static int stress(int nlocks, int nthreads, unsigned int flags)
 static int __init test_ww_mutex_init(void)
 {
 	int ncpus = num_online_cpus();
-	int ret, i;
-
-	printk(KERN_INFO "Beginning ww mutex selftests\n");
+	int ret;
 
 	wq = alloc_workqueue("test-ww_mutex", WQ_UNBOUND, 0);
 	if (!wq)
@@ -633,19 +602,17 @@ static int __init test_ww_mutex_init(void)
 	if (ret)
 		return ret;
 
-	ret = test_aa(false);
+	ret = test_aa();
 	if (ret)
 		return ret;
 
-	ret = test_aa(true);
+	ret = test_abba(false);
 	if (ret)
 		return ret;
 
-	for (i = 0; i < 4; i++) {
-		ret = test_abba(i & 1, i & 2);
-		if (ret)
-			return ret;
-	}
+	ret = test_abba(true);
+	if (ret)
+		return ret;
 
 	ret = test_cycle(ncpus);
 	if (ret)
@@ -663,7 +630,6 @@ static int __init test_ww_mutex_init(void)
 	if (ret)
 		return ret;
 
-	printk(KERN_INFO "All ww mutex selftests passed\n");
 	return 0;
 }
 

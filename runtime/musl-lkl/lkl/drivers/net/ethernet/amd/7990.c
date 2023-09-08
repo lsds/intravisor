@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * 7990.c -- LANCE ethernet IC generic routines.
  * This is an attempt to separate out the bits of various ethernet
@@ -28,7 +27,6 @@
 #include <linux/route.h>
 #include <linux/string.h>
 #include <linux/skbuff.h>
-#include <linux/pgtable.h>
 #include <asm/irq.h>
 /* Used for the temporal inet entries and routing */
 #include <linux/socket.h>
@@ -36,6 +34,7 @@
 
 #include <asm/io.h>
 #include <asm/dma.h>
+#include <asm/pgtable.h>
 #ifdef CONFIG_HP300
 #include <asm/blinken.h>
 #endif
@@ -527,7 +526,7 @@ int lance_close(struct net_device *dev)
 }
 EXPORT_SYMBOL_GPL(lance_close);
 
-void lance_tx_timeout(struct net_device *dev, unsigned int txqueue)
+void lance_tx_timeout(struct net_device *dev)
 {
 	printk("lance_tx_timeout\n");
 	lance_reset(dev);
@@ -536,7 +535,7 @@ void lance_tx_timeout(struct net_device *dev, unsigned int txqueue)
 }
 EXPORT_SYMBOL_GPL(lance_tx_timeout);
 
-netdev_tx_t lance_start_xmit(struct sk_buff *skb, struct net_device *dev)
+int lance_start_xmit(struct sk_buff *skb, struct net_device *dev)
 {
 	struct lance_private *lp = netdev_priv(dev);
 	volatile struct lance_init_block *ib = lp->init_block;

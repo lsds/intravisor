@@ -1,8 +1,11 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * max98088.c -- MAX98088 ALSA SoC Audio driver
  *
  * Copyright 2010 Maxim Integrated Products
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 
 #include <linux/module.h>
@@ -13,7 +16,6 @@
 #include <linux/pm.h>
 #include <linux/i2c.h>
 #include <linux/regmap.h>
-#include <linux/clk.h>
 #include <sound/core.h>
 #include <sound/pcm.h>
 #include <sound/pcm_params.h>
@@ -40,8 +42,6 @@ struct max98088_priv {
 	struct regmap *regmap;
 	enum max98088_type devtype;
 	struct max98088_pdata *pdata;
-	struct clk *mclk;
-	unsigned char mclk_prescaler;
 	unsigned int sysclk;
 	struct max98088_cdata dai[2];
 	int eq_textcnt;
@@ -473,9 +473,6 @@ static const struct snd_kcontrol_new max98088_snd_controls[] = {
                        M98088_REG_36_LVL_MIC2, 5, 2, 0,
                        max98088_mic2pre_get, max98088_mic2pre_set,
                        max98088_micboost_tlv),
-
-        SOC_SINGLE("Noise Gate Threshold", M98088_REG_40_MICAGC_THRESH,
-               4, 15, 0),
 
        SOC_SINGLE("INA Volume", M98088_REG_37_LVL_INA, 0, 7, 1),
        SOC_SINGLE("INB Volume", M98088_REG_38_LVL_INB, 0, 7, 1),
@@ -1000,18 +997,15 @@ static int max98088_dai1_hw_params(struct snd_pcm_substream *substream,
        cdata->rate = rate;
 
        /* Configure NI when operating as master */
-       if (snd_soc_component_read(component, M98088_REG_14_DAI1_FORMAT)
+       if (snd_soc_component_read32(component, M98088_REG_14_DAI1_FORMAT)
                & M98088_DAI_MAS) {
-               unsigned long pclk;
-
                if (max98088->sysclk == 0) {
                        dev_err(component->dev, "Invalid system clock frequency\n");
                        return -EINVAL;
                }
                ni = 65536ULL * (rate < 50000 ? 96ULL : 48ULL)
                                * (unsigned long long int)rate;
-               pclk = DIV_ROUND_CLOSEST(max98088->sysclk, max98088->mclk_prescaler);
-               ni = DIV_ROUND_CLOSEST_ULL(ni, pclk);
+               do_div(ni, (unsigned long long int)max98088->sysclk);
                snd_soc_component_write(component, M98088_REG_12_DAI1_CLKCFG_HI,
                        (ni >> 8) & 0x7F);
                snd_soc_component_write(component, M98088_REG_13_DAI1_CLKCFG_LO,
@@ -1070,18 +1064,15 @@ static int max98088_dai2_hw_params(struct snd_pcm_substream *substream,
        cdata->rate = rate;
 
        /* Configure NI when operating as master */
-       if (snd_soc_component_read(component, M98088_REG_1C_DAI2_FORMAT)
+       if (snd_soc_component_read32(component, M98088_REG_1C_DAI2_FORMAT)
                & M98088_DAI_MAS) {
-               unsigned long pclk;
-
                if (max98088->sysclk == 0) {
                        dev_err(component->dev, "Invalid system clock frequency\n");
                        return -EINVAL;
                }
                ni = 65536ULL * (rate < 50000 ? 96ULL : 48ULL)
                                * (unsigned long long int)rate;
-               pclk = DIV_ROUND_CLOSEST(max98088->sysclk, max98088->mclk_prescaler);
-               ni = DIV_ROUND_CLOSEST_ULL(ni, pclk);
+               do_div(ni, (unsigned long long int)max98088->sysclk);
                snd_soc_component_write(component, M98088_REG_1A_DAI2_CLKCFG_HI,
                        (ni >> 8) & 0x7F);
                snd_soc_component_write(component, M98088_REG_1B_DAI2_CLKCFG_LO,
@@ -1112,27 +1103,20 @@ static int max98088_dai_set_sysclk(struct snd_soc_dai *dai,
        if (freq == max98088->sysclk)
                return 0;
 
-	if (!IS_ERR(max98088->mclk)) {
-		freq = clk_round_rate(max98088->mclk, freq);
-		clk_set_rate(max98088->mclk, freq);
-	}
-
        /* Setup clocks for slave mode, and using the PLL
         * PSCLK = 0x01 (when master clk is 10MHz to 20MHz)
         *         0x02 (when master clk is 20MHz to 30MHz)..
         */
        if ((freq >= 10000000) && (freq < 20000000)) {
                snd_soc_component_write(component, M98088_REG_10_SYS_CLK, 0x10);
-               max98088->mclk_prescaler = 1;
        } else if ((freq >= 20000000) && (freq < 30000000)) {
                snd_soc_component_write(component, M98088_REG_10_SYS_CLK, 0x20);
-               max98088->mclk_prescaler = 2;
        } else {
                dev_err(component->dev, "Invalid master clock frequency\n");
                return -EINVAL;
        }
 
-       if (snd_soc_component_read(component, M98088_REG_51_PWR_SYS)  & M98088_SHDNRUN) {
+       if (snd_soc_component_read32(component, M98088_REG_51_PWR_SYS)  & M98088_SHDNRUN) {
                snd_soc_component_update_bits(component, M98088_REG_51_PWR_SYS,
                        M98088_SHDNRUN, 0);
                snd_soc_component_update_bits(component, M98088_REG_51_PWR_SYS,
@@ -1159,18 +1143,20 @@ static int max98088_dai1_set_fmt(struct snd_soc_dai *codec_dai,
        if (fmt != cdata->fmt) {
                cdata->fmt = fmt;
 
-               switch (fmt & SND_SOC_DAIFMT_CLOCK_PROVIDER_MASK) {
-               case SND_SOC_DAIFMT_CBC_CFC:
-                       /* Consumer mode PLL */
+               switch (fmt & SND_SOC_DAIFMT_MASTER_MASK) {
+               case SND_SOC_DAIFMT_CBS_CFS:
+                       /* Slave mode PLL */
                        snd_soc_component_write(component, M98088_REG_12_DAI1_CLKCFG_HI,
                                0x80);
                        snd_soc_component_write(component, M98088_REG_13_DAI1_CLKCFG_LO,
                                0x00);
                        break;
-               case SND_SOC_DAIFMT_CBP_CFP:
-                       /* Set to provider mode */
+               case SND_SOC_DAIFMT_CBM_CFM:
+                       /* Set to master mode */
                        reg14val |= M98088_DAI_MAS;
                        break;
+               case SND_SOC_DAIFMT_CBS_CFM:
+               case SND_SOC_DAIFMT_CBM_CFS:
                default:
                        dev_err(component->dev, "Clock mode unsupported");
                        return -EINVAL;
@@ -1228,18 +1214,20 @@ static int max98088_dai2_set_fmt(struct snd_soc_dai *codec_dai,
        if (fmt != cdata->fmt) {
                cdata->fmt = fmt;
 
-               switch (fmt & SND_SOC_DAIFMT_CLOCK_PROVIDER_MASK) {
-               case SND_SOC_DAIFMT_CBC_CFC:
-                       /* Consumer mode PLL */
+               switch (fmt & SND_SOC_DAIFMT_MASTER_MASK) {
+               case SND_SOC_DAIFMT_CBS_CFS:
+                       /* Slave mode PLL */
                        snd_soc_component_write(component, M98088_REG_1A_DAI2_CLKCFG_HI,
                                0x80);
                        snd_soc_component_write(component, M98088_REG_1B_DAI2_CLKCFG_LO,
                                0x00);
                        break;
-               case SND_SOC_DAIFMT_CBP_CFP:
-                       /* Set to provider mode */
+               case SND_SOC_DAIFMT_CBM_CFM:
+                       /* Set to master mode */
                        reg1Cval |= M98088_DAI_MAS;
                        break;
+               case SND_SOC_DAIFMT_CBS_CFM:
+               case SND_SOC_DAIFMT_CBM_CFS:
                default:
                        dev_err(component->dev, "Clock mode unsupported");
                        return -EINVAL;
@@ -1282,8 +1270,7 @@ static int max98088_dai2_set_fmt(struct snd_soc_dai *codec_dai,
        return 0;
 }
 
-static int max98088_dai1_mute(struct snd_soc_dai *codec_dai, int mute,
-			      int direction)
+static int max98088_dai1_digital_mute(struct snd_soc_dai *codec_dai, int mute)
 {
        struct snd_soc_component *component = codec_dai->component;
        int reg;
@@ -1298,8 +1285,7 @@ static int max98088_dai1_mute(struct snd_soc_dai *codec_dai, int mute,
        return 0;
 }
 
-static int max98088_dai2_mute(struct snd_soc_dai *codec_dai, int mute,
-			      int direction)
+static int max98088_dai2_digital_mute(struct snd_soc_dai *codec_dai, int mute)
 {
        struct snd_soc_component *component = codec_dai->component;
        int reg;
@@ -1324,20 +1310,6 @@ static int max98088_set_bias_level(struct snd_soc_component *component,
 		break;
 
 	case SND_SOC_BIAS_PREPARE:
-		/*
-		 * SND_SOC_BIAS_PREPARE is called while preparing for a
-		 * transition to ON or away from ON. If current bias_level
-		 * is SND_SOC_BIAS_ON, then it is preparing for a transition
-		 * away from ON. Disable the clock in that case, otherwise
-		 * enable it.
-		 */
-		if (!IS_ERR(max98088->mclk)) {
-			if (snd_soc_component_get_bias_level(component) ==
-			    SND_SOC_BIAS_ON)
-				clk_disable_unprepare(max98088->mclk);
-			else
-				clk_prepare_enable(max98088->mclk);
-		}
 		break;
 
 	case SND_SOC_BIAS_STANDBY:
@@ -1364,16 +1336,14 @@ static const struct snd_soc_dai_ops max98088_dai1_ops = {
        .set_sysclk = max98088_dai_set_sysclk,
        .set_fmt = max98088_dai1_set_fmt,
        .hw_params = max98088_dai1_hw_params,
-       .mute_stream = max98088_dai1_mute,
-       .no_capture_mute = 1,
+       .digital_mute = max98088_dai1_digital_mute,
 };
 
 static const struct snd_soc_dai_ops max98088_dai2_ops = {
        .set_sysclk = max98088_dai_set_sysclk,
        .set_fmt = max98088_dai2_set_fmt,
        .hw_params = max98088_dai2_hw_params,
-       .mute_stream = max98088_dai2_mute,
-       .no_capture_mute = 1,
+       .digital_mute = max98088_dai2_digital_mute,
 };
 
 static struct snd_soc_dai_driver max98088_dai[] = {
@@ -1412,12 +1382,15 @@ static const char *eq_mode_name[] = {"EQ1 Mode", "EQ2 Mode"};
 
 static int max98088_get_channel(struct snd_soc_component *component, const char *name)
 {
-	int ret;
+	int i;
 
-	ret = match_string(eq_mode_name, ARRAY_SIZE(eq_mode_name), name);
-	if (ret < 0)
-		dev_err(component->dev, "Bad EQ channel name '%s'\n", name);
-	return ret;
+	for (i = 0; i < ARRAY_SIZE(eq_mode_name); i++)
+		if (strcmp(name, eq_mode_name[i]) == 0)
+			return i;
+
+	/* Shouldn't happen */
+	dev_err(component->dev, "Bad EQ channel name '%s'\n", name);
+	return -EINVAL;
 }
 
 static void max98088_setup_eq1(struct snd_soc_component *component)
@@ -1452,7 +1425,7 @@ static void max98088_setup_eq1(struct snd_soc_component *component)
                pdata->eq_cfg[best].rate, fs);
 
        /* Disable EQ while configuring, and save current on/off state */
-       save = snd_soc_component_read(component, M98088_REG_49_CFG_LEVEL);
+       save = snd_soc_component_read32(component, M98088_REG_49_CFG_LEVEL);
        snd_soc_component_update_bits(component, M98088_REG_49_CFG_LEVEL, M98088_EQ1EN, 0);
 
        coef_set = &pdata->eq_cfg[sel];
@@ -1499,7 +1472,7 @@ static void max98088_setup_eq2(struct snd_soc_component *component)
                pdata->eq_cfg[best].rate, fs);
 
        /* Disable EQ while configuring, and save current on/off state */
-       save = snd_soc_component_read(component, M98088_REG_49_CFG_LEVEL);
+       save = snd_soc_component_read32(component, M98088_REG_49_CFG_LEVEL);
        snd_soc_component_update_bits(component, M98088_REG_49_CFG_LEVEL, M98088_EQ2EN, 0);
 
        coef_set = &pdata->eq_cfg[sel];
@@ -1685,7 +1658,7 @@ static int max98088_probe(struct snd_soc_component *component)
        max98088->mic1pre = 0;
        max98088->mic2pre = 0;
 
-       ret = snd_soc_component_read(component, M98088_REG_FF_REV_ID);
+       ret = snd_soc_component_read32(component, M98088_REG_FF_REV_ID);
        if (ret < 0) {
                dev_err(component->dev, "Failed to read device revision: %d\n",
                        ret);
@@ -1737,7 +1710,33 @@ static const struct snd_soc_component_driver soc_component_dev_max98088 = {
 	.idle_bias_on		= 1,
 	.use_pmdown_time	= 1,
 	.endianness		= 1,
+	.non_legacy_dai_naming	= 1,
 };
+
+static int max98088_i2c_probe(struct i2c_client *i2c,
+			      const struct i2c_device_id *id)
+{
+       struct max98088_priv *max98088;
+       int ret;
+
+       max98088 = devm_kzalloc(&i2c->dev, sizeof(struct max98088_priv),
+			       GFP_KERNEL);
+       if (max98088 == NULL)
+               return -ENOMEM;
+
+       max98088->regmap = devm_regmap_init_i2c(i2c, &max98088_regmap);
+       if (IS_ERR(max98088->regmap))
+	       return PTR_ERR(max98088->regmap);
+
+       max98088->devtype = id->driver_data;
+
+       i2c_set_clientdata(i2c, max98088);
+       max98088->pdata = i2c->dev.platform_data;
+
+       ret = devm_snd_soc_register_component(&i2c->dev,
+                       &soc_component_dev_max98088, &max98088_dai[0], 2);
+       return ret;
+}
 
 static const struct i2c_device_id max98088_i2c_id[] = {
        { "max98088", MAX98088 },
@@ -1746,50 +1745,11 @@ static const struct i2c_device_id max98088_i2c_id[] = {
 };
 MODULE_DEVICE_TABLE(i2c, max98088_i2c_id);
 
-static int max98088_i2c_probe(struct i2c_client *i2c)
-{
-	struct max98088_priv *max98088;
-	const struct i2c_device_id *id;
-
-	max98088 = devm_kzalloc(&i2c->dev, sizeof(struct max98088_priv),
-				GFP_KERNEL);
-	if (max98088 == NULL)
-		return -ENOMEM;
-
-	max98088->regmap = devm_regmap_init_i2c(i2c, &max98088_regmap);
-	if (IS_ERR(max98088->regmap))
-		return PTR_ERR(max98088->regmap);
-
-	max98088->mclk = devm_clk_get(&i2c->dev, "mclk");
-	if (IS_ERR(max98088->mclk))
-		if (PTR_ERR(max98088->mclk) == -EPROBE_DEFER)
-			return PTR_ERR(max98088->mclk);
-
-	id = i2c_match_id(max98088_i2c_id, i2c);
-	max98088->devtype = id->driver_data;
-
-	i2c_set_clientdata(i2c, max98088);
-	max98088->pdata = i2c->dev.platform_data;
-
-	return devm_snd_soc_register_component(&i2c->dev, &soc_component_dev_max98088,
-					      &max98088_dai[0], 2);
-}
-
-#if defined(CONFIG_OF)
-static const struct of_device_id max98088_of_match[] = {
-	{ .compatible = "maxim,max98088" },
-	{ .compatible = "maxim,max98089" },
-	{ }
-};
-MODULE_DEVICE_TABLE(of, max98088_of_match);
-#endif
-
 static struct i2c_driver max98088_i2c_driver = {
 	.driver = {
 		.name = "max98088",
-		.of_match_table = of_match_ptr(max98088_of_match),
 	},
-	.probe_new = max98088_i2c_probe,
+	.probe  = max98088_i2c_probe,
 	.id_table = max98088_i2c_id,
 };
 

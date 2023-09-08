@@ -33,13 +33,23 @@ create_errno_lookup_func()
 	local arch=$(arch_string "$1")
 	local nr name
 
-	printf "static const char *errno_to_name__%s(int err)\n{\n\tswitch (err) {\n" $arch
+	cat <<EoFuncBegin
+static const char *errno_to_name__$arch(int err)
+{
+	switch (err) {
+EoFuncBegin
 
 	while read name nr; do
 		printf '\tcase %d: return "%s";\n' $nr $name
 	done
 
-	printf '\tdefault: return "(unknown)";\n\t}\n}\n'
+	cat <<EoFuncEnd
+	default:
+		return "(unknown)";
+	}
+}
+
+EoFuncEnd
 }
 
 process_arch()
@@ -47,7 +57,7 @@ process_arch()
 	local arch="$1"
 	local asm_errno=$(asm_errno_file "$arch")
 
-	$gcc $CFLAGS $include_path -E -dM -x c $asm_errno \
+	$gcc $include_path -E -dM -x c $asm_errno \
 		|grep -hE '^#define[[:blank:]]+(E[^[:blank:]]+)[[:blank:]]+([[:digit:]]+).*' \
 		|awk '{ print $2","$3; }' \
 		|sort -t, -k2 -nu \
@@ -77,13 +87,14 @@ cat <<EoHEADER
 
 EoHEADER
 
-# Create list of architectures that have a specific errno.h.
+# Create list of architectures and ignore those that do not appear
+# in tools/perf/arch
 archlist=""
-for arch in $(find $toolsdir/arch -maxdepth 1 -mindepth 1 -type d -printf "%f\n" | sort -r); do
-	test -f $toolsdir/arch/$arch/include/uapi/asm/errno.h && archlist="$archlist $arch"
+for arch in $(find $toolsdir/arch -maxdepth 1 -mindepth 1 -type d -printf "%f\n" | grep -v x86 | sort); do
+	test -d arch/$arch && archlist="$archlist $arch"
 done
 
-for arch in generic $archlist; do
+for arch in x86 $archlist generic; do
 	process_arch "$arch"
 done
-create_arch_errno_table_func "$archlist" "generic"
+create_arch_errno_table_func "x86 $archlist" "generic"

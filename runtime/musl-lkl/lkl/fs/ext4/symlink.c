@@ -27,7 +27,7 @@ static const char *ext4_encrypted_get_link(struct dentry *dentry,
 					   struct inode *inode,
 					   struct delayed_call *done)
 {
-	struct buffer_head *bh = NULL;
+	struct page *cpage = NULL;
 	const void *caddr;
 	unsigned int max_size;
 	const char *paddr;
@@ -39,88 +39,28 @@ static const char *ext4_encrypted_get_link(struct dentry *dentry,
 		caddr = EXT4_I(inode)->i_data;
 		max_size = sizeof(EXT4_I(inode)->i_data);
 	} else {
-		bh = ext4_bread(NULL, inode, 0, 0);
-		if (IS_ERR(bh))
-			return ERR_CAST(bh);
-		if (!bh) {
-			EXT4_ERROR_INODE(inode, "bad symlink.");
-			return ERR_PTR(-EFSCORRUPTED);
-		}
-		caddr = bh->b_data;
+		cpage = read_mapping_page(inode->i_mapping, 0, NULL);
+		if (IS_ERR(cpage))
+			return ERR_CAST(cpage);
+		caddr = page_address(cpage);
 		max_size = inode->i_sb->s_blocksize;
 	}
 
 	paddr = fscrypt_get_symlink(inode, caddr, max_size, done);
-	brelse(bh);
+	if (cpage)
+		put_page(cpage);
 	return paddr;
-}
-
-static int ext4_encrypted_symlink_getattr(struct user_namespace *mnt_userns,
-					  const struct path *path,
-					  struct kstat *stat, u32 request_mask,
-					  unsigned int query_flags)
-{
-	ext4_getattr(mnt_userns, path, stat, request_mask, query_flags);
-
-	return fscrypt_symlink_getattr(path, stat);
-}
-
-static void ext4_free_link(void *bh)
-{
-	brelse(bh);
-}
-
-static const char *ext4_get_link(struct dentry *dentry, struct inode *inode,
-				 struct delayed_call *callback)
-{
-	struct buffer_head *bh;
-	char *inline_link;
-
-	/*
-	 * Create a new inlined symlink is not supported, just provide a
-	 * method to read the leftovers.
-	 */
-	if (ext4_has_inline_data(inode)) {
-		if (!dentry)
-			return ERR_PTR(-ECHILD);
-
-		inline_link = ext4_read_inline_link(inode);
-		if (!IS_ERR(inline_link))
-			set_delayed_call(callback, kfree_link, inline_link);
-		return inline_link;
-	}
-
-	if (!dentry) {
-		bh = ext4_getblk(NULL, inode, 0, EXT4_GET_BLOCKS_CACHED_NOWAIT);
-		if (IS_ERR(bh))
-			return ERR_CAST(bh);
-		if (!bh || !ext4_buffer_uptodate(bh))
-			return ERR_PTR(-ECHILD);
-	} else {
-		bh = ext4_bread(NULL, inode, 0, 0);
-		if (IS_ERR(bh))
-			return ERR_CAST(bh);
-		if (!bh) {
-			EXT4_ERROR_INODE(inode, "bad symlink.");
-			return ERR_PTR(-EFSCORRUPTED);
-		}
-	}
-
-	set_delayed_call(callback, ext4_free_link, bh);
-	nd_terminate_link(bh->b_data, inode->i_size,
-			  inode->i_sb->s_blocksize - 1);
-	return bh->b_data;
 }
 
 const struct inode_operations ext4_encrypted_symlink_inode_operations = {
 	.get_link	= ext4_encrypted_get_link,
 	.setattr	= ext4_setattr,
-	.getattr	= ext4_encrypted_symlink_getattr,
+	.getattr	= ext4_getattr,
 	.listxattr	= ext4_listxattr,
 };
 
 const struct inode_operations ext4_symlink_inode_operations = {
-	.get_link	= ext4_get_link,
+	.get_link	= page_get_link,
 	.setattr	= ext4_setattr,
 	.getattr	= ext4_getattr,
 	.listxattr	= ext4_listxattr,

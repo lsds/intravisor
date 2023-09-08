@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  *  linux/arch/arm/mach-pxa/littleton.c
  *
@@ -10,6 +9,10 @@
  *
  *  2007-11-22  modified to align with latest kernel
  *              eric miao <eric.miao@marvell.com>
+ *
+ *  This program is free software; you can redistribute it and/or modify
+ *  it under the terms of the GNU General Public License version 2 as
+ *  publishhed by the Free Software Foundation.
  */
 
 #include <linux/init.h>
@@ -17,7 +20,7 @@
 #include <linux/delay.h>
 #include <linux/platform_device.h>
 #include <linux/clk.h>
-#include <linux/gpio/machine.h>
+#include <linux/gpio.h>
 #include <linux/spi/spi.h>
 #include <linux/spi/pxa2xx_spi.h>
 #include <linux/smc91x.h>
@@ -31,6 +34,7 @@
 #include <asm/setup.h>
 #include <asm/memory.h>
 #include <asm/mach-types.h>
+#include <mach/hardware.h>
 #include <asm/irq.h>
 
 #include <asm/mach/arch.h>
@@ -46,6 +50,8 @@
 #include <linux/platform_data/mtd-nand-pxa3xx.h>
 
 #include "generic.h"
+
+#define GPIO_MMC1_CARD_DETECT	mfp_to_gpio(MFP_PIN_GPIO15)
 
 /* Littleton MFP configurations */
 static mfp_cfg_t littleton_mfp_cfg[] __initdata = {
@@ -178,7 +184,7 @@ static struct pxafb_mach_info littleton_lcd_info = {
 	.lcd_conn		= LCD_COLOR_TFT_16BPP,
 };
 
-static void __init littleton_init_lcd(void)
+static void littleton_init_lcd(void)
 {
 	pxa_set_fb_info(NULL, &littleton_lcd_info);
 }
@@ -187,13 +193,14 @@ static inline void littleton_init_lcd(void) {};
 #endif /* CONFIG_FB_PXA || CONFIG_FB_PXA_MODULE */
 
 #if defined(CONFIG_SPI_PXA2XX) || defined(CONFIG_SPI_PXA2XX_MODULE)
-static struct pxa2xx_spi_controller littleton_spi_info = {
+static struct pxa2xx_spi_master littleton_spi_info = {
 	.num_chipselect		= 1,
 };
 
 static struct pxa2xx_spi_chip littleton_tdo24m_chip = {
 	.rx_threshold	= 1,
 	.tx_threshold	= 1,
+	.gpio_cs	= LITTLETON_GPIO_LCD_CS,
 };
 
 static struct spi_board_info littleton_spi_devices[] __initdata = {
@@ -206,17 +213,8 @@ static struct spi_board_info littleton_spi_devices[] __initdata = {
 	},
 };
 
-static struct gpiod_lookup_table littleton_spi_gpio_table = {
-	.dev_id = "spi2",
-	.table = {
-		GPIO_LOOKUP_IDX("gpio-pxa", LITTLETON_GPIO_LCD_CS, "cs", 0, GPIO_ACTIVE_LOW),
-		{ },
-	},
-};
-
 static void __init littleton_init_spi(void)
 {
-	gpiod_add_lookup_table(&littleton_spi_gpio_table);
 	pxa2xx_set_spi_info(2, &littleton_spi_info);
 	spi_register_board_info(ARRAY_AND_SIZE(littleton_spi_devices));
 }
@@ -280,21 +278,13 @@ static inline void littleton_init_keypad(void) {}
 static struct pxamci_platform_data littleton_mci_platform_data = {
 	.detect_delay_ms	= 200,
 	.ocr_mask		= MMC_VDD_32_33 | MMC_VDD_33_34,
-};
-
-static struct gpiod_lookup_table littleton_mci_gpio_table = {
-	.dev_id = "pxa2xx-mci.0",
-	.table = {
-		/* Card detect on MFP (gpio-pxa) GPIO 15 */
-		GPIO_LOOKUP("gpio-pxa", MFP_PIN_GPIO15,
-			    "cd", GPIO_ACTIVE_LOW),
-		{ },
-	},
+	.gpio_card_detect	= GPIO_MMC1_CARD_DETECT,
+	.gpio_card_ro		= -1,
+	.gpio_power		= -1,
 };
 
 static void __init littleton_init_mmc(void)
 {
-	gpiod_add_lookup_table(&littleton_mci_gpio_table);
 	pxa_set_mci_info(&littleton_mci_platform_data);
 }
 #else

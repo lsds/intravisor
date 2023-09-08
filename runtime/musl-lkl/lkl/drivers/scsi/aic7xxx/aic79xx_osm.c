@@ -194,7 +194,7 @@ struct ahd_linux_iocell_opts
 #define AIC79XX_PRECOMP_INDEX	0
 #define AIC79XX_SLEWRATE_INDEX	1
 #define AIC79XX_AMPLITUDE_INDEX	2
-static struct ahd_linux_iocell_opts aic79xx_iocell_info[] __ro_after_init =
+static const struct ahd_linux_iocell_opts aic79xx_iocell_info[] =
 {
 	AIC79XX_DEFAULT_IOOPTS,
 	AIC79XX_DEFAULT_IOOPTS,
@@ -572,7 +572,8 @@ ahd_linux_info(struct Scsi_Host *host)
 /*
  * Queue an SCB to the controller.
  */
-static int ahd_linux_queue_lck(struct scsi_cmnd *cmd)
+static int
+ahd_linux_queue_lck(struct scsi_cmnd * cmd, void (*scsi_done) (struct scsi_cmnd *))
 {
 	struct	 ahd_softc *ahd;
 	struct	 ahd_linux_device *dev = scsi_transport_device_data(cmd->device);
@@ -580,6 +581,7 @@ static int ahd_linux_queue_lck(struct scsi_cmnd *cmd)
 
 	ahd = *(struct ahd_softc **)cmd->device->host->hostdata;
 
+	cmd->scsi_done = scsi_done;
 	cmd->result = CAM_REQ_INPROG << 16;
 	rtn = ahd_linux_run_command(ahd, dev, cmd);
 
@@ -698,6 +700,9 @@ ahd_linux_slave_alloc(struct scsi_device *sdev)
 static int
 ahd_linux_slave_configure(struct scsi_device *sdev)
 {
+	struct	ahd_softc *ahd;
+
+	ahd = *((struct ahd_softc **)sdev->host->hostdata);
 	if (bootverbose)
 		sdev_printk(KERN_INFO, sdev, "Slave Configure\n");
 
@@ -718,17 +723,24 @@ static int
 ahd_linux_biosparam(struct scsi_device *sdev, struct block_device *bdev,
 		    sector_t capacity, int geom[])
 {
+	uint8_t *bh;
 	int	 heads;
 	int	 sectors;
 	int	 cylinders;
+	int	 ret;
 	int	 extended;
 	struct	 ahd_softc *ahd;
 
 	ahd = *((struct ahd_softc **)sdev->host->hostdata);
 
-	if (scsi_partsize(bdev, capacity, geom))
-		return 0;
-
+	bh = scsi_bios_ptable(bdev);
+	if (bh) {
+		ret = scsi_partsize(bh, capacity,
+				    &geom[2], &geom[0], &geom[1]);
+		kfree(bh);
+		if (ret != -1)
+			return (ret);
+	}
 	heads = 64;
 	sectors = 32;
 	cylinders = aic_sector_div(capacity, heads, sectors);
@@ -755,7 +767,11 @@ ahd_linux_biosparam(struct scsi_device *sdev, struct block_device *bdev,
 static int
 ahd_linux_abort(struct scsi_cmnd *cmd)
 {
-	return ahd_linux_queue_abort_cmd(cmd);
+	int error;
+	
+	error = ahd_linux_queue_abort_cmd(cmd);
+
+	return error;
 }
 
 /*
@@ -769,13 +785,16 @@ ahd_linux_dev_reset(struct scsi_cmnd *cmd)
 	struct scb *reset_scb;
 	u_int  cdb_byte;
 	int    retval = SUCCESS;
+	int    paused;
+	int    wait;
 	struct	ahd_initiator_tinfo *tinfo;
 	struct	ahd_tmode_tstate *tstate;
 	unsigned long flags;
 	DECLARE_COMPLETION_ONSTACK(done);
 
 	reset_scb = NULL;
-
+	paused = FALSE;
+	wait = FALSE;
 	ahd = *(struct ahd_softc **)cmd->device->host->hostdata;
 
 	scmd_printk(KERN_INFO, cmd,
@@ -901,6 +920,7 @@ struct scsi_host_template aic79xx_driver_template = {
 	.this_id		= -1,
 	.max_sectors		= 8192,
 	.cmd_per_lun		= 2,
+	.use_clustering		= ENABLE_CLUSTERING,
 	.slave_alloc		= ahd_linux_slave_alloc,
 	.slave_configure	= ahd_linux_slave_configure,
 	.target_alloc		= ahd_linux_target_alloc,
@@ -946,8 +966,8 @@ int
 ahd_dmamem_alloc(struct ahd_softc *ahd, bus_dma_tag_t dmat, void** vaddr,
 		 int flags, bus_dmamap_t *mapp)
 {
-	*vaddr = dma_alloc_coherent(&ahd->dev_softc->dev, dmat->maxsize, mapp,
-				    GFP_ATOMIC);
+	*vaddr = pci_alloc_consistent(ahd->dev_softc,
+				      dmat->maxsize, mapp);
 	if (*vaddr == NULL)
 		return (ENOMEM);
 	return(0);
@@ -957,7 +977,8 @@ void
 ahd_dmamem_free(struct ahd_softc *ahd, bus_dma_tag_t dmat,
 		void* vaddr, bus_dmamap_t map)
 {
-	dma_free_coherent(&ahd->dev_softc->dev, dmat->maxsize, vaddr, map);
+	pci_free_consistent(ahd->dev_softc, dmat->maxsize,
+			    vaddr, map);
 }
 
 int
@@ -1596,10 +1617,10 @@ ahd_linux_run_command(struct ahd_softc *ahd, struct ahd_linux_device *dev,
 	if ((dev->flags & (AHD_DEV_Q_TAGGED|AHD_DEV_Q_BASIC)) != 0) {
 		if (dev->commands_since_idle_or_otag == AHD_OTAG_THRESH
 		 && (dev->flags & AHD_DEV_Q_TAGGED) != 0) {
-			hscb->control |= ORDERED_QUEUE_TAG;
+			hscb->control |= MSG_ORDERED_TASK;
 			dev->commands_since_idle_or_otag = 0;
 		} else {
-			hscb->control |= SIMPLE_QUEUE_TAG;
+			hscb->control |= MSG_SIMPLE_TASK;
 		}
 	}
 
@@ -1780,12 +1801,10 @@ ahd_done(struct ahd_softc *ahd, struct scb *scb)
 	 */
 	cmd->sense_buffer[0] = 0;
 	if (ahd_get_transaction_status(scb) == CAM_REQ_INPROG) {
-#ifdef AHD_REPORT_UNDERFLOWS
 		uint32_t amount_xferred;
 
 		amount_xferred =
 		    ahd_get_transfer_length(scb) - ahd_get_residual(scb);
-#endif
 		if ((scb->flags & SCB_TRANSMISSION_ERROR) != 0) {
 #ifdef AHD_DEBUG
 			if ((ahd_debug & AHD_SHOW_MISC) != 0) {
@@ -1828,7 +1847,7 @@ ahd_done(struct ahd_softc *ahd, struct scb *scb)
 
 	if (dev->openings == 1
 	 && ahd_get_transaction_status(scb) == CAM_REQ_CMP
-	 && ahd_get_scsi_status(scb) != SAM_STAT_TASK_SET_FULL)
+	 && ahd_get_scsi_status(scb) != SCSI_STATUS_QUEUE_FULL)
 		dev->tag_success_count++;
 	/*
 	 * Some devices deal with temporary internal resource
@@ -1885,8 +1904,8 @@ ahd_linux_handle_scsi_status(struct ahd_softc *ahd,
 	switch (ahd_get_scsi_status(scb)) {
 	default:
 		break;
-	case SAM_STAT_CHECK_CONDITION:
-	case SAM_STAT_COMMAND_TERMINATED:
+	case SCSI_STATUS_CHECK_COND:
+	case SCSI_STATUS_CMD_TERMINATED:
 	{
 		struct scsi_cmnd *cmd;
 
@@ -1922,7 +1941,7 @@ ahd_linux_handle_scsi_status(struct ahd_softc *ahd,
 			memcpy(cmd->sense_buffer,
 			       ahd_get_sense_buf(ahd, scb)
 			       + sense_offset, sense_size);
-			set_status_byte(cmd, SAM_STAT_CHECK_CONDITION);
+			cmd->result |= (DRIVER_SENSE << 24);
 
 #ifdef AHD_DEBUG
 			if (ahd_debug & AHD_SHOW_SENSE) {
@@ -1941,7 +1960,7 @@ ahd_linux_handle_scsi_status(struct ahd_softc *ahd,
 		}
 		break;
 	}
-	case SAM_STAT_TASK_SET_FULL:
+	case SCSI_STATUS_QUEUE_FULL:
 		/*
 		 * By the time the core driver has returned this
 		 * command, all other commands that were queued
@@ -1987,7 +2006,7 @@ ahd_linux_handle_scsi_status(struct ahd_softc *ahd,
 				dev->last_queuefull_same_count = 0;
 			}
 			ahd_set_transaction_status(scb, CAM_REQUEUE_REQ);
-			ahd_set_scsi_status(scb, SAM_STAT_GOOD);
+			ahd_set_scsi_status(scb, SCSI_STATUS_OK);
 			ahd_platform_set_tags(ahd, sdev, &devinfo,
 				     (dev->flags & AHD_DEV_Q_BASIC)
 				   ? AHD_QUEUE_BASIC : AHD_QUEUE_TAGGED);
@@ -2001,7 +2020,7 @@ ahd_linux_handle_scsi_status(struct ahd_softc *ahd,
 		ahd_platform_set_tags(ahd, sdev, &devinfo,
 			     (dev->flags & AHD_DEV_Q_BASIC)
 			   ? AHD_QUEUE_BASIC : AHD_QUEUE_TAGGED);
-		ahd_set_scsi_status(scb, SAM_STAT_BUSY);
+		ahd_set_scsi_status(scb, SCSI_STATUS_BUSY);
 	}
 }
 
@@ -2012,7 +2031,6 @@ ahd_linux_queue_cmd_complete(struct ahd_softc *ahd, struct scsi_cmnd *cmd)
 	int new_status = DID_OK;
 	int do_fallback = 0;
 	int scsi_status;
-	struct scsi_sense_data *sense;
 
 	/*
 	 * Map CAM error codes into Linux Error codes.  We
@@ -2029,19 +2047,25 @@ ahd_linux_queue_cmd_complete(struct ahd_softc *ahd, struct scsi_cmnd *cmd)
 		break;
 	case CAM_AUTOSENSE_FAIL:
 		new_status = DID_ERROR;
-		fallthrough;
+		/* Fallthrough */
 	case CAM_SCSI_STATUS_ERROR:
 		scsi_status = ahd_cmd_get_scsi_status(cmd);
 
 		switch(scsi_status) {
-		case SAM_STAT_COMMAND_TERMINATED:
-		case SAM_STAT_CHECK_CONDITION:
-			sense = (struct scsi_sense_data *)
-				cmd->sense_buffer;
-			if (sense->extra_len >= 5 &&
-			    (sense->add_sense_code == 0x47
-			     || sense->add_sense_code == 0x48))
+		case SCSI_STATUS_CMD_TERMINATED:
+		case SCSI_STATUS_CHECK_COND:
+			if ((cmd->result >> 24) != DRIVER_SENSE) {
 				do_fallback = 1;
+			} else {
+				struct scsi_sense_data *sense;
+				
+				sense = (struct scsi_sense_data *)
+					cmd->sense_buffer;
+				if (sense->extra_len >= 5 &&
+				    (sense->add_sense_code == 0x47
+				     || sense->add_sense_code == 0x48))
+					do_fallback = 1;
+			}
 			break;
 		default:
 			break;
@@ -2105,7 +2129,7 @@ ahd_linux_queue_cmd_complete(struct ahd_softc *ahd, struct scsi_cmnd *cmd)
 
 	ahd_cmd_set_transaction_status(cmd, new_status);
 
-	scsi_done(cmd);
+	cmd->scsi_done(cmd);
 }
 
 static void
@@ -2129,8 +2153,9 @@ ahd_linux_queue_abort_cmd(struct scsi_cmnd *cmd)
 	u_int  saved_scbptr;
 	u_int  active_scbptr;
 	u_int  last_phase;
+	u_int  saved_scsiid;
 	u_int  cdb_byte;
-	int    retval = SUCCESS;
+	int    retval;
 	int    was_paused;
 	int    paused;
 	int    wait;
@@ -2168,7 +2193,8 @@ ahd_linux_queue_abort_cmd(struct scsi_cmnd *cmd)
 		 * so we must not still own the command.
 		 */
 		scmd_printk(KERN_INFO, cmd, "Is not an active device\n");
-		goto done;
+		retval = SUCCESS;
+		goto no_cmd;
 	}
 
 	/*
@@ -2181,7 +2207,7 @@ ahd_linux_queue_abort_cmd(struct scsi_cmnd *cmd)
 
 	if (pending_scb == NULL) {
 		scmd_printk(KERN_INFO, cmd, "Command not found\n");
-		goto done;
+		goto no_cmd;
 	}
 
 	if ((pending_scb->flags & SCB_RECOVERY_SCB) != 0) {
@@ -2189,7 +2215,7 @@ ahd_linux_queue_abort_cmd(struct scsi_cmnd *cmd)
 		 * We can't queue two recovery actions using the same SCB
 		 */
 		retval = FAILED;
-		goto done;
+		goto  done;
 	}
 
 	/*
@@ -2204,7 +2230,7 @@ ahd_linux_queue_abort_cmd(struct scsi_cmnd *cmd)
 
 	if ((pending_scb->flags & SCB_ACTIVE) == 0) {
 		scmd_printk(KERN_INFO, cmd, "Command already completed\n");
-		goto done;
+		goto no_cmd;
 	}
 
 	printk("%s: At time of recovery, card was %spaused\n",
@@ -2221,6 +2247,7 @@ ahd_linux_queue_abort_cmd(struct scsi_cmnd *cmd)
 		printk("%s:%d:%d:%d: Cmd aborted from QINFIFO\n",
 		       ahd_name(ahd), cmd->device->channel, 
 		       cmd->device->id, (u8)cmd->device->lun);
+		retval = SUCCESS;
 		goto done;
 	}
 
@@ -2242,7 +2269,7 @@ ahd_linux_queue_abort_cmd(struct scsi_cmnd *cmd)
 	 * passed in command.  That command is currently active on the
 	 * bus or is in the disconnected state.
 	 */
-	ahd_inb(ahd, SAVED_SCSIID);
+	saved_scsiid = ahd_inb(ahd, SAVED_SCSIID);
 	if (last_phase != P_BUSFREE
 	    && SCB_GET_TAG(pending_scb) == active_scbptr) {
 
@@ -2317,10 +2344,17 @@ ahd_linux_queue_abort_cmd(struct scsi_cmnd *cmd)
 	} else {
 		scmd_printk(KERN_INFO, cmd, "Unable to deliver message\n");
 		retval = FAILED;
+		goto done;
 	}
 
-
-	ahd_restore_modes(ahd, saved_modes);
+no_cmd:
+	/*
+	 * Our assumption is that if we don't have the command, no
+	 * recovery action was required, so we return success.  Again,
+	 * the semantics of the mid-layer recovery engine are not
+	 * well defined, so this may change in time.
+	 */
+	retval = SUCCESS;
 done:
 	if (paused)
 		ahd_unpause(ahd);

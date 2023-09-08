@@ -1,8 +1,12 @@
-/* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
  * Copyright (C) 2008 Andres Salomon <dilinger@debian.org>
  *
  * Geode GX2 header information
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
  */
 #ifndef _GXFB_H_
 #define _GXFB_H_
@@ -21,6 +25,7 @@ struct gxfb_par {
 	void __iomem *dc_regs;
 	void __iomem *vid_regs;
 	void __iomem *gp_regs;
+#ifdef CONFIG_PM
 	int powered_down;
 
 	/* register state, for power management functionality */
@@ -35,6 +40,7 @@ struct gxfb_par {
 	uint64_t fp[FP_REG_COUNT];
 
 	uint32_t pal[DC_PAL_COUNT];
+#endif
 };
 
 unsigned int gx_frame_buffer_size(void);
@@ -47,8 +53,11 @@ void gx_set_dclk_frequency(struct fb_info *info);
 void gx_configure_display(struct fb_info *info);
 int gx_blank_display(struct fb_info *info, int blank_mode);
 
+#ifdef CONFIG_PM
 int gx_powerdown(struct fb_info *info);
 int gx_powerup(struct fb_info *info);
+#endif
+
 
 /* Graphics Processor registers (table 6-23 from the data book) */
 enum gp_registers {

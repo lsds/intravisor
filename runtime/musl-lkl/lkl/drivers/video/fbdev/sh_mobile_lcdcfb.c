@@ -15,7 +15,7 @@
 #include <linux/ctype.h>
 #include <linux/dma-mapping.h>
 #include <linux/delay.h>
-#include <linux/fbcon.h>
+#include <linux/gpio.h>
 #include <linux/init.h>
 #include <linux/interrupt.h>
 #include <linux/ioctl.h>
@@ -29,6 +29,7 @@
 #include <linux/vmalloc.h>
 
 #include <video/sh_mobile_lcdc.h>
+#include <video/sh_mobile_meram.h>
 
 #include "sh_mobile_lcdcfb.h"
 
@@ -213,8 +214,10 @@ struct sh_mobile_lcdc_priv {
 	struct sh_mobile_lcdc_chan ch[2];
 	struct sh_mobile_lcdc_overlay overlays[4];
 
+	struct notifier_block notifier;
 	int started;
 	int forced_fourcc; /* 2 channel LCDC must share fourcc setting */
+	struct sh_mobile_meram_info *meram_dev;
 };
 
 /* -----------------------------------------------------------------------------
@@ -340,16 +343,22 @@ static void lcdc_wait_bit(struct sh_mobile_lcdc_priv *priv,
 static void sh_mobile_lcdc_clk_on(struct sh_mobile_lcdc_priv *priv)
 {
 	if (atomic_inc_and_test(&priv->hw_usecnt)) {
-		clk_prepare_enable(priv->dot_clk);
+		if (priv->dot_clk)
+			clk_prepare_enable(priv->dot_clk);
 		pm_runtime_get_sync(priv->dev);
+		if (priv->meram_dev && priv->meram_dev->pdev)
+			pm_runtime_get_sync(&priv->meram_dev->pdev->dev);
 	}
 }
 
 static void sh_mobile_lcdc_clk_off(struct sh_mobile_lcdc_priv *priv)
 {
 	if (atomic_sub_return(1, &priv->hw_usecnt) == -1) {
+		if (priv->meram_dev && priv->meram_dev->pdev)
+			pm_runtime_put_sync(&priv->meram_dev->pdev->dev);
 		pm_runtime_put(priv->dev);
-		clk_disable_unprepare(priv->dot_clk);
+		if (priv->dot_clk)
+			clk_disable_unprepare(priv->dot_clk);
 	}
 }
 
@@ -435,23 +444,24 @@ static struct sh_mobile_lcdc_sys_bus_ops sh_mobile_lcdc_sys_bus_ops = {
 	.read_data	= lcdc_sys_read_data,
 };
 
-static int sh_mobile_lcdc_sginit(struct fb_info *info, struct list_head *pagereflist)
+static int sh_mobile_lcdc_sginit(struct fb_info *info,
+				  struct list_head *pagelist)
 {
 	struct sh_mobile_lcdc_chan *ch = info->par;
 	unsigned int nr_pages_max = ch->fb_size >> PAGE_SHIFT;
-	struct fb_deferred_io_pageref *pageref;
+	struct page *page;
 	int nr_pages = 0;
 
 	sg_init_table(ch->sglist, nr_pages_max);
 
-	list_for_each_entry(pageref, pagereflist, list) {
-		sg_set_page(&ch->sglist[nr_pages++], pageref->page, PAGE_SIZE, 0);
-	}
+	list_for_each_entry(page, pagelist, lru)
+		sg_set_page(&ch->sglist[nr_pages++], page, PAGE_SIZE, 0);
 
 	return nr_pages;
 }
 
-static void sh_mobile_lcdc_deferred_io(struct fb_info *info, struct list_head *pagereflist)
+static void sh_mobile_lcdc_deferred_io(struct fb_info *info,
+				       struct list_head *pagelist)
 {
 	struct sh_mobile_lcdc_chan *ch = info->par;
 	const struct sh_mobile_lcdc_panel_cfg *panel = &ch->cfg->panel_cfg;
@@ -460,7 +470,7 @@ static void sh_mobile_lcdc_deferred_io(struct fb_info *info, struct list_head *p
 	sh_mobile_lcdc_clk_on(ch->lcdc);
 
 	/*
-	 * It's possible to get here without anything on the pagereflist via
+	 * It's possible to get here without anything on the pagelist via
 	 * sh_mobile_lcdc_deferred_io_touch() or via a userspace fsync()
 	 * invocation. In the former case, the acceleration routines are
 	 * stepped in to when using the framebuffer console causing the
@@ -470,12 +480,12 @@ static void sh_mobile_lcdc_deferred_io(struct fb_info *info, struct list_head *p
 	 * acceleration routines have their own methods for writing in
 	 * that still need to be updated.
 	 *
-	 * The fsync() and empty pagereflist case could be optimized for,
+	 * The fsync() and empty pagelist case could be optimized for,
 	 * but we don't bother, as any application exhibiting such
 	 * behaviour is fundamentally broken anyways.
 	 */
-	if (!list_empty(pagereflist)) {
-		unsigned int nr_pages = sh_mobile_lcdc_sginit(info, pagereflist);
+	if (!list_empty(pagelist)) {
+		unsigned int nr_pages = sh_mobile_lcdc_sginit(info, pagelist);
 
 		/* trigger panel update */
 		dma_map_sg(ch->lcdc->dev, ch->sglist, nr_pages, DMA_TO_DEVICE);
@@ -528,6 +538,89 @@ static void sh_mobile_lcdc_display_off(struct sh_mobile_lcdc_chan *ch)
 
 	if (ch->tx_dev)
 		ch->tx_dev->ops->display_off(ch->tx_dev);
+}
+
+static bool
+sh_mobile_lcdc_must_reconfigure(struct sh_mobile_lcdc_chan *ch,
+				const struct fb_videomode *new_mode)
+{
+	dev_dbg(ch->info->dev, "Old %ux%u, new %ux%u\n",
+		ch->display.mode.xres, ch->display.mode.yres,
+		new_mode->xres, new_mode->yres);
+
+	/* It can be a different monitor with an equal video-mode */
+	if (fb_mode_is_equal(&ch->display.mode, new_mode))
+		return false;
+
+	dev_dbg(ch->info->dev, "Switching %u -> %u lines\n",
+		ch->display.mode.yres, new_mode->yres);
+	ch->display.mode = *new_mode;
+
+	return true;
+}
+
+static int sh_mobile_lcdc_check_var(struct fb_var_screeninfo *var,
+				    struct fb_info *info);
+
+static int sh_mobile_lcdc_display_notify(struct sh_mobile_lcdc_chan *ch,
+					 enum sh_mobile_lcdc_entity_event event,
+					 const struct fb_videomode *mode,
+					 const struct fb_monspecs *monspec)
+{
+	struct fb_info *info = ch->info;
+	struct fb_var_screeninfo var;
+	int ret = 0;
+
+	switch (event) {
+	case SH_MOBILE_LCDC_EVENT_DISPLAY_CONNECT:
+		/* HDMI plug in */
+		console_lock();
+		if (lock_fb_info(info)) {
+
+
+			ch->display.width = monspec->max_x * 10;
+			ch->display.height = monspec->max_y * 10;
+
+			if (!sh_mobile_lcdc_must_reconfigure(ch, mode) &&
+			    info->state == FBINFO_STATE_RUNNING) {
+				/* First activation with the default monitor.
+				 * Just turn on, if we run a resume here, the
+				 * logo disappears.
+				 */
+				info->var.width = ch->display.width;
+				info->var.height = ch->display.height;
+				sh_mobile_lcdc_display_on(ch);
+			} else {
+				/* New monitor or have to wake up */
+				fb_set_suspend(info, 0);
+			}
+
+
+			unlock_fb_info(info);
+		}
+		console_unlock();
+		break;
+
+	case SH_MOBILE_LCDC_EVENT_DISPLAY_DISCONNECT:
+		/* HDMI disconnect */
+		console_lock();
+		if (lock_fb_info(info)) {
+			fb_set_suspend(info, 1);
+			unlock_fb_info(info);
+		}
+		console_unlock();
+		break;
+
+	case SH_MOBILE_LCDC_EVENT_DISPLAY_MODE:
+		/* Validate a proposed new mode */
+		fb_videomode_to_var(&var, mode);
+		var.bits_per_pixel = info->var.bits_per_pixel;
+		var.grayscale = info->var.grayscale;
+		ret = sh_mobile_lcdc_check_var(&var, info);
+		break;
+	}
+
+	return ret;
 }
 
 /* -----------------------------------------------------------------------------
@@ -980,6 +1073,7 @@ static void __sh_mobile_lcdc_start(struct sh_mobile_lcdc_priv *priv)
 
 static int sh_mobile_lcdc_start(struct sh_mobile_lcdc_priv *priv)
 {
+	struct sh_mobile_meram_info *mdev = priv->meram_dev;
 	struct sh_mobile_lcdc_chan *ch;
 	unsigned long tmp;
 	int ret;
@@ -1012,6 +1106,9 @@ static int sh_mobile_lcdc_start(struct sh_mobile_lcdc_priv *priv)
 
 	/* Compute frame buffer base address and pitch for each channel. */
 	for (k = 0; k < ARRAY_SIZE(priv->ch); k++) {
+		int pixelformat;
+		void *cache;
+
 		ch = &priv->ch[k];
 		if (!ch->enabled)
 			continue;
@@ -1020,6 +1117,45 @@ static int sh_mobile_lcdc_start(struct sh_mobile_lcdc_priv *priv)
 		ch->base_addr_c = ch->dma_handle
 				+ ch->xres_virtual * ch->yres_virtual;
 		ch->line_size = ch->pitch;
+
+		/* Enable MERAM if possible. */
+		if (mdev == NULL || ch->cfg->meram_cfg == NULL)
+			continue;
+
+		/* Free the allocated MERAM cache. */
+		if (ch->cache) {
+			sh_mobile_meram_cache_free(mdev, ch->cache);
+			ch->cache = NULL;
+		}
+
+		switch (ch->format->fourcc) {
+		case V4L2_PIX_FMT_NV12:
+		case V4L2_PIX_FMT_NV21:
+		case V4L2_PIX_FMT_NV16:
+		case V4L2_PIX_FMT_NV61:
+			pixelformat = SH_MOBILE_MERAM_PF_NV;
+			break;
+		case V4L2_PIX_FMT_NV24:
+		case V4L2_PIX_FMT_NV42:
+			pixelformat = SH_MOBILE_MERAM_PF_NV24;
+			break;
+		case V4L2_PIX_FMT_RGB565:
+		case V4L2_PIX_FMT_BGR24:
+		case V4L2_PIX_FMT_BGR32:
+		default:
+			pixelformat = SH_MOBILE_MERAM_PF_RGB;
+			break;
+		}
+
+		cache = sh_mobile_meram_cache_alloc(mdev, ch->cfg->meram_cfg,
+					ch->pitch, ch->yres, pixelformat,
+					&ch->line_size);
+		if (!IS_ERR(cache)) {
+			sh_mobile_meram_cache_update(mdev, cache,
+					ch->base_addr_y, ch->base_addr_c,
+					&ch->base_addr_y, &ch->base_addr_c);
+			ch->cache = cache;
+		}
 	}
 
 	for (k = 0; k < ARRAY_SIZE(priv->overlays); ++k) {
@@ -1087,6 +1223,13 @@ static void sh_mobile_lcdc_stop(struct sh_mobile_lcdc_priv *priv)
 		}
 
 		sh_mobile_lcdc_display_off(ch);
+
+		/* Free the MERAM cache. */
+		if (ch->cache) {
+			sh_mobile_meram_cache_free(priv->meram_dev, ch->cache);
+			ch->cache = NULL;
+		}
+
 	}
 
 	/* stop the lcdc */
@@ -1479,14 +1622,11 @@ sh_mobile_lcdc_overlay_mmap(struct fb_info *info, struct vm_area_struct *vma)
 {
 	struct sh_mobile_lcdc_overlay *ovl = info->par;
 
-	if (info->fbdefio)
-		return fb_deferred_io_mmap(info, vma);
-
 	return dma_mmap_coherent(ovl->channel->lcdc->dev, vma, ovl->fb_mem,
 				 ovl->dma_handle, ovl->fb_size);
 }
 
-static const struct fb_ops sh_mobile_lcdc_overlay_ops = {
+static struct fb_ops sh_mobile_lcdc_overlay_ops = {
 	.owner          = THIS_MODULE,
 	.fb_read        = fb_sys_read,
 	.fb_write       = fb_sys_write,
@@ -1560,15 +1700,17 @@ sh_mobile_lcdc_overlay_fb_init(struct sh_mobile_lcdc_overlay *ovl)
 
 	/* Allocate and initialize the frame buffer device. */
 	info = framebuffer_alloc(0, priv->dev);
-	if (!info)
+	if (info == NULL) {
+		dev_err(priv->dev, "unable to allocate fb_info\n");
 		return -ENOMEM;
+	}
 
 	ovl->info = info;
 
 	info->flags = FBINFO_FLAG_DEFAULT;
 	info->fbops = &sh_mobile_lcdc_overlay_ops;
 	info->device = priv->dev;
-	info->screen_buffer = ovl->fb_mem;
+	info->screen_base = ovl->fb_mem;
 	info->par = ovl;
 
 	/* Initialize fixed screen information. Restrict pan to 2 lines steps
@@ -1590,7 +1732,6 @@ sh_mobile_lcdc_overlay_fb_init(struct sh_mobile_lcdc_overlay *ovl)
 	case V4L2_PIX_FMT_NV12:
 	case V4L2_PIX_FMT_NV21:
 		info->fix.ypanstep = 2;
-		fallthrough;
 	case V4L2_PIX_FMT_NV16:
 	case V4L2_PIX_FMT_NV61:
 		info->fix.xpanstep = 2;
@@ -1710,6 +1851,11 @@ static int sh_mobile_lcdc_pan(struct fb_var_screeninfo *var,
 	base_addr_c = ch->dma_handle + ch->xres_virtual * ch->yres_virtual
 		    + c_offset;
 
+	if (ch->cache)
+		sh_mobile_meram_cache_update(priv->meram_dev, ch->cache,
+					     base_addr_y, base_addr_c,
+					     &base_addr_y, &base_addr_c);
+
 	ch->base_addr_y = base_addr_y;
 	ch->base_addr_c = base_addr_c;
 	ch->pan_y_offset = y_offset;
@@ -1753,6 +1899,8 @@ static void sh_mobile_fb_reconfig(struct fb_info *info)
 	struct sh_mobile_lcdc_chan *ch = info->par;
 	struct fb_var_screeninfo var;
 	struct fb_videomode mode;
+	struct fb_event event;
+	int evnt = FB_EVENT_MODE_CHANGE_ALL;
 
 	if (ch->use_count > 1 || (ch->use_count == 1 && !info->fbcon_par))
 		/* More framebuffer users are active */
@@ -1774,7 +1922,14 @@ static void sh_mobile_fb_reconfig(struct fb_info *info)
 		/* Couldn't reconfigure, hopefully, can continue as before */
 		return;
 
-	fbcon_update_vcs(info, true);
+	/*
+	 * fb_set_var() calls the notifier change internally, only if
+	 * FBINFO_MISC_USEREVENT flag is set. Since we do not want to fake a
+	 * user event, we have to call the chain ourselves.
+	 */
+	event.info = info;
+	event.data = &ch->display.mode;
+	fb_notifier_call_chain(evnt, &event);
 }
 
 /*
@@ -1956,14 +2111,11 @@ sh_mobile_lcdc_mmap(struct fb_info *info, struct vm_area_struct *vma)
 {
 	struct sh_mobile_lcdc_chan *ch = info->par;
 
-	if (info->fbdefio)
-		return fb_deferred_io_mmap(info, vma);
-
 	return dma_mmap_coherent(ch->lcdc->dev, vma, ch->fb_mem,
 				 ch->dma_handle, ch->fb_size);
 }
 
-static const struct fb_ops sh_mobile_lcdc_ops = {
+static struct fb_ops sh_mobile_lcdc_ops = {
 	.owner          = THIS_MODULE,
 	.fb_setcolreg	= sh_mobile_lcdc_setcolreg,
 	.fb_read        = fb_sys_read,
@@ -1997,8 +2149,10 @@ sh_mobile_lcdc_channel_fb_register(struct sh_mobile_lcdc_chan *ch)
 	if (info->fbdefio) {
 		ch->sglist = vmalloc(sizeof(struct scatterlist) *
 				     ch->fb_size >> PAGE_SHIFT);
-		if (!ch->sglist)
+		if (!ch->sglist) {
+			dev_err(ch->lcdc->dev, "cannot allocate sglist\n");
 			return -ENOMEM;
+		}
 	}
 
 	info->bl_dev = ch->bl;
@@ -2047,15 +2201,17 @@ sh_mobile_lcdc_channel_fb_init(struct sh_mobile_lcdc_chan *ch,
 	 * list and allocate the color map.
 	 */
 	info = framebuffer_alloc(0, priv->dev);
-	if (!info)
+	if (info == NULL) {
+		dev_err(priv->dev, "unable to allocate fb_info\n");
 		return -ENOMEM;
+	}
 
 	ch->info = info;
 
 	info->flags = FBINFO_FLAG_DEFAULT;
 	info->fbops = &sh_mobile_lcdc_ops;
 	info->device = priv->dev;
-	info->screen_buffer = ch->fb_mem;
+	info->screen_base = ch->fb_mem;
 	info->pseudo_palette = &ch->pseudo_palette;
 	info->par = ch;
 
@@ -2084,7 +2240,6 @@ sh_mobile_lcdc_channel_fb_init(struct sh_mobile_lcdc_chan *ch,
 	case V4L2_PIX_FMT_NV12:
 	case V4L2_PIX_FMT_NV21:
 		info->fix.ypanstep = 2;
-		fallthrough;
 	case V4L2_PIX_FMT_NV16:
 	case V4L2_PIX_FMT_NV61:
 		info->fix.xpanstep = 2;
@@ -2199,7 +2354,8 @@ static int sh_mobile_lcdc_resume(struct device *dev)
 
 static int sh_mobile_lcdc_runtime_suspend(struct device *dev)
 {
-	struct sh_mobile_lcdc_priv *priv = dev_get_drvdata(dev);
+	struct platform_device *pdev = to_platform_device(dev);
+	struct sh_mobile_lcdc_priv *priv = platform_get_drvdata(pdev);
 
 	/* turn off LCDC hardware */
 	lcdc_write(priv, _LDCNT1R, 0);
@@ -2209,7 +2365,8 @@ static int sh_mobile_lcdc_runtime_suspend(struct device *dev)
 
 static int sh_mobile_lcdc_runtime_resume(struct device *dev)
 {
-	struct sh_mobile_lcdc_priv *priv = dev_get_drvdata(dev);
+	struct platform_device *pdev = to_platform_device(dev);
+	struct sh_mobile_lcdc_priv *priv = platform_get_drvdata(pdev);
 
 	__sh_mobile_lcdc_start(priv);
 
@@ -2226,6 +2383,37 @@ static const struct dev_pm_ops sh_mobile_lcdc_dev_pm_ops = {
 /* -----------------------------------------------------------------------------
  * Framebuffer notifier
  */
+
+/* locking: called with info->lock held */
+static int sh_mobile_lcdc_notify(struct notifier_block *nb,
+				 unsigned long action, void *data)
+{
+	struct fb_event *event = data;
+	struct fb_info *info = event->info;
+	struct sh_mobile_lcdc_chan *ch = info->par;
+
+	if (&ch->lcdc->notifier != nb)
+		return NOTIFY_DONE;
+
+	dev_dbg(info->dev, "%s(): action = %lu, data = %p\n",
+		__func__, action, event->data);
+
+	switch(action) {
+	case FB_EVENT_SUSPEND:
+		sh_mobile_lcdc_display_off(ch);
+		sh_mobile_lcdc_stop(ch->lcdc);
+		break;
+	case FB_EVENT_RESUME:
+		mutex_lock(&ch->open_lock);
+		sh_mobile_fb_reconfig(info);
+		mutex_unlock(&ch->open_lock);
+
+		sh_mobile_lcdc_display_on(ch);
+		sh_mobile_lcdc_start(ch->lcdc);
+	}
+
+	return NOTIFY_OK;
+}
 
 /* -----------------------------------------------------------------------------
  * Probe/remove and driver init/exit
@@ -2253,6 +2441,8 @@ static int sh_mobile_lcdc_remove(struct platform_device *pdev)
 {
 	struct sh_mobile_lcdc_priv *priv = platform_get_drvdata(pdev);
 	unsigned int i;
+
+	fb_unregister_client(&priv->notifier);
 
 	for (i = 0; i < ARRAY_SIZE(priv->overlays); i++)
 		sh_mobile_lcdc_overlay_fb_unregister(&priv->overlays[i]);
@@ -2415,6 +2605,8 @@ sh_mobile_lcdc_channel_init(struct sh_mobile_lcdc_chan *ch)
 	unsigned int max_size;
 	unsigned int i;
 
+	ch->notify = sh_mobile_lcdc_display_notify;
+
 	/* Validate the format. */
 	format = sh_mobile_format_info(cfg->fourcc);
 	if (format == NULL) {
@@ -2526,11 +2718,13 @@ static int sh_mobile_lcdc_probe(struct platform_device *pdev)
 	}
 
 	priv = kzalloc(sizeof(*priv), GFP_KERNEL);
-	if (!priv)
+	if (!priv) {
+		dev_err(&pdev->dev, "cannot allocate device data\n");
 		return -ENOMEM;
+	}
 
 	priv->dev = &pdev->dev;
-
+	priv->meram_dev = pdata->meram_dev;
 	for (i = 0; i < ARRAY_SIZE(priv->ch); i++)
 		mutex_init(&priv->ch[i].open_lock);
 	platform_set_drvdata(pdev, priv);
@@ -2587,7 +2781,7 @@ static int sh_mobile_lcdc_probe(struct platform_device *pdev)
 	if (num_channels == 2)
 		priv->forced_fourcc = pdata->ch[0].fourcc;
 
-	priv->base = ioremap(res->start, resource_size(res));
+	priv->base = ioremap_nocache(res->start, resource_size(res));
 	if (!priv->base) {
 		error = -ENOMEM;
 		goto err1;
@@ -2642,6 +2836,10 @@ static int sh_mobile_lcdc_probe(struct platform_device *pdev)
 		if (error)
 			goto err1;
 	}
+
+	/* Failure ignored */
+	priv->notifier.notifier_call = sh_mobile_lcdc_notify;
+	fb_register_client(&priv->notifier);
 
 	return 0;
 err1:

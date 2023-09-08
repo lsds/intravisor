@@ -15,7 +15,6 @@
  */
 
 /dts-v1/;
-#include <dt-bindings/interrupt-controller/irq.h>
 #include <dt-bindings/input/input.h>
 #include "s5pv210.dtsi"
 
@@ -32,18 +31,11 @@
 		reg = <0x20000000 0x40000000>;
 	};
 
-	pmic_ap_clk: clock-0 {
-		/* Workaround for missing PMIC and its clock */
-		compatible = "fixed-clock";
-		#clock-cells = <0>;
-		clock-frequency = <32768>;
-	};
-
-	ethernet@a8000000 {
+	ethernet@18000000 {
 		compatible = "davicom,dm9000";
 		reg = <0xA8000000 0x2 0xA8000002 0x2>;
 		interrupt-parent = <&gph1>;
-		interrupts = <1 IRQ_TYPE_LEVEL_HIGH>;
+		interrupts = <1 4>;
 		local-mac-address = [00 00 de ad be ef];
 		davicom,no-eeprom;
 	};
@@ -76,61 +68,61 @@
 			<&keypad_col6>, <&keypad_col7>;
 	status = "okay";
 
-	key-1 {
+	key_1 {
 		keypad,row = <0>;
 		keypad,column = <3>;
 		linux,code = <KEY_1>;
 	};
 
-	key-2 {
+	key_2 {
 		keypad,row = <0>;
 		keypad,column = <4>;
 		linux,code = <KEY_2>;
 	};
 
-	key-3 {
+	key_3 {
 		keypad,row = <0>;
 		keypad,column = <5>;
 		linux,code = <KEY_3>;
 	};
 
-	key-4 {
+	key_4 {
 		keypad,row = <0>;
 		keypad,column = <6>;
 		linux,code = <KEY_4>;
 	};
 
-	key-5 {
+	key_5 {
 		keypad,row = <0
 		>;
 		keypad,column = <7>;
 		linux,code = <KEY_5>;
 	};
 
-	key-6 {
+	key_6 {
 		keypad,row = <1>;
 		keypad,column = <3>;
 		linux,code = <KEY_A>;
 	};
-	key-7 {
+	key_7 {
 		keypad,row = <1>;
 		keypad,column = <4>;
 		linux,code = <KEY_B>;
 	};
 
-	key-8 {
+	key_8 {
 		keypad,row = <1>;
 		keypad,column = <5>;
 		linux,code = <KEY_C>;
 	};
 
-	key-9 {
+	key_9 {
 		keypad,row = <1>;
 		keypad,column = <6>;
 		linux,code = <KEY_D>;
 	};
 
-	key-10 {
+	key_10 {
 		keypad,row = <1>;
 		keypad,column = <7>;
 		linux,code = <KEY_E>;
@@ -155,8 +147,6 @@
 
 &rtc {
 	status = "okay";
-	clocks = <&clocks CLK_RTC>, <&pmic_ap_clk>;
-	clock-names = "rtc", "rtc_src";
 };
 
 &sdhci0 {

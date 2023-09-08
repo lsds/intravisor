@@ -275,8 +275,7 @@ static inline int process_frame_data(struct hp_handler *handler,
 
 static enum qman_cb_dqrr_result normal_dqrr(struct qman_portal *portal,
 					    struct qman_fq *fq,
-					    const struct qm_dqrr_entry *dqrr,
-					    bool sched_napi)
+					    const struct qm_dqrr_entry *dqrr)
 {
 	struct hp_handler *handler = (struct hp_handler *)fq;
 
@@ -294,8 +293,7 @@ skip:
 
 static enum qman_cb_dqrr_result special_dqrr(struct qman_portal *portal,
 					     struct qman_fq *fq,
-					     const struct qm_dqrr_entry *dqrr,
-					     bool sched_napi)
+					     const struct qm_dqrr_entry *dqrr)
 {
 	struct hp_handler *handler = (struct hp_handler *)fq;
 

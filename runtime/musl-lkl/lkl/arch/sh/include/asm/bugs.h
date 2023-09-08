@@ -53,6 +53,10 @@ static void __init check_bugs(void)
 		*p++ = 's';
 		*p++ = 'p';
 		break;
+	case CPU_FAMILY_SH5:
+		*p++ = '6';
+		*p++ = '4';
+		break;
 	case CPU_FAMILY_UNKNOWN:
 		/*
 		 * Specifically use CPU_FAMILY_UNKNOWN rather than

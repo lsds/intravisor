@@ -1,16 +1,16 @@
-// SPDX-License-Identifier: GPL-2.0-or-later OR MIT
 /*
  * Copyright (C) 2016 Rafał Miłecki <rafal@milecki.pl>
+ *
+ * Licensed under the ISC license.
  */
 
 #include <dt-bindings/gpio/gpio.h>
 #include <dt-bindings/input/input.h>
 #include <dt-bindings/interrupt-controller/irq.h>
 #include <dt-bindings/interrupt-controller/arm-gic.h>
+#include "skeleton.dtsi"
 
 / {
-	#address-cells = <1>;
-	#size-cells = <1>;
 	interrupt-parent = <&gic>;
 
 	aliases {
@@ -32,7 +32,7 @@
 		};
 	};
 
-	mpcore@18310000 {
+	mpcore {
 		compatible = "simple-bus";
 		ranges = <0x00000000 0x18310000 0x00008000>;
 		#address-cells = <1>;
@@ -46,14 +46,6 @@
 			reg = <0x1000 0x1000>,
 			      <0x2000 0x0100>;
 		};
-	};
-
-	timer {
-		compatible = "arm,armv7-timer";
-		interrupts = <GIC_PPI 13 IRQ_TYPE_LEVEL_LOW>,
-			     <GIC_PPI 14 IRQ_TYPE_LEVEL_LOW>,
-			     <GIC_PPI 11 IRQ_TYPE_LEVEL_LOW>,
-			     <GIC_PPI 10 IRQ_TYPE_LEVEL_LOW>;
 	};
 
 	clocks {
@@ -135,7 +127,7 @@
 			#address-cells = <1>;
 			#size-cells = <1>;
 
-			ehci: usb@4000 {
+			ehci: ehci@4000 {
 				compatible = "generic-ehci";
 				reg = <0x4000 0x1000>;
 				interrupt-parent = <&gic>;
@@ -155,7 +147,7 @@
 				};
 			};
 
-			ohci: usb@d000 {
+			ohci: ohci@d000 {
 				#usb-cells = <0>;
 
 				compatible = "generic-ohci";
@@ -180,24 +172,6 @@
 
 		gmac0: ethernet@5000 {
 			reg = <0x5000 0x1000>;
-
-			mdio {
-				#address-cells = <1>;
-				#size-cells = <0>;
-
-				switch: switch@1e {
-					compatible = "brcm,bcm53125";
-					reg = <0x1e>;
-
-					status = "disabled";
-
-					/* ports are defined in board DTS */
-					ports {
-						#address-cells = <1>;
-						#size-cells = <0>;
-					};
-				};
-			};
 		};
 
 		gmac1: ethernet@b000 {

@@ -15,8 +15,6 @@ static inline int using_rollback_handler(void)
 	return cpu_wait == r4k_wait;
 }
 
-extern void __init check_wait(void);
-
 extern int mips_cpuidle_wait_enter(struct cpuidle_device *dev,
 				   struct cpuidle_driver *drv, int index);
 

@@ -76,7 +76,7 @@ void checklist(struct timespec *list, int size)
 
 /* The shared thread shares a global list
  * that each thread fills while holding the lock.
- * This stresses clock synchronization across cpus.
+ * This stresses clock syncronization across cpus.
  */
 void *shared_thread(void *arg)
 {
@@ -163,7 +163,6 @@ int main(int argc, char **argv)
 	strftime(buf, 255, "%a, %d %b %Y %T %z", localtime(&start));
 	printf("%s\n", buf);
 	printf("Testing consistency with %i threads for %ld seconds: ", thread_count, runtime);
-	fflush(stdout);
 
 	/* spawn */
 	for (i = 0; i < thread_count; i++)

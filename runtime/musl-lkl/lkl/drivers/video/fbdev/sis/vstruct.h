@@ -148,7 +148,7 @@ struct SiS_Ext {
 	unsigned char  VB_ExtTVYFilterIndex;
 	unsigned char  VB_ExtTVYFilterIndexROM661;
 	unsigned char  REFindex;
-	signed char    ROMMODEIDX661;
+	char           ROMMODEIDX661;
 };
 
 struct SiS_Ext2 {

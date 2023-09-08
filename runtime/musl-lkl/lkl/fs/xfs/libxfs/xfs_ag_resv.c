@@ -1,7 +1,21 @@
-// SPDX-License-Identifier: GPL-2.0+
 /*
  * Copyright (C) 2016 Oracle.  All Rights Reserved.
+ *
  * Author: Darrick J. Wong <darrick.wong@oracle.com>
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version 2
+ * of the License, or (at your option) any later version.
+ *
+ * This program is distributed in the hope that it would be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write the Free Software Foundation,
+ * Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301, USA.
  */
 #include "xfs.h"
 #include "xfs_fs.h"
@@ -9,18 +23,24 @@
 #include "xfs_format.h"
 #include "xfs_log_format.h"
 #include "xfs_trans_resv.h"
+#include "xfs_sb.h"
 #include "xfs_mount.h"
+#include "xfs_defer.h"
 #include "xfs_alloc.h"
 #include "xfs_errortag.h"
 #include "xfs_error.h"
 #include "xfs_trace.h"
+#include "xfs_cksum.h"
 #include "xfs_trans.h"
+#include "xfs_bit.h"
+#include "xfs_bmap.h"
+#include "xfs_bmap_btree.h"
+#include "xfs_ag_resv.h"
+#include "xfs_trans_space.h"
 #include "xfs_rmap_btree.h"
 #include "xfs_btree.h"
 #include "xfs_refcount_btree.h"
 #include "xfs_ialloc_btree.h"
-#include "xfs_ag.h"
-#include "xfs_ag_resv.h"
 
 /*
  * Per-AG Block Reservations
@@ -91,8 +111,7 @@ xfs_ag_resv_critical(
 	trace_xfs_ag_resv_critical(pag, type, avail);
 
 	/* Critically low if less than 10% or max btree height remains. */
-	return XFS_TEST_ERROR(avail < orig / 10 ||
-			      avail < pag->pag_mount->m_agbtree_maxlevels,
+	return XFS_TEST_ERROR(avail < orig / 10 || avail < XFS_BTREE_MAXLEVELS,
 			pag->pag_mount, XFS_ERRTAG_AG_RESV_CRITICAL);
 }
 
@@ -152,7 +171,6 @@ __xfs_ag_resv_free(
 	error = xfs_mod_fdblocks(pag->pag_mount, oldresv, true);
 	resv->ar_reserved = 0;
 	resv->ar_asked = 0;
-	resv->ar_orig_reserved = 0;
 
 	if (error)
 		trace_xfs_ag_resv_free_error(pag->pag_mount, pag->pag_agno,
@@ -185,38 +203,13 @@ __xfs_ag_resv_init(
 	struct xfs_mount		*mp = pag->pag_mount;
 	struct xfs_ag_resv		*resv;
 	int				error;
-	xfs_extlen_t			hidden_space;
+	xfs_extlen_t			reserved;
 
 	if (used > ask)
 		ask = used;
+	reserved = ask - used;
 
-	switch (type) {
-	case XFS_AG_RESV_RMAPBT:
-		/*
-		 * Space taken by the rmapbt is not subtracted from fdblocks
-		 * because the rmapbt lives in the free space.  Here we must
-		 * subtract the entire reservation from fdblocks so that we
-		 * always have blocks available for rmapbt expansion.
-		 */
-		hidden_space = ask;
-		break;
-	case XFS_AG_RESV_METADATA:
-		/*
-		 * Space taken by all other metadata btrees are accounted
-		 * on-disk as used space.  We therefore only hide the space
-		 * that is reserved but not used by the trees.
-		 */
-		hidden_space = ask - used;
-		break;
-	default:
-		ASSERT(0);
-		return -EINVAL;
-	}
-
-	if (XFS_TEST_ERROR(false, mp, XFS_ERRTAG_AG_RESV_FAIL))
-		error = -ENOSPC;
-	else
-		error = xfs_mod_fdblocks(mp, -(int64_t)hidden_space, true);
+	error = xfs_mod_fdblocks(mp, -(int64_t)reserved, true);
 	if (error) {
 		trace_xfs_ag_resv_init_error(pag->pag_mount, pag->pag_agno,
 				error, _RET_IP_);
@@ -237,8 +230,7 @@ __xfs_ag_resv_init(
 
 	resv = xfs_perag_resv(pag, type);
 	resv->ar_asked = ask;
-	resv->ar_orig_reserved = hidden_space;
-	resv->ar_reserved = ask - used;
+	resv->ar_reserved = resv->ar_orig_reserved = reserved;
 
 	trace_xfs_ag_resv_init(pag, type, ask);
 	return 0;
@@ -247,24 +239,23 @@ __xfs_ag_resv_init(
 /* Create a per-AG block reservation. */
 int
 xfs_ag_resv_init(
-	struct xfs_perag		*pag,
-	struct xfs_trans		*tp)
+	struct xfs_perag		*pag)
 {
 	struct xfs_mount		*mp = pag->pag_mount;
+	xfs_agnumber_t			agno = pag->pag_agno;
 	xfs_extlen_t			ask;
 	xfs_extlen_t			used;
-	int				error = 0, error2;
-	bool				has_resv = false;
+	int				error = 0;
 
 	/* Create the metadata reservation. */
 	if (pag->pag_meta_resv.ar_asked == 0) {
 		ask = used = 0;
 
-		error = xfs_refcountbt_calc_reserves(mp, tp, pag, &ask, &used);
+		error = xfs_refcountbt_calc_reserves(mp, agno, &ask, &used);
 		if (error)
 			goto out;
 
-		error = xfs_finobt_calc_reserves(mp, tp, pag, &ask, &used);
+		error = xfs_finobt_calc_reserves(mp, agno, &ask, &used);
 		if (error)
 			goto out;
 
@@ -280,9 +271,9 @@ xfs_ag_resv_init(
 			 */
 			ask = used = 0;
 
-			mp->m_finobt_nores = true;
+			mp->m_inotbt_nores = true;
 
-			error = xfs_refcountbt_calc_reserves(mp, tp, pag, &ask,
+			error = xfs_refcountbt_calc_reserves(mp, agno, &ask,
 					&used);
 			if (error)
 				goto out;
@@ -292,55 +283,32 @@ xfs_ag_resv_init(
 			if (error)
 				goto out;
 		}
-		if (ask)
-			has_resv = true;
 	}
 
 	/* Create the RMAPBT metadata reservation */
 	if (pag->pag_rmapbt_resv.ar_asked == 0) {
 		ask = used = 0;
 
-		error = xfs_rmapbt_calc_reserves(mp, tp, pag, &ask, &used);
+		error = xfs_rmapbt_calc_reserves(mp, agno, &ask, &used);
 		if (error)
 			goto out;
 
 		error = __xfs_ag_resv_init(pag, XFS_AG_RESV_RMAPBT, ask, used);
 		if (error)
 			goto out;
-		if (ask)
-			has_resv = true;
 	}
 
+#ifdef DEBUG
+	/* need to read in the AGF for the ASSERT below to work */
+	error = xfs_alloc_pagf_init(pag->pag_mount, NULL, pag->pag_agno, 0);
+	if (error)
+		return error;
+
+	ASSERT(xfs_perag_resv(pag, XFS_AG_RESV_METADATA)->ar_reserved +
+	       xfs_perag_resv(pag, XFS_AG_RESV_RMAPBT)->ar_reserved <=
+	       pag->pagf_freeblks + pag->pagf_flcount);
+#endif
 out:
-	/*
-	 * Initialize the pagf if we have at least one active reservation on the
-	 * AG. This may have occurred already via reservation calculation, but
-	 * fall back to an explicit init to ensure the in-core allocbt usage
-	 * counters are initialized as soon as possible. This is important
-	 * because filesystems with large perag reservations are susceptible to
-	 * free space reservation problems that the allocbt counter is used to
-	 * address.
-	 */
-	if (has_resv) {
-		error2 = xfs_alloc_read_agf(pag, tp, 0, NULL);
-		if (error2)
-			return error2;
-
-		/*
-		 * If there isn't enough space in the AG to satisfy the
-		 * reservation, let the caller know that there wasn't enough
-		 * space.  Callers are responsible for deciding what to do
-		 * next, since (in theory) we can stumble along with
-		 * insufficient reservation if data blocks are being freed to
-		 * replenish the AG's free space.
-		 */
-		if (!error &&
-		    xfs_perag_resv(pag, XFS_AG_RESV_METADATA)->ar_reserved +
-		    xfs_perag_resv(pag, XFS_AG_RESV_RMAPBT)->ar_reserved >
-		    pag->pagf_freeblks + pag->pagf_flcount)
-			error = -ENOSPC;
-	}
-
 	return error;
 }
 
@@ -366,7 +334,7 @@ xfs_ag_resv_alloc_extent(
 		break;
 	default:
 		ASSERT(0);
-		fallthrough;
+		/* fall through */
 	case XFS_AG_RESV_NONE:
 		field = args->wasdel ? XFS_TRANS_SB_RES_FDBLOCKS :
 				       XFS_TRANS_SB_FDBLOCKS;
@@ -408,7 +376,7 @@ xfs_ag_resv_free_extent(
 		break;
 	default:
 		ASSERT(0);
-		fallthrough;
+		/* fall through */
 	case XFS_AG_RESV_NONE:
 		xfs_trans_mod_sb(tp, XFS_TRANS_SB_FDBLOCKS, (int64_t)len);
 		return;

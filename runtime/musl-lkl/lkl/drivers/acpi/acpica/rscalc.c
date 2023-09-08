@@ -677,10 +677,10 @@ acpi_rs_get_list_length(u8 *aml_buffer,
 		*size_needed += buffer_size;
 
 		ACPI_DEBUG_PRINT((ACPI_DB_RESOURCES,
-				  "Type %.2X, AmlLength %.2X InternalLength %.2X%8X\n",
+				  "Type %.2X, AmlLength %.2X InternalLength %.2X\n",
 				  acpi_ut_get_resource_type(aml_buffer),
 				  acpi_ut_get_descriptor_length(aml_buffer),
-				  ACPI_FORMAT_UINT64(*size_needed)));
+				  buffer_size));
 
 		/*
 		 * Point to the next resource within the AML stream using the length

@@ -55,11 +55,6 @@ static const struct pci_device_id zip_id_table[] = {
 	{ 0, }
 };
 
-static void zip_debugfs_init(void);
-static void zip_debugfs_exit(void);
-static int zip_register_compression_device(void);
-static void zip_unregister_compression_device(void);
-
 void zip_reg_write(u64 val, u64 __iomem *addr)
 {
 	writeq(val, addr);
@@ -118,7 +113,7 @@ struct zip_device *zip_get_device(int node)
  */
 int zip_get_node_id(void)
 {
-	return cpu_to_node(raw_smp_processor_id());
+	return cpu_to_node(smp_processor_id());
 }
 
 /* Initializes the ZIP h/w sub-system */
@@ -240,15 +235,6 @@ static int zip_init_hw(struct zip_device *zip)
 	return 0;
 }
 
-static void zip_reset(struct zip_device *zip)
-{
-	union zip_cmd_ctl cmd_ctl;
-
-	cmd_ctl.u_reg64 = 0x0ull;
-	cmd_ctl.s.reset = 1;  /* Forces ZIP cores to do reset */
-	zip_reg_write(cmd_ctl.u_reg64, (zip->reg_base + ZIP_CMD_CTL));
-}
-
 static int zip_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 {
 	struct device *dev = &pdev->dev;
@@ -277,9 +263,15 @@ static int zip_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 		goto err_disable_device;
 	}
 
-	err = dma_set_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(48));
+	err = pci_set_dma_mask(pdev, DMA_BIT_MASK(48));
 	if (err) {
-		dev_err(dev, "Unable to get usable 48-bit DMA configuration\n");
+		dev_err(dev, "Unable to get usable DMA configuration\n");
+		goto err_release_regions;
+	}
+
+	err = pci_set_consistent_dma_mask(pdev, DMA_BIT_MASK(48));
+	if (err) {
+		dev_err(dev, "Unable to get 48-bit DMA for allocations\n");
 		goto err_release_regions;
 	}
 
@@ -296,20 +288,7 @@ static int zip_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	if (err)
 		goto err_release_regions;
 
-	/* Register with the Kernel Crypto Interface */
-	err = zip_register_compression_device();
-	if (err < 0) {
-		zip_err("ZIP: Kernel Crypto Registration failed\n");
-		goto err_register;
-	}
-
-	/* comp-decomp statistics are handled with debugfs interface */
-	zip_debugfs_init();
-
 	return 0;
-
-err_register:
-	zip_reset(zip);
 
 err_release_regions:
 	if (zip->reg_base)
@@ -332,17 +311,16 @@ err_free_device:
 static void zip_remove(struct pci_dev *pdev)
 {
 	struct zip_device *zip = pci_get_drvdata(pdev);
+	union zip_cmd_ctl cmd_ctl;
 	int q = 0;
 
 	if (!zip)
 		return;
 
-	zip_debugfs_exit();
-
-	zip_unregister_compression_device();
-
 	if (zip->reg_base) {
-		zip_reset(zip);
+		cmd_ctl.u_reg64 = 0x0ull;
+		cmd_ctl.s.reset = 1;  /* Forces ZIP cores to do reset */
+		zip_reg_write(cmd_ctl.u_reg64, (zip->reg_base + ZIP_CMD_CTL));
 		iounmap(zip->reg_base);
 	}
 
@@ -373,7 +351,6 @@ static struct pci_driver zip_driver = {
 
 static struct crypto_alg zip_comp_deflate = {
 	.cra_name		= "deflate",
-	.cra_driver_name	= "deflate-cavium",
 	.cra_flags		= CRYPTO_ALG_TYPE_COMPRESS,
 	.cra_ctxsize		= sizeof(struct zip_kernel_ctx),
 	.cra_priority           = 300,
@@ -388,7 +365,6 @@ static struct crypto_alg zip_comp_deflate = {
 
 static struct crypto_alg zip_comp_lzs = {
 	.cra_name		= "lzs",
-	.cra_driver_name	= "lzs-cavium",
 	.cra_flags		= CRYPTO_ALG_TYPE_COMPRESS,
 	.cra_ctxsize		= sizeof(struct zip_kernel_ctx),
 	.cra_priority           = 300,
@@ -408,7 +384,7 @@ static struct scomp_alg zip_scomp_deflate = {
 	.decompress		= zip_scomp_decompress,
 	.base			= {
 		.cra_name		= "deflate",
-		.cra_driver_name	= "deflate-scomp-cavium",
+		.cra_driver_name	= "deflate-scomp",
 		.cra_module		= THIS_MODULE,
 		.cra_priority           = 300,
 	}
@@ -421,7 +397,7 @@ static struct scomp_alg zip_scomp_lzs = {
 	.decompress		= zip_scomp_decompress,
 	.base			= {
 		.cra_name		= "lzs",
-		.cra_driver_name	= "lzs-scomp-cavium",
+		.cra_driver_name	= "lzs-scomp",
 		.cra_module		= THIS_MODULE,
 		.cra_priority           = 300,
 	}
@@ -482,7 +458,7 @@ static void zip_unregister_compression_device(void)
 #include <linux/debugfs.h>
 
 /* Displays ZIP device statistics */
-static int zip_stats_show(struct seq_file *s, void *unused)
+static int zip_show_stats(struct seq_file *s, void *unused)
 {
 	u64 val = 0ull;
 	u64 avg_chunk = 0ull, avg_cr = 0ull;
@@ -493,8 +469,6 @@ static int zip_stats_show(struct seq_file *s, void *unused)
 	struct zip_stats  *st;
 
 	for (index = 0; index < MAX_ZIP_DEVICES; index++) {
-		u64 pending = 0;
-
 		if (zip_dev[index]) {
 			zip = zip_dev[index];
 			st  = &zip->stats;
@@ -502,15 +476,16 @@ static int zip_stats_show(struct seq_file *s, void *unused)
 			/* Get all the pending requests */
 			for (q = 0; q < ZIP_NUM_QUEUES; q++) {
 				val = zip_reg_read((zip->reg_base +
-						    ZIP_DBG_QUEX_STA(q)));
-				pending += val >> 32 & 0xffffff;
+						    ZIP_DBG_COREX_STA(q)));
+				val = (val >> 32);
+				val = val & 0xffffff;
+				atomic64_add(val, &st->pending_req);
 			}
 
-			val = atomic64_read(&st->comp_req_complete);
-			avg_chunk = (val) ? atomic64_read(&st->comp_in_bytes) / val : 0;
-
-			val = atomic64_read(&st->comp_out_bytes);
-			avg_cr = (val) ? atomic64_read(&st->comp_in_bytes) / val : 0;
+			avg_chunk = (atomic64_read(&st->comp_in_bytes) /
+				     atomic64_read(&st->comp_req_complete));
+			avg_cr = (atomic64_read(&st->comp_in_bytes) /
+				  atomic64_read(&st->comp_out_bytes));
 			seq_printf(s, "        ZIP Device %d Stats\n"
 				      "-----------------------------------\n"
 				      "Comp Req Submitted        : \t%lld\n"
@@ -538,14 +513,17 @@ static int zip_stats_show(struct seq_file *s, void *unused)
 				       (u64)atomic64_read(&st->decomp_in_bytes),
 				       (u64)atomic64_read(&st->decomp_out_bytes),
 				       (u64)atomic64_read(&st->decomp_bad_reqs),
-				       pending);
+				       (u64)atomic64_read(&st->pending_req));
+
+			/* Reset pending requests  count */
+			atomic64_set(&st->pending_req, 0);
 		}
 	}
 	return 0;
 }
 
 /* Clears stats data */
-static int zip_clear_show(struct seq_file *s, void *unused)
+static int zip_clear_stats(struct seq_file *s, void *unused)
 {
 	int index = 0;
 
@@ -580,7 +558,7 @@ static struct zip_registers zipregs[64] = {
 };
 
 /* Prints registers' contents */
-static int zip_regs_show(struct seq_file *s, void *unused)
+static int zip_print_regs(struct seq_file *s, void *unused)
 {
 	u64 val = 0;
 	int i = 0, index = 0;
@@ -606,44 +584,144 @@ static int zip_regs_show(struct seq_file *s, void *unused)
 	return 0;
 }
 
-DEFINE_SHOW_ATTRIBUTE(zip_stats);
-DEFINE_SHOW_ATTRIBUTE(zip_clear);
-DEFINE_SHOW_ATTRIBUTE(zip_regs);
+static int zip_stats_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, zip_show_stats, NULL);
+}
+
+static const struct file_operations zip_stats_fops = {
+	.owner = THIS_MODULE,
+	.open  = zip_stats_open,
+	.read  = seq_read,
+};
+
+static int zip_clear_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, zip_clear_stats, NULL);
+}
+
+static const struct file_operations zip_clear_fops = {
+	.owner = THIS_MODULE,
+	.open  = zip_clear_open,
+	.read  = seq_read,
+};
+
+static int zip_regs_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, zip_print_regs, NULL);
+}
+
+static const struct file_operations zip_regs_fops = {
+	.owner = THIS_MODULE,
+	.open  = zip_regs_open,
+	.read  = seq_read,
+};
 
 /* Root directory for thunderx_zip debugfs entry */
 static struct dentry *zip_debugfs_root;
 
-static void zip_debugfs_init(void)
+static int __init zip_debugfs_init(void)
 {
+	struct dentry *zip_stats, *zip_clear, *zip_regs;
+
 	if (!debugfs_initialized())
-		return;
+		return -ENODEV;
 
 	zip_debugfs_root = debugfs_create_dir("thunderx_zip", NULL);
+	if (!zip_debugfs_root)
+		return -ENOMEM;
 
 	/* Creating files for entries inside thunderx_zip directory */
-	debugfs_create_file("zip_stats", 0444, zip_debugfs_root, NULL,
-			    &zip_stats_fops);
+	zip_stats = debugfs_create_file("zip_stats", 0444,
+					zip_debugfs_root,
+					NULL, &zip_stats_fops);
+	if (!zip_stats)
+		goto failed_to_create;
 
-	debugfs_create_file("zip_clear", 0444, zip_debugfs_root, NULL,
-			    &zip_clear_fops);
+	zip_clear = debugfs_create_file("zip_clear", 0444,
+					zip_debugfs_root,
+					NULL, &zip_clear_fops);
+	if (!zip_clear)
+		goto failed_to_create;
 
-	debugfs_create_file("zip_regs", 0444, zip_debugfs_root, NULL,
-			    &zip_regs_fops);
+	zip_regs = debugfs_create_file("zip_regs", 0444,
+				       zip_debugfs_root,
+				       NULL, &zip_regs_fops);
+	if (!zip_regs)
+		goto failed_to_create;
 
+	return 0;
+
+failed_to_create:
+	debugfs_remove_recursive(zip_debugfs_root);
+	return -ENOENT;
 }
 
-static void zip_debugfs_exit(void)
+static void __exit zip_debugfs_exit(void)
 {
 	debugfs_remove_recursive(zip_debugfs_root);
 }
 
 #else
-static void __init zip_debugfs_init(void) { }
+static int __init zip_debugfs_init(void)
+{
+	return 0;
+}
+
 static void __exit zip_debugfs_exit(void) { }
+
 #endif
 /* debugfs - end */
 
-module_pci_driver(zip_driver);
+static int __init zip_init_module(void)
+{
+	int ret;
+
+	zip_msg("%s\n", DRV_NAME);
+
+	ret = pci_register_driver(&zip_driver);
+	if (ret < 0) {
+		zip_err("ZIP: pci_register_driver() failed\n");
+		return ret;
+	}
+
+	/* Register with the Kernel Crypto Interface */
+	ret = zip_register_compression_device();
+	if (ret < 0) {
+		zip_err("ZIP: Kernel Crypto Registration failed\n");
+		goto err_pci_unregister;
+	}
+
+	/* comp-decomp statistics are handled with debugfs interface */
+	ret = zip_debugfs_init();
+	if (ret < 0) {
+		zip_err("ZIP: debugfs initialization failed\n");
+		goto err_crypto_unregister;
+	}
+
+	return ret;
+
+err_crypto_unregister:
+	zip_unregister_compression_device();
+
+err_pci_unregister:
+	pci_unregister_driver(&zip_driver);
+	return ret;
+}
+
+static void __exit zip_cleanup_module(void)
+{
+	zip_debugfs_exit();
+
+	/* Unregister from the kernel crypto interface */
+	zip_unregister_compression_device();
+
+	/* Unregister this driver for pci zip devices */
+	pci_unregister_driver(&zip_driver);
+}
+
+module_init(zip_init_module);
+module_exit(zip_cleanup_module);
 
 MODULE_AUTHOR("Cavium Inc");
 MODULE_DESCRIPTION("Cavium Inc ThunderX ZIP Driver");

@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Nuvoton NAU8825 audio codec driver
  *
@@ -6,6 +5,8 @@
  *  Author: Anatol Pomozov <anatol@chromium.org>
  * Copyright 2015 Nuvoton Technology Corp.
  *  Co-author: Meng-Huang Kuo <mhkuo@nuvoton.com>
+ *
+ * Licensed under the GPL-2.
  */
 
 #include <linux/module.h>
@@ -47,7 +48,6 @@
 
 static int nau8825_configure_sysclk(struct nau8825 *nau8825,
 		int clk_id, unsigned int freq);
-static bool nau8825_is_jack_inserted(struct regmap *regmap);
 
 struct nau8825_fll {
 	int mclk_src;
@@ -252,7 +252,7 @@ static const unsigned short logtable[256] = {
  *
  * Acquires the semaphore without jiffies. Try to acquire the semaphore
  * atomically. Returns 0 if the semaphore has been acquired successfully
- * or 1 if it cannot be acquired.
+ * or 1 if it it cannot be acquired.
  */
 static int nau8825_sema_acquire(struct nau8825 *nau8825, long timeout)
 {
@@ -296,7 +296,7 @@ static inline void nau8825_sema_reset(struct nau8825 *nau8825)
 }
 
 /**
- * nau8825_hpvol_ramp - Ramp up the headphone volume change gradually to target level.
+ * Ramp up the headphone volume change gradually to target level.
  *
  * @nau8825:  component to register the codec private data with
  * @vol_from: the volume to start up
@@ -348,11 +348,9 @@ static void nau8825_hpvol_ramp(struct nau8825 *nau8825,
 }
 
 /**
- * nau8825_intlog10_dec3 - Computes log10 of a value
- * the result is round off to 3 decimal. This function takes reference to
- * dvb-math. The source code locates as the following.
+ * Computes log10 of a value; the result is round off to 3 decimal. This func-
+ * tion takes reference to dvb-math. The source code locates as the following.
  * Linux/drivers/media/dvb-core/dvb_math.c
- * @value:  input for log10
  *
  * return log10(value) * 1000
  */
@@ -410,7 +408,7 @@ static u32 nau8825_intlog10_dec3(u32 value)
 }
 
 /**
- * nau8825_xtalk_sidetone - computes cross talk suppression sidetone gain.
+ * computes cross talk suppression sidetone gain.
  *
  * @sig_org: orignal signal level
  * @sig_cros: cross talk signal level
@@ -426,8 +424,10 @@ static u32 nau8825_xtalk_sidetone(u32 sig_org, u32 sig_cros)
 {
 	u32 gain, sidetone;
 
-	if (WARN_ON(sig_org == 0 || sig_cros == 0))
+	if (unlikely(sig_org == 0) || unlikely(sig_cros == 0)) {
+		WARN_ON(1);
 		return 0;
+	}
 
 	sig_org = nau8825_intlog10_dec3(sig_org);
 	sig_cros = nau8825_intlog10_dec3(sig_cros);
@@ -982,31 +982,6 @@ static int nau8825_output_dac_event(struct snd_soc_dapm_widget *w,
 	return 0;
 }
 
-static int system_clock_control(struct snd_soc_dapm_widget *w,
-				struct snd_kcontrol *k, int  event)
-{
-	struct snd_soc_component *component = snd_soc_dapm_to_component(w->dapm);
-	struct nau8825 *nau8825 = snd_soc_component_get_drvdata(component);
-	struct regmap *regmap = nau8825->regmap;
-
-	if (SND_SOC_DAPM_EVENT_OFF(event)) {
-		dev_dbg(nau8825->dev, "system clock control : POWER OFF\n");
-		/* Set clock source to disable or internal clock before the
-		 * playback or capture end. Codec needs clock for Jack
-		 * detection and button press if jack inserted; otherwise,
-		 * the clock should be closed.
-		 */
-		if (nau8825_is_jack_inserted(regmap)) {
-			nau8825_configure_sysclk(nau8825,
-						 NAU8825_CLK_INTERNAL, 0);
-		} else {
-			nau8825_configure_sysclk(nau8825, NAU8825_CLK_DIS, 0);
-		}
-	}
-
-	return 0;
-}
-
 static int nau8825_biq_coeff_get(struct snd_kcontrol *kcontrol,
 				     struct snd_ctl_elem_value *ucontrol)
 {
@@ -1120,9 +1095,6 @@ static const struct snd_kcontrol_new nau8825_dacr_mux =
 static const struct snd_soc_dapm_widget nau8825_dapm_widgets[] = {
 	SND_SOC_DAPM_AIF_OUT("AIFTX", "Capture", 0, NAU8825_REG_I2S_PCM_CTRL2,
 		15, 1),
-	SND_SOC_DAPM_AIF_IN("AIFRX", "Playback", 0, SND_SOC_NOPM, 0, 0),
-	SND_SOC_DAPM_SUPPLY("System Clock", SND_SOC_NOPM, 0, 0,
-			    system_clock_control, SND_SOC_DAPM_POST_PMD),
 
 	SND_SOC_DAPM_INPUT("MIC"),
 	SND_SOC_DAPM_MICBIAS("MICBIAS", NAU8825_REG_MIC_BIAS, 8, 0),
@@ -1211,11 +1183,9 @@ static const struct snd_soc_dapm_route nau8825_dapm_routes[] = {
 	{"ADC", NULL, "ADC Clock"},
 	{"ADC", NULL, "ADC Power"},
 	{"AIFTX", NULL, "ADC"},
-	{"AIFTX", NULL, "System Clock"},
 
-	{"AIFRX", NULL, "System Clock"},
-	{"DDACL", NULL, "AIFRX"},
-	{"DDACR", NULL, "AIFRX"},
+	{"DDACL", NULL, "Playback"},
+	{"DDACR", NULL, "Playback"},
 	{"DDACL", NULL, "DDAC Clock"},
 	{"DDACR", NULL, "DDAC Clock"},
 	{"DACL Mux", "DACL", "DDACL"},
@@ -1247,42 +1217,27 @@ static const struct snd_soc_dapm_route nau8825_dapm_routes[] = {
 	{"HPOR", NULL, "Class G"},
 };
 
-static const struct nau8825_osr_attr *
-nau8825_get_osr(struct nau8825 *nau8825, int stream)
+static int nau8825_clock_check(struct nau8825 *nau8825,
+	int stream, int rate, int osr)
 {
-	unsigned int osr;
+	int osrate;
 
 	if (stream == SNDRV_PCM_STREAM_PLAYBACK) {
-		regmap_read(nau8825->regmap,
-			    NAU8825_REG_DAC_CTRL1, &osr);
-		osr &= NAU8825_DAC_OVERSAMPLE_MASK;
 		if (osr >= ARRAY_SIZE(osr_dac_sel))
-			return NULL;
-		return &osr_dac_sel[osr];
+			return -EINVAL;
+		osrate = osr_dac_sel[osr].osr;
 	} else {
-		regmap_read(nau8825->regmap,
-			    NAU8825_REG_ADC_RATE, &osr);
-		osr &= NAU8825_ADC_SYNC_DOWN_MASK;
 		if (osr >= ARRAY_SIZE(osr_adc_sel))
-			return NULL;
-		return &osr_adc_sel[osr];
+			return -EINVAL;
+		osrate = osr_adc_sel[osr].osr;
 	}
-}
 
-static int nau8825_dai_startup(struct snd_pcm_substream *substream,
-			       struct snd_soc_dai *dai)
-{
-	struct snd_soc_component *component = dai->component;
-	struct nau8825 *nau8825 = snd_soc_component_get_drvdata(component);
-	const struct nau8825_osr_attr *osr;
-
-	osr = nau8825_get_osr(nau8825, substream->stream);
-	if (!osr || !osr->osr)
+	if (!osrate || rate * osr > CLK_DA_AD_MAX) {
+		dev_err(nau8825->dev, "exceed the maximum frequency of CLK_ADC or CLK_DAC\n");
 		return -EINVAL;
+	}
 
-	return snd_pcm_hw_constraint_minmax(substream->runtime,
-					    SNDRV_PCM_HW_PARAM_RATE,
-					    0, CLK_DA_AD_MAX / osr->osr);
+	return 0;
 }
 
 static int nau8825_hw_params(struct snd_pcm_substream *substream,
@@ -1291,9 +1246,7 @@ static int nau8825_hw_params(struct snd_pcm_substream *substream,
 {
 	struct snd_soc_component *component = dai->component;
 	struct nau8825 *nau8825 = snd_soc_component_get_drvdata(component);
-	unsigned int val_len = 0, ctrl_val, bclk_fs, bclk_div;
-	const struct nau8825_osr_attr *osr;
-	int err = -EINVAL;
+	unsigned int val_len = 0, osr, ctrl_val, bclk_fs, bclk_div;
 
 	nau8825_sema_acquire(nau8825, 3 * HZ);
 
@@ -1303,19 +1256,29 @@ static int nau8825_hw_params(struct snd_pcm_substream *substream,
 	 * values must be selected such that the maximum frequency is less
 	 * than 6.144 MHz.
 	 */
-	osr = nau8825_get_osr(nau8825, substream->stream);
-	if (!osr || !osr->osr)
-		goto error;
-	if (params_rate(params) * osr->osr > CLK_DA_AD_MAX)
-		goto error;
-	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK)
+	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
+		regmap_read(nau8825->regmap, NAU8825_REG_DAC_CTRL1, &osr);
+		osr &= NAU8825_DAC_OVERSAMPLE_MASK;
+		if (nau8825_clock_check(nau8825, substream->stream,
+			params_rate(params), osr)) {
+			nau8825_sema_release(nau8825);
+			return -EINVAL;
+		}
 		regmap_update_bits(nau8825->regmap, NAU8825_REG_CLK_DIVIDER,
 			NAU8825_CLK_DAC_SRC_MASK,
-			osr->clk_src << NAU8825_CLK_DAC_SRC_SFT);
-	else
+			osr_dac_sel[osr].clk_src << NAU8825_CLK_DAC_SRC_SFT);
+	} else {
+		regmap_read(nau8825->regmap, NAU8825_REG_ADC_RATE, &osr);
+		osr &= NAU8825_ADC_SYNC_DOWN_MASK;
+		if (nau8825_clock_check(nau8825, substream->stream,
+			params_rate(params), osr)) {
+			nau8825_sema_release(nau8825);
+			return -EINVAL;
+		}
 		regmap_update_bits(nau8825->regmap, NAU8825_REG_CLK_DIVIDER,
 			NAU8825_CLK_ADC_SRC_MASK,
-			osr->clk_src << NAU8825_CLK_ADC_SRC_SFT);
+			osr_adc_sel[osr].clk_src << NAU8825_CLK_ADC_SRC_SFT);
+	}
 
 	/* make BCLK and LRC divde configuration if the codec as master. */
 	regmap_read(nau8825->regmap, NAU8825_REG_I2S_PCM_CTRL2, &ctrl_val);
@@ -1328,8 +1291,10 @@ static int nau8825_hw_params(struct snd_pcm_substream *substream,
 			bclk_div = 1;
 		else if (bclk_fs <= 128)
 			bclk_div = 0;
-		else
-			goto error;
+		else {
+			nau8825_sema_release(nau8825);
+			return -EINVAL;
+		}
 		regmap_update_bits(nau8825->regmap, NAU8825_REG_I2S_PCM_CTRL2,
 			NAU8825_I2S_LRC_DIV_MASK | NAU8825_I2S_BLK_DIV_MASK,
 			((bclk_div + 1) << NAU8825_I2S_LRC_DIV_SFT) | bclk_div);
@@ -1349,18 +1314,17 @@ static int nau8825_hw_params(struct snd_pcm_substream *substream,
 		val_len |= NAU8825_I2S_DL_32;
 		break;
 	default:
-		goto error;
+		nau8825_sema_release(nau8825);
+		return -EINVAL;
 	}
 
 	regmap_update_bits(nau8825->regmap, NAU8825_REG_I2S_PCM_CTRL1,
 		NAU8825_I2S_DL_MASK, val_len);
-	err = 0;
 
- error:
 	/* Release the semaphore. */
 	nau8825_sema_release(nau8825);
 
-	return err;
+	return 0;
 }
 
 static int nau8825_set_dai_fmt(struct snd_soc_dai *codec_dai, unsigned int fmt)
@@ -1425,107 +1389,9 @@ static int nau8825_set_dai_fmt(struct snd_soc_dai *codec_dai, unsigned int fmt)
 	return 0;
 }
 
-/**
- * nau8825_set_tdm_slot - configure DAI TDM.
- * @dai: DAI
- * @tx_mask: bitmask representing active TX slots.
- * @rx_mask: bitmask representing active RX slots.
- * @slots: Number of slots in use.
- * @slot_width: Width in bits for each slot.
- *
- * Configures a DAI for TDM operation. Support TDM 4/8 slots.
- * The limitation is DAC and ADC need shift 4 slots at 8 slots mode.
- */
-static int nau8825_set_tdm_slot(struct snd_soc_dai *dai, unsigned int tx_mask,
-				unsigned int rx_mask, int slots, int slot_width)
-{
-	struct snd_soc_component *component = dai->component;
-	struct nau8825 *nau8825 = snd_soc_component_get_drvdata(component);
-	unsigned int ctrl_val = 0, ctrl_offset = 0, value = 0, dac_s, adc_s;
-
-	if (slots != 4 && slots != 8) {
-		dev_err(nau8825->dev, "Only support 4 or 8 slots!\n");
-		return -EINVAL;
-	}
-
-	/* The driver is limited to 1-channel for ADC, and 2-channel for DAC on TDM mode */
-	if (hweight_long((unsigned long) tx_mask) != 1 ||
-	    hweight_long((unsigned long) rx_mask) != 2) {
-		dev_err(nau8825->dev,
-			"The limitation is 1-channel for ADC, and 2-channel for DAC on TDM mode.\n");
-		return -EINVAL;
-	}
-
-	if (((tx_mask & 0xf) && (tx_mask & 0xf0)) ||
-	    ((rx_mask & 0xf) && (rx_mask & 0xf0)) ||
-	    ((tx_mask & 0xf) && (rx_mask & 0xf0)) ||
-	    ((rx_mask & 0xf) && (tx_mask & 0xf0))) {
-		dev_err(nau8825->dev,
-			"Slot assignment of DAC and ADC need to set same interval.\n");
-		return -EINVAL;
-	}
-
-	/* The offset of fixed 4 slots for 8 slots support */
-	if (rx_mask & 0xf0) {
-		regmap_update_bits(nau8825->regmap, NAU8825_REG_I2S_PCM_CTRL2,
-				   NAU8825_I2S_PCM_TS_EN_MASK, NAU8825_I2S_PCM_TS_EN);
-		regmap_read(nau8825->regmap, NAU8825_REG_I2S_PCM_CTRL1, &value);
-		ctrl_val |= NAU8825_TDM_OFFSET_EN;
-		ctrl_offset = 4 * slot_width;
-		if (!(value & NAU8825_I2S_PCMB_MASK))
-			ctrl_offset += 1;
-		dac_s = (rx_mask & 0xf0) >> 4;
-		adc_s = fls((tx_mask & 0xf0) >> 4);
-	} else {
-		dac_s = rx_mask & 0xf;
-		adc_s = fls(tx_mask & 0xf);
-	}
-
-	ctrl_val |= NAU8825_TDM_MODE;
-
-	switch (dac_s) {
-	case 0x3:
-		ctrl_val |= 1 << NAU8825_TDM_DACR_RX_SFT;
-		break;
-	case 0x5:
-		ctrl_val |= 2 << NAU8825_TDM_DACR_RX_SFT;
-		break;
-	case 0x6:
-		ctrl_val |= 1 << NAU8825_TDM_DACL_RX_SFT;
-		ctrl_val |= 2 << NAU8825_TDM_DACR_RX_SFT;
-		break;
-	case 0x9:
-		ctrl_val |= 3 << NAU8825_TDM_DACR_RX_SFT;
-		break;
-	case 0xa:
-		ctrl_val |= 1 << NAU8825_TDM_DACL_RX_SFT;
-		ctrl_val |= 3 << NAU8825_TDM_DACR_RX_SFT;
-		break;
-	case 0xc:
-		ctrl_val |= 2 << NAU8825_TDM_DACL_RX_SFT;
-		ctrl_val |= 3 << NAU8825_TDM_DACR_RX_SFT;
-		break;
-	default:
-		return -EINVAL;
-	}
-
-	ctrl_val |= adc_s - 1;
-
-	regmap_update_bits(nau8825->regmap, NAU8825_REG_TDM_CTRL,
-			   NAU8825_TDM_MODE | NAU8825_TDM_OFFSET_EN |
-			   NAU8825_TDM_DACL_RX_MASK | NAU8825_TDM_DACR_RX_MASK |
-			   NAU8825_TDM_TX_MASK, ctrl_val);
-	regmap_update_bits(nau8825->regmap, NAU8825_REG_LEFT_TIME_SLOT,
-			   NAU8825_TSLOT_L0_MASK, ctrl_offset);
-
-	return 0;
-}
-
 static const struct snd_soc_dai_ops nau8825_dai_ops = {
-	.startup	= nau8825_dai_startup,
 	.hw_params	= nau8825_hw_params,
 	.set_fmt	= nau8825_set_dai_fmt,
-	.set_tdm_slot	= nau8825_set_tdm_slot,
 };
 
 #define NAU8825_RATES	SNDRV_PCM_RATE_8000_192000
@@ -1544,7 +1410,7 @@ static struct snd_soc_dai_driver nau8825_dai = {
 	.capture = {
 		.stream_name	 = "Capture",
 		.channels_min	 = 1,
-		.channels_max	 = 2,   /* Only 1 channel of data */
+		.channels_max	 = 1,
 		.rates		 = NAU8825_RATES,
 		.formats	 = NAU8825_FORMATS,
 	},
@@ -1569,12 +1435,6 @@ int nau8825_enable_jack_detect(struct snd_soc_component *component,
 
 	nau8825->jack = jack;
 
-	if (!nau8825->jack) {
-		regmap_update_bits(regmap, NAU8825_REG_HSD_CTRL,
-				   NAU8825_HSD_AUTO_MODE | NAU8825_SPKR_DWN1R |
-				   NAU8825_SPKR_DWN1L, 0);
-		return 0;
-	}
 	/* Ground HP Outputs[1:0], needed for headset auto detection
 	 * Enable Automatic Mic/Gnd switching reading on insert interrupt[6]
 	 */
@@ -2022,10 +1882,6 @@ static void nau8825_init_regs(struct nau8825 *nau8825)
 		NAU8825_JACK_EJECT_DEBOUNCE_MASK,
 		nau8825->jack_eject_debounce << NAU8825_JACK_EJECT_DEBOUNCE_SFT);
 
-	/* Pull up IRQ pin */
-	regmap_update_bits(regmap, NAU8825_REG_INTERRUPT_MASK,
-		NAU8825_IRQ_PIN_PULLUP | NAU8825_IRQ_PIN_PULL_EN,
-		NAU8825_IRQ_PIN_PULLUP | NAU8825_IRQ_PIN_PULL_EN);
 	/* Mask unneeded IRQs: 1 - disable, 0 - enable */
 	regmap_update_bits(regmap, NAU8825_REG_INTERRUPT_MASK, 0x7ff, 0x7ff);
 
@@ -2080,10 +1936,6 @@ static void nau8825_init_regs(struct nau8825 *nau8825)
 	/* Disable short Frame Sync detection logic */
 	regmap_update_bits(regmap, NAU8825_REG_LEFT_TIME_SLOT,
 		NAU8825_DIS_FS_SHORT_DET, NAU8825_DIS_FS_SHORT_DET);
-	/* ADCDAT IO drive strength control */
-	regmap_update_bits(regmap, NAU8825_REG_CHARGE_PUMP,
-			   NAU8825_ADCOUT_DS_MASK,
-			   nau8825->adcout_ds << NAU8825_ADCOUT_DS_SFT);
 }
 
 static const struct regmap_config nau8825_regmap_config = {
@@ -2164,7 +2016,7 @@ static int nau8825_calc_fll_param(unsigned int fll_in, unsigned int fs,
 	fvco_max = 0;
 	fvco_sel = ARRAY_SIZE(mclk_src_scaling);
 	for (i = 0; i < ARRAY_SIZE(mclk_src_scaling); i++) {
-		fvco = 256ULL * fs * 2 * mclk_src_scaling[i].param;
+		fvco = 256 * fs * 2 * mclk_src_scaling[i].param;
 		if (fvco > NAU_FVCO_MIN && fvco < NAU_FVCO_MAX &&
 			fvco_max < fvco) {
 			fvco_max = fvco;
@@ -2256,7 +2108,7 @@ static int nau8825_set_pll(struct snd_soc_component *component, int pll_id, int 
 
 static int nau8825_mclk_prepare(struct nau8825 *nau8825, unsigned int freq)
 {
-	int ret;
+	int ret = 0;
 
 	nau8825->mclk = devm_clk_get(nau8825->dev, "mclk");
 	if (IS_ERR(nau8825->mclk)) {
@@ -2561,12 +2413,6 @@ static int __maybe_unused nau8825_resume(struct snd_soc_component *component)
 	return 0;
 }
 
-static int nau8825_set_jack(struct snd_soc_component *component,
-			    struct snd_soc_jack *jack, void *data)
-{
-	return nau8825_enable_jack_detect(component, jack);
-}
-
 static const struct snd_soc_component_driver nau8825_component_driver = {
 	.probe			= nau8825_component_probe,
 	.remove			= nau8825_component_remove,
@@ -2581,11 +2427,11 @@ static const struct snd_soc_component_driver nau8825_component_driver = {
 	.num_dapm_widgets	= ARRAY_SIZE(nau8825_dapm_widgets),
 	.dapm_routes		= nau8825_dapm_routes,
 	.num_dapm_routes	= ARRAY_SIZE(nau8825_dapm_routes),
-	.set_jack		= nau8825_set_jack,
 	.suspend_bias_off	= 1,
 	.idle_bias_on		= 1,
 	.use_pmdown_time	= 1,
 	.endianness		= 1,
+	.non_legacy_dai_naming	= 1,
 };
 
 static void nau8825_reset_chip(struct regmap *regmap)
@@ -2622,7 +2468,6 @@ static void nau8825_print_device_properties(struct nau8825 *nau8825)
 			nau8825->jack_eject_debounce);
 	dev_dbg(dev, "crosstalk-enable:     %d\n",
 			nau8825->xtalk_enable);
-	dev_dbg(dev, "adcout-drive-strong:  %d\n", nau8825->adcout_ds);
 }
 
 static int nau8825_read_device_properties(struct device *dev,
@@ -2689,7 +2534,6 @@ static int nau8825_read_device_properties(struct device *dev,
 		nau8825->jack_eject_debounce = 0;
 	nau8825->xtalk_enable = device_property_read_bool(dev,
 		"nuvoton,crosstalk-enable");
-	nau8825->adcout_ds = device_property_read_bool(dev, "nuvoton,adcout-drive-strong");
 
 	nau8825->mclk = devm_clk_get(dev, "mclk");
 	if (PTR_ERR(nau8825->mclk) == -EPROBE_DEFER) {
@@ -2722,7 +2566,8 @@ static int nau8825_setup_irq(struct nau8825 *nau8825)
 	return 0;
 }
 
-static int nau8825_i2c_probe(struct i2c_client *i2c)
+static int nau8825_i2c_probe(struct i2c_client *i2c,
+	const struct i2c_device_id *id)
 {
 	struct device *dev = &i2c->dev;
 	struct nau8825 *nau8825 = dev_get_platdata(&i2c->dev);
@@ -2778,8 +2623,10 @@ static int nau8825_i2c_probe(struct i2c_client *i2c)
 		&nau8825_dai, 1);
 }
 
-static void nau8825_i2c_remove(struct i2c_client *client)
-{}
+static int nau8825_i2c_remove(struct i2c_client *client)
+{
+	return 0;
+}
 
 static const struct i2c_device_id nau8825_i2c_ids[] = {
 	{ "nau8825", 0 },
@@ -2809,7 +2656,7 @@ static struct i2c_driver nau8825_driver = {
 		.of_match_table = of_match_ptr(nau8825_of_ids),
 		.acpi_match_table = ACPI_PTR(nau8825_acpi_match),
 	},
-	.probe_new = nau8825_i2c_probe,
+	.probe = nau8825_i2c_probe,
 	.remove = nau8825_i2c_remove,
 	.id_table = nau8825_i2c_ids,
 };

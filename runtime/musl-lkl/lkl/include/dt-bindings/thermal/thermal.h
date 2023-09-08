@@ -1,9 +1,10 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * This header provides constants for most thermal bindings.
  *
  * Copyright (C) 2013 Texas Instruments
  *	Eduardo Valentin <eduardo.valentin@ti.com>
+ *
+ * GPLv2 only
  */
 
 #ifndef _DT_BINDINGS_THERMAL_THERMAL_H

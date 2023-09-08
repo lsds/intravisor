@@ -1,6 +1,18 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright © 2008 Keith Packard <keithp@keithp.com>
+ *
+ * This file is free software; you can redistribute it and/or modify
+ * it under the terms of version 2 of the GNU General Public License
+ * as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software Foundation,
+ * Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA.
  */
 
 #ifndef _LINUX_IO_MAPPING_H
@@ -10,14 +22,13 @@
 #include <linux/slab.h>
 #include <linux/bug.h>
 #include <linux/io.h>
-#include <linux/pgtable.h>
 #include <asm/page.h>
 
 /*
  * The io_mapping mechanism provides an abstraction for mapping
  * individual pages from an io device to the CPU in an efficient fashion.
  *
- * See Documentation/driver-api/io-mapping.rst
+ * See Documentation/io-mapping.txt
  */
 
 struct io_mapping {
@@ -29,7 +40,6 @@ struct io_mapping {
 
 #ifdef CONFIG_HAVE_ATOMIC_IOMAP
 
-#include <linux/pfn.h>
 #include <asm/iomap.h>
 /*
  * For small address space machines, mapping large objects
@@ -66,35 +76,18 @@ io_mapping_map_atomic_wc(struct io_mapping *mapping,
 			 unsigned long offset)
 {
 	resource_size_t phys_addr;
+	unsigned long pfn;
 
 	BUG_ON(offset >= mapping->size);
 	phys_addr = mapping->base + offset;
-	preempt_disable();
-	pagefault_disable();
-	return __iomap_local_pfn_prot(PHYS_PFN(phys_addr), mapping->prot);
+	pfn = (unsigned long) (phys_addr >> PAGE_SHIFT);
+	return iomap_atomic_prot_pfn(pfn, mapping->prot);
 }
 
 static inline void
 io_mapping_unmap_atomic(void __iomem *vaddr)
 {
-	kunmap_local_indexed((void __force *)vaddr);
-	pagefault_enable();
-	preempt_enable();
-}
-
-static inline void __iomem *
-io_mapping_map_local_wc(struct io_mapping *mapping, unsigned long offset)
-{
-	resource_size_t phys_addr;
-
-	BUG_ON(offset >= mapping->size);
-	phys_addr = mapping->base + offset;
-	return __iomap_local_pfn_prot(PHYS_PFN(phys_addr), mapping->prot);
-}
-
-static inline void io_mapping_unmap_local(void __iomem *vaddr)
-{
-	kunmap_local_indexed((void __force *)vaddr);
+	iounmap_atomic(vaddr);
 }
 
 static inline void __iomem *
@@ -116,9 +109,10 @@ io_mapping_unmap(void __iomem *vaddr)
 	iounmap(vaddr);
 }
 
-#else  /* HAVE_ATOMIC_IOMAP */
+#else
 
 #include <linux/uaccess.h>
+#include <asm/pgtable.h>
 
 /* Create the io_mapping object*/
 static inline struct io_mapping *
@@ -126,13 +120,16 @@ io_mapping_init_wc(struct io_mapping *iomap,
 		   resource_size_t base,
 		   unsigned long size)
 {
-	iomap->iomem = ioremap_wc(base, size);
-	if (!iomap->iomem)
-		return NULL;
-
 	iomap->base = base;
 	iomap->size = size;
+	iomap->iomem = ioremap_wc(base, size);
+#if defined(pgprot_noncached_wc) /* archs can't agree on a name ... */
+	iomap->prot = pgprot_noncached_wc(PAGE_KERNEL);
+#elif defined(pgprot_writecombine)
 	iomap->prot = pgprot_writecombine(PAGE_KERNEL);
+#else
+	iomap->prot = pgprot_noncached(PAGE_KERNEL);
+#endif
 
 	return iomap;
 }
@@ -175,18 +172,7 @@ io_mapping_unmap_atomic(void __iomem *vaddr)
 	preempt_enable();
 }
 
-static inline void __iomem *
-io_mapping_map_local_wc(struct io_mapping *mapping, unsigned long offset)
-{
-	return io_mapping_map_wc(mapping, offset, PAGE_SIZE);
-}
-
-static inline void io_mapping_unmap_local(void __iomem *vaddr)
-{
-	io_mapping_unmap(vaddr);
-}
-
-#endif /* !HAVE_ATOMIC_IOMAP */
+#endif /* HAVE_ATOMIC_IOMAP */
 
 static inline struct io_mapping *
 io_mapping_create_wc(resource_size_t base,
@@ -214,6 +200,3 @@ io_mapping_free(struct io_mapping *iomap)
 }
 
 #endif /* _LINUX_IO_MAPPING_H */
-
-int io_mapping_map_user(struct io_mapping *iomap, struct vm_area_struct *vma,
-		unsigned long addr, unsigned long pfn, unsigned long size);

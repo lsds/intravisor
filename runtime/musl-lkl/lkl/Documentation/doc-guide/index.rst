@@ -7,11 +7,9 @@ How to write kernel documentation
 .. toctree::
    :maxdepth: 1
 
-   sphinx
-   kernel-doc
-   parse-headers
-   contributing
-   maintainer-profile
+   sphinx.rst
+   kernel-doc.rst
+   parse-headers.rst
 
 .. only::  subproject and html
 

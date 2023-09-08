@@ -29,10 +29,10 @@ static int ip32_be_handler(struct pt_regs *regs, int is_fixup)
 	show_regs(regs);
 	dump_tlb_all();
 	while(1);
-	force_sig(SIGBUS);
+	force_sig(SIGBUS, current);
 }
 
 void __init ip32_be_init(void)
 {
-	mips_set_be_handler(ip32_be_handler);
+	board_be_handler = ip32_be_handler;
 }

@@ -1,7 +1,23 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
-/*
+/* -*- mode: c; c-basic-offset: 8; -*-
+ *
+ * vim: noexpandtab sw=8 ts=8 sts=0:
  *
  * Copyright (C) 2004 Oracle.  All rights reserved.
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public
+ * License as published by the Free Software Foundation; either
+ * version 2 of the License, or (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public
+ * License along with this program; if not, write to the
+ * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+ * Boston, MA 021110-1307, USA.
  *
  * ----
  *
@@ -856,6 +872,8 @@ int o2net_register_handler(u32 msg_type, u32 key, u32 max_len,
 				"for type %u key %08x\n", msg_type, key);
 	}
 	write_unlock(&o2net_handler_lock);
+	if (ret)
+		goto out;
 
 out:
 	if (ret)
@@ -900,7 +918,7 @@ static int o2net_recv_tcp_msg(struct socket *sock, void *data, size_t len)
 {
 	struct kvec vec = { .iov_len = len, .iov_base = data, };
 	struct msghdr msg = { .msg_flags = MSG_DONTWAIT, };
-	iov_iter_kvec(&msg.msg_iter, READ, &vec, 1, len);
+	iov_iter_kvec(&msg.msg_iter, READ | ITER_KVEC, &vec, 1, len);
 	return sock_recvmsg(sock, &msg, MSG_DONTWAIT);
 }
 
@@ -1060,7 +1078,7 @@ int o2net_send_message_vec(u32 msg_type, u32 key, struct kvec *caller_vec,
 	o2net_set_nst_sock_container(&nst, sc);
 
 	veclen = caller_veclen + 1;
-	vec = kmalloc_array(veclen, sizeof(struct kvec), GFP_ATOMIC);
+	vec = kmalloc(sizeof(struct kvec) * veclen, GFP_ATOMIC);
 	if (vec == NULL) {
 		mlog(0, "failed to %zu element kvec!\n", veclen);
 		ret = -ENOMEM;
@@ -1196,6 +1214,7 @@ static int o2net_process_message(struct o2net_sock_container *sc,
 			msglog(hdr, "bad magic\n");
 			ret = -EINVAL;
 			goto out;
+			break;
 	}
 
 	/* find a handler for it */
@@ -1438,6 +1457,22 @@ static void o2net_rx_until_empty(struct work_struct *work)
 	sc_put(sc);
 }
 
+static int o2net_set_nodelay(struct socket *sock)
+{
+	int val = 1;
+
+	return kernel_setsockopt(sock, SOL_TCP, TCP_NODELAY,
+				    (void *)&val, sizeof(val));
+}
+
+static int o2net_set_usertimeout(struct socket *sock)
+{
+	int user_timeout = O2NET_TCP_USER_TIMEOUT;
+
+	return kernel_setsockopt(sock, SOL_TCP, TCP_USER_TIMEOUT,
+				(void *)&user_timeout, sizeof(user_timeout));
+}
+
 static void o2net_initialize_handshake(void)
 {
 	o2net_hand->o2hb_heartbeat_timeout_ms = cpu_to_be32(
@@ -1551,13 +1586,15 @@ static void o2net_start_connect(struct work_struct *work)
 	struct sockaddr_in myaddr = {0, }, remoteaddr = {0, };
 	int ret = 0, stop;
 	unsigned int timeout;
-	unsigned int nofs_flag;
+	unsigned int noio_flag;
 
 	/*
-	 * sock_create allocates the sock with GFP_KERNEL. We must
-	 * prevent the filesystem from being reentered by memory reclaim.
+	 * sock_create allocates the sock with GFP_KERNEL. We must set
+	 * per-process flag PF_MEMALLOC_NOIO so that all allocations done
+	 * by this process are done as if GFP_NOIO was specified. So we
+	 * are not reentering filesystem while doing memory reclaim.
 	 */
-	nofs_flag = memalloc_nofs_save();
+	noio_flag = memalloc_noio_save();
 	/* if we're greater we initiate tx, otherwise we accept */
 	if (o2nm_this_node() <= o2net_num_from_nn(nn))
 		goto out;
@@ -1617,8 +1654,17 @@ static void o2net_start_connect(struct work_struct *work)
 		goto out;
 	}
 
-	tcp_sock_set_nodelay(sc->sc_sock->sk);
-	tcp_sock_set_user_timeout(sock->sk, O2NET_TCP_USER_TIMEOUT);
+	ret = o2net_set_nodelay(sc->sc_sock);
+	if (ret) {
+		mlog(ML_ERROR, "setting TCP_NODELAY failed with %d\n", ret);
+		goto out;
+	}
+
+	ret = o2net_set_usertimeout(sock);
+	if (ret) {
+		mlog(ML_ERROR, "set TCP_USER_TIMEOUT failed with %d\n", ret);
+		goto out;
+	}
 
 	o2net_register_callbacks(sc->sc_sock->sk, sc);
 
@@ -1653,7 +1699,7 @@ out:
 	if (mynode)
 		o2nm_node_put(mynode);
 
-	memalloc_nofs_restore(nofs_flag);
+	memalloc_noio_restore(noio_flag);
 	return;
 }
 
@@ -1732,7 +1778,7 @@ static void o2net_hb_node_up_cb(struct o2nm_node *node, int node_num,
 		(msecs_to_jiffies(o2net_reconnect_delay()) + 1);
 
 	if (node_num != o2nm_this_node()) {
-		/* believe it or not, accept and node heartbeating testing
+		/* believe it or not, accept and node hearbeating testing
 		 * can succeed for this node before we got here.. so
 		 * only use set_nn_state to clear the persistent error
 		 * if that hasn't already happened */
@@ -1780,13 +1826,15 @@ static int o2net_accept_one(struct socket *sock, int *more)
 	struct o2nm_node *local_node = NULL;
 	struct o2net_sock_container *sc = NULL;
 	struct o2net_node *nn;
-	unsigned int nofs_flag;
+	unsigned int noio_flag;
 
 	/*
-	 * sock_create_lite allocates the sock with GFP_KERNEL. We must
-	 * prevent the filesystem from being reentered by memory reclaim.
+	 * sock_create_lite allocates the sock with GFP_KERNEL. We must set
+	 * per-process flag PF_MEMALLOC_NOIO so that all allocations done
+	 * by this process are done as if GFP_NOIO was specified. So we
+	 * are not reentering filesystem while doing memory reclaim.
 	 */
-	nofs_flag = memalloc_nofs_save();
+	noio_flag = memalloc_noio_save();
 
 	BUG_ON(sock == NULL);
 	*more = 0;
@@ -1804,8 +1852,17 @@ static int o2net_accept_one(struct socket *sock, int *more)
 	*more = 1;
 	new_sock->sk->sk_allocation = GFP_ATOMIC;
 
-	tcp_sock_set_nodelay(new_sock->sk);
-	tcp_sock_set_user_timeout(new_sock->sk, O2NET_TCP_USER_TIMEOUT);
+	ret = o2net_set_nodelay(new_sock);
+	if (ret) {
+		mlog(ML_ERROR, "setting TCP_NODELAY failed with %d\n", ret);
+		goto out;
+	}
+
+	ret = o2net_set_usertimeout(new_sock);
+	if (ret) {
+		mlog(ML_ERROR, "set TCP_USER_TIMEOUT failed with %d\n", ret);
+		goto out;
+	}
 
 	ret = new_sock->ops->getname(new_sock, (struct sockaddr *) &sin, 1);
 	if (ret < 0)
@@ -1893,7 +1950,7 @@ out:
 	if (sc)
 		sc_put(sc);
 
-	memalloc_nofs_restore(nofs_flag);
+	memalloc_noio_restore(noio_flag);
 	return ret;
 }
 
@@ -1907,6 +1964,7 @@ static void o2net_accept_many(struct work_struct *work)
 {
 	struct socket *sock = o2net_listen_sock;
 	int	more;
+	int	err;
 
 	/*
 	 * It is critical to note that due to interrupt moderation
@@ -1921,7 +1979,7 @@ static void o2net_accept_many(struct work_struct *work)
 	 */
 
 	for (;;) {
-		o2net_accept_one(sock, &more);
+		err = o2net_accept_one(sock, &more);
 		if (!more)
 			break;
 		cond_resched();
@@ -2087,7 +2145,8 @@ int o2net_init(void)
 
 	o2quo_init();
 
-	o2net_debugfs_init();
+	if (o2net_debugfs_init())
+		goto out;
 
 	o2net_hand = kzalloc(sizeof(struct o2net_handshake), GFP_KERNEL);
 	o2net_keep_req = kzalloc(sizeof(struct o2net_msg), GFP_KERNEL);

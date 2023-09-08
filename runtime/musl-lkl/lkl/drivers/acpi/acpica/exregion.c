@@ -3,7 +3,7 @@
  *
  * Module Name: exregion - ACPI default op_region (address space) handlers
  *
- * Copyright (C) 2000 - 2022, Intel Corp.
+ * Copyright (C) 2000 - 2018, Intel Corp.
  *
  *****************************************************************************/
 
@@ -41,7 +41,6 @@ acpi_ex_system_memory_space_handler(u32 function,
 	acpi_status status = AE_OK;
 	void *logical_addr_ptr = NULL;
 	struct acpi_mem_space_context *mem_info = region_context;
-	struct acpi_mem_mapping *mm = mem_info->cur_mm;
 	u32 length;
 	acpi_size map_length;
 	acpi_size page_boundary_map_length;
@@ -97,37 +96,20 @@ acpi_ex_system_memory_space_handler(u32 function,
 	 * Is 1) Address below the current mapping? OR
 	 *    2) Address beyond the current mapping?
 	 */
-	if (!mm || (address < mm->physical_address) ||
-	    ((u64) address + length > (u64) mm->physical_address + mm->length)) {
+	if ((address < mem_info->mapped_physical_address) ||
+	    (((u64) address + length) > ((u64)
+					 mem_info->mapped_physical_address +
+					 mem_info->mapped_length))) {
 		/*
-		 * The request cannot be resolved by the current memory mapping.
-		 *
-		 * Look for an existing saved mapping covering the address range
-		 * at hand.  If found, save it as the current one and carry out
-		 * the access.
+		 * The request cannot be resolved by the current memory mapping;
+		 * Delete the existing mapping and create a new one.
 		 */
-		for (mm = mem_info->first_mm; mm; mm = mm->next_mm) {
-			if (mm == mem_info->cur_mm)
-				continue;
+		if (mem_info->mapped_length) {
 
-			if (address < mm->physical_address)
-				continue;
+			/* Valid mapping, delete it */
 
-			if ((u64) address + length >
-					(u64) mm->physical_address + mm->length)
-				continue;
-
-			mem_info->cur_mm = mm;
-			goto access;
-		}
-
-		/* Create a new mappings list entry */
-		mm = ACPI_ALLOCATE_ZEROED(sizeof(*mm));
-		if (!mm) {
-			ACPI_ERROR((AE_INFO,
-				    "Unable to save memory mapping at 0x%8.8X%8.8X, size %u",
-				    ACPI_FORMAT_UINT64(address), length));
-			return_ACPI_STATUS(AE_NO_MEMORY);
+			acpi_os_unmap_memory(mem_info->mapped_logical_address,
+					     mem_info->mapped_length);
 		}
 
 		/*
@@ -161,39 +143,29 @@ acpi_ex_system_memory_space_handler(u32 function,
 
 		/* Create a new mapping starting at the address given */
 
-		logical_addr_ptr = acpi_os_map_memory(address, map_length);
-		if (!logical_addr_ptr) {
+		mem_info->mapped_logical_address =
+		    acpi_os_map_memory(address, map_length);
+		if (!mem_info->mapped_logical_address) {
 			ACPI_ERROR((AE_INFO,
 				    "Could not map memory at 0x%8.8X%8.8X, size %u",
 				    ACPI_FORMAT_UINT64(address),
 				    (u32)map_length));
-			ACPI_FREE(mm);
+			mem_info->mapped_length = 0;
 			return_ACPI_STATUS(AE_NO_MEMORY);
 		}
 
 		/* Save the physical address and mapping size */
 
-		mm->logical_address = logical_addr_ptr;
-		mm->physical_address = address;
-		mm->length = map_length;
-
-		/*
-		 * Add the new entry to the mappigs list and save it as the
-		 * current mapping.
-		 */
-		mm->next_mm = mem_info->first_mm;
-		mem_info->first_mm = mm;
-
-		mem_info->cur_mm = mm;
+		mem_info->mapped_physical_address = address;
+		mem_info->mapped_length = map_length;
 	}
 
-access:
 	/*
 	 * Generate a logical pointer corresponding to the address we want to
 	 * access
 	 */
-	logical_addr_ptr = mm->logical_address +
-		((u64) address - (u64) mm->physical_address);
+	logical_addr_ptr = mem_info->mapped_logical_address +
+	    ((u64) address - (u64) mem_info->mapped_physical_address);
 
 	ACPI_DEBUG_PRINT((ACPI_DB_INFO,
 			  "System-Memory (width %u) R/W %u Address=%8.8X%8.8X\n",
@@ -339,7 +311,6 @@ acpi_ex_system_io_space_handler(u32 function,
 	return_ACPI_STATUS(status);
 }
 
-#ifdef ACPI_PCI_CONFIGURED
 /*******************************************************************************
  *
  * FUNCTION:    acpi_ex_pci_config_space_handler
@@ -416,7 +387,6 @@ acpi_ex_pci_config_space_handler(u32 function,
 
 	return_ACPI_STATUS(status);
 }
-#endif
 
 /*******************************************************************************
  *
@@ -450,7 +420,6 @@ acpi_ex_cmos_space_handler(u32 function,
 	return_ACPI_STATUS(status);
 }
 
-#ifdef ACPI_PCI_CONFIGURED
 /*******************************************************************************
  *
  * FUNCTION:    acpi_ex_pci_bar_space_handler
@@ -482,7 +451,6 @@ acpi_ex_pci_bar_space_handler(u32 function,
 
 	return_ACPI_STATUS(status);
 }
-#endif
 
 /*******************************************************************************
  *
@@ -509,14 +477,7 @@ acpi_ex_data_table_space_handler(u32 function,
 				 u64 *value,
 				 void *handler_context, void *region_context)
 {
-	struct acpi_data_table_space_context *mapping;
-	char *pointer;
-
 	ACPI_FUNCTION_TRACE(ex_data_table_space_handler);
-
-	mapping = (struct acpi_data_table_space_context *) region_context;
-	pointer = ACPI_CAST_PTR(char, mapping->pointer) +
-	    (address - ACPI_PTR_TO_PHYSADDR(mapping->pointer));
 
 	/*
 	 * Perform the memory read or write. The bit_width was already
@@ -525,14 +486,14 @@ acpi_ex_data_table_space_handler(u32 function,
 	switch (function) {
 	case ACPI_READ:
 
-		memcpy(ACPI_CAST_PTR(char, value), pointer,
-		       ACPI_DIV_8(bit_width));
+		memcpy(ACPI_CAST_PTR(char, value),
+		       ACPI_PHYSADDR_TO_PTR(address), ACPI_DIV_8(bit_width));
 		break;
 
 	case ACPI_WRITE:
 
-		memcpy(pointer, ACPI_CAST_PTR(char, value),
-		       ACPI_DIV_8(bit_width));
+		memcpy(ACPI_PHYSADDR_TO_PTR(address),
+		       ACPI_CAST_PTR(char, value), ACPI_DIV_8(bit_width));
 		break;
 
 	default:

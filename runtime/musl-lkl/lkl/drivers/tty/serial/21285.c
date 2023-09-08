@@ -41,43 +41,8 @@
 
 static const char serial21285_name[] = "Footbridge UART";
 
-/*
- * We only need 2 bits of data, so instead of creating a whole structure for
- * this, use bits of the private_data pointer of the uart port structure.
- */
-#define tx_enabled_bit	0
-#define rx_enabled_bit	1
-
-static bool is_enabled(struct uart_port *port, int bit)
-{
-	unsigned long *private_data = (unsigned long *)&port->private_data;
-
-	if (test_bit(bit, private_data))
-		return true;
-	return false;
-}
-
-static void enable(struct uart_port *port, int bit)
-{
-	unsigned long *private_data = (unsigned long *)&port->private_data;
-
-	set_bit(bit, private_data);
-}
-
-static void disable(struct uart_port *port, int bit)
-{
-	unsigned long *private_data = (unsigned long *)&port->private_data;
-
-	clear_bit(bit, private_data);
-}
-
-#define is_tx_enabled(port)	is_enabled(port, tx_enabled_bit)
-#define tx_enable(port)		enable(port, tx_enabled_bit)
-#define tx_disable(port)	disable(port, tx_enabled_bit)
-
-#define is_rx_enabled(port)	is_enabled(port, rx_enabled_bit)
-#define rx_enable(port)		enable(port, rx_enabled_bit)
-#define rx_disable(port)	disable(port, rx_enabled_bit)
+#define tx_enabled(port)	((port)->unused[0])
+#define rx_enabled(port)	((port)->unused[1])
 
 /*
  * The documented expression for selecting the divisor is:
@@ -92,25 +57,25 @@ static void disable(struct uart_port *port, int bit)
 
 static void serial21285_stop_tx(struct uart_port *port)
 {
-	if (is_tx_enabled(port)) {
+	if (tx_enabled(port)) {
 		disable_irq_nosync(IRQ_CONTX);
-		tx_disable(port);
+		tx_enabled(port) = 0;
 	}
 }
 
 static void serial21285_start_tx(struct uart_port *port)
 {
-	if (!is_tx_enabled(port)) {
+	if (!tx_enabled(port)) {
 		enable_irq(IRQ_CONTX);
-		tx_enable(port);
+		tx_enabled(port) = 1;
 	}
 }
 
 static void serial21285_stop_rx(struct uart_port *port)
 {
-	if (is_rx_enabled(port)) {
+	if (rx_enabled(port)) {
 		disable_irq_nosync(IRQ_CONRX);
-		rx_disable(port);
+		rx_enabled(port) = 0;
 	}
 }
 
@@ -220,8 +185,8 @@ static int serial21285_startup(struct uart_port *port)
 {
 	int ret;
 
-	tx_enable(port);
-	rx_enable(port);
+	tx_enabled(port) = 1;
+	rx_enabled(port) = 1;
 
 	ret = request_irq(IRQ_CONRX, serial21285_rx_chars, 0,
 			  serial21285_name, port);
@@ -243,7 +208,7 @@ static void serial21285_shutdown(struct uart_port *port)
 
 static void
 serial21285_set_termios(struct uart_port *port, struct ktermios *termios,
-			const struct ktermios *old)
+			struct ktermios *old)
 {
 	unsigned long flags;
 	unsigned int baud, quot, h_lcr, b;
@@ -403,7 +368,7 @@ static void serial21285_setup_ports(void)
 }
 
 #ifdef CONFIG_SERIAL_21285_CONSOLE
-static void serial21285_console_putchar(struct uart_port *port, unsigned char ch)
+static void serial21285_console_putchar(struct uart_port *port, int ch)
 {
 	while (*CSR_UARTFLG & 0x20)
 		barrier();
@@ -460,6 +425,9 @@ static int __init serial21285_console_setup(struct console *co, char *options)
 	int bits = 8;
 	int parity = 'n';
 	int flow = 'n';
+
+	if (machine_is_personal_server())
+		baud = 57600;
 
 	/*
 	 * Check whether an invalid uart number has been specified, and

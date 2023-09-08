@@ -1,9 +1,13 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Atmel AT45xxx DataFlash MTD driver for lightweight SPI framework
  *
  * Largely derived from at91_dataflash.c:
  *  Copyright (C) 2003-2005 SAN People (Pty) Ltd
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version
+ * 2 of the License, or (at your option) any later version.
 */
 #include <linux/module.h>
 #include <linux/slab.h>
@@ -96,13 +100,6 @@ struct dataflash {
 	struct mtd_info		mtd;
 };
 
-static const struct spi_device_id dataflash_dev_ids[] = {
-	{ "at45" },
-	{ "dataflash" },
-	{ },
-};
-MODULE_DEVICE_TABLE(spi, dataflash_dev_ids);
-
 #ifdef CONFIG_OF
 static const struct of_device_id dataflash_dt_ids[] = {
 	{ .compatible = "atmel,at45", },
@@ -111,13 +108,6 @@ static const struct of_device_id dataflash_dt_ids[] = {
 };
 MODULE_DEVICE_TABLE(of, dataflash_dt_ids);
 #endif
-
-static const struct spi_device_id dataflash_spi_ids[] = {
-	{ .name = "at45", },
-	{ .name = "dataflash", },
-	{ /* sentinel */ }
-};
-MODULE_DEVICE_TABLE(spi, dataflash_spi_ids);
 
 /* ......................................................................... */
 
@@ -150,7 +140,7 @@ static int dataflash_waitready(struct spi_device *spi)
 		if (status & (1 << 7))	/* RDY/nBSY */
 			return status;
 
-		usleep_range(3000, 4000);
+		msleep(3);
 	}
 }
 
@@ -541,7 +531,7 @@ static int dataflash_read_user_otp(struct mtd_info *mtd,
 }
 
 static int dataflash_write_user_otp(struct mtd_info *mtd,
-		loff_t from, size_t len, size_t *retlen, const u_char *buf)
+		loff_t from, size_t len, size_t *retlen, u_char *buf)
 {
 	struct spi_message	m;
 	const size_t		l = 4 + 64;
@@ -743,8 +733,8 @@ static struct flash_info dataflash_data[] = {
 	{ "AT45DB642x",  0x1f2800, 8192, 1056, 11, SUP_POW2PS},
 	{ "at45db642d",  0x1f2800, 8192, 1024, 10, SUP_POW2PS | IS_POW2PS},
 
-	{ "AT45DB641E",  0x1f28000100ULL, 32768, 264, 9, SUP_EXTID | SUP_POW2PS},
-	{ "at45db641e",  0x1f28000100ULL, 32768, 256, 8, SUP_EXTID | SUP_POW2PS | IS_POW2PS},
+	{ "AT45DB641E",  0x1f28000100, 32768, 264, 9, SUP_EXTID | SUP_POW2PS},
+	{ "at45db641e",  0x1f28000100, 32768, 256, 8, SUP_EXTID | SUP_POW2PS | IS_POW2PS},
 };
 
 static struct flash_info *jedec_lookup(struct spi_device *spi,
@@ -923,15 +913,17 @@ static int dataflash_probe(struct spi_device *spi)
 	return status;
 }
 
-static void dataflash_remove(struct spi_device *spi)
+static int dataflash_remove(struct spi_device *spi)
 {
 	struct dataflash	*flash = spi_get_drvdata(spi);
+	int			status;
 
 	dev_dbg(&spi->dev, "remove\n");
 
-	WARN_ON(mtd_device_unregister(&flash->mtd));
-
-	kfree(flash);
+	status = mtd_device_unregister(&flash->mtd);
+	if (status == 0)
+		kfree(flash);
+	return status;
 }
 
 static struct spi_driver dataflash_driver = {
@@ -939,11 +931,9 @@ static struct spi_driver dataflash_driver = {
 		.name		= "mtd_dataflash",
 		.of_match_table = of_match_ptr(dataflash_dt_ids),
 	},
-	.id_table = dataflash_dev_ids,
 
 	.probe		= dataflash_probe,
 	.remove		= dataflash_remove,
-	.id_table	= dataflash_spi_ids,
 
 	/* FIXME:  investigate suspend and resume... */
 };

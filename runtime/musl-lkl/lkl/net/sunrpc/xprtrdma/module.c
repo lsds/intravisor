@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0 OR BSD-3-Clause
 /*
  * Copyright (c) 2015, 2017 Oracle.  All rights reserved.
  */
@@ -14,17 +13,14 @@
 
 #include <asm/swab.h>
 
-#include "xprt_rdma.h"
-
 #define CREATE_TRACE_POINTS
-#include <trace/events/rpcrdma.h>
+#include "xprt_rdma.h"
 
 MODULE_AUTHOR("Open Grid Computing and Network Appliance, Inc.");
 MODULE_DESCRIPTION("RPC/RDMA Transport");
 MODULE_LICENSE("Dual BSD/GPL");
 MODULE_ALIAS("svcrdma");
 MODULE_ALIAS("xprtrdma");
-MODULE_ALIAS("rpcrdma6");
 
 static void __exit rpc_rdma_cleanup(void)
 {

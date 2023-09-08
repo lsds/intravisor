@@ -1,6 +1,18 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (C) 2011 LAPIS Semiconductor Co., Ltd.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; version 2 of the License.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307, USA.
  */
 
 #include <linux/module.h>
@@ -56,6 +68,7 @@ static const DECLARE_TLV_DB_SCALE(alclvl, -2250, 150, 0);
 static const DECLARE_TLV_DB_SCALE(mingain, -1200, 600, 0);
 static const DECLARE_TLV_DB_SCALE(maxgain, -675, 600, 0);
 static const DECLARE_TLV_DB_SCALE(boost_vol, -1200, 75, 0);
+static const DECLARE_TLV_DB_SCALE(ngth, -7650, 150, 0);
 
 static const char * const ml26124_companding[] = {"16bit PCM", "u-law",
 						  "A-law"};
@@ -372,7 +385,7 @@ static int ml26124_hw_params(struct snd_pcm_substream *substream,
 	return 0;
 }
 
-static int ml26124_mute(struct snd_soc_dai *dai, int mute, int direction)
+static int ml26124_mute(struct snd_soc_dai *dai, int mute)
 {
 	struct snd_soc_component *component = dai->component;
 	struct ml26124_priv *priv = snd_soc_component_get_drvdata(component);
@@ -402,11 +415,12 @@ static int ml26124_set_dai_fmt(struct snd_soc_dai *codec_dai,
 	unsigned char mode;
 	struct snd_soc_component *component = codec_dai->component;
 
-	switch (fmt & SND_SOC_DAIFMT_CLOCK_PROVIDER_MASK) {
-	case SND_SOC_DAIFMT_CBP_CFP:
+	/* set master/slave audio interface */
+	switch (fmt & SND_SOC_DAIFMT_MASTER_MASK) {
+	case SND_SOC_DAIFMT_CBM_CFM:
 		mode = 1;
 		break;
-	case SND_SOC_DAIFMT_CBC_CFC:
+	case SND_SOC_DAIFMT_CBS_CFS:
 		mode = 0;
 		break;
 	default:
@@ -491,10 +505,9 @@ static int ml26124_set_bias_level(struct snd_soc_component *component,
 
 static const struct snd_soc_dai_ops ml26124_dai_ops = {
 	.hw_params	= ml26124_hw_params,
-	.mute_stream	= ml26124_mute,
+	.digital_mute	= ml26124_mute,
 	.set_fmt	= ml26124_set_dai_fmt,
 	.set_sysclk	= ml26124_set_dai_sysclk,
-	.no_capture_mute = 1,
 };
 
 static struct snd_soc_dai_driver ml26124_dai = {
@@ -512,7 +525,7 @@ static struct snd_soc_dai_driver ml26124_dai = {
 		.rates = ML26124_RATES,
 		.formats = ML26124_FORMATS,},
 	.ops = &ml26124_dai_ops,
-	.symmetric_rate = 1,
+	.symmetric_rates = 1,
 };
 
 static int ml26124_probe(struct snd_soc_component *component)
@@ -537,6 +550,7 @@ static const struct snd_soc_component_driver soc_component_dev_ml26124 = {
 	.idle_bias_on		= 1,
 	.use_pmdown_time	= 1,
 	.endianness		= 1,
+	.non_legacy_dai_naming	= 1,
 };
 
 static const struct regmap_config ml26124_i2c_regmap = {
@@ -549,7 +563,8 @@ static const struct regmap_config ml26124_i2c_regmap = {
 	.write_flag_mask = 0x01,
 };
 
-static int ml26124_i2c_probe(struct i2c_client *i2c)
+static int ml26124_i2c_probe(struct i2c_client *i2c,
+			     const struct i2c_device_id *id)
 {
 	struct ml26124_priv *priv;
 	int ret;
@@ -581,7 +596,7 @@ static struct i2c_driver ml26124_i2c_driver = {
 	.driver = {
 		.name = "ml26124",
 	},
-	.probe_new = ml26124_i2c_probe,
+	.probe = ml26124_i2c_probe,
 	.id_table = ml26124_i2c_id,
 };
 

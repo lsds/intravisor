@@ -100,7 +100,7 @@ static void ath9k_htc_vif_iter(void *data, u8 *mac, struct ieee80211_vif *vif)
 		priv->rearm_ani = true;
 	}
 
-	if (vif->cfg.assoc) {
+	if (bss_conf->assoc) {
 		priv->rearm_ani = true;
 		priv->reconfig_beacon = true;
 	}
@@ -491,7 +491,7 @@ static int ath9k_htc_add_station(struct ath9k_htc_priv *priv,
 		ista->index = sta_idx;
 		tsta.is_vif_sta = 0;
 		maxampdu = 1 << (IEEE80211_HT_MAX_AMPDU_FACTOR +
-				 sta->deflink.ht_cap.ampdu_factor);
+				 sta->ht_cap.ampdu_factor);
 		tsta.maxampdu = cpu_to_be16(maxampdu);
 	} else {
 		memcpy(&tsta.macaddr, vif->addr, ETH_ALEN);
@@ -602,7 +602,7 @@ static void ath9k_htc_setup_rate(struct ath9k_htc_priv *priv,
 	sband = priv->hw->wiphy->bands[priv->hw->conf.chandef.chan->band];
 
 	for (i = 0, j = 0; i < sband->n_bitrates; i++) {
-		if (sta->deflink.supp_rates[sband->band] & BIT(i)) {
+		if (sta->supp_rates[sband->band] & BIT(i)) {
 			trate->rates.legacy_rates.rs_rates[j]
 				= (sband->bitrates[i].bitrate * 2) / 10;
 			j++;
@@ -610,9 +610,9 @@ static void ath9k_htc_setup_rate(struct ath9k_htc_priv *priv,
 	}
 	trate->rates.legacy_rates.rs_nrates = j;
 
-	if (sta->deflink.ht_cap.ht_supported) {
+	if (sta->ht_cap.ht_supported) {
 		for (i = 0, j = 0; i < 77; i++) {
-			if (sta->deflink.ht_cap.mcs.rx_mask[i/8] & (1<<(i%8)))
+			if (sta->ht_cap.mcs.rx_mask[i/8] & (1<<(i%8)))
 				trate->rates.ht_rates.rs_rates[j++] = i;
 			if (j == ATH_HTC_RATE_MAX)
 				break;
@@ -620,18 +620,18 @@ static void ath9k_htc_setup_rate(struct ath9k_htc_priv *priv,
 		trate->rates.ht_rates.rs_nrates = j;
 
 		caps = WLAN_RC_HT_FLAG;
-		if (sta->deflink.ht_cap.cap & IEEE80211_HT_CAP_RX_STBC)
+		if (sta->ht_cap.cap & IEEE80211_HT_CAP_RX_STBC)
 			caps |= ATH_RC_TX_STBC_FLAG;
-		if (sta->deflink.ht_cap.mcs.rx_mask[1])
+		if (sta->ht_cap.mcs.rx_mask[1])
 			caps |= WLAN_RC_DS_FLAG;
-		if ((sta->deflink.ht_cap.cap & IEEE80211_HT_CAP_SUP_WIDTH_20_40) &&
-		    (conf_is_ht40(&priv->hw->conf)))
+		if ((sta->ht_cap.cap & IEEE80211_HT_CAP_SUP_WIDTH_20_40) &&
+		     (conf_is_ht40(&priv->hw->conf)))
 			caps |= WLAN_RC_40_FLAG;
 		if (conf_is_ht40(&priv->hw->conf) &&
-		    (sta->deflink.ht_cap.cap & IEEE80211_HT_CAP_SGI_40))
+		    (sta->ht_cap.cap & IEEE80211_HT_CAP_SGI_40))
 			caps |= WLAN_RC_SGI_FLAG;
 		else if (conf_is_ht20(&priv->hw->conf) &&
-			 (sta->deflink.ht_cap.cap & IEEE80211_HT_CAP_SGI_20))
+			 (sta->ht_cap.cap & IEEE80211_HT_CAP_SGI_20))
 			caps |= WLAN_RC_SGI_FLAG;
 	}
 
@@ -1251,7 +1251,6 @@ out:
 	FIF_OTHER_BSS |				\
 	FIF_BCN_PRBRESP_PROMISC |		\
 	FIF_PROBE_REQ |				\
-	FIF_MCAST_ACTION |			\
 	FIF_FCSFAIL)
 
 static void ath9k_htc_configure_filter(struct ieee80211_hw *hw,
@@ -1369,8 +1368,7 @@ static void ath9k_htc_sta_rc_update(struct ieee80211_hw *hw,
 }
 
 static int ath9k_htc_conf_tx(struct ieee80211_hw *hw,
-			     struct ieee80211_vif *vif,
-			     unsigned int link_id, u16 queue,
+			     struct ieee80211_vif *vif, u16 queue,
 			     const struct ieee80211_tx_queue_params *params)
 {
 	struct ath9k_htc_priv *priv = hw->priv;
@@ -1462,7 +1460,7 @@ static int ath9k_htc_set_key(struct ieee80211_hw *hw,
 		}
 		break;
 	case DISABLE_KEY:
-		ath_key_delete(common, key->hw_key_idx);
+		ath_key_delete(common, key);
 		break;
 	default:
 		ret = -EINVAL;
@@ -1489,8 +1487,8 @@ static void ath9k_htc_bss_iter(void *data, u8 *mac, struct ieee80211_vif *vif)
 	struct ath_common *common = ath9k_hw_common(priv->ah);
 	struct ieee80211_bss_conf *bss_conf = &vif->bss_conf;
 
-	if ((vif->type == NL80211_IFTYPE_STATION) && vif->cfg.assoc) {
-		common->curaid = vif->cfg.aid;
+	if ((vif->type == NL80211_IFTYPE_STATION) && bss_conf->assoc) {
+		common->curaid = bss_conf->aid;
 		common->last_rssi = ATH_RSSI_DUMMY_MARKER;
 		memcpy(common->curbssid, bss_conf->bssid, ETH_ALEN);
 		set_bit(ATH_OP_PRIM_STA_VIF, &common->op_flags);
@@ -1510,7 +1508,7 @@ static void ath9k_htc_choose_set_bssid(struct ath9k_htc_priv *priv)
 static void ath9k_htc_bss_info_changed(struct ieee80211_hw *hw,
 				       struct ieee80211_vif *vif,
 				       struct ieee80211_bss_conf *bss_conf,
-				       u64 changed)
+				       u32 changed)
 {
 	struct ath9k_htc_priv *priv = hw->priv;
 	struct ath_hw *ah = priv->ah;
@@ -1522,17 +1520,17 @@ static void ath9k_htc_bss_info_changed(struct ieee80211_hw *hw,
 
 	if (changed & BSS_CHANGED_ASSOC) {
 		ath_dbg(common, CONFIG, "BSS Changed ASSOC %d\n",
-			vif->cfg.assoc);
+			bss_conf->assoc);
 
-		vif->cfg.assoc ?
+		bss_conf->assoc ?
 			priv->num_sta_assoc_vif++ : priv->num_sta_assoc_vif--;
 
-		if (!vif->cfg.assoc)
+		if (!bss_conf->assoc)
 			clear_bit(ATH_OP_PRIM_STA_VIF, &common->op_flags);
 
 		if (priv->ah->opmode == NL80211_IFTYPE_STATION) {
 			ath9k_htc_choose_set_bssid(priv);
-			if (vif->cfg.assoc && (priv->num_sta_assoc_vif == 1))
+			if (bss_conf->assoc && (priv->num_sta_assoc_vif == 1))
 				ath9k_htc_start_ani(priv);
 			else if (priv->num_sta_assoc_vif == 0)
 				ath9k_htc_stop_ani(priv);
@@ -1541,7 +1539,7 @@ static void ath9k_htc_bss_info_changed(struct ieee80211_hw *hw,
 
 	if (changed & BSS_CHANGED_IBSS) {
 		if (priv->ah->opmode == NL80211_IFTYPE_ADHOC) {
-			common->curaid = vif->cfg.aid;
+			common->curaid = bss_conf->aid;
 			memcpy(common->curbssid, bss_conf->bssid, ETH_ALEN);
 			ath9k_htc_set_bssid(priv);
 		}
@@ -1676,7 +1674,7 @@ static int ath9k_htc_ampdu_action(struct ieee80211_hw *hw,
 	case IEEE80211_AMPDU_TX_START:
 		ret = ath9k_htc_tx_aggr_oper(priv, vif, sta, action, tid);
 		if (!ret)
-			ret = IEEE80211_AMPDU_TX_START_IMMEDIATE;
+			ieee80211_start_tx_ba_cb_irqsafe(vif, sta->addr, tid);
 		break;
 	case IEEE80211_AMPDU_TX_STOP_CONT:
 	case IEEE80211_AMPDU_TX_STOP_FLUSH:

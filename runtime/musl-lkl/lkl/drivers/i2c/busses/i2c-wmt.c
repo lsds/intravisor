@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  *  Wondermedia I2C Master Mode Driver
  *
@@ -6,6 +5,11 @@
  *
  *  Derived from GPLv2+ licensed source:
  *  - Copyright (C) 2008 WonderMedia Technologies, Inc.
+ *
+ *  This program is free software; you can redistribute it and/or modify
+ *  it under the terms of the GNU General Public License version 2, or
+ *  (at your option) any later version. as published by the Free Software
+ *  Foundation
  */
 
 #include <linux/clk.h>
@@ -399,7 +403,7 @@ static int wmt_i2c_probe(struct platform_device *pdev)
 
 	i2c_dev->mode = I2C_MODE_STANDARD;
 	err = of_property_read_u32(np, "clock-frequency", &clk_rate);
-	if (!err && (clk_rate == I2C_MAX_FAST_MODE_FREQ))
+	if ((!err) && (clk_rate == 400000))
 		i2c_dev->mode = I2C_MODE_FAST;
 
 	i2c_dev->dev = &pdev->dev;
@@ -413,7 +417,7 @@ static int wmt_i2c_probe(struct platform_device *pdev)
 
 	adap = &i2c_dev->adapter;
 	i2c_set_adapdata(adap, i2c_dev);
-	strscpy(adap->name, "WMT I2C adapter", sizeof(adap->name));
+	strlcpy(adap->name, "WMT I2C adapter", sizeof(adap->name));
 	adap->owner = THIS_MODULE;
 	adap->algo = &wmt_i2c_algo;
 	adap->dev.parent = &pdev->dev;

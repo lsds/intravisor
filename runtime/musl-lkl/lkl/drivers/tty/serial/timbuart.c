@@ -87,7 +87,9 @@ static void timbuart_rx_chars(struct uart_port *port)
 		tty_insert_flip_char(tport, ch, TTY_NORMAL);
 	}
 
+	spin_unlock(&port->lock);
 	tty_flip_buffer_push(tport);
+	spin_lock(&port->lock);
 
 	dev_dbg(port->dev, "%s - total read %d bytes\n",
 		__func__, port->icount.rx);
@@ -170,9 +172,9 @@ static void timbuart_handle_rx_port(struct uart_port *port, u32 isr, u32 *ier)
 	dev_dbg(port->dev, "%s - leaving\n", __func__);
 }
 
-static void timbuart_tasklet(struct tasklet_struct *t)
+static void timbuart_tasklet(unsigned long arg)
 {
-	struct timbuart_port *uart = from_tasklet(uart, t, tasklet);
+	struct timbuart_port *uart = (struct timbuart_port *)arg;
 	u32 isr, ier = 0;
 
 	spin_lock(&uart->port.lock);
@@ -275,8 +277,8 @@ static int get_bindex(int baud)
 }
 
 static void timbuart_set_termios(struct uart_port *port,
-				 struct ktermios *termios,
-				 const struct ktermios *old)
+	struct ktermios *termios,
+	struct ktermios *old)
 {
 	unsigned int baud;
 	short bindex;
@@ -449,7 +451,7 @@ static int timbuart_probe(struct platform_device *dev)
 	}
 	uart->port.irq = irq;
 
-	tasklet_setup(&uart->tasklet, timbuart_tasklet);
+	tasklet_init(&uart->tasklet, timbuart_tasklet, (unsigned long)uart);
 
 	err = uart_register_driver(&timbuart_driver);
 	if (err)

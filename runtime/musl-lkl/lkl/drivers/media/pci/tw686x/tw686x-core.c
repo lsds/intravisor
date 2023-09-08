@@ -1,10 +1,13 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (C) 2015 VanguardiaSur - www.vanguardiasur.com.ar
  *
  * Based on original driver by Krzysztof Ha?asa:
  * Copyright (C) 2015 Industrial Research Institute for Automation
  * and Measurements PIAP
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of version 2 of the GNU General Public License
+ * as published by the Free Software Foundation.
  *
  * Notes
  * -----
@@ -276,7 +279,7 @@ static int tw686x_probe(struct pci_dev *pci_dev,
 	}
 
 	pci_set_master(pci_dev);
-	err = dma_set_mask(&pci_dev->dev, DMA_BIT_MASK(32));
+	err = pci_set_dma_mask(pci_dev, DMA_BIT_MASK(32));
 	if (err) {
 		dev_err(&pci_dev->dev, "32-bit PCI DMA not supported\n");
 		err = -EIO;
@@ -315,6 +318,13 @@ static int tw686x_probe(struct pci_dev *pci_dev,
 
 	spin_lock_init(&dev->lock);
 
+	err = request_irq(pci_dev->irq, tw686x_irq, IRQF_SHARED,
+			  dev->name, dev);
+	if (err < 0) {
+		dev_err(&pci_dev->dev, "unable to request interrupt\n");
+		goto iounmap;
+	}
+
 	timer_setup(&dev->dma_delay_timer, tw686x_dma_delay, 0);
 
 	/*
@@ -326,26 +336,18 @@ static int tw686x_probe(struct pci_dev *pci_dev,
 	err = tw686x_video_init(dev);
 	if (err) {
 		dev_err(&pci_dev->dev, "can't register video\n");
-		goto iounmap;
+		goto free_irq;
 	}
 
 	err = tw686x_audio_init(dev);
 	if (err)
 		dev_warn(&pci_dev->dev, "can't register audio\n");
 
-	err = request_irq(pci_dev->irq, tw686x_irq, IRQF_SHARED,
-			  dev->name, dev);
-	if (err < 0) {
-		dev_err(&pci_dev->dev, "unable to request interrupt\n");
-		goto tw686x_free;
-	}
-
 	pci_set_drvdata(pci_dev, dev);
 	return 0;
 
-tw686x_free:
-	tw686x_video_free(dev);
-	tw686x_audio_free(dev);
+free_irq:
+	free_irq(pci_dev->irq, dev);
 iounmap:
 	pci_iounmap(pci_dev, dev->mmio);
 free_region:

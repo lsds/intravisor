@@ -1,6 +1,10 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Copyright 2014 IBM Corp.
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version
+ * 2 of the License, or (at your option) any later version.
  */
 
 #include <linux/kernel.h>
@@ -178,7 +182,7 @@ static ssize_t perst_reloads_same_image_store(struct device *device,
 	if ((rc != 1) || !(val == 1 || val == 0))
 		return -EINVAL;
 
-	adapter->perst_same_image = (val == 1);
+	adapter->perst_same_image = (val == 1 ? true : false);
 	return count;
 }
 
@@ -349,20 +353,12 @@ static ssize_t prefault_mode_store(struct device *device,
 	struct cxl_afu *afu = to_cxl_afu(device);
 	enum prefault_modes mode = -1;
 
+	if (!strncmp(buf, "work_element_descriptor", 23))
+		mode = CXL_PREFAULT_WED;
+	if (!strncmp(buf, "all", 3))
+		mode = CXL_PREFAULT_ALL;
 	if (!strncmp(buf, "none", 4))
 		mode = CXL_PREFAULT_NONE;
-	else {
-		if (!radix_enabled()) {
-
-			/* only allowed when not in radix mode */
-			if (!strncmp(buf, "work_element_descriptor", 23))
-				mode = CXL_PREFAULT_WED;
-			if (!strncmp(buf, "all", 3))
-				mode = CXL_PREFAULT_ALL;
-		} else {
-			dev_err(device, "Cannot prefault with radix enabled\n");
-		}
-	}
 
 	if (mode == -1)
 		return -EINVAL;
@@ -570,7 +566,6 @@ static struct attribute *afu_cr_attrs[] = {
 	&class_attribute.attr,
 	NULL,
 };
-ATTRIBUTE_GROUPS(afu_cr);
 
 static void release_afu_config_record(struct kobject *kobj)
 {
@@ -582,7 +577,7 @@ static void release_afu_config_record(struct kobject *kobj)
 static struct kobj_type afu_config_record_type = {
 	.sysfs_ops = &kobj_sysfs_ops,
 	.release = release_afu_config_record,
-	.default_groups = afu_cr_groups,
+	.default_attrs = afu_cr_attrs,
 };
 
 static struct afu_config_record *cxl_sysfs_afu_new_cr(struct cxl_afu *afu, int cr_idx)
@@ -625,7 +620,7 @@ static struct afu_config_record *cxl_sysfs_afu_new_cr(struct cxl_afu *afu, int c
 	rc = kobject_init_and_add(&cr->kobj, &afu_config_record_type,
 				  &afu->dev.kobj, "cr%i", cr->cr);
 	if (rc)
-		goto err1;
+		goto err;
 
 	rc = sysfs_create_bin_file(&cr->kobj, &cr->config_attr);
 	if (rc)

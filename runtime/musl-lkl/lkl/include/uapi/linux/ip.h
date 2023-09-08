@@ -100,10 +100,8 @@ struct iphdr {
 	__u8	ttl;
 	__u8	protocol;
 	__sum16	check;
-	__struct_group(/* no tag */, addrs, /* no attrs */,
-		__be32	saddr;
-		__be32	daddr;
-	);
+	__be32	saddr;
+	__be32	daddr;
 	/*The options start here. */
 };
 
@@ -114,13 +112,13 @@ struct ip_auth_hdr {
 	__be16 reserved;
 	__be32 spi;
 	__be32 seq_no;		/* Sequence number */
-	__u8  auth_data[];	/* Variable len but >=4. Mind the 64 bit alignment! */
+	__u8  auth_data[0];	/* Variable len but >=4. Mind the 64 bit alignment! */
 };
 
 struct ip_esp_hdr {
 	__be32 spi;
 	__be32 seq_no;		/* Sequence number */
-	__u8  enc_data[];	/* Variable len but >=8. Mind the 64 bit alignment! */
+	__u8  enc_data[0];	/* Variable len but >=8. Mind the 64 bit alignment! */
 };
 
 struct ip_comp_hdr {
@@ -170,8 +168,6 @@ enum
 	IPV4_DEVCONF_IGNORE_ROUTES_WITH_LINKDOWN,
 	IPV4_DEVCONF_DROP_UNICAST_IN_L2_MULTICAST,
 	IPV4_DEVCONF_DROP_GRATUITOUS_ARP,
-	IPV4_DEVCONF_BC_FORWARDING,
-	IPV4_DEVCONF_ARP_EVICT_NOCARRIER,
 	__IPV4_DEVCONF_MAX
 };
 

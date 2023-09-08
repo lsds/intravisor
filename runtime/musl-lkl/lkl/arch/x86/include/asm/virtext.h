@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
 /* CPU virtualization extensions handling
  *
  * This should carry the code for handling CPU virtualization extensions
@@ -9,6 +8,9 @@
  * Copyright (C) 2008, Red Hat Inc.
  *
  * Contains code from KVM, Copyright (C) 2006 Qumranet, Inc.
+ *
+ * This work is licensed under the terms of the GNU GPL, version 2.  See
+ * the COPYING file in the top-level directory.
  */
 #ifndef _ASM_X86_VIRTEX_H
 #define _ASM_X86_VIRTEX_H
@@ -30,29 +32,16 @@ static inline int cpu_has_vmx(void)
 }
 
 
-/**
- * cpu_vmxoff() - Disable VMX on the current CPU
+/** Disable VMX on the current CPU
  *
- * Disable VMX and clear CR4.VMXE (even if VMXOFF faults)
- *
- * Note, VMXOFF causes a #UD if the CPU is !post-VMXON, but it's impossible to
- * atomically track post-VMXON state, e.g. this may be called in NMI context.
- * Eat all faults as all other faults on VMXOFF faults are mode related, i.e.
- * faults are guaranteed to be due to the !post-VMXON check unless the CPU is
- * magically in RM, VM86, compat mode, or at CPL>0.
+ * vmxoff causes a undefined-opcode exception if vmxon was not run
+ * on the CPU previously. Only call this function if you know VMX
+ * is enabled.
  */
-static inline int cpu_vmxoff(void)
+static inline void cpu_vmxoff(void)
 {
-	asm_volatile_goto("1: vmxoff\n\t"
-			  _ASM_EXTABLE(1b, %l[fault])
-			  ::: "cc", "memory" : fault);
-
+	asm volatile (ASM_VMX_VMXOFF : : : "cc");
 	cr4_clear_bits(X86_CR4_VMXE);
-	return 0;
-
-fault:
-	cr4_clear_bits(X86_CR4_VMXE);
-	return -EIO;
 }
 
 static inline int cpu_vmx_enabled(void)
@@ -94,10 +83,9 @@ static inline void cpu_emergency_vmxoff(void)
  */
 static inline int cpu_has_svm(const char **msg)
 {
-	if (boot_cpu_data.x86_vendor != X86_VENDOR_AMD &&
-	    boot_cpu_data.x86_vendor != X86_VENDOR_HYGON) {
+	if (boot_cpu_data.x86_vendor != X86_VENDOR_AMD) {
 		if (msg)
-			*msg = "not amd or hygon";
+			*msg = "not amd";
 		return 0;
 	}
 

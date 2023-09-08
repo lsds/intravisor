@@ -1,6 +1,14 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /* Copyright (c) 2017 MediaTek Inc.
  * Author: Kevin Chen <kevin-cw.chen@mediatek.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
  */
 
 #include <linux/clk-provider.h>
@@ -32,23 +40,33 @@ static const struct mtk_gate img_clks[] = {
 	GATE_IMG(CLK_IMG_LARB6, "img_larb6", "mm_sel", 0),
 };
 
-static const struct mtk_clk_desc img_desc = {
-	.clks = img_clks,
-	.num_clks = ARRAY_SIZE(img_clks),
+static const struct of_device_id of_match_clk_mt6797_img[] = {
+	{ .compatible = "mediatek,mt6797-imgsys", },
+	{}
 };
 
-static const struct of_device_id of_match_clk_mt6797_img[] = {
-	{
-		.compatible = "mediatek,mt6797-imgsys",
-		.data = &img_desc,
-	}, {
-		/* sentinel */
-	}
-};
+static int clk_mt6797_img_probe(struct platform_device *pdev)
+{
+	struct clk_onecell_data *clk_data;
+	int r;
+	struct device_node *node = pdev->dev.of_node;
+
+	clk_data = mtk_alloc_clk_data(CLK_IMG_NR);
+
+	mtk_clk_register_gates(node, img_clks, ARRAY_SIZE(img_clks),
+			       clk_data);
+
+	r = of_clk_add_provider(node, of_clk_src_onecell_get, clk_data);
+	if (r)
+		dev_err(&pdev->dev,
+			"could not register clock provider: %s: %d\n",
+			pdev->name, r);
+
+	return r;
+}
 
 static struct platform_driver clk_mt6797_img_drv = {
-	.probe = mtk_clk_simple_probe,
-	.remove = mtk_clk_simple_remove,
+	.probe = clk_mt6797_img_probe,
 	.driver = {
 		.name = "clk-mt6797-img",
 		.of_match_table = of_match_clk_mt6797_img,

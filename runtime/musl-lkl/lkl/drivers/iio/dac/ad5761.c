@@ -1,9 +1,10 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * AD5721, AD5721R, AD5761, AD5761R, Voltage Output Digital to Analog Converter
  *
  * Copyright 2016 Qtechnology A/S
- * 2016 Ricardo Ribalda <ribalda@kernel.org>
+ * 2016 Ricardo Ribalda <ricardo.ribalda@gmail.com>
+ *
+ * Licensed under the GPL-2.
  */
 #include <linux/kernel.h>
 #include <linux/module.h>
@@ -57,26 +58,24 @@ enum ad5761_supported_device_ids {
  * @use_intref:		true when the internal voltage reference is used
  * @vref:		actual voltage reference in mVolts
  * @range:		output range mode used
- * @lock:		lock to protect the data buffer during SPI ops
  * @data:		cache aligned spi buffer
  */
 struct ad5761_state {
 	struct spi_device		*spi;
 	struct regulator		*vref_reg;
-	struct mutex			lock;
 
 	bool use_intref;
 	int vref;
 	enum ad5761_voltage_range range;
 
 	/*
-	 * DMA (thus cache coherency maintenance) may require the
+	 * DMA (thus cache coherency maintenance) requires the
 	 * transfer buffers to live in their own cache lines.
 	 */
 	union {
 		__be32 d32;
 		u8 d8[4];
-	} data[3] __aligned(IIO_DMA_MINALIGN);
+	} data[3] ____cacheline_aligned;
 };
 
 static const struct ad5761_range_params ad5761_range_params[] = {
@@ -126,9 +125,9 @@ static int ad5761_spi_write(struct iio_dev *indio_dev, u8 addr, u16 val)
 	struct ad5761_state *st = iio_priv(indio_dev);
 	int ret;
 
-	mutex_lock(&st->lock);
+	mutex_lock(&indio_dev->mlock);
 	ret = _ad5761_spi_write(st, addr, val);
-	mutex_unlock(&st->lock);
+	mutex_unlock(&indio_dev->mlock);
 
 	return ret;
 }
@@ -165,9 +164,9 @@ static int ad5761_spi_read(struct iio_dev *indio_dev, u8 addr, u16 *val)
 	struct ad5761_state *st = iio_priv(indio_dev);
 	int ret;
 
-	mutex_lock(&st->lock);
+	mutex_lock(&indio_dev->mlock);
 	ret = _ad5761_spi_read(st, addr, val);
-	mutex_unlock(&st->lock);
+	mutex_unlock(&indio_dev->mlock);
 
 	return ret;
 }
@@ -370,12 +369,11 @@ static int ad5761_probe(struct spi_device *spi)
 	if (pdata)
 		voltage_range = pdata->voltage_range;
 
-	mutex_init(&st->lock);
-
 	ret = ad5761_spi_set_range(st, voltage_range);
 	if (ret)
 		goto disable_regulator_err;
 
+	iio_dev->dev.parent = &spi->dev;
 	iio_dev->info = &ad5761_info;
 	iio_dev->modes = INDIO_DIRECT_MODE;
 	iio_dev->channels = &chip_info->channel;
@@ -394,7 +392,7 @@ disable_regulator_err:
 	return ret;
 }
 
-static void ad5761_remove(struct spi_device *spi)
+static int ad5761_remove(struct spi_device *spi)
 {
 	struct iio_dev *iio_dev = spi_get_drvdata(spi);
 	struct ad5761_state *st = iio_priv(iio_dev);
@@ -403,6 +401,8 @@ static void ad5761_remove(struct spi_device *spi)
 
 	if (!IS_ERR_OR_NULL(st->vref_reg))
 		regulator_disable(st->vref_reg);
+
+	return 0;
 }
 
 static const struct spi_device_id ad5761_id[] = {
@@ -424,6 +424,6 @@ static struct spi_driver ad5761_driver = {
 };
 module_spi_driver(ad5761_driver);
 
-MODULE_AUTHOR("Ricardo Ribalda <ribalda@kernel.org>");
+MODULE_AUTHOR("Ricardo Ribalda <ricardo.ribalda@gmail.com>");
 MODULE_DESCRIPTION("Analog Devices AD5721, AD5721R, AD5761, AD5761R driver");
 MODULE_LICENSE("GPL v2");

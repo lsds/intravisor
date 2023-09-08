@@ -14,13 +14,29 @@
 #include <asm/bootinfo.h>
 #include <asm/idle.h>
 #include <asm/reboot.h>
-#include <asm/setup.h>
 #include <asm/mach-au1x00/au1000.h>
 #include <asm/mach-db1x00/bcsr.h>
 
 #include <prom.h>
 
-void prom_putchar(char c)
+void __init prom_init(void)
+{
+	unsigned char *memsize_str;
+	unsigned long memsize;
+
+	prom_argc = (int)fw_arg0;
+	prom_argv = (char **)fw_arg1;
+	prom_envp = (char **)fw_arg2;
+
+	prom_init_cmdline();
+	memsize_str = prom_getenv("memsize");
+	if (!memsize_str || kstrtoul(memsize_str, 0, &memsize))
+		memsize = 64 << 20; /* all devboards have at least 64MB RAM */
+
+	add_memory_region(0, memsize, BOOT_MEM_RAM);
+}
+
+void prom_putchar(unsigned char c)
 {
 	if (alchemy_get_cputype() == ALCHEMY_CPU_AU1300)
 		alchemy_uart_putchar(AU1300_UART2_PHYS_ADDR, c);
@@ -87,7 +103,7 @@ int __init db1x_register_pcmcia_socket(phys_addr_t pcmcia_attr_start,
 	if (stschg_irq)
 		cnt++;
 
-	sr = kcalloc(cnt, sizeof(struct resource), GFP_KERNEL);
+	sr = kzalloc(sizeof(struct resource) * cnt, GFP_KERNEL);
 	if (!sr)
 		return -ENOMEM;
 
@@ -162,7 +178,7 @@ int __init db1x_register_norflash(unsigned long size, int width,
 		return -EINVAL;
 
 	ret = -ENOMEM;
-	parts = kcalloc(5, sizeof(struct mtd_partition), GFP_KERNEL);
+	parts = kzalloc(sizeof(struct mtd_partition) * 5, GFP_KERNEL);
 	if (!parts)
 		goto out;
 

@@ -21,6 +21,7 @@
 
 #include <linux/types.h>
 #include <linux/spinlock.h>
+#include <linux/kernel.h>
 #include <linux/time.h>
 #include <linux/timer.h>
 #include <linux/wait.h>

@@ -19,14 +19,14 @@ struct stackframe {
 
 static __always_inline unsigned long *stack_pointer(struct task_struct *task)
 {
-	unsigned long sp;
+	unsigned long *sp;
 
 	if (!task || task == current)
-		sp = current_stack_pointer;
+		__asm__ __volatile__ ("mov %0, a1\n" : "=a"(sp));
 	else
-		sp = task->thread.sp;
+		sp = (unsigned long *)task->thread.sp;
 
-	return (unsigned long *)sp;
+	return sp;
 }
 
 void walk_stackframe(unsigned long *sp,

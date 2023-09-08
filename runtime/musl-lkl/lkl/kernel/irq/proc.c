@@ -100,6 +100,10 @@ static int irq_affinity_hint_proc_show(struct seq_file *m, void *v)
 	return 0;
 }
 
+#ifndef is_affinity_mask_valid
+#define is_affinity_mask_valid(val) 1
+#endif
+
 int no_irq_affinity;
 static int irq_affinity_proc_show(struct seq_file *m, void *v)
 {
@@ -111,40 +115,18 @@ static int irq_affinity_list_proc_show(struct seq_file *m, void *v)
 	return show_irq_affinity(AFFINITY_LIST, m);
 }
 
-#ifndef CONFIG_AUTO_IRQ_AFFINITY
-static inline int irq_select_affinity_usr(unsigned int irq)
-{
-	/*
-	 * If the interrupt is started up already then this fails. The
-	 * interrupt is assigned to an online CPU already. There is no
-	 * point to move it around randomly. Tell user space that the
-	 * selected mask is bogus.
-	 *
-	 * If not then any change to the affinity is pointless because the
-	 * startup code invokes irq_setup_affinity() which will select
-	 * a online CPU anyway.
-	 */
-	return -EINVAL;
-}
-#else
-/* ALPHA magic affinity auto selector. Keep it for historical reasons. */
-static inline int irq_select_affinity_usr(unsigned int irq)
-{
-	return irq_select_affinity(irq);
-}
-#endif
 
 static ssize_t write_irq_affinity(int type, struct file *file,
 		const char __user *buffer, size_t count, loff_t *pos)
 {
-	unsigned int irq = (int)(long)pde_data(file_inode(file));
+	unsigned int irq = (int)(long)PDE_DATA(file_inode(file));
 	cpumask_var_t new_value;
 	int err;
 
 	if (!irq_can_set_affinity_usr(irq) || no_irq_affinity)
 		return -EIO;
 
-	if (!zalloc_cpumask_var(&new_value, GFP_KERNEL))
+	if (!alloc_cpumask_var(&new_value, GFP_KERNEL))
 		return -ENOMEM;
 
 	if (type)
@@ -153,6 +135,11 @@ static ssize_t write_irq_affinity(int type, struct file *file,
 		err = cpumask_parse_user(buffer, count, new_value);
 	if (err)
 		goto free_cpumask;
+
+	if (!is_affinity_mask_valid(new_value)) {
+		err = -EINVAL;
+		goto free_cpumask;
+	}
 
 	/*
 	 * Do not allow disabling IRQs completely - it's a too easy
@@ -190,28 +177,40 @@ static ssize_t irq_affinity_list_proc_write(struct file *file,
 
 static int irq_affinity_proc_open(struct inode *inode, struct file *file)
 {
-	return single_open(file, irq_affinity_proc_show, pde_data(inode));
+	return single_open(file, irq_affinity_proc_show, PDE_DATA(inode));
 }
 
 static int irq_affinity_list_proc_open(struct inode *inode, struct file *file)
 {
-	return single_open(file, irq_affinity_list_proc_show, pde_data(inode));
+	return single_open(file, irq_affinity_list_proc_show, PDE_DATA(inode));
 }
 
-static const struct proc_ops irq_affinity_proc_ops = {
-	.proc_open	= irq_affinity_proc_open,
-	.proc_read	= seq_read,
-	.proc_lseek	= seq_lseek,
-	.proc_release	= single_release,
-	.proc_write	= irq_affinity_proc_write,
+static int irq_affinity_hint_proc_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, irq_affinity_hint_proc_show, PDE_DATA(inode));
+}
+
+static const struct file_operations irq_affinity_proc_fops = {
+	.open		= irq_affinity_proc_open,
+	.read		= seq_read,
+	.llseek		= seq_lseek,
+	.release	= single_release,
+	.write		= irq_affinity_proc_write,
 };
 
-static const struct proc_ops irq_affinity_list_proc_ops = {
-	.proc_open	= irq_affinity_list_proc_open,
-	.proc_read	= seq_read,
-	.proc_lseek	= seq_lseek,
-	.proc_release	= single_release,
-	.proc_write	= irq_affinity_list_proc_write,
+static const struct file_operations irq_affinity_hint_proc_fops = {
+	.open		= irq_affinity_hint_proc_open,
+	.read		= seq_read,
+	.llseek		= seq_lseek,
+	.release	= single_release,
+};
+
+static const struct file_operations irq_affinity_list_proc_fops = {
+	.open		= irq_affinity_list_proc_open,
+	.read		= seq_read,
+	.llseek		= seq_lseek,
+	.release	= single_release,
+	.write		= irq_affinity_list_proc_write,
 };
 
 #ifdef CONFIG_GENERIC_IRQ_EFFECTIVE_AFF_MASK
@@ -224,6 +223,32 @@ static int irq_effective_aff_list_proc_show(struct seq_file *m, void *v)
 {
 	return show_irq_affinity(EFFECTIVE_LIST, m);
 }
+
+static int irq_effective_aff_proc_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, irq_effective_aff_proc_show, PDE_DATA(inode));
+}
+
+static int irq_effective_aff_list_proc_open(struct inode *inode,
+					    struct file *file)
+{
+	return single_open(file, irq_effective_aff_list_proc_show,
+			   PDE_DATA(inode));
+}
+
+static const struct file_operations irq_effective_aff_proc_fops = {
+	.open		= irq_effective_aff_proc_open,
+	.read		= seq_read,
+	.llseek		= seq_lseek,
+	.release	= single_release,
+};
+
+static const struct file_operations irq_effective_aff_list_proc_fops = {
+	.open		= irq_effective_aff_list_proc_open,
+	.read		= seq_read,
+	.llseek		= seq_lseek,
+	.release	= single_release,
+};
 #endif
 
 static int default_affinity_show(struct seq_file *m, void *v)
@@ -238,12 +263,17 @@ static ssize_t default_affinity_write(struct file *file,
 	cpumask_var_t new_value;
 	int err;
 
-	if (!zalloc_cpumask_var(&new_value, GFP_KERNEL))
+	if (!alloc_cpumask_var(&new_value, GFP_KERNEL))
 		return -ENOMEM;
 
 	err = cpumask_parse_user(buffer, count, new_value);
 	if (err)
 		goto out;
+
+	if (!is_affinity_mask_valid(new_value)) {
+		err = -EINVAL;
+		goto out;
+	}
 
 	/*
 	 * Do not allow disabling IRQs completely - it's a too easy
@@ -265,15 +295,15 @@ out:
 
 static int default_affinity_open(struct inode *inode, struct file *file)
 {
-	return single_open(file, default_affinity_show, pde_data(inode));
+	return single_open(file, default_affinity_show, PDE_DATA(inode));
 }
 
-static const struct proc_ops default_affinity_proc_ops = {
-	.proc_open	= default_affinity_open,
-	.proc_read	= seq_read,
-	.proc_lseek	= seq_lseek,
-	.proc_release	= single_release,
-	.proc_write	= default_affinity_write,
+static const struct file_operations default_affinity_proc_fops = {
+	.open		= default_affinity_open,
+	.read		= seq_read,
+	.llseek		= seq_lseek,
+	.release	= single_release,
+	.write		= default_affinity_write,
 };
 
 static int irq_node_proc_show(struct seq_file *m, void *v)
@@ -283,6 +313,18 @@ static int irq_node_proc_show(struct seq_file *m, void *v)
 	seq_printf(m, "%d\n", irq_desc_get_node(desc));
 	return 0;
 }
+
+static int irq_node_proc_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, irq_node_proc_show, PDE_DATA(inode));
+}
+
+static const struct file_operations irq_node_proc_fops = {
+	.open		= irq_node_proc_open,
+	.read		= seq_read,
+	.llseek		= seq_lseek,
+	.release	= single_release,
+};
 #endif
 
 static int irq_spurious_proc_show(struct seq_file *m, void *v)
@@ -294,6 +336,18 @@ static int irq_spurious_proc_show(struct seq_file *m, void *v)
 		   jiffies_to_msecs(desc->last_unhandled));
 	return 0;
 }
+
+static int irq_spurious_proc_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, irq_spurious_proc_show, PDE_DATA(inode));
+}
+
+static const struct file_operations irq_spurious_proc_fops = {
+	.open		= irq_spurious_proc_open,
+	.read		= seq_read,
+	.llseek		= seq_lseek,
+	.release	= single_release,
+};
 
 #define MAX_NAMELEN 128
 
@@ -364,27 +418,27 @@ void register_irq_proc(unsigned int irq, struct irq_desc *desc)
 #ifdef CONFIG_SMP
 	/* create /proc/irq/<irq>/smp_affinity */
 	proc_create_data("smp_affinity", 0644, desc->dir,
-			 &irq_affinity_proc_ops, irqp);
+			 &irq_affinity_proc_fops, irqp);
 
 	/* create /proc/irq/<irq>/affinity_hint */
-	proc_create_single_data("affinity_hint", 0444, desc->dir,
-			irq_affinity_hint_proc_show, irqp);
+	proc_create_data("affinity_hint", 0444, desc->dir,
+			 &irq_affinity_hint_proc_fops, irqp);
 
 	/* create /proc/irq/<irq>/smp_affinity_list */
 	proc_create_data("smp_affinity_list", 0644, desc->dir,
-			 &irq_affinity_list_proc_ops, irqp);
+			 &irq_affinity_list_proc_fops, irqp);
 
-	proc_create_single_data("node", 0444, desc->dir, irq_node_proc_show,
-			irqp);
+	proc_create_data("node", 0444, desc->dir,
+			 &irq_node_proc_fops, irqp);
 # ifdef CONFIG_GENERIC_IRQ_EFFECTIVE_AFF_MASK
-	proc_create_single_data("effective_affinity", 0444, desc->dir,
-			irq_effective_aff_proc_show, irqp);
-	proc_create_single_data("effective_affinity_list", 0444, desc->dir,
-			irq_effective_aff_list_proc_show, irqp);
+	proc_create_data("effective_affinity", 0444, desc->dir,
+			 &irq_effective_aff_proc_fops, irqp);
+	proc_create_data("effective_affinity_list", 0444, desc->dir,
+			 &irq_effective_aff_list_proc_fops, irqp);
 # endif
 #endif
-	proc_create_single_data("spurious", 0444, desc->dir,
-			irq_spurious_proc_show, (void *)(long)irq);
+	proc_create_data("spurious", 0444, desc->dir,
+			 &irq_spurious_proc_fops, (void *)(long)irq);
 
 out_unlock:
 	mutex_unlock(&register_lock);
@@ -423,7 +477,7 @@ static void register_default_affinity_proc(void)
 {
 #ifdef CONFIG_SMP
 	proc_create("irq/default_smp_affinity", 0644, NULL,
-		    &default_affinity_proc_ops);
+		    &default_affinity_proc_fops);
 #endif
 }
 
@@ -483,25 +537,22 @@ int show_interrupts(struct seq_file *p, void *v)
 		seq_putc(p, '\n');
 	}
 
-	rcu_read_lock();
+	irq_lock_sparse();
 	desc = irq_to_desc(i);
-	if (!desc || irq_settings_is_hidden(desc))
+	if (!desc)
 		goto outsparse;
 
-	if (desc->kstat_irqs) {
-		for_each_online_cpu(j)
-			any_count |= data_race(*per_cpu_ptr(desc->kstat_irqs, j));
-	}
-
-	if ((!desc->action || irq_desc_is_chained(desc)) && !any_count)
-		goto outsparse;
+	raw_spin_lock_irqsave(&desc->lock, flags);
+	for_each_online_cpu(j)
+		any_count |= kstat_irqs_cpu(i, j);
+	action = desc->action;
+	if ((!action || irq_desc_is_chained(desc)) && !any_count)
+		goto out;
 
 	seq_printf(p, "%*d: ", prec, i);
 	for_each_online_cpu(j)
-		seq_printf(p, "%10u ", desc->kstat_irqs ?
-					*per_cpu_ptr(desc->kstat_irqs, j) : 0);
+		seq_printf(p, "%10u ", kstat_irqs_cpu(i, j));
 
-	raw_spin_lock_irqsave(&desc->lock, flags);
 	if (desc->irq_data.chip) {
 		if (desc->irq_data.chip->irq_print_chip)
 			desc->irq_data.chip->irq_print_chip(&desc->irq_data, p);
@@ -513,7 +564,7 @@ int show_interrupts(struct seq_file *p, void *v)
 		seq_printf(p, " %8s", "None");
 	}
 	if (desc->irq_data.domain)
-		seq_printf(p, " %*lu", prec, desc->irq_data.hwirq);
+		seq_printf(p, " %*d", prec, (int) desc->irq_data.hwirq);
 	else
 		seq_printf(p, " %*s", prec, "");
 #ifdef CONFIG_GENERIC_IRQ_SHOW_LEVEL
@@ -522,7 +573,6 @@ int show_interrupts(struct seq_file *p, void *v)
 	if (desc->name)
 		seq_printf(p, "-%-8s", desc->name);
 
-	action = desc->action;
 	if (action) {
 		seq_printf(p, "  %s", action->name);
 		while ((action = action->next) != NULL)
@@ -530,9 +580,10 @@ int show_interrupts(struct seq_file *p, void *v)
 	}
 
 	seq_putc(p, '\n');
+out:
 	raw_spin_unlock_irqrestore(&desc->lock, flags);
 outsparse:
-	rcu_read_unlock();
+	irq_unlock_sparse();
 	return 0;
 }
 #endif

@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (c) 2013 Intel Corporation. All Rights Reserved.
  *
@@ -23,46 +22,43 @@
 
 /* Tagged binary data container structure definitions. */
 struct tbd_header {
-	u32 tag;          /*!< Tag identifier, also checks endianness */
-	u32 size;         /*!< Container size including this header */
-	u32 version;      /*!< Version, format 0xYYMMDDVV */
-	u32 revision;     /*!< Revision, format 0xYYMMDDVV */
-	u32 config_bits;  /*!< Configuration flag bits set */
-	u32 checksum;     /*!< Global checksum, header included */
+	uint32_t tag;          /*!< Tag identifier, also checks endianness */
+	uint32_t size;         /*!< Container size including this header */
+	uint32_t version;      /*!< Version, format 0xYYMMDDVV */
+	uint32_t revision;     /*!< Revision, format 0xYYMMDDVV */
+	uint32_t config_bits;  /*!< Configuration flag bits set */
+	uint32_t checksum;     /*!< Global checksum, header included */
 } __packed;
 
 struct tbd_record_header {
-	u32 size;        /*!< Size of record including header */
-	u8 format_id;    /*!< tbd_format_t enumeration values used */
-	u8 packing_key;  /*!< Packing method; 0 = no packing */
-	u16 class_id;    /*!< tbd_class_t enumeration values used */
+	uint32_t size;        /*!< Size of record including header */
+	uint8_t format_id;    /*!< tbd_format_t enumeration values used */
+	uint8_t packing_key;  /*!< Packing method; 0 = no packing */
+	uint16_t class_id;    /*!< tbd_class_t enumeration values used */
 } __packed;
 
 struct tbd_data_record_header {
-	u16 next_offset;
-	u16 flags;
-	u16 data_offset;
-	u16 data_size;
+	uint16_t next_offset;
+	uint16_t flags;
+	uint16_t data_offset;
+	uint16_t data_size;
 } __packed;
 
 #define TBD_CLASS_DRV_ID 2
 
 static int set_msr_configuration(struct i2c_client *client, uint8_t *bufptr,
-				 unsigned int size)
+		unsigned int size)
 {
-	/*
-	 * The configuration data contains any number of sequences where
+	/* The configuration data contains any number of sequences where
 	 * the first byte (that is, uint8_t) that marks the number of bytes
 	 * in the sequence to follow, is indeed followed by the indicated
 	 * number of bytes of actual data to be written to sensor.
 	 * By convention, the first two bytes of actual data should be
 	 * understood as an address in the sensor address space (hibyte
 	 * followed by lobyte) where the remaining data in the sequence
-	 * will be written.
-	 */
+	 * will be written. */
 
-	u8 *ptr = bufptr;
-
+	uint8_t *ptr = bufptr;
 	while (ptr < bufptr + size) {
 		struct i2c_msg msg = {
 			.addr = client->addr,
@@ -90,11 +86,11 @@ static int set_msr_configuration(struct i2c_client *client, uint8_t *bufptr,
 }
 
 static int parse_and_apply(struct i2c_client *client, uint8_t *buffer,
-			   unsigned int size)
+		unsigned int size)
 {
-	u8 *endptr8 = buffer + size;
+	uint8_t *endptr8 = buffer + size;
 	struct tbd_data_record_header *header =
-	    (struct tbd_data_record_header *)buffer;
+		(struct tbd_data_record_header *)buffer;
 
 	/* There may be any number of datasets present */
 	unsigned int dataset = 0;
@@ -106,7 +102,7 @@ static int parse_and_apply(struct i2c_client *client, uint8_t *buffer,
 
 		/* All data should be located within given buffer */
 		if ((uint8_t *)header + header->data_offset +
-		    header->data_size > endptr8)
+				header->data_size > endptr8)
 			return -EINVAL;
 
 		/* We have a new valid dataset */
@@ -117,16 +113,16 @@ static int parse_and_apply(struct i2c_client *client, uint8_t *buffer,
 			int ret;
 
 			dev_info(&client->dev,
-				 "New MSR data for sensor driver (dataset %02d) size:%d\n",
-				 dataset, header->data_size);
+				"New MSR data for sensor driver (dataset %02d) size:%d\n",
+				dataset, header->data_size);
 			ret = set_msr_configuration(client,
-						    buffer + header->data_offset,
-						    header->data_size);
+						buffer + header->data_offset,
+						header->data_size);
 			if (ret)
 				return ret;
 		}
 		header = (struct tbd_data_record_header *)(buffer +
-			 header->next_offset);
+			header->next_offset);
 	} while (header->next_offset);
 
 	return 0;
@@ -171,10 +167,9 @@ int apply_msr_data(struct i2c_client *client, const struct firmware *fw)
 EXPORT_SYMBOL_GPL(apply_msr_data);
 
 int load_msr_list(struct i2c_client *client, char *name,
-		  const struct firmware **fw)
+		const struct firmware **fw)
 {
 	int ret = request_firmware(fw, name, &client->dev);
-
 	if (ret) {
 		dev_err(&client->dev,
 			"Error %d while requesting firmware %s\n",
@@ -182,7 +177,7 @@ int load_msr_list(struct i2c_client *client, char *name,
 		return ret;
 	}
 	dev_info(&client->dev, "Received %lu bytes drv data\n",
-		 (unsigned long)(*fw)->size);
+			(unsigned long)(*fw)->size);
 
 	return 0;
 }

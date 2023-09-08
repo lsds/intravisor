@@ -1,9 +1,19 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * ITE IT913X silicon tuner driver
  *
  *  Copyright (C) 2011 Malcolm Priestley (tvboxspy@gmail.com)
  *  IT9137 Copyright (C) ITE Tech Inc.
+ *
+ *  This program is free software; you can redistribute it and/or modify
+ *  it under the terms of the GNU General Public License as published by
+ *  the Free Software Foundation; either version 2 of the License, or
+ *  (at your option) any later version.
+ *
+ *  This program is distributed in the hope that it will be useful,
+ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *
+ *  GNU General Public License for more details.
  */
 
 #include "it913x.h"
@@ -62,7 +72,6 @@ static int it913x_init(struct dvb_frontend *fe)
 		break;
 	default:
 		dev_err(&pdev->dev, "unknown clock identifier %d\n", utmp);
-		ret = -EINVAL;
 		goto err;
 	}
 
@@ -366,9 +375,9 @@ err:
 
 static const struct dvb_tuner_ops it913x_tuner_ops = {
 	.info = {
-		.name             = "ITE IT913X",
-		.frequency_min_hz = 174 * MHz,
-		.frequency_max_hz = 862 * MHz,
+		.name           = "ITE IT913X",
+		.frequency_min  = 174000000,
+		.frequency_max  = 862000000,
 	},
 
 	.init = it913x_init,

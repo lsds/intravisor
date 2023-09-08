@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * adv7170 - adv7170, adv7171 video encoder driver version 0.0.1
  *
@@ -13,6 +12,16 @@
  *
  * Changes by Ronald Bultje <rbultje@ronald.bitfreak.net>
  *    - moved over to linux>=2.4.x i2c protocol (1/1/2003)
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
  */
 
 #include <linux/module.h>
@@ -250,7 +259,7 @@ static int adv7170_s_routing(struct v4l2_subdev *sd,
 }
 
 static int adv7170_enum_mbus_code(struct v4l2_subdev *sd,
-		struct v4l2_subdev_state *sd_state,
+		struct v4l2_subdev_pad_config *cfg,
 		struct v4l2_subdev_mbus_code_enum *code)
 {
 	if (code->pad || code->index >= ARRAY_SIZE(adv7170_codes))
@@ -261,7 +270,7 @@ static int adv7170_enum_mbus_code(struct v4l2_subdev *sd,
 }
 
 static int adv7170_get_fmt(struct v4l2_subdev *sd,
-		struct v4l2_subdev_state *sd_state,
+		struct v4l2_subdev_pad_config *cfg,
 		struct v4l2_subdev_format *format)
 {
 	struct v4l2_mbus_framefmt *mf = &format->format;
@@ -284,7 +293,7 @@ static int adv7170_get_fmt(struct v4l2_subdev *sd,
 }
 
 static int adv7170_set_fmt(struct v4l2_subdev *sd,
-		struct v4l2_subdev_state *sd_state,
+		struct v4l2_subdev_pad_config *cfg,
 		struct v4l2_subdev_format *format)
 {
 	struct v4l2_mbus_framefmt *mf = &format->format;
@@ -368,11 +377,12 @@ static int adv7170_probe(struct i2c_client *client,
 	return 0;
 }
 
-static void adv7170_remove(struct i2c_client *client)
+static int adv7170_remove(struct i2c_client *client)
 {
 	struct v4l2_subdev *sd = i2c_get_clientdata(client);
 
 	v4l2_device_unregister_subdev(sd);
+	return 0;
 }
 
 /* ----------------------------------------------------------------------- */

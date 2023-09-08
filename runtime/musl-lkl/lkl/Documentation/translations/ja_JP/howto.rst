@@ -1,9 +1,5 @@
-.. raw:: latex
-
-	\kerneldocCJKoff
-
 NOTE:
-This is a version of Documentation/process/howto.rst translated into Japanese.
+This is a version of Documentation/HOWTO translated into Japanese.
 This document is maintained by Tsugikazu Shibata <tshibata@ab.jp.nec.com>
 If you find any difference between this document and the original file or
 a problem with the translation, please contact the maintainer of this file.
@@ -14,10 +10,6 @@ a fork. So if you have any comments or updates for this file, please
 try to update the original English file first.
 
 ----------------------------------
-
-.. raw:: latex
-
-	\kerneldocCJKon
 
 この文書は、
 Documentation/process/howto.rst
@@ -65,7 +57,7 @@ Linux カーネル開発のやり方
  - 『新・詳説 C 言語 H&S リファレンス』 (サミュエル P ハービソン/ガイ L スティール共著 斉藤 信男監訳)[ソフトバンク]
 
 カーネルは GNU C と GNU ツールチェインを使って書かれています。カーネル
-は ISO C11 仕様に準拠して書く一方で、標準には無い言語拡張を多く使って
+は ISO C89 仕様に準拠して書く一方で、標準には無い言語拡張を多く使って
 います。カーネルは標準 C ライブラリに依存しない、C 言語非依存環境です。
 そのため、C の標準の中で使えないものもあります。特に任意の long long
 の除算や浮動小数点は使えません。カーネルがツールチェインや C 言語拡張
@@ -117,7 +109,7 @@ linux-api@vger.kernel.org に送ることを勧めます。
     ています。 カーネルに関して初めての人はここからスタートすると良い
     でしょう。
 
-  :ref:`Documentation/process/changes.rst <changes>`
+  :ref:`Documentation/Process/changes.rst <changes>`
     このファイルはカーネルをうまく生成(訳注 build )し、走らせるのに最
     小限のレベルで必要な数々のソフトウェアパッケージの一覧を示してい
     ます。
@@ -129,8 +121,8 @@ linux-api@vger.kernel.org に送ることを勧めます。
     ルに従っているものだけを受け付け、多くの人は正しいスタイルのコード
     だけをレビューします。
 
-  :ref:`Documentation/process/submitting-patches.rst <codingstyle>`
-    このファイルには、どうやってうまくパッチを作って投稿するかにつ
+  :ref:`Documentation/process/submitting-patches.rst <codingstyle>` と :ref:`Documentation/process/submitting-drivers.rst <submittingdrivers>`
+    これらのファイルには、どうやってうまくパッチを作って投稿するかにつ
     いて非常に詳しく書かれており、以下を含みます (これだけに限らない
     けれども)
 
@@ -147,7 +139,7 @@ linux-api@vger.kernel.org に送ることを勧めます。
        "The Perfect Patch"
 		http://www.ozlabs.org/~akpm/stuff/tpp.txt
        "Linux kernel patch submission format"
-		https://web.archive.org/web/20180829112450/http://linux.yyz.us/patch-format.html
+		http://linux.yyz.us/patch-format.html
 
   :ref:`Documentation/process/stable-api-nonsense.rst <stable_api_nonsense>`
     このファイルはカーネルの中に不変の API を持たないことにした意識的
@@ -253,7 +245,7 @@ Linux カーネルソースツリーの中に含まれる、きれいにし、�
 できます。この最新の素晴しいカーネルコードのリポジトリは以下で見つかり
 ます -
 
-	https://elixir.bootlin.com/
+	http://lxr.free-electrons.com/
 
 開発プロセス
 ------------
@@ -262,21 +254,22 @@ Linux カーネルの開発プロセスは現在幾つかの異なるメイン�
 チ」と多数のサブシステム毎のカーネルブランチから構成されます。これらの
 ブランチとは -
 
-  - Linus のメインラインツリー
-  - メジャー番号をまたぐ数本の安定版ツリー
-  - サブシステム毎のカーネルツリー
-  - 統合テストのための linux-next カーネルツリー
+  - メインの 4.x カーネルツリー
+  - 4.x.y -stable カーネルツリー
+  - 4.x -git カーネルパッチ
+  - サブシステム毎のカーネルツリーとパッチ
+  - 統合テストのための 4.x -next カーネルツリー
 
-メインラインツリー
+4.x カーネルツリー
 ~~~~~~~~~~~~~~~~~~
 
-メインラインツリーは Linus Torvalds によってメンテナンスされ、
-https://kernel.org のリポジトリに存在します。
+4.x カーネルは Linus Torvalds によってメンテナンスされ、
+https://kernel.org の pub/linux/kernel/v4.x/ ディレクトリに存在します。
 この開発プロセスは以下のとおり -
 
   - 新しいカーネルがリリースされた直後に、2週間の特別期間が設けられ、
     この期間中に、メンテナ達は Linus に大きな差分を送ることができます。
-    このような差分は通常 linux-next カーネルに数週間含まれてきたパッチです。
+    このような差分は通常 -next カーネルに数週間含まれてきたパッチです。
     大きな変更は git(カーネルのソース管理ツール、詳細は
     http://git-scm.com/ 参照) を使って送るのが好ましいやり方ですが、パッ
     チファイルの形式のまま送るのでも十分です。
@@ -303,18 +296,20 @@ Andrew Morton が Linux-kernel メーリングリストにカーネルリリー�
         前もって決められた計画によってリリースされるものではないから
         です。」*
 
-メジャー番号をまたぐ数本の安定版ツリー
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+4.x.y -stable カーネルツリー
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 バージョン番号が3つの数字に分かれているカーネルは -stable カーネルです。
-これには最初の2つのバージョン番号の数字に対応した、
-メインラインリリースで見つかったセキュリティ問題や
-重大な後戻りに対する比較的小さい重要な修正が含まれます。
+これには、4.x カーネルで見つかったセキュリティ問題や重大な後戻りに対す
+る比較的小さい重要な修正が含まれます。
 
 これは、開発/実験的バージョンのテストに協力することに興味が無く、最新
 の安定したカーネルを使いたいユーザに推奨するブランチです。
 
-安定版ツリーは"stable" チーム <stable@vger.kernel.org> でメンテされており、
+もし、4.x.y カーネルが存在しない場合には、番号が一番大きい 4.x が最新
+の安定版カーネルです。
+
+4.x.y は "stable" チーム <stable@vger.kernel.org> でメンテされており、
 必要に応じてリリースされます。通常のリリース期間は 2週間毎ですが、差
 し迫った問題がなければもう少し長くなることもあります。セキュリティ関
 連の問題の場合はこれに対してだいたいの場合、すぐにリリースがされます。
@@ -324,7 +319,16 @@ Documentation/process/stable-kernel-rules.rst ファイルにはどのような�
 類の変更が -stable ツリーに受け入れ可能か、またリリースプロセスがどう
 動くかが記述されています。
 
-サブシステム毎のカーネルツリー
+4.x -git パッチ
+~~~~~~~~~~~~~~~
+
+git リポジトリで管理されているLinus のカーネルツリーの毎日のスナップ
+ショットがあります。(だから -git という名前がついています)。これらのパッ
+チはおおむね毎日リリースされており、Linus のツリーの現状を表します。こ
+れは -rc カーネルと比べて、パッチが大丈夫かどうかも確認しないで自動的
+に生成されるので、より実験的です。
+
+サブシステム毎のカーネルツリーとパッチ
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 それぞれのカーネルサブシステムのメンテナ達は --- そして多くのカーネル
@@ -349,19 +353,19 @@ quilt シリーズとして公開されているパッチキューも使われ�
 けることができます。大部分のこれらの patchwork のサイトは
 https://patchwork.kernel.org/ でリストされています。
 
-統合テストのための linux-next カーネルツリー
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+統合テストのための 4.x -next カーネルツリー
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-サブシステムツリーの更新内容がメインラインツリーにマージされる
+サブシステムツリーの更新内容がメインラインの 4.x ツリーにマージされる
 前に、それらは統合テストされる必要があります。この目的のため、実質的に
 全サブシステムツリーからほぼ毎日プルされてできる特別なテスト用のリポジ
 トリが存在します-
 
        https://git.kernel.org/?p=linux/kernel/git/next/linux-next.git
 
-このやり方によって、linux-next は次のマージ機会でどんなものがメイン
-ラインにマージされるか、おおまかな展望を提供します。
-linux-next の実行テストを行う冒険好きなテスターは大いに歓迎されます。
+このやり方によって、-next カーネルは次のマージ機会でどんなものがメイン
+ラインカーネルにマージされるか、おおまかなの展望を提供します。-next カー
+ネルの実行テストを行う冒険好きなテスターは大いに歓迎されます。
 
 バグレポート
 -------------
@@ -410,7 +414,7 @@ https://bugzilla.kernel.org に行ってください。もし今後のバグレ�
 このメーリングリストのアーカイブは web 上の多数の場所に存在します。こ
 れらのアーカイブを探すにはサーチエンジンを使いましょう。例えば-
 
-	https://lore.kernel.org/lkml/
+	http://dir.gmane.org/gmane.linux.kernel
 
 リストに投稿する前にすでにその話題がアーカイブに存在するかどうかを検索
 することを是非やってください。多数の事がすでに詳細に渡って議論されてお

@@ -239,7 +239,7 @@ int au1100fb_fb_setcolreg(unsigned regno, unsigned red, unsigned green, unsigned
 	u32 value;
 
 	fbdev = to_au1100fb_device(fbi);
-	palette = fbdev->regs->lcd_palettebase;
+	palette = fbdev->regs->lcd_pallettebase;
 
 	if (regno > (AU1100_LCD_NBR_PALETTE_ENTRIES - 1))
 		return -EINVAL;
@@ -340,15 +340,17 @@ int au1100fb_fb_pan_display(struct fb_var_screeninfo *var, struct fb_info *fbi)
  */
 int au1100fb_fb_mmap(struct fb_info *fbi, struct vm_area_struct *vma)
 {
-	struct au1100fb_device *fbdev = to_au1100fb_device(fbi);
+	struct au1100fb_device *fbdev;
 
+	fbdev = to_au1100fb_device(fbi);
+
+	vma->vm_page_prot = pgprot_noncached(vma->vm_page_prot);
 	pgprot_val(vma->vm_page_prot) |= (6 << 9); //CCA=6
 
-	return dma_mmap_coherent(fbdev->dev, vma, fbdev->fb_mem, fbdev->fb_phys,
-			fbdev->fb_len);
+	return vm_iomap_memory(vma, fbdev->fb_phys, fbdev->fb_len);
 }
 
-static const struct fb_ops au1100fb_ops =
+static struct fb_ops au1100fb_ops =
 {
 	.owner			= THIS_MODULE,
 	.fb_setcolreg		= au1100fb_fb_setcolreg,
@@ -410,6 +412,7 @@ static int au1100fb_drv_probe(struct platform_device *dev)
 {
 	struct au1100fb_device *fbdev;
 	struct resource *regs_res;
+	unsigned long page;
 	struct clk *c;
 
 	/* Allocate new device private */
@@ -421,7 +424,6 @@ static int au1100fb_drv_probe(struct platform_device *dev)
 		goto failed;
 
 	platform_set_drvdata(dev, (void *)fbdev);
-	fbdev->dev = &dev->dev;
 
 	/* Allocate region for our registers and map them */
 	regs_res = platform_get_resource(dev, IORESOURCE_MEM, 0);
@@ -462,13 +464,27 @@ static int au1100fb_drv_probe(struct platform_device *dev)
 					    PAGE_ALIGN(fbdev->fb_len),
 					    &fbdev->fb_phys, GFP_KERNEL);
 	if (!fbdev->fb_mem) {
-		print_err("fail to allocate framebuffer (size: %dK))",
+		print_err("fail to allocate frambuffer (size: %dK))",
 			  fbdev->fb_len / 1024);
 		return -ENOMEM;
 	}
 
 	au1100fb_fix.smem_start = fbdev->fb_phys;
 	au1100fb_fix.smem_len = fbdev->fb_len;
+
+	/*
+	 * Set page reserved so that mmap will work. This is necessary
+	 * since we'll be remapping normal memory.
+	 */
+	for (page = (unsigned long)fbdev->fb_mem;
+	     page < PAGE_ALIGN((unsigned long)fbdev->fb_mem + fbdev->fb_len);
+	     page += PAGE_SIZE) {
+#ifdef CONFIG_DMA_NONCOHERENT
+		SetPageReserved(virt_to_page(CAC_ADDR((void *)page)));
+#else
+		SetPageReserved(virt_to_page(page));
+#endif
+	}
 
 	print_dbg("Framebuffer memory map at %p", fbdev->fb_mem);
 	print_dbg("phys=0x%08x, size=%dK", fbdev->fb_phys, fbdev->fb_len / 1024);
@@ -485,7 +501,7 @@ static int au1100fb_drv_probe(struct platform_device *dev)
 	fbdev->info.fix = au1100fb_fix;
 
 	fbdev->info.pseudo_palette =
-		devm_kcalloc(&dev->dev, 16, sizeof(u32), GFP_KERNEL);
+		devm_kzalloc(&dev->dev, sizeof(u32) * 16, GFP_KERNEL);
 	if (!fbdev->info.pseudo_palette)
 		return -ENOMEM;
 
@@ -560,7 +576,8 @@ int au1100fb_drv_suspend(struct platform_device *dev, pm_message_t state)
 	/* Blank the LCD */
 	au1100fb_fb_blank(VESA_POWERDOWN, &fbdev->info);
 
-	clk_disable(fbdev->lcdclk);
+	if (fbdev->lcdclk)
+		clk_disable(fbdev->lcdclk);
 
 	memcpy(&fbregs, fbdev->regs, sizeof(struct au1100fb_regs));
 
@@ -576,7 +593,8 @@ int au1100fb_drv_resume(struct platform_device *dev)
 
 	memcpy(fbdev->regs, &fbregs, sizeof(struct au1100fb_regs));
 
-	clk_enable(fbdev->lcdclk);
+	if (fbdev->lcdclk)
+		clk_enable(fbdev->lcdclk);
 
 	/* Unblank the LCD */
 	au1100fb_fb_blank(VESA_NO_BLANKING, &fbdev->info);

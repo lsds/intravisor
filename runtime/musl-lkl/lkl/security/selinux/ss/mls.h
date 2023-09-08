@@ -22,10 +22,7 @@
 #ifndef _SS_MLS_H_
 #define _SS_MLS_H_
 
-#include <linux/jhash.h>
-
 #include "context.h"
-#include "ebitmap.h"
 #include "policydb.h"
 
 int mls_compute_context_len(struct policydb *p, struct context *context);
@@ -37,7 +34,7 @@ int mls_level_isvalid(struct policydb *p, struct mls_level *l);
 
 int mls_context_to_sid(struct policydb *p,
 		       char oldc,
-		       char *scontext,
+		       char **scontext,
 		       struct context *context,
 		       struct sidtab *s,
 		       u32 def_sid);
@@ -49,8 +46,7 @@ int mls_range_set(struct context *context, struct mls_range *range);
 
 int mls_convert_context(struct policydb *oldp,
 			struct policydb *newp,
-			struct context *oldc,
-			struct context *newc);
+			struct context *context);
 
 int mls_compute_sid(struct policydb *p,
 		    struct context *scontext,
@@ -103,14 +99,6 @@ static inline int mls_import_netlbl_cat(struct policydb *p,
 	return -ENOMEM;
 }
 #endif
-
-static inline u32 mls_range_hash(const struct mls_range *r, u32 hash)
-{
-	hash = jhash_2words(r->level[0].sens, r->level[1].sens, hash);
-	hash = ebitmap_hash(&r->level[0].cat, hash);
-	hash = ebitmap_hash(&r->level[1].cat, hash);
-	return hash;
-}
 
 #endif	/* _SS_MLS_H */
 

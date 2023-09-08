@@ -58,6 +58,9 @@
 
 #include <asm/xen/hypervisor.h>
 
+
+#define GRANT_INVALID_REF	0
+
 #define VSCSIFRONT_OP_ADD_LUN	1
 #define VSCSIFRONT_OP_DEL_LUN	2
 #define VSCSIFRONT_OP_READD_LUN	3
@@ -80,8 +83,6 @@ struct vscsifrnt_shadow {
 	uint16_t rqid;
 	uint16_t ref_rqid;
 
-	bool inflight;
-
 	unsigned int nr_grants;		/* number of grants in gref[] */
 	struct scsiif_request_segment *sg;	/* scatter/gather elements */
 	struct scsiif_request_segment seg[VSCSIIF_SG_TABLESIZE];
@@ -103,11 +104,7 @@ struct vscsifrnt_info {
 	struct xenbus_device *dev;
 
 	struct Scsi_Host *host;
-	enum {
-		STATE_INACTIVE,
-		STATE_ACTIVE,
-		STATE_ERROR
-	}  host_active;
+	int host_active;
 
 	unsigned int evtchn;
 	unsigned int irq;
@@ -215,25 +212,16 @@ static int scsifront_do_request(struct vscsifrnt_info *info,
 	memcpy(ring_req->cmnd, sc->cmnd, sc->cmd_len);
 
 	ring_req->sc_data_direction   = (uint8_t)sc->sc_data_direction;
-	ring_req->timeout_per_command = scsi_cmd_to_rq(sc)->timeout / HZ;
+	ring_req->timeout_per_command = sc->request->timeout / HZ;
 
 	for (i = 0; i < (shadow->nr_segments & ~VSCSIIF_SG_GRANT); i++)
 		ring_req->seg[i] = shadow->seg[i];
-
-	shadow->inflight = true;
 
 	RING_PUSH_REQUESTS_AND_CHECK_NOTIFY(ring, notify);
 	if (notify)
 		notify_remote_via_irq(info->irq);
 
 	return 0;
-}
-
-static void scsifront_set_error(struct vscsifrnt_info *info, const char *msg)
-{
-	shost_printk(KERN_ERR, info->host, KBUILD_MODNAME "%s\n"
-		     "Disabling device for further use\n", msg);
-	info->host_active = STATE_ERROR;
 }
 
 static void scsifront_gnttab_done(struct vscsifrnt_info *info,
@@ -245,55 +233,15 @@ static void scsifront_gnttab_done(struct vscsifrnt_info *info,
 		return;
 
 	for (i = 0; i < shadow->nr_grants; i++) {
-		if (unlikely(!gnttab_try_end_foreign_access(shadow->gref[i]))) {
-			scsifront_set_error(info, "grant still in use by backend");
-			return;
+		if (unlikely(gnttab_query_foreign_access(shadow->gref[i]))) {
+			shost_printk(KERN_ALERT, info->host, KBUILD_MODNAME
+				     "grant still in use by backend\n");
+			BUG();
 		}
+		gnttab_end_foreign_access(shadow->gref[i], 0, 0UL);
 	}
 
 	kfree(shadow->sg);
-}
-
-static unsigned int scsifront_host_byte(int32_t rslt)
-{
-	switch (XEN_VSCSIIF_RSLT_HOST(rslt)) {
-	case XEN_VSCSIIF_RSLT_HOST_OK:
-		return DID_OK;
-	case XEN_VSCSIIF_RSLT_HOST_NO_CONNECT:
-		return DID_NO_CONNECT;
-	case XEN_VSCSIIF_RSLT_HOST_BUS_BUSY:
-		return DID_BUS_BUSY;
-	case XEN_VSCSIIF_RSLT_HOST_TIME_OUT:
-		return DID_TIME_OUT;
-	case XEN_VSCSIIF_RSLT_HOST_BAD_TARGET:
-		return DID_BAD_TARGET;
-	case XEN_VSCSIIF_RSLT_HOST_ABORT:
-		return DID_ABORT;
-	case XEN_VSCSIIF_RSLT_HOST_PARITY:
-		return DID_PARITY;
-	case XEN_VSCSIIF_RSLT_HOST_ERROR:
-		return DID_ERROR;
-	case XEN_VSCSIIF_RSLT_HOST_RESET:
-		return DID_RESET;
-	case XEN_VSCSIIF_RSLT_HOST_BAD_INTR:
-		return DID_BAD_INTR;
-	case XEN_VSCSIIF_RSLT_HOST_PASSTHROUGH:
-		return DID_PASSTHROUGH;
-	case XEN_VSCSIIF_RSLT_HOST_SOFT_ERROR:
-		return DID_SOFT_ERROR;
-	case XEN_VSCSIIF_RSLT_HOST_IMM_RETRY:
-		return DID_IMM_RETRY;
-	case XEN_VSCSIIF_RSLT_HOST_REQUEUE:
-		return DID_REQUEUE;
-	case XEN_VSCSIIF_RSLT_HOST_TRANSPORT_DISRUPTED:
-		return DID_TRANSPORT_DISRUPTED;
-	case XEN_VSCSIIF_RSLT_HOST_TRANSPORT_FAILFAST:
-		return DID_TRANSPORT_FAILFAST;
-	case XEN_VSCSIIF_RSLT_HOST_TRANSPORT_MARGINAL:
-		return DID_TRANSPORT_MARGINAL;
-	default:
-		return DID_ERROR;
-	}
 }
 
 static void scsifront_cdb_cmd_done(struct vscsifrnt_info *info,
@@ -311,12 +259,9 @@ static void scsifront_cdb_cmd_done(struct vscsifrnt_info *info,
 	BUG_ON(sc == NULL);
 
 	scsifront_gnttab_done(info, shadow);
-	if (info->host_active == STATE_ERROR)
-		return;
 	scsifront_put_rqid(info, id);
 
-	set_host_byte(sc, scsifront_host_byte(ring_rsp->rslt));
-	set_status_byte(sc, XEN_VSCSIIF_RSLT_STATUS(ring_rsp->rslt));
+	sc->result = ring_rsp->rslt;
 	scsi_set_resid(sc, ring_rsp->residual_len);
 
 	sense_len = min_t(uint8_t, VSCSIIF_SENSE_BUFFERSIZE,
@@ -325,7 +270,7 @@ static void scsifront_cdb_cmd_done(struct vscsifrnt_info *info,
 	if (sense_len)
 		memcpy(sc->sense_buffer, ring_rsp->sense_buffer, sense_len);
 
-	scsi_done(sc);
+	sc->scsi_done(sc);
 }
 
 static void scsifront_sync_cmd_done(struct vscsifrnt_info *info,
@@ -340,10 +285,7 @@ static void scsifront_sync_cmd_done(struct vscsifrnt_info *info,
 	shadow->wait_reset = 1;
 	switch (shadow->rslt_reset) {
 	case RSLT_RESET_WAITING:
-		if (ring_rsp->rslt == XEN_VSCSIIF_RSLT_RESET_SUCCESS)
-			shadow->rslt_reset = SUCCESS;
-		else
-			shadow->rslt_reset = FAILED;
+		shadow->rslt_reset = ring_rsp->rslt;
 		break;
 	case RSLT_RESET_ERR:
 		kick = _scsifront_put_rqid(info, id);
@@ -353,7 +295,9 @@ static void scsifront_sync_cmd_done(struct vscsifrnt_info *info,
 			scsifront_wake_up(info);
 		return;
 	default:
-		scsifront_set_error(info, "bad reset state");
+		shost_printk(KERN_ERR, info->host, KBUILD_MODNAME
+			     "bad reset state %d, possibly leaking %u\n",
+			     shadow->rslt_reset, id);
 		break;
 	}
 	spin_unlock_irqrestore(&info->shadow_lock, flags);
@@ -364,41 +308,28 @@ static void scsifront_sync_cmd_done(struct vscsifrnt_info *info,
 static void scsifront_do_response(struct vscsifrnt_info *info,
 				  struct vscsiif_response *ring_rsp)
 {
-	struct vscsifrnt_shadow *shadow;
-
-	if (ring_rsp->rqid >= VSCSIIF_MAX_REQS ||
-	    !info->shadow[ring_rsp->rqid]->inflight) {
-		scsifront_set_error(info, "illegal rqid returned by backend!");
+	if (WARN(ring_rsp->rqid >= VSCSIIF_MAX_REQS ||
+		 test_bit(ring_rsp->rqid, info->shadow_free_bitmap),
+		 "illegal rqid %u returned by backend!\n", ring_rsp->rqid))
 		return;
-	}
-	shadow = info->shadow[ring_rsp->rqid];
-	shadow->inflight = false;
 
-	if (shadow->act == VSCSIIF_ACT_SCSI_CDB)
+	if (info->shadow[ring_rsp->rqid]->act == VSCSIIF_ACT_SCSI_CDB)
 		scsifront_cdb_cmd_done(info, ring_rsp);
 	else
 		scsifront_sync_cmd_done(info, ring_rsp);
 }
 
-static int scsifront_ring_drain(struct vscsifrnt_info *info,
-				unsigned int *eoiflag)
+static int scsifront_ring_drain(struct vscsifrnt_info *info)
 {
-	struct vscsiif_response ring_rsp;
+	struct vscsiif_response *ring_rsp;
 	RING_IDX i, rp;
 	int more_to_do = 0;
 
-	rp = READ_ONCE(info->ring.sring->rsp_prod);
-	virt_rmb();	/* ordering required respective to backend */
-	if (RING_RESPONSE_PROD_OVERFLOW(&info->ring, rp)) {
-		scsifront_set_error(info, "illegal number of responses");
-		return 0;
-	}
+	rp = info->ring.sring->rsp_prod;
+	rmb();	/* ordering required respective to dom0 */
 	for (i = info->ring.rsp_cons; i != rp; i++) {
-		RING_COPY_RESPONSE(&info->ring, i, &ring_rsp);
-		scsifront_do_response(info, &ring_rsp);
-		if (info->host_active == STATE_ERROR)
-			return 0;
-		*eoiflag &= ~XEN_EOI_FLAG_SPURIOUS;
+		ring_rsp = RING_GET_RESPONSE(&info->ring, i);
+		scsifront_do_response(info, ring_rsp);
 	}
 
 	info->ring.rsp_cons = i;
@@ -411,15 +342,14 @@ static int scsifront_ring_drain(struct vscsifrnt_info *info,
 	return more_to_do;
 }
 
-static int scsifront_cmd_done(struct vscsifrnt_info *info,
-			      unsigned int *eoiflag)
+static int scsifront_cmd_done(struct vscsifrnt_info *info)
 {
 	int more_to_do;
 	unsigned long flags;
 
 	spin_lock_irqsave(info->host->host_lock, flags);
 
-	more_to_do = scsifront_ring_drain(info, eoiflag);
+	more_to_do = scsifront_ring_drain(info);
 
 	info->wait_ring_available = 0;
 
@@ -433,28 +363,20 @@ static int scsifront_cmd_done(struct vscsifrnt_info *info,
 static irqreturn_t scsifront_irq_fn(int irq, void *dev_id)
 {
 	struct vscsifrnt_info *info = dev_id;
-	unsigned int eoiflag = XEN_EOI_FLAG_SPURIOUS;
 
-	if (info->host_active == STATE_ERROR) {
-		xen_irq_lateeoi(irq, XEN_EOI_FLAG_SPURIOUS);
-		return IRQ_HANDLED;
-	}
-
-	while (scsifront_cmd_done(info, &eoiflag))
+	while (scsifront_cmd_done(info))
 		/* Yield point for this unbounded loop. */
 		cond_resched();
-
-	xen_irq_lateeoi(irq, eoiflag);
 
 	return IRQ_HANDLED;
 }
 
 static void scsifront_finish_all(struct vscsifrnt_info *info)
 {
-	unsigned int i, dummy;
+	unsigned i;
 	struct vscsiif_response resp;
 
-	scsifront_ring_drain(info, &dummy);
+	scsifront_ring_drain(info);
 
 	for (i = 0; i < VSCSIIF_MAX_REQS; i++) {
 		if (test_bit(i, info->shadow_free_bitmap))
@@ -611,9 +533,6 @@ static int scsifront_queuecommand(struct Scsi_Host *shost,
 	unsigned long flags;
 	int err;
 
-	if (info->host_active == STATE_ERROR)
-		return SCSI_MLQUEUE_HOST_BUSY;
-
 	sc->result = 0;
 
 	shadow->sc  = sc;
@@ -633,7 +552,7 @@ static int scsifront_queuecommand(struct Scsi_Host *shost,
 		if (err == -ENOMEM)
 			return SCSI_MLQUEUE_HOST_BUSY;
 		sc->result = DID_ERROR << 16;
-		scsi_done(sc);
+		sc->scsi_done(sc);
 		return 0;
 	}
 
@@ -665,9 +584,6 @@ static int scsifront_action_handler(struct scsi_cmnd *sc, uint8_t act)
 	struct vscsifrnt_info *info = shost_priv(host);
 	struct vscsifrnt_shadow *shadow, *s = scsi_cmd_priv(sc);
 	int err = 0;
-
-	if (info->host_active == STATE_ERROR)
-		return FAILED;
 
 	shadow = kzalloc(sizeof(*shadow), GFP_NOIO);
 	if (!shadow)
@@ -738,20 +654,10 @@ static int scsifront_dev_reset_handler(struct scsi_cmnd *sc)
 static int scsifront_sdev_configure(struct scsi_device *sdev)
 {
 	struct vscsifrnt_info *info = shost_priv(sdev->host);
-	int err;
 
-	if (info->host_active == STATE_ERROR)
-		return -EIO;
-
-	if (info && current == info->curr) {
-		err = xenbus_printf(XBT_NIL, info->dev->nodename,
+	if (info && current == info->curr)
+		xenbus_printf(XBT_NIL, info->dev->nodename,
 			      info->dev_state_path, "%d", XenbusStateConnected);
-		if (err) {
-			xenbus_dev_error(info->dev, err,
-				"%s: writing dev_state_path", __func__);
-			return err;
-		}
-	}
 
 	return 0;
 }
@@ -759,15 +665,10 @@ static int scsifront_sdev_configure(struct scsi_device *sdev)
 static void scsifront_sdev_destroy(struct scsi_device *sdev)
 {
 	struct vscsifrnt_info *info = shost_priv(sdev->host);
-	int err;
 
-	if (info && current == info->curr) {
-		err = xenbus_printf(XBT_NIL, info->dev->nodename,
+	if (info && current == info->curr)
+		xenbus_printf(XBT_NIL, info->dev->nodename,
 			      info->dev_state_path, "%d", XenbusStateClosed);
-		if (err)
-			xenbus_dev_error(info->dev, err,
-				"%s: writing dev_state_path", __func__);
-	}
 }
 
 static struct scsi_host_template scsifront_sht = {
@@ -783,6 +684,7 @@ static struct scsi_host_template scsifront_sht = {
 	.this_id		= -1,
 	.cmd_size		= sizeof(struct vscsifrnt_shadow),
 	.sg_tablesize		= VSCSIIF_SG_TABLESIZE,
+	.use_clustering		= DISABLE_CLUSTERING,
 	.proc_name		= "scsifront",
 };
 
@@ -790,15 +692,27 @@ static int scsifront_alloc_ring(struct vscsifrnt_info *info)
 {
 	struct xenbus_device *dev = info->dev;
 	struct vscsiif_sring *sring;
-	int err;
+	grant_ref_t gref;
+	int err = -ENOMEM;
 
 	/***** Frontend to Backend ring start *****/
-	err = xenbus_setup_ring(dev, GFP_KERNEL, (void **)&sring, 1,
-				&info->ring_ref);
-	if (err)
+	sring = (struct vscsiif_sring *)__get_free_page(GFP_KERNEL);
+	if (!sring) {
+		xenbus_dev_fatal(dev, err,
+			"fail to allocate shared ring (Front to Back)");
 		return err;
+	}
+	SHARED_RING_INIT(sring);
+	FRONT_RING_INIT(&info->ring, sring, PAGE_SIZE);
 
-	XEN_FRONT_RING_INIT(&info->ring, sring, PAGE_SIZE);
+	err = xenbus_grant_ring(dev, sring, 1, &gref);
+	if (err < 0) {
+		free_page((unsigned long)sring);
+		xenbus_dev_fatal(dev, err,
+			"fail to grant shared ring (Front to Back)");
+		return err;
+	}
+	info->ring_ref = gref;
 
 	err = xenbus_alloc_evtchn(dev, &info->evtchn);
 	if (err) {
@@ -806,7 +720,7 @@ static int scsifront_alloc_ring(struct vscsifrnt_info *info)
 		goto free_gnttab;
 	}
 
-	err = bind_evtchn_to_irq_lateeoi(info->evtchn);
+	err = bind_evtchn_to_irq(info->evtchn);
 	if (err <= 0) {
 		xenbus_dev_fatal(dev, err, "bind_evtchn_to_irq");
 		goto free_gnttab;
@@ -827,7 +741,8 @@ static int scsifront_alloc_ring(struct vscsifrnt_info *info)
 free_irq:
 	unbind_from_irqhandler(info->irq, info);
 free_gnttab:
-	xenbus_teardown_ring((void **)&sring, 1, &info->ring_ref);
+	gnttab_end_foreign_access(info->ring_ref, 0,
+				  (unsigned long)info->ring.sring);
 
 	return err;
 }
@@ -835,7 +750,8 @@ free_gnttab:
 static void scsifront_free_ring(struct vscsifrnt_info *info)
 {
 	unbind_from_irqhandler(info->irq, info);
-	xenbus_teardown_ring((void **)&info->ring.sring, 1, &info->ring_ref);
+	gnttab_end_foreign_access(info->ring_ref, 0,
+				  (unsigned long)info->ring.sring);
 }
 
 static int scsifront_init_ring(struct vscsifrnt_info *info)
@@ -934,7 +850,7 @@ static int scsifront_probe(struct xenbus_device *dev,
 		goto free_sring;
 	}
 	info->host = host;
-	info->host_active = STATE_ACTIVE;
+	info->host_active = 1;
 
 	xenbus_switch_state(dev, XenbusStateInitialised);
 
@@ -1002,10 +918,10 @@ static int scsifront_remove(struct xenbus_device *dev)
 	pr_debug("%s: %s removed\n", __func__, dev->nodename);
 
 	mutex_lock(&scsifront_mutex);
-	if (info->host_active != STATE_INACTIVE) {
+	if (info->host_active) {
 		/* Scsi_host not yet removed */
 		scsi_remove_host(info->host);
-		info->host_active = STATE_INACTIVE;
+		info->host_active = 0;
 	}
 	mutex_unlock(&scsifront_mutex);
 
@@ -1029,9 +945,9 @@ static void scsifront_disconnect(struct vscsifrnt_info *info)
 	 */
 
 	mutex_lock(&scsifront_mutex);
-	if (info->host_active != STATE_INACTIVE) {
+	if (info->host_active) {
 		scsi_remove_host(host);
-		info->host_active = STATE_INACTIVE;
+		info->host_active = 0;
 	}
 	mutex_unlock(&scsifront_mutex);
 
@@ -1048,9 +964,6 @@ static void scsifront_do_lun_hotplug(struct vscsifrnt_info *info, int op)
 	unsigned int device_state;
 	unsigned int hst, chn, tgt, lun;
 	struct scsi_device *sdev;
-
-	if (info->host_active == STATE_ERROR)
-		return;
 
 	dir = xenbus_directory(XBT_NIL, dev->otherend, "vscsi-devs", &dir_n);
 	if (IS_ERR(dir))
@@ -1090,12 +1003,9 @@ static void scsifront_do_lun_hotplug(struct vscsifrnt_info *info, int op)
 
 			if (scsi_add_device(info->host, chn, tgt, lun)) {
 				dev_err(&dev->dev, "scsi_add_device\n");
-				err = xenbus_printf(XBT_NIL, dev->nodename,
+				xenbus_printf(XBT_NIL, dev->nodename,
 					      info->dev_state_path,
 					      "%d", XenbusStateClosed);
-				if (err)
-					xenbus_dev_error(dev, err,
-						"%s: writing dev_state_path", __func__);
 			}
 			break;
 		case VSCSIFRONT_OP_DEL_LUN:
@@ -1109,14 +1019,10 @@ static void scsifront_do_lun_hotplug(struct vscsifrnt_info *info, int op)
 			}
 			break;
 		case VSCSIFRONT_OP_READD_LUN:
-			if (device_state == XenbusStateConnected) {
-				err = xenbus_printf(XBT_NIL, dev->nodename,
+			if (device_state == XenbusStateConnected)
+				xenbus_printf(XBT_NIL, dev->nodename,
 					      info->dev_state_path,
 					      "%d", XenbusStateConnected);
-				if (err)
-					xenbus_dev_error(dev, err,
-						"%s: writing dev_state_path", __func__);
-			}
 			break;
 		default:
 			break;
@@ -1187,7 +1093,7 @@ static void scsifront_backend_changed(struct xenbus_device *dev,
 	case XenbusStateClosed:
 		if (dev->state == XenbusStateClosed)
 			break;
-		fallthrough;	/* Missed the backend's Closing state */
+		/* Missed the backend's Closing state -- fallthrough */
 	case XenbusStateClosing:
 		scsifront_disconnect(info);
 		break;

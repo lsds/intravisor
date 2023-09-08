@@ -7,7 +7,10 @@
 #
 #
 
-obj-$(CONFIG_OF) += $(addsuffix .dtb.o, $(CONFIG_BUILTIN_DTB_SOURCE))
+BUILTIN_DTB := $(patsubst "%",%,$(CONFIG_BUILTIN_DTB)).dtb.o
+ifneq ($(CONFIG_BUILTIN_DTB),"")
+obj-$(CONFIG_OF) += $(BUILTIN_DTB)
+endif
 
 # for CONFIG_OF_ALL_DTBS test
 dtstree	:= $(srctree)/$(src)

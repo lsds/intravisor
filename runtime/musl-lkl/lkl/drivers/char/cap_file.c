@@ -21,8 +21,8 @@
 #define MODE_STREAM	1
 #define MODE_MAX	MODE_STREAM
 
-extern long copy_from_cap(void *dst, void *src_cap_location, int len);
-extern long copy_to_cap(void *src_cap_location, void *src, int len);
+extern copy_from_cap(void *dst, void *src_cap_location, int len);
+extern copy_to_cap(void *src_cap_location, void *src, int len);
 
 extern int wrap_host_cap_adv(void *ptr, long size, char *key);
 extern int wrap_host_cap_prb(char *key, void *location, void *size);

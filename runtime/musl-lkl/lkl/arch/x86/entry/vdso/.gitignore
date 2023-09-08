@@ -1,4 +1,3 @@
-# SPDX-License-Identifier: GPL-2.0-only
 vdso.lds
 vdsox32.lds
 vdso32-syscall-syms.lds

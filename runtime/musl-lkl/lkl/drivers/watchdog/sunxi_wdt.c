@@ -1,9 +1,13 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  *      sunxi Watchdog Driver
  *
  *      Copyright (c) 2013 Carlo Caione
  *                    2012 Henrik Nordstrom
+ *
+ *      This program is free software; you can redistribute it and/or
+ *      modify it under the terms of the GNU General Public License
+ *      as published by the Free Software Foundation; either version
+ *      2 of the License, or (at your option) any later version.
  *
  *      Based on xen_wdt.c
  *      (c) Copyright 2010 Novell, Inc.
@@ -48,7 +52,6 @@ struct sunxi_wdt_reg {
 	u8 wdt_timeout_shift;
 	u8 wdt_reset_mask;
 	u8 wdt_reset_val;
-	u32 wdt_key_val;
 };
 
 struct sunxi_wdt_dev {
@@ -92,14 +95,12 @@ static int sunxi_wdt_restart(struct watchdog_device *wdt_dev,
 	val = readl(wdt_base + regs->wdt_cfg);
 	val &= ~(regs->wdt_reset_mask);
 	val |= regs->wdt_reset_val;
-	val |= regs->wdt_key_val;
 	writel(val, wdt_base + regs->wdt_cfg);
 
 	/* Set lowest timeout and enable watchdog */
 	val = readl(wdt_base + regs->wdt_mode);
 	val &= ~(WDT_TIMEOUT_MASK << regs->wdt_timeout_shift);
 	val |= WDT_MODE_EN;
-	val |= regs->wdt_key_val;
 	writel(val, wdt_base + regs->wdt_mode);
 
 	/*
@@ -112,7 +113,6 @@ static int sunxi_wdt_restart(struct watchdog_device *wdt_dev,
 		mdelay(5);
 		val = readl(wdt_base + regs->wdt_mode);
 		val |= WDT_MODE_EN;
-		val |= regs->wdt_key_val;
 		writel(val, wdt_base + regs->wdt_mode);
 	}
 	return 0;
@@ -145,7 +145,6 @@ static int sunxi_wdt_set_timeout(struct watchdog_device *wdt_dev,
 	reg = readl(wdt_base + regs->wdt_mode);
 	reg &= ~(WDT_TIMEOUT_MASK << regs->wdt_timeout_shift);
 	reg |= wdt_timeout_map[timeout] << regs->wdt_timeout_shift;
-	reg |= regs->wdt_key_val;
 	writel(reg, wdt_base + regs->wdt_mode);
 
 	sunxi_wdt_ping(wdt_dev);
@@ -159,7 +158,7 @@ static int sunxi_wdt_stop(struct watchdog_device *wdt_dev)
 	void __iomem *wdt_base = sunxi_wdt->wdt_base;
 	const struct sunxi_wdt_reg *regs = sunxi_wdt->wdt_regs;
 
-	writel(regs->wdt_key_val, wdt_base + regs->wdt_mode);
+	writel(0, wdt_base + regs->wdt_mode);
 
 	return 0;
 }
@@ -181,13 +180,11 @@ static int sunxi_wdt_start(struct watchdog_device *wdt_dev)
 	reg = readl(wdt_base + regs->wdt_cfg);
 	reg &= ~(regs->wdt_reset_mask);
 	reg |= regs->wdt_reset_val;
-	reg |= regs->wdt_key_val;
 	writel(reg, wdt_base + regs->wdt_cfg);
 
 	/* Enable watchdog */
 	reg = readl(wdt_base + regs->wdt_mode);
 	reg |= WDT_MODE_EN;
-	reg |= regs->wdt_key_val;
 	writel(reg, wdt_base + regs->wdt_mode);
 
 	return 0;
@@ -227,39 +224,29 @@ static const struct sunxi_wdt_reg sun6i_wdt_reg = {
 	.wdt_reset_val = 0x01,
 };
 
-static const struct sunxi_wdt_reg sun20i_wdt_reg = {
-	.wdt_ctrl = 0x10,
-	.wdt_cfg = 0x14,
-	.wdt_mode = 0x18,
-	.wdt_timeout_shift = 4,
-	.wdt_reset_mask = 0x03,
-	.wdt_reset_val = 0x01,
-	.wdt_key_val = 0x16aa0000,
-};
-
 static const struct of_device_id sunxi_wdt_dt_ids[] = {
 	{ .compatible = "allwinner,sun4i-a10-wdt", .data = &sun4i_wdt_reg },
 	{ .compatible = "allwinner,sun6i-a31-wdt", .data = &sun6i_wdt_reg },
-	{ .compatible = "allwinner,sun20i-d1-wdt", .data = &sun20i_wdt_reg },
 	{ /* sentinel */ }
 };
 MODULE_DEVICE_TABLE(of, sunxi_wdt_dt_ids);
 
 static int sunxi_wdt_probe(struct platform_device *pdev)
 {
-	struct device *dev = &pdev->dev;
 	struct sunxi_wdt_dev *sunxi_wdt;
+	struct resource *res;
 	int err;
 
-	sunxi_wdt = devm_kzalloc(dev, sizeof(*sunxi_wdt), GFP_KERNEL);
+	sunxi_wdt = devm_kzalloc(&pdev->dev, sizeof(*sunxi_wdt), GFP_KERNEL);
 	if (!sunxi_wdt)
-		return -ENOMEM;
+		return -EINVAL;
 
-	sunxi_wdt->wdt_regs = of_device_get_match_data(dev);
+	sunxi_wdt->wdt_regs = of_device_get_match_data(&pdev->dev);
 	if (!sunxi_wdt->wdt_regs)
 		return -ENODEV;
 
-	sunxi_wdt->wdt_base = devm_platform_ioremap_resource(pdev, 0);
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	sunxi_wdt->wdt_base = devm_ioremap_resource(&pdev->dev, res);
 	if (IS_ERR(sunxi_wdt->wdt_base))
 		return PTR_ERR(sunxi_wdt->wdt_base);
 
@@ -268,9 +255,9 @@ static int sunxi_wdt_probe(struct platform_device *pdev)
 	sunxi_wdt->wdt_dev.timeout = WDT_MAX_TIMEOUT;
 	sunxi_wdt->wdt_dev.max_timeout = WDT_MAX_TIMEOUT;
 	sunxi_wdt->wdt_dev.min_timeout = WDT_MIN_TIMEOUT;
-	sunxi_wdt->wdt_dev.parent = dev;
+	sunxi_wdt->wdt_dev.parent = &pdev->dev;
 
-	watchdog_init_timeout(&sunxi_wdt->wdt_dev, timeout, dev);
+	watchdog_init_timeout(&sunxi_wdt->wdt_dev, timeout, &pdev->dev);
 	watchdog_set_nowayout(&sunxi_wdt->wdt_dev, nowayout);
 	watchdog_set_restart_priority(&sunxi_wdt->wdt_dev, 128);
 
@@ -279,12 +266,12 @@ static int sunxi_wdt_probe(struct platform_device *pdev)
 	sunxi_wdt_stop(&sunxi_wdt->wdt_dev);
 
 	watchdog_stop_on_reboot(&sunxi_wdt->wdt_dev);
-	err = devm_watchdog_register_device(dev, &sunxi_wdt->wdt_dev);
+	err = devm_watchdog_register_device(&pdev->dev, &sunxi_wdt->wdt_dev);
 	if (unlikely(err))
 		return err;
 
-	dev_info(dev, "Watchdog enabled (timeout=%d sec, nowayout=%d)",
-		 sunxi_wdt->wdt_dev.timeout, nowayout);
+	dev_info(&pdev->dev, "Watchdog enabled (timeout=%d sec, nowayout=%d)",
+			sunxi_wdt->wdt_dev.timeout, nowayout);
 
 	return 0;
 }

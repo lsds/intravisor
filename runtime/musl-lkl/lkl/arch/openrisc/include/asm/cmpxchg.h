@@ -16,9 +16,8 @@
 #ifndef __ASM_OPENRISC_CMPXCHG_H
 #define __ASM_OPENRISC_CMPXCHG_H
 
-#include  <linux/bits.h>
-#include  <linux/compiler.h>
 #include  <linux/types.h>
+#include  <linux/bitops.h>
 
 #define __HAVE_ARCH_CMPXCHG 1
 
@@ -132,7 +131,7 @@ static inline unsigned long __cmpxchg(volatile void *ptr, unsigned long old,
 	}
 }
 
-#define arch_cmpxchg(ptr, o, n)						\
+#define cmpxchg(ptr, o, n)						\
 	({								\
 		(__typeof__(*(ptr))) __cmpxchg((ptr),			\
 					       (unsigned long)(o),	\
@@ -161,7 +160,7 @@ static inline unsigned long __xchg(volatile void *ptr, unsigned long with,
 	}
 }
 
-#define arch_xchg(ptr, with) 						\
+#define xchg(ptr, with) 						\
 	({								\
 		(__typeof__(*(ptr))) __xchg((ptr),			\
 					    (unsigned long)(with),	\

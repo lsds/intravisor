@@ -1,6 +1,9 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  *  Copyright (c) 2002 Petko Manolov (petkan@users.sourceforge.net)
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * version 2 as published by the Free Software Foundation.
  */
 
 #include <linux/signal.h>
@@ -152,16 +155,36 @@ static const char driver_name [] = "rtl8150";
 */
 static int get_registers(rtl8150_t * dev, u16 indx, u16 size, void *data)
 {
-	return usb_control_msg_recv(dev->udev, 0, RTL8150_REQ_GET_REGS,
-				    RTL8150_REQT_READ, indx, 0, data, size,
-				    1000, GFP_NOIO);
+	void *buf;
+	int ret;
+
+	buf = kmalloc(size, GFP_NOIO);
+	if (!buf)
+		return -ENOMEM;
+
+	ret = usb_control_msg(dev->udev, usb_rcvctrlpipe(dev->udev, 0),
+			      RTL8150_REQ_GET_REGS, RTL8150_REQT_READ,
+			      indx, 0, buf, size, 500);
+	if (ret > 0 && ret <= size)
+		memcpy(data, buf, ret);
+	kfree(buf);
+	return ret;
 }
 
 static int set_registers(rtl8150_t * dev, u16 indx, u16 size, const void *data)
 {
-	return usb_control_msg_send(dev->udev, 0, RTL8150_REQ_SET_REGS,
-				    RTL8150_REQT_WRITE, indx, 0, data, size,
-				    1000, GFP_NOIO);
+	void *buf;
+	int ret;
+
+	buf = kmemdup(data, size, GFP_NOIO);
+	if (!buf)
+		return -ENOMEM;
+
+	ret = usb_control_msg(dev->udev, usb_sndctrlpipe(dev->udev, 0),
+			      RTL8150_REQ_SET_REGS, RTL8150_REQT_WRITE,
+			      indx, 0, buf, size, 500);
+	kfree(buf);
+	return ret;
 }
 
 static void async_set_reg_cb(struct urb *urb)
@@ -254,20 +277,12 @@ static int write_mii_word(rtl8150_t * dev, u8 phy, __u8 indx, u16 reg)
 		return 1;
 }
 
-static void set_ethernet_addr(rtl8150_t *dev)
+static inline void set_ethernet_addr(rtl8150_t * dev)
 {
-	u8 node_id[ETH_ALEN];
-	int ret;
+	u8 node_id[6];
 
-	ret = get_registers(dev, IDR, sizeof(node_id), node_id);
-
-	if (!ret) {
-		eth_hw_addr_set(dev->netdev, node_id);
-	} else {
-		eth_hw_addr_random(dev->netdev);
-		netdev_notice(dev->netdev, "Assigned a random MAC address: %pM\n",
-			      dev->netdev->dev_addr);
-	}
+	get_registers(dev, IDR, sizeof(node_id), node_id);
+	memcpy(dev->netdev->dev_addr, node_id, sizeof(node_id));
 }
 
 static int rtl8150_set_mac_address(struct net_device *netdev, void *p)
@@ -278,7 +293,7 @@ static int rtl8150_set_mac_address(struct net_device *netdev, void *p)
 	if (netif_running(netdev))
 		return -EBUSY;
 
-	eth_hw_addr_set(netdev, addr->sa_data);
+	memcpy(netdev->dev_addr, addr->sa_data, netdev->addr_len);
 	netdev_dbg(netdev, "Setting MAC address to %pM\n", netdev->dev_addr);
 	/* Set the IDR registers. */
 	set_registers(dev, IDR, netdev->addr_len, netdev->dev_addr);
@@ -373,9 +388,9 @@ static void read_bulk_callback(struct urb *urb)
 	unsigned pkt_len, res;
 	struct sk_buff *skb;
 	struct net_device *netdev;
+	u16 rx_stat;
 	int status = urb->status;
 	int result;
-	unsigned long flags;
 
 	dev = urb->context;
 	if (!dev)
@@ -408,6 +423,7 @@ static void read_bulk_callback(struct urb *urb)
 		goto goon;
 
 	res = urb->actual_length;
+	rx_stat = le16_to_cpu(*(__le16 *)(urb->transfer_buffer + res - 4));
 	pkt_len = res - 4;
 
 	skb_put(dev->rx_skb, pkt_len);
@@ -416,9 +432,9 @@ static void read_bulk_callback(struct urb *urb)
 	netdev->stats.rx_packets++;
 	netdev->stats.rx_bytes += pkt_len;
 
-	spin_lock_irqsave(&dev->rx_pool_lock, flags);
+	spin_lock(&dev->rx_pool_lock);
 	skb = pull_skb(dev);
-	spin_unlock_irqrestore(&dev->rx_pool_lock, flags);
+	spin_unlock(&dev->rx_pool_lock);
 	if (!skb)
 		goto resched;
 
@@ -574,12 +590,13 @@ static void free_skb_pool(rtl8150_t *dev)
 	int i;
 
 	for (i = 0; i < RX_SKB_POOL_SIZE; i++)
-		dev_kfree_skb(dev->rx_skb_pool[i]);
+		if (dev->rx_skb_pool[i])
+			dev_kfree_skb(dev->rx_skb_pool[i]);
 }
 
-static void rx_fixup(struct tasklet_struct *t)
+static void rx_fixup(unsigned long data)
 {
-	struct rtl8150 *dev = from_tasklet(dev, t, tl);
+	struct rtl8150 *dev = (struct rtl8150 *)data;
 	struct sk_buff *skb;
 	int status;
 
@@ -643,7 +660,7 @@ static void disable_net_traffic(rtl8150_t * dev)
 	set_registers(dev, CR, 1, &cr);
 }
 
-static void rtl8150_tx_timeout(struct net_device *netdev, unsigned int txqueue)
+static void rtl8150_tx_timeout(struct net_device *netdev)
 {
 	rtl8150_t *dev = netdev_priv(netdev);
 	dev_warn(&netdev->dev, "Tx timeout.\n");
@@ -664,7 +681,7 @@ static void rtl8150_set_multicast(struct net_device *netdev)
 		   (netdev->flags & IFF_ALLMULTI)) {
 		rx_creg &= 0xfffe;
 		rx_creg |= 0x0002;
-		dev_dbg(&netdev->dev, "%s: allmulti set\n", netdev->name);
+		dev_info(&netdev->dev, "%s: allmulti set\n", netdev->name);
 	} else {
 		/* ~RX_MULTICAST, ~RX_PROMISCUOUS */
 		rx_creg &= 0x00fc;
@@ -769,8 +786,8 @@ static void rtl8150_get_drvinfo(struct net_device *netdev, struct ethtool_drvinf
 {
 	rtl8150_t *dev = netdev_priv(netdev);
 
-	strscpy(info->driver, driver_name, sizeof(info->driver));
-	strscpy(info->version, DRIVER_VERSION, sizeof(info->version));
+	strlcpy(info->driver, driver_name, sizeof(info->driver));
+	strlcpy(info->version, DRIVER_VERSION, sizeof(info->version));
 	usb_make_path(dev->udev, info->bus_info, sizeof(info->bus_info));
 }
 
@@ -822,8 +839,7 @@ static const struct ethtool_ops ops = {
 	.get_link_ksettings = rtl8150_get_link_ksettings,
 };
 
-static int rtl8150_siocdevprivate(struct net_device *netdev, struct ifreq *rq,
-				  void __user *udata, int cmd)
+static int rtl8150_ioctl(struct net_device *netdev, struct ifreq *rq, int cmd)
 {
 	rtl8150_t *dev = netdev_priv(netdev);
 	u16 *data = (u16 *) & rq->ifr_ifru;
@@ -832,7 +848,6 @@ static int rtl8150_siocdevprivate(struct net_device *netdev, struct ifreq *rq,
 	switch (cmd) {
 	case SIOCDEVPRIVATE:
 		data[0] = dev->phy;
-		fallthrough;
 	case SIOCDEVPRIVATE + 1:
 		read_mii_word(dev, dev->phy, (data[1] & 0x1f), &data[3]);
 		break;
@@ -851,7 +866,7 @@ static int rtl8150_siocdevprivate(struct net_device *netdev, struct ifreq *rq,
 static const struct net_device_ops rtl8150_netdev_ops = {
 	.ndo_open		= rtl8150_open,
 	.ndo_stop		= rtl8150_close,
-	.ndo_siocdevprivate	= rtl8150_siocdevprivate,
+	.ndo_do_ioctl		= rtl8150_ioctl,
 	.ndo_start_xmit		= rtl8150_start_xmit,
 	.ndo_tx_timeout		= rtl8150_tx_timeout,
 	.ndo_set_rx_mode	= rtl8150_set_multicast,
@@ -879,7 +894,7 @@ static int rtl8150_probe(struct usb_interface *intf,
 		return -ENOMEM;
 	}
 
-	tasklet_setup(&dev->tl, rx_fixup);
+	tasklet_init(&dev->tl, rx_fixup, (unsigned long)dev);
 	spin_lock_init(&dev->rx_pool_lock);
 
 	dev->udev = udev;
@@ -934,7 +949,8 @@ static void rtl8150_disconnect(struct usb_interface *intf)
 		unlink_all_urbs(dev);
 		free_all_urbs(dev);
 		free_skb_pool(dev);
-		dev_kfree_skb(dev->rx_skb);
+		if (dev->rx_skb)
+			dev_kfree_skb(dev->rx_skb);
 		kfree(dev->intr_buff);
 		free_netdev(dev->netdev);
 	}

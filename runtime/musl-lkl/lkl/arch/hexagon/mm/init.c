@@ -1,13 +1,26 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Memory subsystem initialization for Hexagon
  *
  * Copyright (c) 2010-2013, The Linux Foundation. All rights reserved.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 and
+ * only version 2 as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+ * 02110-1301, USA.
  */
 
 #include <linux/init.h>
 #include <linux/mm.h>
-#include <linux/memblock.h>
+#include <linux/bootmem.h>
 #include <asm/atomic.h>
 #include <linux/highmem.h>
 #include <asm/tlb.h>
@@ -26,8 +39,13 @@ unsigned long __phys_offset;	/*  physical kernel offset >> 12  */
 /*  Set as variable to limit PMD copies  */
 int max_kernel_seg = 0x303;
 
+/*  think this should be (page_size-1) the way it's used...*/
+unsigned long zero_page_mask;
+
 /*  indicate pfn's of high memory  */
 unsigned long highstart_pfn, highend_pfn;
+
+DEFINE_PER_CPU(struct mmu_gather, mmu_gathers);
 
 /* Default cache attribute for newly created page tables */
 unsigned long _dflt_cache_att = CACHEDEF;
@@ -52,7 +70,8 @@ unsigned long long kmap_generation;
 void __init mem_init(void)
 {
 	/*  No idea where this is actually declared.  Seems to evade LXR.  */
-	memblock_free_all();
+	free_all_bootmem();
+	mem_init_print_info(NULL);
 
 	/*
 	 *  To-Do:  someone somewhere should wipe out the bootmem map
@@ -66,6 +85,29 @@ void __init mem_init(void)
 	 * kernel segment table's physical address.
 	 */
 	init_mm.context.ptbase = __pa(init_mm.pgd);
+}
+
+/*
+ * free_initmem - frees memory used by stuff declared with __init
+ *
+ * Todo:  free pages between __init_begin and __init_end; possibly
+ * some devtree related stuff as well.
+ */
+void __ref free_initmem(void)
+{
+}
+
+/*
+ * free_initrd_mem - frees...  initrd memory.
+ * @start - start of init memory
+ * @end - end of init memory
+ *
+ * Apparently has to be passed the address of the initrd memory.
+ *
+ * Wrapped by #ifdef CONFIG_BLKDEV_INITRD
+ */
+void free_initrd_mem(unsigned long start, unsigned long end)
+{
 }
 
 void sync_icache_dcache(pte_t pte)
@@ -88,7 +130,7 @@ void sync_icache_dcache(pte_t pte)
  */
 void __init paging_init(void)
 {
-	unsigned long max_zone_pfn[MAX_NR_ZONES] = {0, };
+	unsigned long zones_sizes[MAX_NR_ZONES] = {0, };
 
 	/*
 	 *  This is not particularly well documented anywhere, but
@@ -98,9 +140,9 @@ void __init paging_init(void)
 	 *  adjust accordingly.
 	 */
 
-	max_zone_pfn[ZONE_NORMAL] = max_low_pfn;
+	zones_sizes[ZONE_NORMAL] = max_low_pfn;
 
-	free_area_init(max_zone_pfn);  /*  sets up the zonelists and mem_map  */
+	free_area_init(zones_sizes);  /*  sets up the zonelists and mem_map  */
 
 	/*
 	 * Start of high memory area.  Will probably need something more
@@ -137,6 +179,7 @@ size_t hexagon_coherent_pool_size = (size_t) (DMA_RESERVE << 22);
 
 void __init setup_arch_memory(void)
 {
+	int bootmap_size;
 	/*  XXX Todo: this probably should be cleaned up  */
 	u32 *segtable = (u32 *) &swapper_pg_dir[0];
 	u32 *segtable_end;
@@ -155,22 +198,18 @@ void __init setup_arch_memory(void)
 	bootmem_lastpg = PFN_DOWN((bootmem_lastpg << PAGE_SHIFT) &
 		~((BIG_KERNEL_PAGE_SIZE) - 1));
 
-	memblock_add(PHYS_OFFSET,
-		     (bootmem_lastpg - ARCH_PFN_OFFSET) << PAGE_SHIFT);
-
-	/* Reserve kernel text/data/bss */
-	memblock_reserve(PHYS_OFFSET,
-			 (bootmem_startpg - ARCH_PFN_OFFSET) << PAGE_SHIFT);
 	/*
 	 * Reserve the top DMA_RESERVE bytes of RAM for DMA (uncached)
 	 * memory allocation
 	 */
+
 	max_low_pfn = bootmem_lastpg - PFN_DOWN(DMA_RESERVED_BYTES);
 	min_low_pfn = ARCH_PFN_OFFSET;
-	memblock_reserve(PFN_PHYS(max_low_pfn), DMA_RESERVED_BYTES);
+	bootmap_size =  init_bootmem_node(NODE_DATA(0), bootmem_startpg, min_low_pfn, max_low_pfn);
 
 	printk(KERN_INFO "bootmem_startpg:  0x%08lx\n", bootmem_startpg);
 	printk(KERN_INFO "bootmem_lastpg:  0x%08lx\n", bootmem_lastpg);
+	printk(KERN_INFO "bootmap_size:  %d\n", bootmap_size);
 	printk(KERN_INFO "min_low_pfn:  0x%08lx\n", min_low_pfn);
 	printk(KERN_INFO "max_low_pfn:  0x%08lx\n", max_low_pfn);
 
@@ -221,6 +260,14 @@ void __init setup_arch_memory(void)
 #endif
 
 	/*
+	 * Free all the memory that wasn't taken up by the bootmap, the DMA
+	 * reserve, or kernel itself.
+	 */
+	free_bootmem(PFN_PHYS(bootmem_startpg) + bootmap_size,
+		     PFN_PHYS(bootmem_lastpg - bootmem_startpg) - bootmap_size -
+		     DMA_RESERVED_BYTES);
+
+	/*
 	 *  The bootmem allocator seemingly just lives to feed memory
 	 *  to the paging system
 	 */
@@ -234,45 +281,3 @@ void __init setup_arch_memory(void)
 	 *  which is called by start_kernel() later on in the process
 	 */
 }
-
-static const pgprot_t protection_map[16] = {
-	[VM_NONE]					= __pgprot(_PAGE_PRESENT | _PAGE_USER |
-								   CACHEDEF),
-	[VM_READ]					= __pgprot(_PAGE_PRESENT | _PAGE_USER |
-								   _PAGE_READ | CACHEDEF),
-	[VM_WRITE]					= __pgprot(_PAGE_PRESENT | _PAGE_USER |
-								   CACHEDEF),
-	[VM_WRITE | VM_READ]				= __pgprot(_PAGE_PRESENT | _PAGE_USER |
-								   _PAGE_READ | CACHEDEF),
-	[VM_EXEC]					= __pgprot(_PAGE_PRESENT | _PAGE_USER |
-								   _PAGE_EXECUTE | CACHEDEF),
-	[VM_EXEC | VM_READ]				= __pgprot(_PAGE_PRESENT | _PAGE_USER |
-								   _PAGE_EXECUTE | _PAGE_READ |
-								   CACHEDEF),
-	[VM_EXEC | VM_WRITE]				= __pgprot(_PAGE_PRESENT | _PAGE_USER |
-								   _PAGE_EXECUTE | CACHEDEF),
-	[VM_EXEC | VM_WRITE | VM_READ]			= __pgprot(_PAGE_PRESENT | _PAGE_USER |
-								   _PAGE_EXECUTE | _PAGE_READ |
-								   CACHEDEF),
-	[VM_SHARED]                                     = __pgprot(_PAGE_PRESENT | _PAGE_USER |
-								   CACHEDEF),
-	[VM_SHARED | VM_READ]				= __pgprot(_PAGE_PRESENT | _PAGE_USER |
-								   _PAGE_READ | CACHEDEF),
-	[VM_SHARED | VM_WRITE]				= __pgprot(_PAGE_PRESENT | _PAGE_USER |
-								   _PAGE_WRITE | CACHEDEF),
-	[VM_SHARED | VM_WRITE | VM_READ]		= __pgprot(_PAGE_PRESENT | _PAGE_USER |
-								   _PAGE_READ | _PAGE_WRITE |
-								   CACHEDEF),
-	[VM_SHARED | VM_EXEC]				= __pgprot(_PAGE_PRESENT | _PAGE_USER |
-								   _PAGE_EXECUTE | CACHEDEF),
-	[VM_SHARED | VM_EXEC | VM_READ]			= __pgprot(_PAGE_PRESENT | _PAGE_USER |
-								   _PAGE_EXECUTE | _PAGE_READ |
-								   CACHEDEF),
-	[VM_SHARED | VM_EXEC | VM_WRITE]		= __pgprot(_PAGE_PRESENT | _PAGE_USER |
-								   _PAGE_EXECUTE | _PAGE_WRITE |
-								   CACHEDEF),
-	[VM_SHARED | VM_EXEC | VM_WRITE | VM_READ]	= __pgprot(_PAGE_PRESENT | _PAGE_USER |
-								   _PAGE_READ | _PAGE_EXECUTE |
-								   _PAGE_WRITE | CACHEDEF)
-};
-DECLARE_VM_GET_PAGE_PROT

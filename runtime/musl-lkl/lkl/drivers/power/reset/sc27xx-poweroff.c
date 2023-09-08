@@ -6,7 +6,6 @@
 
 #include <linux/cpu.h>
 #include <linux/kernel.h>
-#include <linux/module.h>
 #include <linux/platform_device.h>
 #include <linux/pm.h>
 #include <linux/regmap.h>
@@ -14,8 +13,6 @@
 
 #define SC27XX_PWR_PD_HW	0xc2c
 #define SC27XX_PWR_OFF_EN	BIT(0)
-#define SC27XX_SLP_CTRL		0xdf0
-#define SC27XX_LDO_XTL_EN	BIT(3)
 
 static struct regmap *regmap;
 
@@ -30,13 +27,10 @@ static struct regmap *regmap;
  */
 static void sc27xx_poweroff_shutdown(void)
 {
-#ifdef CONFIG_HOTPLUG_CPU
-	int cpu;
+#ifdef CONFIG_PM_SLEEP_SMP
+	int cpu = smp_processor_id();
 
-	for_each_online_cpu(cpu) {
-		if (cpu != smp_processor_id())
-			remove_cpu(cpu);
-	}
+	freeze_secondary_cpus(cpu);
 #endif
 }
 
@@ -46,9 +40,6 @@ static struct syscore_ops poweroff_syscore_ops = {
 
 static void sc27xx_poweroff_do_poweroff(void)
 {
-	/* Disable the external subsys connection's power firstly */
-	regmap_write(regmap, SC27XX_SLP_CTRL, SC27XX_LDO_XTL_EN);
-
 	regmap_write(regmap, SC27XX_PWR_PD_HW, SC27XX_PWR_OFF_EN);
 }
 
@@ -72,8 +63,4 @@ static struct platform_driver sc27xx_poweroff_driver = {
 		.name = "sc27xx-poweroff",
 	},
 };
-module_platform_driver(sc27xx_poweroff_driver);
-
-MODULE_DESCRIPTION("Power off driver for SC27XX PMIC Device");
-MODULE_AUTHOR("Baolin Wang <baolin.wang@unisoc.com>");
-MODULE_LICENSE("GPL v2");
+builtin_platform_driver(sc27xx_poweroff_driver);

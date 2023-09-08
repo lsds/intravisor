@@ -1,13 +1,12 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright 2016, Michael Ellerman, IBM Corp.
+ * Licensed under GPLv2.
  */
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
-#include <unistd.h>
 
 #include <asm/cputable.h>
 
@@ -19,13 +18,8 @@ int test_prot_sao(void)
 {
 	char *p;
 
-	/*
-	 * SAO was introduced in 2.06 and removed in 3.1. It's disabled in
-	 * guests/LPARs by default, so also skip if we are running in a guest.
-	 */
-	SKIP_IF(!have_hwcap(PPC_FEATURE_ARCH_2_06) ||
-		have_hwcap2(PPC_FEATURE2_ARCH_3_1) ||
-		access("/proc/device-tree/rtas/ibm,hypertas-functions", F_OK) == 0);
+	/* 2.06 or later should support SAO */
+	SKIP_IF(!have_hwcap(PPC_FEATURE_ARCH_2_06));
 
 	/*
 	 * Ensure we can ask for PROT_SAO.

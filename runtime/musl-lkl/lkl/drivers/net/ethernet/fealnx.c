@@ -25,6 +25,8 @@
 */
 
 #define DRV_NAME	"fealnx"
+#define DRV_VERSION	"2.52"
+#define DRV_RELDATE	"Sep-11-2006"
 
 static int debug;		/* 1-> print debug message */
 static int max_interrupt_work = 20;
@@ -89,6 +91,11 @@ static int full_duplex[MAX_UNITS] = { -1, -1, -1, -1, -1, -1, -1, -1 };
 #include <linux/uaccess.h>
 #include <asm/byteorder.h>
 
+/* These identify the driver base version and may not be removed. */
+static const char version[] =
+	KERN_INFO DRV_NAME ".c:v" DRV_VERSION " " DRV_RELDATE "\n";
+
+
 /* This driver was written to use PCI memory space, however some x86 systems
    work only with I/O space accesses. */
 #ifndef __alpha__
@@ -144,7 +151,7 @@ struct chip_info {
 };
 
 static const struct chip_info skel_netdrv_tbl[] = {
-	{ "100/10M Ethernet PCI Adapter",	HAS_MII_XCVR },
+ 	{ "100/10M Ethernet PCI Adapter",	HAS_MII_XCVR },
 	{ "100/10M Ethernet PCI Adapter",	HAS_CHIP_XCVR },
 	{ "1000/100/10M Ethernet PCI Adapter",	HAS_MII_XCVR },
 };
@@ -421,7 +428,7 @@ static void getlinktype(struct net_device *dev);
 static void getlinkstatus(struct net_device *dev);
 static void netdev_timer(struct timer_list *t);
 static void reset_timer(struct timer_list *t);
-static void fealnx_tx_timeout(struct net_device *dev, unsigned int txqueue);
+static void fealnx_tx_timeout(struct net_device *dev);
 static void init_ring(struct net_device *dev);
 static netdev_tx_t start_tx(struct sk_buff *skb, struct net_device *dev);
 static irqreturn_t intr_handler(int irq, void *dev_instance);
@@ -463,7 +470,7 @@ static const struct net_device_ops netdev_ops = {
 	.ndo_start_xmit		= start_tx,
 	.ndo_get_stats 		= get_stats,
 	.ndo_set_rx_mode	= set_rx_mode,
-	.ndo_eth_ioctl		= mii_ioctl,
+	.ndo_do_ioctl		= mii_ioctl,
 	.ndo_tx_timeout		= fealnx_tx_timeout,
 	.ndo_set_mac_address 	= eth_mac_addr,
 	.ndo_validate_addr	= eth_validate_addr,
@@ -482,11 +489,17 @@ static int fealnx_init_one(struct pci_dev *pdev,
 	struct net_device *dev;
 	void *ring_space;
 	dma_addr_t ring_dma;
-	u8 addr[ETH_ALEN];
 #ifdef USE_IO_OPS
 	int bar = 0;
 #else
 	int bar = 1;
+#endif
+
+/* when built into the kernel, we only print version if device is found */
+#ifndef MODULE
+	static int printed_version;
+	if (!printed_version++)
+		printk(version);
 #endif
 
 	card_idx++;
@@ -526,8 +539,7 @@ static int fealnx_init_one(struct pci_dev *pdev,
 
 	/* read ethernet id */
 	for (i = 0; i < 6; ++i)
-		addr[i] = ioread8(ioaddr + PAR0 + i);
-	eth_hw_addr_set(dev, addr);
+		dev->dev_addr[i] = ioread8(ioaddr + PAR0 + i);
 
 	/* Reset the chip to erase previous misconfiguration. */
 	iowrite32(0x00000001, ioaddr + BCR);
@@ -545,8 +557,7 @@ static int fealnx_init_one(struct pci_dev *pdev,
 	np->mii.phy_id_mask = 0x1f;
 	np->mii.reg_num_mask = 0x1f;
 
-	ring_space = dma_alloc_coherent(&pdev->dev, RX_TOTAL_SIZE, &ring_dma,
-					GFP_KERNEL);
+	ring_space = pci_alloc_consistent(pdev, RX_TOTAL_SIZE, &ring_dma);
 	if (!ring_space) {
 		err = -ENOMEM;
 		goto err_out_free_dev;
@@ -554,8 +565,7 @@ static int fealnx_init_one(struct pci_dev *pdev,
 	np->rx_ring = ring_space;
 	np->rx_ring_dma = ring_dma;
 
-	ring_space = dma_alloc_coherent(&pdev->dev, TX_TOTAL_SIZE, &ring_dma,
-					GFP_KERNEL);
+	ring_space = pci_alloc_consistent(pdev, TX_TOTAL_SIZE, &ring_dma);
 	if (!ring_space) {
 		err = -ENOMEM;
 		goto err_out_free_rx;
@@ -660,11 +670,9 @@ static int fealnx_init_one(struct pci_dev *pdev,
 	return 0;
 
 err_out_free_tx:
-	dma_free_coherent(&pdev->dev, TX_TOTAL_SIZE, np->tx_ring,
-			  np->tx_ring_dma);
+	pci_free_consistent(pdev, TX_TOTAL_SIZE, np->tx_ring, np->tx_ring_dma);
 err_out_free_rx:
-	dma_free_coherent(&pdev->dev, RX_TOTAL_SIZE, np->rx_ring,
-			  np->rx_ring_dma);
+	pci_free_consistent(pdev, RX_TOTAL_SIZE, np->rx_ring, np->rx_ring_dma);
 err_out_free_dev:
 	free_netdev(dev);
 err_out_unmap:
@@ -682,10 +690,10 @@ static void fealnx_remove_one(struct pci_dev *pdev)
 	if (dev) {
 		struct netdev_private *np = netdev_priv(dev);
 
-		dma_free_coherent(&pdev->dev, TX_TOTAL_SIZE, np->tx_ring,
-				  np->tx_ring_dma);
-		dma_free_coherent(&pdev->dev, RX_TOTAL_SIZE, np->rx_ring,
-				  np->rx_ring_dma);
+		pci_free_consistent(pdev, TX_TOTAL_SIZE, np->tx_ring,
+			np->tx_ring_dma);
+		pci_free_consistent(pdev, RX_TOTAL_SIZE, np->rx_ring,
+			np->rx_ring_dma);
 		unregister_netdev(dev);
 		pci_iounmap(pdev, np->mem);
 		free_netdev(dev);
@@ -829,7 +837,7 @@ static int netdev_open(struct net_device *dev)
 		return -EAGAIN;
 
 	for (i = 0; i < 3; i++)
-		iowrite16(((const unsigned short *)dev->dev_addr)[i],
+		iowrite16(((unsigned short*)dev->dev_addr)[i],
 				ioaddr + PAR0 + i*2);
 
 	init_ring(dev);
@@ -859,7 +867,7 @@ static int netdev_open(struct net_device *dev)
 	np->bcrvalue |= 0x04;	/* big-endian */
 #endif
 
-#if defined(__i386__) && !defined(MODULE) && !defined(CONFIG_UML)
+#if defined(__i386__) && !defined(MODULE)
 	if (boot_cpu_data.x86 <= 4)
 		np->crvalue = 0xa00;
 	else
@@ -1062,10 +1070,8 @@ static void allocate_rx_buffers(struct net_device *dev)
 			np->lack_rxbuf = np->lack_rxbuf->next_desc_logical;
 
 		np->lack_rxbuf->skbuff = skb;
-		np->lack_rxbuf->buffer = dma_map_single(&np->pci_dev->dev,
-							skb->data,
-							np->rx_buf_sz,
-							DMA_FROM_DEVICE);
+		np->lack_rxbuf->buffer = pci_map_single(np->pci_dev, skb->data,
+			np->rx_buf_sz, PCI_DMA_FROMDEVICE);
 		np->lack_rxbuf->status = RXOWN;
 		++np->really_rx_count;
 	}
@@ -1185,7 +1191,7 @@ static void reset_timer(struct timer_list *t)
 }
 
 
-static void fealnx_tx_timeout(struct net_device *dev, unsigned int txqueue)
+static void fealnx_tx_timeout(struct net_device *dev)
 {
 	struct netdev_private *np = netdev_priv(dev);
 	void __iomem *ioaddr = np->mem;
@@ -1259,10 +1265,8 @@ static void init_ring(struct net_device *dev)
 
 		++np->really_rx_count;
 		np->rx_ring[i].skbuff = skb;
-		np->rx_ring[i].buffer = dma_map_single(&np->pci_dev->dev,
-						       skb->data,
-						       np->rx_buf_sz,
-						       DMA_FROM_DEVICE);
+		np->rx_ring[i].buffer = pci_map_single(np->pci_dev, skb->data,
+			np->rx_buf_sz, PCI_DMA_FROMDEVICE);
 		np->rx_ring[i].status = RXOWN;
 		np->rx_ring[i].control |= RXIC;
 	}
@@ -1300,8 +1304,8 @@ static netdev_tx_t start_tx(struct sk_buff *skb, struct net_device *dev)
 #define one_buffer
 #define BPT 1022
 #if defined(one_buffer)
-	np->cur_tx_copy->buffer = dma_map_single(&np->pci_dev->dev, skb->data,
-						 skb->len, DMA_TO_DEVICE);
+	np->cur_tx_copy->buffer = pci_map_single(np->pci_dev, skb->data,
+		skb->len, PCI_DMA_TODEVICE);
 	np->cur_tx_copy->control = TXIC | TXLD | TXFD | CRCEnable | PADEnable;
 	np->cur_tx_copy->control |= (skb->len << PKTSShift);	/* pkt size */
 	np->cur_tx_copy->control |= (skb->len << TBSShift);	/* buffer size */
@@ -1316,9 +1320,8 @@ static netdev_tx_t start_tx(struct sk_buff *skb, struct net_device *dev)
 		struct fealnx_desc *next;
 
 		/* for the first descriptor */
-		np->cur_tx_copy->buffer = dma_map_single(&np->pci_dev->dev,
-							 skb->data, BPT,
-							 DMA_TO_DEVICE);
+		np->cur_tx_copy->buffer = pci_map_single(np->pci_dev, skb->data,
+			BPT, PCI_DMA_TODEVICE);
 		np->cur_tx_copy->control = TXIC | TXFD | CRCEnable | PADEnable;
 		np->cur_tx_copy->control |= (skb->len << PKTSShift);	/* pkt size */
 		np->cur_tx_copy->control |= (BPT << TBSShift);	/* buffer size */
@@ -1332,9 +1335,8 @@ static netdev_tx_t start_tx(struct sk_buff *skb, struct net_device *dev)
 // 89/12/29 add,
 		if (np->pci_dev->device == 0x891)
 			np->cur_tx_copy->control |= ETIControl | RetryTxLC;
-		next->buffer = dma_map_single(&ep->pci_dev->dev,
-					      skb->data + BPT, skb->len - BPT,
-					      DMA_TO_DEVICE);
+		next->buffer = pci_map_single(ep->pci_dev, skb->data + BPT,
+                                skb->len - BPT, PCI_DMA_TODEVICE);
 
 		next->status = TXOWN;
 		np->cur_tx_copy->status = TXOWN;
@@ -1342,9 +1344,8 @@ static netdev_tx_t start_tx(struct sk_buff *skb, struct net_device *dev)
 		np->cur_tx_copy = next->next_desc_logical;
 		np->free_tx_count -= 2;
 	} else {
-		np->cur_tx_copy->buffer = dma_map_single(&np->pci_dev->dev,
-							 skb->data, skb->len,
-							 DMA_TO_DEVICE);
+		np->cur_tx_copy->buffer = pci_map_single(np->pci_dev, skb->data,
+			skb->len, PCI_DMA_TODEVICE);
 		np->cur_tx_copy->control = TXIC | TXLD | TXFD | CRCEnable | PADEnable;
 		np->cur_tx_copy->control |= (skb->len << PKTSShift);	/* pkt size */
 		np->cur_tx_copy->control |= (skb->len << TBSShift);	/* buffer size */
@@ -1384,8 +1385,8 @@ static void reset_tx_descriptors(struct net_device *dev)
 	for (i = 0; i < TX_RING_SIZE; i++) {
 		cur = &np->tx_ring[i];
 		if (cur->skbuff) {
-			dma_unmap_single(&np->pci_dev->dev, cur->buffer,
-					 cur->skbuff->len, DMA_TO_DEVICE);
+			pci_unmap_single(np->pci_dev, cur->buffer,
+				cur->skbuff->len, PCI_DMA_TODEVICE);
 			dev_kfree_skb_any(cur->skbuff);
 			cur->skbuff = NULL;
 		}
@@ -1528,11 +1529,9 @@ static irqreturn_t intr_handler(int irq, void *dev_instance)
 			}
 
 			/* Free the original skb. */
-			dma_unmap_single(&np->pci_dev->dev,
-					 np->cur_tx->buffer,
-					 np->cur_tx->skbuff->len,
-					 DMA_TO_DEVICE);
-			dev_consume_skb_irq(np->cur_tx->skbuff);
+			pci_unmap_single(np->pci_dev, np->cur_tx->buffer,
+				np->cur_tx->skbuff->len, PCI_DMA_TODEVICE);
+			dev_kfree_skb_irq(np->cur_tx->skbuff);
 			np->cur_tx->skbuff = NULL;
 			--np->really_tx_count;
 			if (np->cur_tx->control & TXLD) {
@@ -1697,10 +1696,10 @@ static int netdev_rx(struct net_device *dev)
 			if (pkt_len < rx_copybreak &&
 			    (skb = netdev_alloc_skb(dev, pkt_len + 2)) != NULL) {
 				skb_reserve(skb, 2);	/* 16 byte align the IP header */
-				dma_sync_single_for_cpu(&np->pci_dev->dev,
-							np->cur_rx->buffer,
-							np->rx_buf_sz,
-							DMA_FROM_DEVICE);
+				pci_dma_sync_single_for_cpu(np->pci_dev,
+							    np->cur_rx->buffer,
+							    np->rx_buf_sz,
+							    PCI_DMA_FROMDEVICE);
 				/* Call copy + cksum if available. */
 
 #if ! defined(__alpha__)
@@ -1711,15 +1710,15 @@ static int netdev_rx(struct net_device *dev)
 				skb_put_data(skb, np->cur_rx->skbuff->data,
 					     pkt_len);
 #endif
-				dma_sync_single_for_device(&np->pci_dev->dev,
-							   np->cur_rx->buffer,
-							   np->rx_buf_sz,
-							   DMA_FROM_DEVICE);
+				pci_dma_sync_single_for_device(np->pci_dev,
+							       np->cur_rx->buffer,
+							       np->rx_buf_sz,
+							       PCI_DMA_FROMDEVICE);
 			} else {
-				dma_unmap_single(&np->pci_dev->dev,
+				pci_unmap_single(np->pci_dev,
 						 np->cur_rx->buffer,
 						 np->rx_buf_sz,
-						 DMA_FROM_DEVICE);
+						 PCI_DMA_FROMDEVICE);
 				skb_put(skb = np->cur_rx->skbuff, pkt_len);
 				np->cur_rx->skbuff = NULL;
 				--np->really_rx_count;
@@ -1809,8 +1808,9 @@ static void netdev_get_drvinfo(struct net_device *dev, struct ethtool_drvinfo *i
 {
 	struct netdev_private *np = netdev_priv(dev);
 
-	strscpy(info->driver, DRV_NAME, sizeof(info->driver));
-	strscpy(info->bus_info, pci_name(np->pci_dev), sizeof(info->bus_info));
+	strlcpy(info->driver, DRV_NAME, sizeof(info->driver));
+	strlcpy(info->version, DRV_VERSION, sizeof(info->version));
+	strlcpy(info->bus_info, pci_name(np->pci_dev), sizeof(info->bus_info));
 }
 
 static int netdev_get_link_ksettings(struct net_device *dev,
@@ -1911,9 +1911,8 @@ static int netdev_close(struct net_device *dev)
 
 		np->rx_ring[i].status = 0;
 		if (skb) {
-			dma_unmap_single(&np->pci_dev->dev,
-					 np->rx_ring[i].buffer, np->rx_buf_sz,
-					 DMA_FROM_DEVICE);
+			pci_unmap_single(np->pci_dev, np->rx_ring[i].buffer,
+				np->rx_buf_sz, PCI_DMA_FROMDEVICE);
 			dev_kfree_skb(skb);
 			np->rx_ring[i].skbuff = NULL;
 		}
@@ -1923,9 +1922,8 @@ static int netdev_close(struct net_device *dev)
 		struct sk_buff *skb = np->tx_ring[i].skbuff;
 
 		if (skb) {
-			dma_unmap_single(&np->pci_dev->dev,
-					 np->tx_ring[i].buffer, skb->len,
-					 DMA_TO_DEVICE);
+			pci_unmap_single(np->pci_dev, np->tx_ring[i].buffer,
+				skb->len, PCI_DMA_TODEVICE);
 			dev_kfree_skb(skb);
 			np->tx_ring[i].skbuff = NULL;
 		}
@@ -1950,4 +1948,20 @@ static struct pci_driver fealnx_driver = {
 	.remove		= fealnx_remove_one,
 };
 
-module_pci_driver(fealnx_driver);
+static int __init fealnx_init(void)
+{
+/* when a module, this is printed whether or not devices are found in probe */
+#ifdef MODULE
+	printk(version);
+#endif
+
+	return pci_register_driver(&fealnx_driver);
+}
+
+static void __exit fealnx_exit(void)
+{
+	pci_unregister_driver(&fealnx_driver);
+}
+
+module_init(fealnx_init);
+module_exit(fealnx_exit);

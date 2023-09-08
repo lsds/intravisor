@@ -7,9 +7,10 @@
 #include <stdlib.h>
 #include <linux/compiler.h>
 #include "tests.h"
-#include "util/debug.h"
 
-static int test__python_use(struct test_suite *test __maybe_unused, int subtest __maybe_unused)
+extern int verbose;
+
+int test__python_use(struct test *test __maybe_unused, int subtest __maybe_unused)
 {
 	char *cmd;
 	int ret;
@@ -18,10 +19,7 @@ static int test__python_use(struct test_suite *test __maybe_unused, int subtest 
 		     PYTHONPATH, PYTHON, verbose > 0 ? "" : "2> /dev/null") < 0)
 		return -1;
 
-	pr_debug("python usage test: \"%s\"\n", cmd);
 	ret = system(cmd) ? -1 : 0;
 	free(cmd);
 	return ret;
 }
-
-DEFINE_SUITE("'import perf' in python", python_use);

@@ -1,9 +1,10 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Xilinx XADC driver
  *
  * Copyright 2013 Analog Devices Inc.
- *  Author: Lars-Peter Clausen <lars@metafoo.de>
+ *  Author: Lars-Peter Clauen <lars@metafoo.de>
+ *
+ * Licensed under the GPL-2.
  */
 
 #ifndef __IIO_XILINX_XADC__
@@ -69,11 +70,6 @@ struct xadc {
 	struct completion completion;
 };
 
-enum xadc_type {
-	XADC_TYPE_S7, /* Series 7 */
-	XADC_TYPE_US, /* UltraScale and UltraScale+ */
-};
-
 struct xadc_ops {
 	int (*read)(struct xadc *xadc, unsigned int reg, uint16_t *val);
 	int (*write)(struct xadc *xadc, unsigned int reg, uint16_t val);
@@ -84,7 +80,6 @@ struct xadc_ops {
 	irqreturn_t (*interrupt_handler)(int irq, void *devid);
 
 	unsigned int flags;
-	enum xadc_type type;
 };
 
 static inline int _xadc_read_adc_reg(struct xadc *xadc, unsigned int reg,

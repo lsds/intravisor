@@ -1,9 +1,20 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * HDMI interface DSS driver for TI's OMAP4 family of SoCs.
- * Copyright (C) 2010-2011 Texas Instruments Incorporated - https://www.ti.com/
+ * Copyright (C) 2010-2011 Texas Instruments Incorporated - http://www.ti.com/
  * Authors: Yong Zhi
  *	Mythri pk <mythripk@ti.com>
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License version 2 as published by
+ * the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+ * more details.
+ *
+ * You should have received a copy of the GNU General Public License along with
+ * this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
 #define DSS_SUBSYS_NAME "HDMI"
@@ -19,7 +30,7 @@
 #include <linux/platform_device.h>
 #include <linux/pm_runtime.h>
 #include <linux/clk.h>
-#include <linux/of.h>
+#include <linux/gpio.h>
 #include <linux/regulator/consumer.h>
 #include <linux/component.h>
 #include <video/omapfb_dss.h>
@@ -38,8 +49,9 @@ static int hdmi_runtime_get(void)
 
 	DSSDBG("hdmi_runtime_get\n");
 
-	r = pm_runtime_resume_and_get(&hdmi.pdev->dev);
-	if (WARN_ON(r < 0))
+	r = pm_runtime_get_sync(&hdmi.pdev->dev);
+	WARN_ON(r < 0);
+	if (r < 0)
 		return r;
 
 	return 0;
@@ -454,8 +466,10 @@ static void hdmi_disconnect(struct omap_dss_device *dssdev,
 static int hdmi_read_edid(struct omap_dss_device *dssdev,
 		u8 *edid, int len)
 {
-	bool need_enable = !hdmi.core_enabled;
+	bool need_enable;
 	int r;
+
+	need_enable = hdmi.core_enabled == false;
 
 	if (need_enable) {
 		r = hdmi_core_enable(dssdev);
@@ -670,7 +684,7 @@ static int hdmi4_bind(struct device *dev, struct device *master, void *data)
 	int irq;
 
 	hdmi.pdev = pdev;
-	platform_set_drvdata(pdev, &hdmi);
+	dev_set_drvdata(&pdev->dev, &hdmi);
 
 	mutex_init(&hdmi.lock);
 	spin_lock_init(&hdmi.audio_playing_lock);

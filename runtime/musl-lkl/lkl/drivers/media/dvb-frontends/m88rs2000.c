@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
 	Driver for M88RS2000 demodulator and tuner
 
@@ -8,6 +7,19 @@
 	Include various calculation code from DS3000 driver.
 	Copyright (C) 2009 Konstantin Dimitrov.
 
+	This program is free software; you can redistribute it and/or modify
+	it under the terms of the GNU General Public License as published by
+	the Free Software Foundation; either version 2 of the License, or
+	(at your option) any later version.
+
+	This program is distributed in the hope that it will be useful,
+	but WITHOUT ANY WARRANTY; without even the implied warranty of
+	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+	GNU General Public License for more details.
+
+	You should have received a copy of the GNU General Public License
+	along with this program; if not, write to the Free Software
+	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
 */
 #include <linux/init.h>
@@ -390,7 +402,6 @@ static int m88rs2000_tab_set(struct m88rs2000_state *state,
 		case 0xff:
 			if (tab[i].reg == 0xaa && tab[i].val == 0xff)
 				return 0;
-			break;
 		case 0x00:
 			break;
 		default:
@@ -690,7 +701,7 @@ static int m88rs2000_set_frontend(struct dvb_frontend *fe)
 
 	if (status & FE_HAS_LOCK) {
 		state->fec_inner = m88rs2000_get_fec(state);
-		/* Unknown suspect SNR level */
+		/* Uknown suspect SNR level */
 		reg = m88rs2000_readreg(state, 0x65);
 	}
 
@@ -748,10 +759,10 @@ static const struct dvb_frontend_ops m88rs2000_ops = {
 	.delsys = { SYS_DVBS },
 	.info = {
 		.name			= "M88RS2000 DVB-S",
-		.frequency_min_hz	=  950 * MHz,
-		.frequency_max_hz	= 2150 * MHz,
-		.frequency_stepsize_hz	= 1 * MHz,
-		.frequency_tolerance_hz	= 5 * MHz,
+		.frequency_min		= 950000,
+		.frequency_max		= 2150000,
+		.frequency_stepsize	= 1000,	 /* kHz for QPSK frontends */
+		.frequency_tolerance	= 5000,
 		.symbol_rate_min	= 1000000,
 		.symbol_rate_max	= 45000000,
 		.symbol_rate_tolerance	= 500,	/* ppm */

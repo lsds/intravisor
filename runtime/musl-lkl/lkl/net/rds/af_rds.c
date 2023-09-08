@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2006, 2019 Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2006 Oracle.  All rights reserved.
  *
  * This software is available to you under a choice of one of two
  * licenses.  You may choose to be licensed under the terms of the GNU
@@ -35,7 +35,6 @@
 #include <linux/kernel.h>
 #include <linux/gfp.h>
 #include <linux/in.h>
-#include <linux/ipv6.h>
 #include <linux/poll.h>
 #include <net/sock.h>
 
@@ -114,82 +113,26 @@ void rds_wake_sk_sleep(struct rds_sock *rs)
 static int rds_getname(struct socket *sock, struct sockaddr *uaddr,
 		       int peer)
 {
+	struct sockaddr_in *sin = (struct sockaddr_in *)uaddr;
 	struct rds_sock *rs = rds_sk_to_rs(sock->sk);
-	struct sockaddr_in6 *sin6;
-	struct sockaddr_in *sin;
-	int uaddr_len;
+
+	memset(sin->sin_zero, 0, sizeof(sin->sin_zero));
 
 	/* racey, don't care */
 	if (peer) {
-		if (ipv6_addr_any(&rs->rs_conn_addr))
+		if (!rs->rs_conn_addr)
 			return -ENOTCONN;
 
-		if (ipv6_addr_v4mapped(&rs->rs_conn_addr)) {
-			sin = (struct sockaddr_in *)uaddr;
-			memset(sin->sin_zero, 0, sizeof(sin->sin_zero));
-			sin->sin_family = AF_INET;
-			sin->sin_port = rs->rs_conn_port;
-			sin->sin_addr.s_addr = rs->rs_conn_addr_v4;
-			uaddr_len = sizeof(*sin);
-		} else {
-			sin6 = (struct sockaddr_in6 *)uaddr;
-			sin6->sin6_family = AF_INET6;
-			sin6->sin6_port = rs->rs_conn_port;
-			sin6->sin6_addr = rs->rs_conn_addr;
-			sin6->sin6_flowinfo = 0;
-			/* scope_id is the same as in the bound address. */
-			sin6->sin6_scope_id = rs->rs_bound_scope_id;
-			uaddr_len = sizeof(*sin6);
-		}
+		sin->sin_port = rs->rs_conn_port;
+		sin->sin_addr.s_addr = rs->rs_conn_addr;
 	} else {
-		/* If socket is not yet bound and the socket is connected,
-		 * set the return address family to be the same as the
-		 * connected address, but with 0 address value.  If it is not
-		 * connected, set the family to be AF_UNSPEC (value 0) and
-		 * the address size to be that of an IPv4 address.
-		 */
-		if (ipv6_addr_any(&rs->rs_bound_addr)) {
-			if (ipv6_addr_any(&rs->rs_conn_addr)) {
-				sin = (struct sockaddr_in *)uaddr;
-				memset(sin, 0, sizeof(*sin));
-				sin->sin_family = AF_UNSPEC;
-				return sizeof(*sin);
-			}
-
-#if IS_ENABLED(CONFIG_IPV6)
-			if (!(ipv6_addr_type(&rs->rs_conn_addr) &
-			      IPV6_ADDR_MAPPED)) {
-				sin6 = (struct sockaddr_in6 *)uaddr;
-				memset(sin6, 0, sizeof(*sin6));
-				sin6->sin6_family = AF_INET6;
-				return sizeof(*sin6);
-			}
-#endif
-
-			sin = (struct sockaddr_in *)uaddr;
-			memset(sin, 0, sizeof(*sin));
-			sin->sin_family = AF_INET;
-			return sizeof(*sin);
-		}
-		if (ipv6_addr_v4mapped(&rs->rs_bound_addr)) {
-			sin = (struct sockaddr_in *)uaddr;
-			memset(sin->sin_zero, 0, sizeof(sin->sin_zero));
-			sin->sin_family = AF_INET;
-			sin->sin_port = rs->rs_bound_port;
-			sin->sin_addr.s_addr = rs->rs_bound_addr_v4;
-			uaddr_len = sizeof(*sin);
-		} else {
-			sin6 = (struct sockaddr_in6 *)uaddr;
-			sin6->sin6_family = AF_INET6;
-			sin6->sin6_port = rs->rs_bound_port;
-			sin6->sin6_addr = rs->rs_bound_addr;
-			sin6->sin6_flowinfo = 0;
-			sin6->sin6_scope_id = rs->rs_bound_scope_id;
-			uaddr_len = sizeof(*sin6);
-		}
+		sin->sin_port = rs->rs_bound_port;
+		sin->sin_addr.s_addr = rs->rs_bound_addr;
 	}
 
-	return uaddr_len;
+	sin->sin_family = AF_INET;
+
+	return sizeof(*sin);
 }
 
 /*
@@ -254,50 +197,17 @@ static __poll_t rds_poll(struct file *file, struct socket *sock,
 
 static int rds_ioctl(struct socket *sock, unsigned int cmd, unsigned long arg)
 {
-	struct rds_sock *rs = rds_sk_to_rs(sock->sk);
-	rds_tos_t utos, tos = 0;
-
-	switch (cmd) {
-	case SIOCRDSSETTOS:
-		if (get_user(utos, (rds_tos_t __user *)arg))
-			return -EFAULT;
-
-		if (rs->rs_transport &&
-		    rs->rs_transport->get_tos_map)
-			tos = rs->rs_transport->get_tos_map(utos);
-		else
-			return -ENOIOCTLCMD;
-
-		spin_lock_bh(&rds_sock_lock);
-		if (rs->rs_tos || rs->rs_conn) {
-			spin_unlock_bh(&rds_sock_lock);
-			return -EINVAL;
-		}
-		rs->rs_tos = tos;
-		spin_unlock_bh(&rds_sock_lock);
-		break;
-	case SIOCRDSGETTOS:
-		spin_lock_bh(&rds_sock_lock);
-		tos = rs->rs_tos;
-		spin_unlock_bh(&rds_sock_lock);
-		if (put_user(tos, (rds_tos_t __user *)arg))
-			return -EFAULT;
-		break;
-	default:
-		return -ENOIOCTLCMD;
-	}
-
-	return 0;
+	return -ENOIOCTLCMD;
 }
 
-static int rds_cancel_sent_to(struct rds_sock *rs, sockptr_t optval, int len)
+static int rds_cancel_sent_to(struct rds_sock *rs, char __user *optval,
+			      int len)
 {
-	struct sockaddr_in6 sin6;
 	struct sockaddr_in sin;
 	int ret = 0;
 
 	/* racing with another thread binding seems ok here */
-	if (ipv6_addr_any(&rs->rs_bound_addr)) {
+	if (rs->rs_bound_addr == 0) {
 		ret = -ENOTCONN; /* XXX not a great errno */
 		goto out;
 	}
@@ -305,42 +215,33 @@ static int rds_cancel_sent_to(struct rds_sock *rs, sockptr_t optval, int len)
 	if (len < sizeof(struct sockaddr_in)) {
 		ret = -EINVAL;
 		goto out;
-	} else if (len < sizeof(struct sockaddr_in6)) {
-		/* Assume IPv4 */
-		if (copy_from_sockptr(&sin, optval,
-				sizeof(struct sockaddr_in))) {
-			ret = -EFAULT;
-			goto out;
-		}
-		ipv6_addr_set_v4mapped(sin.sin_addr.s_addr, &sin6.sin6_addr);
-		sin6.sin6_port = sin.sin_port;
-	} else {
-		if (copy_from_sockptr(&sin6, optval,
-				   sizeof(struct sockaddr_in6))) {
-			ret = -EFAULT;
-			goto out;
-		}
 	}
 
-	rds_send_drop_to(rs, &sin6);
+	if (copy_from_user(&sin, optval, sizeof(sin))) {
+		ret = -EFAULT;
+		goto out;
+	}
+
+	rds_send_drop_to(rs, &sin);
 out:
 	return ret;
 }
 
-static int rds_set_bool_option(unsigned char *optvar, sockptr_t optval,
+static int rds_set_bool_option(unsigned char *optvar, char __user *optval,
 			       int optlen)
 {
 	int value;
 
 	if (optlen < sizeof(int))
 		return -EINVAL;
-	if (copy_from_sockptr(&value, optval, sizeof(int)))
+	if (get_user(value, (int __user *) optval))
 		return -EFAULT;
 	*optvar = !!value;
 	return 0;
 }
 
-static int rds_cong_monitor(struct rds_sock *rs, sockptr_t optval, int optlen)
+static int rds_cong_monitor(struct rds_sock *rs, char __user *optval,
+			    int optlen)
 {
 	int ret;
 
@@ -357,7 +258,8 @@ static int rds_cong_monitor(struct rds_sock *rs, sockptr_t optval, int optlen)
 	return ret;
 }
 
-static int rds_set_transport(struct rds_sock *rs, sockptr_t optval, int optlen)
+static int rds_set_transport(struct rds_sock *rs, char __user *optval,
+			     int optlen)
 {
 	int t_type;
 
@@ -367,7 +269,7 @@ static int rds_set_transport(struct rds_sock *rs, sockptr_t optval, int optlen)
 	if (optlen != sizeof(int))
 		return -EINVAL;
 
-	if (copy_from_sockptr(&t_type, optval, sizeof(t_type)))
+	if (copy_from_user(&t_type, (int __user *)optval, sizeof(t_type)))
 		return -EFAULT;
 
 	if (t_type < 0 || t_type >= RDS_TRANS_COUNT)
@@ -378,21 +280,18 @@ static int rds_set_transport(struct rds_sock *rs, sockptr_t optval, int optlen)
 	return rs->rs_transport ? 0 : -ENOPROTOOPT;
 }
 
-static int rds_enable_recvtstamp(struct sock *sk, sockptr_t optval,
-				 int optlen, int optname)
+static int rds_enable_recvtstamp(struct sock *sk, char __user *optval,
+				 int optlen)
 {
 	int val, valbool;
 
 	if (optlen != sizeof(int))
 		return -EFAULT;
 
-	if (copy_from_sockptr(&val, optval, sizeof(int)))
+	if (get_user(val, (int __user *)optval))
 		return -EFAULT;
 
 	valbool = val ? 1 : 0;
-
-	if (optname == SO_TIMESTAMP_NEW)
-		sock_set_flag(sk, SOCK_TSTAMP_NEW);
 
 	if (valbool)
 		sock_set_flag(sk, SOCK_RCVTSTAMP);
@@ -402,7 +301,7 @@ static int rds_enable_recvtstamp(struct sock *sk, sockptr_t optval,
 	return 0;
 }
 
-static int rds_recv_track_latency(struct rds_sock *rs, sockptr_t optval,
+static int rds_recv_track_latency(struct rds_sock *rs, char __user *optval,
 				  int optlen)
 {
 	struct rds_rx_trace_so trace;
@@ -411,7 +310,7 @@ static int rds_recv_track_latency(struct rds_sock *rs, sockptr_t optval,
 	if (optlen != sizeof(struct rds_rx_trace_so))
 		return -EFAULT;
 
-	if (copy_from_sockptr(&trace, optval, sizeof(trace)))
+	if (copy_from_user(&trace, optval, sizeof(trace)))
 		return -EFAULT;
 
 	if (trace.rx_traces > RDS_MSG_RX_DGRAM_TRACE_MAX)
@@ -430,7 +329,7 @@ static int rds_recv_track_latency(struct rds_sock *rs, sockptr_t optval,
 }
 
 static int rds_setsockopt(struct socket *sock, int level, int optname,
-			  sockptr_t optval, unsigned int optlen)
+			  char __user *optval, unsigned int optlen)
 {
 	struct rds_sock *rs = rds_sk_to_rs(sock->sk);
 	int ret;
@@ -464,10 +363,9 @@ static int rds_setsockopt(struct socket *sock, int level, int optname,
 		ret = rds_set_transport(rs, optval, optlen);
 		release_sock(sock->sk);
 		break;
-	case SO_TIMESTAMP_OLD:
-	case SO_TIMESTAMP_NEW:
+	case SO_TIMESTAMP:
 		lock_sock(sock->sk);
-		ret = rds_enable_recvtstamp(sock->sk, optval, optlen, optname);
+		ret = rds_enable_recvtstamp(sock->sk, optval, optlen);
 		release_sock(sock->sk);
 		break;
 	case SO_RDS_MSG_RXPATH_LATENCY:
@@ -537,94 +435,31 @@ static int rds_connect(struct socket *sock, struct sockaddr *uaddr,
 		       int addr_len, int flags)
 {
 	struct sock *sk = sock->sk;
-	struct sockaddr_in *sin;
+	struct sockaddr_in *sin = (struct sockaddr_in *)uaddr;
 	struct rds_sock *rs = rds_sk_to_rs(sk);
 	int ret = 0;
 
-	if (addr_len < offsetofend(struct sockaddr, sa_family))
-		return -EINVAL;
-
 	lock_sock(sk);
 
-	switch (uaddr->sa_family) {
-	case AF_INET:
-		sin = (struct sockaddr_in *)uaddr;
-		if (addr_len < sizeof(struct sockaddr_in)) {
-			ret = -EINVAL;
-			break;
-		}
-		if (sin->sin_addr.s_addr == htonl(INADDR_ANY)) {
-			ret = -EDESTADDRREQ;
-			break;
-		}
-		if (ipv4_is_multicast(sin->sin_addr.s_addr) ||
-		    sin->sin_addr.s_addr == htonl(INADDR_BROADCAST)) {
-			ret = -EINVAL;
-			break;
-		}
-		ipv6_addr_set_v4mapped(sin->sin_addr.s_addr, &rs->rs_conn_addr);
-		rs->rs_conn_port = sin->sin_port;
-		break;
-
-#if IS_ENABLED(CONFIG_IPV6)
-	case AF_INET6: {
-		struct sockaddr_in6 *sin6;
-		int addr_type;
-
-		sin6 = (struct sockaddr_in6 *)uaddr;
-		if (addr_len < sizeof(struct sockaddr_in6)) {
-			ret = -EINVAL;
-			break;
-		}
-		addr_type = ipv6_addr_type(&sin6->sin6_addr);
-		if (!(addr_type & IPV6_ADDR_UNICAST)) {
-			__be32 addr4;
-
-			if (!(addr_type & IPV6_ADDR_MAPPED)) {
-				ret = -EPROTOTYPE;
-				break;
-			}
-
-			/* It is a mapped address.  Need to do some sanity
-			 * checks.
-			 */
-			addr4 = sin6->sin6_addr.s6_addr32[3];
-			if (addr4 == htonl(INADDR_ANY) ||
-			    addr4 == htonl(INADDR_BROADCAST) ||
-			    ipv4_is_multicast(addr4)) {
-				ret = -EPROTOTYPE;
-				break;
-			}
-		}
-
-		if (addr_type & IPV6_ADDR_LINKLOCAL) {
-			/* If socket is arleady bound to a link local address,
-			 * the peer address must be on the same link.
-			 */
-			if (sin6->sin6_scope_id == 0 ||
-			    (!ipv6_addr_any(&rs->rs_bound_addr) &&
-			     rs->rs_bound_scope_id &&
-			     sin6->sin6_scope_id != rs->rs_bound_scope_id)) {
-				ret = -EINVAL;
-				break;
-			}
-			/* Remember the connected address scope ID.  It will
-			 * be checked against the binding local address when
-			 * the socket is bound.
-			 */
-			rs->rs_bound_scope_id = sin6->sin6_scope_id;
-		}
-		rs->rs_conn_addr = sin6->sin6_addr;
-		rs->rs_conn_port = sin6->sin6_port;
-		break;
+	if (addr_len != sizeof(struct sockaddr_in)) {
+		ret = -EINVAL;
+		goto out;
 	}
-#endif
 
-	default:
+	if (sin->sin_family != AF_INET) {
 		ret = -EAFNOSUPPORT;
-		break;
+		goto out;
 	}
 
+	if (sin->sin_addr.s_addr == htonl(INADDR_ANY)) {
+		ret = -EDESTADDRREQ;
+		goto out;
+	}
+
+	rs->rs_conn_addr = sin->sin_addr.s_addr;
+	rs->rs_conn_port = sin->sin_port;
+
+out:
 	release_sock(sk);
 	return ret;
 }
@@ -684,8 +519,6 @@ static int __rds_create(struct socket *sock, struct sock *sk, int protocol)
 	spin_lock_init(&rs->rs_rdma_lock);
 	rs->rs_rdma_keys = RB_ROOT;
 	rs->rs_rx_traces = 0;
-	rs->rs_tos = 0;
-	rs->rs_conn = NULL;
 
 	spin_lock_bh(&rds_sock_lock);
 	list_add_tail(&rs->rs_item, &rds_sock_list);
@@ -703,7 +536,7 @@ static int rds_create(struct net *net, struct socket *sock, int protocol,
 	if (sock->type != SOCK_SEQPACKET || protocol)
 		return -ESOCKTNOSUPPORT;
 
-	sk = sk_alloc(net, AF_RDS, GFP_KERNEL, &rds_proto, kern);
+	sk = sk_alloc(net, AF_RDS, GFP_ATOMIC, &rds_proto, kern);
 	if (!sk)
 		return -ENOMEM;
 
@@ -739,20 +572,14 @@ static void rds_sock_inc_info(struct socket *sock, unsigned int len,
 	spin_lock_bh(&rds_sock_lock);
 
 	list_for_each_entry(rs, &rds_sock_list, rs_item) {
-		/* This option only supports IPv4 sockets. */
-		if (!ipv6_addr_v4mapped(&rs->rs_bound_addr))
-			continue;
-
 		read_lock(&rs->rs_recv_lock);
 
 		/* XXX too lazy to maintain counts.. */
 		list_for_each_entry(inc, &rs->rs_recv_queue, i_item) {
 			total++;
 			if (total <= len)
-				rds_inc_info_copy(inc, iter,
-						  inc->i_saddr.s6_addr32[3],
-						  rs->rs_bound_addr_v4,
-						  1);
+				rds_inc_info_copy(inc, iter, inc->i_saddr,
+						  rs->rs_bound_addr, 1);
 		}
 
 		read_unlock(&rs->rs_recv_lock);
@@ -764,88 +591,14 @@ static void rds_sock_inc_info(struct socket *sock, unsigned int len,
 	lens->each = sizeof(struct rds_info_message);
 }
 
-#if IS_ENABLED(CONFIG_IPV6)
-static void rds6_sock_inc_info(struct socket *sock, unsigned int len,
-			       struct rds_info_iterator *iter,
-			       struct rds_info_lengths *lens)
-{
-	struct rds_incoming *inc;
-	unsigned int total = 0;
-	struct rds_sock *rs;
-
-	len /= sizeof(struct rds6_info_message);
-
-	spin_lock_bh(&rds_sock_lock);
-
-	list_for_each_entry(rs, &rds_sock_list, rs_item) {
-		read_lock(&rs->rs_recv_lock);
-
-		list_for_each_entry(inc, &rs->rs_recv_queue, i_item) {
-			total++;
-			if (total <= len)
-				rds6_inc_info_copy(inc, iter, &inc->i_saddr,
-						   &rs->rs_bound_addr, 1);
-		}
-
-		read_unlock(&rs->rs_recv_lock);
-	}
-
-	spin_unlock_bh(&rds_sock_lock);
-
-	lens->nr = total;
-	lens->each = sizeof(struct rds6_info_message);
-}
-#endif
-
 static void rds_sock_info(struct socket *sock, unsigned int len,
 			  struct rds_info_iterator *iter,
 			  struct rds_info_lengths *lens)
 {
 	struct rds_info_socket sinfo;
-	unsigned int cnt = 0;
 	struct rds_sock *rs;
 
 	len /= sizeof(struct rds_info_socket);
-
-	spin_lock_bh(&rds_sock_lock);
-
-	if (len < rds_sock_count) {
-		cnt = rds_sock_count;
-		goto out;
-	}
-
-	list_for_each_entry(rs, &rds_sock_list, rs_item) {
-		/* This option only supports IPv4 sockets. */
-		if (!ipv6_addr_v4mapped(&rs->rs_bound_addr))
-			continue;
-		sinfo.sndbuf = rds_sk_sndbuf(rs);
-		sinfo.rcvbuf = rds_sk_rcvbuf(rs);
-		sinfo.bound_addr = rs->rs_bound_addr_v4;
-		sinfo.connected_addr = rs->rs_conn_addr_v4;
-		sinfo.bound_port = rs->rs_bound_port;
-		sinfo.connected_port = rs->rs_conn_port;
-		sinfo.inum = sock_i_ino(rds_rs_to_sk(rs));
-
-		rds_info_copy(iter, &sinfo, sizeof(sinfo));
-		cnt++;
-	}
-
-out:
-	lens->nr = cnt;
-	lens->each = sizeof(struct rds_info_socket);
-
-	spin_unlock_bh(&rds_sock_lock);
-}
-
-#if IS_ENABLED(CONFIG_IPV6)
-static void rds6_sock_info(struct socket *sock, unsigned int len,
-			   struct rds_info_iterator *iter,
-			   struct rds_info_lengths *lens)
-{
-	struct rds6_info_socket sinfo6;
-	struct rds_sock *rs;
-
-	len /= sizeof(struct rds6_info_socket);
 
 	spin_lock_bh(&rds_sock_lock);
 
@@ -853,24 +606,23 @@ static void rds6_sock_info(struct socket *sock, unsigned int len,
 		goto out;
 
 	list_for_each_entry(rs, &rds_sock_list, rs_item) {
-		sinfo6.sndbuf = rds_sk_sndbuf(rs);
-		sinfo6.rcvbuf = rds_sk_rcvbuf(rs);
-		sinfo6.bound_addr = rs->rs_bound_addr;
-		sinfo6.connected_addr = rs->rs_conn_addr;
-		sinfo6.bound_port = rs->rs_bound_port;
-		sinfo6.connected_port = rs->rs_conn_port;
-		sinfo6.inum = sock_i_ino(rds_rs_to_sk(rs));
+		sinfo.sndbuf = rds_sk_sndbuf(rs);
+		sinfo.rcvbuf = rds_sk_rcvbuf(rs);
+		sinfo.bound_addr = rs->rs_bound_addr;
+		sinfo.connected_addr = rs->rs_conn_addr;
+		sinfo.bound_port = rs->rs_bound_port;
+		sinfo.connected_port = rs->rs_conn_port;
+		sinfo.inum = sock_i_ino(rds_rs_to_sk(rs));
 
-		rds_info_copy(iter, &sinfo6, sizeof(sinfo6));
+		rds_info_copy(iter, &sinfo, sizeof(sinfo));
 	}
 
- out:
+out:
 	lens->nr = rds_sock_count;
-	lens->each = sizeof(struct rds6_info_socket);
+	lens->each = sizeof(struct rds_info_socket);
 
 	spin_unlock_bh(&rds_sock_lock);
 }
-#endif
 
 static void rds_exit(void)
 {
@@ -885,16 +637,12 @@ static void rds_exit(void)
 	rds_bind_lock_destroy();
 	rds_info_deregister_func(RDS_INFO_SOCKETS, rds_sock_info);
 	rds_info_deregister_func(RDS_INFO_RECV_MESSAGES, rds_sock_inc_info);
-#if IS_ENABLED(CONFIG_IPV6)
-	rds_info_deregister_func(RDS6_INFO_SOCKETS, rds6_sock_info);
-	rds_info_deregister_func(RDS6_INFO_RECV_MESSAGES, rds6_sock_inc_info);
-#endif
 }
 module_exit(rds_exit);
 
 u32 rds_gen_num;
 
-static int __init rds_init(void)
+static int rds_init(void)
 {
 	int ret;
 
@@ -926,10 +674,6 @@ static int __init rds_init(void)
 
 	rds_info_register_func(RDS_INFO_SOCKETS, rds_sock_info);
 	rds_info_register_func(RDS_INFO_RECV_MESSAGES, rds_sock_inc_info);
-#if IS_ENABLED(CONFIG_IPV6)
-	rds_info_register_func(RDS6_INFO_SOCKETS, rds6_sock_info);
-	rds_info_register_func(RDS6_INFO_RECV_MESSAGES, rds6_sock_inc_info);
-#endif
 
 	goto out;
 

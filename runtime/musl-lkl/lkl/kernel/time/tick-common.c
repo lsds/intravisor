@@ -1,17 +1,20 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
+ * linux/kernel/time/tick-common.c
+ *
  * This file contains the base functions to manage periodic tick
  * related events.
  *
  * Copyright(C) 2005-2006, Thomas Gleixner <tglx@linutronix.de>
  * Copyright(C) 2005-2007, Red Hat, Inc., Ingo Molnar
  * Copyright(C) 2006-2007, Timesys Corp., Thomas Gleixner
+ *
+ * This code is licenced under the GPL version 2. For details see
+ * kernel-base/COPYING.
  */
 #include <linux/cpu.h>
 #include <linux/err.h>
 #include <linux/hrtimer.h>
 #include <linux/interrupt.h>
-#include <linux/nmi.h>
 #include <linux/percpu.h>
 #include <linux/profile.h>
 #include <linux/sched.h>
@@ -27,11 +30,10 @@
  */
 DEFINE_PER_CPU(struct tick_device, tick_cpu_device);
 /*
- * Tick next event: keeps track of the tick time. It's updated by the
- * CPU which handles the tick and protected by jiffies_lock. There is
- * no requirement to write hold the jiffies seqcount for it.
+ * Tick next event: keeps track of the tick time
  */
 ktime_t tick_next_period;
+ktime_t tick_period;
 
 /*
  * tick_do_timer_cpu is a timer core internal variable which holds the CPU NR
@@ -48,14 +50,6 @@ ktime_t tick_next_period;
  *    procedure also covers cpu hotplug.
  */
 int tick_do_timer_cpu __read_mostly = TICK_DO_TIMER_BOOT;
-#ifdef CONFIG_NO_HZ_FULL
-/*
- * tick_do_timer_boot_cpu indicates the boot CPU temporarily owns
- * tick_do_timer_cpu and it should be taken over by an eligible secondary
- * when one comes online.
- */
-static int tick_do_timer_boot_cpu __read_mostly = -1;
-#endif
 
 /*
  * Debugging: see timer_list.c
@@ -85,15 +79,13 @@ int tick_is_oneshot_available(void)
 static void tick_periodic(int cpu)
 {
 	if (tick_do_timer_cpu == cpu) {
-		raw_spin_lock(&jiffies_lock);
-		write_seqcount_begin(&jiffies_seq);
+		write_seqlock(&jiffies_lock);
 
 		/* Keep track of the next tick event */
-		tick_next_period = ktime_add_ns(tick_next_period, TICK_NSEC);
+		tick_next_period = ktime_add(tick_next_period, tick_period);
 
 		do_timer(1);
-		write_seqcount_end(&jiffies_seq);
-		raw_spin_unlock(&jiffies_lock);
+		write_sequnlock(&jiffies_lock);
 		update_wall_time();
 	}
 
@@ -128,7 +120,7 @@ void tick_handle_periodic(struct clock_event_device *dev)
 		 * Setup the next period for devices, which do not have
 		 * periodic mode:
 		 */
-		next = ktime_add_ns(next, TICK_NSEC);
+		next = ktime_add(next, tick_period);
 
 		if (!clockevents_program_event(dev, next, false))
 			return;
@@ -161,43 +153,23 @@ void tick_setup_periodic(struct clock_event_device *dev, int broadcast)
 	    !tick_broadcast_oneshot_active()) {
 		clockevents_switch_state(dev, CLOCK_EVT_STATE_PERIODIC);
 	} else {
-		unsigned int seq;
+		unsigned long seq;
 		ktime_t next;
 
 		do {
-			seq = read_seqcount_begin(&jiffies_seq);
+			seq = read_seqbegin(&jiffies_lock);
 			next = tick_next_period;
-		} while (read_seqcount_retry(&jiffies_seq, seq));
+		} while (read_seqretry(&jiffies_lock, seq));
 
 		clockevents_switch_state(dev, CLOCK_EVT_STATE_ONESHOT);
 
 		for (;;) {
 			if (!clockevents_program_event(dev, next, false))
 				return;
-			next = ktime_add_ns(next, TICK_NSEC);
+			next = ktime_add(next, tick_period);
 		}
 	}
 }
-
-#ifdef CONFIG_NO_HZ_FULL
-static void giveup_do_timer(void *info)
-{
-	int cpu = *(unsigned int *)info;
-
-	WARN_ON(tick_do_timer_cpu != smp_processor_id());
-
-	tick_do_timer_cpu = cpu;
-}
-
-static void tick_take_do_timer_from_boot(void)
-{
-	int cpu = smp_processor_id();
-	int from = tick_do_timer_boot_cpu;
-
-	if (from >= 0 && from != cpu)
-		smp_call_function_single(from, giveup_do_timer, &cpu, 1);
-}
-#endif
 
 /*
  * Setup the tick device
@@ -218,25 +190,12 @@ static void tick_setup_device(struct tick_device *td,
 		 * this cpu:
 		 */
 		if (tick_do_timer_cpu == TICK_DO_TIMER_BOOT) {
-			tick_do_timer_cpu = cpu;
-
+			if (!tick_nohz_full_cpu(cpu))
+				tick_do_timer_cpu = cpu;
+			else
+				tick_do_timer_cpu = TICK_DO_TIMER_NONE;
 			tick_next_period = ktime_get();
-#ifdef CONFIG_NO_HZ_FULL
-			/*
-			 * The boot CPU may be nohz_full, in which case set
-			 * tick_do_timer_boot_cpu so the first housekeeping
-			 * secondary that comes up will take do_timer from
-			 * us.
-			 */
-			if (tick_nohz_full_cpu(cpu))
-				tick_do_timer_boot_cpu = cpu;
-
-		} else if (tick_do_timer_boot_cpu != -1 &&
-						!tick_nohz_full_cpu(cpu)) {
-			tick_take_do_timer_from_boot();
-			tick_do_timer_boot_cpu = -1;
-			WARN_ON(tick_do_timer_cpu != cpu);
-#endif
+			tick_period = NSEC_PER_SEC / HZ;
 		}
 
 		/*
@@ -348,7 +307,12 @@ void tick_check_new_device(struct clock_event_device *newdev)
 	td = &per_cpu(tick_cpu_device, cpu);
 	curdev = td->evtdev;
 
-	if (!tick_check_replacement(curdev, newdev))
+	/* cpu local device ? */
+	if (!tick_check_percpu(curdev, newdev, cpu))
+		goto out_bc;
+
+	/* Preference decision */
+	if (!tick_check_preferred(curdev, newdev))
 		goto out_bc;
 
 	if (!try_module_get(newdev->owner))
@@ -373,7 +337,7 @@ out_bc:
 	/*
 	 * Can the new device be used as a broadcast device ?
 	 */
-	tick_install_broadcast_device(newdev, cpu);
+	tick_install_broadcast_device(newdev);
 }
 
 /**
@@ -402,13 +366,17 @@ EXPORT_SYMBOL_GPL(tick_broadcast_oneshot_control);
 /*
  * Transfer the do_timer job away from a dying cpu.
  *
- * Called with interrupts disabled. No locking required. If
+ * Called with interrupts disabled. Not locking required. If
  * tick_do_timer_cpu is owned by this cpu, nothing can change it.
  */
 void tick_handover_do_timer(void)
 {
-	if (tick_do_timer_cpu == smp_processor_id())
-		tick_do_timer_cpu = cpumask_first(cpu_online_mask);
+	if (tick_do_timer_cpu == smp_processor_id()) {
+		int cpu = cpumask_first(cpu_online_mask);
+
+		tick_do_timer_cpu = (cpu < nr_cpu_ids) ? cpu :
+			TICK_DO_TIMER_NONE;
+	}
 }
 
 /*
@@ -470,13 +438,6 @@ void tick_resume_local(void)
 		else
 			tick_resume_oneshot();
 	}
-
-	/*
-	 * Ensure that hrtimers are up to date and the clockevents device
-	 * is reprogrammed correctly when high resolution timers are
-	 * enabled.
-	 */
-	hrtimers_resume_local();
 }
 
 /**
@@ -529,8 +490,6 @@ void tick_freeze(void)
 	if (tick_freeze_depth == num_online_cpus()) {
 		trace_suspend_resume(TPS("timekeeping_freeze"),
 				     smp_processor_id(), true);
-		system_state = SYSTEM_SUSPEND;
-		sched_clock_suspend();
 		timekeeping_suspend();
 	} else {
 		tick_suspend_local();
@@ -554,12 +513,9 @@ void tick_unfreeze(void)
 
 	if (tick_freeze_depth == num_online_cpus()) {
 		timekeeping_resume();
-		sched_clock_resume();
-		system_state = SYSTEM_RUNNING;
 		trace_suspend_resume(TPS("timekeeping_freeze"),
 				     smp_processor_id(), false);
 	} else {
-		touch_softlockup_watchdog();
 		tick_resume_local();
 	}
 

@@ -1,6 +1,10 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Copyright (c) 2016, Prodys S.L.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
  *
  * This adds support for sbs-charger compilant chips as defined here:
  * http://sbs-forum.org/specs/sbc110.pdf
@@ -16,9 +20,10 @@
 #include <linux/i2c.h>
 #include <linux/slab.h>
 #include <linux/interrupt.h>
+#include <linux/gpio.h>
 #include <linux/regmap.h>
+#include <linux/of_gpio.h>
 #include <linux/bitops.h>
-#include <linux/devm-helpers.h>
 
 #define SBS_CHARGER_REG_SPEC_INFO		0x11
 #define SBS_CHARGER_REG_STATUS			0x13
@@ -188,14 +193,18 @@ static int sbs_probe(struct i2c_client *client,
 	 * to the battery.
 	 */
 	ret = regmap_read(chip->regmap, SBS_CHARGER_REG_STATUS, &val);
-	if (ret)
-		return dev_err_probe(&client->dev, ret, "Failed to get device status\n");
+	if (ret) {
+		dev_err(&client->dev, "Failed to get device status\n");
+		return ret;
+	}
 	chip->last_state = val;
 
-	chip->power_supply = devm_power_supply_register(&client->dev, &sbs_desc, &psy_cfg);
-	if (IS_ERR(chip->power_supply))
-		return dev_err_probe(&client->dev, PTR_ERR(chip->power_supply),
-				     "Failed to register power supply\n");
+	chip->power_supply = devm_power_supply_register(&client->dev, &sbs_desc,
+							&psy_cfg);
+	if (IS_ERR(chip->power_supply)) {
+		dev_err(&client->dev, "Failed to register power supply\n");
+		return PTR_ERR(chip->power_supply);
+	}
 
 	/*
 	 * The sbs-charger spec doesn't impose the use of an interrupt. So in
@@ -207,21 +216,27 @@ static int sbs_probe(struct i2c_client *client,
 					NULL, sbs_irq_thread,
 					IRQF_TRIGGER_FALLING | IRQF_ONESHOT,
 					dev_name(&client->dev), chip);
-		if (ret)
-			return dev_err_probe(&client->dev, ret, "Failed to request irq\n");
+		if (ret) {
+			dev_err(&client->dev, "Failed to request irq, %d\n", ret);
+			return ret;
+		}
 	} else {
-		ret = devm_delayed_work_autocancel(&client->dev, &chip->work,
-						   sbs_delayed_work);
-		if (ret)
-			return dev_err_probe(&client->dev, ret,
-					     "Failed to init work for polling\n");
-
+		INIT_DELAYED_WORK(&chip->work, sbs_delayed_work);
 		schedule_delayed_work(&chip->work,
 				      msecs_to_jiffies(SBS_CHARGER_POLL_TIME));
 	}
 
 	dev_info(&client->dev,
 		 "%s: smart charger device registered\n", client->name);
+
+	return 0;
+}
+
+static int sbs_remove(struct i2c_client *client)
+{
+	struct sbs_info *chip = i2c_get_clientdata(client);
+
+	cancel_delayed_work_sync(&chip->work);
 
 	return 0;
 }
@@ -242,6 +257,7 @@ MODULE_DEVICE_TABLE(i2c, sbs_id);
 
 static struct i2c_driver sbs_driver = {
 	.probe		= sbs_probe,
+	.remove		= sbs_remove,
 	.id_table	= sbs_id,
 	.driver = {
 		.name	= "sbs-charger",

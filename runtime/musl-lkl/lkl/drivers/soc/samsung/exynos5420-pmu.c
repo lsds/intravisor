@@ -3,7 +3,7 @@
 // Copyright (c) 2011-2015 Samsung Electronics Co., Ltd.
 //		http://www.samsung.com/
 //
-// Exynos5420 - CPU PMU (Power Management Unit) support
+// EXYNOS5420 - CPU PMU (Power Management Unit) support
 
 #include <linux/pm.h>
 #include <linux/soc/samsung/exynos-regs-pmu.h>

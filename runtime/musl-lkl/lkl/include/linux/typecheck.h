@@ -22,13 +22,4 @@
 	(void)__tmp; \
 })
 
-/*
- * Check at compile time that something is a pointer type.
- */
-#define typecheck_pointer(x) \
-({	typeof(x) __dummy; \
-	(void)sizeof(*__dummy); \
-	1; \
-})
-
 #endif		/* TYPECHECK_H_INCLUDED */

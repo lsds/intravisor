@@ -1,8 +1,17 @@
-/* SPDX-License-Identifier: GPL-2.0+ */
 /*
- * NILFS meta data file prototype and definitions
+ * mdt.h - NILFS meta data file prototype and definitions
  *
  * Copyright (C) 2005-2008 Nippon Telegraph and Telephone Corporation.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
  *
  * Written by Ryusuke Konishi.
  */
@@ -18,12 +27,14 @@
 /**
  * struct nilfs_shadow_map - shadow mapping of meta data file
  * @bmap_store: shadow copy of bmap state
- * @inode: holder of page caches used in shadow mapping
+ * @frozen_data: shadowed dirty data pages
+ * @frozen_btnodes: shadowed dirty b-tree nodes' pages
  * @frozen_buffers: list of frozen buffers
  */
 struct nilfs_shadow_map {
 	struct nilfs_bmap_store bmap_store;
-	struct inode *inode;
+	struct address_space frozen_data;
+	struct address_space frozen_btnodes;
 	struct list_head frozen_buffers;
 };
 

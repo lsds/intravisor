@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * File: arch/arm/plat-omap/fb.c
  *
@@ -6,6 +5,20 @@
  *
  * Copyright (C) 2006 Nokia Corporation
  * Author: Imre Deak <imre.deak@nokia.com>
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License as published by the
+ * Free Software Foundation; either version 2 of the License, or (at your
+ * option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
  */
 
 #include <linux/module.h>
@@ -17,11 +30,8 @@
 #include <linux/io.h>
 #include <linux/omapfb.h>
 #include <linux/dma-mapping.h>
-#include <linux/irq.h>
 
 #include <asm/mach/map.h>
-
-#include "irqs.h"
 
 #if IS_ENABLED(CONFIG_FB_OMAP)
 
@@ -29,19 +39,6 @@ static bool omapfb_lcd_configured;
 static struct omapfb_platform_data omapfb_config;
 
 static u64 omap_fb_dma_mask = ~(u32)0;
-
-static struct resource omap_fb_resources[] = {
-	{
-		.name  = "irq",
-		.start = INT_LCD_CTRL,
-		.flags = IORESOURCE_IRQ,
-	},
-	{
-		.name  = "irq",
-		.start = INT_SOSSI_MATCH,
-		.flags = IORESOURCE_IRQ,
-	},
-};
 
 static struct platform_device omap_fb_device = {
 	.name		= "omapfb",
@@ -51,8 +48,7 @@ static struct platform_device omap_fb_device = {
 		.coherent_dma_mask	= DMA_BIT_MASK(32),
 		.platform_data		= &omapfb_config,
 	},
-	.num_resources = ARRAY_SIZE(omap_fb_resources),
-	.resource = omap_fb_resources,
+	.num_resources = 0,
 };
 
 void __init omapfb_set_lcd_config(const struct omap_lcd_config *config)

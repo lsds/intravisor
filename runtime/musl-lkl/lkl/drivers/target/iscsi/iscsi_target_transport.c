@@ -31,7 +31,7 @@ void iscsit_put_transport(struct iscsit_transport *t)
 	module_put(t->owner);
 }
 
-void iscsit_register_transport(struct iscsit_transport *t)
+int iscsit_register_transport(struct iscsit_transport *t)
 {
 	INIT_LIST_HEAD(&t->t_node);
 
@@ -40,6 +40,8 @@ void iscsit_register_transport(struct iscsit_transport *t)
 	mutex_unlock(&transport_mutex);
 
 	pr_debug("Registered iSCSI transport: %s\n", t->name);
+
+	return 0;
 }
 EXPORT_SYMBOL(iscsit_register_transport);
 

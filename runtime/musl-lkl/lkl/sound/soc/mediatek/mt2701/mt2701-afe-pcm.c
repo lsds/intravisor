@@ -1,11 +1,18 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * Mediatek ALSA SoC AFE platform driver for 2701
  *
  * Copyright (c) 2016 MediaTek Inc.
  * Author: Garlic Tseng <garlic.tseng@mediatek.com>
- *	   Ir Lian <ir.lian@mediatek.com>
- *	   Ryder Lee <ryder.lee@mediatek.com>
+ *             Ir Lian <ir.lian@mediatek.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 and
+ * only version 2 as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
  */
 
 #include <linux/delay.h>
@@ -13,7 +20,6 @@
 #include <linux/mfd/syscon.h>
 #include <linux/of.h>
 #include <linux/of_address.h>
-#include <linux/of_device.h>
 #include <linux/pm_runtime.h>
 
 #include "mt2701-afe-common.h"
@@ -30,7 +36,7 @@ static const struct snd_pcm_hardware mt2701_afe_hardware = {
 	.period_bytes_max = 1024 * 256,
 	.periods_min = 4,
 	.periods_max = 1024,
-	.buffer_bytes_max = 1024 * 1024,
+	.buffer_bytes_max = 1024 * 1024 * 16,
 	.fifo_size = 0,
 };
 
@@ -60,33 +66,11 @@ static const struct mt2701_afe_rate mt2701_afe_i2s_rates[] = {
 	{ .rate = 352800, .regvalue = 24 },
 };
 
-static const unsigned int mt2701_afe_backup_list[] = {
-	AUDIO_TOP_CON0,
-	AUDIO_TOP_CON4,
-	AUDIO_TOP_CON5,
-	ASYS_TOP_CON,
-	AFE_CONN0,
-	AFE_CONN1,
-	AFE_CONN2,
-	AFE_CONN3,
-	AFE_CONN15,
-	AFE_CONN16,
-	AFE_CONN17,
-	AFE_CONN18,
-	AFE_CONN19,
-	AFE_CONN20,
-	AFE_CONN21,
-	AFE_CONN22,
-	AFE_DAC_CON0,
-	AFE_MEMIF_PBUF_SIZE,
-};
-
 static int mt2701_dai_num_to_i2s(struct mtk_base_afe *afe, int num)
 {
-	struct mt2701_afe_private *afe_priv = afe->platform_priv;
 	int val = num - MT2701_IO_I2S;
 
-	if (val < 0 || val >= afe_priv->soc->i2s_num) {
+	if (val < 0 || val >= MT2701_I2S_NUM) {
 		dev_err(afe->dev, "%s, num not available, num %d, val %d\n",
 			__func__, num, val);
 		return -EINVAL;
@@ -108,26 +92,44 @@ static int mt2701_afe_i2s_fs(unsigned int sample_rate)
 static int mt2701_afe_i2s_startup(struct snd_pcm_substream *substream,
 				  struct snd_soc_dai *dai)
 {
-	struct mtk_base_afe *afe = snd_soc_dai_get_drvdata(dai);
-	struct mt2701_afe_private *afe_priv = afe->platform_priv;
+	struct snd_soc_pcm_runtime *rtd = substream->private_data;
+	struct snd_soc_component *component = snd_soc_rtdcom_lookup(rtd, AFE_PCM_NAME);
+	struct mtk_base_afe *afe = snd_soc_component_get_drvdata(component);
 	int i2s_num = mt2701_dai_num_to_i2s(afe, dai->id);
-	bool mode = afe_priv->soc->has_one_heart_mode;
 
 	if (i2s_num < 0)
 		return i2s_num;
 
-	return mt2701_afe_enable_mclk(afe, mode ? 1 : i2s_num);
+	return mt2701_afe_enable_mclk(afe, i2s_num);
 }
 
-static int mt2701_afe_i2s_path_disable(struct mtk_base_afe *afe,
-				       struct mt2701_i2s_path *i2s_path,
-				       int stream_dir)
+static int mt2701_afe_i2s_path_shutdown(struct snd_pcm_substream *substream,
+					struct snd_soc_dai *dai,
+					int i2s_num,
+					int dir_invert)
 {
-	const struct mt2701_i2s_data *i2s_data = i2s_path->i2s_data[stream_dir];
+	struct snd_soc_pcm_runtime *rtd = substream->private_data;
+	struct snd_soc_component *component = snd_soc_rtdcom_lookup(rtd, AFE_PCM_NAME);
+	struct mtk_base_afe *afe = snd_soc_component_get_drvdata(component);
+	struct mt2701_afe_private *afe_priv = afe->platform_priv;
+	struct mt2701_i2s_path *i2s_path = &afe_priv->i2s_path[i2s_num];
+	const struct mt2701_i2s_data *i2s_data;
+	int stream_dir = substream->stream;
 
-	if (--i2s_path->on[stream_dir] < 0)
+	if (dir_invert)	{
+		if (stream_dir == SNDRV_PCM_STREAM_PLAYBACK)
+			stream_dir = SNDRV_PCM_STREAM_CAPTURE;
+		else
+			stream_dir = SNDRV_PCM_STREAM_PLAYBACK;
+	}
+	i2s_data = i2s_path->i2s_data[stream_dir];
+
+	i2s_path->on[stream_dir]--;
+	if (i2s_path->on[stream_dir] < 0) {
+		dev_warn(afe->dev, "i2s_path->on: %d, dir: %d\n",
+			 i2s_path->on[stream_dir], stream_dir);
 		i2s_path->on[stream_dir] = 0;
-
+	}
 	if (i2s_path->on[stream_dir])
 		return 0;
 
@@ -135,7 +137,7 @@ static int mt2701_afe_i2s_path_disable(struct mtk_base_afe *afe,
 	regmap_update_bits(afe->regmap, i2s_data->i2s_ctrl_reg,
 			   ASYS_I2S_CON_I2S_EN, 0);
 
-	mt2701_afe_disable_i2s(afe, i2s_path, stream_dir);
+	mt2701_afe_disable_i2s(afe, i2s_num, stream_dir);
 
 	return 0;
 }
@@ -143,11 +145,12 @@ static int mt2701_afe_i2s_path_disable(struct mtk_base_afe *afe,
 static void mt2701_afe_i2s_shutdown(struct snd_pcm_substream *substream,
 				    struct snd_soc_dai *dai)
 {
-	struct mtk_base_afe *afe = snd_soc_dai_get_drvdata(dai);
+	struct snd_soc_pcm_runtime *rtd = substream->private_data;
+	struct snd_soc_component *component = snd_soc_rtdcom_lookup(rtd, AFE_PCM_NAME);
+	struct mtk_base_afe *afe = snd_soc_component_get_drvdata(component);
 	struct mt2701_afe_private *afe_priv = afe->platform_priv;
 	int i2s_num = mt2701_dai_num_to_i2s(afe, dai->id);
 	struct mt2701_i2s_path *i2s_path;
-	bool mode = afe_priv->soc->has_one_heart_mode;
 
 	if (i2s_num < 0)
 		return;
@@ -157,33 +160,50 @@ static void mt2701_afe_i2s_shutdown(struct snd_pcm_substream *substream,
 	if (i2s_path->occupied[substream->stream])
 		i2s_path->occupied[substream->stream] = 0;
 	else
-		goto exit;
+		goto I2S_UNSTART;
 
-	mt2701_afe_i2s_path_disable(afe, i2s_path, substream->stream);
+	mt2701_afe_i2s_path_shutdown(substream, dai, i2s_num, 0);
 
 	/* need to disable i2s-out path when disable i2s-in */
 	if (substream->stream == SNDRV_PCM_STREAM_CAPTURE)
-		mt2701_afe_i2s_path_disable(afe, i2s_path, !substream->stream);
+		mt2701_afe_i2s_path_shutdown(substream, dai, i2s_num, 1);
 
-exit:
+I2S_UNSTART:
 	/* disable mclk */
-	mt2701_afe_disable_mclk(afe, mode ? 1 : i2s_num);
+	mt2701_afe_disable_mclk(afe, i2s_num);
 }
 
-static int mt2701_i2s_path_enable(struct mtk_base_afe *afe,
-				  struct mt2701_i2s_path *i2s_path,
-				  int stream_dir, int rate)
+static int mt2701_i2s_path_prepare_enable(struct snd_pcm_substream *substream,
+					  struct snd_soc_dai *dai,
+					  int i2s_num,
+					  int dir_invert)
 {
-	const struct mt2701_i2s_data *i2s_data = i2s_path->i2s_data[stream_dir];
+	struct snd_soc_pcm_runtime *rtd = substream->private_data;
+	struct snd_soc_component *component = snd_soc_rtdcom_lookup(rtd, AFE_PCM_NAME);
+	struct mtk_base_afe *afe = snd_soc_component_get_drvdata(component);
 	struct mt2701_afe_private *afe_priv = afe->platform_priv;
+	struct mt2701_i2s_path *i2s_path = &afe_priv->i2s_path[i2s_num];
+	const struct mt2701_i2s_data *i2s_data;
+	struct snd_pcm_runtime * const runtime = substream->runtime;
 	int reg, fs, w_len = 1; /* now we support bck 64bits only */
-	unsigned int mask, val;
+	int stream_dir = substream->stream;
+	unsigned int mask = 0, val = 0;
+
+	if (dir_invert) {
+		if (stream_dir == SNDRV_PCM_STREAM_PLAYBACK)
+			stream_dir = SNDRV_PCM_STREAM_CAPTURE;
+		else
+			stream_dir = SNDRV_PCM_STREAM_PLAYBACK;
+	}
+	i2s_data = i2s_path->i2s_data[stream_dir];
 
 	/* no need to enable if already done */
-	if (++i2s_path->on[stream_dir] != 1)
+	i2s_path->on[stream_dir]++;
+
+	if (i2s_path->on[stream_dir] != 1)
 		return 0;
 
-	fs = mt2701_afe_i2s_fs(rate);
+	fs = mt2701_afe_i2s_fs(runtime->rate);
 
 	mask = ASYS_I2S_CON_FS |
 	       ASYS_I2S_CON_I2S_COUPLE_MODE | /* 0 */
@@ -197,16 +217,14 @@ static int mt2701_i2s_path_enable(struct mtk_base_afe *afe,
 	if (stream_dir == SNDRV_PCM_STREAM_CAPTURE) {
 		mask |= ASYS_I2S_IN_PHASE_FIX;
 		val |= ASYS_I2S_IN_PHASE_FIX;
-		reg = ASMI_TIMING_CON1;
-	} else {
-		if (afe_priv->soc->has_one_heart_mode) {
-			mask |= ASYS_I2S_CON_ONE_HEART_MODE;
-			val |= ASYS_I2S_CON_ONE_HEART_MODE;
-		}
-		reg = ASMO_TIMING_CON1;
 	}
 
 	regmap_update_bits(afe->regmap, i2s_data->i2s_ctrl_reg, mask, val);
+
+	if (stream_dir == SNDRV_PCM_STREAM_PLAYBACK)
+		reg = ASMO_TIMING_CON1;
+	else
+		reg = ASMI_TIMING_CON1;
 
 	regmap_update_bits(afe->regmap, reg,
 			   i2s_data->i2s_asrc_fs_mask
@@ -214,7 +232,7 @@ static int mt2701_i2s_path_enable(struct mtk_base_afe *afe,
 			   fs << i2s_data->i2s_asrc_fs_shift);
 
 	/* enable i2s */
-	mt2701_afe_enable_i2s(afe, i2s_path, stream_dir);
+	mt2701_afe_enable_i2s(afe, i2s_num, stream_dir);
 
 	/* reset i2s hw status before enable */
 	regmap_update_bits(afe->regmap, i2s_data->i2s_ctrl_reg,
@@ -231,33 +249,45 @@ static int mt2701_i2s_path_enable(struct mtk_base_afe *afe,
 static int mt2701_afe_i2s_prepare(struct snd_pcm_substream *substream,
 				  struct snd_soc_dai *dai)
 {
-	struct mtk_base_afe *afe = snd_soc_dai_get_drvdata(dai);
+	int clk_domain;
+	struct snd_soc_pcm_runtime *rtd = substream->private_data;
+	struct snd_soc_component *component = snd_soc_rtdcom_lookup(rtd, AFE_PCM_NAME);
+	struct mtk_base_afe *afe = snd_soc_component_get_drvdata(component);
 	struct mt2701_afe_private *afe_priv = afe->platform_priv;
-	int ret, i2s_num = mt2701_dai_num_to_i2s(afe, dai->id);
+	int i2s_num = mt2701_dai_num_to_i2s(afe, dai->id);
 	struct mt2701_i2s_path *i2s_path;
-	bool mode = afe_priv->soc->has_one_heart_mode;
+	int mclk_rate;
 
 	if (i2s_num < 0)
 		return i2s_num;
 
 	i2s_path = &afe_priv->i2s_path[i2s_num];
+	mclk_rate = i2s_path->mclk_rate;
 
 	if (i2s_path->occupied[substream->stream])
 		return -EBUSY;
-
-	ret = mt2701_mclk_configuration(afe, mode ? 1 : i2s_num);
-	if (ret)
-		return ret;
-
 	i2s_path->occupied[substream->stream] = 1;
 
-	/* need to enable i2s-out path when enable i2s-in */
-	if (substream->stream == SNDRV_PCM_STREAM_CAPTURE)
-		mt2701_i2s_path_enable(afe, i2s_path, !substream->stream,
-				       substream->runtime->rate);
+	if (MT2701_PLL_DOMAIN_0_RATE % mclk_rate == 0) {
+		clk_domain = 0;
+	} else if (MT2701_PLL_DOMAIN_1_RATE % mclk_rate == 0) {
+		clk_domain = 1;
+	} else {
+		dev_err(dai->dev, "%s() bad mclk rate %d\n",
+			__func__, mclk_rate);
+		return -EINVAL;
+	}
+	mt2701_mclk_configuration(afe, i2s_num, clk_domain, mclk_rate);
 
-	mt2701_i2s_path_enable(afe, i2s_path, substream->stream,
-			       substream->runtime->rate);
+	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
+		mt2701_i2s_path_prepare_enable(substream, dai, i2s_num, 0);
+	} else {
+		/* need to enable i2s-out path when enable i2s-in */
+		/* prepare for another direction "out" */
+		mt2701_i2s_path_prepare_enable(substream, dai, i2s_num, 1);
+		/* prepare for "in" */
+		mt2701_i2s_path_prepare_enable(substream, dai, i2s_num, 0);
+	}
 
 	return 0;
 }
@@ -265,29 +295,30 @@ static int mt2701_afe_i2s_prepare(struct snd_pcm_substream *substream,
 static int mt2701_afe_i2s_set_sysclk(struct snd_soc_dai *dai, int clk_id,
 				     unsigned int freq, int dir)
 {
-	struct mtk_base_afe *afe = snd_soc_dai_get_drvdata(dai);
+	struct mtk_base_afe *afe = dev_get_drvdata(dai->dev);
 	struct mt2701_afe_private *afe_priv = afe->platform_priv;
 	int i2s_num = mt2701_dai_num_to_i2s(afe, dai->id);
-	bool mode = afe_priv->soc->has_one_heart_mode;
 
 	if (i2s_num < 0)
 		return i2s_num;
 
 	/* mclk */
 	if (dir == SND_SOC_CLOCK_IN) {
-		dev_warn(dai->dev, "The SoCs doesn't support mclk input\n");
+		dev_warn(dai->dev,
+			 "%s() warning: mt2701 doesn't support mclk input\n",
+			__func__);
 		return -EINVAL;
 	}
-
-	afe_priv->i2s_path[mode ? 1 : i2s_num].mclk_rate = freq;
-
+	afe_priv->i2s_path[i2s_num].mclk_rate = freq;
 	return 0;
 }
 
 static int mt2701_btmrg_startup(struct snd_pcm_substream *substream,
 				struct snd_soc_dai *dai)
 {
-	struct mtk_base_afe *afe = snd_soc_dai_get_drvdata(dai);
+	struct snd_soc_pcm_runtime *rtd = substream->private_data;
+	struct snd_soc_component *component = snd_soc_rtdcom_lookup(rtd, AFE_PCM_NAME);
+	struct mtk_base_afe *afe = snd_soc_component_get_drvdata(component);
 	struct mt2701_afe_private *afe_priv = afe->platform_priv;
 	int ret;
 
@@ -296,7 +327,6 @@ static int mt2701_btmrg_startup(struct snd_pcm_substream *substream,
 		return ret;
 
 	afe_priv->mrg_enable[substream->stream] = 1;
-
 	return 0;
 }
 
@@ -304,14 +334,17 @@ static int mt2701_btmrg_hw_params(struct snd_pcm_substream *substream,
 				  struct snd_pcm_hw_params *params,
 				  struct snd_soc_dai *dai)
 {
-	struct mtk_base_afe *afe = snd_soc_dai_get_drvdata(dai);
+	struct snd_soc_pcm_runtime *rtd = substream->private_data;
+	struct snd_soc_component *component = snd_soc_rtdcom_lookup(rtd, AFE_PCM_NAME);
+	struct mtk_base_afe *afe = snd_soc_component_get_drvdata(component);
 	int stream_fs;
 	u32 val, msk;
 
 	stream_fs = params_rate(params);
 
-	if (stream_fs != 8000 && stream_fs != 16000) {
-		dev_err(afe->dev, "unsupported rate %d\n", stream_fs);
+	if ((stream_fs != 8000) && (stream_fs != 16000)) {
+		dev_err(afe->dev, "%s() btmgr not support this stream_fs %d\n",
+			__func__, stream_fs);
 		return -EINVAL;
 	}
 
@@ -345,7 +378,9 @@ static int mt2701_btmrg_hw_params(struct snd_pcm_substream *substream,
 static void mt2701_btmrg_shutdown(struct snd_pcm_substream *substream,
 				  struct snd_soc_dai *dai)
 {
-	struct mtk_base_afe *afe = snd_soc_dai_get_drvdata(dai);
+	struct snd_soc_pcm_runtime *rtd = substream->private_data;
+	struct snd_soc_component *component = snd_soc_rtdcom_lookup(rtd, AFE_PCM_NAME);
+	struct mtk_base_afe *afe = snd_soc_component_get_drvdata(component);
 	struct mt2701_afe_private *afe_priv = afe->platform_priv;
 
 	/* if the other direction stream is not occupied */
@@ -358,26 +393,28 @@ static void mt2701_btmrg_shutdown(struct snd_pcm_substream *substream,
 				   AFE_MRGIF_CON_MRG_I2S_EN, 0);
 		mt2701_disable_btmrg_clk(afe);
 	}
-
 	afe_priv->mrg_enable[substream->stream] = 0;
 }
 
 static int mt2701_simple_fe_startup(struct snd_pcm_substream *substream,
 				    struct snd_soc_dai *dai)
 {
-	struct mtk_base_afe *afe = snd_soc_dai_get_drvdata(dai);
-	struct mtk_base_afe_memif *memif_tmp;
+	struct snd_soc_pcm_runtime *rtd = substream->private_data;
+	struct snd_soc_component *component = snd_soc_rtdcom_lookup(rtd, AFE_PCM_NAME);
+	struct mtk_base_afe *afe = snd_soc_component_get_drvdata(component);
 	int stream_dir = substream->stream;
+	int memif_num = rtd->cpu_dai->id;
+	struct mtk_base_afe_memif *memif_tmp;
 
 	/* can't run single DL & DLM at the same time */
 	if (stream_dir == SNDRV_PCM_STREAM_PLAYBACK) {
 		memif_tmp = &afe->memif[MT2701_MEMIF_DLM];
 		if (memif_tmp->substream) {
-			dev_warn(afe->dev, "memif is not available");
+			dev_warn(afe->dev, "%s memif is not available, stream_dir %d, memif_num %d\n",
+				 __func__, stream_dir, memif_num);
 			return -EBUSY;
 		}
 	}
-
 	return mtk_afe_fe_startup(substream, dai);
 }
 
@@ -385,23 +422,27 @@ static int mt2701_simple_fe_hw_params(struct snd_pcm_substream *substream,
 				      struct snd_pcm_hw_params *params,
 				      struct snd_soc_dai *dai)
 {
-	struct mtk_base_afe *afe = snd_soc_dai_get_drvdata(dai);
+	struct snd_soc_pcm_runtime *rtd = substream->private_data;
+	struct snd_soc_component *component = snd_soc_rtdcom_lookup(rtd, AFE_PCM_NAME);
+	struct mtk_base_afe *afe = snd_soc_component_get_drvdata(component);
 	int stream_dir = substream->stream;
 
 	/* single DL use PAIR_INTERLEAVE */
-	if (stream_dir == SNDRV_PCM_STREAM_PLAYBACK)
+	if (stream_dir == SNDRV_PCM_STREAM_PLAYBACK) {
 		regmap_update_bits(afe->regmap,
 				   AFE_MEMIF_PBUF_SIZE,
 				   AFE_MEMIF_PBUF_SIZE_DLM_MASK,
 				   AFE_MEMIF_PBUF_SIZE_PAIR_INTERLEAVE);
-
+	}
 	return mtk_afe_fe_hw_params(substream, params, dai);
 }
 
 static int mt2701_dlm_fe_startup(struct snd_pcm_substream *substream,
 				 struct snd_soc_dai *dai)
 {
-	struct mtk_base_afe *afe = snd_soc_dai_get_drvdata(dai);
+	struct snd_soc_pcm_runtime *rtd = substream->private_data;
+	struct snd_soc_component *component = snd_soc_rtdcom_lookup(rtd, AFE_PCM_NAME);
+	struct mtk_base_afe *afe = snd_soc_component_get_drvdata(component);
 	struct mtk_base_afe_memif *memif_tmp;
 	const struct mtk_base_memif_data *memif_data;
 	int i;
@@ -427,7 +468,9 @@ static int mt2701_dlm_fe_startup(struct snd_pcm_substream *substream,
 static void mt2701_dlm_fe_shutdown(struct snd_pcm_substream *substream,
 				   struct snd_soc_dai *dai)
 {
-	struct mtk_base_afe *afe = snd_soc_dai_get_drvdata(dai);
+	struct snd_soc_pcm_runtime *rtd = substream->private_data;
+	struct snd_soc_component *component = snd_soc_rtdcom_lookup(rtd, AFE_PCM_NAME);
+	struct mtk_base_afe *afe = snd_soc_component_get_drvdata(component);
 	const struct mtk_base_memif_data *memif_data;
 	int i;
 
@@ -438,7 +481,6 @@ static void mt2701_dlm_fe_shutdown(struct snd_pcm_substream *substream,
 				   1 << memif_data->agent_disable_shift,
 				   1 << memif_data->agent_disable_shift);
 	}
-
 	return mtk_afe_fe_shutdown(substream, dai);
 }
 
@@ -446,7 +488,9 @@ static int mt2701_dlm_fe_hw_params(struct snd_pcm_substream *substream,
 				   struct snd_pcm_hw_params *params,
 				   struct snd_soc_dai *dai)
 {
-	struct mtk_base_afe *afe = snd_soc_dai_get_drvdata(dai);
+	struct snd_soc_pcm_runtime *rtd = substream->private_data;
+	struct snd_soc_component *component = snd_soc_rtdcom_lookup(rtd, AFE_PCM_NAME);
+	struct mtk_base_afe *afe = snd_soc_component_get_drvdata(component);
 	int channels = params_channels(params);
 
 	regmap_update_bits(afe->regmap,
@@ -468,7 +512,9 @@ static int mt2701_dlm_fe_hw_params(struct snd_pcm_substream *substream,
 static int mt2701_dlm_fe_trigger(struct snd_pcm_substream *substream,
 				 int cmd, struct snd_soc_dai *dai)
 {
-	struct mtk_base_afe *afe = snd_soc_dai_get_drvdata(dai);
+	struct snd_soc_pcm_runtime *rtd = substream->private_data;
+	struct snd_soc_component *component = snd_soc_rtdcom_lookup(rtd, AFE_PCM_NAME);
+	struct mtk_base_afe *afe = snd_soc_component_get_drvdata(component);
 	struct mtk_base_afe_memif *memif_tmp = &afe->memif[MT2701_MEMIF_DL1];
 
 	switch (cmd) {
@@ -494,14 +540,13 @@ static int mt2701_dlm_fe_trigger(struct snd_pcm_substream *substream,
 static int mt2701_memif_fs(struct snd_pcm_substream *substream,
 			   unsigned int rate)
 {
-	struct snd_soc_pcm_runtime *rtd = asoc_substream_to_rtd(substream);
+	struct snd_soc_pcm_runtime *rtd = substream->private_data;
 	int fs;
 
-	if (asoc_rtd_to_cpu(rtd, 0)->id != MT2701_MEMIF_ULBT)
+	if (rtd->cpu_dai->id != MT2701_MEMIF_ULBT)
 		fs = mt2701_afe_i2s_fs(rate);
 	else
 		fs = (rate == 16000 ? 1 : 0);
-
 	return fs;
 }
 
@@ -549,6 +594,8 @@ static struct snd_soc_dai_driver mt2701_afe_pcm_dais[] = {
 	{
 		.name = "PCMO0",
 		.id = MT2701_MEMIF_DL1,
+		.suspend = mtk_afe_dai_suspend,
+		.resume = mtk_afe_dai_resume,
 		.playback = {
 			.stream_name = "DL1",
 			.channels_min = 1,
@@ -563,6 +610,8 @@ static struct snd_soc_dai_driver mt2701_afe_pcm_dais[] = {
 	{
 		.name = "PCM_multi",
 		.id = MT2701_MEMIF_DLM,
+		.suspend = mtk_afe_dai_suspend,
+		.resume = mtk_afe_dai_resume,
 		.playback = {
 			.stream_name = "DLM",
 			.channels_min = 1,
@@ -578,6 +627,8 @@ static struct snd_soc_dai_driver mt2701_afe_pcm_dais[] = {
 	{
 		.name = "PCM0",
 		.id = MT2701_MEMIF_UL1,
+		.suspend = mtk_afe_dai_suspend,
+		.resume = mtk_afe_dai_resume,
 		.capture = {
 			.stream_name = "UL1",
 			.channels_min = 1,
@@ -592,6 +643,8 @@ static struct snd_soc_dai_driver mt2701_afe_pcm_dais[] = {
 	{
 		.name = "PCM1",
 		.id = MT2701_MEMIF_UL2,
+		.suspend = mtk_afe_dai_suspend,
+		.resume = mtk_afe_dai_resume,
 		.capture = {
 			.stream_name = "UL2",
 			.channels_min = 1,
@@ -607,6 +660,8 @@ static struct snd_soc_dai_driver mt2701_afe_pcm_dais[] = {
 	{
 		.name = "PCM_BT_DL",
 		.id = MT2701_MEMIF_DLBT,
+		.suspend = mtk_afe_dai_suspend,
+		.resume = mtk_afe_dai_resume,
 		.playback = {
 			.stream_name = "DLBT",
 			.channels_min = 1,
@@ -620,6 +675,8 @@ static struct snd_soc_dai_driver mt2701_afe_pcm_dais[] = {
 	{
 		.name = "PCM_BT_UL",
 		.id = MT2701_MEMIF_ULBT,
+		.suspend = mtk_afe_dai_suspend,
+		.resume = mtk_afe_dai_resume,
 		.capture = {
 			.stream_name = "ULBT",
 			.channels_min = 1,
@@ -655,7 +712,7 @@ static struct snd_soc_dai_driver mt2701_afe_pcm_dais[] = {
 
 		},
 		.ops = &mt2701_afe_i2s_ops,
-		.symmetric_rate = 1,
+		.symmetric_rates = 1,
 	},
 	{
 		.name = "I2S1",
@@ -679,7 +736,7 @@ static struct snd_soc_dai_driver mt2701_afe_pcm_dais[] = {
 				| SNDRV_PCM_FMTBIT_S32_LE)
 			},
 		.ops = &mt2701_afe_i2s_ops,
-		.symmetric_rate = 1,
+		.symmetric_rates = 1,
 	},
 	{
 		.name = "I2S2",
@@ -703,7 +760,7 @@ static struct snd_soc_dai_driver mt2701_afe_pcm_dais[] = {
 				| SNDRV_PCM_FMTBIT_S32_LE)
 			},
 		.ops = &mt2701_afe_i2s_ops,
-		.symmetric_rate = 1,
+		.symmetric_rates = 1,
 	},
 	{
 		.name = "I2S3",
@@ -727,7 +784,7 @@ static struct snd_soc_dai_driver mt2701_afe_pcm_dais[] = {
 				| SNDRV_PCM_FMTBIT_S32_LE)
 			},
 		.ops = &mt2701_afe_i2s_ops,
-		.symmetric_rate = 1,
+		.symmetric_rates = 1,
 	},
 	{
 		.name = "MRG BT",
@@ -749,7 +806,7 @@ static struct snd_soc_dai_driver mt2701_afe_pcm_dais[] = {
 			.formats = SNDRV_PCM_FMTBIT_S16_LE,
 		},
 		.ops = &mt2701_btmrg_ops,
-		.symmetric_rate = 1,
+		.symmetric_rates = 1,
 	}
 };
 
@@ -805,6 +862,14 @@ static const struct snd_kcontrol_new mt2701_afe_o22_mix[] = {
 	SOC_DAPM_SINGLE_AUTODISABLE("I19 Switch", AFE_CONN22, 19, 1, 0),
 };
 
+static const struct snd_kcontrol_new mt2701_afe_o23_mix[] = {
+	SOC_DAPM_SINGLE_AUTODISABLE("I20 Switch", AFE_CONN23, 20, 1, 0),
+};
+
+static const struct snd_kcontrol_new mt2701_afe_o24_mix[] = {
+	SOC_DAPM_SINGLE_AUTODISABLE("I21 Switch", AFE_CONN24, 21, 1, 0),
+};
+
 static const struct snd_kcontrol_new mt2701_afe_o31_mix[] = {
 	SOC_DAPM_SINGLE_AUTODISABLE("I35 Switch", AFE_CONN41, 9, 1, 0),
 };
@@ -831,6 +896,11 @@ static const struct snd_kcontrol_new mt2701_afe_multi_ch_out_i2s2[] = {
 static const struct snd_kcontrol_new mt2701_afe_multi_ch_out_i2s3[] = {
 	SOC_DAPM_SINGLE_AUTODISABLE("Multich I2S3 Out Switch",
 				    PWR2_TOP_CON, 18, 1, 0),
+};
+
+static const struct snd_kcontrol_new mt2701_afe_multi_ch_out_i2s4[] = {
+	SOC_DAPM_SINGLE_AUTODISABLE("Multich I2S4 Out Switch",
+				    PWR2_TOP_CON, 19, 1, 0),
 };
 
 static const struct snd_soc_dapm_widget mt2701_afe_pcm_widgets[] = {
@@ -954,27 +1024,15 @@ static const struct snd_soc_dapm_route mt2701_afe_pcm_routes[] = {
 	{ "O31", "I35 Switch", "I35" },
 };
 
-static int mt2701_afe_pcm_probe(struct snd_soc_component *component)
-{
-	struct mtk_base_afe *afe = snd_soc_component_get_drvdata(component);
-
-	snd_soc_component_init_regmap(component, afe->regmap);
-
-	return 0;
-}
-
 static const struct snd_soc_component_driver mt2701_afe_pcm_dai_component = {
-	.probe = mt2701_afe_pcm_probe,
 	.name = "mt2701-afe-pcm-dai",
 	.dapm_widgets = mt2701_afe_pcm_widgets,
 	.num_dapm_widgets = ARRAY_SIZE(mt2701_afe_pcm_widgets),
 	.dapm_routes = mt2701_afe_pcm_routes,
 	.num_dapm_routes = ARRAY_SIZE(mt2701_afe_pcm_routes),
-	.suspend = mtk_afe_suspend,
-	.resume = mtk_afe_resume,
 };
 
-static const struct mtk_base_memif_data memif_data_array[MT2701_MEMIF_NUM] = {
+static const struct mtk_base_memif_data memif_data[MT2701_MEMIF_NUM] = {
 	{
 		.name = "DL1",
 		.id = MT2701_MEMIF_DL1,
@@ -992,6 +1050,7 @@ static const struct mtk_base_memif_data memif_data_array[MT2701_MEMIF_NUM] = {
 		.agent_disable_reg = AUDIO_TOP_CON5,
 		.agent_disable_shift = 6,
 		.msb_reg = -1,
+		.msb_shift = -1,
 	},
 	{
 		.name = "DL2",
@@ -1010,6 +1069,7 @@ static const struct mtk_base_memif_data memif_data_array[MT2701_MEMIF_NUM] = {
 		.agent_disable_reg = AUDIO_TOP_CON5,
 		.agent_disable_shift = 7,
 		.msb_reg = -1,
+		.msb_shift = -1,
 	},
 	{
 		.name = "DL3",
@@ -1028,6 +1088,7 @@ static const struct mtk_base_memif_data memif_data_array[MT2701_MEMIF_NUM] = {
 		.agent_disable_reg = AUDIO_TOP_CON5,
 		.agent_disable_shift = 8,
 		.msb_reg = -1,
+		.msb_shift = -1,
 	},
 	{
 		.name = "DL4",
@@ -1046,6 +1107,7 @@ static const struct mtk_base_memif_data memif_data_array[MT2701_MEMIF_NUM] = {
 		.agent_disable_reg = AUDIO_TOP_CON5,
 		.agent_disable_shift = 9,
 		.msb_reg = -1,
+		.msb_shift = -1,
 	},
 	{
 		.name = "DL5",
@@ -1064,6 +1126,7 @@ static const struct mtk_base_memif_data memif_data_array[MT2701_MEMIF_NUM] = {
 		.agent_disable_reg = AUDIO_TOP_CON5,
 		.agent_disable_shift = 10,
 		.msb_reg = -1,
+		.msb_shift = -1,
 	},
 	{
 		.name = "DLM",
@@ -1082,6 +1145,7 @@ static const struct mtk_base_memif_data memif_data_array[MT2701_MEMIF_NUM] = {
 		.agent_disable_reg = AUDIO_TOP_CON5,
 		.agent_disable_shift = 12,
 		.msb_reg = -1,
+		.msb_shift = -1,
 	},
 	{
 		.name = "UL1",
@@ -1100,6 +1164,7 @@ static const struct mtk_base_memif_data memif_data_array[MT2701_MEMIF_NUM] = {
 		.agent_disable_reg = AUDIO_TOP_CON5,
 		.agent_disable_shift = 0,
 		.msb_reg = -1,
+		.msb_shift = -1,
 	},
 	{
 		.name = "UL2",
@@ -1118,6 +1183,7 @@ static const struct mtk_base_memif_data memif_data_array[MT2701_MEMIF_NUM] = {
 		.agent_disable_reg = AUDIO_TOP_CON5,
 		.agent_disable_shift = 1,
 		.msb_reg = -1,
+		.msb_shift = -1,
 	},
 	{
 		.name = "UL3",
@@ -1136,6 +1202,7 @@ static const struct mtk_base_memif_data memif_data_array[MT2701_MEMIF_NUM] = {
 		.agent_disable_reg = AUDIO_TOP_CON5,
 		.agent_disable_shift = 2,
 		.msb_reg = -1,
+		.msb_shift = -1,
 	},
 	{
 		.name = "UL4",
@@ -1154,6 +1221,7 @@ static const struct mtk_base_memif_data memif_data_array[MT2701_MEMIF_NUM] = {
 		.agent_disable_reg = AUDIO_TOP_CON5,
 		.agent_disable_shift = 3,
 		.msb_reg = -1,
+		.msb_shift = -1,
 	},
 	{
 		.name = "UL5",
@@ -1172,6 +1240,7 @@ static const struct mtk_base_memif_data memif_data_array[MT2701_MEMIF_NUM] = {
 		.agent_disable_reg = AUDIO_TOP_CON5,
 		.agent_disable_shift = 4,
 		.msb_reg = -1,
+		.msb_shift = -1,
 	},
 	{
 		.name = "DLBT",
@@ -1190,6 +1259,7 @@ static const struct mtk_base_memif_data memif_data_array[MT2701_MEMIF_NUM] = {
 		.agent_disable_reg = AUDIO_TOP_CON5,
 		.agent_disable_shift = 13,
 		.msb_reg = -1,
+		.msb_shift = -1,
 	},
 	{
 		.name = "ULBT",
@@ -1208,6 +1278,7 @@ static const struct mtk_base_memif_data memif_data_array[MT2701_MEMIF_NUM] = {
 		.agent_disable_reg = AUDIO_TOP_CON5,
 		.agent_disable_shift = 16,
 		.msb_reg = -1,
+		.msb_shift = -1,
 	},
 };
 
@@ -1253,24 +1324,63 @@ static const struct mtk_base_irq_data irq_data[MT2701_IRQ_ASYS_END] = {
 	}
 };
 
-static const struct mt2701_i2s_data mt2701_i2s_data[][2] = {
+static const struct mt2701_i2s_data mt2701_i2s_data[MT2701_I2S_NUM][2] = {
 	{
-		{ ASYS_I2SO1_CON, 0, 0x1f },
-		{ ASYS_I2SIN1_CON, 0, 0x1f },
+		{
+			.i2s_ctrl_reg = ASYS_I2SO1_CON,
+			.i2s_asrc_fs_shift = 0,
+			.i2s_asrc_fs_mask = 0x1f,
+
+		},
+		{
+			.i2s_ctrl_reg = ASYS_I2SIN1_CON,
+			.i2s_asrc_fs_shift = 0,
+			.i2s_asrc_fs_mask = 0x1f,
+
+		},
 	},
 	{
-		{ ASYS_I2SO2_CON, 5, 0x1f },
-		{ ASYS_I2SIN2_CON, 5, 0x1f },
+		{
+			.i2s_ctrl_reg = ASYS_I2SO2_CON,
+			.i2s_asrc_fs_shift = 5,
+			.i2s_asrc_fs_mask = 0x1f,
+
+		},
+		{
+			.i2s_ctrl_reg = ASYS_I2SIN2_CON,
+			.i2s_asrc_fs_shift = 5,
+			.i2s_asrc_fs_mask = 0x1f,
+
+		},
 	},
 	{
-		{ ASYS_I2SO3_CON, 10, 0x1f },
-		{ ASYS_I2SIN3_CON, 10, 0x1f },
+		{
+			.i2s_ctrl_reg = ASYS_I2SO3_CON,
+			.i2s_asrc_fs_shift = 10,
+			.i2s_asrc_fs_mask = 0x1f,
+
+		},
+		{
+			.i2s_ctrl_reg = ASYS_I2SIN3_CON,
+			.i2s_asrc_fs_shift = 10,
+			.i2s_asrc_fs_mask = 0x1f,
+
+		},
 	},
 	{
-		{ ASYS_I2SO4_CON, 15, 0x1f },
-		{ ASYS_I2SIN4_CON, 15, 0x1f },
+		{
+			.i2s_ctrl_reg = ASYS_I2SO4_CON,
+			.i2s_asrc_fs_shift = 15,
+			.i2s_asrc_fs_mask = 0x1f,
+
+		},
+		{
+			.i2s_ctrl_reg = ASYS_I2SIN4_CON,
+			.i2s_asrc_fs_shift = 15,
+			.i2s_asrc_fs_mask = 0x1f,
+
+		},
 	},
-	/* TODO - extend control registers supported by newer SoCs */
 };
 
 static irqreturn_t mt2701_asys_isr(int irq_id, void *dev)
@@ -1288,12 +1398,10 @@ static irqreturn_t mt2701_asys_isr(int irq_id, void *dev)
 		memif = &afe->memif[id];
 		if (memif->irq_usage < 0)
 			continue;
-
 		irq = &afe->irqs[memif->irq_usage];
-		if (status & 1 << irq->irq_data->irq_clr_shift)
+		if (status & 1 << (irq->irq_data->irq_clr_shift))
 			snd_pcm_period_elapsed(memif->substream);
 	}
-
 	return IRQ_HANDLED;
 }
 
@@ -1309,6 +1417,22 @@ static int mt2701_afe_runtime_resume(struct device *dev)
 	struct mtk_base_afe *afe = dev_get_drvdata(dev);
 
 	return mt2701_afe_enable_clock(afe);
+}
+
+static int mt2701_afe_add_component(struct mtk_base_afe *afe)
+{
+	struct snd_soc_component *component;
+
+	component = kzalloc(sizeof(*component), GFP_KERNEL);
+	if (!component)
+		return -ENOMEM;
+
+	component->regmap = afe->regmap;
+
+	return snd_soc_add_component(afe->dev, component,
+				     &mt2701_afe_pcm_dai_component,
+				     mt2701_afe_pcm_dais,
+				     ARRAY_SIZE(mt2701_afe_pcm_dais));
 }
 
 static int mt2701_afe_pcm_dev_probe(struct platform_device *pdev)
@@ -1328,20 +1452,14 @@ static int mt2701_afe_pcm_dev_probe(struct platform_device *pdev)
 		return -ENOMEM;
 
 	afe_priv = afe->platform_priv;
-	afe_priv->soc = of_device_get_match_data(&pdev->dev);
 	afe->dev = &pdev->dev;
 	dev = afe->dev;
 
-	afe_priv->i2s_path = devm_kcalloc(dev,
-					  afe_priv->soc->i2s_num,
-					  sizeof(struct mt2701_i2s_path),
-					  GFP_KERNEL);
-	if (!afe_priv->i2s_path)
-		return -ENOMEM;
-
 	irq_id = platform_get_irq_byname(pdev, "asys");
-	if (irq_id < 0)
+	if (irq_id < 0) {
+		dev_err(dev, "unable to get ASYS IRQ\n");
 		return irq_id;
+	}
 
 	ret = devm_request_irq(dev, irq_id, mt2701_asys_isr,
 			       IRQF_TRIGGER_NONE, "asys-isr", (void *)afe);
@@ -1366,7 +1484,7 @@ static int mt2701_afe_pcm_dev_probe(struct platform_device *pdev)
 		return -ENOMEM;
 
 	for (i = 0; i < afe->memif_size; i++) {
-		afe->memif[i].data = &memif_data_array[i];
+		afe->memif[i].data = &memif_data[i];
 		afe->memif[i].irq_usage = -1;
 	}
 
@@ -1381,11 +1499,11 @@ static int mt2701_afe_pcm_dev_probe(struct platform_device *pdev)
 		afe->irqs[i].irq_data = &irq_data[i];
 
 	/* I2S initialize */
-	for (i = 0; i < afe_priv->soc->i2s_num; i++) {
-		afe_priv->i2s_path[i].i2s_data[SNDRV_PCM_STREAM_PLAYBACK] =
-			&mt2701_i2s_data[i][SNDRV_PCM_STREAM_PLAYBACK];
-		afe_priv->i2s_path[i].i2s_data[SNDRV_PCM_STREAM_CAPTURE] =
-			&mt2701_i2s_data[i][SNDRV_PCM_STREAM_CAPTURE];
+	for (i = 0; i < MT2701_I2S_NUM; i++) {
+		afe_priv->i2s_path[i].i2s_data[I2S_OUT]
+			= &mt2701_i2s_data[i][I2S_OUT];
+		afe_priv->i2s_path[i].i2s_data[I2S_IN]
+			= &mt2701_i2s_data[i][I2S_IN];
 	}
 
 	afe->mtk_afe_hardware = &mt2701_afe_hardware;
@@ -1420,10 +1538,7 @@ static int mt2701_afe_pcm_dev_probe(struct platform_device *pdev)
 		goto err_platform;
 	}
 
-	ret = devm_snd_soc_register_component(&pdev->dev,
-					 &mt2701_afe_pcm_dai_component,
-					 mt2701_afe_pcm_dais,
-					 ARRAY_SIZE(mt2701_afe_pcm_dais));
+	ret = mt2701_afe_add_component(afe);
 	if (ret) {
 		dev_warn(dev, "err_dai_component\n");
 		goto err_platform;
@@ -1449,18 +1564,8 @@ static int mt2701_afe_pcm_dev_remove(struct platform_device *pdev)
 	return 0;
 }
 
-static const struct mt2701_soc_variants mt2701_soc_v1 = {
-	.i2s_num = 4,
-};
-
-static const struct mt2701_soc_variants mt2701_soc_v2 = {
-	.has_one_heart_mode = true,
-	.i2s_num = 4,
-};
-
 static const struct of_device_id mt2701_afe_pcm_dt_match[] = {
-	{ .compatible = "mediatek,mt2701-audio", .data = &mt2701_soc_v1 },
-	{ .compatible = "mediatek,mt7622-audio", .data = &mt2701_soc_v2 },
+	{ .compatible = "mediatek,mt2701-audio", },
 	{},
 };
 MODULE_DEVICE_TABLE(of, mt2701_afe_pcm_dt_match);
@@ -1474,7 +1579,9 @@ static struct platform_driver mt2701_afe_pcm_driver = {
 	.driver = {
 		   .name = "mt2701-audio",
 		   .of_match_table = mt2701_afe_pcm_dt_match,
+#ifdef CONFIG_PM
 		   .pm = &mt2701_afe_pm_ops,
+#endif
 	},
 	.probe = mt2701_afe_pcm_dev_probe,
 	.remove = mt2701_afe_pcm_dev_remove,

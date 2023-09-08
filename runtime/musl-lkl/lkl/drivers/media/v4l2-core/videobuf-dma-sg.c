@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * helper functions for SG DMA video4linux capture buffers
  *
@@ -13,6 +12,10 @@
  * (c) 2001,02 Gerd Knorr <kraxel@bytesex.org>
  * (c) 2006 Mauro Carvalho Chehab, <mchehab@kernel.org>
  * (c) 2006 Ted Walther and John Sokol
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2
  */
 
 #include <linux/init.h>
@@ -21,13 +24,13 @@
 #include <linux/sched/mm.h>
 #include <linux/slab.h>
 #include <linux/interrupt.h>
-#include <linux/pgtable.h>
 
 #include <linux/dma-mapping.h>
 #include <linux/vmalloc.h>
 #include <linux/pagemap.h>
 #include <linux/scatterlist.h>
 #include <asm/page.h>
+#include <asm/pgtable.h>
 
 #include <media/videobuf-dma-sg.h>
 
@@ -66,7 +69,7 @@ static struct scatterlist *videobuf_vmalloc_to_sg(unsigned char *virt,
 	struct page *pg;
 	int i;
 
-	sglist = vzalloc(array_size(nr_pages, sizeof(*sglist)));
+	sglist = vzalloc(nr_pages * sizeof(*sglist));
 	if (NULL == sglist)
 		return NULL;
 	sg_init_table(sglist, nr_pages);
@@ -97,7 +100,7 @@ static struct scatterlist *videobuf_pages_to_sg(struct page **pages,
 
 	if (NULL == pages[0])
 		return NULL;
-	sglist = vmalloc(array_size(nr_pages, sizeof(*sglist)));
+	sglist = vmalloc(nr_pages * sizeof(*sglist));
 	if (NULL == sglist)
 		return NULL;
 	sg_init_table(sglist, nr_pages);
@@ -172,23 +175,22 @@ static int videobuf_dma_init_user_locked(struct videobuf_dmabuf *dma,
 	dma->offset = data & ~PAGE_MASK;
 	dma->size = size;
 	dma->nr_pages = last-first+1;
-	dma->pages = kmalloc_array(dma->nr_pages, sizeof(struct page *),
-				   GFP_KERNEL);
+	dma->pages = kmalloc(dma->nr_pages * sizeof(struct page *), GFP_KERNEL);
 	if (NULL == dma->pages)
 		return -ENOMEM;
 
 	if (rw == READ)
 		flags |= FOLL_WRITE;
 
-	dprintk(1, "init user [0x%lx+0x%lx => %lu pages]\n",
+	dprintk(1, "init user [0x%lx+0x%lx => %d pages]\n",
 		data, size, dma->nr_pages);
 
-	err = pin_user_pages(data & PAGE_MASK, dma->nr_pages,
-			     flags | FOLL_LONGTERM, dma->pages, NULL);
+	err = get_user_pages_longterm(data & PAGE_MASK, dma->nr_pages,
+			     flags, dma->pages, NULL);
 
 	if (err != dma->nr_pages) {
 		dma->nr_pages = (err >= 0) ? err : 0;
-		dprintk(1, "pin_user_pages: err=%d [%lu]\n", err,
+		dprintk(1, "get_user_pages_longterm: err=%d [%d]\n", err,
 			dma->nr_pages);
 		return err < 0 ? err : -EINVAL;
 	}
@@ -200,19 +202,19 @@ static int videobuf_dma_init_user(struct videobuf_dmabuf *dma, int direction,
 {
 	int ret;
 
-	mmap_read_lock(current->mm);
+	down_read(&current->mm->mmap_sem);
 	ret = videobuf_dma_init_user_locked(dma, direction, data, size);
-	mmap_read_unlock(current->mm);
+	up_read(&current->mm->mmap_sem);
 
 	return ret;
 }
 
 static int videobuf_dma_init_kernel(struct videobuf_dmabuf *dma, int direction,
-				    unsigned long nr_pages)
+			     int nr_pages)
 {
 	int i;
 
-	dprintk(1, "init kernel [%lu pages]\n", nr_pages);
+	dprintk(1, "init kernel [%d pages]\n", nr_pages);
 
 	dma->direction = direction;
 	dma->vaddr_pages = kcalloc(nr_pages, sizeof(*dma->vaddr_pages),
@@ -238,11 +240,11 @@ static int videobuf_dma_init_kernel(struct videobuf_dmabuf *dma, int direction,
 	dma->vaddr = vmap(dma->vaddr_pages, nr_pages, VM_MAP | VM_IOREMAP,
 			  PAGE_KERNEL);
 	if (NULL == dma->vaddr) {
-		dprintk(1, "vmalloc_32(%lu pages) failed\n", nr_pages);
+		dprintk(1, "vmalloc_32(%d pages) failed\n", nr_pages);
 		goto out_free_pages;
 	}
 
-	dprintk(1, "vmalloc is at addr %p, size=%lu\n",
+	dprintk(1, "vmalloc is at addr %p, size=%d\n",
 		dma->vaddr, nr_pages << PAGE_SHIFT);
 
 	memset(dma->vaddr, 0, nr_pages << PAGE_SHIFT);
@@ -267,9 +269,9 @@ out_free_pages:
 }
 
 static int videobuf_dma_init_overlay(struct videobuf_dmabuf *dma, int direction,
-			      dma_addr_t addr, unsigned long nr_pages)
+			      dma_addr_t addr, int nr_pages)
 {
-	dprintk(1, "init overlay [%lu pages @ bus 0x%lx]\n",
+	dprintk(1, "init overlay [%d pages @ bus 0x%lx]\n",
 		nr_pages, (unsigned long)addr);
 	dma->direction = direction;
 
@@ -332,7 +334,7 @@ int videobuf_dma_unmap(struct device *dev, struct videobuf_dmabuf *dma)
 	if (!dma->sglen)
 		return 0;
 
-	dma_unmap_sg(dev, dma->sglist, dma->nr_pages, dma->direction);
+	dma_unmap_sg(dev, dma->sglist, dma->sglen, dma->direction);
 
 	vfree(dma->sglist);
 	dma->sglist = NULL;
@@ -349,8 +351,8 @@ int videobuf_dma_free(struct videobuf_dmabuf *dma)
 	BUG_ON(dma->sglen);
 
 	if (dma->pages) {
-		unpin_user_pages_dirty_lock(dma->pages, dma->nr_pages,
-					    dma->direction == DMA_FROM_DEVICE);
+		for (i = 0; i < dma->nr_pages; i++)
+			put_page(dma->pages[i]);
 		kfree(dma->pages);
 		dma->pages = NULL;
 	}
@@ -423,6 +425,7 @@ static void videobuf_vm_close(struct vm_area_struct *vma)
 		videobuf_queue_unlock(q);
 		kfree(map);
 	}
+	return;
 }
 
 /*
@@ -431,7 +434,7 @@ static void videobuf_vm_close(struct vm_area_struct *vma)
  * now ...).  Bounce buffers don't work very well for the data rates
  * video capture has.
  */
-static vm_fault_t videobuf_vm_fault(struct vm_fault *vmf)
+static int videobuf_vm_fault(struct vm_fault *vmf)
 {
 	struct vm_area_struct *vma = vmf->vma;
 	struct page *page;
@@ -499,11 +502,9 @@ static int __videobuf_iolock(struct videobuf_queue *q,
 			     struct videobuf_buffer *vb,
 			     struct v4l2_framebuffer *fbuf)
 {
-	struct videobuf_dma_sg_memory *mem = vb->priv;
-	unsigned long pages;
+	int err, pages;
 	dma_addr_t bus;
-	int err;
-
+	struct videobuf_dma_sg_memory *mem = vb->priv;
 	BUG_ON(!mem);
 
 	MAGIC_CHECK(mem->magic, MAGIC_SG_MEM);
@@ -534,7 +535,7 @@ static int __videobuf_iolock(struct videobuf_queue *q,
 		} else {
 			/* NOTE: HACK: videobuf_iolock on V4L2_MEMORY_MMAP
 			buffers can only be called from videobuf_qbuf
-			we take current->mm->mmap_lock there, to prevent
+			we take current->mm->mmap_sem there, to prevent
 			locking inversion, so don't take it here */
 
 			err = videobuf_dma_init_user_locked(&mem->dma,
@@ -580,7 +581,7 @@ static int __videobuf_sync(struct videobuf_queue *q,
 	MAGIC_CHECK(mem->dma.magic, MAGIC_DMABUF);
 
 	dma_sync_sg_for_cpu(q->dev, mem->dma.sglist,
-			    mem->dma.nr_pages, mem->dma.direction);
+			    mem->dma.sglen, mem->dma.direction);
 
 	return 0;
 }

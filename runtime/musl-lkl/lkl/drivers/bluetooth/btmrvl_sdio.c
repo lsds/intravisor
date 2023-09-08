@@ -1,8 +1,21 @@
-// SPDX-License-Identifier: GPL-2.0-only
-/*
+/**
  * Marvell BT-over-SDIO driver: SDIO interface related functions.
  *
  * Copyright (C) 2009, Marvell International Ltd.
+ *
+ * This software file (the "File") is distributed by Marvell International
+ * Ltd. under the terms of the GNU General Public License Version 2, June 1991
+ * (the "License").  You may use, redistribute and/or modify this File in
+ * accordance with the terms and conditions of the License, a copy of which
+ * is available by writing to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA or on the
+ * worldwide web at http://www.gnu.org/licenses/old-licenses/gpl-2.0.txt.
+ *
+ *
+ * THE FILE IS DISTRIBUTED AS-IS, WITHOUT WARRANTY OF ANY KIND, AND THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE
+ * ARE EXPRESSLY DISCLAIMED.  The License provides additional details about
+ * this warranty disclaimer.
  **/
 
 #include <linux/firmware.h>
@@ -49,14 +62,13 @@ static const struct of_device_id btmrvl_sdio_of_match_table[] = {
 static irqreturn_t btmrvl_wake_irq_bt(int irq, void *priv)
 {
 	struct btmrvl_sdio_card *card = priv;
-	struct device *dev = &card->func->dev;
 	struct btmrvl_plt_wake_cfg *cfg = card->plt_wake_cfg;
 
-	dev_info(dev, "wake by bt\n");
+	pr_info("%s: wake by bt\n", __func__);
 	cfg->wake_by_bt = true;
 	disable_irq_nosync(irq);
 
-	pm_wakeup_event(dev, 0);
+	pm_wakeup_event(&card->func->dev, 0);
 	pm_system_wakeup();
 
 	return IRQ_HANDLED;
@@ -75,7 +87,7 @@ static int btmrvl_sdio_probe_of(struct device *dev,
 
 	if (!dev->of_node ||
 	    !of_match_node(btmrvl_sdio_of_match_table, dev->of_node)) {
-		dev_info(dev, "sdio device tree data not available\n");
+		pr_err("sdio platform data not available\n");
 		return -1;
 	}
 
@@ -98,9 +110,6 @@ static int btmrvl_sdio_probe_of(struct device *dev,
 					"Failed to request irq_bt %d (%d)\n",
 					cfg->irq_bt, ret);
 			}
-
-			/* Configure wakeup (enabled by default) */
-			device_init_wakeup(dev, true);
 			disable_irq(cfg->irq_bt);
 		}
 	}
@@ -202,7 +211,7 @@ static const struct btmrvl_sdio_card_reg btmrvl_reg_8897 = {
 	.fw_dump_end = 0xea,
 };
 
-static const struct btmrvl_sdio_card_reg btmrvl_reg_89xx = {
+static const struct btmrvl_sdio_card_reg btmrvl_reg_8997 = {
 	.cfg = 0x00,
 	.host_int_mask = 0x08,
 	.host_intstatus = 0x0c,
@@ -219,7 +228,7 @@ static const struct btmrvl_sdio_card_reg btmrvl_reg_89xx = {
 	.io_port_2 = 0xe6,
 	.int_read_to_clear = true,
 	.host_int_rsr = 0x04,
-	.card_misc_cfg = 0xd8,
+	.card_misc_cfg = 0xD8,
 	.fw_dump_ctrl = 0xf0,
 	.fw_dump_start = 0xf1,
 	.fw_dump_end = 0xf8,
@@ -270,28 +279,10 @@ static const struct btmrvl_sdio_device btmrvl_sdio_sd8897 = {
 	.supports_fw_dump = true,
 };
 
-static const struct btmrvl_sdio_device btmrvl_sdio_sd8977 = {
-	.helper         = NULL,
-	.firmware       = "mrvl/sdsd8977_combo_v2.bin",
-	.reg            = &btmrvl_reg_89xx,
-	.support_pscan_win_report = true,
-	.sd_blksz_fw_dl = 256,
-	.supports_fw_dump = true,
-};
-
-static const struct btmrvl_sdio_device btmrvl_sdio_sd8987 = {
-	.helper		= NULL,
-	.firmware	= "mrvl/sd8987_uapsta.bin",
-	.reg		= &btmrvl_reg_89xx,
-	.support_pscan_win_report = true,
-	.sd_blksz_fw_dl	= 256,
-	.supports_fw_dump = true,
-};
-
 static const struct btmrvl_sdio_device btmrvl_sdio_sd8997 = {
 	.helper         = NULL,
-	.firmware       = "mrvl/sdsd8997_combo_v4.bin",
-	.reg            = &btmrvl_reg_89xx,
+	.firmware       = "mrvl/sd8997_uapsta.bin",
+	.reg            = &btmrvl_reg_8997,
 	.support_pscan_win_report = true,
 	.sd_blksz_fw_dl = 256,
 	.supports_fw_dump = true,
@@ -299,31 +290,25 @@ static const struct btmrvl_sdio_device btmrvl_sdio_sd8997 = {
 
 static const struct sdio_device_id btmrvl_sdio_ids[] = {
 	/* Marvell SD8688 Bluetooth device */
-	{ SDIO_DEVICE(SDIO_VENDOR_ID_MARVELL, SDIO_DEVICE_ID_MARVELL_8688_BT),
+	{ SDIO_DEVICE(SDIO_VENDOR_ID_MARVELL, 0x9105),
 			.driver_data = (unsigned long)&btmrvl_sdio_sd8688 },
 	/* Marvell SD8787 Bluetooth device */
-	{ SDIO_DEVICE(SDIO_VENDOR_ID_MARVELL, SDIO_DEVICE_ID_MARVELL_8787_BT),
+	{ SDIO_DEVICE(SDIO_VENDOR_ID_MARVELL, 0x911A),
 			.driver_data = (unsigned long)&btmrvl_sdio_sd8787 },
 	/* Marvell SD8787 Bluetooth AMP device */
-	{ SDIO_DEVICE(SDIO_VENDOR_ID_MARVELL, SDIO_DEVICE_ID_MARVELL_8787_BT_AMP),
+	{ SDIO_DEVICE(SDIO_VENDOR_ID_MARVELL, 0x911B),
 			.driver_data = (unsigned long)&btmrvl_sdio_sd8787 },
 	/* Marvell SD8797 Bluetooth device */
-	{ SDIO_DEVICE(SDIO_VENDOR_ID_MARVELL, SDIO_DEVICE_ID_MARVELL_8797_BT),
+	{ SDIO_DEVICE(SDIO_VENDOR_ID_MARVELL, 0x912A),
 			.driver_data = (unsigned long)&btmrvl_sdio_sd8797 },
 	/* Marvell SD8887 Bluetooth device */
-	{ SDIO_DEVICE(SDIO_VENDOR_ID_MARVELL, SDIO_DEVICE_ID_MARVELL_8887_BT),
+	{ SDIO_DEVICE(SDIO_VENDOR_ID_MARVELL, 0x9136),
 			.driver_data = (unsigned long)&btmrvl_sdio_sd8887 },
 	/* Marvell SD8897 Bluetooth device */
-	{ SDIO_DEVICE(SDIO_VENDOR_ID_MARVELL, SDIO_DEVICE_ID_MARVELL_8897_BT),
+	{ SDIO_DEVICE(SDIO_VENDOR_ID_MARVELL, 0x912E),
 			.driver_data = (unsigned long)&btmrvl_sdio_sd8897 },
-	/* Marvell SD8977 Bluetooth device */
-	{ SDIO_DEVICE(SDIO_VENDOR_ID_MARVELL, SDIO_DEVICE_ID_MARVELL_8977_BT),
-			.driver_data = (unsigned long)&btmrvl_sdio_sd8977 },
-	/* Marvell SD8987 Bluetooth device */
-	{ SDIO_DEVICE(SDIO_VENDOR_ID_MARVELL, SDIO_DEVICE_ID_MARVELL_8987_BT),
-			.driver_data = (unsigned long)&btmrvl_sdio_sd8987 },
 	/* Marvell SD8997 Bluetooth device */
-	{ SDIO_DEVICE(SDIO_VENDOR_ID_MARVELL, SDIO_DEVICE_ID_MARVELL_8997_BT),
+	{ SDIO_DEVICE(SDIO_VENDOR_ID_MARVELL, 0x9142),
 			.driver_data = (unsigned long)&btmrvl_sdio_sd8997 },
 
 	{ }	/* Terminating entry */
@@ -733,7 +718,7 @@ static int btmrvl_sdio_card_to_host(struct btmrvl_private *priv)
 	}
 
 	/* Allocate buffer */
-	skb = bt_skb_alloc(num_blocks * blksz + BTSDIO_DMA_ALIGN, GFP_KERNEL);
+	skb = bt_skb_alloc(num_blocks * blksz + BTSDIO_DMA_ALIGN, GFP_ATOMIC);
 	if (!skb) {
 		BT_ERR("No free skb");
 		ret = -ENOMEM;
@@ -1326,21 +1311,15 @@ rdwr_status btmrvl_sdio_rdwr_firmware(struct btmrvl_private *priv,
 }
 
 /* This function dump sdio register and memory data */
-static void btmrvl_sdio_coredump(struct device *dev)
+static void btmrvl_sdio_dump_firmware(struct btmrvl_private *priv)
 {
-	struct sdio_func *func = dev_to_sdio_func(dev);
-	struct btmrvl_sdio_card *card;
-	struct btmrvl_private *priv;
+	struct btmrvl_sdio_card *card = priv->btmrvl_dev.card;
 	int ret = 0;
 	unsigned int reg, reg_start, reg_end;
 	enum rdwr_status stat;
 	u8 *dbg_ptr, *end_ptr, *fw_dump_data, *fw_dump_ptr;
 	u8 dump_num = 0, idx, i, read_reg, doneflag = 0;
 	u32 memory_size, fw_dump_len = 0;
-	int size = 0;
-
-	card = sdio_get_drvdata(func);
-	priv = card->priv;
 
 	/* dump sdio register first */
 	btmrvl_sdio_dump_regs(priv);
@@ -1449,7 +1428,9 @@ static void btmrvl_sdio_coredump(struct device *dev)
 					BT_ERR("Allocated buffer not enough");
 			}
 
-			if (stat == RDWR_STATUS_DONE) {
+			if (stat != RDWR_STATUS_DONE) {
+				continue;
+			} else {
 				BT_INFO("%s done: size=0x%tx",
 					entry->mem_name,
 					dbg_ptr - entry->mem_ptr);
@@ -1466,7 +1447,7 @@ done:
 	if (fw_dump_len == 0)
 		return;
 
-	fw_dump_data = vzalloc(fw_dump_len + 1);
+	fw_dump_data = vzalloc(fw_dump_len+1);
 	if (!fw_dump_data) {
 		BT_ERR("Vzalloc fw_dump_data fail!");
 		return;
@@ -1481,18 +1462,20 @@ done:
 		struct memory_type_mapping *entry = &mem_type_mapping_tbl[idx];
 
 		if (entry->mem_ptr) {
-			size += scnprintf(fw_dump_ptr + size,
-					  fw_dump_len + 1 - size,
-					  "========Start dump %s========\n",
-					  entry->mem_name);
+			strcpy(fw_dump_ptr, "========Start dump ");
+			fw_dump_ptr += strlen("========Start dump ");
 
-			memcpy(fw_dump_ptr + size, entry->mem_ptr,
-			       entry->mem_size);
-			size += entry->mem_size;
+			strcpy(fw_dump_ptr, entry->mem_name);
+			fw_dump_ptr += strlen(entry->mem_name);
 
-			size += scnprintf(fw_dump_ptr + size,
-					  fw_dump_len + 1 - size,
-					  "\n========End dump========\n");
+			strcpy(fw_dump_ptr, "========\n");
+			fw_dump_ptr += strlen("========\n");
+
+			memcpy(fw_dump_ptr, entry->mem_ptr, entry->mem_size);
+			fw_dump_ptr += entry->mem_size;
+
+			strcpy(fw_dump_ptr, "\n========End dump========\n");
+			fw_dump_ptr += strlen("\n========End dump========\n");
 
 			vfree(mem_type_mapping_tbl[idx].mem_ptr);
 			mem_type_mapping_tbl[idx].mem_ptr = NULL;
@@ -1564,6 +1547,7 @@ static int btmrvl_sdio_probe(struct sdio_func *func,
 	priv->hw_host_to_card = btmrvl_sdio_host_to_card;
 	priv->hw_wakeup_firmware = btmrvl_sdio_wakeup_fw;
 	priv->hw_process_int_status = btmrvl_sdio_process_int_status;
+	priv->firmware_dump = btmrvl_sdio_dump_firmware;
 
 	if (btmrvl_register_hdev(priv)) {
 		BT_ERR("Register hdev failed!");
@@ -1595,7 +1579,6 @@ static void btmrvl_sdio_remove(struct sdio_func *func)
 							MODULE_SHUTDOWN_REQ);
 				btmrvl_sdio_disable_host_int(card);
 			}
-
 			BT_DBG("unregister dev");
 			card->priv->surprise_removed = true;
 			btmrvl_sdio_unregister_dev(card);
@@ -1632,8 +1615,7 @@ static int btmrvl_sdio_suspend(struct device *dev)
 	}
 
 	/* Enable platform specific wakeup interrupt */
-	if (card->plt_wake_cfg && card->plt_wake_cfg->irq_bt >= 0 &&
-	    device_may_wakeup(dev)) {
+	if (card->plt_wake_cfg && card->plt_wake_cfg->irq_bt >= 0) {
 		card->plt_wake_cfg->wake_by_bt = false;
 		enable_irq(card->plt_wake_cfg->irq_bt);
 		enable_irq_wake(card->plt_wake_cfg->irq_bt);
@@ -1650,8 +1632,7 @@ static int btmrvl_sdio_suspend(struct device *dev)
 			BT_ERR("HS not activated, suspend failed!");
 			/* Disable platform specific wakeup interrupt */
 			if (card->plt_wake_cfg &&
-			    card->plt_wake_cfg->irq_bt >= 0 &&
-			    device_may_wakeup(dev)) {
+			    card->plt_wake_cfg->irq_bt >= 0) {
 				disable_irq_wake(card->plt_wake_cfg->irq_bt);
 				disable_irq(card->plt_wake_cfg->irq_bt);
 			}
@@ -1711,8 +1692,7 @@ static int btmrvl_sdio_resume(struct device *dev)
 	hci_resume_dev(hcidev);
 
 	/* Disable platform specific wakeup interrupt */
-	if (card->plt_wake_cfg && card->plt_wake_cfg->irq_bt >= 0 &&
-	    device_may_wakeup(dev)) {
+	if (card->plt_wake_cfg && card->plt_wake_cfg->irq_bt >= 0) {
 		disable_irq_wake(card->plt_wake_cfg->irq_bt);
 		disable_irq(card->plt_wake_cfg->irq_bt);
 		if (card->plt_wake_cfg->wake_by_bt)
@@ -1737,7 +1717,6 @@ static struct sdio_driver bt_mrvl_sdio = {
 	.remove		= btmrvl_sdio_remove,
 	.drv = {
 		.owner = THIS_MODULE,
-		.coredump = btmrvl_sdio_coredump,
 		.pm = &btmrvl_sdio_pm_ops,
 	}
 };
@@ -1776,6 +1755,4 @@ MODULE_FIRMWARE("mrvl/sd8787_uapsta.bin");
 MODULE_FIRMWARE("mrvl/sd8797_uapsta.bin");
 MODULE_FIRMWARE("mrvl/sd8887_uapsta.bin");
 MODULE_FIRMWARE("mrvl/sd8897_uapsta.bin");
-MODULE_FIRMWARE("mrvl/sdsd8977_combo_v2.bin");
-MODULE_FIRMWARE("mrvl/sd8987_uapsta.bin");
-MODULE_FIRMWARE("mrvl/sdsd8997_combo_v4.bin");
+MODULE_FIRMWARE("mrvl/sd8997_uapsta.bin");

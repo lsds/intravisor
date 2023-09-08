@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * g760a - Driver for the Global Mixed-mode Technology Inc. G760A
  *	   fan speed PWM controller chip
@@ -7,6 +6,11 @@
  *
  * Complete datasheet is available at GMT's website:
  * http://www.gmt.com.tw/product/datasheet/EDS-760A.pdf
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
  */
 
 #include <linux/module.h>
@@ -95,7 +99,7 @@ static struct g760a_data *g760a_update_client(struct device *dev)
 		data->fan_sta = g760a_read_value(client, G760A_REG_FAN_STA);
 
 		data->last_updated = jiffies;
-		data->valid = true;
+		data->valid = 1;
 	}
 
 	mutex_unlock(&data->update_lock);
@@ -170,7 +174,8 @@ ATTRIBUTE_GROUPS(g760a);
  * new-style driver model code
  */
 
-static int g760a_probe(struct i2c_client *client)
+static int g760a_probe(struct i2c_client *client,
+			const struct i2c_device_id *id)
 {
 	struct device *dev = &client->dev;
 	struct g760a_data *data;
@@ -206,7 +211,7 @@ static struct i2c_driver g760a_driver = {
 	.driver = {
 		.name	= "g760a",
 	},
-	.probe_new = g760a_probe,
+	.probe	  = g760a_probe,
 	.id_table = g760a_id,
 };
 

@@ -1,8 +1,16 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * ADV7343 header file
  *
  * Copyright (C) 2009 Texas Instruments Incorporated - http://www.ti.com/
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License as
+ * published by the Free Software Foundation version 2.
+ *
+ * This program is distributed .as is. WITHOUT ANY WARRANTY of any
+ * kind, whether express or implied; without even the implied warranty
+ * of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
  */
 
 #ifndef ADV7343_H
@@ -13,7 +21,7 @@
 #define ADV7343_SVIDEO_ID	(2)
 
 /**
- * struct adv7343_power_mode - power mode configuration.
+ * adv7343_power_mode - power mode configuration.
  * @sleep_mode: on enable the current consumption is reduced to micro ampere
  *		level. All DACs and the internal PLL circuit are disabled.
  *		Registers can be read from and written in sleep mode.

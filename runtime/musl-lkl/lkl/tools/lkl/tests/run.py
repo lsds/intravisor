@@ -7,6 +7,7 @@
 # Author: Octavian Purdila <tavi@cs.pub.ro>
 #
 
+from __future__ import print_function
 
 import argparse
 import os
@@ -57,18 +58,11 @@ tests = [
     'net.sh -b pipe',
     'net.sh -b raw',
     'net.sh -b macvtap',
-    'net.sh -b wintap',
     'lklfuse.sh -t ext4',
     'lklfuse.sh -t btrfs',
     'lklfuse.sh -t vfat',
     'lklfuse.sh -t xfs',
-    'config',
-    'hijack-test.sh',
-    'LKL_HIJACK_ZPOLINE=1 hijack-test.sh',
-    'disk-vfio-pci.sh -t ext4 run',
-    'disk-vfio-pci.sh -t btrfs run',
-    'disk-vfio-pci.sh -t vfat run',
-    'disk-vfio-pci.sh -t xfs run'
+    'hijack-test.sh'
 ]
 
 parser = argparse.ArgumentParser(description='LKL test runner')

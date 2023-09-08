@@ -1,8 +1,12 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * PowerNV LPC bus handling.
  *
  * Copyright 2013 IBM Corp.
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version
+ * 2 of the License, or (at your option) any later version.
  */
 
 #include <linux/kernel.h>
@@ -10,13 +14,13 @@
 #include <linux/bug.h>
 #include <linux/io.h>
 #include <linux/slab.h>
-#include <linux/debugfs.h>
 
 #include <asm/machdep.h>
 #include <asm/firmware.h>
 #include <asm/opal.h>
 #include <asm/prom.h>
 #include <linux/uaccess.h>
+#include <asm/debugfs.h>
 #include <asm/isa-bridge.h>
 
 static int opal_lpc_chip_id = -1;
@@ -188,7 +192,7 @@ static ssize_t lpc_debug_read(struct file *filp, char __user *ubuf,
 	u32 data, pos, len, todo;
 	int rc;
 
-	if (!access_ok(ubuf, count))
+	if (!access_ok(VERIFY_WRITE, ubuf, count))
 		return -EFAULT;
 
 	todo = count;
@@ -197,7 +201,7 @@ static ssize_t lpc_debug_read(struct file *filp, char __user *ubuf,
 
 		/*
 		 * Select access size based on count and alignment and
-		 * access type. IO and MEM only support byte accesses,
+		 * access type. IO and MEM only support byte acceses,
 		 * FW supports all 3.
 		 */
 		len = 1;
@@ -279,7 +283,7 @@ static ssize_t lpc_debug_write(struct file *filp, const char __user *ubuf,
 	u32 data, pos, len, todo;
 	int rc;
 
-	if (!access_ok(ubuf, count))
+	if (!access_ok(VERIFY_READ, ubuf, count))
 		return -EFAULT;
 
 	todo = count;
@@ -371,7 +375,7 @@ static int opal_lpc_init_debugfs(void)
 	if (opal_lpc_chip_id < 0)
 		return -ENODEV;
 
-	root = debugfs_create_dir("lpc", arch_debugfs_dir);
+	root = debugfs_create_dir("lpc", powerpc_debugfs_root);
 
 	rc |= opal_lpc_debugfs_create_type(root, "io", OPAL_LPC_IO);
 	rc |= opal_lpc_debugfs_create_type(root, "mem", OPAL_LPC_MEM);
@@ -396,7 +400,6 @@ void __init opal_lpc_init(void)
 		if (!of_get_property(np, "primary", NULL))
 			continue;
 		opal_lpc_chip_id = of_get_ibm_chip_id(np);
-		of_node_put(np);
 		break;
 	}
 	if (opal_lpc_chip_id < 0)

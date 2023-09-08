@@ -1,7 +1,15 @@
-/* SPDX-License-Identifier: GPL-2.0 */
 /******************************************************************************
  *
  * Copyright(c) 2007 - 2011 Realtek Corporation. All rights reserved.
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of version 2 of the GNU General Public License as
+ * published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for
+ * more details.
  *
  ******************************************************************************/
 /*****************************************************************************
@@ -34,7 +42,7 @@
 /*--------------------------Define Parameters-------------------------------*/
 
 /*  */
-/*        8192S Register offset definition */
+/*        8192S Regsiter offset definition */
 /*  */
 
 /*  */
@@ -43,7 +51,7 @@
 /*  2. 0x800/0x900/0xA00/0xC00/0xD00/0xE00 */
 /*  3. RF register 0x00-2E */
 /*  4. Bit Mask for BB/RF register */
-/*  5. Other definition for BB/RF R/W */
+/*  5. Other defintion for BB/RF R/W */
 /*  */
 
 
@@ -109,6 +117,7 @@
 #define		rTxAGC_B_Mcs03_Mcs00			0x83c
 
 #define		rTxAGC_B_Mcs07_Mcs04			0x848
+#define		rTxAGC_B_Mcs11_Mcs08			0x84c
 
 #define		rFPGA0_XA_LSSIParameter		0x840
 #define		rFPGA0_XB_LSSIParameter		0x844
@@ -122,6 +131,7 @@
 #define		rFPGA0_XA_RFInterfaceOE		0x860	/*  RF Channel switch */
 #define		rFPGA0_XB_RFInterfaceOE		0x864
 
+#define		rTxAGC_B_Mcs15_Mcs12			0x868
 #define		rTxAGC_B_CCK11_A_CCK2_11		0x86c
 
 #define		rFPGA0_XAB_RFInterfaceSW		0x870	/*  RF Interface Software Control */
@@ -135,7 +145,7 @@
 #define		rFPGA0_AnalogParameter3		0x888	/*  Useless now */
 #define		rFPGA0_AnalogParameter4		0x88c
 
-#define		rFPGA0_XA_LSSIReadBack		0x8a0	/*  Transceiver LSSI Readback */
+#define		rFPGA0_XA_LSSIReadBack		0x8a0	/*  Tranceiver LSSI Readback */
 #define		rFPGA0_XB_LSSIReadBack		0x8a4
 #define		rFPGA0_XC_LSSIReadBack		0x8a8
 #define		rFPGA0_XD_LSSIReadBack		0x8ac
@@ -204,7 +214,7 @@
 #define		rOFDM0_TRSWIsolation		0xc0c
 
 #define		rOFDM0_XARxAFE			0xc10  /* RxIQ DC offset, Rx digital filter, DC notch filter */
-#define		rOFDM0_XARxIQImbalance		0xc14  /* RxIQ imbalance matrix */
+#define		rOFDM0_XARxIQImbalance		0xc14  /* RxIQ imblance matrix */
 #define		rOFDM0_XBRxAFE				0xc18
 #define		rOFDM0_XBRxIQImbalance		0xc1c
 #define		rOFDM0_XCRxAFE				0xc20
@@ -301,6 +311,8 @@
 #define		rTxAGC_A_CCK1_Mcs32			0xe08
 #define		rTxAGC_A_Mcs03_Mcs00			0xe10
 #define		rTxAGC_A_Mcs07_Mcs04			0xe14
+#define		rTxAGC_A_Mcs11_Mcs08			0xe18
+#define		rTxAGC_A_Mcs15_Mcs12			0xe1c
 
 #define		rFPGA0_IQK					0xe28
 #define		rTx_IQK_Tone_A				0xe30
@@ -554,6 +566,7 @@
 
 #define		b3WireRFPowerDown			0x1	/*  Useless now */
 /* define bHWSISelect				0x8 */
+#define		b5GPAPEPolarity				0x40000000
 #define		b2GPAPEPolarity				0x80000000
 #define		bRFSW_TxDefaultAnt			0x3
 #define		bRFSW_TxOptionAnt			0x30
@@ -572,6 +585,7 @@
 #define		bRFSI_ANTSW				0x100
 #define		bRFSI_ANTSWB				0x200
 #define		bRFSI_PAPE					0x400
+#define		bRFSI_PAPE5G				0x800
 #define		bBandSelect					0x1
 #define		bHTSIG2_GI					0x80
 #define		bHTSIG2_Smoothing			0x01

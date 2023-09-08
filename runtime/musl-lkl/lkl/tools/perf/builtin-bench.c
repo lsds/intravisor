@@ -11,12 +11,12 @@
  * Available benchmark collection list:
  *
  *  sched ... scheduler and IPC performance
- *  syscall ... System call performance
  *  mem   ... memory access performance
  *  numa  ... NUMA scheduling and MM performance
  *  futex ... Futex performance
- *  epoll ... Event poll performance
  */
+#include "perf.h"
+#include "util/util.h"
 #include <subcmd/parse-options.h>
 #include "builtin.h"
 #include "bench/bench.h"
@@ -25,7 +25,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/prctl.h>
-#include <linux/zalloc.h>
 
 typedef int (*bench_fn_t)(int argc, const char **argv);
 
@@ -50,16 +49,9 @@ static struct bench sched_benchmarks[] = {
 	{ NULL,		NULL,						NULL			}
 };
 
-static struct bench syscall_benchmarks[] = {
-	{ "basic",	"Benchmark for basic getppid(2) calls",		bench_syscall_basic	},
-	{ "all",	"Run all syscall benchmarks",			NULL			},
-	{ NULL,		NULL,						NULL			},
-};
-
 static struct bench mem_benchmarks[] = {
 	{ "memcpy",	"Benchmark for memcpy() functions",		bench_mem_memcpy	},
 	{ "memset",	"Benchmark for memset() functions",		bench_mem_memset	},
-	{ "find_bit",	"Benchmark for find_bit() functions",		bench_mem_find_bit	},
 	{ "all",	"Run all memory access benchmarks",		NULL			},
 	{ NULL,		NULL,						NULL			}
 };
@@ -75,30 +67,6 @@ static struct bench futex_benchmarks[] = {
 	{ NULL,		NULL,						NULL			}
 };
 
-#ifdef HAVE_EVENTFD_SUPPORT
-static struct bench epoll_benchmarks[] = {
-	{ "wait",	"Benchmark epoll concurrent epoll_waits",       bench_epoll_wait	},
-	{ "ctl",	"Benchmark epoll concurrent epoll_ctls",        bench_epoll_ctl		},
-	{ "all",	"Run all futex benchmarks",			NULL			},
-	{ NULL,		NULL,						NULL			}
-};
-#endif // HAVE_EVENTFD_SUPPORT
-
-static struct bench internals_benchmarks[] = {
-	{ "synthesize", "Benchmark perf event synthesis",	bench_synthesize	},
-	{ "kallsyms-parse", "Benchmark kallsyms parsing",	bench_kallsyms_parse	},
-	{ "inject-build-id", "Benchmark build-id injection",	bench_inject_build_id	},
-	{ "evlist-open-close", "Benchmark evlist open and close",	bench_evlist_open_close	},
-	{ NULL,		NULL,					NULL			}
-};
-
-static struct bench breakpoint_benchmarks[] = {
-	{ "thread", "Benchmark thread start/finish with breakpoints", bench_breakpoint_thread},
-	{ "enable", "Benchmark breakpoint enable/disable", bench_breakpoint_enable},
-	{ "all", "Run all breakpoint benchmarks", NULL},
-	{ NULL,	NULL, NULL },
-};
-
 struct collection {
 	const char	*name;
 	const char	*summary;
@@ -107,17 +75,11 @@ struct collection {
 
 static struct collection collections[] = {
 	{ "sched",	"Scheduler and IPC benchmarks",			sched_benchmarks	},
-	{ "syscall",	"System call benchmarks",			syscall_benchmarks	},
 	{ "mem",	"Memory access benchmarks",			mem_benchmarks		},
 #ifdef HAVE_LIBNUMA_SUPPORT
 	{ "numa",	"NUMA scheduling and MM benchmarks",		numa_benchmarks		},
 #endif
 	{"futex",       "Futex stressing benchmarks",                   futex_benchmarks        },
-#ifdef HAVE_EVENTFD_SUPPORT
-	{"epoll",       "Epoll stressing benchmarks",                   epoll_benchmarks        },
-#endif
-	{ "internals",	"Perf-internals benchmarks",			internals_benchmarks	},
-	{ "breakpoint",	"Breakpoint benchmarks",			breakpoint_benchmarks	},
 	{ "all",	"All benchmarks",				NULL			},
 	{ NULL,		NULL,						NULL			}
 };
@@ -234,6 +196,7 @@ static void run_collection(struct collection *coll)
 		if (!bench->fn)
 			break;
 		printf("# Running %s/%s benchmark...\n", coll->name, bench->name);
+		fflush(stdout);
 
 		argv[1] = bench->name;
 		run_bench(coll->name, bench->name, bench->fn, 1, argv);
@@ -253,9 +216,6 @@ int cmd_bench(int argc, const char **argv)
 {
 	struct collection *coll;
 	int ret = 0;
-
-	/* Unbuffered output */
-	setvbuf(stdout, NULL, _IONBF, 0);
 
 	if (argc < 2) {
 		/* No collection specified. */
@@ -310,6 +270,7 @@ int cmd_bench(int argc, const char **argv)
 
 			if (bench_format == BENCH_FORMAT_DEFAULT)
 				printf("# Running '%s/%s' benchmark:\n", coll->name, bench->name);
+			fflush(stdout);
 			ret = run_bench(coll->name, bench->name, bench->fn, argc-1, argv+1);
 			goto end;
 		}

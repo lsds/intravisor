@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * dmi-sysfs.c
  *
@@ -262,7 +261,7 @@ struct dmi_system_event_log {
 	u8	header_format;
 	u8	type_descriptors_supported_count;
 	u8	per_log_type_descriptor_length;
-	u8	supported_log_type_descriptos[];
+	u8	supported_log_type_descriptos[0];
 } __packed;
 
 #define DMI_SYSFS_SEL_FIELD(_field) \
@@ -302,12 +301,12 @@ static struct attribute *dmi_sysfs_sel_attrs[] = {
 	&dmi_sysfs_attr_sel_per_log_type_descriptor_length.attr,
 	NULL,
 };
-ATTRIBUTE_GROUPS(dmi_sysfs_sel);
+
 
 static struct kobj_type dmi_system_event_log_ktype = {
 	.release = dmi_entry_free,
 	.sysfs_ops = &dmi_sysfs_specialize_attr_ops,
-	.default_groups = dmi_sysfs_sel_groups,
+	.default_attrs = dmi_sysfs_sel_attrs,
 };
 
 typedef u8 (*sel_io_reader)(const struct dmi_system_event_log *sel,
@@ -518,7 +517,6 @@ static struct attribute *dmi_sysfs_entry_attrs[] = {
 	&dmi_sysfs_attr_entry_position.attr,
 	NULL,
 };
-ATTRIBUTE_GROUPS(dmi_sysfs_entry);
 
 static ssize_t dmi_entry_raw_read_helper(struct dmi_sysfs_entry *entry,
 					 const struct dmi_header *dh,
@@ -566,7 +564,7 @@ static void dmi_sysfs_entry_release(struct kobject *kobj)
 static struct kobj_type dmi_sysfs_entry_ktype = {
 	.release = dmi_sysfs_entry_release,
 	.sysfs_ops = &dmi_sysfs_attr_ops,
-	.default_groups = dmi_sysfs_entry_groups,
+	.default_attrs = dmi_sysfs_entry_attrs,
 };
 
 static struct kset *dmi_kset;
@@ -604,7 +602,7 @@ static void __init dmi_sysfs_register_handle(const struct dmi_header *dh,
 				    "%d-%d", dh->type, entry->instance);
 
 	if (*ret) {
-		kobject_put(&entry->kobj);
+		kfree(entry);
 		return;
 	}
 

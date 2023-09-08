@@ -52,6 +52,13 @@
 
 #include "pvrdma.h"
 
+int pvrdma_post_srq_recv(struct ib_srq *ibsrq, struct ib_recv_wr *wr,
+			 struct ib_recv_wr **bad_wr)
+{
+	/* No support for kernel clients. */
+	return -EOPNOTSUPP;
+}
+
 /**
  * pvrdma_query_srq - query shared receive queue
  * @ibsrq: the shared receive queue to query
@@ -90,49 +97,56 @@ int pvrdma_query_srq(struct ib_srq *ibsrq, struct ib_srq_attr *srq_attr)
 
 /**
  * pvrdma_create_srq - create shared receive queue
- * @ibsrq: the IB shared receive queue
+ * @pd: protection domain
  * @init_attr: shared receive queue attributes
  * @udata: user data
  *
- * @return: 0 on success, otherwise returns an errno.
+ * @return: the ib_srq pointer on success, otherwise returns an errno.
  */
-int pvrdma_create_srq(struct ib_srq *ibsrq, struct ib_srq_init_attr *init_attr,
-		      struct ib_udata *udata)
+struct ib_srq *pvrdma_create_srq(struct ib_pd *pd,
+				 struct ib_srq_init_attr *init_attr,
+				 struct ib_udata *udata)
 {
-	struct pvrdma_srq *srq = to_vsrq(ibsrq);
-	struct pvrdma_dev *dev = to_vdev(ibsrq->device);
+	struct pvrdma_srq *srq = NULL;
+	struct pvrdma_dev *dev = to_vdev(pd->device);
 	union pvrdma_cmd_req req;
 	union pvrdma_cmd_resp rsp;
 	struct pvrdma_cmd_create_srq *cmd = &req.create_srq;
 	struct pvrdma_cmd_create_srq_resp *resp = &rsp.create_srq_resp;
-	struct pvrdma_create_srq_resp srq_resp = {};
+	struct pvrdma_create_srq_resp srq_resp = {0};
 	struct pvrdma_create_srq ucmd;
 	unsigned long flags;
 	int ret;
 
-	if (!udata) {
+	if (!(pd->uobject && udata)) {
 		/* No support for kernel clients. */
 		dev_warn(&dev->pdev->dev,
 			 "no shared receive queue support for kernel client\n");
-		return -EOPNOTSUPP;
+		return ERR_PTR(-EOPNOTSUPP);
 	}
 
 	if (init_attr->srq_type != IB_SRQT_BASIC) {
 		dev_warn(&dev->pdev->dev,
 			 "shared receive queue type %d not supported\n",
 			 init_attr->srq_type);
-		return -EOPNOTSUPP;
+		return ERR_PTR(-EINVAL);
 	}
 
 	if (init_attr->attr.max_wr  > dev->dsr->caps.max_srq_wr ||
 	    init_attr->attr.max_sge > dev->dsr->caps.max_srq_sge) {
 		dev_warn(&dev->pdev->dev,
 			 "shared receive queue size invalid\n");
-		return -EINVAL;
+		return ERR_PTR(-EINVAL);
 	}
 
 	if (!atomic_add_unless(&dev->num_srqs, 1, dev->dsr->caps.max_srq))
-		return -ENOMEM;
+		return ERR_PTR(-ENOMEM);
+
+	srq = kmalloc(sizeof(*srq), GFP_KERNEL);
+	if (!srq) {
+		ret = -ENOMEM;
+		goto err_srq;
+	}
 
 	spin_lock_init(&srq->lock);
 	refcount_set(&srq->refcnt, 1);
@@ -146,13 +160,15 @@ int pvrdma_create_srq(struct ib_srq *ibsrq, struct ib_srq_init_attr *init_attr,
 		goto err_srq;
 	}
 
-	srq->umem = ib_umem_get(ibsrq->device, ucmd.buf_addr, ucmd.buf_size, 0);
+	srq->umem = ib_umem_get(pd->uobject->context,
+				ucmd.buf_addr,
+				ucmd.buf_size, 0, 0);
 	if (IS_ERR(srq->umem)) {
 		ret = PTR_ERR(srq->umem);
 		goto err_srq;
 	}
 
-	srq->npages = ib_umem_num_dma_blocks(srq->umem, PAGE_SIZE);
+	srq->npages = ib_umem_page_count(srq->umem);
 
 	if (srq->npages < 0 || srq->npages > PVRDMA_PAGE_DIR_MAX_PAGES) {
 		dev_warn(&dev->pdev->dev,
@@ -174,7 +190,7 @@ int pvrdma_create_srq(struct ib_srq *ibsrq, struct ib_srq_init_attr *init_attr,
 	cmd->hdr.cmd = PVRDMA_CMD_CREATE_SRQ;
 	cmd->srq_type = init_attr->srq_type;
 	cmd->nchunks = srq->npages;
-	cmd->pd_handle = to_vpd(ibsrq->pd)->pd_handle;
+	cmd->pd_handle = to_vpd(pd)->pd_handle;
 	cmd->attrs.max_wr = init_attr->attr.max_wr;
 	cmd->attrs.max_sge = init_attr->attr.max_sge;
 	cmd->attrs.srq_limit = init_attr->attr.srq_limit;
@@ -197,20 +213,21 @@ int pvrdma_create_srq(struct ib_srq *ibsrq, struct ib_srq_init_attr *init_attr,
 	/* Copy udata back. */
 	if (ib_copy_to_udata(udata, &srq_resp, sizeof(srq_resp))) {
 		dev_warn(&dev->pdev->dev, "failed to copy back udata\n");
-		pvrdma_destroy_srq(&srq->ibsrq, udata);
-		return -EINVAL;
+		pvrdma_destroy_srq(&srq->ibsrq);
+		return ERR_PTR(-EINVAL);
 	}
 
-	return 0;
+	return &srq->ibsrq;
 
 err_page_dir:
 	pvrdma_page_dir_cleanup(dev, &srq->pdir);
 err_umem:
 	ib_umem_release(srq->umem);
 err_srq:
+	kfree(srq);
 	atomic_dec(&dev->num_srqs);
 
-	return ret;
+	return ERR_PTR(ret);
 }
 
 static void pvrdma_free_srq(struct pvrdma_dev *dev, struct pvrdma_srq *srq)
@@ -230,17 +247,18 @@ static void pvrdma_free_srq(struct pvrdma_dev *dev, struct pvrdma_srq *srq)
 
 	pvrdma_page_dir_cleanup(dev, &srq->pdir);
 
+	kfree(srq);
+
 	atomic_dec(&dev->num_srqs);
 }
 
 /**
  * pvrdma_destroy_srq - destroy shared receive queue
  * @srq: the shared receive queue to destroy
- * @udata: user data or null for kernel object
  *
  * @return: 0 for success.
  */
-int pvrdma_destroy_srq(struct ib_srq *srq, struct ib_udata *udata)
+int pvrdma_destroy_srq(struct ib_srq *srq)
 {
 	struct pvrdma_srq *vsrq = to_vsrq(srq);
 	union pvrdma_cmd_req req;
@@ -259,6 +277,7 @@ int pvrdma_destroy_srq(struct ib_srq *srq, struct ib_udata *udata)
 			 ret);
 
 	pvrdma_free_srq(dev, vsrq);
+
 	return 0;
 }
 

@@ -174,7 +174,7 @@ put:
 }
 
 static struct usb_composite_driver midi_driver = {
-	.name		= longname,
+	.name		= (char *) longname,
 	.dev		= &device_desc,
 	.strings	= dev_strings,
 	.max_speed	= USB_SPEED_HIGH,

@@ -4,18 +4,16 @@
 #
 
 cachefiles-y := \
-	cache.o \
+	bind.o \
 	daemon.o \
 	interface.o \
-	io.o \
 	key.o \
 	main.o \
 	namei.o \
+	rdwr.o \
 	security.o \
-	volume.o \
 	xattr.o
 
-cachefiles-$(CONFIG_CACHEFILES_ERROR_INJECTION) += error_inject.o
-cachefiles-$(CONFIG_CACHEFILES_ONDEMAND) += ondemand.o
+cachefiles-$(CONFIG_CACHEFILES_HISTOGRAM) += proc.o
 
 obj-$(CONFIG_CACHEFILES) := cachefiles.o

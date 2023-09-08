@@ -6,7 +6,7 @@
 #include <stdint.h>
 #include <lkl.h>
 #include <lkl_host.h>
-#if !defined(__MSYS__) && !defined(__MINGW32__)
+#ifndef __MINGW32__
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <sys/ioctl.h>
@@ -37,7 +37,7 @@ static int disk_id = -1;
 
 int lkl_test_disk_add(void)
 {
-#if defined(__MSYS__) || defined(__MINGW32__)
+#ifdef __MINGW32__
 	disk.handle = CreateFile(cla.disk, GENERIC_READ | GENERIC_WRITE,
 			       0, NULL, OPEN_EXISTING, 0, NULL);
 	if (!disk.handle)
@@ -56,14 +56,14 @@ int lkl_test_disk_add(void)
 	goto out;
 
 out_close:
-#if defined(__MSYS__) || defined(__MINGW32__)
+#ifdef __MINGW32__
 	CloseHandle(disk.handle);
 #else
 	close(disk.fd);
 #endif
 
 out_unlink:
-#if defined(__MSYS__) || defined(__MINGW32__)
+#ifdef __MINGW32__
 	DeleteFile(cla.disk);
 #else
 	unlink(cla.disk);
@@ -84,7 +84,7 @@ int lkl_test_disk_remove(void)
 
 	ret = lkl_disk_remove(disk);
 
-#if defined(__MSYS__) || defined(__MINGW32__)
+#ifdef __MINGW32__
 	CloseHandle(disk.handle);
 #else
 	close(disk.fd);
@@ -158,7 +158,8 @@ static int lkl_test_readdir(void)
 
 LKL_TEST_CALL(closedir, lkl_closedir, 0, dir);
 LKL_TEST_CALL(chdir_mnt_point, lkl_sys_chdir, 0, mnt_point);
-LKL_TEST_CALL(start_kernel, lkl_start_kernel, 0, "mem=32M loglevel=8");
+LKL_TEST_CALL(start_kernel, lkl_start_kernel, 0, &lkl_host_ops,
+	     "mem=16M loglevel=8");
 LKL_TEST_CALL(stop_kernel, lkl_sys_halt, 0);
 
 struct lkl_test tests[] = {
@@ -177,19 +178,11 @@ struct lkl_test tests[] = {
 
 int main(int argc, const char **argv)
 {
-	int ret;
-
 	if (parse_args(argc, argv, args) < 0)
 		return -1;
 
 	lkl_host_ops.print = lkl_test_log;
 
-	lkl_init(&lkl_host_ops);
-
-	ret = lkl_test_run(tests, sizeof(tests)/sizeof(struct lkl_test),
-			"disk %s", cla.fstype);
-
-	lkl_cleanup();
-
-	return ret;
+	return lkl_test_run(tests, sizeof(tests)/sizeof(struct lkl_test),
+			    "disk %s", cla.fstype);
 }

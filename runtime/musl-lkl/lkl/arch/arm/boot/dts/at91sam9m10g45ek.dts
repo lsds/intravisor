@@ -1,9 +1,10 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * at91sam9m10g45ek.dts - Device Tree file for AT91SAM9M10G45-EK board
  *
  *  Copyright (C) 2011 Atmel,
  *                2011 Nicolas Ferre <nicolas.ferre@atmel.com>
+ *
+ * Licensed under GPLv2 or later.
  */
 /dts-v1/;
 #include "at91sam9g45.dtsi"
@@ -18,7 +19,7 @@
 		stdout-path = "serial0:115200n8";
 	};
 
-	memory@70000000 {
+	memory {
 		reg = <0x70000000 0x4000000>;
 	};
 
@@ -72,9 +73,9 @@
 					pinctrl-0 = <&pinctrl_pck1_as_isi_mck &pinctrl_sensor_power &pinctrl_sensor_reset>;
 					resetb-gpios = <&pioD 12 GPIO_ACTIVE_LOW>;
 					pwdn-gpios = <&pioD 13 GPIO_ACTIVE_HIGH>;
-					clocks = <&pmc PMC_TYPE_SYSTEM 9>;
+					clocks = <&pck1>;
 					clock-names = "xvclk";
-					assigned-clocks = <&pmc PMC_TYPE_SYSTEM 9>;
+					assigned-clocks = <&pck1>;
 					assigned-clock-rates = <25000000>;
 
 					port {
@@ -99,7 +100,6 @@
 					&pinctrl_board_mmc0
 					&pinctrl_mmc0_slot0_clk_cmd_dat0
 					&pinctrl_mmc0_slot0_dat1_3>;
-				pinctrl-names = "default";
 				status = "okay";
 				slot@0 {
 					reg = <0>;
@@ -113,7 +113,6 @@
 					&pinctrl_board_mmc1
 					&pinctrl_mmc1_slot0_clk_cmd_dat0
 					&pinctrl_mmc1_slot0_dat1_3>;
-				pinctrl-names = "default";
 				status = "okay";
 				slot@0 {
 					reg = <0>;
@@ -167,7 +166,7 @@
 			spi0: spi@fffa4000{
 				status = "okay";
 				cs-gpios = <&pioB 3 0>, <0>, <0>, <0>;
-				flash@0 {
+				mtd_dataflash@0 {
 					compatible = "atmel,at45", "atmel,dataflash";
 					spi-max-frequency = <13000000>;
 					reg = <0>;
@@ -237,7 +236,7 @@
 			display = <&display0>;
 			status = "okay";
 
-			display0: panel {
+			display0: display {
 				bits-per-pixel = <32>;
 				atmel,lcdcon-backlight;
 				atmel,dmacon = <0x1>;
@@ -315,27 +314,27 @@
 		};
 	};
 
-	led-controller-1 {
+	leds {
 		compatible = "gpio-leds";
 
-		led-1 {
+		d8 {
 			label = "d8";
 			gpios = <&pioD 30 GPIO_ACTIVE_HIGH>;
 			linux,default-trigger = "heartbeat";
 		};
 	};
 
-	led-controller-2 {
+	pwmleds {
 		compatible = "pwm-leds";
 
-		led-2 {
+		d6 {
 			label = "d6";
 			pwms = <&pwm0 3 5000 PWM_POLARITY_INVERTED>;
 			max-brightness = <255>;
 			linux,default-trigger = "nand-disk";
 		};
 
-		led-3 {
+		d7 {
 			label = "d7";
 			pwms = <&pwm0 1 5000 PWM_POLARITY_INVERTED>;
 			max-brightness = <255>;
@@ -343,48 +342,48 @@
 		};
 	};
 
-	gpio-keys {
+	gpio_keys {
 		compatible = "gpio-keys";
 
-		button-left-click {
+		left_click {
 			label = "left_click";
 			gpios = <&pioB 6 GPIO_ACTIVE_LOW>;
 			linux,code = <272>;
 			wakeup-source;
 		};
 
-		button-right-click {
+		right_click {
 			label = "right_click";
 			gpios = <&pioB 7 GPIO_ACTIVE_LOW>;
 			linux,code = <273>;
 			wakeup-source;
 		};
 
-		button-left {
+		left {
 			label = "Joystick Left";
 			gpios = <&pioB 14 GPIO_ACTIVE_LOW>;
 			linux,code = <105>;
 		};
 
-		button-right {
+		right {
 			label = "Joystick Right";
 			gpios = <&pioB 15 GPIO_ACTIVE_LOW>;
 			linux,code = <106>;
 		};
 
-		button-up {
+		up {
 			label = "Joystick Up";
 			gpios = <&pioB 16 GPIO_ACTIVE_LOW>;
 			linux,code = <103>;
 		};
 
-		button-down {
+		down {
 			label = "Joystick Down";
 			gpios = <&pioB 17 GPIO_ACTIVE_LOW>;
 			linux,code = <108>;
 		};
 
-		button-enter {
+		enter {
 			label = "Joystick Press";
 			gpios = <&pioB 18 GPIO_ACTIVE_LOW>;
 			linux,code = <28>;

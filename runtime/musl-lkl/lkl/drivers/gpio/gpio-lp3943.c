@@ -1,15 +1,18 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * TI/National Semiconductor LP3943 GPIO driver
  *
  * Copyright 2013 Texas Instruments
  *
  * Author: Milo Kim <milo.kim@ti.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; version 2.
  */
 
 #include <linux/bitops.h>
 #include <linux/err.h>
-#include <linux/gpio/driver.h>
+#include <linux/gpio.h>
 #include <linux/i2c.h>
 #include <linux/mfd/lp3943.h>
 #include <linux/module.h>
@@ -42,7 +45,7 @@ struct lp3943_gpio {
 	u16 input_mask;		/* 1 = GPIO is input direction, 0 = output */
 };
 
-static int lp3943_gpio_request(struct gpio_chip *chip, unsigned int offset)
+static int lp3943_gpio_request(struct gpio_chip *chip, unsigned offset)
 {
 	struct lp3943_gpio *lp3943_gpio = gpiochip_get_data(chip);
 	struct lp3943 *lp3943 = lp3943_gpio->lp3943;
@@ -54,7 +57,7 @@ static int lp3943_gpio_request(struct gpio_chip *chip, unsigned int offset)
 	return 0;
 }
 
-static void lp3943_gpio_free(struct gpio_chip *chip, unsigned int offset)
+static void lp3943_gpio_free(struct gpio_chip *chip, unsigned offset)
 {
 	struct lp3943_gpio *lp3943_gpio = gpiochip_get_data(chip);
 	struct lp3943 *lp3943 = lp3943_gpio->lp3943;
@@ -72,7 +75,7 @@ static int lp3943_gpio_set_mode(struct lp3943_gpio *lp3943_gpio, u8 offset,
 				  val << mux[offset].shift);
 }
 
-static int lp3943_gpio_direction_input(struct gpio_chip *chip, unsigned int offset)
+static int lp3943_gpio_direction_input(struct gpio_chip *chip, unsigned offset)
 {
 	struct lp3943_gpio *lp3943_gpio = gpiochip_get_data(chip);
 
@@ -82,7 +85,7 @@ static int lp3943_gpio_direction_input(struct gpio_chip *chip, unsigned int offs
 }
 
 static int lp3943_get_gpio_in_status(struct lp3943_gpio *lp3943_gpio,
-				     struct gpio_chip *chip, unsigned int offset)
+				     struct gpio_chip *chip, unsigned offset)
 {
 	u8 addr, read;
 	int err;
@@ -107,7 +110,7 @@ static int lp3943_get_gpio_in_status(struct lp3943_gpio *lp3943_gpio,
 }
 
 static int lp3943_get_gpio_out_status(struct lp3943_gpio *lp3943_gpio,
-				      struct gpio_chip *chip, unsigned int offset)
+				      struct gpio_chip *chip, unsigned offset)
 {
 	struct lp3943 *lp3943 = lp3943_gpio->lp3943;
 	const struct lp3943_reg_cfg *mux = lp3943->mux_cfg;
@@ -128,7 +131,7 @@ static int lp3943_get_gpio_out_status(struct lp3943_gpio *lp3943_gpio,
 		return -EINVAL;
 }
 
-static int lp3943_gpio_get(struct gpio_chip *chip, unsigned int offset)
+static int lp3943_gpio_get(struct gpio_chip *chip, unsigned offset)
 {
 	struct lp3943_gpio *lp3943_gpio = gpiochip_get_data(chip);
 
@@ -147,7 +150,7 @@ static int lp3943_gpio_get(struct gpio_chip *chip, unsigned int offset)
 		return lp3943_get_gpio_out_status(lp3943_gpio, chip, offset);
 }
 
-static void lp3943_gpio_set(struct gpio_chip *chip, unsigned int offset, int value)
+static void lp3943_gpio_set(struct gpio_chip *chip, unsigned offset, int value)
 {
 	struct lp3943_gpio *lp3943_gpio = gpiochip_get_data(chip);
 	u8 data;
@@ -160,7 +163,7 @@ static void lp3943_gpio_set(struct gpio_chip *chip, unsigned int offset, int val
 	lp3943_gpio_set_mode(lp3943_gpio, offset, data);
 }
 
-static int lp3943_gpio_direction_output(struct gpio_chip *chip, unsigned int offset,
+static int lp3943_gpio_direction_output(struct gpio_chip *chip, unsigned offset,
 					int value)
 {
 	struct lp3943_gpio *lp3943_gpio = gpiochip_get_data(chip);

@@ -1,10 +1,26 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
-/*
+/* -*- mode: c; c-basic-offset: 8; -*-
+ * vim: noexpandtab sw=8 ts=8 sts=0:
+ *
  * journal.c
  *
  * Defines functions of journalling api
  *
  * Copyright (C) 2003, 2004 Oracle.  All rights reserved.
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public
+ * License as published by the Free Software Foundation; either
+ * version 2 of the License, or (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public
+ * License along with this program; if not, write to the
+ * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+ * Boston, MA 021110-1307, USA.
  */
 
 #include <linux/fs.h>
@@ -89,7 +105,7 @@ enum ocfs2_replay_state {
 struct ocfs2_replay_map {
 	unsigned int rm_slots;
 	enum ocfs2_replay_state rm_state;
-	unsigned char rm_replay_slots[];
+	unsigned char rm_replay_slots[0];
 };
 
 static void ocfs2_replay_map_set_state(struct ocfs2_super *osb, int state)
@@ -215,8 +231,7 @@ void ocfs2_recovery_exit(struct ocfs2_super *osb)
 	/* At this point, we know that no more recovery threads can be
 	 * launched, so wait for any recovery completion work to
 	 * complete. */
-	if (osb->ocfs2_wq)
-		flush_workqueue(osb->ocfs2_wq);
+	flush_workqueue(osb->ocfs2_wq);
 
 	/*
 	 * Now that recovery is shut down, and the osb is about to be
@@ -308,7 +323,7 @@ static int ocfs2_commit_cache(struct ocfs2_super *osb)
 	}
 
 	jbd2_journal_lock_updates(journal->j_journal);
-	status = jbd2_journal_flush(journal->j_journal, 0);
+	status = jbd2_journal_flush(journal->j_journal);
 	jbd2_journal_unlock_updates(journal->j_journal);
 	if (status < 0) {
 		up_write(&journal->j_trans_barrier);
@@ -418,14 +433,14 @@ int ocfs2_extend_trans(handle_t *handle, int nblocks)
 	if (!nblocks)
 		return 0;
 
-	old_nblocks = jbd2_handle_buffer_credits(handle);
+	old_nblocks = handle->h_buffer_credits;
 
 	trace_ocfs2_extend_trans(old_nblocks, nblocks);
 
 #ifdef CONFIG_OCFS2_DEBUG_FS
 	status = 1;
 #else
-	status = jbd2_journal_extend(handle, nblocks, 0);
+	status = jbd2_journal_extend(handle, nblocks);
 	if (status < 0) {
 		mlog_errno(status);
 		goto bail;
@@ -459,13 +474,13 @@ int ocfs2_allocate_extend_trans(handle_t *handle, int thresh)
 
 	BUG_ON(!handle);
 
-	old_nblks = jbd2_handle_buffer_credits(handle);
+	old_nblks = handle->h_buffer_credits;
 	trace_ocfs2_allocate_extend_trans(old_nblks, thresh);
 
 	if (old_nblks < thresh)
 		return 0;
 
-	status = jbd2_journal_extend(handle, OCFS2_MAX_TRANS_DATA, 0);
+	status = jbd2_journal_extend(handle, OCFS2_MAX_TRANS_DATA);
 	if (status < 0) {
 		mlog_errno(status);
 		goto bail;
@@ -810,48 +825,20 @@ void ocfs2_set_journal_params(struct ocfs2_super *osb)
 	write_unlock(&journal->j_state_lock);
 }
 
-/*
- * alloc & initialize skeleton for journal structure.
- * ocfs2_journal_init() will make fs have journal ability.
- */
-int ocfs2_journal_alloc(struct ocfs2_super *osb)
-{
-	int status = 0;
-	struct ocfs2_journal *journal;
-
-	journal = kzalloc(sizeof(struct ocfs2_journal), GFP_KERNEL);
-	if (!journal) {
-		mlog(ML_ERROR, "unable to alloc journal\n");
-		status = -ENOMEM;
-		goto bail;
-	}
-	osb->journal = journal;
-	journal->j_osb = osb;
-
-	atomic_set(&journal->j_num_trans, 0);
-	init_rwsem(&journal->j_trans_barrier);
-	init_waitqueue_head(&journal->j_checkpointed);
-	spin_lock_init(&journal->j_lock);
-	journal->j_trans_id = 1UL;
-	INIT_LIST_HEAD(&journal->j_la_cleanups);
-	INIT_WORK(&journal->j_recovery_work, ocfs2_complete_recovery);
-	journal->j_state = OCFS2_JOURNAL_FREE;
-
-bail:
-	return status;
-}
-
-int ocfs2_journal_init(struct ocfs2_super *osb, int *dirty)
+int ocfs2_journal_init(struct ocfs2_journal *journal, int *dirty)
 {
 	int status = -1;
 	struct inode *inode = NULL; /* the journal inode */
 	journal_t *j_journal = NULL;
-	struct ocfs2_journal *journal = osb->journal;
 	struct ocfs2_dinode *di = NULL;
 	struct buffer_head *bh = NULL;
+	struct ocfs2_super *osb;
 	int inode_lock = 0;
 
 	BUG_ON(!journal);
+
+	osb = journal->j_osb;
+
 	/* already have the inode for our journal */
 	inode = ocfs2_get_system_file_inode(osb, JOURNAL_SYSTEM_INODE,
 					    osb->slot_num);
@@ -903,16 +890,12 @@ int ocfs2_journal_init(struct ocfs2_super *osb, int *dirty)
 		goto done;
 	}
 
-	trace_ocfs2_journal_init_maxlen(j_journal->j_total_len);
+	trace_ocfs2_journal_init_maxlen(j_journal->j_maxlen);
 
 	*dirty = (le32_to_cpu(di->id1.journal1.ij_flags) &
 		  OCFS2_JOURNAL_DIRTY_FL);
 
 	journal->j_journal = j_journal;
-	journal->j_journal->j_submit_inode_data_buffers =
-		jbd2_journal_submit_inode_data_buffers;
-	journal->j_journal->j_finish_inode_data_buffers =
-		jbd2_journal_finish_inode_data_buffers;
 	journal->j_inode = inode;
 	journal->j_bh = bh;
 
@@ -1028,14 +1011,13 @@ void ocfs2_journal_shutdown(struct ocfs2_super *osb)
 
 	if (ocfs2_mount_local(osb)) {
 		jbd2_journal_lock_updates(journal->j_journal);
-		status = jbd2_journal_flush(journal->j_journal, 0);
+		status = jbd2_journal_flush(journal->j_journal);
 		jbd2_journal_unlock_updates(journal->j_journal);
 		if (status < 0)
 			mlog_errno(status);
 	}
 
-	/* Shutdown the kernel journal system */
-	if (!jbd2_journal_destroy(journal->j_journal) && !status) {
+	if (status == 0) {
 		/*
 		 * Do not toggle if flush was unsuccessful otherwise
 		 * will leave dirty metadata in a "clean" journal
@@ -1044,6 +1026,9 @@ void ocfs2_journal_shutdown(struct ocfs2_super *osb)
 		if (status < 0)
 			mlog_errno(status);
 	}
+
+	/* Shutdown the kernel journal system */
+	jbd2_journal_destroy(journal->j_journal);
 	journal->j_journal = NULL;
 
 	OCFS2_I(inode)->ip_open_count--;
@@ -1056,10 +1041,9 @@ void ocfs2_journal_shutdown(struct ocfs2_super *osb)
 
 	journal->j_state = OCFS2_JOURNAL_FREE;
 
+//	up_write(&journal->j_trans_barrier);
 done:
 	iput(inode);
-	kfree(journal);
-	osb->journal = NULL;
 }
 
 static void ocfs2_clear_journal_error(struct super_block *sb,
@@ -1096,14 +1080,6 @@ int ocfs2_journal_load(struct ocfs2_journal *journal, int local, int replayed)
 	}
 
 	ocfs2_clear_journal_error(osb->sb, journal->j_journal, osb->slot_num);
-
-	if (replayed) {
-		jbd2_journal_lock_updates(journal->j_journal);
-		status = jbd2_journal_flush(journal->j_journal, 0);
-		jbd2_journal_unlock_updates(journal->j_journal);
-		if (status < 0)
-			mlog_errno(status);
-	}
 
 	status = ocfs2_journal_toggle_dirty(osb, 1, replayed);
 	if (status < 0) {
@@ -1402,23 +1378,15 @@ static int __ocfs2_recovery_thread(void *arg)
 	int rm_quota_used = 0, i;
 	struct ocfs2_quota_recovery *qrec;
 
-	/* Whether the quota supported. */
-	int quota_enabled = OCFS2_HAS_RO_COMPAT_FEATURE(osb->sb,
-			OCFS2_FEATURE_RO_COMPAT_USRQUOTA)
-		|| OCFS2_HAS_RO_COMPAT_FEATURE(osb->sb,
-			OCFS2_FEATURE_RO_COMPAT_GRPQUOTA);
-
 	status = ocfs2_wait_on_mount(osb);
 	if (status < 0) {
 		goto bail;
 	}
 
-	if (quota_enabled) {
-		rm_quota = kcalloc(osb->max_slots, sizeof(int), GFP_NOFS);
-		if (!rm_quota) {
-			status = -ENOMEM;
-			goto bail;
-		}
+	rm_quota = kzalloc(osb->max_slots * sizeof(int), GFP_NOFS);
+	if (!rm_quota) {
+		status = -ENOMEM;
+		goto bail;
 	}
 restart:
 	status = ocfs2_super_lock(osb, 1);
@@ -1454,14 +1422,9 @@ restart:
 		 * then quota usage would be out of sync until some node takes
 		 * the slot. So we remember which nodes need quota recovery
 		 * and when everything else is done, we recover quotas. */
-		if (quota_enabled) {
-			for (i = 0; i < rm_quota_used
-					&& rm_quota[i] != slot_num; i++)
-				;
-
-			if (i == rm_quota_used)
-				rm_quota[rm_quota_used++] = slot_num;
-		}
+		for (i = 0; i < rm_quota_used && rm_quota[i] != slot_num; i++);
+		if (i == rm_quota_used)
+			rm_quota[rm_quota_used++] = slot_num;
 
 		status = ocfs2_recover_node(osb, node_num, slot_num);
 skip_recovery:
@@ -1489,19 +1452,16 @@ skip_recovery:
 	/* Now it is right time to recover quotas... We have to do this under
 	 * superblock lock so that no one can start using the slot (and crash)
 	 * before we recover it */
-	if (quota_enabled) {
-		for (i = 0; i < rm_quota_used; i++) {
-			qrec = ocfs2_begin_quota_recovery(osb, rm_quota[i]);
-			if (IS_ERR(qrec)) {
-				status = PTR_ERR(qrec);
-				mlog_errno(status);
-				continue;
-			}
-			ocfs2_queue_recovery_completion(osb->journal,
-					rm_quota[i],
-					NULL, NULL, qrec,
-					ORPHAN_NEED_TRUNCATE);
+	for (i = 0; i < rm_quota_used; i++) {
+		qrec = ocfs2_begin_quota_recovery(osb, rm_quota[i]);
+		if (IS_ERR(qrec)) {
+			status = PTR_ERR(qrec);
+			mlog_errno(status);
+			continue;
 		}
+		ocfs2_queue_recovery_completion(osb->journal, rm_quota[i],
+						NULL, NULL, qrec,
+						ORPHAN_NEED_TRUNCATE);
 	}
 
 	ocfs2_super_unlock(osb, 1);
@@ -1523,10 +1483,12 @@ bail:
 
 	mutex_unlock(&osb->recovery_lock);
 
-	if (quota_enabled)
-		kfree(rm_quota);
+	kfree(rm_quota);
 
-	return status;
+	/* no one is callint kthread_stop() for us so the kthread() api
+	 * requires that we call do_exit().  And it isn't exported, but
+	 * complete_and_exit() seems to be a minimal wrapper around it. */
+	complete_and_exit(NULL, status);
 }
 
 void ocfs2_recovery_thread(struct ocfs2_super *osb, int node_num)
@@ -1682,7 +1644,8 @@ static int ocfs2_replay_journal(struct ocfs2_super *osb,
 	status = jbd2_journal_load(journal);
 	if (status < 0) {
 		mlog_errno(status);
-		BUG_ON(!igrab(inode));
+		if (!igrab(inode))
+			BUG();
 		jbd2_journal_destroy(journal);
 		goto done;
 	}
@@ -1691,7 +1654,7 @@ static int ocfs2_replay_journal(struct ocfs2_super *osb,
 
 	/* wipe the journal */
 	jbd2_journal_lock_updates(journal);
-	status = jbd2_journal_flush(journal, 0);
+	status = jbd2_journal_flush(journal);
 	jbd2_journal_unlock_updates(journal);
 	if (status < 0)
 		mlog_errno(status);
@@ -1711,7 +1674,8 @@ static int ocfs2_replay_journal(struct ocfs2_super *osb,
 	if (status < 0)
 		mlog_errno(status);
 
-	BUG_ON(!igrab(inode));
+	if (!igrab(inode))
+		BUG();
 
 	jbd2_journal_destroy(journal);
 
@@ -2057,7 +2021,7 @@ struct ocfs2_orphan_filldir_priv {
 	enum ocfs2_orphan_reco_type orphan_reco_type;
 };
 
-static bool ocfs2_orphan_filldir(struct dir_context *ctx, const char *name,
+static int ocfs2_orphan_filldir(struct dir_context *ctx, const char *name,
 				int name_len, loff_t pos, u64 ino,
 				unsigned type)
 {
@@ -2066,21 +2030,21 @@ static bool ocfs2_orphan_filldir(struct dir_context *ctx, const char *name,
 	struct inode *iter;
 
 	if (name_len == 1 && !strncmp(".", name, 1))
-		return true;
+		return 0;
 	if (name_len == 2 && !strncmp("..", name, 2))
-		return true;
+		return 0;
 
 	/* do not include dio entry in case of orphan scan */
 	if ((p->orphan_reco_type == ORPHAN_NO_NEED_TRUNCATE) &&
 			(!strncmp(name, OCFS2_DIO_ORPHAN_PREFIX,
 			OCFS2_DIO_ORPHAN_PREFIX_LEN)))
-		return true;
+		return 0;
 
 	/* Skip bad inodes so that recovery can continue */
 	iter = ocfs2_iget(p->osb, ino,
 			  OCFS2_FI_FLAG_ORPHAN_RECOVERY, 0);
 	if (IS_ERR(iter))
-		return true;
+		return 0;
 
 	if (!strncmp(name, OCFS2_DIO_ORPHAN_PREFIX,
 			OCFS2_DIO_ORPHAN_PREFIX_LEN))
@@ -2090,7 +2054,7 @@ static bool ocfs2_orphan_filldir(struct dir_context *ctx, const char *name,
 	 * happen concurrently with unlink/rename */
 	if (OCFS2_I(iter)->ip_next_orphan) {
 		iput(iter);
-		return true;
+		return 0;
 	}
 
 	trace_ocfs2_orphan_filldir((unsigned long long)OCFS2_I(iter)->ip_blkno);
@@ -2099,7 +2063,7 @@ static bool ocfs2_orphan_filldir(struct dir_context *ctx, const char *name,
 	OCFS2_I(iter)->ip_next_orphan = p->head;
 	p->head = iter;
 
-	return true;
+	return 0;
 }
 
 static int ocfs2_queue_orphans(struct ocfs2_super *osb,

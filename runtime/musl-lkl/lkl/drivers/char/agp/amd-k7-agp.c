@@ -85,8 +85,7 @@ static int amd_create_gatt_pages(int nr_tables)
 	int retval = 0;
 	int i;
 
-	tables = kcalloc(nr_tables + 1, sizeof(struct amd_page_map *),
-			 GFP_KERNEL);
+	tables = kzalloc((nr_tables + 1) * sizeof(struct amd_page_map *),GFP_KERNEL);
 	if (tables == NULL)
 		return -ENOMEM;
 
@@ -425,7 +424,7 @@ static int agp_amdk7_probe(struct pci_dev *pdev,
 		return -ENOMEM;
 
 	bridge->driver = &amd_irongate_driver;
-	bridge->dev_private_data = &amd_irongate_private;
+	bridge->dev_private_data = &amd_irongate_private,
 	bridge->dev = pdev;
 	bridge->capndx = cap_ptr;
 

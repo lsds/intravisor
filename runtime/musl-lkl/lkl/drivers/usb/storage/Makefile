@@ -6,9 +6,7 @@
 # Rewritten to use lists instead of if-statements.
 #
 
-ccflags-y := -I $(srctree)/drivers/scsi
-
-ccflags-y += -DDEFAULT_SYMBOL_NAMESPACE=USB_STORAGE
+ccflags-y := -Idrivers/scsi
 
 obj-$(CONFIG_USB_UAS)		+= uas.o
 obj-$(CONFIG_USB_STORAGE)	+= usb-storage.o

@@ -1,8 +1,9 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Driver for a keypad w/16 buttons connected to a PCF8574 I2C I/O expander
  *
  * Copyright 2005-2008 Analog Devices Inc.
+ *
+ * Licensed under the GPL-2 or later.
  */
 
 #include <linux/module.h>
@@ -157,7 +158,7 @@ static int pcf8574_kp_probe(struct i2c_client *client, const struct i2c_device_i
 	return ret;
 }
 
-static void pcf8574_kp_remove(struct i2c_client *client)
+static int pcf8574_kp_remove(struct i2c_client *client)
 {
 	struct kp_data *lp = i2c_get_clientdata(client);
 
@@ -165,6 +166,8 @@ static void pcf8574_kp_remove(struct i2c_client *client)
 
 	input_unregister_device(lp->idev);
 	kfree(lp);
+
+	return 0;
 }
 
 #ifdef CONFIG_PM

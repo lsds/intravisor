@@ -21,8 +21,8 @@ struct dm_bio_prison_v2 {
 	struct workqueue_struct *wq;
 
 	spinlock_t lock;
+	mempool_t *cell_pool;
 	struct rb_root cells;
-	mempool_t cell_pool;
 };
 
 static struct kmem_cache *_cell_cache;
@@ -35,8 +35,7 @@ static struct kmem_cache *_cell_cache;
  */
 struct dm_bio_prison_v2 *dm_bio_prison_create_v2(struct workqueue_struct *wq)
 {
-	struct dm_bio_prison_v2 *prison = kzalloc(sizeof(*prison), GFP_KERNEL);
-	int ret;
+	struct dm_bio_prison_v2 *prison = kmalloc(sizeof(*prison), GFP_KERNEL);
 
 	if (!prison)
 		return NULL;
@@ -44,8 +43,8 @@ struct dm_bio_prison_v2 *dm_bio_prison_create_v2(struct workqueue_struct *wq)
 	prison->wq = wq;
 	spin_lock_init(&prison->lock);
 
-	ret = mempool_init_slab_pool(&prison->cell_pool, MIN_CELLS, _cell_cache);
-	if (ret) {
+	prison->cell_pool = mempool_create_slab_pool(MIN_CELLS, _cell_cache);
+	if (!prison->cell_pool) {
 		kfree(prison);
 		return NULL;
 	}
@@ -58,21 +57,21 @@ EXPORT_SYMBOL_GPL(dm_bio_prison_create_v2);
 
 void dm_bio_prison_destroy_v2(struct dm_bio_prison_v2 *prison)
 {
-	mempool_exit(&prison->cell_pool);
+	mempool_destroy(prison->cell_pool);
 	kfree(prison);
 }
 EXPORT_SYMBOL_GPL(dm_bio_prison_destroy_v2);
 
 struct dm_bio_prison_cell_v2 *dm_bio_prison_alloc_cell_v2(struct dm_bio_prison_v2 *prison, gfp_t gfp)
 {
-	return mempool_alloc(&prison->cell_pool, gfp);
+	return mempool_alloc(prison->cell_pool, gfp);
 }
 EXPORT_SYMBOL_GPL(dm_bio_prison_alloc_cell_v2);
 
 void dm_bio_prison_free_cell_v2(struct dm_bio_prison_v2 *prison,
 				struct dm_bio_prison_cell_v2 *cell)
 {
-	mempool_free(cell, &prison->cell_pool);
+	mempool_free(cell, prison->cell_pool);
 }
 EXPORT_SYMBOL_GPL(dm_bio_prison_free_cell_v2);
 
@@ -177,10 +176,11 @@ bool dm_cell_get_v2(struct dm_bio_prison_v2 *prison,
 		    struct dm_bio_prison_cell_v2 **cell_result)
 {
 	int r;
+	unsigned long flags;
 
-	spin_lock_irq(&prison->lock);
+	spin_lock_irqsave(&prison->lock, flags);
 	r = __get(prison, key, lock_level, inmate, cell_prealloc, cell_result);
-	spin_unlock_irq(&prison->lock);
+	spin_unlock_irqrestore(&prison->lock, flags);
 
 	return r;
 }
@@ -260,10 +260,11 @@ int dm_cell_lock_v2(struct dm_bio_prison_v2 *prison,
 		    struct dm_bio_prison_cell_v2 **cell_result)
 {
 	int r;
+	unsigned long flags;
 
-	spin_lock_irq(&prison->lock);
+	spin_lock_irqsave(&prison->lock, flags);
 	r = __lock(prison, key, lock_level, cell_prealloc, cell_result);
-	spin_unlock_irq(&prison->lock);
+	spin_unlock_irqrestore(&prison->lock, flags);
 
 	return r;
 }
@@ -283,9 +284,11 @@ void dm_cell_quiesce_v2(struct dm_bio_prison_v2 *prison,
 			struct dm_bio_prison_cell_v2 *cell,
 			struct work_struct *continuation)
 {
-	spin_lock_irq(&prison->lock);
+	unsigned long flags;
+
+	spin_lock_irqsave(&prison->lock, flags);
 	__quiesce(prison, cell, continuation);
-	spin_unlock_irq(&prison->lock);
+	spin_unlock_irqrestore(&prison->lock, flags);
 }
 EXPORT_SYMBOL_GPL(dm_cell_quiesce_v2);
 
@@ -305,10 +308,11 @@ int dm_cell_lock_promote_v2(struct dm_bio_prison_v2 *prison,
 			    unsigned new_lock_level)
 {
 	int r;
+	unsigned long flags;
 
-	spin_lock_irq(&prison->lock);
+	spin_lock_irqsave(&prison->lock, flags);
 	r = __promote(prison, cell, new_lock_level);
-	spin_unlock_irq(&prison->lock);
+	spin_unlock_irqrestore(&prison->lock, flags);
 
 	return r;
 }
@@ -324,7 +328,7 @@ static bool __unlock(struct dm_bio_prison_v2 *prison,
 	bio_list_init(&cell->bios);
 
 	if (cell->shared_count) {
-		cell->exclusive_lock = false;
+		cell->exclusive_lock = 0;
 		return false;
 	}
 
@@ -337,10 +341,11 @@ bool dm_cell_unlock_v2(struct dm_bio_prison_v2 *prison,
 		       struct bio_list *bios)
 {
 	bool r;
+	unsigned long flags;
 
-	spin_lock_irq(&prison->lock);
+	spin_lock_irqsave(&prison->lock, flags);
 	r = __unlock(prison, cell, bios);
-	spin_unlock_irq(&prison->lock);
+	spin_unlock_irqrestore(&prison->lock, flags);
 
 	return r;
 }

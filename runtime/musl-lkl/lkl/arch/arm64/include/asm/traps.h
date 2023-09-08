@@ -1,8 +1,19 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Based on arch/arm/include/asm/traps.h
  *
  * Copyright (C) 2012 ARM Ltd.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 #ifndef __ASM_TRAP_H
 #define __ASM_TRAP_H
@@ -24,11 +35,10 @@ struct undef_hook {
 
 void register_undef_hook(struct undef_hook *hook);
 void unregister_undef_hook(struct undef_hook *hook);
-void force_signal_inject(int signal, int code, unsigned long address, unsigned long err);
+void force_signal_inject(int signal, int code, unsigned long address);
 void arm64_notify_segfault(unsigned long addr);
-void arm64_force_sig_fault(int signo, int code, unsigned long far, const char *str);
-void arm64_force_sig_mceerr(int code, unsigned long far, short lsb, const char *str);
-void arm64_force_sig_ptrace_errno_trap(int errno, unsigned long far, const char *str);
+void arm64_force_sig_info(struct siginfo *info, const char *str,
+			  struct task_struct *tsk);
 
 /*
  * Move regs->pc to next instruction and do necessary setup before it
@@ -40,6 +50,16 @@ static inline int __in_irqentry_text(unsigned long ptr)
 {
 	return ptr >= (unsigned long)&__irqentry_text_start &&
 	       ptr < (unsigned long)&__irqentry_text_end;
+}
+
+static inline int in_exception_text(unsigned long ptr)
+{
+	int in;
+
+	in = ptr >= (unsigned long)&__exception_text_start &&
+	     ptr < (unsigned long)&__exception_text_end;
+
+	return in ? : __in_irqentry_text(ptr);
 }
 
 static inline int in_entry_text(unsigned long ptr)
@@ -57,7 +77,7 @@ static inline int in_entry_text(unsigned long ptr)
  * errors share the same encoding as an all-zeros encoding from a CPU that
  * doesn't support RAS.
  */
-static inline bool arm64_is_ras_serror(unsigned long esr)
+static inline bool arm64_is_ras_serror(u32 esr)
 {
 	WARN_ON(preemptible());
 
@@ -77,9 +97,9 @@ static inline bool arm64_is_ras_serror(unsigned long esr)
  * We treat them as Uncontainable.
  * Non-RAS SError's are reported as Uncontained/Uncategorized.
  */
-static inline unsigned long arm64_ras_serror_get_severity(unsigned long esr)
+static inline u32 arm64_ras_serror_get_severity(u32 esr)
 {
-	unsigned long aet = esr & ESR_ELx_AET;
+	u32 aet = esr & ESR_ELx_AET;
 
 	if (!arm64_is_ras_serror(esr)) {
 		/* Not a RAS error, we can't interpret the ESR. */
@@ -98,6 +118,6 @@ static inline unsigned long arm64_ras_serror_get_severity(unsigned long esr)
 	return aet;
 }
 
-bool arm64_is_fatal_ras_serror(struct pt_regs *regs, unsigned long esr);
-void __noreturn arm64_serror_panic(struct pt_regs *regs, unsigned long esr);
+bool arm64_is_fatal_ras_serror(struct pt_regs *regs, unsigned int esr);
+void __noreturn arm64_serror_panic(struct pt_regs *regs, u32 esr);
 #endif

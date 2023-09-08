@@ -4,7 +4,7 @@
 
 #include <asm/types.h>
 
-#ifdef CONFIG_PPC64_ELF_ABI_V1
+#ifdef PPC64_ELF_ABI_v1
 #define cond_syscall(x) \
 	asm ("\t.weak " #x "\n\t.set " #x ", sys_ni_syscall\n"		\
 	     "\t.weak ." #x "\n\t.set ." #x ", .sys_ni_syscall\n")

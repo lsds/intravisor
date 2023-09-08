@@ -1,6 +1,14 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2017, NVIDIA CORPORATION. All rights reserved
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms and conditions of the GNU General Public License,
+ * version 2, as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+ * more details.
  */
 
 #include <linux/cpufreq.h>
@@ -12,71 +20,69 @@
 #include <soc/tegra/bpmp.h>
 #include <soc/tegra/bpmp-abi.h>
 
-#define TEGRA186_NUM_CLUSTERS		2
-#define EDVD_OFFSET_A57(core)		((SZ_64K * 6) + (0x20 + (core) * 0x4))
-#define EDVD_OFFSET_DENVER(core)	((SZ_64K * 7) + (0x20 + (core) * 0x4))
-#define EDVD_CORE_VOLT_FREQ_F_SHIFT	0
-#define EDVD_CORE_VOLT_FREQ_F_MASK	0xffff
-#define EDVD_CORE_VOLT_FREQ_V_SHIFT	16
+#define EDVD_CORE_VOLT_FREQ(core)		(0x20 + (core) * 0x4)
+#define EDVD_CORE_VOLT_FREQ_F_SHIFT		0
+#define EDVD_CORE_VOLT_FREQ_V_SHIFT		16
 
-struct tegra186_cpufreq_cpu {
+struct tegra186_cpufreq_cluster_info {
+	unsigned long offset;
+	int cpus[4];
 	unsigned int bpmp_cluster_id;
-	unsigned int edvd_offset;
 };
 
-static const struct tegra186_cpufreq_cpu tegra186_cpus[] = {
-	/* CPU0 - A57 Cluster */
+#define NO_CPU -1
+static const struct tegra186_cpufreq_cluster_info tegra186_clusters[] = {
+	/* Denver cluster */
 	{
-		.bpmp_cluster_id = 1,
-		.edvd_offset = EDVD_OFFSET_A57(0)
-	},
-	/* CPU1 - Denver Cluster */
-	{
+		.offset = SZ_64K * 7,
+		.cpus = { 1, 2, NO_CPU, NO_CPU },
 		.bpmp_cluster_id = 0,
-		.edvd_offset = EDVD_OFFSET_DENVER(0)
 	},
-	/* CPU2 - Denver Cluster */
+	/* A57 cluster */
 	{
-		.bpmp_cluster_id = 0,
-		.edvd_offset = EDVD_OFFSET_DENVER(1)
-	},
-	/* CPU3 - A57 Cluster */
-	{
+		.offset = SZ_64K * 6,
+		.cpus = { 0, 3, 4, 5 },
 		.bpmp_cluster_id = 1,
-		.edvd_offset = EDVD_OFFSET_A57(1)
-	},
-	/* CPU4 - A57 Cluster */
-	{
-		.bpmp_cluster_id = 1,
-		.edvd_offset = EDVD_OFFSET_A57(2)
-	},
-	/* CPU5 - A57 Cluster */
-	{
-		.bpmp_cluster_id = 1,
-		.edvd_offset = EDVD_OFFSET_A57(3)
 	},
 };
 
 struct tegra186_cpufreq_cluster {
+	const struct tegra186_cpufreq_cluster_info *info;
 	struct cpufreq_frequency_table *table;
-	u32 ref_clk_khz;
-	u32 div;
 };
 
 struct tegra186_cpufreq_data {
 	void __iomem *regs;
+
+	size_t num_clusters;
 	struct tegra186_cpufreq_cluster *clusters;
-	const struct tegra186_cpufreq_cpu *cpus;
 };
 
 static int tegra186_cpufreq_init(struct cpufreq_policy *policy)
 {
 	struct tegra186_cpufreq_data *data = cpufreq_get_driver_data();
-	unsigned int cluster = data->cpus[policy->cpu].bpmp_cluster_id;
+	unsigned int i;
 
-	policy->freq_table = data->clusters[cluster].table;
+	for (i = 0; i < data->num_clusters; i++) {
+		struct tegra186_cpufreq_cluster *cluster = &data->clusters[i];
+		const struct tegra186_cpufreq_cluster_info *info =
+			cluster->info;
+		int core;
+
+		for (core = 0; core < ARRAY_SIZE(info->cpus); core++) {
+			if (info->cpus[core] == policy->cpu)
+				break;
+		}
+		if (core == ARRAY_SIZE(info->cpus))
+			continue;
+
+		policy->driver_data =
+			data->regs + info->offset + EDVD_CORE_VOLT_FREQ(core);
+		policy->freq_table = cluster->table;
+		break;
+	}
+
 	policy->cpuinfo.transition_latency = 300 * 1000;
-	policy->driver_data = NULL;
 
 	return 0;
 }
@@ -84,42 +90,18 @@ static int tegra186_cpufreq_init(struct cpufreq_policy *policy)
 static int tegra186_cpufreq_set_target(struct cpufreq_policy *policy,
 				       unsigned int index)
 {
-	struct tegra186_cpufreq_data *data = cpufreq_get_driver_data();
 	struct cpufreq_frequency_table *tbl = policy->freq_table + index;
-	unsigned int edvd_offset = data->cpus[policy->cpu].edvd_offset;
+	void __iomem *edvd_reg = policy->driver_data;
 	u32 edvd_val = tbl->driver_data;
 
-	writel(edvd_val, data->regs + edvd_offset);
+	writel(edvd_val, edvd_reg);
 
 	return 0;
 }
 
-static unsigned int tegra186_cpufreq_get(unsigned int cpu)
-{
-	struct tegra186_cpufreq_data *data = cpufreq_get_driver_data();
-	struct tegra186_cpufreq_cluster *cluster;
-	struct cpufreq_policy *policy;
-	unsigned int edvd_offset, cluster_id;
-	u32 ndiv;
-
-	policy = cpufreq_cpu_get(cpu);
-	if (!policy)
-		return 0;
-
-	edvd_offset = data->cpus[policy->cpu].edvd_offset;
-	ndiv = readl(data->regs + edvd_offset) & EDVD_CORE_VOLT_FREQ_F_MASK;
-	cluster_id = data->cpus[policy->cpu].bpmp_cluster_id;
-	cluster = &data->clusters[cluster_id];
-	cpufreq_cpu_put(policy);
-
-	return (cluster->ref_clk_khz * ndiv) / cluster->div;
-}
-
 static struct cpufreq_driver tegra186_cpufreq_driver = {
 	.name = "tegra186",
-	.flags = CPUFREQ_HAVE_GOVERNOR_PER_POLICY |
-			CPUFREQ_NEED_INITIAL_FREQ_CHECK,
-	.get = tegra186_cpufreq_get,
+	.flags = CPUFREQ_STICKY | CPUFREQ_HAVE_GOVERNOR_PER_POLICY,
 	.verify = cpufreq_generic_frequency_table_verify,
 	.target_index = tegra186_cpufreq_set_target,
 	.init = tegra186_cpufreq_init,
@@ -128,7 +110,7 @@ static struct cpufreq_driver tegra186_cpufreq_driver = {
 
 static struct cpufreq_frequency_table *init_vhint_table(
 	struct platform_device *pdev, struct tegra_bpmp *bpmp,
-	struct tegra186_cpufreq_cluster *cluster, unsigned int cluster_id)
+	unsigned int cluster_id)
 {
 	struct cpufreq_frequency_table *table;
 	struct mrq_cpu_vhint_request req;
@@ -139,7 +121,7 @@ static struct cpufreq_frequency_table *init_vhint_table(
 	void *virt;
 
 	virt = dma_alloc_coherent(bpmp->dev, sizeof(*data), &phys,
-				  GFP_KERNEL);
+				  GFP_KERNEL | GFP_DMA32);
 	if (!virt)
 		return ERR_PTR(-ENOMEM);
 
@@ -157,10 +139,6 @@ static struct cpufreq_frequency_table *init_vhint_table(
 	err = tegra_bpmp_transfer(bpmp, &msg);
 	if (err) {
 		table = ERR_PTR(err);
-		goto free;
-	}
-	if (msg.rx.ret) {
-		table = ERR_PTR(-EINVAL);
 		goto free;
 	}
 
@@ -184,9 +162,6 @@ static struct cpufreq_frequency_table *init_vhint_table(
 		goto free;
 	}
 
-	cluster->ref_clk_khz = data->ref_clk_hz / 1000;
-	cluster->div = data->pdiv * data->mdiv;
-
 	for (i = data->vfloor, j = 0; i <= data->vceil; i++) {
 		struct cpufreq_frequency_table *point;
 		u16 ndiv = data->ndiv[i];
@@ -204,7 +179,8 @@ static struct cpufreq_frequency_table *init_vhint_table(
 
 		point = &table[j++];
 		point->driver_data = edvd_val;
-		point->frequency = (cluster->ref_clk_khz * ndiv) / cluster->div;
+		point->frequency = data->ref_clk_hz * ndiv / data->pdiv /
+			data->mdiv / 1000;
 	}
 
 	table[j].frequency = CPUFREQ_TABLE_END;
@@ -219,42 +195,52 @@ static int tegra186_cpufreq_probe(struct platform_device *pdev)
 {
 	struct tegra186_cpufreq_data *data;
 	struct tegra_bpmp *bpmp;
+	struct resource *res;
 	unsigned int i = 0, err;
 
 	data = devm_kzalloc(&pdev->dev, sizeof(*data), GFP_KERNEL);
 	if (!data)
 		return -ENOMEM;
 
-	data->clusters = devm_kcalloc(&pdev->dev, TEGRA186_NUM_CLUSTERS,
+	data->clusters = devm_kcalloc(&pdev->dev, ARRAY_SIZE(tegra186_clusters),
 				      sizeof(*data->clusters), GFP_KERNEL);
 	if (!data->clusters)
 		return -ENOMEM;
 
-	data->cpus = tegra186_cpus;
+	data->num_clusters = ARRAY_SIZE(tegra186_clusters);
 
 	bpmp = tegra_bpmp_get(&pdev->dev);
 	if (IS_ERR(bpmp))
 		return PTR_ERR(bpmp);
 
-	data->regs = devm_platform_ioremap_resource(pdev, 0);
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	data->regs = devm_ioremap_resource(&pdev->dev, res);
 	if (IS_ERR(data->regs)) {
 		err = PTR_ERR(data->regs);
 		goto put_bpmp;
 	}
 
-	for (i = 0; i < TEGRA186_NUM_CLUSTERS; i++) {
+	for (i = 0; i < data->num_clusters; i++) {
 		struct tegra186_cpufreq_cluster *cluster = &data->clusters[i];
 
-		cluster->table = init_vhint_table(pdev, bpmp, cluster, i);
+		cluster->info = &tegra186_clusters[i];
+		cluster->table = init_vhint_table(
+			pdev, bpmp, cluster->info->bpmp_cluster_id);
 		if (IS_ERR(cluster->table)) {
 			err = PTR_ERR(cluster->table);
 			goto put_bpmp;
 		}
 	}
 
+	tegra_bpmp_put(bpmp);
+
 	tegra186_cpufreq_driver.driver_data = data;
 
 	err = cpufreq_register_driver(&tegra186_cpufreq_driver);
+	if (err)
+		return err;
+
+	return 0;
 
 put_bpmp:
 	tegra_bpmp_put(bpmp);

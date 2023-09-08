@@ -1,7 +1,10 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (C) 2015-2016 Red Hat
  * Copyright (C) 2015 Lyude Paul <thatslyude@gmail.com>
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License version 2 as published by
+ * the Free Software Foundation.
  */
 
 #include <linux/kernel.h>
@@ -181,7 +184,7 @@ static int rmi_f03_register_pt(struct f03_data *f03)
 	serio->close = rmi_f03_pt_close;
 	serio->port_data = f03;
 
-	strscpy(serio->name, "RMI4 PS/2 pass-through", sizeof(serio->name));
+	strlcpy(serio->name, "RMI4 PS/2 pass-through", sizeof(serio->name));
 	snprintf(serio->phys, sizeof(serio->phys), "%s/serio0",
 		 dev_name(&f03->fn->dev));
 	serio->dev.parent = &f03->fn->dev;
@@ -241,9 +244,8 @@ static int rmi_f03_config(struct rmi_function *fn)
 	return 0;
 }
 
-static irqreturn_t rmi_f03_attention(int irq, void *ctx)
+static int rmi_f03_attention(struct rmi_function *fn, unsigned long *irq_bits)
 {
-	struct rmi_function *fn = ctx;
 	struct rmi_device *rmi_dev = fn->rmi_dev;
 	struct rmi_driver_data *drvdata = dev_get_drvdata(&rmi_dev->dev);
 	struct f03_data *f03 = dev_get_drvdata(&fn->dev);
@@ -260,7 +262,7 @@ static irqreturn_t rmi_f03_attention(int irq, void *ctx)
 		/* First grab the data passed by the transport device */
 		if (drvdata->attn_data.size < ob_len) {
 			dev_warn(&fn->dev, "F03 interrupted, but data is missing!\n");
-			return IRQ_HANDLED;
+			return 0;
 		}
 
 		memcpy(obs, drvdata->attn_data.data, ob_len);
@@ -275,7 +277,7 @@ static irqreturn_t rmi_f03_attention(int irq, void *ctx)
 				"%s: Failed to read F03 output buffers: %d\n",
 				__func__, error);
 			serio_interrupt(f03->serio, 0, SERIO_TIMEOUT);
-			return IRQ_RETVAL(error);
+			return error;
 		}
 	}
 
@@ -301,7 +303,7 @@ static irqreturn_t rmi_f03_attention(int irq, void *ctx)
 		serio_interrupt(f03->serio, ob_data, serio_flags);
 	}
 
-	return IRQ_HANDLED;
+	return 0;
 }
 
 static void rmi_f03_remove(struct rmi_function *fn)

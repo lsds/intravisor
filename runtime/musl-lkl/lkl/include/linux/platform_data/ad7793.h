@@ -1,8 +1,9 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * AD7792/AD7793 SPI ADC driver
  *
  * Copyright 2011 Analog Devices Inc.
+ *
+ * Licensed under the GPL-2.
  */
 #ifndef __LINUX_PLATFORM_DATA_AD7793_H__
 #define __LINUX_PLATFORM_DATA_AD7793_H__
@@ -40,7 +41,7 @@ enum ad7793_bias_voltage {
  * enum ad7793_refsel - AD7793 reference voltage selection
  * @AD7793_REFSEL_REFIN1: External reference applied between REFIN1(+)
  *	and REFIN1(-).
- * @AD7793_REFSEL_REFIN2: External reference applied between REFIN2(+)
+ * @AD7793_REFSEL_REFIN2: External reference applied between REFIN2(+) and
  *	and REFIN1(-). Only valid for AD7795/AD7796.
  * @AD7793_REFSEL_INTERNAL: Internal 1.17 V reference.
  */

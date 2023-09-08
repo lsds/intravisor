@@ -1,10 +1,19 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Device driver for monitoring ambient light intensity (lux)
  * within the TAOS tsl258x family of devices (tsl2580, tsl2581, tsl2583).
  *
  * Copyright (c) 2011, TAOS Corporation.
  * Copyright (c) 2016-2017 Brian Masney <masneyb@onstation.org>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+ * more details.
  */
 
 #include <linux/kernel.h>
@@ -285,7 +294,7 @@ static int tsl2583_get_lux(struct iio_dev *indio_dev)
 	lux64 = lux64 * chip->als_settings.als_gain_trim;
 	lux64 >>= 13;
 	lux = lux64;
-	lux = DIV_ROUND_CLOSEST(lux, 1000);
+	lux = (lux + 500) / 1000;
 
 	if (lux > TSL2583_LUX_CALC_OVER_FLOW) { /* check for overflow */
 return_max:
@@ -341,14 +350,6 @@ static int tsl2583_als_calibrate(struct iio_dev *indio_dev)
 		return lux_val;
 	}
 
-	/* Avoid division by zero of lux_value later on */
-	if (lux_val == 0) {
-		dev_err(&chip->client->dev,
-			"%s: lux_val of 0 will produce out of range trim_value\n",
-			__func__);
-		return -ENODATA;
-	}
-
 	gain_trim_val = (unsigned int)(((chip->als_settings.als_cal_target)
 			* chip->als_settings.als_gain_trim) / lux_val);
 	if ((gain_trim_val < 250) || (gain_trim_val > 4000)) {
@@ -369,12 +370,12 @@ static int tsl2583_set_als_time(struct tsl2583_chip *chip)
 	u8 val;
 
 	/* determine als integration register */
-	als_count = DIV_ROUND_CLOSEST(chip->als_settings.als_time * 100, 270);
+	als_count = (chip->als_settings.als_time * 100 + 135) / 270;
 	if (!als_count)
 		als_count = 1; /* ensure at least one cycle */
 
 	/* convert back to time (encompasses overrides) */
-	als_time = DIV_ROUND_CLOSEST(als_count * 27, 10);
+	als_time = (als_count * 27 + 5) / 10;
 
 	val = 256 - als_count;
 	ret = i2c_smbus_write_byte_data(chip->client,
@@ -388,7 +389,7 @@ static int tsl2583_set_als_time(struct tsl2583_chip *chip)
 
 	/* set chip struct re scaling and saturation */
 	chip->als_saturation = als_count * 922; /* 90% of full scale */
-	chip->als_time_scale = DIV_ROUND_CLOSEST(als_time, 50);
+	chip->als_time_scale = (als_time + 25) / 50;
 
 	return ret;
 }
@@ -599,7 +600,7 @@ done:
 
 static IIO_CONST_ATTR(in_illuminance_calibscale_available, "1 8 16 111");
 static IIO_CONST_ATTR(in_illuminance_integration_time_available,
-		      "0.050 0.100 0.150 0.200 0.250 0.300 0.350 0.400 0.450 0.500 0.550 0.600 0.650");
+		      "0.000050 0.000100 0.000150 0.000200 0.000250 0.000300 0.000350 0.000400 0.000450 0.000500 0.000550 0.000600 0.000650");
 static IIO_DEVICE_ATTR_RW(in_illuminance_input_target, 0);
 static IIO_DEVICE_ATTR_WO(in_illuminance_calibrate, 0);
 static IIO_DEVICE_ATTR_RW(in_illuminance_lux_table, 0);
@@ -644,7 +645,9 @@ static int tsl2583_set_pm_runtime_busy(struct tsl2583_chip *chip, bool on)
 	int ret;
 
 	if (on) {
-		ret = pm_runtime_resume_and_get(&chip->client->dev);
+		ret = pm_runtime_get_sync(&chip->client->dev);
+		if (ret < 0)
+			pm_runtime_put_noidle(&chip->client->dev);
 	} else {
 		pm_runtime_mark_last_busy(&chip->client->dev);
 		ret = pm_runtime_put_autosuspend(&chip->client->dev);
@@ -727,10 +730,8 @@ static int tsl2583_read_raw(struct iio_dev *indio_dev,
 read_done:
 	mutex_unlock(&chip->als_mutex);
 
-	if (ret < 0) {
-		tsl2583_set_pm_runtime_busy(chip, false);
+	if (ret < 0)
 		return ret;
-	}
 
 	/*
 	 * Preserve the ret variable if the call to
@@ -791,10 +792,8 @@ static int tsl2583_write_raw(struct iio_dev *indio_dev,
 
 	mutex_unlock(&chip->als_mutex);
 
-	if (ret < 0) {
-		tsl2583_set_pm_runtime_busy(chip, false);
+	if (ret < 0)
 		return ret;
-	}
 
 	ret = tsl2583_set_pm_runtime_busy(chip, false);
 	if (ret < 0)
@@ -850,6 +849,7 @@ static int tsl2583_probe(struct i2c_client *clientp,
 	indio_dev->info = &tsl2583_info;
 	indio_dev->channels = tsl2583_channels;
 	indio_dev->num_channels = ARRAY_SIZE(tsl2583_channels);
+	indio_dev->dev.parent = &clientp->dev;
 	indio_dev->modes = INDIO_DIRECT_MODE;
 	indio_dev->name = chip->client->name;
 
@@ -858,7 +858,7 @@ static int tsl2583_probe(struct i2c_client *clientp,
 					 TSL2583_POWER_OFF_DELAY_MS);
 	pm_runtime_use_autosuspend(&clientp->dev);
 
-	ret = iio_device_register(indio_dev);
+	ret = devm_iio_device_register(indio_dev->dev.parent, indio_dev);
 	if (ret) {
 		dev_err(&clientp->dev, "%s: iio registration failed\n",
 			__func__);
@@ -873,7 +873,7 @@ static int tsl2583_probe(struct i2c_client *clientp,
 	return 0;
 }
 
-static void tsl2583_remove(struct i2c_client *client)
+static int tsl2583_remove(struct i2c_client *client)
 {
 	struct iio_dev *indio_dev = i2c_get_clientdata(client);
 	struct tsl2583_chip *chip = iio_priv(indio_dev);
@@ -882,11 +882,12 @@ static void tsl2583_remove(struct i2c_client *client)
 
 	pm_runtime_disable(&client->dev);
 	pm_runtime_set_suspended(&client->dev);
+	pm_runtime_put_noidle(&client->dev);
 
-	tsl2583_set_power_state(chip, TSL2583_CNTL_PWR_OFF);
+	return tsl2583_set_power_state(chip, TSL2583_CNTL_PWR_OFF);
 }
 
-static int tsl2583_suspend(struct device *dev)
+static int __maybe_unused tsl2583_suspend(struct device *dev)
 {
 	struct iio_dev *indio_dev = i2c_get_clientdata(to_i2c_client(dev));
 	struct tsl2583_chip *chip = iio_priv(indio_dev);
@@ -901,7 +902,7 @@ static int tsl2583_suspend(struct device *dev)
 	return ret;
 }
 
-static int tsl2583_resume(struct device *dev)
+static int __maybe_unused tsl2583_resume(struct device *dev)
 {
 	struct iio_dev *indio_dev = i2c_get_clientdata(to_i2c_client(dev));
 	struct tsl2583_chip *chip = iio_priv(indio_dev);
@@ -916,8 +917,11 @@ static int tsl2583_resume(struct device *dev)
 	return ret;
 }
 
-static DEFINE_RUNTIME_DEV_PM_OPS(tsl2583_pm_ops, tsl2583_suspend,
-				 tsl2583_resume, NULL);
+static const struct dev_pm_ops tsl2583_pm_ops = {
+	SET_SYSTEM_SLEEP_PM_OPS(pm_runtime_force_suspend,
+				pm_runtime_force_resume)
+	SET_RUNTIME_PM_OPS(tsl2583_suspend, tsl2583_resume, NULL)
+};
 
 static const struct i2c_device_id tsl2583_idtable[] = {
 	{ "tsl2580", 0 },
@@ -939,7 +943,7 @@ MODULE_DEVICE_TABLE(of, tsl2583_of_match);
 static struct i2c_driver tsl2583_driver = {
 	.driver = {
 		.name = "tsl2583",
-		.pm = pm_ptr(&tsl2583_pm_ops),
+		.pm = &tsl2583_pm_ops,
 		.of_match_table = tsl2583_of_match,
 	},
 	.id_table = tsl2583_idtable,

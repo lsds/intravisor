@@ -1,7 +1,8 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * QLogic qlcnic NIC Driver
  * Copyright (c) 2009-2013 QLogic Corporation
+ *
+ * See LICENSE.qlcnic for copyright and licensing details.
  */
 
 #ifndef __QLCNIC_83XX_HW_H
@@ -549,8 +550,7 @@ int qlcnic_83xx_wrt_reg_indirect(struct qlcnic_adapter *, ulong, u32);
 int qlcnic_83xx_nic_set_promisc(struct qlcnic_adapter *, u32);
 int qlcnic_83xx_config_hw_lro(struct qlcnic_adapter *, int);
 int qlcnic_83xx_config_rss(struct qlcnic_adapter *, int);
-void qlcnic_83xx_change_l2_filter(struct qlcnic_adapter *adapter, u64 *addr,
-				  u16 vlan, struct qlcnic_host_tx_ring *ring);
+void qlcnic_83xx_change_l2_filter(struct qlcnic_adapter *, u64 *, u16);
 int qlcnic_83xx_get_pci_info(struct qlcnic_adapter *, struct qlcnic_pci_info *);
 int qlcnic_83xx_set_nic_info(struct qlcnic_adapter *, struct qlcnic_info *);
 void qlcnic_83xx_initialize_nic(struct qlcnic_adapter *, int);
@@ -609,7 +609,7 @@ int qlcnic_83xx_read_flash_descriptor_table(struct qlcnic_adapter *);
 int qlcnic_83xx_flash_read32(struct qlcnic_adapter *, u32, u8 *, int);
 int qlcnic_83xx_lockless_flash_read32(struct qlcnic_adapter *,
 				      u32, u8 *, int);
-int qlcnic_83xx_init(struct qlcnic_adapter *);
+int qlcnic_83xx_init(struct qlcnic_adapter *, int);
 int qlcnic_83xx_idc_ready_state_entry(struct qlcnic_adapter *);
 void qlcnic_83xx_idc_poll_dev_state(struct work_struct *);
 void qlcnic_83xx_idc_exit(struct qlcnic_adapter *);

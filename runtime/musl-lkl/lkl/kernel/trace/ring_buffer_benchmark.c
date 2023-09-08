@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * ring buffer tester and benchmark
  *
@@ -29,7 +28,7 @@ static int reader_finish;
 static DECLARE_COMPLETION(read_start);
 static DECLARE_COMPLETION(read_done);
 
-static struct trace_buffer *buffer;
+static struct ring_buffer *buffer;
 static struct task_struct *producer;
 static struct task_struct *consumer;
 static unsigned long read;
@@ -45,8 +44,8 @@ MODULE_PARM_DESC(write_iteration, "# of writes between timestamp readings");
 static int producer_nice = MAX_NICE;
 static int consumer_nice = MAX_NICE;
 
-static int producer_fifo;
-static int consumer_fifo;
+static int producer_fifo = -1;
+static int consumer_fifo = -1;
 
 module_param(producer_nice, int, 0644);
 MODULE_PARM_DESC(producer_nice, "nice prio for producer");
@@ -55,10 +54,10 @@ module_param(consumer_nice, int, 0644);
 MODULE_PARM_DESC(consumer_nice, "nice prio for consumer");
 
 module_param(producer_fifo, int, 0644);
-MODULE_PARM_DESC(producer_fifo, "use fifo for producer: 0 - disabled, 1 - low prio, 2 - fifo");
+MODULE_PARM_DESC(producer_fifo, "fifo prio for producer");
 
 module_param(consumer_fifo, int, 0644);
-MODULE_PARM_DESC(consumer_fifo, "use fifo for consumer: 0 - disabled, 1 - low prio, 2 - fifo");
+MODULE_PARM_DESC(consumer_fifo, "fifo prio for consumer");
 
 static int read_events;
 
@@ -267,12 +266,12 @@ static void ring_buffer_producer(void)
 		if (consumer && !(cnt % wakeup_interval))
 			wake_up_process(consumer);
 
-#ifndef CONFIG_PREEMPTION
+#ifndef CONFIG_PREEMPT
 		/*
-		 * If we are a non preempt kernel, the 10 seconds run will
+		 * If we are a non preempt kernel, the 10 second run will
 		 * stop everything while it runs. Instead, we will call
 		 * cond_resched and also add any time that was lost by a
-		 * reschedule.
+		 * rescedule.
 		 *
 		 * Do a cond resched at the same frequency we would wake up
 		 * the reader.
@@ -303,22 +302,22 @@ static void ring_buffer_producer(void)
 		trace_printk("ERROR!\n");
 
 	if (!disable_reader) {
-		if (consumer_fifo)
-			trace_printk("Running Consumer at SCHED_FIFO %s\n",
-				     consumer_fifo == 1 ? "low" : "high");
-		else
+		if (consumer_fifo < 0)
 			trace_printk("Running Consumer at nice: %d\n",
 				     consumer_nice);
+		else
+			trace_printk("Running Consumer at SCHED_FIFO %d\n",
+				     consumer_fifo);
 	}
-	if (producer_fifo)
-		trace_printk("Running Producer at SCHED_FIFO %s\n",
-			     producer_fifo == 1 ? "low" : "high");
-	else
+	if (producer_fifo < 0)
 		trace_printk("Running Producer at nice: %d\n",
 			     producer_nice);
+	else
+		trace_printk("Running Producer at SCHED_FIFO %d\n",
+			     producer_fifo);
 
 	/* Let the user know that the test is running at low priority */
-	if (!producer_fifo && !consumer_fifo &&
+	if (producer_fifo < 0 && consumer_fifo < 0 &&
 	    producer_nice == MAX_NICE && consumer_nice == MAX_NICE)
 		trace_printk("WARNING!!! This test is running at lowest priority.\n");
 
@@ -362,7 +361,7 @@ static void ring_buffer_producer(void)
 			hit--; /* make it non zero */
 		}
 
-		/* Calculate the average time in nanosecs */
+		/* Caculate the average time in nanosecs */
 		avg = NSEC_PER_MSEC / (hit + missed);
 		trace_printk("%ld ns per entry\n", avg);
 	}
@@ -455,19 +454,21 @@ static int __init ring_buffer_benchmark_init(void)
 	 * Run them as low-prio background tasks by default:
 	 */
 	if (!disable_reader) {
-		if (consumer_fifo >= 2)
-			sched_set_fifo(consumer);
-		else if (consumer_fifo == 1)
-			sched_set_fifo_low(consumer);
-		else
+		if (consumer_fifo >= 0) {
+			struct sched_param param = {
+				.sched_priority = consumer_fifo
+			};
+			sched_setscheduler(consumer, SCHED_FIFO, &param);
+		} else
 			set_user_nice(consumer, consumer_nice);
 	}
 
-	if (producer_fifo >= 2)
-		sched_set_fifo(producer);
-	else if (producer_fifo == 1)
-		sched_set_fifo_low(producer);
-	else
+	if (producer_fifo >= 0) {
+		struct sched_param param = {
+			.sched_priority = producer_fifo
+		};
+		sched_setscheduler(producer, SCHED_FIFO, &param);
+	} else
 		set_user_nice(producer, producer_nice);
 
 	return 0;

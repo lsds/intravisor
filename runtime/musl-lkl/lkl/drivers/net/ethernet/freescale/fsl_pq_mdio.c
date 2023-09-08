@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Freescale PowerQUICC Ethernet Driver -- MIIM bus implementation
  * Provides Bus interface for MIIM regs
@@ -9,6 +8,12 @@
  * Copyright 2002-2004, 2008-2009 Freescale Semiconductor, Inc.
  *
  * Based on gianfar_mii.c and ucc_geth_mii.c (Li Yang, Kim Phillips)
+ *
+ * This program is free software; you can redistribute  it and/or modify it
+ * under  the terms of  the GNU General  Public License as published by the
+ * Free Software Foundation;  either version 2 of the  License, or (at your
+ * option) any later version.
+ *
  */
 
 #include <linux/kernel.h>
@@ -430,7 +435,7 @@ static int fsl_pq_mdio_probe(struct platform_device *pdev)
 		return -ENOMEM;
 
 	priv = new_bus->priv;
-	new_bus->name = "Freescale PowerQUICC MII Bus";
+	new_bus->name = "Freescale PowerQUICC MII Bus",
 	new_bus->read = &fsl_pq_mdio_read;
 	new_bus->write = &fsl_pq_mdio_write;
 	new_bus->reset = &fsl_pq_mdio_reset;
@@ -441,8 +446,8 @@ static int fsl_pq_mdio_probe(struct platform_device *pdev)
 		goto error;
 	}
 
-	snprintf(new_bus->id, MII_BUS_ID_SIZE, "%pOFn@%llx", np,
-		 (unsigned long long)res.start);
+	snprintf(new_bus->id, MII_BUS_ID_SIZE, "%s@%llx", np->name,
+		(unsigned long long)res.start);
 
 	priv->map = of_iomap(np, 0);
 	if (!priv->map) {
@@ -468,7 +473,7 @@ static int fsl_pq_mdio_probe(struct platform_device *pdev)
 
 	if (data->get_tbipa) {
 		for_each_child_of_node(np, tbi) {
-			if (of_node_is_type(tbi, "tbi-phy")) {
+			if (strcmp(tbi->type, "tbi-phy") == 0) {
 				dev_dbg(&pdev->dev, "found TBI PHY node %pOFP\n",
 					tbi);
 				break;

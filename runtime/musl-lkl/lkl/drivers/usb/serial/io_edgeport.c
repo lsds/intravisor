@@ -220,7 +220,7 @@ struct edgeport_serial {
 	__u8			rxHeader3;			/* receive header byte 3 */
 	__u8			rxPort;				/* the port that we are currently receiving data for */
 	__u8			rxStatusCode;			/* the receive status code */
-	__u8			rxStatusParam;			/* the receive status parameter */
+	__u8			rxStatusParam;			/* the receive status paramater */
 	__s16			rxBytesRemaining;		/* the number of port bytes left to read */
 	struct usb_serial	*serial;			/* loop back to the owner of this object */
 };
@@ -263,9 +263,39 @@ static const struct divisor_table_entry divisor_table[] = {
 static atomic_t CmdUrbs = ATOMIC_INIT(0);
 
 
-/* function prototypes */
+/* local function prototypes */
 
+/* function prototypes for all URB callbacks */
+static void edge_interrupt_callback(struct urb *urb);
+static void edge_bulk_in_callback(struct urb *urb);
+static void edge_bulk_out_data_callback(struct urb *urb);
+static void edge_bulk_out_cmd_callback(struct urb *urb);
+
+/* function prototypes for the usbserial callbacks */
+static int edge_open(struct tty_struct *tty, struct usb_serial_port *port);
 static void edge_close(struct usb_serial_port *port);
+static int edge_write(struct tty_struct *tty, struct usb_serial_port *port,
+					const unsigned char *buf, int count);
+static int edge_write_room(struct tty_struct *tty);
+static int edge_chars_in_buffer(struct tty_struct *tty);
+static void edge_throttle(struct tty_struct *tty);
+static void edge_unthrottle(struct tty_struct *tty);
+static void edge_set_termios(struct tty_struct *tty,
+					struct usb_serial_port *port,
+					struct ktermios *old_termios);
+static int  edge_ioctl(struct tty_struct *tty,
+					unsigned int cmd, unsigned long arg);
+static void edge_break(struct tty_struct *tty, int break_state);
+static int  edge_tiocmget(struct tty_struct *tty);
+static int  edge_tiocmset(struct tty_struct *tty,
+					unsigned int set, unsigned int clear);
+static int  edge_startup(struct usb_serial *serial);
+static void edge_disconnect(struct usb_serial *serial);
+static void edge_release(struct usb_serial *serial);
+static int edge_port_probe(struct usb_serial_port *port);
+static int edge_port_remove(struct usb_serial_port *port);
+
+/* function prototypes for all of our local functions */
 
 static void  process_rcvd_data(struct edgeport_serial *edge_serial,
 				unsigned char *buffer, __u16 bufferLength);
@@ -279,9 +309,11 @@ static void handle_new_lsr(struct edgeport_port *edge_port, __u8 lsrData,
 static int  send_iosp_ext_cmd(struct edgeport_port *edge_port, __u8 command,
 				__u8 param);
 static int  calc_baud_rate_divisor(struct device *dev, int baud_rate, int *divisor);
+static int  send_cmd_write_baud_rate(struct edgeport_port *edge_port,
+				int baudRate);
 static void change_port_settings(struct tty_struct *tty,
 				struct edgeport_port *edge_port,
-				const struct ktermios *old_termios);
+				struct ktermios *old_termios);
 static int  send_cmd_write_uart_register(struct edgeport_port *edge_port,
 				__u8 regNum, __u8 regValue);
 static int  write_cmd_usb(struct edgeport_port *edge_port,
@@ -289,8 +321,19 @@ static int  write_cmd_usb(struct edgeport_port *edge_port,
 static void send_more_port_data(struct edgeport_serial *edge_serial,
 				struct edgeport_port *edge_port);
 
+static int sram_write(struct usb_serial *serial, __u16 extAddr, __u16 addr,
+					__u16 length, const __u8 *data);
+static int rom_read(struct usb_serial *serial, __u16 extAddr, __u16 addr,
+						__u16 length, __u8 *data);
 static int rom_write(struct usb_serial *serial, __u16 extAddr, __u16 addr,
 					__u16 length, const __u8 *data);
+static void get_manufacturing_desc(struct edgeport_serial *edge_serial);
+static void get_boot_desc(struct edgeport_serial *edge_serial);
+static void load_application_firmware(struct edgeport_serial *edge_serial);
+
+static void unicode_to_ascii(char *string, int buflen,
+				__le16 *unicode, int unicode_size);
+
 
 /* ************************************************************************ */
 /* ************************************************************************ */
@@ -388,6 +431,39 @@ static void update_edgeport_E2PROM(struct edgeport_serial *edge_serial)
 	}
 	release_firmware(fw);
 }
+
+#if 0
+/************************************************************************
+ *
+ *  Get string descriptor from device
+ *
+ ************************************************************************/
+static int get_string_desc(struct usb_device *dev, int Id,
+				struct usb_string_descriptor **pRetDesc)
+{
+	struct usb_string_descriptor StringDesc;
+	struct usb_string_descriptor *pStringDesc;
+
+	dev_dbg(&dev->dev, "%s - USB String ID = %d\n", __func__, Id);
+
+	if (!usb_get_descriptor(dev, USB_DT_STRING, Id, &StringDesc,
+						sizeof(StringDesc)))
+		return 0;
+
+	pStringDesc = kmalloc(StringDesc.bLength, GFP_KERNEL);
+	if (!pStringDesc)
+		return -1;
+
+	if (!usb_get_descriptor(dev, USB_DT_STRING, Id, pStringDesc,
+							StringDesc.bLength)) {
+		kfree(pStringDesc);
+		return -1;
+	}
+
+	*pRetDesc = pStringDesc;
+	return 0;
+}
+#endif
 
 static void dump_product_info(struct edgeport_serial *edge_serial,
 			      struct edgeport_product_info *product_info)
@@ -572,7 +648,6 @@ static void edge_interrupt_callback(struct urb *urb)
 	struct usb_serial_port *port;
 	unsigned char *data = urb->transfer_buffer;
 	int length = urb->actual_length;
-	unsigned long flags;
 	int bytes_avail;
 	int position;
 	int txCredits;
@@ -604,7 +679,7 @@ static void edge_interrupt_callback(struct urb *urb)
 		if (length > 1) {
 			bytes_avail = data[0] | (data[1] << 8);
 			if (bytes_avail) {
-				spin_lock_irqsave(&edge_serial->es_lock, flags);
+				spin_lock(&edge_serial->es_lock);
 				edge_serial->rxBytesAvail += bytes_avail;
 				dev_dbg(dev,
 					"%s - bytes_avail=%d, rxBytesAvail=%d, read_in_progress=%d\n",
@@ -627,25 +702,22 @@ static void edge_interrupt_callback(struct urb *urb)
 						edge_serial->read_in_progress = false;
 					}
 				}
-				spin_unlock_irqrestore(&edge_serial->es_lock,
-						       flags);
+				spin_unlock(&edge_serial->es_lock);
 			}
 		}
 		/* grab the txcredits for the ports if available */
 		position = 2;
 		portNumber = 0;
-		while ((position < length - 1) &&
+		while ((position < length) &&
 				(portNumber < edge_serial->serial->num_ports)) {
 			txCredits = data[position] | (data[position+1] << 8);
 			if (txCredits) {
 				port = edge_serial->serial->port[portNumber];
 				edge_port = usb_get_serial_port_data(port);
-				if (edge_port && edge_port->open) {
-					spin_lock_irqsave(&edge_port->ep_lock,
-							  flags);
+				if (edge_port->open) {
+					spin_lock(&edge_port->ep_lock);
 					edge_port->txCredits += txCredits;
-					spin_unlock_irqrestore(&edge_port->ep_lock,
-							       flags);
+					spin_unlock(&edge_port->ep_lock);
 					dev_dbg(dev, "%s - txcredits for port%d = %d\n",
 						__func__, portNumber,
 						edge_port->txCredits);
@@ -686,7 +758,6 @@ static void edge_bulk_in_callback(struct urb *urb)
 	int			retval;
 	__u16			raw_data_length;
 	int status = urb->status;
-	unsigned long flags;
 
 	if (status) {
 		dev_dbg(&urb->dev->dev, "%s - nonzero read bulk status received: %d\n",
@@ -706,7 +777,7 @@ static void edge_bulk_in_callback(struct urb *urb)
 
 	usb_serial_debug_data(dev, __func__, raw_data_length, data);
 
-	spin_lock_irqsave(&edge_serial->es_lock, flags);
+	spin_lock(&edge_serial->es_lock);
 
 	/* decrement our rxBytes available by the number that we just got */
 	edge_serial->rxBytesAvail -= raw_data_length;
@@ -730,7 +801,7 @@ static void edge_bulk_in_callback(struct urb *urb)
 		edge_serial->read_in_progress = false;
 	}
 
-	spin_unlock_irqrestore(&edge_serial->es_lock, flags);
+	spin_unlock(&edge_serial->es_lock);
 }
 
 
@@ -901,7 +972,7 @@ static int edge_open(struct tty_struct *tty, struct usb_serial_port *port)
 
 	if (!edge_port->open) {
 		/* open timed out */
-		dev_dbg(dev, "%s - open timeout\n", __func__);
+		dev_dbg(dev, "%s - open timedout\n", __func__);
 		edge_port->openPending = false;
 		return -ENODEV;
 	}
@@ -1318,21 +1389,33 @@ exit_send:
 /*****************************************************************************
  * edge_write_room
  *	this function is called by the tty driver when it wants to know how
- *	many bytes of data we can accept for a specific port.
+ *	many bytes of data we can accept for a specific port. If successful,
+ *	we return the amount of room that we have for this port	(the txCredits)
+ *	otherwise we return a negative error number.
  *****************************************************************************/
-static unsigned int edge_write_room(struct tty_struct *tty)
+static int edge_write_room(struct tty_struct *tty)
 {
 	struct usb_serial_port *port = tty->driver_data;
 	struct edgeport_port *edge_port = usb_get_serial_port_data(port);
-	unsigned int room;
+	int room;
 	unsigned long flags;
+
+	if (edge_port == NULL)
+		return 0;
+	if (edge_port->closePending)
+		return 0;
+
+	if (!edge_port->open) {
+		dev_dbg(&port->dev, "%s - port not opened\n", __func__);
+		return 0;
+	}
 
 	/* total of both buffers is still txCredit */
 	spin_lock_irqsave(&edge_port->ep_lock, flags);
 	room = edge_port->txCredits - edge_port->txfifo.count;
 	spin_unlock_irqrestore(&edge_port->ep_lock, flags);
 
-	dev_dbg(&port->dev, "%s - returns %u\n", __func__, room);
+	dev_dbg(&port->dev, "%s - returns %d\n", __func__, room);
 	return room;
 }
 
@@ -1342,20 +1425,33 @@ static unsigned int edge_write_room(struct tty_struct *tty)
  *	this function is called by the tty driver when it wants to know how
  *	many bytes of data we currently have outstanding in the port (data that
  *	has been written, but hasn't made it out the port yet)
+ *	If successful, we return the number of bytes left to be written in the
+ *	system,
+ *	Otherwise we return a negative error number.
  *****************************************************************************/
-static unsigned int edge_chars_in_buffer(struct tty_struct *tty)
+static int edge_chars_in_buffer(struct tty_struct *tty)
 {
 	struct usb_serial_port *port = tty->driver_data;
 	struct edgeport_port *edge_port = usb_get_serial_port_data(port);
-	unsigned int num_chars;
+	int num_chars;
 	unsigned long flags;
+
+	if (edge_port == NULL)
+		return 0;
+	if (edge_port->closePending)
+		return 0;
+
+	if (!edge_port->open) {
+		dev_dbg(&port->dev, "%s - port not opened\n", __func__);
+		return 0;
+	}
 
 	spin_lock_irqsave(&edge_port->ep_lock, flags);
 	num_chars = edge_port->maxTxCredits - edge_port->txCredits +
 						edge_port->txfifo.count;
 	spin_unlock_irqrestore(&edge_port->ep_lock, flags);
 	if (num_chars) {
-		dev_dbg(&port->dev, "%s - returns %u\n", __func__, num_chars);
+		dev_dbg(&port->dev, "%s - returns %d\n", __func__, num_chars);
 	}
 
 	return num_chars;
@@ -1441,8 +1537,7 @@ static void edge_unthrottle(struct tty_struct *tty)
  * the termios structure
  *****************************************************************************/
 static void edge_set_termios(struct tty_struct *tty,
-			     struct usb_serial_port *port,
-			     const struct ktermios *old_termios)
+	struct usb_serial_port *port, struct ktermios *old_termios)
 {
 	struct edgeport_port *edge_port = usb_get_serial_port_data(port);
 
@@ -1537,6 +1632,28 @@ static int edge_tiocmget(struct tty_struct *tty)
 	return result;
 }
 
+static int get_serial_info(struct edgeport_port *edge_port,
+				struct serial_struct __user *retinfo)
+{
+	struct serial_struct tmp;
+
+	memset(&tmp, 0, sizeof(tmp));
+
+	tmp.type		= PORT_16550A;
+	tmp.line		= edge_port->port->minor;
+	tmp.port		= edge_port->port->port_number;
+	tmp.irq			= 0;
+	tmp.xmit_fifo_size	= edge_port->maxTxCredits;
+	tmp.baud_base		= 9600;
+	tmp.close_delay		= 5*HZ;
+	tmp.closing_wait	= 30*HZ;
+
+	if (copy_to_user(retinfo, &tmp, sizeof(*retinfo)))
+		return -EFAULT;
+	return 0;
+}
+
+
 /*****************************************************************************
  * SerialIoctl
  *	this function handles any ioctl calls to the driver
@@ -1545,12 +1662,17 @@ static int edge_ioctl(struct tty_struct *tty,
 					unsigned int cmd, unsigned long arg)
 {
 	struct usb_serial_port *port = tty->driver_data;
+	DEFINE_WAIT(wait);
 	struct edgeport_port *edge_port = usb_get_serial_port_data(port);
 
 	switch (cmd) {
 	case TIOCSERGETLSR:
 		dev_dbg(&port->dev, "%s TIOCSERGETLSR\n", __func__);
 		return get_lsr_info(edge_port, (unsigned int __user *) arg);
+
+	case TIOCGSERIAL:
+		dev_dbg(&port->dev, "%s TIOCGSERIAL\n", __func__);
+		return get_serial_info(edge_port, (struct serial_struct __user *) arg);
 	}
 	return -ENOIOCTLCMD;
 }
@@ -1607,8 +1729,7 @@ static void edge_break(struct tty_struct *tty, int break_state)
 static void process_rcvd_data(struct edgeport_serial *edge_serial,
 				unsigned char *buffer, __u16 bufferLength)
 {
-	struct usb_serial *serial = edge_serial->serial;
-	struct device *dev = &serial->dev->dev;
+	struct device *dev = &edge_serial->serial->dev->dev;
 	struct usb_serial_port *port;
 	struct edgeport_port *edge_port;
 	__u16 lastBufferLength;
@@ -1634,7 +1755,7 @@ static void process_rcvd_data(struct edgeport_serial *edge_serial,
 				edge_serial->rxState = EXPECT_HDR2;
 				break;
 			}
-			fallthrough;
+			/* otherwise, drop on through */
 		case EXPECT_HDR2:
 			edge_serial->rxHeader2 = *buffer;
 			++buffer;
@@ -1673,20 +1794,29 @@ static void process_rcvd_data(struct edgeport_serial *edge_serial,
 						edge_serial->rxHeader2, 0);
 				edge_serial->rxState = EXPECT_HDR1;
 				break;
-			}
+			} else {
+				edge_serial->rxPort =
+				    IOSP_GET_HDR_PORT(edge_serial->rxHeader1);
+				edge_serial->rxBytesRemaining =
+				    IOSP_GET_HDR_DATA_LEN(
+						edge_serial->rxHeader1,
+						edge_serial->rxHeader2);
+				dev_dbg(dev, "%s - Data for Port %u Len %u\n",
+					__func__,
+					edge_serial->rxPort,
+					edge_serial->rxBytesRemaining);
 
-			edge_serial->rxPort = IOSP_GET_HDR_PORT(edge_serial->rxHeader1);
-			edge_serial->rxBytesRemaining = IOSP_GET_HDR_DATA_LEN(edge_serial->rxHeader1,
-									      edge_serial->rxHeader2);
-			dev_dbg(dev, "%s - Data for Port %u Len %u\n", __func__,
-				edge_serial->rxPort,
-				edge_serial->rxBytesRemaining);
+				/* ASSERT(DevExt->RxPort < DevExt->NumPorts);
+				 * ASSERT(DevExt->RxBytesRemaining <
+				 *		IOSP_MAX_DATA_LENGTH);
+				 */
 
-			if (bufferLength == 0) {
-				edge_serial->rxState = EXPECT_DATA;
-				break;
+				if (bufferLength == 0) {
+					edge_serial->rxState = EXPECT_DATA;
+					break;
+				}
+				/* Else, drop through */
 			}
-			fallthrough;
 		case EXPECT_DATA: /* Expect data */
 			if (bufferLength < edge_serial->rxBytesRemaining) {
 				rxLen = bufferLength;
@@ -1704,10 +1834,11 @@ static void process_rcvd_data(struct edgeport_serial *edge_serial,
 
 			/* spit this data back into the tty driver if this
 			   port is open */
-			if (rxLen && edge_serial->rxPort < serial->num_ports) {
-				port = serial->port[edge_serial->rxPort];
+			if (rxLen) {
+				port = edge_serial->serial->port[
+							edge_serial->rxPort];
 				edge_port = usb_get_serial_port_data(port);
-				if (edge_port && edge_port->open) {
+				if (edge_port->open) {
 					dev_dbg(dev, "%s - Sending %d bytes to TTY for port %d\n",
 						__func__, rxLen,
 						edge_serial->rxPort);
@@ -1715,8 +1846,8 @@ static void process_rcvd_data(struct edgeport_serial *edge_serial,
 							rxLen);
 					edge_port->port->icount.rx += rxLen;
 				}
+				buffer += rxLen;
 			}
-			buffer += rxLen;
 			break;
 
 		case EXPECT_HDR3:	/* Expect 3rd byte of status header */
@@ -1751,8 +1882,6 @@ static void process_rcvd_status(struct edgeport_serial *edge_serial,
 	__u8 code = edge_serial->rxStatusCode;
 
 	/* switch the port pointer to the one being currently talked about */
-	if (edge_serial->rxPort >= edge_serial->serial->num_ports)
-		return;
 	port = edge_serial->serial->port[edge_serial->rxPort];
 	edge_port = usb_get_serial_port_data(port);
 	if (edge_port == NULL) {
@@ -2326,7 +2455,7 @@ static int send_cmd_write_uart_register(struct edgeport_port *edge_port,
  *****************************************************************************/
 
 static void change_port_settings(struct tty_struct *tty,
-	struct edgeport_port *edge_port, const struct ktermios *old_termios)
+	struct edgeport_port *edge_port, struct ktermios *old_termios)
 {
 	struct device *dev = &edge_port->port->dev;
 	struct edgeport_serial *edge_serial =
@@ -2785,18 +2914,16 @@ static int edge_startup(struct usb_serial *serial)
 	response = 0;
 
 	if (edge_serial->is_epic) {
-		struct usb_host_interface *alt;
-
-		alt = serial->interface->cur_altsetting;
-
 		/* EPIC thing, set up our interrupt polling now and our read
 		 * urb, so that the device knows it really is connected. */
 		interrupt_in_found = bulk_in_found = bulk_out_found = false;
-		for (i = 0; i < alt->desc.bNumEndpoints; ++i) {
+		for (i = 0; i < serial->interface->altsetting[0]
+						.desc.bNumEndpoints; ++i) {
 			struct usb_endpoint_descriptor *endpoint;
 			int buffer_size;
 
-			endpoint = &alt->endpoint[i].desc;
+			endpoint = &serial->interface->altsetting[0].
+							endpoint[i].desc;
 			buffer_size = usb_endpoint_maxp(endpoint);
 			if (!interrupt_in_found &&
 			    (usb_endpoint_is_int_in(endpoint))) {
@@ -2885,31 +3012,25 @@ static int edge_startup(struct usb_serial *serial)
 				response = -ENODEV;
 			}
 
-			goto error;
+			usb_free_urb(edge_serial->interrupt_read_urb);
+			kfree(edge_serial->interrupt_in_buffer);
+
+			usb_free_urb(edge_serial->read_urb);
+			kfree(edge_serial->bulk_in_buffer);
+
+			kfree(edge_serial);
+
+			return response;
 		}
 
 		/* start interrupt read for this edgeport this interrupt will
 		 * continue as long as the edgeport is connected */
 		response = usb_submit_urb(edge_serial->interrupt_read_urb,
 								GFP_KERNEL);
-		if (response) {
+		if (response)
 			dev_err(ddev, "%s - Error %d submitting control urb\n",
 				__func__, response);
-
-			goto error;
-		}
 	}
-	return response;
-
-error:
-	usb_free_urb(edge_serial->interrupt_read_urb);
-	kfree(edge_serial->interrupt_in_buffer);
-
-	usb_free_urb(edge_serial->read_urb);
-	kfree(edge_serial->bulk_in_buffer);
-
-	kfree(edge_serial);
-
 	return response;
 }
 
@@ -2966,12 +3087,14 @@ static int edge_port_probe(struct usb_serial_port *port)
 	return 0;
 }
 
-static void edge_port_remove(struct usb_serial_port *port)
+static int edge_port_remove(struct usb_serial_port *port)
 {
 	struct edgeport_port *edge_port;
 
 	edge_port = usb_get_serial_port_data(port);
 	kfree(edge_port);
+
+	return 0;
 }
 
 static struct usb_serial_driver edgeport_2port_device = {

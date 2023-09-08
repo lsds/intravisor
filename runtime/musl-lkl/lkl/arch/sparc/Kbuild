@@ -1,4 +1,3 @@
-# SPDX-License-Identifier: GPL-2.0
 #
 # core part of the sparc kernel
 #
@@ -9,6 +8,3 @@ obj-y += math-emu/
 obj-y += net/
 obj-y += crypto/
 obj-$(CONFIG_SPARC64) += vdso/
-
-# for cleaning
-subdir- += boot

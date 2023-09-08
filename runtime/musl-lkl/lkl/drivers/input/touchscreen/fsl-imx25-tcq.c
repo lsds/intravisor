@@ -1,11 +1,16 @@
-// SPDX-License-Identifier: GPL-2.0
-//
-// Copyright (C) 2014-2015 Pengutronix, Markus Pargmann <mpa@pengutronix.de>
-// Based on driver from 2011:
-//   Juergen Beisert, Pengutronix <kernel@pengutronix.de>
-//
-// This is the driver for the imx25 TCQ (Touchscreen Conversion Queue)
-// connected to the imx25 ADC.
+/*
+ * Copyright (C) 2014-2015 Pengutronix, Markus Pargmann <mpa@pengutronix.de>
+ *
+ * This program is free software; you can redistribute it and/or modify it under
+ * the terms of the GNU General Public License version 2 as published by the
+ * Free Software Foundation.
+ *
+ * Based on driver from 2011:
+ *   Juergen Beisert, Pengutronix <kernel@pengutronix.de>
+ *
+ * This is the driver for the imx25 TCQ (Touchscreen Conversion Queue)
+ * connected to the imx25 ADC.
+ */
 
 #include <linux/clk.h>
 #include <linux/device.h>
@@ -503,6 +508,7 @@ static int mx25_tcq_probe(struct platform_device *pdev)
 	struct input_dev *idev;
 	struct mx25_tcq_priv *priv;
 	struct mx25_tsadc *tsadc = dev_get_drvdata(dev->parent);
+	struct resource *res;
 	void __iomem *mem;
 	int error;
 
@@ -511,7 +517,8 @@ static int mx25_tcq_probe(struct platform_device *pdev)
 		return -ENOMEM;
 	priv->dev = dev;
 
-	mem = devm_platform_ioremap_resource(pdev, 0);
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	mem = devm_ioremap_resource(dev, res);
 	if (IS_ERR(mem))
 		return PTR_ERR(mem);
 
@@ -526,8 +533,10 @@ static int mx25_tcq_probe(struct platform_device *pdev)
 	}
 
 	priv->irq = platform_get_irq(pdev, 0);
-	if (priv->irq <= 0)
+	if (priv->irq <= 0) {
+		dev_err(dev, "Failed to get IRQ\n");
 		return priv->irq;
+	}
 
 	idev = devm_input_allocate_device(dev);
 	if (!idev) {

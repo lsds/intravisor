@@ -1,19 +1,21 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  *  74Hx164 - Generic serial-in/parallel-out 8-bits shift register GPIO driver
  *
  *  Copyright (C) 2010 Gabor Juhos <juhosg@openwrt.org>
  *  Copyright (C) 2010 Miguel Gaio <miguel.gaio@efixo.com>
+ *
+ *  This program is free software; you can redistribute it and/or modify
+ *  it under the terms of the GNU General Public License version 2 as
+ *  published by the Free Software Foundation.
  */
 
-#include <linux/bitops.h>
-#include <linux/gpio/consumer.h>
-#include <linux/gpio/driver.h>
-#include <linux/module.h>
+#include <linux/init.h>
 #include <linux/mutex.h>
-#include <linux/property.h>
-#include <linux/slab.h>
 #include <linux/spi/spi.h>
+#include <linux/gpio/driver.h>
+#include <linux/gpio/consumer.h>
+#include <linux/slab.h>
+#include <linux/module.h>
 
 #define GEN_74X164_NUMBER_GPIOS	8
 
@@ -73,18 +75,20 @@ static void gen_74x164_set_multiple(struct gpio_chip *gc, unsigned long *mask,
 				    unsigned long *bits)
 {
 	struct gen_74x164_chip *chip = gpiochip_get_data(gc);
-	unsigned long offset;
-	unsigned long bankmask;
-	size_t bank;
-	unsigned long bitmask;
+	unsigned int i, idx, shift;
+	u8 bank, bankmask;
 
 	mutex_lock(&chip->lock);
-	for_each_set_clump8(offset, bankmask, mask, chip->registers * 8) {
-		bank = chip->registers - 1 - offset / 8;
-		bitmask = bitmap_get_value8(bits, offset) & bankmask;
+	for (i = 0, bank = chip->registers - 1; i < chip->registers;
+	     i++, bank--) {
+		idx = i / sizeof(*mask);
+		shift = i % sizeof(*mask) * BITS_PER_BYTE;
+		bankmask = mask[idx] >> shift;
+		if (!bankmask)
+			continue;
 
 		chip->buffer[bank] &= ~bankmask;
-		chip->buffer[bank] |= bitmask;
+		chip->buffer[bank] |= bankmask & (bits[idx] >> shift);
 	}
 	__gen_74x164_write_config(chip);
 	mutex_unlock(&chip->lock);
@@ -112,9 +116,10 @@ static int gen_74x164_probe(struct spi_device *spi)
 	if (ret < 0)
 		return ret;
 
-	ret = device_property_read_u32(&spi->dev, "registers-number", &nregs);
-	if (ret) {
-		dev_err(&spi->dev, "Missing 'registers-number' property.\n");
+	if (of_property_read_u32(spi->dev.of_node, "registers-number",
+				 &nregs)) {
+		dev_err(&spi->dev,
+			"Missing registers-number property in the DT.\n");
 		return -EINVAL;
 	}
 
@@ -163,21 +168,16 @@ exit_destroy:
 	return ret;
 }
 
-static void gen_74x164_remove(struct spi_device *spi)
+static int gen_74x164_remove(struct spi_device *spi)
 {
 	struct gen_74x164_chip *chip = spi_get_drvdata(spi);
 
 	gpiod_set_value_cansleep(chip->gpiod_oe, 0);
 	gpiochip_remove(&chip->gpio_chip);
 	mutex_destroy(&chip->lock);
-}
 
-static const struct spi_device_id gen_74x164_spi_ids[] = {
-	{ .name = "74hc595" },
-	{ .name = "74lvc594" },
-	{},
-};
-MODULE_DEVICE_TABLE(spi, gen_74x164_spi_ids);
+	return 0;
+}
 
 static const struct of_device_id gen_74x164_dt_ids[] = {
 	{ .compatible = "fairchild,74hc595" },
@@ -193,7 +193,6 @@ static struct spi_driver gen_74x164_driver = {
 	},
 	.probe		= gen_74x164_probe,
 	.remove		= gen_74x164_remove,
-	.id_table	= gen_74x164_spi_ids,
 };
 module_spi_driver(gen_74x164_driver);
 

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * Device driver for the PMU in Apple PowerBooks and PowerMacs.
+ * Device driver for the via-pmu on Apple Powermacs.
  *
  * The VIA (versatile interface adapter) interfaces to the PMU,
  * a 6805 microprocessor core whose primary function is to control
@@ -18,7 +18,7 @@
  *    a sleep or a freq. switch
  *
  */
-#include <linux/stdarg.h>
+#include <stdarg.h>
 #include <linux/mutex.h>
 #include <linux/types.h>
 #include <linux/errno.h>
@@ -49,35 +49,34 @@
 #include <linux/compat.h>
 #include <linux/of_address.h>
 #include <linux/of_irq.h>
-#include <linux/uaccess.h>
-#include <linux/pgtable.h>
+#include <asm/prom.h>
 #include <asm/machdep.h>
 #include <asm/io.h>
+#include <asm/pgtable.h>
 #include <asm/sections.h>
 #include <asm/irq.h>
-#ifdef CONFIG_PPC_PMAC
 #include <asm/pmac_feature.h>
 #include <asm/pmac_pfunc.h>
 #include <asm/pmac_low_i2c.h>
+#include <linux/uaccess.h>
 #include <asm/mmu_context.h>
 #include <asm/cputable.h>
 #include <asm/time.h>
 #include <asm/backlight.h>
-#else
-#include <asm/macintosh.h>
-#include <asm/macints.h>
-#include <asm/mac_via.h>
-#endif
 
 #include "via-pmu-event.h"
 
 /* Some compile options */
 #undef DEBUG_SLEEP
 
+/* Misc minor number allocated for /dev/pmu */
+#define PMU_MINOR		154
+
 /* How many iterations between battery polls */
 #define BATTERY_POLLING_COUNT	2
 
 static DEFINE_MUTEX(pmu_info_proc_mutex);
+static volatile unsigned char __iomem *via;
 
 /* VIA registers - spaced 0x200 bytes apart */
 #define RS		0x200		/* skip between registers */
@@ -99,13 +98,8 @@ static DEFINE_MUTEX(pmu_info_proc_mutex);
 #define ANH		(15*RS)		/* A-side data, no handshake */
 
 /* Bits in B data register: both active low */
-#ifdef CONFIG_PPC_PMAC
 #define TACK		0x08		/* Transfer acknowledge (input) */
 #define TREQ		0x10		/* Transfer request (output) */
-#else
-#define TACK		0x02
-#define TREQ		0x04
-#endif
 
 /* Bits in ACR */
 #define SR_CTRL		0x1c		/* Shift register control bits */
@@ -120,7 +114,6 @@ static DEFINE_MUTEX(pmu_info_proc_mutex);
 #define CB1_INT		0x10		/* transition on CB1 input */
 
 static volatile enum pmu_state {
-	uninitialized = 0,
 	idle,
 	sending,
 	intack,
@@ -147,20 +140,16 @@ static int data_index;
 static int data_len;
 static volatile int adb_int_pending;
 static volatile int disable_poll;
+static struct device_node *vias;
 static int pmu_kind = PMU_UNKNOWN;
 static int pmu_fully_inited;
 static int pmu_has_adb;
-#ifdef CONFIG_PPC_PMAC
-static volatile unsigned char __iomem *via1;
-static volatile unsigned char __iomem *via2;
-static struct device_node *vias;
 static struct device_node *gpio_node;
-#endif
 static unsigned char __iomem *gpio_reg;
 static int gpio_irq = 0;
 static int gpio_irq_enabled = -1;
 static volatile int pmu_suspended;
-static DEFINE_SPINLOCK(pmu_lock);
+static spinlock_t pmu_lock;
 static u8 pmu_intr_mask;
 static int pmu_version;
 static int drop_interrupts;
@@ -168,9 +157,7 @@ static int drop_interrupts;
 static int option_lid_wakeup = 1;
 #endif /* CONFIG_SUSPEND && CONFIG_PPC32 */
 static unsigned long async_req_locks;
-
-#define NUM_IRQ_STATS 13
-static unsigned int pmu_irq_stats[NUM_IRQ_STATS];
+static unsigned int pmu_irq_stats[11];
 
 static struct proc_dir_entry *proc_pmu_root;
 static struct proc_dir_entry *proc_pmu_info;
@@ -179,13 +166,14 @@ static struct proc_dir_entry *proc_pmu_options;
 static int option_server_mode;
 
 int pmu_battery_count;
-static int pmu_cur_battery;
+int pmu_cur_battery;
 unsigned int pmu_power_flags = PMU_PWR_AC_PRESENT;
 struct pmu_battery_info pmu_batteries[PMU_MAX_BATTERIES];
 static int query_batt_timer = BATTERY_POLLING_COUNT;
 static struct adb_request batt_req;
 static struct proc_dir_entry *proc_pmu_batt[PMU_MAX_BATTERIES];
 
+int __fake_sleep;
 int asleep;
 
 #ifdef CONFIG_ADB
@@ -203,11 +191,11 @@ static int init_pmu(void);
 static void pmu_start(void);
 static irqreturn_t via_pmu_interrupt(int irq, void *arg);
 static irqreturn_t gpio1_interrupt(int irq, void *arg);
-static int pmu_info_proc_show(struct seq_file *m, void *v);
-static int pmu_irqstats_proc_show(struct seq_file *m, void *v);
-static int pmu_battery_proc_show(struct seq_file *m, void *v);
+static const struct file_operations pmu_info_proc_fops;
+static const struct file_operations pmu_irqstats_proc_fops;
 static void pmu_pass_intr(unsigned char *data, int len);
-static const struct proc_ops pmu_options_proc_ops;
+static const struct file_operations pmu_battery_proc_fops;
+static const struct file_operations pmu_options_proc_fops;
 
 #ifdef CONFIG_ADB
 const struct adb_driver via_pmu_driver = {
@@ -283,11 +271,10 @@ static char *pbook_type[] = {
 
 int __init find_via_pmu(void)
 {
-#ifdef CONFIG_PPC_PMAC
 	u64 taddr;
 	const u32 *reg;
 
-	if (pmu_state != uninitialized)
+	if (via != 0)
 		return 1;
 	vias = of_find_node_by_name(NULL, "via-pmu");
 	if (vias == NULL)
@@ -304,6 +291,8 @@ int __init find_via_pmu(void)
 		goto fail;
 	}
 
+	spin_lock_init(&pmu_lock);
+
 	pmu_has_adb = 1;
 
 	pmu_intr_mask =	PMU_INT_PCEJECT |
@@ -311,8 +300,8 @@ int __init find_via_pmu(void)
 			PMU_INT_ADB |
 			PMU_INT_TICK;
 	
-	if (of_node_name_eq(vias->parent, "ohare") ||
-	    of_device_is_compatible(vias->parent, "ohare"))
+	if (vias->parent->name && ((strcmp(vias->parent->name, "ohare") == 0)
+	    || of_device_is_compatible(vias->parent, "ohare")))
 		pmu_kind = PMU_OHARE_BASED;
 	else if (of_device_is_compatible(vias->parent, "paddington"))
 		pmu_kind = PMU_PADDINGTON_BASED;
@@ -350,68 +339,50 @@ int __init find_via_pmu(void)
 	} else
 		pmu_kind = PMU_UNKNOWN;
 
-	via1 = via2 = ioremap(taddr, 0x2000);
-	if (via1 == NULL) {
+	via = ioremap(taddr, 0x2000);
+	if (via == NULL) {
 		printk(KERN_ERR "via-pmu: Can't map address !\n");
 		goto fail_via_remap;
 	}
 	
-	out_8(&via1[IER], IER_CLR | 0x7f);	/* disable all intrs */
-	out_8(&via1[IFR], 0x7f);			/* clear IFR */
+	out_8(&via[IER], IER_CLR | 0x7f);	/* disable all intrs */
+	out_8(&via[IFR], 0x7f);			/* clear IFR */
 
 	pmu_state = idle;
 
 	if (!init_pmu())
 		goto fail_init;
 
+	printk(KERN_INFO "PMU driver v%d initialized for %s, firmware: %02x\n",
+	       PMU_DRIVER_VERSION, pbook_type[pmu_kind], pmu_version);
+	       
 	sys_ctrler = SYS_CTRLER_PMU;
 	
 	return 1;
 
  fail_init:
-	iounmap(via1);
-	via1 = via2 = NULL;
+	iounmap(via);
+	via = NULL;
  fail_via_remap:
 	iounmap(gpio_reg);
 	gpio_reg = NULL;
  fail:
 	of_node_put(vias);
 	vias = NULL;
-	pmu_state = uninitialized;
 	return 0;
-#else
-	if (macintosh_config->adb_type != MAC_ADB_PB2)
-		return 0;
-
-	pmu_kind = PMU_UNKNOWN;
-
-	pmu_has_adb = 1;
-
-	pmu_intr_mask =	PMU_INT_PCEJECT |
-			PMU_INT_SNDBRT |
-			PMU_INT_ADB |
-			PMU_INT_TICK;
-
-	pmu_state = idle;
-
-	if (!init_pmu()) {
-		pmu_state = uninitialized;
-		return 0;
-	}
-
-	return 1;
-#endif /* !CONFIG_PPC_PMAC */
 }
 
 #ifdef CONFIG_ADB
 static int pmu_probe(void)
 {
-	return pmu_state == uninitialized ? -ENODEV : 0;
+	return vias == NULL? -ENODEV: 0;
 }
 
-static int pmu_init(void)
+static int __init pmu_init(void)
 {
-	return pmu_state == uninitialized ? -ENODEV : 0;
+	if (vias == NULL)
+		return -ENODEV;
+	return 0;
 }
 #endif /* CONFIG_ADB */
 
@@ -424,14 +395,13 @@ static int pmu_init(void)
  */
 static int __init via_pmu_start(void)
 {
-	unsigned int __maybe_unused irq;
+	unsigned int irq;
 
-	if (pmu_state == uninitialized)
+	if (vias == NULL)
 		return -ENODEV;
 
 	batt_req.complete = 1;
 
-#ifdef CONFIG_PPC_PMAC
 	irq = irq_of_parse_and_map(vias, 0);
 	if (!irq) {
 		printk(KERN_ERR "via-pmu: can't map interrupt\n");
@@ -467,20 +437,7 @@ static int __init via_pmu_start(void)
 	}
 
 	/* Enable interrupts */
-	out_8(&via1[IER], IER_SET | SR_INT | CB1_INT);
-#else
-	if (request_irq(IRQ_MAC_ADB_SR, via_pmu_interrupt, IRQF_NO_SUSPEND,
-			"VIA-PMU-SR", NULL)) {
-		pr_err("%s: couldn't get SR irq\n", __func__);
-		return -ENODEV;
-	}
-	if (request_irq(IRQ_MAC_ADB_CL, via_pmu_interrupt, IRQF_NO_SUSPEND,
-			"VIA-PMU-CL", NULL)) {
-		pr_err("%s: couldn't get CL irq\n", __func__);
-		free_irq(IRQ_MAC_ADB_SR, NULL);
-		return -ENODEV;
-	}
-#endif /* !CONFIG_PPC_PMAC */
+	out_8(&via[IER], IER_SET | SR_INT | CB1_INT);
 
 	pmu_fully_inited = 1;
 
@@ -506,7 +463,7 @@ arch_initcall(via_pmu_start);
  */
 static int __init via_pmu_dev_init(void)
 {
-	if (pmu_state == uninitialized)
+	if (vias == NULL)
 		return -ENODEV;
 
 #ifdef CONFIG_PMAC_BACKLIGHT
@@ -554,17 +511,15 @@ static int __init via_pmu_dev_init(void)
 		for (i=0; i<pmu_battery_count; i++) {
 			char title[16];
 			sprintf(title, "battery_%ld", i);
-			proc_pmu_batt[i] = proc_create_single_data(title, 0,
-					proc_pmu_root, pmu_battery_proc_show,
-					(void *)i);
+			proc_pmu_batt[i] = proc_create_data(title, 0, proc_pmu_root,
+					&pmu_battery_proc_fops, (void *)i);
 		}
 
-		proc_pmu_info = proc_create_single("info", 0, proc_pmu_root,
-				pmu_info_proc_show);
-		proc_pmu_irqstats = proc_create_single("interrupts", 0,
-				proc_pmu_root, pmu_irqstats_proc_show);
+		proc_pmu_info = proc_create("info", 0, proc_pmu_root, &pmu_info_proc_fops);
+		proc_pmu_irqstats = proc_create("interrupts", 0, proc_pmu_root,
+						&pmu_irqstats_proc_fops);
 		proc_pmu_options = proc_create("options", 0600, proc_pmu_root,
-						&pmu_options_proc_ops);
+						&pmu_options_proc_fops);
 	}
 	return 0;
 }
@@ -577,9 +532,8 @@ init_pmu(void)
 	int timeout;
 	struct adb_request req;
 
-	/* Negate TREQ. Set TACK to input and TREQ to output. */
-	out_8(&via2[B], in_8(&via2[B]) | TREQ);
-	out_8(&via2[DIRB], (in_8(&via2[DIRB]) | TREQ) & ~TACK);
+	out_8(&via[B], via[B] | TREQ);			/* negate TREQ */
+	out_8(&via[DIRB], (via[DIRB] | TREQ) & ~TACK);	/* TACK in, TREQ out */
 
 	pmu_request(&req, NULL, 2, PMU_SET_INTR_MASK, pmu_intr_mask);
 	timeout =  100000;
@@ -631,10 +585,6 @@ init_pmu(void)
 			       option_server_mode ? "enabled" : "disabled");
 		}
 	}
-
-	printk(KERN_INFO "PMU driver v%d initialized for %s, firmware: %02x\n",
-	       PMU_DRIVER_VERSION, pbook_type[pmu_kind], pmu_version);
-
 	return 1;
 }
 
@@ -673,7 +623,6 @@ static void pmu_set_server_mode(int server_mode)
 static void
 done_battery_state_ohare(struct adb_request* req)
 {
-#ifdef CONFIG_PPC_PMAC
 	/* format:
 	 *  [0]    :  flags
 	 *    0x01 :  AC indicator
@@ -755,7 +704,6 @@ done_battery_state_ohare(struct adb_request* req)
 	pmu_batteries[pmu_cur_battery].amperage = amperage;
 	pmu_batteries[pmu_cur_battery].voltage = voltage;
 	pmu_batteries[pmu_cur_battery].time_remaining = time;
-#endif /* CONFIG_PPC_PMAC */
 
 	clear_bit(0, &async_req_locks);
 }
@@ -863,12 +811,25 @@ static int pmu_info_proc_show(struct seq_file *m, void *v)
 	return 0;
 }
 
+static int pmu_info_proc_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, pmu_info_proc_show, NULL);
+}
+
+static const struct file_operations pmu_info_proc_fops = {
+	.owner		= THIS_MODULE,
+	.open		= pmu_info_proc_open,
+	.read		= seq_read,
+	.llseek		= seq_lseek,
+	.release	= single_release,
+};
+
 static int pmu_irqstats_proc_show(struct seq_file *m, void *v)
 {
 	int i;
-	static const char *irq_names[NUM_IRQ_STATS] = {
-		"Unknown interrupt (type 0)",
-		"Unknown interrupt (type 1)",
+	static const char *irq_names[] = {
+		"Total CB1 triggered events",
+		"Total GPIO1 triggered events",
 		"PC-Card eject button",
 		"Sound/Brightness button",
 		"ADB message",
@@ -877,17 +838,28 @@ static int pmu_irqstats_proc_show(struct seq_file *m, void *v)
 		"Tick timer",
 		"Ghost interrupt (zero len)",
 		"Empty interrupt (empty mask)",
-		"Max irqs in a row",
-		"Total CB1 triggered events",
-		"Total GPIO1 triggered events",
+		"Max irqs in a row"
         };
 
-	for (i = 0; i < NUM_IRQ_STATS; i++) {
+	for (i=0; i<11; i++) {
 		seq_printf(m, " %2u: %10u (%s)\n",
 			     i, pmu_irq_stats[i], irq_names[i]);
 	}
 	return 0;
 }
+
+static int pmu_irqstats_proc_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, pmu_irqstats_proc_show, NULL);
+}
+
+static const struct file_operations pmu_irqstats_proc_fops = {
+	.owner		= THIS_MODULE,
+	.open		= pmu_irqstats_proc_open,
+	.read		= seq_read,
+	.llseek		= seq_lseek,
+	.release	= single_release,
+};
 
 static int pmu_battery_proc_show(struct seq_file *m, void *v)
 {
@@ -902,6 +874,19 @@ static int pmu_battery_proc_show(struct seq_file *m, void *v)
 	seq_printf(m, "time rem.  : %d\n", pmu_batteries[batnum].time_remaining);
 	return 0;
 }
+
+static int pmu_battery_proc_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, pmu_battery_proc_show, PDE_DATA(inode));
+}
+
+static const struct file_operations pmu_battery_proc_fops = {
+	.owner		= THIS_MODULE,
+	.open		= pmu_battery_proc_open,
+	.read		= seq_read,
+	.llseek		= seq_lseek,
+	.release	= single_release,
+};
 
 static int pmu_options_proc_show(struct seq_file *m, void *v)
 {
@@ -965,12 +950,13 @@ static ssize_t pmu_options_proc_write(struct file *file,
 	return fcount;
 }
 
-static const struct proc_ops pmu_options_proc_ops = {
-	.proc_open	= pmu_options_proc_open,
-	.proc_read	= seq_read,
-	.proc_lseek	= seq_lseek,
-	.proc_release	= single_release,
-	.proc_write	= pmu_options_proc_write,
+static const struct file_operations pmu_options_proc_fops = {
+	.owner		= THIS_MODULE,
+	.open		= pmu_options_proc_open,
+	.read		= seq_read,
+	.llseek		= seq_lseek,
+	.release	= single_release,
+	.write		= pmu_options_proc_write,
 };
 
 #ifdef CONFIG_ADB
@@ -979,7 +965,7 @@ static int pmu_send_request(struct adb_request *req, int sync)
 {
 	int i, ret;
 
-	if (pmu_state == uninitialized || !pmu_fully_inited) {
+	if ((vias == NULL) || (!pmu_fully_inited)) {
 		req->complete = 1;
 		return -ENXIO;
 	}
@@ -1073,7 +1059,7 @@ static int __pmu_adb_autopoll(int devs)
 
 static int pmu_adb_autopoll(int devs)
 {
-	if (pmu_state == uninitialized || !pmu_fully_inited || !pmu_has_adb)
+	if ((vias == NULL) || (!pmu_fully_inited) || !pmu_has_adb)
 		return -ENXIO;
 
 	adb_dev_map = devs;
@@ -1086,7 +1072,7 @@ static int pmu_adb_reset_bus(void)
 	struct adb_request req;
 	int save_autopoll = adb_dev_map;
 
-	if (pmu_state == uninitialized || !pmu_fully_inited || !pmu_has_adb)
+	if ((vias == NULL) || (!pmu_fully_inited) || !pmu_has_adb)
 		return -ENXIO;
 
 	/* anyone got a better idea?? */
@@ -1122,7 +1108,7 @@ pmu_request(struct adb_request *req, void (*done)(struct adb_request *),
 	va_list list;
 	int i;
 
-	if (pmu_state == uninitialized)
+	if (vias == NULL)
 		return -ENXIO;
 
 	if (nbytes < 0 || nbytes > 32) {
@@ -1147,7 +1133,7 @@ pmu_queue_request(struct adb_request *req)
 	unsigned long flags;
 	int nsend;
 
-	if (pmu_state == uninitialized) {
+	if (via == NULL) {
 		req->complete = 1;
 		return -ENXIO;
 	}
@@ -1166,7 +1152,7 @@ pmu_queue_request(struct adb_request *req)
 	req->complete = 0;
 
 	spin_lock_irqsave(&pmu_lock, flags);
-	if (current_req) {
+	if (current_req != 0) {
 		last_req->next = req;
 		last_req = req;
 	} else {
@@ -1187,7 +1173,7 @@ wait_for_ack(void)
 	 * reported
 	 */
 	int timeout = 4000;
-	while ((in_8(&via2[B]) & TACK) == 0) {
+	while ((in_8(&via[B]) & TACK) == 0) {
 		if (--timeout < 0) {
 			printk(KERN_ERR "PMU not responding (!ack)\n");
 			return;
@@ -1201,19 +1187,23 @@ wait_for_ack(void)
 static inline void
 send_byte(int x)
 {
-	out_8(&via1[ACR], in_8(&via1[ACR]) | SR_OUT | SR_EXT);
-	out_8(&via1[SR], x);
-	out_8(&via2[B], in_8(&via2[B]) & ~TREQ);	/* assert TREQ */
-	(void)in_8(&via2[B]);
+	volatile unsigned char __iomem *v = via;
+
+	out_8(&v[ACR], in_8(&v[ACR]) | SR_OUT | SR_EXT);
+	out_8(&v[SR], x);
+	out_8(&v[B], in_8(&v[B]) & ~TREQ);		/* assert TREQ */
+	(void)in_8(&v[B]);
 }
 
 static inline void
 recv_byte(void)
 {
-	out_8(&via1[ACR], (in_8(&via1[ACR]) & ~SR_OUT) | SR_EXT);
-	in_8(&via1[SR]);		/* resets SR */
-	out_8(&via2[B], in_8(&via2[B]) & ~TREQ);
-	(void)in_8(&via2[B]);
+	volatile unsigned char __iomem *v = via;
+
+	out_8(&v[ACR], (in_8(&v[ACR]) & ~SR_OUT) | SR_EXT);
+	in_8(&v[SR]);		/* resets SR */
+	out_8(&v[B], in_8(&v[B]) & ~TREQ);
+	(void)in_8(&v[B]);
 }
 
 static inline void
@@ -1237,7 +1227,7 @@ pmu_start(void)
 	/* assert pmu_state == idle */
 	/* get the packet to send */
 	req = current_req;
-	if (!req || pmu_state != idle
+	if (req == 0 || pmu_state != idle
 	    || (/*req->reply_expected && */req_awaiting_reply))
 		return;
 
@@ -1256,7 +1246,7 @@ pmu_start(void)
 void
 pmu_poll(void)
 {
-	if (pmu_state == uninitialized)
+	if (!via)
 		return;
 	if (disable_poll)
 		return;
@@ -1266,7 +1256,7 @@ pmu_poll(void)
 void
 pmu_poll_adb(void)
 {
-	if (pmu_state == uninitialized)
+	if (!via)
 		return;
 	if (disable_poll)
 		return;
@@ -1281,7 +1271,7 @@ pmu_poll_adb(void)
 void
 pmu_wait_complete(struct adb_request *req)
 {
-	if (pmu_state == uninitialized)
+	if (!via)
 		return;
 	while((pmu_state != idle && pmu_state != locked) || !req->complete)
 		via_pmu_interrupt(0, NULL);
@@ -1297,7 +1287,7 @@ pmu_suspend(void)
 {
 	unsigned long flags;
 
-	if (pmu_state == uninitialized)
+	if (!via)
 		return;
 	
 	spin_lock_irqsave(&pmu_lock, flags);
@@ -1316,7 +1306,7 @@ pmu_suspend(void)
 		if (!adb_int_pending && pmu_state == idle && !req_awaiting_reply) {
 			if (gpio_irq >= 0)
 				disable_irq_nosync(gpio_irq);
-			out_8(&via1[IER], CB1_INT | IER_CLR);
+			out_8(&via[IER], CB1_INT | IER_CLR);
 			spin_unlock_irqrestore(&pmu_lock, flags);
 			break;
 		}
@@ -1328,7 +1318,7 @@ pmu_resume(void)
 {
 	unsigned long flags;
 
-	if (pmu_state == uninitialized || pmu_suspended < 1)
+	if (!via || (pmu_suspended < 1))
 		return;
 
 	spin_lock_irqsave(&pmu_lock, flags);
@@ -1340,7 +1330,7 @@ pmu_resume(void)
 	adb_int_pending = 1;
 	if (gpio_irq >= 0)
 		enable_irq(gpio_irq);
-	out_8(&via1[IER], CB1_INT | IER_SET);
+	out_8(&via[IER], CB1_INT | IER_SET);
 	spin_unlock_irqrestore(&pmu_lock, flags);
 	pmu_poll();
 }
@@ -1349,8 +1339,7 @@ pmu_resume(void)
 static void
 pmu_handle_data(unsigned char *data, int len)
 {
-	unsigned char ints;
-	int idx;
+	unsigned char ints, pirq;
 	int i = 0;
 
 	asleep = 0;
@@ -1372,27 +1361,28 @@ pmu_handle_data(unsigned char *data, int len)
 		ints &= ~(PMU_INT_ADB_AUTO | PMU_INT_AUTO_SRQ_POLL);
 
 next:
+
 	if (ints == 0) {
 		if (i > pmu_irq_stats[10])
 			pmu_irq_stats[10] = i;
 		return;
 	}
+
+	for (pirq = 0; pirq < 8; pirq++)
+		if (ints & (1 << pirq))
+			break;
+	pmu_irq_stats[pirq]++;
 	i++;
-
-	idx = ffs(ints) - 1;
-	ints &= ~BIT(idx);
-
-	pmu_irq_stats[idx]++;
+	ints &= ~(1 << pirq);
 
 	/* Note: for some reason, we get an interrupt with len=1,
 	 * data[0]==0 after each normal ADB interrupt, at least
 	 * on the Pismo. Still investigating...  --BenH
 	 */
-	switch (BIT(idx)) {
-	case PMU_INT_ADB:
+	if ((1 << pirq) & PMU_INT_ADB) {
 		if ((data[0] & PMU_INT_ADB_AUTO) == 0) {
 			struct adb_request *req = req_awaiting_reply;
-			if (!req) {
+			if (req == 0) {
 				printk(KERN_ERR "PMU: extra ADB reply\n");
 				return;
 			}
@@ -1405,7 +1395,6 @@ next:
 			}
 			pmu_done(req);
 		} else {
-#ifdef CONFIG_XMON
 			if (len == 4 && data[1] == 0x2c) {
 				extern int xmon_wants_key, xmon_adb_keycode;
 				if (xmon_wants_key) {
@@ -1413,7 +1402,6 @@ next:
 					return;
 				}
 			}
-#endif /* CONFIG_XMON */
 #ifdef CONFIG_ADB
 			/*
 			 * XXX On the [23]400 the PMU gives us an up
@@ -1427,40 +1415,35 @@ next:
 				adb_input(data+1, len-1, 1);
 #endif /* CONFIG_ADB */		
 		}
-		break;
-
+	}
 	/* Sound/brightness button pressed */
-	case PMU_INT_SNDBRT:
+	else if ((1 << pirq) & PMU_INT_SNDBRT) {
 #ifdef CONFIG_PMAC_BACKLIGHT
 		if (len == 3)
 			pmac_backlight_set_legacy_brightness_pmu(data[1] >> 4);
 #endif
-		break;
-
+	}
 	/* Tick interrupt */
-	case PMU_INT_TICK:
-		/* Environment or tick interrupt, query batteries */
+	else if ((1 << pirq) & PMU_INT_TICK) {
+		/* Environement or tick interrupt, query batteries */
 		if (pmu_battery_count) {
 			if ((--query_batt_timer) == 0) {
 				query_battery_state();
 				query_batt_timer = BATTERY_POLLING_COUNT;
 			}
 		}
-		break;
-
-	case PMU_INT_ENVIRONMENT:
+        }
+	else if ((1 << pirq) & PMU_INT_ENVIRONMENT) {
 		if (pmu_battery_count)
 			query_battery_state();
 		pmu_pass_intr(data, len);
 		/* len == 6 is probably a bad check. But how do I
 		 * know what PMU versions send what events here? */
-		if (IS_ENABLED(CONFIG_ADB_PMU_EVENT) && len == 6) {
+		if (len == 6) {
 			via_pmu_event(PMU_EVT_POWER, !!(data[1]&8));
 			via_pmu_event(PMU_EVT_LID, data[1]&1);
 		}
-		break;
-
-	default:
+	} else {
 	       pmu_pass_intr(data, len);
 	}
 	goto next;
@@ -1472,20 +1455,21 @@ pmu_sr_intr(void)
 	struct adb_request *req;
 	int bite = 0;
 
-	if (in_8(&via2[B]) & TREQ) {
-		printk(KERN_ERR "PMU: spurious SR intr (%x)\n", in_8(&via2[B]));
+	if (via[B] & TREQ) {
+		printk(KERN_ERR "PMU: spurious SR intr (%x)\n", via[B]);
+		out_8(&via[IFR], SR_INT);
 		return NULL;
 	}
 	/* The ack may not yet be low when we get the interrupt */
-	while ((in_8(&via2[B]) & TACK) != 0)
+	while ((in_8(&via[B]) & TACK) != 0)
 			;
 
 	/* if reading grab the byte, and reset the interrupt */
 	if (pmu_state == reading || pmu_state == reading_intr)
-		bite = in_8(&via1[SR]);
+		bite = in_8(&via[SR]);
 
 	/* reset TREQ and wait for TACK to go high */
-	out_8(&via2[B], in_8(&via2[B]) | TREQ);
+	out_8(&via[B], in_8(&via[B]) | TREQ);
 	wait_for_ack();
 
 	switch (pmu_state) {
@@ -1586,46 +1570,26 @@ via_pmu_interrupt(int irq, void *arg)
 	++disable_poll;
 	
 	for (;;) {
-		/* On 68k Macs, VIA interrupts are dispatched individually.
-		 * Unless we are polling, the relevant IRQ flag has already
-		 * been cleared.
-		 */
-		intr = 0;
-		if (IS_ENABLED(CONFIG_PPC_PMAC) || !irq) {
-			intr = in_8(&via1[IFR]) & (SR_INT | CB1_INT);
-			out_8(&via1[IFR], intr);
-		}
-#ifndef CONFIG_PPC_PMAC
-		switch (irq) {
-		case IRQ_MAC_ADB_CL:
-			intr = CB1_INT;
-			break;
-		case IRQ_MAC_ADB_SR:
-			intr = SR_INT;
-			break;
-		}
-#endif
+		intr = in_8(&via[IFR]) & (SR_INT | CB1_INT);
 		if (intr == 0)
 			break;
 		handled = 1;
 		if (++nloop > 1000) {
 			printk(KERN_DEBUG "PMU: stuck in intr loop, "
 			       "intr=%x, ier=%x pmu_state=%d\n",
-			       intr, in_8(&via1[IER]), pmu_state);
+			       intr, in_8(&via[IER]), pmu_state);
 			break;
 		}
+		out_8(&via[IFR], intr);
 		if (intr & CB1_INT) {
 			adb_int_pending = 1;
-			pmu_irq_stats[11]++;
+			pmu_irq_stats[0]++;
 		}
 		if (intr & SR_INT) {
 			req = pmu_sr_intr();
 			if (req)
 				break;
 		}
-#ifndef CONFIG_PPC_PMAC
-		break;
-#endif
 	}
 
 recheck:
@@ -1692,7 +1656,7 @@ pmu_unlock(void)
 }
 
 
-static __maybe_unused irqreturn_t
+static irqreturn_t
 gpio1_interrupt(int irq, void *arg)
 {
 	unsigned long flags;
@@ -1703,7 +1667,7 @@ gpio1_interrupt(int irq, void *arg)
 			disable_irq_nosync(gpio_irq);
 			gpio_irq_enabled = 0;
 		}
-		pmu_irq_stats[12]++;
+		pmu_irq_stats[1]++;
 		adb_int_pending = 1;
 		spin_unlock_irqrestore(&pmu_lock, flags);
 		via_pmu_interrupt(0, NULL);
@@ -1717,7 +1681,7 @@ pmu_enable_irled(int on)
 {
 	struct adb_request req;
 
-	if (pmu_state == uninitialized)
+	if (vias == NULL)
 		return ;
 	if (pmu_kind == PMU_KEYLARGO_BASED)
 		return ;
@@ -1727,45 +1691,12 @@ pmu_enable_irled(int on)
 	pmu_wait_complete(&req);
 }
 
-/* Offset between Unix time (1970-based) and Mac time (1904-based) */
-#define RTC_OFFSET	2082844800
-
-time64_t pmu_get_time(void)
-{
-	struct adb_request req;
-	u32 now;
-
-	if (pmu_request(&req, NULL, 1, PMU_READ_RTC) < 0)
-		return 0;
-	pmu_wait_complete(&req);
-	if (req.reply_len != 4)
-		pr_err("%s: got %d byte reply\n", __func__, req.reply_len);
-	now = (req.reply[0] << 24) + (req.reply[1] << 16) +
-	      (req.reply[2] << 8) + req.reply[3];
-	return (time64_t)now - RTC_OFFSET;
-}
-
-int pmu_set_rtc_time(struct rtc_time *tm)
-{
-	u32 now;
-	struct adb_request req;
-
-	now = lower_32_bits(rtc_tm_to_time64(tm) + RTC_OFFSET);
-	if (pmu_request(&req, NULL, 5, PMU_SET_RTC,
-	                now >> 24, now >> 16, now >> 8, now) < 0)
-		return -ENXIO;
-	pmu_wait_complete(&req);
-	if (req.reply_len != 0)
-		pr_err("%s: got %d byte reply\n", __func__, req.reply_len);
-	return 0;
-}
-
 void
 pmu_restart(void)
 {
 	struct adb_request req;
 
-	if (pmu_state == uninitialized)
+	if (via == NULL)
 		return;
 
 	local_irq_disable();
@@ -1790,7 +1721,7 @@ pmu_shutdown(void)
 {
 	struct adb_request req;
 
-	if (pmu_state == uninitialized)
+	if (via == NULL)
 		return;
 
 	local_irq_disable();
@@ -1818,7 +1749,7 @@ pmu_shutdown(void)
 int
 pmu_present(void)
 {
-	return pmu_state != uninitialized;
+	return via != 0;
 }
 
 #if defined(CONFIG_SUSPEND) && defined(CONFIG_PPC32)
@@ -1827,34 +1758,33 @@ pmu_present(void)
  */
  
 static u32 save_via[8];
-static int __fake_sleep;
 
 static void
 save_via_state(void)
 {
-	save_via[0] = in_8(&via1[ANH]);
-	save_via[1] = in_8(&via1[DIRA]);
-	save_via[2] = in_8(&via1[B]);
-	save_via[3] = in_8(&via1[DIRB]);
-	save_via[4] = in_8(&via1[PCR]);
-	save_via[5] = in_8(&via1[ACR]);
-	save_via[6] = in_8(&via1[T1CL]);
-	save_via[7] = in_8(&via1[T1CH]);
+	save_via[0] = in_8(&via[ANH]);
+	save_via[1] = in_8(&via[DIRA]);
+	save_via[2] = in_8(&via[B]);
+	save_via[3] = in_8(&via[DIRB]);
+	save_via[4] = in_8(&via[PCR]);
+	save_via[5] = in_8(&via[ACR]);
+	save_via[6] = in_8(&via[T1CL]);
+	save_via[7] = in_8(&via[T1CH]);
 }
 static void
 restore_via_state(void)
 {
-	out_8(&via1[ANH],  save_via[0]);
-	out_8(&via1[DIRA], save_via[1]);
-	out_8(&via1[B],    save_via[2]);
-	out_8(&via1[DIRB], save_via[3]);
-	out_8(&via1[PCR],  save_via[4]);
-	out_8(&via1[ACR],  save_via[5]);
-	out_8(&via1[T1CL], save_via[6]);
-	out_8(&via1[T1CH], save_via[7]);
-	out_8(&via1[IER], IER_CLR | 0x7f);	/* disable all intrs */
-	out_8(&via1[IFR], 0x7f);			/* clear IFR */
-	out_8(&via1[IER], IER_SET | SR_INT | CB1_INT);
+	out_8(&via[ANH], save_via[0]);
+	out_8(&via[DIRA], save_via[1]);
+	out_8(&via[B], save_via[2]);
+	out_8(&via[DIRB], save_via[3]);
+	out_8(&via[PCR], save_via[4]);
+	out_8(&via[ACR], save_via[5]);
+	out_8(&via[T1CL], save_via[6]);
+	out_8(&via[T1CH], save_via[7]);
+	out_8(&via[IER], IER_CLR | 0x7f);	/* disable all intrs */
+	out_8(&via[IFR], 0x7f);				/* clear IFR */
+	out_8(&via[IER], IER_SET | SR_INT | CB1_INT);
 }
 
 #define	GRACKLE_PM	(1<<7)
@@ -2151,7 +2081,7 @@ pmu_open(struct inode *inode, struct file *file)
 	unsigned long flags;
 
 	pp = kmalloc(sizeof(struct pmu_private), GFP_KERNEL);
-	if (!pp)
+	if (pp == 0)
 		return -ENOMEM;
 	pp->rb_get = pp->rb_put = 0;
 	spin_lock_init(&pp->lock);
@@ -2177,8 +2107,10 @@ pmu_read(struct file *file, char __user *buf,
 	unsigned long flags;
 	int ret = 0;
 
-	if (count < 1 || !pp)
+	if (count < 1 || pp == 0)
 		return -EINVAL;
+	if (!access_ok(VERIFY_WRITE, buf, count))
+		return -EFAULT;
 
 	spin_lock_irqsave(&pp->lock, flags);
 	add_wait_queue(&pp->wait, &wait);
@@ -2232,7 +2164,7 @@ pmu_fpoll(struct file *filp, poll_table *wait)
 	__poll_t mask = 0;
 	unsigned long flags;
 	
-	if (!pp)
+	if (pp == 0)
 		return 0;
 	poll_wait(filp, &pp->wait, wait);
 	spin_lock_irqsave(&pp->lock, flags);
@@ -2248,7 +2180,7 @@ pmu_release(struct inode *inode, struct file *file)
 	struct pmu_private *pp = file->private_data;
 	unsigned long flags;
 
-	if (pp) {
+	if (pp != 0) {
 		file->private_data = NULL;
 		spin_lock_irqsave(&all_pvt_lock, flags);
 		list_del(&pp->list);
@@ -2358,7 +2290,6 @@ static int pmu_ioctl(struct file *filp,
 	int error = -EINVAL;
 
 	switch (cmd) {
-#ifdef CONFIG_PPC_PMAC
 	case PMU_IOC_SLEEP:
 		if (!capable(CAP_SYS_ADMIN))
 			return -EACCES;
@@ -2368,7 +2299,6 @@ static int pmu_ioctl(struct file *filp,
 			return put_user(0, argp);
 		else
 			return put_user(1, argp);
-#endif
 
 #ifdef CONFIG_PMAC_BACKLIGHT_LEGACY
 	/* Compatibility ioctl's for backlight */
@@ -2485,7 +2415,7 @@ static struct miscdevice pmu_device = {
 
 static int pmu_device_init(void)
 {
-	if (pmu_state == uninitialized)
+	if (!via)
 		return 0;
 	if (misc_register(&pmu_device) < 0)
 		printk(KERN_ERR "via-pmu: cannot register misc device.\n");
@@ -2496,33 +2426,33 @@ device_initcall(pmu_device_init);
 
 #ifdef DEBUG_SLEEP
 static inline void 
-polled_handshake(void)
+polled_handshake(volatile unsigned char __iomem *via)
 {
-	via2[B] &= ~TREQ; eieio();
-	while ((via2[B] & TACK) != 0)
+	via[B] &= ~TREQ; eieio();
+	while ((via[B] & TACK) != 0)
 		;
-	via2[B] |= TREQ; eieio();
-	while ((via2[B] & TACK) == 0)
+	via[B] |= TREQ; eieio();
+	while ((via[B] & TACK) == 0)
 		;
 }
 
 static inline void 
-polled_send_byte(int x)
+polled_send_byte(volatile unsigned char __iomem *via, int x)
 {
-	via1[ACR] |= SR_OUT | SR_EXT; eieio();
-	via1[SR] = x; eieio();
-	polled_handshake();
+	via[ACR] |= SR_OUT | SR_EXT; eieio();
+	via[SR] = x; eieio();
+	polled_handshake(via);
 }
 
 static inline int
-polled_recv_byte(void)
+polled_recv_byte(volatile unsigned char __iomem *via)
 {
 	int x;
 
-	via1[ACR] = (via1[ACR] & ~SR_OUT) | SR_EXT; eieio();
-	x = via1[SR]; eieio();
-	polled_handshake();
-	x = via1[SR]; eieio();
+	via[ACR] = (via[ACR] & ~SR_OUT) | SR_EXT; eieio();
+	x = via[SR]; eieio();
+	polled_handshake(via);
+	x = via[SR]; eieio();
 	return x;
 }
 
@@ -2531,6 +2461,7 @@ pmu_polled_request(struct adb_request *req)
 {
 	unsigned long flags;
 	int i, l, c;
+	volatile unsigned char __iomem *v = via;
 
 	req->complete = 1;
 	c = req->data[0];
@@ -2542,21 +2473,21 @@ pmu_polled_request(struct adb_request *req)
 	while (pmu_state != idle)
 		pmu_poll();
 
-	while ((via2[B] & TACK) == 0)
+	while ((via[B] & TACK) == 0)
 		;
-	polled_send_byte(c);
+	polled_send_byte(v, c);
 	if (l < 0) {
 		l = req->nbytes - 1;
-		polled_send_byte(l);
+		polled_send_byte(v, l);
 	}
 	for (i = 1; i <= l; ++i)
-		polled_send_byte(req->data[i]);
+		polled_send_byte(v, req->data[i]);
 
 	l = pmu_data_len[c][1];
 	if (l < 0)
-		l = polled_recv_byte();
+		l = polled_recv_byte(v);
 	for (i = 0; i < l; ++i)
-		req->reply[i + req->reply_len] = polled_recv_byte();
+		req->reply[i + req->reply_len] = polled_recv_byte(v);
 
 	if (req->done)
 		(*req->done)(req);

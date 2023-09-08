@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
  * OF helpers for usb devices.
+ *
+ * This file is released under the GPLv2
  */
 
 #ifndef __LINUX_USB_OF_H

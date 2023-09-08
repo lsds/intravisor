@@ -295,6 +295,7 @@ static void bluecard_write_wakeup(struct bluecard_info *info)
 				baud_reg = REG_CONTROL_BAUD_RATE_115200;
 				break;
 			case PKT_BAUD_RATE_57600:
+				/* Fall through... */
 			default:
 				baud_reg = REG_CONTROL_BAUD_RATE_57600;
 				break;
@@ -564,7 +565,7 @@ static int bluecard_hci_set_baud_rate(struct hci_dev *hdev, int baud)
 	/* Ericsson baud rate command */
 	unsigned char cmd[] = { HCI_COMMAND_PKT, 0x09, 0xfc, 0x01, 0x03 };
 
-	skb = bt_skb_alloc(HCI_MAX_FRAME_SIZE, GFP_KERNEL);
+	skb = bt_skb_alloc(HCI_MAX_FRAME_SIZE, GFP_ATOMIC);
 	if (!skb) {
 		BT_ERR("Can't allocate mem for new packet");
 		return -1;
@@ -584,6 +585,7 @@ static int bluecard_hci_set_baud_rate(struct hci_dev *hdev, int baud)
 		hci_skb_pkt_type(skb) = PKT_BAUD_RATE_115200;
 		break;
 	case 57600:
+		/* Fall through... */
 	default:
 		cmd[4] = 0x03;
 		hci_skb_pkt_type(skb) = PKT_BAUD_RATE_57600;

@@ -1,8 +1,16 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * ISHTP bus layer messages handling
  *
  * Copyright (c) 2003-2016, Intel Corporation.
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms and conditions of the GNU General Public License,
+ * version 2, as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for
+ * more details.
  */
 
 #ifndef _ISHTP_HBM_H_
@@ -82,7 +90,7 @@ struct ishtp_msg_hdr {
 
 struct ishtp_bus_message {
 	uint8_t hbm_cmd;
-	uint8_t data[];
+	uint8_t data[0];
 } __packed;
 
 /**
@@ -141,7 +149,7 @@ struct hbm_host_enum_response {
 } __packed;
 
 struct ishtp_client_properties {
-	guid_t protocol_name;
+	uuid_le protocol_name;
 	uint8_t protocol_version;
 	uint8_t max_number_of_connections;
 	uint8_t fixed_address;
@@ -235,7 +243,6 @@ struct dma_xfer_hbm {
 #define SYSTEM_STATE_QUERY_SUBSCRIBERS		0x3
 #define SYSTEM_STATE_STATE_CHANGE_REQ		0x4
 /*indicates suspend and resume states*/
-#define CONNECTED_STANDBY_STATE_BIT		(1<<0)
 #define SUSPEND_STATE_BIT			(1<<1)
 
 struct ish_system_states_header {

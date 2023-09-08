@@ -1,10 +1,18 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (C) 2010-2012 Stephane Grosjean <s.grosjean@peak-system.com>
  *
  * CAN driver for PEAK-System PCAN-PC Card
  * Derived from the PCAN project file driver/src/pcan_pccard.c
  * Copyright (C) 2006-2010 PEAK System-Technik GmbH
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the version 2 of the GNU General Public License
+ * as published by the Free Software Foundation
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
  */
 #include <linux/kernel.h>
 #include <linux/module.h>
@@ -22,6 +30,7 @@
 MODULE_AUTHOR("Stephane Grosjean <s.grosjean@peak-system.com>");
 MODULE_DESCRIPTION("CAN driver for PEAK-System PCAN-PC Cards");
 MODULE_LICENSE("GPL v2");
+MODULE_SUPPORTED_DEVICE("PEAK PCAN-PC Card");
 
 /* PEAK-System PCMCIA driver name */
 #define PCC_NAME		"peak_pcmcia"
@@ -478,7 +487,7 @@ static void pcan_free_channels(struct pcan_pccard *card)
 		if (!netdev)
 			continue;
 
-		strscpy(name, netdev->name, IFNAMSIZ);
+		strncpy(name, netdev->name, IFNAMSIZ);
 
 		unregister_sja1000dev(netdev);
 
@@ -521,7 +530,7 @@ static int pcan_add_channels(struct pcan_pccard *card)
 	pcan_write_reg(card, PCC_CCR, ccr);
 
 	/* wait 2ms before unresetting channels */
-	usleep_range(2000, 3000);
+	mdelay(2);
 
 	ccr &= ~PCC_CCR_RST_ALL;
 	pcan_write_reg(card, PCC_CCR, ccr);
@@ -670,7 +679,7 @@ static int pcan_probe(struct pcmcia_device *pdev)
 	card->fw_major = pcan_read_reg(card, PCC_FW_MAJOR);
 	card->fw_minor = pcan_read_reg(card, PCC_FW_MINOR);
 
-	/* display board name and firmware version */
+	/* display board name and firware version */
 	dev_info(&pdev->dev, "PEAK-System pcmcia card %s fw %d.%d\n",
 		pdev->prod_id[1] ? pdev->prod_id[1] : "PCAN-PC Card",
 		card->fw_major, card->fw_minor);

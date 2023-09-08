@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  *	ACPI PATA driver
  *
@@ -28,7 +27,7 @@ struct pata_acpi {
 
 /**
  *	pacpi_pre_reset	-	check for 40/80 pin
- *	@link: ATA link
+ *	@ap: Port
  *	@deadline: deadline jiffies for the operation
  *
  *	Perform the PATA port setup we need.
@@ -63,8 +62,8 @@ static int pacpi_cable_detect(struct ata_port *ap)
 
 /**
  *	pacpi_discover_modes	-	filter non ACPI modes
- *	@ap: ATA port
  *	@adev: ATA device
+ *	@mask: proposed modes
  *
  *	Try the modes available and see which ones the ACPI method will
  *	set up sensibly. From this we get a mask of ACPI modes we can use
@@ -97,7 +96,7 @@ static unsigned long pacpi_discover_modes(struct ata_port *ap, struct ata_device
  *	this case the list of discovered valid modes obtained by ACPI probing
  */
 
-static unsigned int pacpi_mode_filter(struct ata_device *adev, unsigned int mask)
+static unsigned long pacpi_mode_filter(struct ata_device *adev, unsigned long mask)
 {
 	struct pata_acpi *acpi = adev->link->ap->private_data;
 	return mask & acpi->mask[adev->devno];
@@ -224,7 +223,7 @@ static struct ata_port_operations pacpi_ops = {
 /**
  *	pacpi_init_one - Register ACPI ATA PCI device with kernel services
  *	@pdev: PCI device to register
- *	@id: PCI device ID
+ *	@ent: Entry in pacpi_pci_tbl matching with @pdev
  *
  *	Called from kernel PCI layer.
  *

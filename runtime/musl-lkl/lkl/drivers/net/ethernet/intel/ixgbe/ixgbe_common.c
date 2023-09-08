@@ -1,5 +1,31 @@
 // SPDX-License-Identifier: GPL-2.0
-/* Copyright(c) 1999 - 2018 Intel Corporation. */
+/*******************************************************************************
+
+  Intel 10 Gigabit PCI Express Linux driver
+  Copyright(c) 1999 - 2016 Intel Corporation.
+
+  This program is free software; you can redistribute it and/or modify it
+  under the terms and conditions of the GNU General Public License,
+  version 2, as published by the Free Software Foundation.
+
+  This program is distributed in the hope it will be useful, but WITHOUT
+  ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+  FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+  more details.
+
+  You should have received a copy of the GNU General Public License along with
+  this program; if not, write to the Free Software Foundation, Inc.,
+  51 Franklin St - Fifth Floor, Boston, MA 02110-1301 USA.
+
+  The full GNU General Public License is included in this distribution in
+  the file called "COPYING".
+
+  Contact Information:
+  Linux NICS <linux.nics@intel.com>
+  e1000-devel Mailing List <e1000-devel@lists.sourceforge.net>
+  Intel Corporation, 5200 N.E. Elam Young Parkway, Hillsboro, OR 97124-6497
+
+*******************************************************************************/
 
 #include <linux/pci.h>
 #include <linux/delay.h>
@@ -30,7 +56,7 @@ static s32 ixgbe_write_eeprom_buffer_bit_bang(struct ixgbe_hw *hw, u16 offset,
 					     u16 words, u16 *data);
 static s32 ixgbe_detect_eeprom_page_size_generic(struct ixgbe_hw *hw,
 						 u16 offset);
-static s32 ixgbe_disable_pcie_primary(struct ixgbe_hw *hw);
+static s32 ixgbe_disable_pcie_master(struct ixgbe_hw *hw);
 
 /* Base table for registers values that change by MAC */
 const u32 ixgbe_mvals_8259X[IXGBE_MVALS_IDX_LIMIT] = {
@@ -64,7 +90,8 @@ bool ixgbe_device_supports_autoneg_fc(struct ixgbe_hw *hw)
 			hw->mac.ops.check_link(hw, &speed, &link_up, false);
 			/* if link is down, assume supported */
 			if (link_up)
-				supported = speed == IXGBE_LINK_SPEED_1GB_FULL;
+				supported = speed == IXGBE_LINK_SPEED_1GB_FULL ?
+				true : false;
 			else
 				supported = true;
 		}
@@ -93,7 +120,6 @@ bool ixgbe_device_supports_autoneg_fc(struct ixgbe_hw *hw)
 		default:
 			break;
 		}
-		break;
 	default:
 		break;
 	}
@@ -146,7 +172,7 @@ s32 ixgbe_setup_fc_generic(struct ixgbe_hw *hw)
 		if (ret_val)
 			return ret_val;
 
-		fallthrough; /* only backplane uses autoc */
+		/* fall through - only backplane uses autoc */
 	case ixgbe_media_type_fiber:
 		reg = IXGBE_READ_REG(hw, IXGBE_PCS1GANA);
 
@@ -746,10 +772,10 @@ s32 ixgbe_stop_adapter_generic(struct ixgbe_hw *hw)
 	usleep_range(1000, 2000);
 
 	/*
-	 * Prevent the PCI-E bus from hanging by disabling PCI-E primary
+	 * Prevent the PCI-E bus from from hanging by disabling PCI-E master
 	 * access and verify no pending requests
 	 */
-	return ixgbe_disable_pcie_primary(hw);
+	return ixgbe_disable_pcie_master(hw);
 }
 
 /**
@@ -1871,12 +1897,7 @@ s32 ixgbe_set_rar_generic(struct ixgbe_hw *hw, u32 index, u8 *addr, u32 vmdq,
 	if (enable_addr != 0)
 		rar_high |= IXGBE_RAH_AV;
 
-	/* Record lower 32 bits of MAC address and then make
-	 * sure that write is flushed to hardware before writing
-	 * the upper 16 bits and setting the valid bit.
-	 */
 	IXGBE_WRITE_REG(hw, IXGBE_RAL(index), rar_low);
-	IXGBE_WRITE_FLUSH(hw);
 	IXGBE_WRITE_REG(hw, IXGBE_RAH(index), rar_high);
 
 	return 0;
@@ -1908,13 +1929,8 @@ s32 ixgbe_clear_rar_generic(struct ixgbe_hw *hw, u32 index)
 	rar_high = IXGBE_READ_REG(hw, IXGBE_RAH(index));
 	rar_high &= ~(0x0000FFFF | IXGBE_RAH_AV);
 
-	/* Clear the address valid bit and upper 16 bits of the address
-	 * before clearing the lower bits. This way we aren't updating
-	 * a live filter.
-	 */
-	IXGBE_WRITE_REG(hw, IXGBE_RAH(index), rar_high);
-	IXGBE_WRITE_FLUSH(hw);
 	IXGBE_WRITE_REG(hw, IXGBE_RAL(index), 0);
+	IXGBE_WRITE_REG(hw, IXGBE_RAH(index), rar_high);
 
 	/* clear VMDq pool/queue selection for this RAR */
 	hw->mac.ops.clear_vmdq(hw, index, IXGBE_CLEAR_VMDQ_ALL);
@@ -2243,7 +2259,7 @@ s32 ixgbe_fc_enable_generic(struct ixgbe_hw *hw)
 	}
 
 	/* Configure pause time (2 TCs per register) */
-	reg = hw->fc.pause_time * 0x00010001U;
+	reg = hw->fc.pause_time * 0x00010001;
 	for (i = 0; i < (MAX_TRAFFIC_CLASS / 2); i++)
 		IXGBE_WRITE_REG(hw, IXGBE_FCTTV(i), reg);
 
@@ -2506,15 +2522,15 @@ static u32 ixgbe_pcie_timeout_poll(struct ixgbe_hw *hw)
 }
 
 /**
- *  ixgbe_disable_pcie_primary - Disable PCI-express primary access
+ *  ixgbe_disable_pcie_master - Disable PCI-express master access
  *  @hw: pointer to hardware structure
  *
- *  Disables PCI-Express primary access and verifies there are no pending
- *  requests. IXGBE_ERR_PRIMARY_REQUESTS_PENDING is returned if primary disable
- *  bit hasn't caused the primary requests to be disabled, else 0
- *  is returned signifying primary requests disabled.
+ *  Disables PCI-Express master access and verifies there are no pending
+ *  requests. IXGBE_ERR_MASTER_REQUESTS_PENDING is returned if master disable
+ *  bit hasn't caused the master requests to be disabled, else 0
+ *  is returned signifying master requests disabled.
  **/
-static s32 ixgbe_disable_pcie_primary(struct ixgbe_hw *hw)
+static s32 ixgbe_disable_pcie_master(struct ixgbe_hw *hw)
 {
 	u32 i, poll;
 	u16 value;
@@ -2523,23 +2539,23 @@ static s32 ixgbe_disable_pcie_primary(struct ixgbe_hw *hw)
 	IXGBE_WRITE_REG(hw, IXGBE_CTRL, IXGBE_CTRL_GIO_DIS);
 
 	/* Poll for bit to read as set */
-	for (i = 0; i < IXGBE_PCI_PRIMARY_DISABLE_TIMEOUT; i++) {
+	for (i = 0; i < IXGBE_PCI_MASTER_DISABLE_TIMEOUT; i++) {
 		if (IXGBE_READ_REG(hw, IXGBE_CTRL) & IXGBE_CTRL_GIO_DIS)
 			break;
 		usleep_range(100, 120);
 	}
-	if (i >= IXGBE_PCI_PRIMARY_DISABLE_TIMEOUT) {
+	if (i >= IXGBE_PCI_MASTER_DISABLE_TIMEOUT) {
 		hw_dbg(hw, "GIO disable did not set - requesting resets\n");
 		goto gio_disable_fail;
 	}
 
-	/* Exit if primary requests are blocked */
+	/* Exit if master requests are blocked */
 	if (!(IXGBE_READ_REG(hw, IXGBE_STATUS) & IXGBE_STATUS_GIO) ||
 	    ixgbe_removed(hw->hw_addr))
 		return 0;
 
-	/* Poll for primary request bit to clear */
-	for (i = 0; i < IXGBE_PCI_PRIMARY_DISABLE_TIMEOUT; i++) {
+	/* Poll for master request bit to clear */
+	for (i = 0; i < IXGBE_PCI_MASTER_DISABLE_TIMEOUT; i++) {
 		udelay(100);
 		if (!(IXGBE_READ_REG(hw, IXGBE_STATUS) & IXGBE_STATUS_GIO))
 			return 0;
@@ -2547,13 +2563,13 @@ static s32 ixgbe_disable_pcie_primary(struct ixgbe_hw *hw)
 
 	/*
 	 * Two consecutive resets are required via CTRL.RST per datasheet
-	 * 5.2.5.3.2 Primary Disable.  We set a flag to inform the reset routine
-	 * of this need.  The first reset prevents new primary requests from
+	 * 5.2.5.3.2 Master Disable.  We set a flag to inform the reset routine
+	 * of this need.  The first reset prevents new master requests from
 	 * being issued by our device.  We then must wait 1usec or more for any
 	 * remaining completions from the PCIe bus to trickle in, and then reset
 	 * again to clear out any effects they may have had on our device.
 	 */
-	hw_dbg(hw, "GIO Primary Disable bit didn't clear - requesting resets\n");
+	hw_dbg(hw, "GIO Master Disable bit didn't clear - requesting resets\n");
 gio_disable_fail:
 	hw->mac.flags |= IXGBE_FLAGS_DOUBLE_RESET_REQUIRED;
 
@@ -2575,7 +2591,7 @@ gio_disable_fail:
 	}
 
 	hw_dbg(hw, "PCIe transaction pending bit also did not clear.\n");
-	return IXGBE_ERR_PRIMARY_REQUESTS_PENDING;
+	return IXGBE_ERR_MASTER_REQUESTS_PENDING;
 }
 
 /**
@@ -2708,7 +2724,7 @@ s32 ixgbe_disable_rx_buff_generic(struct ixgbe_hw *hw)
 }
 
 /**
- *  ixgbe_enable_rx_buff_generic - Enables the receive data path
+ *  ixgbe_enable_rx_buff - Enables the receive data path
  *  @hw: pointer to hardware structure
  *
  *  Enables the receive data path
@@ -3030,14 +3046,14 @@ s32 ixgbe_set_vmdq_generic(struct ixgbe_hw *hw, u32 rar, u32 vmdq)
 }
 
 /**
- *  ixgbe_set_vmdq_san_mac_generic - Associate VMDq pool index with a rx address
- *  @hw: pointer to hardware struct
- *  @vmdq: VMDq pool index
- *
  *  This function should only be involved in the IOV mode.
  *  In IOV mode, Default pool is next pool after the number of
  *  VFs advertized and not 0.
  *  MPSAR table needs to be updated for SAN_MAC RAR [hw->mac.san_mac_rar_index]
+ *
+ *  ixgbe_set_vmdq_san_mac - Associate default VMDq pool index with a rx address
+ *  @hw: pointer to hardware struct
+ *  @vmdq: VMDq pool index
  **/
 s32 ixgbe_set_vmdq_san_mac_generic(struct ixgbe_hw *hw, u32 vmdq)
 {
@@ -3237,7 +3253,7 @@ vfta_update:
  *  ixgbe_clear_vfta_generic - Clear VLAN filter table
  *  @hw: pointer to hardware structure
  *
- *  Clears the VLAN filter table, and the VMDq index associated with the filter
+ *  Clears the VLAN filer table, and the VMDq index associated with the filter
  **/
 s32 ixgbe_clear_vfta_generic(struct ixgbe_hw *hw)
 {
@@ -3534,7 +3550,7 @@ void ixgbe_set_rxpba_generic(struct ixgbe_hw *hw,
 		rxpktsize <<= IXGBE_RXPBSIZE_SHIFT;
 		for (; i < (num_pb / 2); i++)
 			IXGBE_WRITE_REG(hw, IXGBE_RXPBSIZE(i), rxpktsize);
-		fallthrough; /* configure remaining packet buffers */
+		/* fall through - configure remaining packet buffers */
 	case (PBA_STRATEGY_EQUAL):
 		/* Divide the remaining Rx packet buffer evenly among the TCs */
 		rxpktsize = (pbsize / (num_pb - i)) << IXGBE_RXPBSIZE_SHIFT;
@@ -3636,7 +3652,7 @@ s32 ixgbe_hic_unlocked(struct ixgbe_hw *hw, u32 *buffer, u32 length,
 	 */
 	for (i = 0; i < dword_len; i++)
 		IXGBE_WRITE_REG_ARRAY(hw, IXGBE_FLEX_MNG,
-				      i, (__force u32)cpu_to_le32(buffer[i]));
+				      i, cpu_to_le32(buffer[i]));
 
 	/* Setting this bit tells the ARC that a new command is pending. */
 	IXGBE_WRITE_REG(hw, IXGBE_HICR, hicr | IXGBE_HICR_C);
@@ -3678,8 +3694,10 @@ s32 ixgbe_host_interface_command(struct ixgbe_hw *hw, void *buffer,
 				 bool return_data)
 {
 	u32 hdr_size = sizeof(struct ixgbe_hic_hdr);
-	struct ixgbe_hic_hdr *hdr = buffer;
-	u32 *u32arr = buffer;
+	union {
+		struct ixgbe_hic_hdr hdr;
+		u32 u32arr[1];
+	} *bp = buffer;
 	u16 buf_len, dword_len;
 	s32 status;
 	u32 bi;
@@ -3705,12 +3723,12 @@ s32 ixgbe_host_interface_command(struct ixgbe_hw *hw, void *buffer,
 
 	/* first pull in the header so we know the buffer length */
 	for (bi = 0; bi < dword_len; bi++) {
-		u32arr[bi] = IXGBE_READ_REG_ARRAY(hw, IXGBE_FLEX_MNG, bi);
-		le32_to_cpus(&u32arr[bi]);
+		bp->u32arr[bi] = IXGBE_READ_REG_ARRAY(hw, IXGBE_FLEX_MNG, bi);
+		le32_to_cpus(&bp->u32arr[bi]);
 	}
 
 	/* If there is any thing in data position pull it in */
-	buf_len = hdr->buf_len;
+	buf_len = bp->hdr.buf_len;
 	if (!buf_len)
 		goto rel_out;
 
@@ -3725,8 +3743,8 @@ s32 ixgbe_host_interface_command(struct ixgbe_hw *hw, void *buffer,
 
 	/* Pull in the rest of the buffer (bi is where we left off) */
 	for (; bi <= dword_len; bi++) {
-		u32arr[bi] = IXGBE_READ_REG_ARRAY(hw, IXGBE_FLEX_MNG, bi);
-		le32_to_cpus(&u32arr[bi]);
+		bp->u32arr[bi] = IXGBE_READ_REG_ARRAY(hw, IXGBE_FLEX_MNG, bi);
+		le32_to_cpus(&bp->u32arr[bi]);
 	}
 
 rel_out:
@@ -3895,7 +3913,7 @@ static s32 ixgbe_get_ets_data(struct ixgbe_hw *hw, u16 *ets_cfg,
 }
 
 /**
- *  ixgbe_get_thermal_sensor_data_generic - Gathers thermal sensor data
+ *  ixgbe_get_thermal_sensor_data - Gathers thermal sensor data
  *  @hw: pointer to hardware structure
  *
  *  Returns the thermal sensor data structure
@@ -4053,7 +4071,8 @@ void ixgbe_get_orom_version(struct ixgbe_hw *hw,
 }
 
 /**
- *  ixgbe_get_oem_prod_version - Etrack ID from EEPROM
+ *  ixgbe_get_oem_prod_version Etrack ID from EEPROM
+ *
  *  @hw: pointer to hardware structure
  *  @nvm_ver: pointer to output structure
  *

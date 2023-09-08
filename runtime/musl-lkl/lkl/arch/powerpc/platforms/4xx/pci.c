@@ -22,7 +22,6 @@
 #include <linux/pci.h>
 #include <linux/init.h>
 #include <linux/of.h>
-#include <linux/of_address.h>
 #include <linux/delay.h>
 #include <linux/slab.h>
 
@@ -1243,7 +1242,7 @@ static void __init ppc460sx_pciex_check_link(struct ppc4xx_pciex_port *port)
 	if (mbase == NULL) {
 		printk(KERN_ERR "%pOF: Can't map internal config space !",
 			port->node);
-		return;
+		goto done;
 	}
 
 	while (attempt && (0 == (in_le32(mbase + PECFG_460SX_DLLSTA)
@@ -1253,7 +1252,9 @@ static void __init ppc460sx_pciex_check_link(struct ppc4xx_pciex_port *port)
 	}
 	if (attempt)
 		port->link = 1;
+done:
 	iounmap(mbase);
+
 }
 
 static struct ppc4xx_pciex_hwops ppc460sx_pcie_hwops __initdata = {
@@ -1274,7 +1275,7 @@ static int __init ppc405ex_pciex_core_init(struct device_node *np)
 	return 2;
 }
 
-static void __init ppc405ex_pcie_phy_reset(struct ppc4xx_pciex_port *port)
+static void ppc405ex_pcie_phy_reset(struct ppc4xx_pciex_port *port)
 {
 	/* Assert the PE0_PHY reset */
 	mtdcri(SDR0, port->sdr_base + PESDRn_RCSSET, 0x01010000);
@@ -1398,6 +1399,7 @@ static void __init ppc_476fpe_pciex_check_link(struct ppc4xx_pciex_port *port)
 		printk(KERN_WARNING "PCIE%d: Link up failed\n", port->index);
 
 	iounmap(mbase);
+	return;
 }
 
 static struct ppc4xx_pciex_hwops ppc_476fpe_pcie_hwops __initdata =
@@ -1447,7 +1449,7 @@ static int __init ppc4xx_pciex_check_core_init(struct device_node *np)
 	count = ppc4xx_pciex_hwops->core_init(np);
 	if (count > 0) {
 		ppc4xx_pciex_ports =
-		       kcalloc(count, sizeof(struct ppc4xx_pciex_port),
+		       kzalloc(count * sizeof(struct ppc4xx_pciex_port),
 			       GFP_KERNEL);
 		if (ppc4xx_pciex_ports) {
 			ppc4xx_pciex_port_count = count;
@@ -2079,6 +2081,7 @@ static void __init ppc4xx_probe_pciex_bridge(struct device_node *np)
 	const u32 *pval;
 	int portno;
 	unsigned int dcrs;
+	const char *val;
 
 	/* First, proceed to core initialization as we assume there's
 	 * only one PCIe core in the system
@@ -2124,9 +2127,10 @@ static void __init ppc4xx_probe_pciex_bridge(struct device_node *np)
 	 * Resulting from this setup this PCIe port will be configured
 	 * as root-complex or as endpoint.
 	 */
-	if (of_node_is_type(port->node, "pci-endpoint")) {
+	val = of_get_property(port->node, "device_type", NULL);
+	if (!strcmp(val, "pci-endpoint")) {
 		port->endpoint = 1;
-	} else if (of_node_is_type(port->node, "pci")) {
+	} else if (!strcmp(val, "pci")) {
 		port->endpoint = 0;
 	} else {
 		printk(KERN_ERR "PCIE: missing or incorrect device_type for %pOF\n",

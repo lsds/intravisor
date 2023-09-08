@@ -10,7 +10,8 @@
 #include <asm/thread_info.h>
 #define GLOBAL_SPARE	%g7
 #define RESTORE_ASI(TMP)	\
-	wr	%g0, ASI_AIUS, %asi
+	ldub	[%g6 + TI_CURRENT_DS], TMP;  \
+	wr	TMP, 0x0, %asi;
 #else
 #define GLOBAL_SPARE	%g5
 #define RESTORE_ASI(TMP)	\

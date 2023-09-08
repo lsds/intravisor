@@ -1,7 +1,10 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (C) 2010 - Maxim Levitsky
  * driver for Ricoh memstick readers
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 
 #include <linux/kernel.h>
@@ -293,7 +296,7 @@ static int r592_transfer_fifo_dma(struct r592_device *dev)
 
 	/* TODO: hidden assumption about nenth beeing always 1 */
 	sg_count = dma_map_sg(&dev->pci_dev->dev, &dev->req->sg, 1, is_write ?
-			      DMA_TO_DEVICE : DMA_FROM_DEVICE);
+		PCI_DMA_TODEVICE : PCI_DMA_FROMDEVICE);
 
 	if (sg_count != 1 || sg_dma_len(&dev->req->sg) < R592_LFIFO_SIZE) {
 		message("problem in dma_map_sg");
@@ -310,7 +313,8 @@ static int r592_transfer_fifo_dma(struct r592_device *dev)
 	}
 
 	dma_unmap_sg(&dev->pci_dev->dev, &dev->req->sg, 1, is_write ?
-		     DMA_TO_DEVICE : DMA_FROM_DEVICE);
+		PCI_DMA_TODEVICE : PCI_DMA_FROMDEVICE);
+
 
 	return dev->dma_error;
 }
@@ -358,15 +362,13 @@ static void r592_write_fifo_pio(struct r592_device *dev,
 /* Flushes the temporary FIFO used to make aligned DWORD writes */
 static void r592_flush_fifo_write(struct r592_device *dev)
 {
-	int ret;
 	u8 buffer[4] = { 0 };
+	int len;
 
 	if (kfifo_is_empty(&dev->pio_fifo))
 		return;
 
-	ret = kfifo_out(&dev->pio_fifo, buffer, 4);
-	/* intentionally ignore __must_check return code */
-	(void)ret;
+	len = kfifo_out(&dev->pio_fifo, buffer, 4);
 	r592_write_reg_raw_be(dev, R592_FIFO_PIO, *(u32 *)buffer);
 }
 
@@ -760,10 +762,8 @@ static int r592_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 		goto error3;
 
 	dev->mmio = pci_ioremap_bar(pdev, 0);
-	if (!dev->mmio) {
-		error = -ENOMEM;
+	if (!dev->mmio)
 		goto error4;
-	}
 
 	dev->irq = pdev->irq;
 	spin_lock_init(&dev->irq_lock);
@@ -789,14 +789,12 @@ static int r592_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 		&dev->dummy_dma_page_physical_address, GFP_KERNEL);
 	r592_stop_dma(dev , 0);
 
-	error = request_irq(dev->irq, &r592_irq, IRQF_SHARED,
-			  DRV_NAME, dev);
-	if (error)
+	if (request_irq(dev->irq, &r592_irq, IRQF_SHARED,
+			  DRV_NAME, dev))
 		goto error6;
 
 	r592_update_card_detect(dev);
-	error = memstick_add_host(host);
-	if (error)
+	if (memstick_add_host(host))
 		goto error7;
 
 	message("driver successfully loaded");
@@ -838,21 +836,22 @@ static void r592_remove(struct pci_dev *pdev)
 	}
 	memstick_remove_host(dev->host);
 
-	if (dev->dummy_dma_page)
-		dma_free_coherent(&pdev->dev, PAGE_SIZE, dev->dummy_dma_page,
-			dev->dummy_dma_page_physical_address);
-
 	free_irq(dev->irq, dev);
 	iounmap(dev->mmio);
 	pci_release_regions(pdev);
 	pci_disable_device(pdev);
 	memstick_free_host(dev->host);
+
+	if (dev->dummy_dma_page)
+		dma_free_coherent(&pdev->dev, PAGE_SIZE, dev->dummy_dma_page,
+			dev->dummy_dma_page_physical_address);
 }
 
 #ifdef CONFIG_PM_SLEEP
 static int r592_suspend(struct device *core_dev)
 {
-	struct r592_device *dev = dev_get_drvdata(core_dev);
+	struct pci_dev *pdev = to_pci_dev(core_dev);
+	struct r592_device *dev = pci_get_drvdata(pdev);
 
 	r592_clear_interrupts(dev);
 	memstick_suspend_host(dev->host);
@@ -862,7 +861,8 @@ static int r592_suspend(struct device *core_dev)
 
 static int r592_resume(struct device *core_dev)
 {
-	struct r592_device *dev = dev_get_drvdata(core_dev);
+	struct pci_dev *pdev = to_pci_dev(core_dev);
+	struct r592_device *dev = pci_get_drvdata(pdev);
 
 	r592_clear_interrupts(dev);
 	r592_enable_device(dev, false);
@@ -876,7 +876,7 @@ static SIMPLE_DEV_PM_OPS(r592_pm_ops, r592_suspend, r592_resume);
 
 MODULE_DEVICE_TABLE(pci, r592_pci_id_tbl);
 
-static struct pci_driver r592_pci_driver = {
+static struct pci_driver r852_pci_driver = {
 	.name		= DRV_NAME,
 	.id_table	= r592_pci_id_tbl,
 	.probe		= r592_probe,
@@ -884,7 +884,7 @@ static struct pci_driver r592_pci_driver = {
 	.driver.pm	= &r592_pm_ops,
 };
 
-module_pci_driver(r592_pci_driver);
+module_pci_driver(r852_pci_driver);
 
 module_param_named(enable_dma, r592_enable_dma, bool, S_IRUGO);
 MODULE_PARM_DESC(enable_dma, "Enable usage of the DMA (default)");

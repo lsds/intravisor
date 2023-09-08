@@ -1,11 +1,13 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (C) 2017 Texas Instruments Incorporated - https://www.ti.com/
+ * Copyright (C) 2017 Texas Instruments Incorporated - http://www.ti.com/
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 
-#include "dra74-ipu-dsp-common.dtsi"
 #include <dt-bindings/gpio/gpio.h>
-#include <dt-bindings/clock/ti-dra7-atl.h>
+#include <dt-bindings/clk/ti-dra7-atl.h>
 #include <dt-bindings/input/input.h>
 
 / {
@@ -16,11 +18,6 @@
 	extcon_usb1: extcon_usb1 {
 		compatible = "linux,extcon-usb-gpio";
 		id-gpio = <&pcf_gpio_21 1 GPIO_ACTIVE_HIGH>;
-	};
-
-	extcon_usb2: extcon_usb2 {
-		compatible = "linux,extcon-usb-gpio";
-		id-gpio = <&pcf_gpio_21 2 GPIO_ACTIVE_HIGH>;
 	};
 
 	sound0: sound0 {
@@ -135,7 +132,7 @@
 	status = "okay";
 
 	spi-max-frequency = <76800000>;
-	flash@0 {
+	m25p80@0 {
 		compatible = "s25fl256s1";
 		spi-max-frequency = <76800000>;
 		reg = <0>;
@@ -201,18 +198,13 @@
 	extcon = <&extcon_usb1>;
 };
 
-&omap_dwc3_2 {
-	extcon = <&extcon_usb2>;
-};
-
 &usb2 {
 	dr_mode = "host";
-	extcon = <&extcon_usb2>;
 };
 
 &atl {
 	assigned-clocks = <&abe_dpll_sys_clk_mux>,
-			  <&atl_clkctrl DRA7_ATL_ATL_CLKCTRL 26>,
+			  <&atl_clkctrl DRA7_ATL_CLKCTRL 26>,
 			  <&dpll_abe_ck>,
 			  <&dpll_abe_m2x2_ck>,
 			  <&atl_clkin2_ck>;
@@ -230,7 +222,7 @@
 &mcasp3 {
 	#sound-dai-cells = <0>;
 
-	assigned-clocks = <&l4per2_clkctrl DRA7_L4PER2_MCASP3_CLKCTRL 24>;
+	assigned-clocks = <&l4per_clkctrl DRA7_MCASP3_CLKCTRL 24>;
 	assigned-clock-parents = <&atl_clkin2_ck>;
 
 	status = "okay";
@@ -245,21 +237,26 @@
 	rx-num-evt = <32>;
 };
 
-&pcie1_rc {
+&mailbox5 {
 	status = "okay";
+	mbox_ipu1_ipc3x: mbox_ipu1_ipc3x {
+		status = "okay";
+	};
+	mbox_dsp1_ipc3x: mbox_dsp1_ipc3x {
+		status = "okay";
+	};
 };
 
-&mmc4 {
-	bus-width = <4>;
-	cap-power-off-card;
-	keep-power-in-suspend;
-	non-removable;
-	#address-cells = <1>;
-	#size-cells = <0>;
-	wifi@2 {
-		compatible = "ti,wl1835";
-		reg = <2>;
-		interrupt-parent = <&gpio5>;
-		interrupts = <7 IRQ_TYPE_EDGE_RISING>;
+&mailbox6 {
+	status = "okay";
+	mbox_ipu2_ipc3x: mbox_ipu2_ipc3x {
+		status = "okay";
 	};
+	mbox_dsp2_ipc3x: mbox_dsp2_ipc3x {
+		status = "okay";
+	};
+};
+
+&pcie1_rc {
+	status = "okay";
 };

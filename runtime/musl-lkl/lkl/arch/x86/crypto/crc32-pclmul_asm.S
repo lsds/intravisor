@@ -1,4 +1,26 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
+/* GPL HEADER START
+ *
+ * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 only,
+ * as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * General Public License version 2 for more details (a copy is included
+ * in the LICENSE file that accompanied this code).
+ *
+ * You should have received a copy of the GNU General Public License
+ * version 2 along with this program; If not, see http://www.gnu.org/licenses
+ *
+ * Please  visit http://www.xyratex.com/contact if you need additional
+ * information or have any questions.
+ *
+ * GPL HEADER END
+ */
+
 /*
  * Copyright 2012 Xyratex Technology Limited
  *
@@ -16,6 +38,7 @@
  */
 
 #include <linux/linkage.h>
+#include <asm/inst.h>
 
 
 .section .rodata
@@ -80,7 +103,7 @@
  *	                     size_t len, uint crc32)
  */
 
-SYM_FUNC_START(crc32_pclmul_le_16) /* buffer and buffer size are 16 bytes aligned */
+ENTRY(crc32_pclmul_le_16) /* buffer and buffer size are 16 bytes aligned */
 	movdqa  (BUF), %xmm1
 	movdqa  0x10(BUF), %xmm2
 	movdqa  0x20(BUF), %xmm3
@@ -106,17 +129,17 @@ loop_64:/*  64 bytes Full cache line folding */
 #ifdef __x86_64__
 	movdqa  %xmm4, %xmm8
 #endif
-	pclmulqdq $0x00, CONSTANT, %xmm1
-	pclmulqdq $0x00, CONSTANT, %xmm2
-	pclmulqdq $0x00, CONSTANT, %xmm3
+	PCLMULQDQ 00, CONSTANT, %xmm1
+	PCLMULQDQ 00, CONSTANT, %xmm2
+	PCLMULQDQ 00, CONSTANT, %xmm3
 #ifdef __x86_64__
-	pclmulqdq $0x00, CONSTANT, %xmm4
+	PCLMULQDQ 00, CONSTANT, %xmm4
 #endif
-	pclmulqdq $0x11, CONSTANT, %xmm5
-	pclmulqdq $0x11, CONSTANT, %xmm6
-	pclmulqdq $0x11, CONSTANT, %xmm7
+	PCLMULQDQ 0x11, CONSTANT, %xmm5
+	PCLMULQDQ 0x11, CONSTANT, %xmm6
+	PCLMULQDQ 0x11, CONSTANT, %xmm7
 #ifdef __x86_64__
-	pclmulqdq $0x11, CONSTANT, %xmm8
+	PCLMULQDQ 0x11, CONSTANT, %xmm8
 #endif
 	pxor    %xmm5, %xmm1
 	pxor    %xmm6, %xmm2
@@ -126,8 +149,8 @@ loop_64:/*  64 bytes Full cache line folding */
 #else
 	/* xmm8 unsupported for x32 */
 	movdqa  %xmm4, %xmm5
-	pclmulqdq $0x00, CONSTANT, %xmm4
-	pclmulqdq $0x11, CONSTANT, %xmm5
+	PCLMULQDQ 00, CONSTANT, %xmm4
+	PCLMULQDQ 0x11, CONSTANT, %xmm5
 	pxor    %xmm5, %xmm4
 #endif
 
@@ -149,20 +172,20 @@ less_64:/*  Folding cache line into 128bit */
 	prefetchnta     (BUF)
 
 	movdqa  %xmm1, %xmm5
-	pclmulqdq $0x00, CONSTANT, %xmm1
-	pclmulqdq $0x11, CONSTANT, %xmm5
+	PCLMULQDQ 0x00, CONSTANT, %xmm1
+	PCLMULQDQ 0x11, CONSTANT, %xmm5
 	pxor    %xmm5, %xmm1
 	pxor    %xmm2, %xmm1
 
 	movdqa  %xmm1, %xmm5
-	pclmulqdq $0x00, CONSTANT, %xmm1
-	pclmulqdq $0x11, CONSTANT, %xmm5
+	PCLMULQDQ 0x00, CONSTANT, %xmm1
+	PCLMULQDQ 0x11, CONSTANT, %xmm5
 	pxor    %xmm5, %xmm1
 	pxor    %xmm3, %xmm1
 
 	movdqa  %xmm1, %xmm5
-	pclmulqdq $0x00, CONSTANT, %xmm1
-	pclmulqdq $0x11, CONSTANT, %xmm5
+	PCLMULQDQ 0x00, CONSTANT, %xmm1
+	PCLMULQDQ 0x11, CONSTANT, %xmm5
 	pxor    %xmm5, %xmm1
 	pxor    %xmm4, %xmm1
 
@@ -170,8 +193,8 @@ less_64:/*  Folding cache line into 128bit */
 	jb      fold_64
 loop_16:/* Folding rest buffer into 128bit */
 	movdqa  %xmm1, %xmm5
-	pclmulqdq $0x00, CONSTANT, %xmm1
-	pclmulqdq $0x11, CONSTANT, %xmm5
+	PCLMULQDQ 0x00, CONSTANT, %xmm1
+	PCLMULQDQ 0x11, CONSTANT, %xmm5
 	pxor    %xmm5, %xmm1
 	pxor    (BUF), %xmm1
 	sub     $0x10, LEN
@@ -182,7 +205,7 @@ loop_16:/* Folding rest buffer into 128bit */
 fold_64:
 	/* perform the last 64 bit fold, also adds 32 zeroes
 	 * to the input stream */
-	pclmulqdq $0x01, %xmm1, CONSTANT /* R4 * xmm1.low */
+	PCLMULQDQ 0x01, %xmm1, CONSTANT /* R4 * xmm1.low */
 	psrldq  $0x08, %xmm1
 	pxor    CONSTANT, %xmm1
 
@@ -197,7 +220,7 @@ fold_64:
 #endif
 	psrldq  $0x04, %xmm2
 	pand    %xmm3, %xmm1
-	pclmulqdq $0x00, CONSTANT, %xmm1
+	PCLMULQDQ 0x00, CONSTANT, %xmm1
 	pxor    %xmm2, %xmm1
 
 	/* Finish up with the bit-reversed barrett reduction 64 ==> 32 bits */
@@ -208,11 +231,11 @@ fold_64:
 #endif
 	movdqa  %xmm1, %xmm2
 	pand    %xmm3, %xmm1
-	pclmulqdq $0x10, CONSTANT, %xmm1
+	PCLMULQDQ 0x10, CONSTANT, %xmm1
 	pand    %xmm3, %xmm1
-	pclmulqdq $0x00, CONSTANT, %xmm1
+	PCLMULQDQ 0x00, CONSTANT, %xmm1
 	pxor    %xmm2, %xmm1
-	pextrd  $0x01, %xmm1, %eax
+	PEXTRD  0x01, %xmm1, %eax
 
-	RET
-SYM_FUNC_END(crc32_pclmul_le_16)
+	ret
+ENDPROC(crc32_pclmul_le_16)

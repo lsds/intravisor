@@ -22,7 +22,6 @@
 #include <linux/kernel.h>
 #include <linux/mfd/axp20x.h>
 #include <linux/module.h>
-#include <linux/platform_data/x86/soc.h>
 #include <linux/platform_device.h>
 #include <linux/regmap.h>
 #include <linux/slab.h>
@@ -192,17 +191,19 @@ static ssize_t axp20x_store_attr_shutdown(struct device *dev,
 				 axp20x_pek->info->shutdown_mask, buf, count);
 }
 
-static DEVICE_ATTR(startup, 0644, axp20x_show_attr_startup,
-		   axp20x_store_attr_startup);
-static DEVICE_ATTR(shutdown, 0644, axp20x_show_attr_shutdown,
-		   axp20x_store_attr_shutdown);
+DEVICE_ATTR(startup, 0644, axp20x_show_attr_startup, axp20x_store_attr_startup);
+DEVICE_ATTR(shutdown, 0644, axp20x_show_attr_shutdown,
+	    axp20x_store_attr_shutdown);
 
-static struct attribute *axp20x_attrs[] = {
+static struct attribute *axp20x_attributes[] = {
 	&dev_attr_startup.attr,
 	&dev_attr_shutdown.attr,
 	NULL,
 };
-ATTRIBUTE_GROUPS(axp20x);
+
+static const struct attribute_group axp20x_attribute_group = {
+	.attrs = axp20x_attributes,
+};
 
 static irqreturn_t axp20x_pek_irq(int irq, void *pwr)
 {
@@ -231,14 +232,20 @@ static int axp20x_pek_probe_input_device(struct axp20x_pek *axp20x_pek,
 	int error;
 
 	axp20x_pek->irq_dbr = platform_get_irq_byname(pdev, "PEK_DBR");
-	if (axp20x_pek->irq_dbr < 0)
+	if (axp20x_pek->irq_dbr < 0) {
+		dev_err(&pdev->dev, "No IRQ for PEK_DBR, error=%d\n",
+				axp20x_pek->irq_dbr);
 		return axp20x_pek->irq_dbr;
+	}
 	axp20x_pek->irq_dbr = regmap_irq_get_virq(axp20x->regmap_irqc,
 						  axp20x_pek->irq_dbr);
 
 	axp20x_pek->irq_dbf = platform_get_irq_byname(pdev, "PEK_DBF");
-	if (axp20x_pek->irq_dbf < 0)
+	if (axp20x_pek->irq_dbf < 0) {
+		dev_err(&pdev->dev, "No IRQ for PEK_DBF, error=%d\n",
+				axp20x_pek->irq_dbf);
 		return axp20x_pek->irq_dbf;
+	}
 	axp20x_pek->irq_dbf = regmap_irq_get_virq(axp20x->regmap_irqc,
 						  axp20x_pek->irq_dbf);
 
@@ -281,29 +288,47 @@ static int axp20x_pek_probe_input_device(struct axp20x_pek *axp20x_pek,
 		return error;
 	}
 
-	device_init_wakeup(&pdev->dev, true);
+	if (axp20x_pek->axp20x->variant == AXP288_ID)
+		enable_irq_wake(axp20x_pek->irq_dbr);
 
 	return 0;
 }
 
-static bool axp20x_pek_should_register_input(struct axp20x_pek *axp20x_pek)
+#ifdef CONFIG_ACPI
+static bool axp20x_pek_should_register_input(struct axp20x_pek *axp20x_pek,
+					     struct platform_device *pdev)
 {
+	unsigned long long hrv = 0;
+	acpi_status status;
+
 	if (IS_ENABLED(CONFIG_INPUT_SOC_BUTTON_ARRAY) &&
 	    axp20x_pek->axp20x->variant == AXP288_ID) {
+		status = acpi_evaluate_integer(ACPI_HANDLE(pdev->dev.parent),
+					       "_HRV", NULL, &hrv);
+		if (ACPI_FAILURE(status))
+			dev_err(&pdev->dev, "Failed to get PMIC hardware revision\n");
+
 		/*
 		 * On Cherry Trail platforms (hrv == 3), do not register the
 		 * input device if there is an "INTCFD9" or "ACPI0011" gpio
 		 * button ACPI device, as that handles the power button too,
 		 * and otherwise we end up reporting all presses twice.
 		 */
-		if (soc_intel_is_cht() &&
-				(acpi_dev_present("INTCFD9", NULL, -1) ||
+		if (hrv == 3 && (acpi_dev_present("INTCFD9", NULL, -1) ||
 				 acpi_dev_present("ACPI0011", NULL, -1)))
 			return false;
+
 	}
 
 	return true;
 }
+#else
+static bool axp20x_pek_should_register_input(struct axp20x_pek *axp20x_pek,
+					     struct platform_device *pdev)
+{
+	return true;
+}
+#endif
 
 static int axp20x_pek_probe(struct platform_device *pdev)
 {
@@ -323,7 +348,7 @@ static int axp20x_pek_probe(struct platform_device *pdev)
 
 	axp20x_pek->axp20x = dev_get_drvdata(pdev->dev.parent);
 
-	if (axp20x_pek_should_register_input(axp20x_pek)) {
+	if (axp20x_pek_should_register_input(axp20x_pek, pdev)) {
 		error = axp20x_pek_probe_input_device(axp20x_pek, pdev);
 		if (error)
 			return error;
@@ -331,41 +356,14 @@ static int axp20x_pek_probe(struct platform_device *pdev)
 
 	axp20x_pek->info = (struct axp20x_info *)match->driver_data;
 
+	error = devm_device_add_group(&pdev->dev, &axp20x_attribute_group);
+	if (error) {
+		dev_err(&pdev->dev, "Failed to create sysfs attributes: %d\n",
+			error);
+		return error;
+	}
+
 	platform_set_drvdata(pdev, axp20x_pek);
-
-	return 0;
-}
-
-static int __maybe_unused axp20x_pek_suspend(struct device *dev)
-{
-	struct axp20x_pek *axp20x_pek = dev_get_drvdata(dev);
-
-	/*
-	 * As nested threaded IRQs are not automatically disabled during
-	 * suspend, we must explicitly disable non-wakeup IRQs.
-	 */
-	if (device_may_wakeup(dev)) {
-		enable_irq_wake(axp20x_pek->irq_dbf);
-		enable_irq_wake(axp20x_pek->irq_dbr);
-	} else {
-		disable_irq(axp20x_pek->irq_dbf);
-		disable_irq(axp20x_pek->irq_dbr);
-	}
-
-	return 0;
-}
-
-static int __maybe_unused axp20x_pek_resume(struct device *dev)
-{
-	struct axp20x_pek *axp20x_pek = dev_get_drvdata(dev);
-
-	if (device_may_wakeup(dev)) {
-		disable_irq_wake(axp20x_pek->irq_dbf);
-		disable_irq_wake(axp20x_pek->irq_dbr);
-	} else {
-		enable_irq(axp20x_pek->irq_dbf);
-		enable_irq(axp20x_pek->irq_dbr);
-	}
 
 	return 0;
 }
@@ -389,7 +387,6 @@ static int __maybe_unused axp20x_pek_resume_noirq(struct device *dev)
 }
 
 static const struct dev_pm_ops axp20x_pek_pm_ops = {
-	SET_SYSTEM_SLEEP_PM_OPS(axp20x_pek_suspend, axp20x_pek_resume)
 #ifdef CONFIG_PM_SLEEP
 	.resume_noirq = axp20x_pek_resume_noirq,
 #endif
@@ -414,7 +411,6 @@ static struct platform_driver axp20x_pek_driver = {
 	.driver		= {
 		.name		= "axp20x-pek",
 		.pm		= &axp20x_pek_pm_ops,
-		.dev_groups	= axp20x_groups,
 	},
 };
 module_platform_driver(axp20x_pek_driver);

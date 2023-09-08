@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * AppArmor security module
  *
@@ -6,6 +5,12 @@
  *
  * Copyright (C) 1998-2008 Novell/SUSE
  * Copyright 2009-2010 Canonical Ltd.
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License as
+ * published by the Free Software Foundation, version 2 of the
+ * License.
+ *
  *
  * AppArmor policy is based around profiles, which contain the rules a
  * task is confined by.  Every task in the system has a profile attached
@@ -187,9 +192,9 @@ static void aa_free_data(void *ptr, void *arg)
 {
 	struct aa_data *data = ptr;
 
-	kfree_sensitive(data->data);
-	kfree_sensitive(data->key);
-	kfree_sensitive(data);
+	kzfree(data->data);
+	kzfree(data->key);
+	kzfree(data);
 }
 
 /**
@@ -217,19 +222,16 @@ void aa_free_profile(struct aa_profile *profile)
 	aa_put_profile(rcu_access_pointer(profile->parent));
 
 	aa_put_ns(profile->ns);
-	kfree_sensitive(profile->rename);
+	kzfree(profile->rename);
 
 	aa_free_file_rules(&profile->file);
 	aa_free_cap_rules(&profile->caps);
 	aa_free_rlimit_rules(&profile->rlimits);
 
 	for (i = 0; i < profile->xattr_count; i++)
-		kfree_sensitive(profile->xattrs[i]);
-	kfree_sensitive(profile->xattrs);
-	for (i = 0; i < profile->secmark_count; i++)
-		kfree_sensitive(profile->secmark[i].label);
-	kfree_sensitive(profile->secmark);
-	kfree_sensitive(profile->dirname);
+		kzfree(profile->xattrs[i]);
+	kzfree(profile->xattrs);
+	kzfree(profile->dirname);
 	aa_put_dfa(profile->xmatch);
 	aa_put_dfa(profile->policy.dfa);
 
@@ -237,14 +239,13 @@ void aa_free_profile(struct aa_profile *profile)
 		rht = profile->data;
 		profile->data = NULL;
 		rhashtable_free_and_destroy(rht, aa_free_data, NULL);
-		kfree_sensitive(rht);
+		kzfree(rht);
 	}
 
-	kfree_sensitive(profile->hash);
+	kzfree(profile->hash);
 	aa_put_loaddata(profile->rawdata);
-	aa_label_destroy(&profile->label);
 
-	kfree_sensitive(profile);
+	kzfree(profile);
 }
 
 /**
@@ -260,13 +261,14 @@ struct aa_profile *aa_alloc_profile(const char *hname, struct aa_proxy *proxy,
 	struct aa_profile *profile;
 
 	/* freed by free_profile - usually through aa_put_profile */
-	profile = kzalloc(struct_size(profile, label.vec, 2), gfp);
+	profile = kzalloc(sizeof(*profile) + sizeof(struct aa_profile *) * 2,
+			  gfp);
 	if (!profile)
 		return NULL;
 
 	if (!aa_policy_init(&profile->base, NULL, hname, gfp))
 		goto fail;
-	if (!aa_label_init(&profile->label, 1, gfp))
+	if (!aa_label_init(&profile->label, 1))
 		goto fail;
 
 	/* update being set needed by fs interface */
@@ -422,7 +424,7 @@ static struct aa_profile *__lookup_profile(struct aa_policy *base,
 }
 
 /**
- * aa_lookupn_profile - find a profile by its full or partial name
+ * aa_lookup_profile - find a profile by its full or partial name
  * @ns: the namespace to start from (NOT NULL)
  * @hname: name to do lookup on.  Does not contain namespace prefix (NOT NULL)
  * @n: size of @hname
@@ -582,7 +584,7 @@ static int replacement_allowed(struct aa_profile *profile, int noreplace,
 {
 	if (profile) {
 		if (profile->label.flags & FLAG_IMMUTIBLE) {
-			*info = "cannot replace immutable profile";
+			*info = "cannot replace immutible profile";
 			return -EPERM;
 		} else if (noreplace) {
 			*info = "profile already exists";
@@ -631,35 +633,18 @@ static int audit_policy(struct aa_label *label, const char *op,
 	return error;
 }
 
-/* don't call out to other LSMs in the stack for apparmor policy admin
- * permissions
- */
-static int policy_ns_capable(struct aa_label *label,
-			     struct user_namespace *userns, int cap)
-{
-	int err;
-
-	/* check for MAC_ADMIN cap in cred */
-	err = cap_capable(current_cred(), userns, cap, CAP_OPT_NONE);
-	if (!err)
-		err = aa_capable(label, cap, CAP_OPT_NONE);
-
-	return err;
-}
-
 /**
- * aa_policy_view_capable - check if viewing policy in at @ns is allowed
- * label: label that is trying to view policy in ns
- * ns: namespace being viewed by @label (may be NULL if @label's ns)
+ * policy_view_capable - check if viewing policy in at @ns is allowed
+ * ns: namespace being viewed by current task (may be NULL)
  * Returns: true if viewing policy is allowed
  *
  * If @ns is NULL then the namespace being viewed is assumed to be the
  * tasks current namespace.
  */
-bool aa_policy_view_capable(struct aa_label *label, struct aa_ns *ns)
+bool policy_view_capable(struct aa_ns *ns)
 {
 	struct user_namespace *user_ns = current_user_ns();
-	struct aa_ns *view_ns = labels_view(label);
+	struct aa_ns *view_ns = aa_get_current_ns();
 	bool root_in_user_ns = uid_eq(current_euid(), make_kuid(user_ns, 0)) ||
 			       in_egroup_p(make_kgid(user_ns, 0));
 	bool response = false;
@@ -671,44 +656,20 @@ bool aa_policy_view_capable(struct aa_label *label, struct aa_ns *ns)
 	     (unprivileged_userns_apparmor_policy != 0 &&
 	      user_ns->level == view_ns->level)))
 		response = true;
+	aa_put_ns(view_ns);
 
 	return response;
 }
 
-bool aa_policy_admin_capable(struct aa_label *label, struct aa_ns *ns)
+bool policy_admin_capable(struct aa_ns *ns)
 {
 	struct user_namespace *user_ns = current_user_ns();
-	bool capable = policy_ns_capable(label, user_ns, CAP_MAC_ADMIN) == 0;
+	bool capable = ns_capable(user_ns, CAP_MAC_ADMIN);
 
 	AA_DEBUG("cap_mac_admin? %d\n", capable);
 	AA_DEBUG("policy locked? %d\n", aa_g_lock_policy);
 
-	return aa_policy_view_capable(label, ns) && capable &&
-		!aa_g_lock_policy;
-}
-
-bool aa_current_policy_view_capable(struct aa_ns *ns)
-{
-	struct aa_label *label;
-	bool res;
-
-	label = __begin_current_label_crit_section();
-	res = aa_policy_view_capable(label, ns);
-	__end_current_label_crit_section(label);
-
-	return res;
-}
-
-bool aa_current_policy_admin_capable(struct aa_ns *ns)
-{
-	struct aa_label *label;
-	bool res;
-
-	label = __begin_current_label_crit_section();
-	res = aa_policy_admin_capable(label, ns);
-	__end_current_label_crit_section(label);
-
-	return res;
+	return policy_view_capable(ns) && capable && !aa_g_lock_policy;
 }
 
 /**
@@ -734,7 +695,7 @@ int aa_may_manage_policy(struct aa_label *label, struct aa_ns *ns, u32 mask)
 		return audit_policy(label, op, NULL, NULL, "policy_locked",
 				    -EACCES);
 
-	if (!aa_policy_admin_capable(label, ns))
+	if (!policy_admin_capable(ns))
 		return audit_policy(label, op, NULL, NULL, "not policy admin",
 				    -EACCES);
 
@@ -897,7 +858,7 @@ static struct aa_profile *update_to_newest_parent(struct aa_profile *new)
 ssize_t aa_replace_profiles(struct aa_ns *policy_ns, struct aa_label *label,
 			    u32 mask, struct aa_loaddata *udata)
 {
-	const char *ns_name = NULL, *info = NULL;
+	const char *ns_name, *info = NULL;
 	struct aa_ns *ns = NULL;
 	struct aa_load_ent *ent, *tmp;
 	struct aa_loaddata *rawdata_ent;
@@ -952,18 +913,16 @@ ssize_t aa_replace_profiles(struct aa_ns *policy_ns, struct aa_label *label,
 
 	mutex_lock_nested(&ns->lock, ns->level);
 	/* check for duplicate rawdata blobs: space and file dedup */
-	if (!list_empty(&ns->rawdata_list)) {
-		list_for_each_entry(rawdata_ent, &ns->rawdata_list, list) {
-			if (aa_rawdata_eq(rawdata_ent, udata)) {
-				struct aa_loaddata *tmp;
+	list_for_each_entry(rawdata_ent, &ns->rawdata_list, list) {
+		if (aa_rawdata_eq(rawdata_ent, udata)) {
+			struct aa_loaddata *tmp;
 
-				tmp = __aa_get_loaddata(rawdata_ent);
-				/* check we didn't fail the race */
-				if (tmp) {
-					aa_put_loaddata(udata);
-					udata = tmp;
-					break;
-				}
+			tmp = __aa_get_loaddata(rawdata_ent);
+			/* check we didn't fail the race */
+			if (tmp) {
+				aa_put_loaddata(udata);
+				udata = tmp;
+				break;
 			}
 		}
 	}
@@ -971,8 +930,7 @@ ssize_t aa_replace_profiles(struct aa_ns *policy_ns, struct aa_label *label,
 	list_for_each_entry(ent, &lh, list) {
 		struct aa_policy *policy;
 
-		if (aa_g_export_binary)
-			ent->new->rawdata = aa_get_loaddata(udata);
+		ent->new->rawdata = aa_get_loaddata(udata);
 		error = __lookup_replace(ns, ent->new->base.hname,
 					 !(mask & AA_MAY_REPLACE_POLICY),
 					 &ent->old, &info);
@@ -1012,7 +970,7 @@ ssize_t aa_replace_profiles(struct aa_ns *policy_ns, struct aa_label *label,
 	}
 
 	/* create new fs entries for introspection if needed */
-	if (!udata->dents[AAFS_LOADDATA_DIR] && aa_g_export_binary) {
+	if (!udata->dents[AAFS_LOADDATA_DIR]) {
 		error = __aa_fs_create_rawdata(ns, udata);
 		if (error) {
 			info = "failed to create raw_data dir and files";
@@ -1040,21 +998,16 @@ ssize_t aa_replace_profiles(struct aa_ns *policy_ns, struct aa_label *label,
 
 	/* Done with checks that may fail - do actual replacement */
 	__aa_bump_ns_revision(ns);
-	if (aa_g_export_binary)
-		__aa_loaddata_update(udata, ns->revision);
+	__aa_loaddata_update(udata, ns->revision);
 	list_for_each_entry_safe(ent, tmp, &lh, list) {
 		list_del_init(&ent->list);
 		op = (!ent->old && !ent->rename) ? OP_PROF_LOAD : OP_PROF_REPL;
 
-		if (ent->old && ent->old->rawdata == ent->new->rawdata &&
-		    ent->new->rawdata) {
+		if (ent->old && ent->old->rawdata == ent->new->rawdata) {
 			/* dedup actual profile replacement */
 			audit_policy(label, op, ns_name, ent->new->base.hname,
 				     "same as current profile, skipping",
 				     error);
-			/* break refcount cycle with proxy. */
-			aa_put_proxy(ent->new->label.proxy);
-			ent->new->label.proxy = NULL;
 			goto skip;
 		}
 
@@ -1089,7 +1042,6 @@ ssize_t aa_replace_profiles(struct aa_ns *policy_ns, struct aa_label *label,
 out:
 	aa_put_ns(ns);
 	aa_put_loaddata(udata);
-	kfree(ns_name);
 
 	if (error)
 		return error;
@@ -1133,7 +1085,7 @@ fail:
  * Remove a profile or sub namespace from the current namespace, so that
  * they can not be found anymore and mark them as replaced by unconfined
  *
- * NOTE: removing confinement does not restore rlimits to preconfinement values
+ * NOTE: removing confinement does not restore rlimits to preconfinemnet values
  *
  * Returns: size of data consume else error code if fails
  */
@@ -1171,8 +1123,8 @@ ssize_t aa_remove_profiles(struct aa_ns *policy_ns, struct aa_label *subj,
 	if (!name) {
 		/* remove namespace - can only happen if fqname[0] == ':' */
 		mutex_lock_nested(&ns->parent->lock, ns->level);
-		__aa_bump_ns_revision(ns);
 		__aa_remove_ns(ns);
+		__aa_bump_ns_revision(ns);
 		mutex_unlock(&ns->parent->lock);
 	} else {
 		/* remove profile */
@@ -1184,9 +1136,9 @@ ssize_t aa_remove_profiles(struct aa_ns *policy_ns, struct aa_label *subj,
 			goto fail_ns_lock;
 		}
 		name = profile->base.hname;
-		__aa_bump_ns_revision(ns);
 		__remove_profile(profile);
 		__aa_labelset_update_subtree(ns);
+		__aa_bump_ns_revision(ns);
 		mutex_unlock(&ns->lock);
 	}
 

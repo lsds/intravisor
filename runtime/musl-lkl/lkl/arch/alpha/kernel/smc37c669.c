@@ -10,6 +10,7 @@
 
 #include <asm/hwrpb.h>
 #include <asm/io.h>
+#include <asm/segment.h>
 
 #if 0
 # define DBG_DEVS(args)         printk args

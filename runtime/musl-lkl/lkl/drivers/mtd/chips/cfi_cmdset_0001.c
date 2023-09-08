@@ -72,8 +72,7 @@ static int cfi_intelext_is_locked(struct mtd_info *mtd, loff_t ofs,
 #ifdef CONFIG_MTD_OTP
 static int cfi_intelext_read_fact_prot_reg (struct mtd_info *, loff_t, size_t, size_t *, u_char *);
 static int cfi_intelext_read_user_prot_reg (struct mtd_info *, loff_t, size_t, size_t *, u_char *);
-static int cfi_intelext_write_user_prot_reg(struct mtd_info *, loff_t, size_t,
-					    size_t *, const u_char *);
+static int cfi_intelext_write_user_prot_reg (struct mtd_info *, loff_t, size_t, size_t *, u_char *);
 static int cfi_intelext_lock_user_prot_reg (struct mtd_info *, loff_t, size_t);
 static int cfi_intelext_get_fact_prot_info(struct mtd_info *, size_t,
 					   size_t *, struct otp_info *);
@@ -421,9 +420,8 @@ read_pri_intelext(struct map_info *map, __u16 adr)
 		extra_size = 0;
 
 		/* Protection Register info */
-		if (extp->NumProtectionFields)
-			extra_size += (extp->NumProtectionFields - 1) *
-				      sizeof(struct cfi_intelext_otpinfo);
+		extra_size += (extp->NumProtectionFields - 1) *
+			      sizeof(struct cfi_intelext_otpinfo);
 	}
 
 	if (extp->MinorVersion >= '1') {
@@ -610,9 +608,8 @@ static struct mtd_info *cfi_intelext_setup(struct mtd_info *mtd)
 	mtd->size = devsize * cfi->numchips;
 
 	mtd->numeraseregions = cfi->cfiq->NumEraseRegions * cfi->numchips;
-	mtd->eraseregions = kcalloc(mtd->numeraseregions,
-				    sizeof(struct mtd_erase_region_info),
-				    GFP_KERNEL);
+	mtd->eraseregions = kzalloc(sizeof(struct mtd_erase_region_info)
+			* mtd->numeraseregions, GFP_KERNEL);
 	if (!mtd->eraseregions)
 		goto setup_err;
 
@@ -697,16 +694,14 @@ static int cfi_intelext_partition_fixup(struct mtd_info *mtd,
 	 */
 	if (extp && extp->MajorVersion == '1' && extp->MinorVersion >= '3'
 	    && extp->FeatureSupport & (1 << 9)) {
-		int offs = 0;
 		struct cfi_private *newcfi;
 		struct flchip *chip;
 		struct flchip_shared *shared;
-		int numregions, numparts, partshift, numvirtchips, i, j;
+		int offs, numregions, numparts, partshift, numvirtchips, i, j;
 
 		/* Protection Register info */
-		if (extp->NumProtectionFields)
-			offs = (extp->NumProtectionFields - 1) *
-			       sizeof(struct cfi_intelext_otpinfo);
+		offs = (extp->NumProtectionFields - 1) *
+		       sizeof(struct cfi_intelext_otpinfo);
 
 		/* Burst Read info */
 		offs += extp->extra[offs+1]+2;
@@ -760,13 +755,10 @@ static int cfi_intelext_partition_fixup(struct mtd_info *mtd,
 		}
 
 		numvirtchips = cfi->numchips * numparts;
-		newcfi = kmalloc(struct_size(newcfi, chips, numvirtchips),
-				 GFP_KERNEL);
+		newcfi = kmalloc(sizeof(struct cfi_private) + numvirtchips * sizeof(struct flchip), GFP_KERNEL);
 		if (!newcfi)
 			return -ENOMEM;
-		shared = kmalloc_array(cfi->numchips,
-				       sizeof(struct flchip_shared),
-				       GFP_KERNEL);
+		shared = kmalloc(sizeof(struct flchip_shared) * cfi->numchips, GFP_KERNEL);
 		if (!shared) {
 			kfree(newcfi);
 			return -ENOMEM;
@@ -838,7 +830,7 @@ static int chip_ready (struct map_info *map, struct flchip *chip, unsigned long 
 			/* Someone else might have been playing with it. */
 			return -EAGAIN;
 		}
-		fallthrough;
+		/* Fall through */
 	case FL_READY:
 	case FL_CFI_QUERY:
 	case FL_JEDEC_QUERY:
@@ -911,7 +903,7 @@ static int chip_ready (struct map_info *map, struct flchip *chip, unsigned long 
 		/* Only if there's no operation suspended... */
 		if (mode == FL_READY && chip->oldstate == FL_READY)
 			return 0;
-		fallthrough;
+		/* Fall through */
 	default:
 	sleep:
 		set_current_state(TASK_UNINTERRUPTIBLE);
@@ -1357,7 +1349,7 @@ static int do_point_onechip (struct map_info *map, struct flchip *chip, loff_t a
 {
 	unsigned long cmd_addr;
 	struct cfi_private *cfi = map->fldrv_priv;
-	int ret;
+	int ret = 0;
 
 	adr += chip->start;
 
@@ -1387,7 +1379,7 @@ static int cfi_intelext_point(struct mtd_info *mtd, loff_t from, size_t len,
 	struct cfi_private *cfi = map->fldrv_priv;
 	unsigned long ofs, last_end = 0;
 	int chipnum;
-	int ret;
+	int ret = 0;
 
 	if (!map->virt)
 		return -EINVAL;
@@ -1554,7 +1546,7 @@ static int __xipram do_write_oneword(struct map_info *map, struct flchip *chip,
 {
 	struct cfi_private *cfi = map->fldrv_priv;
 	map_word status, write_cmd;
-	int ret;
+	int ret=0;
 
 	adr += chip->start;
 
@@ -1628,7 +1620,7 @@ static int cfi_intelext_write_words (struct mtd_info *mtd, loff_t to , size_t le
 {
 	struct map_info *map = mtd->priv;
 	struct cfi_private *cfi = map->fldrv_priv;
-	int ret;
+	int ret = 0;
 	int chipnum;
 	unsigned long ofs;
 
@@ -1875,7 +1867,7 @@ static int cfi_intelext_writev (struct mtd_info *mtd, const struct kvec *vecs,
 	struct map_info *map = mtd->priv;
 	struct cfi_private *cfi = map->fldrv_priv;
 	int wbufsize = cfi_interleave(cfi) << cfi->cfiq->MaxBufWriteSize;
-	int ret;
+	int ret = 0;
 	int chipnum;
 	unsigned long ofs, vec_seek, i;
 	size_t len = 0;
@@ -2448,10 +2440,10 @@ static int cfi_intelext_read_user_prot_reg(struct mtd_info *mtd, loff_t from,
 
 static int cfi_intelext_write_user_prot_reg(struct mtd_info *mtd, loff_t from,
 					    size_t len, size_t *retlen,
-					    const u_char *buf)
+					     u_char *buf)
 {
 	return cfi_intelext_otp_walk(mtd, from, len, retlen,
-				     (u_char *)buf, do_otp_write, 1);
+				     buf, do_otp_write, 1);
 }
 
 static int cfi_intelext_lock_user_prot_reg(struct mtd_info *mtd,
@@ -2550,7 +2542,6 @@ static int cfi_intelext_suspend(struct mtd_info *mtd)
 			   anyway? The latter for now. */
 			printk(KERN_NOTICE "Flash device refused suspend due to active operation (state %d)\n", chip->state);
 			ret = -EAGAIN;
-			break;
 		case FL_PM_SUSPENDED:
 			break;
 		}

@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 #include <linux/types.h>
 #include <linux/string.h>
 #include <linux/init.h>
@@ -6,14 +5,10 @@
 #include <linux/ctype.h>
 #include <linux/dmi.h>
 #include <linux/efi.h>
-#include <linux/memblock.h>
+#include <linux/bootmem.h>
 #include <linux/random.h>
 #include <asm/dmi.h>
 #include <asm/unaligned.h>
-
-#ifndef SMBIOS_ENTRY_POINT_SCAN_START
-#define SMBIOS_ENTRY_POINT_SCAN_START 0xF0000
-#endif
 
 struct kobject *dmi_kobj;
 EXPORT_SYMBOL_GPL(dmi_kobj);
@@ -21,7 +16,7 @@ EXPORT_SYMBOL_GPL(dmi_kobj);
 /*
  * DMI stands for "Desktop Management Interface".  It is part
  * of and an antecedent to, SMBIOS, which stands for System
- * Management BIOS.  See further: https://www.dmtf.org/standards
+ * Management BIOS.  See further: http://www.dmtf.org/standards
  */
 static const char dmi_empty_string[] = "";
 
@@ -39,7 +34,6 @@ static struct dmi_memdev_info {
 	const char *bank;
 	u64 size;		/* bytes */
 	u16 handle;
-	u8 type;		/* DDR2, DDR3, DDR4 etc */
 } *dmi_memdev;
 static int dmi_memdev_nr;
 
@@ -166,7 +160,6 @@ static int __init dmi_checksum(const u8 *buf, u8 len)
 static const char *dmi_ident[DMI_STRING_MAX];
 static LIST_HEAD(dmi_devices);
 int dmi_available;
-EXPORT_SYMBOL_GPL(dmi_available);
 
 /*
  *	Save a DMI string
@@ -185,34 +178,6 @@ static void __init dmi_save_ident(const struct dmi_header *dm, int slot,
 		return;
 
 	dmi_ident[slot] = p;
-}
-
-static void __init dmi_save_release(const struct dmi_header *dm, int slot,
-		int index)
-{
-	const u8 *minor, *major;
-	char *s;
-
-	/* If the table doesn't have the field, let's return */
-	if (dmi_ident[slot] || dm->length < index)
-		return;
-
-	minor = (u8 *) dm + index;
-	major = (u8 *) dm + index - 1;
-
-	/* As per the spec, if the system doesn't support this field,
-	 * the value is FF
-	 */
-	if (*major == 0xFF && *minor == 0xFF)
-		return;
-
-	s = dmi_alloc(8);
-	if (!s)
-		return;
-
-	sprintf(s, "%u.%u", *major, *minor);
-
-	dmi_ident[slot] = s;
 }
 
 static void __init dmi_save_uuid(const struct dmi_header *dm, int slot,
@@ -425,7 +390,7 @@ static void __init save_mem_devices(const struct dmi_header *dm, void *v)
 	u64 bytes;
 	u16 size;
 
-	if (dm->type != DMI_ENTRY_MEM_DEVICE || dm->length < 0x13)
+	if (dm->type != DMI_ENTRY_MEM_DEVICE || dm->length < 0x12)
 		return;
 	if (nr >= dmi_memdev_nr) {
 		pr_warn(FW_BUG "Too many DIMM entries in SMBIOS table\n");
@@ -434,7 +399,6 @@ static void __init save_mem_devices(const struct dmi_header *dm, void *v)
 	dmi_memdev[nr].handle = get_unaligned(&dm->handle);
 	dmi_memdev[nr].device = dmi_string(dm, d[0x10]);
 	dmi_memdev[nr].bank = dmi_string(dm, d[0x11]);
-	dmi_memdev[nr].type = d[0x12];
 
 	size = get_unaligned((u16 *)&d[0xC]);
 	if (size == 0)
@@ -443,7 +407,7 @@ static void __init save_mem_devices(const struct dmi_header *dm, void *v)
 		bytes = ~0ull;
 	else if (size & 0x8000)
 		bytes = (u64)(size & 0x7fff) << 10;
-	else if (size != 0x7fff || dm->length < 0x20)
+	else if (size != 0x7fff)
 		bytes = (u64)size << 20;
 	else
 		bytes = (u64)get_unaligned((u32 *)&d[0x1C]) << 20;
@@ -452,8 +416,11 @@ static void __init save_mem_devices(const struct dmi_header *dm, void *v)
 	nr++;
 }
 
-static void __init dmi_memdev_walk(void)
+void __init dmi_memdev_walk(void)
 {
+	if (!dmi_available)
+		return;
+
 	if (dmi_walk_early(count_mem_devices) == 0 && dmi_memdev_nr) {
 		dmi_memdev = dmi_alloc(sizeof(*dmi_memdev) * dmi_memdev_nr);
 		if (dmi_memdev)
@@ -473,8 +440,6 @@ static void __init dmi_decode(const struct dmi_header *dm, void *dummy)
 		dmi_save_ident(dm, DMI_BIOS_VENDOR, 4);
 		dmi_save_ident(dm, DMI_BIOS_VERSION, 5);
 		dmi_save_ident(dm, DMI_BIOS_DATE, 8);
-		dmi_save_release(dm, DMI_BIOS_RELEASE, 21);
-		dmi_save_release(dm, DMI_EC_FIRMWARE_RELEASE, 23);
 		break;
 	case 1:		/* System Information */
 		dmi_save_ident(dm, DMI_SYS_VENDOR, 4);
@@ -482,7 +447,6 @@ static void __init dmi_decode(const struct dmi_header *dm, void *dummy)
 		dmi_save_ident(dm, DMI_PRODUCT_VERSION, 6);
 		dmi_save_ident(dm, DMI_PRODUCT_SERIAL, 7);
 		dmi_save_uuid(dm, DMI_PRODUCT_UUID, 8);
-		dmi_save_ident(dm, DMI_PRODUCT_SKU, 25);
 		dmi_save_ident(dm, DMI_PRODUCT_FAMILY, 26);
 		break;
 	case 2:		/* Base Board Information */
@@ -567,13 +531,8 @@ static int __init dmi_present(const u8 *buf)
 {
 	u32 smbios_ver;
 
-	/*
-	 * The size of this structure is 31 bytes, but we also accept value
-	 * 30 due to a mistake in SMBIOS specification version 2.1.
-	 */
 	if (memcmp(buf, "_SM_", 4) == 0 &&
-	    buf[5] >= 30 && buf[5] <= 32 &&
-	    dmi_checksum(buf, buf[5])) {
+	    buf[5] < 32 && dmi_checksum(buf, buf[5])) {
 		smbios_ver = get_unaligned_be16(buf + 6);
 		smbios_entry_point_size = buf[5];
 		memcpy(smbios_entry_point, buf, smbios_entry_point_size);
@@ -634,9 +593,8 @@ static int __init dmi_present(const u8 *buf)
 static int __init dmi_smbios3_present(const u8 *buf)
 {
 	if (memcmp(buf, "_SM3_", 5) == 0 &&
-	    buf[6] >= 24 && buf[6] <= 32 &&
-	    dmi_checksum(buf, buf[6])) {
-		dmi_ver = get_unaligned_be24(buf + 7);
+	    buf[6] < 32 && dmi_checksum(buf, buf[6])) {
+		dmi_ver = get_unaligned_be32(buf + 6) & 0xFFFFFF;
 		dmi_num = 0;			/* No longer specified */
 		dmi_len = get_unaligned_le32(buf + 12);
 		dmi_base = get_unaligned_le64(buf + 16);
@@ -655,7 +613,7 @@ static int __init dmi_smbios3_present(const u8 *buf)
 	return 1;
 }
 
-static void __init dmi_scan_machine(void)
+void __init dmi_scan_machine(void)
 {
 	char __iomem *p, *q;
 	char buf[32];
@@ -704,7 +662,7 @@ static void __init dmi_scan_machine(void)
 			return;
 		}
 	} else if (IS_ENABLED(CONFIG_DMI_SCAN_MACHINE_NON_EFI_FALLBACK)) {
-		p = dmi_early_remap(SMBIOS_ENTRY_POINT_SCAN_START, 0x10000);
+		p = dmi_early_remap(0xF0000, 0x10000);
 		if (p == NULL)
 			goto error;
 
@@ -810,20 +768,15 @@ static int __init dmi_init(void)
 subsys_initcall(dmi_init);
 
 /**
- *	dmi_setup - scan and setup DMI system information
+ * dmi_set_dump_stack_arch_desc - set arch description for dump_stack()
  *
- *	Scan the DMI system information. This setups DMI identifiers
- *	(dmi_system_id) for printing it out on task dumps and prepares
- *	DIMM entry information (dmi_memdev_info) from the SMBIOS table
- *	for using this when reporting memory errors.
+ * Invoke dump_stack_set_arch_desc() with DMI system information so that
+ * DMI identifiers are printed out on task dumps.  Arch boot code should
+ * call this function after dmi_scan_machine() if it wants to print out DMI
+ * identifiers on task dumps.
  */
-void __init dmi_setup(void)
+void __init dmi_set_dump_stack_arch_desc(void)
 {
-	dmi_scan_machine();
-	if (!dmi_available)
-		return;
-
-	dmi_memdev_walk();
 	dump_stack_set_arch_desc("%s", dmi_ids_string);
 }
 
@@ -887,7 +840,7 @@ static bool dmi_is_end_of_table(const struct dmi_system_id *dmi)
  *	returns non zero or we hit the end. Callback function is called for
  *	each successful match. Returns the number of matches.
  *
- *	dmi_setup must be called before this function is called.
+ *	dmi_scan_machine must be called before this function is called.
  */
 int dmi_check_system(const struct dmi_system_id *list)
 {
@@ -917,7 +870,7 @@ EXPORT_SYMBOL(dmi_check_system);
  *	Walk the blacklist table until the first match is found.  Return the
  *	pointer to the matching entry or NULL if there's no match.
  *
- *	dmi_setup must be called before this function is called.
+ *	dmi_scan_machine must be called before this function is called.
  */
 const struct dmi_system_id *dmi_first_match(const struct dmi_system_id *list)
 {
@@ -1171,40 +1124,3 @@ u64 dmi_memdev_size(u16 handle)
 	return ~0ull;
 }
 EXPORT_SYMBOL_GPL(dmi_memdev_size);
-
-/**
- * dmi_memdev_type - get the memory type
- * @handle: DMI structure handle
- *
- * Return the DMI memory type of the module in the slot associated with the
- * given DMI handle, or 0x0 if no such DMI handle exists.
- */
-u8 dmi_memdev_type(u16 handle)
-{
-	int n;
-
-	if (dmi_memdev) {
-		for (n = 0; n < dmi_memdev_nr; n++) {
-			if (handle == dmi_memdev[n].handle)
-				return dmi_memdev[n].type;
-		}
-	}
-	return 0x0;	/* Not a valid value */
-}
-EXPORT_SYMBOL_GPL(dmi_memdev_type);
-
-/**
- *	dmi_memdev_handle - get the DMI handle of a memory slot
- *	@slot: slot number
- *
- *	Return the DMI handle associated with a given memory slot, or %0xFFFF
- *      if there is no such slot.
- */
-u16 dmi_memdev_handle(int slot)
-{
-	if (dmi_memdev && slot >= 0 && slot < dmi_memdev_nr)
-		return dmi_memdev[slot].handle;
-
-	return 0xffff;	/* Not a valid value */
-}
-EXPORT_SYMBOL_GPL(dmi_memdev_handle);

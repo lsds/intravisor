@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Copyright (c) Intel Corp. 2007.
  * All Rights Reserved.
@@ -7,6 +6,21 @@
  * develop this driver.
  *
  * This file is part of the Vermilion Range fb driver.
+ * The Vermilion Range fb driver is free software;
+ * you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * The Vermilion Range fb driver is distributed
+ * in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this driver; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
  *
  * Authors:
  *   Thomas Hellström <thomas-at-tungstengraphics-dot-com>
@@ -14,7 +28,6 @@
  *   Alan Hourihane <alanh-at-tungstengraphics-dot-com>
  */
 
-#include <linux/aperture.h>
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/errno.h>
@@ -318,7 +331,7 @@ static int vmlfb_enable_mmio(struct vml_par *par)
 		       ": Could not claim display controller MMIO.\n");
 		return -EBUSY;
 	}
-	par->vdc_mem = ioremap(par->vdc_mem_base, par->vdc_mem_size);
+	par->vdc_mem = ioremap_nocache(par->vdc_mem_base, par->vdc_mem_size);
 	if (par->vdc_mem == NULL) {
 		printk(KERN_ERR MODULE_NAME
 		       ": Could not map display controller MMIO.\n");
@@ -333,7 +346,7 @@ static int vmlfb_enable_mmio(struct vml_par *par)
 		err = -EBUSY;
 		goto out_err_1;
 	}
-	par->gpu_mem = ioremap(par->gpu_mem_base, par->gpu_mem_size);
+	par->gpu_mem = ioremap_nocache(par->gpu_mem_base, par->gpu_mem_size);
 	if (par->gpu_mem == NULL) {
 		printk(KERN_ERR MODULE_NAME ": Could not map GPU MMIO.\n");
 		err = -ENOMEM;
@@ -443,11 +456,7 @@ static int vml_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 	struct vml_info *vinfo;
 	struct fb_info *info;
 	struct vml_par *par;
-	int err;
-
-	err = aperture_remove_conflicting_pci_devices(dev, "vmlfb");
-	if (err)
-		return err;
+	int err = 0;
 
 	par = kzalloc(sizeof(*par), GFP_KERNEL);
 	if (par == NULL)

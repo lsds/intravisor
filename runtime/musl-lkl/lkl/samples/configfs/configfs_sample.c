@@ -1,20 +1,38 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
+ * vim: noexpandtab ts=8 sts=0 sw=8:
+ *
  * configfs_example_macros.c - This file is a demonstration module
  *      containing a number of configfs subsystems.  It uses the helper
  *      macros defined by configfs.h
  *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public
+ * License as published by the Free Software Foundation; either
+ * version 2 of the License, or (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public
+ * License along with this program; if not, write to the
+ * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+ * Boston, MA 021110-1307, USA.
+ *
  * Based on sysfs:
- *      sysfs is Copyright (C) 2001, 2002, 2003 Patrick Mochel
+ * 	sysfs is Copyright (C) 2001, 2002, 2003 Patrick Mochel
  *
  * configfs Copyright (C) 2005 Oracle.  All rights reserved.
  */
 
 #include <linux/init.h>
-#include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/slab.h>
+
 #include <linux/configfs.h>
+
+
 
 /*
  * 01-childless
@@ -36,8 +54,8 @@ struct childless {
 
 static inline struct childless *to_childless(struct config_item *item)
 {
-	return container_of(to_configfs_subsystem(to_config_group(item)),
-			    struct childless, subsys);
+	return item ? container_of(to_configfs_subsystem(to_config_group(item)),
+			struct childless, subsys) : NULL;
 }
 
 static ssize_t childless_showme_show(struct config_item *item, char *page)
@@ -60,11 +78,17 @@ static ssize_t childless_storeme_store(struct config_item *item,
 		const char *page, size_t count)
 {
 	struct childless *childless = to_childless(item);
-	int ret;
+	unsigned long tmp;
+	char *p = (char *) page;
 
-	ret = kstrtoint(page, 10, &childless->storeme);
-	if (ret)
-		return ret;
+	tmp = simple_strtoul(p, &p, 10);
+	if (!p || (*p && (*p != '\n')))
+		return -EINVAL;
+
+	if (tmp > INT_MAX)
+		return -ERANGE;
+
+	childless->storeme = tmp;
 
 	return count;
 }
@@ -107,6 +131,7 @@ static struct childless childless_subsys = {
 	},
 };
 
+
 /* ----------------------------------------------------------------- */
 
 /*
@@ -125,7 +150,7 @@ struct simple_child {
 
 static inline struct simple_child *to_simple_child(struct config_item *item)
 {
-	return container_of(item, struct simple_child, item);
+	return item ? container_of(item, struct simple_child, item) : NULL;
 }
 
 static ssize_t simple_child_storeme_show(struct config_item *item, char *page)
@@ -137,11 +162,17 @@ static ssize_t simple_child_storeme_store(struct config_item *item,
 		const char *page, size_t count)
 {
 	struct simple_child *simple_child = to_simple_child(item);
-	int ret;
+	unsigned long tmp;
+	char *p = (char *) page;
 
-	ret = kstrtoint(page, 10, &simple_child->storeme);
-	if (ret)
-		return ret;
+	tmp = simple_strtoul(p, &p, 10);
+	if (!p || (*p && (*p != '\n')))
+		return -EINVAL;
+
+	if (tmp > INT_MAX)
+		return -ERANGE;
+
+	simple_child->storeme = tmp;
 
 	return count;
 }
@@ -159,7 +190,7 @@ static void simple_child_release(struct config_item *item)
 }
 
 static struct configfs_item_operations simple_child_item_ops = {
-	.release	= simple_child_release,
+	.release		= simple_child_release,
 };
 
 static const struct config_item_type simple_child_type = {
@@ -168,14 +199,15 @@ static const struct config_item_type simple_child_type = {
 	.ct_owner	= THIS_MODULE,
 };
 
+
 struct simple_children {
 	struct config_group group;
 };
 
 static inline struct simple_children *to_simple_children(struct config_item *item)
 {
-	return container_of(to_config_group(item),
-			    struct simple_children, group);
+	return item ? container_of(to_config_group(item),
+			struct simple_children, group) : NULL;
 }
 
 static struct config_item *simple_children_make_item(struct config_group *group,
@@ -189,6 +221,8 @@ static struct config_item *simple_children_make_item(struct config_group *group,
 
 	config_item_init_type_name(&simple_child->item, name,
 				   &simple_child_type);
+
+	simple_child->storeme = 0;
 
 	return &simple_child->item;
 }
@@ -242,6 +276,7 @@ static struct configfs_subsystem simple_children_subsys = {
 		},
 	},
 };
+
 
 /* ----------------------------------------------------------------- */
 
@@ -329,8 +364,9 @@ static struct configfs_subsystem *example_subsys[] = {
 
 static int __init configfs_example_init(void)
 {
+	int ret;
+	int i;
 	struct configfs_subsystem *subsys;
-	int ret, i;
 
 	for (i = 0; example_subsys[i]; i++) {
 		subsys = example_subsys[i];
@@ -339,8 +375,9 @@ static int __init configfs_example_init(void)
 		mutex_init(&subsys->su_mutex);
 		ret = configfs_register_subsystem(subsys);
 		if (ret) {
-			pr_err("Error %d while registering subsystem %s\n",
-			       ret, subsys->su_group.cg_item.ci_namebuf);
+			printk(KERN_ERR "Error %d while registering subsystem %s\n",
+			       ret,
+			       subsys->su_group.cg_item.ci_namebuf);
 			goto out_unregister;
 		}
 	}

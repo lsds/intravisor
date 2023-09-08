@@ -25,6 +25,8 @@ Optional properties:
 
 Example:
 
+SoC-specific DT Entry:
+
 	pcie0: pcie@1f2b0000 {
 		status = "disabled";
 		device_type = "pci";
@@ -48,3 +50,8 @@ Example:
 		clocks = <&pcie0clk 0>;
 	};
 
+
+Board-specific DT Entry:
+	&pcie0 {
+		status = "ok";
+	};

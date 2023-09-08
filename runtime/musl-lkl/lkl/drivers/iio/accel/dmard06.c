@@ -1,12 +1,14 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * IIO driver for Domintech DMARD06 accelerometer
  *
  * Copyright (C) 2016 Aleksei Mamlin <mamlinav@gmail.com>
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms and conditions of the GNU General Public License,
+ * version 2, as published by the Free Software Foundation.
  */
 
 #include <linux/module.h>
-#include <linux/mod_devicetable.h>
 #include <linux/i2c.h>
 #include <linux/iio/iio.h>
 
@@ -161,6 +163,7 @@ static int dmard06_probe(struct i2c_client *client,
 	dmard06->chip_id = ret;
 
 	i2c_set_clientdata(client, indio_dev);
+	indio_dev->dev.parent = &client->dev;
 	indio_dev->name = DMARD06_DRV_NAME;
 	indio_dev->modes = INDIO_DIRECT_MODE;
 	indio_dev->channels = dmard06_channels;
@@ -170,6 +173,7 @@ static int dmard06_probe(struct i2c_client *client,
 	return devm_iio_device_register(&client->dev, indio_dev);
 }
 
+#ifdef CONFIG_PM_SLEEP
 static int dmard06_suspend(struct device *dev)
 {
 	struct iio_dev *indio_dev = i2c_get_clientdata(to_i2c_client(dev));
@@ -198,8 +202,11 @@ static int dmard06_resume(struct device *dev)
 	return 0;
 }
 
-static DEFINE_SIMPLE_DEV_PM_OPS(dmard06_pm_ops, dmard06_suspend,
-				dmard06_resume);
+static SIMPLE_DEV_PM_OPS(dmard06_pm_ops, dmard06_suspend, dmard06_resume);
+#define DMARD06_PM_OPS (&dmard06_pm_ops)
+#else
+#define DMARD06_PM_OPS NULL
+#endif
 
 static const struct i2c_device_id dmard06_id[] = {
 	{ "dmard05", 0 },
@@ -222,8 +229,8 @@ static struct i2c_driver dmard06_driver = {
 	.id_table = dmard06_id,
 	.driver = {
 		.name = DMARD06_DRV_NAME,
-		.of_match_table = dmard06_of_match,
-		.pm = pm_sleep_ptr(&dmard06_pm_ops),
+		.of_match_table = of_match_ptr(dmard06_of_match),
+		.pm = DMARD06_PM_OPS,
 	},
 };
 module_i2c_driver(dmard06_driver);

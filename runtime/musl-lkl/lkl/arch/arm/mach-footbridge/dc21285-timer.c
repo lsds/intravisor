@@ -101,6 +101,13 @@ static irqreturn_t timer1_interrupt(int irq, void *dev_id)
 	return IRQ_HANDLED;
 }
 
+static struct irqaction footbridge_timer_irq = {
+	.name		= "dc21285_timer1",
+	.handler	= timer1_interrupt,
+	.flags		= IRQF_TIMER | IRQF_IRQPOLL,
+	.dev_id		= &ckevt_dc21285,
+};
+
 /*
  * Set up timer interrupt.
  */
@@ -111,9 +118,7 @@ void __init footbridge_timer_init(void)
 
 	clocksource_register_hz(&cksrc_dc21285, rate);
 
-	if (request_irq(ce->irq, timer1_interrupt, IRQF_TIMER | IRQF_IRQPOLL,
-			"dc21285_timer1", &ckevt_dc21285))
-		pr_err("Failed to request irq %d (dc21285_timer1)", ce->irq);
+	setup_irq(ce->irq, &footbridge_timer_irq);
 
 	ce->cpumask = cpumask_of(smp_processor_id());
 	clockevents_config_and_register(ce, rate, 0x4, 0xffffff);

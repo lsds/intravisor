@@ -545,7 +545,7 @@ static atomic_t adapter_fw_states[MAX_OCTEON_DEVICES];
 
 static u32 octeon_device_count;
 /* locks device array (i.e. octeon_device[]) */
-static DEFINE_SPINLOCK(octeon_devices_lock);
+static spinlock_t octeon_devices_lock;
 
 static struct octeon_core_setup core_setup[MAX_OCTEON_DEVICES];
 
@@ -563,6 +563,7 @@ void octeon_init_device_list(int conf_type)
 	memset(octeon_device, 0, (sizeof(void *) * MAX_OCTEON_DEVICES));
 	for (i = 0; i <  MAX_OCTEON_DEVICES; i++)
 		oct_set_config_info(i, conf_type);
+	spin_lock_init(&octeon_devices_lock);
 }
 
 static void *__retrieve_octeon_config_info(struct octeon_device *oct,
@@ -823,18 +824,23 @@ int octeon_deregister_device(struct octeon_device *oct)
 }
 
 int
-octeon_allocate_ioq_vector(struct octeon_device *oct, u32 num_ioqs)
+octeon_allocate_ioq_vector(struct octeon_device  *oct)
 {
+	int i, num_ioqs = 0;
 	struct octeon_ioq_vector *ioq_vector;
 	int cpu_num;
 	int size;
-	int i;
+
+	if (OCTEON_CN23XX_PF(oct))
+		num_ioqs = oct->sriov_info.num_pf_rings;
+	else if (OCTEON_CN23XX_VF(oct))
+		num_ioqs = oct->sriov_info.rings_per_vf;
 
 	size = sizeof(struct octeon_ioq_vector) * num_ioqs;
 
 	oct->ioq_vector = vzalloc(size);
 	if (!oct->ioq_vector)
-		return -1;
+		return 1;
 	for (i = 0; i < num_ioqs; i++) {
 		ioq_vector		= &oct->ioq_vector[i];
 		ioq_vector->oct_dev	= oct;
@@ -850,7 +856,6 @@ octeon_allocate_ioq_vector(struct octeon_device *oct, u32 num_ioqs)
 		else
 			ioq_vector->ioq_num	= i;
 	}
-
 	return 0;
 }
 
@@ -1043,7 +1048,8 @@ void octeon_delete_dispatch_list(struct octeon_device *oct)
 		dispatch = &oct->dispatch.dlist[i].list;
 		while (dispatch->next != dispatch) {
 			temp = dispatch->next;
-			list_move_tail(temp, &freelist);
+			list_del(temp);
+			list_add_tail(temp, &freelist);
 		}
 
 		oct->dispatch.dlist[i].opcode = 0;
@@ -1055,7 +1061,7 @@ void octeon_delete_dispatch_list(struct octeon_device *oct)
 
 	list_for_each_safe(temp, tmp2, &freelist) {
 		list_del(temp);
-		kfree(temp);
+		vfree(temp);
 	}
 }
 
@@ -1151,10 +1157,13 @@ octeon_register_dispatch_fn(struct octeon_device *oct,
 
 		dev_dbg(&oct->pci_dev->dev,
 			"Adding opcode to dispatch list linked list\n");
-		dispatch = kmalloc(sizeof(*dispatch), GFP_KERNEL);
-		if (!dispatch)
+		dispatch = (struct octeon_dispatch *)
+			   vmalloc(sizeof(struct octeon_dispatch));
+		if (!dispatch) {
+			dev_err(&oct->pci_dev->dev,
+				"No memory to add dispatch function\n");
 			return 1;
-
+		}
 		dispatch->opcode = combined_opcode;
 		dispatch->dispatch_fn = fn;
 		dispatch->arg = fn_arg;
@@ -1306,7 +1315,7 @@ struct octeon_config *octeon_get_conf(struct octeon_device *oct)
 /* scratch register address is same in all the OCT-II and CN70XX models */
 #define CNXX_SLI_SCRATCH1   0x3C0
 
-/* Get the octeon device pointer.
+/** Get the octeon device pointer.
  *  @param octeon_id  - The id for which the octeon device pointer is required.
  *  @return Success: Octeon device pointer.
  *  @return Failure: NULL.
@@ -1323,7 +1332,7 @@ u64 lio_pci_readq(struct octeon_device *oct, u64 addr)
 {
 	u64 val64;
 	unsigned long flags;
-	u32 addrhi;
+	u32 val32, addrhi;
 
 	spin_lock_irqsave(&oct->pci_win_lock, flags);
 
@@ -1338,10 +1347,10 @@ u64 lio_pci_readq(struct octeon_device *oct, u64 addr)
 	writel(addrhi, oct->reg_list.pci_win_rd_addr_hi);
 
 	/* Read back to preserve ordering of writes */
-	readl(oct->reg_list.pci_win_rd_addr_hi);
+	val32 = readl(oct->reg_list.pci_win_rd_addr_hi);
 
 	writel(addr & 0xffffffff, oct->reg_list.pci_win_rd_addr_lo);
-	readl(oct->reg_list.pci_win_rd_addr_lo);
+	val32 = readl(oct->reg_list.pci_win_rd_addr_lo);
 
 	val64 = readq(oct->reg_list.pci_win_rd_data);
 
@@ -1354,6 +1363,7 @@ void lio_pci_writeq(struct octeon_device *oct,
 		    u64 val,
 		    u64 addr)
 {
+	u32 val32;
 	unsigned long flags;
 
 	spin_lock_irqsave(&oct->pci_win_lock, flags);
@@ -1363,7 +1373,7 @@ void lio_pci_writeq(struct octeon_device *oct,
 	/* The write happens when the LSB is written. So write MSB first. */
 	writel(val >> 32, oct->reg_list.pci_win_wr_data_hi);
 	/* Read the MSB to ensure ordering of writes. */
-	readl(oct->reg_list.pci_win_wr_data_hi);
+	val32 = readl(oct->reg_list.pci_win_wr_data_hi);
 
 	writel(val & 0xffffffff, oct->reg_list.pci_win_wr_data_lo);
 
@@ -1409,7 +1419,7 @@ int octeon_wait_for_ddr_init(struct octeon_device *oct, u32 *timeout)
 	return ret;
 }
 
-/* Get the octeon id assigned to the octeon device passed as argument.
+/** Get the octeon id assigned to the octeon device passed as argument.
  *  This function is exported to other modules.
  *  @param dev - octeon device pointer passed as a void *.
  *  @return octeon device id
@@ -1434,16 +1444,20 @@ void lio_enable_irq(struct octeon_droq *droq, struct octeon_instr_queue *iq)
 	/* the whole thing needs to be atomic, ideally */
 	if (droq) {
 		pkts_pend = (u32)atomic_read(&droq->pkts_pending);
+		spin_lock_bh(&droq->lock);
 		writel(droq->pkt_count - pkts_pend, droq->pkts_sent_reg);
 		droq->pkt_count = pkts_pend;
+		/* this write needs to be flushed before we release the lock */
+		mmiowb();
+		spin_unlock_bh(&droq->lock);
 		oct = droq->oct_dev;
 	}
 	if (iq) {
 		spin_lock_bh(&iq->lock);
-		writel(iq->pkts_processed, iq->inst_cnt_reg);
-		iq->pkt_in_done -= iq->pkts_processed;
-		iq->pkts_processed = 0;
+		writel(iq->pkt_in_done, iq->inst_cnt_reg);
+		iq->pkt_in_done = 0;
 		/* this write needs to be flushed before we release the lock */
+		mmiowb();
 		spin_unlock_bh(&iq->lock);
 		oct = iq->oct_dev;
 	}

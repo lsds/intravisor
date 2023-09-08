@@ -74,3 +74,5 @@ int soft_cursor(struct fb_info *info, struct fb_cursor *cursor)
 	info->fbops->fb_imageblit(info, image);
 	return 0;
 }
+
+EXPORT_SYMBOL(soft_cursor);

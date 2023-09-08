@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: GPL-2.0
+#include "../../util/util.h"
 #include <signal.h>
 #include <stdbool.h>
 #include <string.h>
-#include <stdlib.h>
 #include <sys/ttydefaults.h>
 
+#include "../../util/cache.h"
+#include "../../util/debug.h"
 #include "../browser.h"
 #include "../keysyms.h"
 #include "../helpline.h"
@@ -23,7 +25,7 @@ static void ui_browser__argv_write(struct ui_browser *browser,
 	ui_browser__write_nstring(browser, *arg, browser->width);
 }
 
-static int popup_menu__run(struct ui_browser *menu, int *keyp)
+static int popup_menu__run(struct ui_browser *menu)
 {
 	int key;
 
@@ -45,11 +47,6 @@ static int popup_menu__run(struct ui_browser *menu, int *keyp)
 			key = -1;
 			break;
 		default:
-			if (keyp) {
-				*keyp = key;
-				key = menu->nr_entries;
-				break;
-			}
 			continue;
 		}
 
@@ -60,7 +57,7 @@ static int popup_menu__run(struct ui_browser *menu, int *keyp)
 	return key;
 }
 
-int ui__popup_menu(int argc, char * const argv[], int *keyp)
+int ui__popup_menu(int argc, char * const argv[])
 {
 	struct ui_browser menu = {
 		.entries    = (void *)argv,
@@ -69,7 +66,8 @@ int ui__popup_menu(int argc, char * const argv[], int *keyp)
 		.write	    = ui_browser__argv_write,
 		.nr_entries = argc,
 	};
-	return popup_menu__run(&menu, keyp);
+
+	return popup_menu__run(&menu);
 }
 
 int ui_browser__input_window(const char *title, const char *text, char *input,
@@ -95,7 +93,7 @@ int ui_browser__input_window(const char *title, const char *text, char *input,
 		t = sep + 1;
 	}
 
-	mutex_lock(&ui__lock);
+	pthread_mutex_lock(&ui__lock);
 
 	max_len += 2;
 	nr_lines += 8;
@@ -125,17 +123,17 @@ int ui_browser__input_window(const char *title, const char *text, char *input,
 	SLsmg_write_nstring((char *)exit_msg, max_len);
 	SLsmg_refresh();
 
-	mutex_unlock(&ui__lock);
+	pthread_mutex_unlock(&ui__lock);
 
 	x += 2;
 	len = 0;
 	key = ui__getch(delay_secs);
 	while (key != K_TIMER && key != K_ENTER && key != K_ESC) {
-		mutex_lock(&ui__lock);
+		pthread_mutex_lock(&ui__lock);
 
 		if (key == K_BKSPC) {
 			if (len == 0) {
-				mutex_unlock(&ui__lock);
+				pthread_mutex_unlock(&ui__lock);
 				goto next_key;
 			}
 			SLsmg_gotorc(y, x + --len);
@@ -147,7 +145,7 @@ int ui_browser__input_window(const char *title, const char *text, char *input,
 		}
 		SLsmg_refresh();
 
-		mutex_unlock(&ui__lock);
+		pthread_mutex_unlock(&ui__lock);
 
 		/* XXX more graceful overflow handling needed */
 		if (len == sizeof(buf) - 1) {
@@ -164,7 +162,8 @@ next_key:
 	return key;
 }
 
-void __ui__info_window(const char *title, const char *text, const char *exit_msg)
+int ui__question_window(const char *title, const char *text,
+			const char *exit_msg, int delay_secs)
 {
 	int x, y;
 	int max_len = 0, nr_lines = 0;
@@ -186,10 +185,10 @@ void __ui__info_window(const char *title, const char *text, const char *exit_msg
 		t = sep + 1;
 	}
 
+	pthread_mutex_lock(&ui__lock);
+
 	max_len += 2;
-	nr_lines += 2;
-	if (exit_msg)
-		nr_lines += 2;
+	nr_lines += 4;
 	y = SLtt_Screen_Rows / 2 - nr_lines / 2,
 	x = SLtt_Screen_Cols / 2 - max_len / 2;
 
@@ -200,34 +199,18 @@ void __ui__info_window(const char *title, const char *text, const char *exit_msg
 		SLsmg_write_string((char *)title);
 	}
 	SLsmg_gotorc(++y, x);
-	if (exit_msg)
-		nr_lines -= 2;
+	nr_lines -= 2;
 	max_len -= 2;
 	SLsmg_write_wrapped_string((unsigned char *)text, y, x,
 				   nr_lines, max_len, 1);
-	if (exit_msg) {
-		SLsmg_gotorc(y + nr_lines - 2, x);
-		SLsmg_write_nstring((char *)" ", max_len);
-		SLsmg_gotorc(y + nr_lines - 1, x);
-		SLsmg_write_nstring((char *)exit_msg, max_len);
-	}
-}
-
-void ui__info_window(const char *title, const char *text)
-{
-	mutex_lock(&ui__lock);
-	__ui__info_window(title, text, NULL);
+	SLsmg_gotorc(y + nr_lines - 2, x);
+	SLsmg_write_nstring((char *)" ", max_len);
+	SLsmg_gotorc(y + nr_lines - 1, x);
+	SLsmg_write_nstring((char *)exit_msg, max_len);
 	SLsmg_refresh();
-	mutex_unlock(&ui__lock);
-}
 
-int ui__question_window(const char *title, const char *text,
-			const char *exit_msg, int delay_secs)
-{
-	mutex_lock(&ui__lock);
-	__ui__info_window(title, text, exit_msg);
-	SLsmg_refresh();
-	mutex_unlock(&ui__lock);
+	pthread_mutex_unlock(&ui__lock);
+
 	return ui__getch(delay_secs);
 }
 

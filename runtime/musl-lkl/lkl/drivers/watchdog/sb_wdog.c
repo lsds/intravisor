@@ -67,7 +67,7 @@ static DEFINE_SPINLOCK(sbwd_lock);
  *
  * wdog is the iomem address of the cfg register
  */
-static void sbwdog_set(char __iomem *wdog, unsigned long t)
+void sbwdog_set(char __iomem *wdog, unsigned long t)
 {
 	spin_lock(&sbwd_lock);
 	__raw_writeb(0, wdog);
@@ -81,7 +81,7 @@ static void sbwdog_set(char __iomem *wdog, unsigned long t)
  *
  * wdog is the iomem address of the cfg register
  */
-static void sbwdog_pet(char __iomem *wdog)
+void sbwdog_pet(char __iomem *wdog)
 {
 	spin_lock(&sbwd_lock);
 	__raw_writeb(__raw_readb(wdog) | 1, wdog);
@@ -105,7 +105,7 @@ static const struct watchdog_info ident = {
  */
 static int sbwdog_open(struct inode *inode, struct file *file)
 {
-	stream_open(inode, file);
+	nonseekable_open(inode, file);
 	if (test_and_set_bit(0, &sbwdog_gate))
 		return -EBUSY;
 	__module_get(THIS_MODULE);
@@ -202,7 +202,6 @@ static long sbwdog_ioctl(struct file *file, unsigned int cmd,
 		timeout = time;
 		sbwdog_set(user_dog, timeout);
 		sbwdog_pet(user_dog);
-		fallthrough;
 
 	case WDIOC_GETTIMEOUT:
 		/*
@@ -237,7 +236,6 @@ static const struct file_operations sbwdog_fops = {
 	.llseek		= no_llseek,
 	.write		= sbwdog_write,
 	.unlocked_ioctl	= sbwdog_ioctl,
-	.compat_ioctl	= compat_ptr_ioctl,
 	.open		= sbwdog_open,
 	.release	= sbwdog_release,
 };

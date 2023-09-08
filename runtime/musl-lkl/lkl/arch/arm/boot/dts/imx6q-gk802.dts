@@ -1,9 +1,13 @@
-// SPDX-License-Identifier: GPL-2.0-only
-// Copyright (C) 2013 Philipp Zabel
+/*
+ * Copyright (C) 2013 Philipp Zabel
+ *
+ * This file is licensed under the terms of the GNU General Public License
+ * version 2.  This program is licensed "as is" without any warranty of any
+ * kind, whether express or implied.
+ */
 
 /dts-v1/;
 #include <dt-bindings/gpio/gpio.h>
-#include <dt-bindings/input/input.h>
 #include "imx6q.dtsi"
 
 / {
@@ -15,7 +19,6 @@
 	};
 
 	memory@10000000 {
-		device_type = "memory";
 		reg = <0x10000000 0x40000000>;
 	};
 
@@ -40,7 +43,7 @@
 		recovery-button {
 			label = "recovery";
 			gpios = <&gpio3 16 1>;
-			linux,code = <KEY_RESTART>;
+			linux,code = <0x198>; /* KEY_RESTART */
 			wakeup-source;
 		};
 	};

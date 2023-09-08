@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  *  Copyright (C) 2015 - Ben Herrenschmidt, IBM Corp.
  *
@@ -8,6 +7,17 @@
  *
  *  Copyright (C) 1999 - 2003 ARM Limited
  *  Copyright (C) 2000 Deep Blue Solutions Ltd
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
  */
 
 #include <linux/export.h>
@@ -71,7 +81,7 @@ static void vic_init_hw(struct aspeed_vic *vic)
 	writel(0, vic->base + AVIC_INT_SELECT);
 	writel(0, vic->base + AVIC_INT_SELECT + 4);
 
-	/* Some interrupts have a programmable high/low level trigger
+	/* Some interrupts have a programable high/low level trigger
 	 * (4 GPIO direct inputs), for now we assume this was configured
 	 * by firmware. We read which ones are edge now.
 	 */
@@ -100,7 +110,7 @@ static void __exception_irq_entry avic_handle_irq(struct pt_regs *regs)
 		if (stat == 0)
 			break;
 		irq += ffs(stat) - 1;
-		generic_handle_domain_irq(vic->dom, irq);
+		handle_domain_irq(vic->dom, irq, regs);
 	}
 }
 
@@ -203,7 +213,7 @@ static int __init avic_of_init(struct device_node *node,
 	}
 	vic->base = regs;
 
-	/* Initialize sources, all masked */
+	/* Initialize soures, all masked */
 	vic_init_hw(vic);
 
 	/* Ready to receive interrupts */

@@ -1,8 +1,21 @@
-/* SPDX-License-Identifier: GPL-2.0+ */
 /*
  * Copyright (c) 2000-2002,2005 Silicon Graphics, Inc.
  * Copyright (C) 2017 Oracle.
  * All Rights Reserved.
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version 2
+ * of the License, or (at your option) any later version.
+ *
+ * This program is distributed in the hope that it would be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write the Free Software Foundation,
+ * Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301, USA.
  */
 #ifndef __XFS_ERRORTAG_H_
 #define __XFS_ERRORTAG_H_
@@ -52,17 +65,7 @@
 #define XFS_ERRTAG_LOG_BAD_CRC				29
 #define XFS_ERRTAG_LOG_ITEM_PIN				30
 #define XFS_ERRTAG_BUF_LRU_REF				31
-#define XFS_ERRTAG_FORCE_SCRUB_REPAIR			32
-#define XFS_ERRTAG_FORCE_SUMMARY_RECALC			33
-#define XFS_ERRTAG_IUNLINK_FALLBACK			34
-#define XFS_ERRTAG_BUF_IOERROR				35
-#define XFS_ERRTAG_REDUCE_MAX_IEXTENTS			36
-#define XFS_ERRTAG_BMAP_ALLOC_MINLEN_EXTENT		37
-#define XFS_ERRTAG_AG_RESV_FAIL				38
-#define XFS_ERRTAG_LARP					39
-#define XFS_ERRTAG_DA_LEAF_SPLIT			40
-#define XFS_ERRTAG_ATTR_LEAF_TO_NODE			41
-#define XFS_ERRTAG_MAX					42
+#define XFS_ERRTAG_MAX					32
 
 /*
  * Random factors for above tags, 1 means always, 2 means 1/2 time, etc.
@@ -99,15 +102,5 @@
 #define XFS_RANDOM_LOG_BAD_CRC				1
 #define XFS_RANDOM_LOG_ITEM_PIN				1
 #define XFS_RANDOM_BUF_LRU_REF				2
-#define XFS_RANDOM_FORCE_SCRUB_REPAIR			1
-#define XFS_RANDOM_FORCE_SUMMARY_RECALC			1
-#define XFS_RANDOM_IUNLINK_FALLBACK			(XFS_RANDOM_DEFAULT/10)
-#define XFS_RANDOM_BUF_IOERROR				XFS_RANDOM_DEFAULT
-#define XFS_RANDOM_REDUCE_MAX_IEXTENTS			1
-#define XFS_RANDOM_BMAP_ALLOC_MINLEN_EXTENT		1
-#define XFS_RANDOM_AG_RESV_FAIL				1
-#define XFS_RANDOM_LARP					1
-#define XFS_RANDOM_DA_LEAF_SPLIT			1
-#define XFS_RANDOM_ATTR_LEAF_TO_NODE			1
 
 #endif /* __XFS_ERRORTAG_H_ */

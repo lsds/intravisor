@@ -1,5 +1,26 @@
 /* SPDX-License-Identifier: GPL-2.0 */
-/* Copyright(c) 2013 - 2018 Intel Corporation. */
+/*******************************************************************************
+ *
+ * Intel(R) 40-10 Gigabit Ethernet Connection Network Driver
+ * Copyright(c) 2013 - 2017 Intel Corporation.
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms and conditions of the GNU General Public License,
+ * version 2, as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+ * more details.
+ *
+ * The full GNU General Public License is included in this distribution in
+ * the file called "COPYING".
+ *
+ * Contact Information:
+ * e1000-devel Mailing List <e1000-devel@lists.sourceforge.net>
+ * Intel Corporation, 5200 N.E. Elam Young Parkway, Hillsboro, OR 97124-6497
+ *
+ ******************************************************************************/
 
 /* Modeled on trace-events-sample.h */
 
@@ -22,7 +43,7 @@
 
 #include <linux/tracepoint.h>
 
-/*
+/**
  * i40e_trace() macro enables shared code to refer to trace points
  * like:
  *
@@ -112,7 +133,7 @@ DECLARE_EVENT_CLASS(
 	i40e_rx_template,
 
 	TP_PROTO(struct i40e_ring *ring,
-		 union i40e_16byte_rx_desc *desc,
+		 union i40e_32byte_rx_desc *desc,
 		 struct sk_buff *skb),
 
 	TP_ARGS(ring, desc, skb),
@@ -140,7 +161,7 @@ DECLARE_EVENT_CLASS(
 DEFINE_EVENT(
 	i40e_rx_template, i40e_clean_rx_irq,
 	TP_PROTO(struct i40e_ring *ring,
-		 union i40e_16byte_rx_desc *desc,
+		 union i40e_32byte_rx_desc *desc,
 		 struct sk_buff *skb),
 
 	TP_ARGS(ring, desc, skb));
@@ -148,7 +169,7 @@ DEFINE_EVENT(
 DEFINE_EVENT(
 	i40e_rx_template, i40e_clean_rx_irq_rx,
 	TP_PROTO(struct i40e_ring *ring,
-		 union i40e_16byte_rx_desc *desc,
+		 union i40e_32byte_rx_desc *desc,
 		 struct sk_buff *skb),
 
 	TP_ARGS(ring, desc, skb));

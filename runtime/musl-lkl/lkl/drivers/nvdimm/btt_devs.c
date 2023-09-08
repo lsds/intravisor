@@ -1,9 +1,18 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright(c) 2013-2015 Intel Corporation. All rights reserved.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of version 2 of the GNU General Public License as
+ * published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * General Public License for more details.
  */
 #include <linux/blkdev.h>
 #include <linux/device.h>
+#include <linux/genhd.h>
 #include <linux/sizes.h>
 #include <linux/slab.h>
 #include <linux/fs.h>
@@ -23,6 +32,17 @@ static void nd_btt_release(struct device *dev)
 	kfree(nd_btt->uuid);
 	kfree(nd_btt);
 }
+
+static struct device_type nd_btt_device_type = {
+	.name = "nd_btt",
+	.release = nd_btt_release,
+};
+
+bool is_nd_btt(struct device *dev)
+{
+	return dev->type == &nd_btt_device_type;
+}
+EXPORT_SYMBOL(is_nd_btt);
 
 struct nd_btt *to_nd_btt(struct device *dev)
 {
@@ -139,19 +159,11 @@ static ssize_t size_show(struct device *dev,
 }
 static DEVICE_ATTR_RO(size);
 
-static ssize_t log_zero_flags_show(struct device *dev,
-		struct device_attribute *attr, char *buf)
-{
-	return sprintf(buf, "Y\n");
-}
-static DEVICE_ATTR_RO(log_zero_flags);
-
 static struct attribute *nd_btt_attributes[] = {
 	&dev_attr_sector_size.attr,
 	&dev_attr_namespace.attr,
 	&dev_attr_uuid.attr,
 	&dev_attr_size.attr,
-	&dev_attr_log_zero_flags.attr,
 	NULL,
 };
 
@@ -166,23 +178,9 @@ static const struct attribute_group *nd_btt_attribute_groups[] = {
 	NULL,
 };
 
-static const struct device_type nd_btt_device_type = {
-	.name = "nd_btt",
-	.release = nd_btt_release,
-	.groups = nd_btt_attribute_groups,
-};
-
-bool is_nd_btt(struct device *dev)
-{
-	return dev->type == &nd_btt_device_type;
-}
-EXPORT_SYMBOL(is_nd_btt);
-
-static struct lock_class_key nvdimm_btt_key;
-
 static struct device *__nd_btt_create(struct nd_region *nd_region,
-				      unsigned long lbasize, uuid_t *uuid,
-				      struct nd_namespace_common *ndns)
+		unsigned long lbasize, u8 *uuid,
+		struct nd_namespace_common *ndns)
 {
 	struct nd_btt *nd_btt;
 	struct device *dev;
@@ -192,22 +190,21 @@ static struct device *__nd_btt_create(struct nd_region *nd_region,
 		return NULL;
 
 	nd_btt->id = ida_simple_get(&nd_region->btt_ida, 0, 0, GFP_KERNEL);
-	if (nd_btt->id < 0)
-		goto out_nd_btt;
+	if (nd_btt->id < 0) {
+		kfree(nd_btt);
+		return NULL;
+	}
 
 	nd_btt->lbasize = lbasize;
-	if (uuid) {
+	if (uuid)
 		uuid = kmemdup(uuid, 16, GFP_KERNEL);
-		if (!uuid)
-			goto out_put_id;
-	}
 	nd_btt->uuid = uuid;
 	dev = &nd_btt->dev;
 	dev_set_name(dev, "btt%d.%d", nd_region->id, nd_btt->id);
 	dev->parent = &nd_region->dev;
 	dev->type = &nd_btt_device_type;
+	dev->groups = nd_btt_attribute_groups;
 	device_initialize(&nd_btt->dev);
-	lockdep_set_class(&nd_btt->dev.mutex, &nvdimm_btt_key);
 	if (ndns && !__nd_attach_ndns(&nd_btt->dev, ndns, &nd_btt->ndns)) {
 		dev_dbg(&ndns->dev, "failed, already claimed by %s\n",
 				dev_name(ndns->claim));
@@ -215,20 +212,13 @@ static struct device *__nd_btt_create(struct nd_region *nd_region,
 		return NULL;
 	}
 	return dev;
-
-out_put_id:
-	ida_simple_remove(&nd_region->btt_ida, nd_btt->id);
-
-out_nd_btt:
-	kfree(nd_btt);
-	return NULL;
 }
 
 struct device *nd_btt_create(struct nd_region *nd_region)
 {
 	struct device *dev = __nd_btt_create(nd_region, 0, NULL, NULL);
 
-	nd_device_register(dev);
+	__nd_device_register(dev);
 	return dev;
 }
 
@@ -246,16 +236,14 @@ struct device *nd_btt_create(struct nd_region *nd_region)
  */
 bool nd_btt_arena_is_valid(struct nd_btt *nd_btt, struct btt_sb *super)
 {
-	const uuid_t *ns_uuid = nd_dev_to_uuid(&nd_btt->ndns->dev);
-	uuid_t parent_uuid;
+	const u8 *parent_uuid = nd_dev_to_uuid(&nd_btt->ndns->dev);
 	u64 checksum;
 
 	if (memcmp(super->signature, BTT_SIG, BTT_SIG_LEN) != 0)
 		return false;
 
-	import_uuid(&parent_uuid, super->parent_uuid);
-	if (!uuid_is_null(&parent_uuid))
-		if (!uuid_equal(&parent_uuid, ns_uuid))
+	if (!guid_is_null((guid_t *)&super->parent_uuid))
+		if (memcmp(super->parent_uuid, parent_uuid, 16) != 0)
 			return false;
 
 	checksum = le64_to_cpu(super->checksum);
@@ -323,11 +311,11 @@ static int __nd_btt_probe(struct nd_btt *nd_btt,
 		return rc;
 
 	nd_btt->lbasize = le32_to_cpu(btt_sb->external_lbasize);
-	nd_btt->uuid = kmemdup(&btt_sb->uuid, sizeof(uuid_t), GFP_KERNEL);
+	nd_btt->uuid = kmemdup(btt_sb->uuid, 16, GFP_KERNEL);
 	if (!nd_btt->uuid)
 		return -ENOMEM;
 
-	nd_device_register(&nd_btt->dev);
+	__nd_device_register(&nd_btt->dev);
 
 	return 0;
 }

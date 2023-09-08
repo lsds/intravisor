@@ -1,8 +1,11 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * An rtc driver for the Dallas DS1742
  *
  * Copyright (C) 2006 Atsushi Nemoto <anemo@mba.ocn.ne.jp>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  *
  * Copyright (C) 2006 Torsten Ertbjerg Rasmussen <tr@newtec.dk>
  *  - nvram size determined from resource
@@ -55,7 +58,8 @@ struct rtc_plat_data {
 
 static int ds1742_rtc_set_time(struct device *dev, struct rtc_time *tm)
 {
-	struct rtc_plat_data *pdata = dev_get_drvdata(dev);
+	struct platform_device *pdev = to_platform_device(dev);
+	struct rtc_plat_data *pdata = platform_get_drvdata(pdev);
 	void __iomem *ioaddr = pdata->ioaddr_rtc;
 	u8 century;
 
@@ -79,7 +83,8 @@ static int ds1742_rtc_set_time(struct device *dev, struct rtc_time *tm)
 
 static int ds1742_rtc_read_time(struct device *dev, struct rtc_time *tm)
 {
-	struct rtc_plat_data *pdata = dev_get_drvdata(dev);
+	struct platform_device *pdev = to_platform_device(dev);
+	struct rtc_plat_data *pdata = platform_get_drvdata(pdev);
 	void __iomem *ioaddr = pdata->ioaddr_rtc;
 	unsigned int year, month, day, hour, minute, second, week;
 	unsigned int century;
@@ -149,6 +154,8 @@ static int ds1742_rtc_probe(struct platform_device *pdev)
 	int ret = 0;
 	struct nvmem_config nvmem_cfg = {
 		.name = "ds1742_nvram",
+		.word_size = 1,
+		.stride = 1,
 		.reg_read = ds1742_nvram_read,
 		.reg_write = ds1742_nvram_write,
 	};
@@ -190,12 +197,14 @@ static int ds1742_rtc_probe(struct platform_device *pdev)
 		return PTR_ERR(rtc);
 
 	rtc->ops = &ds1742_rtc_ops;
+	rtc->nvram_old_abi = true;
 
-	ret = devm_rtc_register_device(rtc);
+	ret = rtc_register_device(rtc);
 	if (ret)
 		return ret;
 
-	devm_rtc_nvmem_register(rtc, &nvmem_cfg);
+	if (rtc_nvmem_register(rtc, &nvmem_cfg))
+		dev_err(&pdev->dev, "Unable to register nvmem\n");
 
 	return 0;
 }

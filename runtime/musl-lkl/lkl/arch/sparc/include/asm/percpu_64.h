@@ -4,9 +4,7 @@
 
 #include <linux/compiler.h>
 
-#ifndef BUILD_VDSO
 register unsigned long __local_per_cpu_offset asm("g5");
-#endif
 
 #ifdef CONFIG_SMP
 

@@ -1,8 +1,11 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * apds9300.c - IIO driver for Avago APDS9300 ambient light sensor
  *
  * Copyright 2013 Oleksandr Kravchenko <o.v.kravchenko@globallogic.com>
+ *
+ * This file is subject to the terms and conditions of version 2 of
+ * the GNU General Public License.  See the file COPYING in the main
+ * directory of this archive for more details.
  */
 
 #include <linux/module.h>
@@ -419,6 +422,7 @@ static int apds9300_probe(struct i2c_client *client,
 
 	mutex_init(&data->mutex);
 
+	indio_dev->dev.parent = &client->dev;
 	indio_dev->channels = apds9300_channels;
 	indio_dev->num_channels = ARRAY_SIZE(apds9300_channels);
 	indio_dev->name = APDS9300_DRV_NAME;
@@ -452,7 +456,7 @@ err:
 	return ret;
 }
 
-static void apds9300_remove(struct i2c_client *client)
+static int apds9300_remove(struct i2c_client *client)
 {
 	struct iio_dev *indio_dev = i2c_get_clientdata(client);
 	struct apds9300_data *data = iio_priv(indio_dev);
@@ -462,8 +466,11 @@ static void apds9300_remove(struct i2c_client *client)
 	/* Ensure that power off and interrupts are disabled */
 	apds9300_set_intr_state(data, 0);
 	apds9300_set_power_state(data, 0);
+
+	return 0;
 }
 
+#ifdef CONFIG_PM_SLEEP
 static int apds9300_suspend(struct device *dev)
 {
 	struct iio_dev *indio_dev = i2c_get_clientdata(to_i2c_client(dev));
@@ -490,8 +497,11 @@ static int apds9300_resume(struct device *dev)
 	return ret;
 }
 
-static DEFINE_SIMPLE_DEV_PM_OPS(apds9300_pm_ops, apds9300_suspend,
-				apds9300_resume);
+static SIMPLE_DEV_PM_OPS(apds9300_pm_ops, apds9300_suspend, apds9300_resume);
+#define APDS9300_PM_OPS (&apds9300_pm_ops)
+#else
+#define APDS9300_PM_OPS NULL
+#endif
 
 static const struct i2c_device_id apds9300_id[] = {
 	{ APDS9300_DRV_NAME, 0 },
@@ -503,7 +513,7 @@ MODULE_DEVICE_TABLE(i2c, apds9300_id);
 static struct i2c_driver apds9300_driver = {
 	.driver = {
 		.name	= APDS9300_DRV_NAME,
-		.pm	= pm_sleep_ptr(&apds9300_pm_ops),
+		.pm	= APDS9300_PM_OPS,
 	},
 	.probe		= apds9300_probe,
 	.remove		= apds9300_remove,

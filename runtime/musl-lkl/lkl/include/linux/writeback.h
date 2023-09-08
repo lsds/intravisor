@@ -17,12 +17,20 @@ struct bio;
 DECLARE_PER_CPU(int, dirty_throttle_leaks);
 
 /*
+ * The 1/4 region under the global dirty thresh is for smooth dirty throttling:
+ *
+ *	(thresh - thresh/DIRTY_FULL_SCOPE, thresh)
+ *
+ * Further beyond, all dirtier tasks will enter a loop waiting (possibly long
+ * time) for the dirty pages to drop, unless written enough pages.
+ *
  * The global dirty threshold is normally equal to the global dirty limit,
  * except when the system suddenly allocates a lot of anonymous memory and
  * knocks down the global dirty threshold quickly, in which case the global
  * dirty limit will follow down slowly to prevent livelocking all dirtier tasks.
  */
 #define DIRTY_SCOPE		8
+#define DIRTY_FULL_SCOPE	(DIRTY_SCOPE / 2)
 
 struct backing_dev_info;
 
@@ -60,25 +68,6 @@ struct writeback_control {
 	unsigned for_reclaim:1;		/* Invoked from the page allocator */
 	unsigned range_cyclic:1;	/* range_start is cyclic */
 	unsigned for_sync:1;		/* sync(2) WB_SYNC_ALL writeback */
-	unsigned unpinned_fscache_wb:1;	/* Cleared I_PINNING_FSCACHE_WB */
-
-	/*
-	 * When writeback IOs are bounced through async layers, only the
-	 * initial synchronous phase should be accounted towards inode
-	 * cgroup ownership arbitration to avoid confusion.  Later stages
-	 * can set the following flag to disable the accounting.
-	 */
-	unsigned no_cgroup_owner:1;
-
-	unsigned punt_to_cgroup:1;	/* cgrp punting, see __REQ_CGROUP_PUNT */
-
-	/* To enable batching of swap writes to non-block-device backends,
-	 * "plug" can be set point to a 'struct swap_iocb *'.  When all swap
-	 * writes have been submitted, if with swap_iocb is not NULL,
-	 * swap_write_unplug() should be called.
-	 */
-	struct swap_iocb **swap_plug;
-
 #ifdef CONFIG_CGROUP_WRITEBACK
 	struct bdi_writeback *wb;	/* wb this writeback is issued under */
 	struct inode *inode;		/* inode being written out */
@@ -93,27 +82,15 @@ struct writeback_control {
 #endif
 };
 
-static inline blk_opf_t wbc_to_write_flags(struct writeback_control *wbc)
+static inline int wbc_to_write_flags(struct writeback_control *wbc)
 {
-	blk_opf_t flags = 0;
-
-	if (wbc->punt_to_cgroup)
-		flags = REQ_CGROUP_PUNT;
-
 	if (wbc->sync_mode == WB_SYNC_ALL)
-		flags |= REQ_SYNC;
+		return REQ_SYNC;
 	else if (wbc->for_kupdate || wbc->for_background)
-		flags |= REQ_BACKGROUND;
+		return REQ_BACKGROUND;
 
-	return flags;
+	return 0;
 }
-
-#ifdef CONFIG_CGROUP_WRITEBACK
-#define wbc_blkcg_css(wbc) \
-	((wbc)->wb ? (wbc)->wb->blkcg_css : blkcg_root_css)
-#else
-#define wbc_blkcg_css(wbc)		(blkcg_root_css)
-#endif /* CONFIG_CGROUP_WRITEBACK */
 
 /*
  * A wb_domain represents a domain that wb's (bdi_writeback's) belong to
@@ -193,7 +170,6 @@ void wakeup_flusher_threads(enum wb_reason reason);
 void wakeup_flusher_threads_bdi(struct backing_dev_info *bdi,
 				enum wb_reason reason);
 void inode_wait_for_writeback(struct inode *inode);
-void inode_io_list_del(struct inode *inode);
 
 /* writeback.h requires fs.h; it, too, is not included from here. */
 static inline void wait_on_inode(struct inode *inode)
@@ -212,12 +188,9 @@ void wbc_attach_and_unlock_inode(struct writeback_control *wbc,
 				 struct inode *inode)
 	__releases(&inode->i_lock);
 void wbc_detach_inode(struct writeback_control *wbc);
-void wbc_account_cgroup_owner(struct writeback_control *wbc, struct page *page,
-			      size_t bytes);
-int cgroup_writeback_by_id(u64 bdi_id, int memcg_id,
-			   enum wb_reason reason, struct wb_completion *done);
+void wbc_account_io(struct writeback_control *wbc, struct page *page,
+		    size_t bytes);
 void cgroup_writeback_umount(void);
-bool cleanup_offline_cgwb(struct bdi_writeback *wb);
 
 /**
  * inode_attach_wb - associate an inode with its wb
@@ -273,8 +246,7 @@ static inline void wbc_attach_fdatawrite_inode(struct writeback_control *wbc,
  *
  * @bio is a part of the writeback in progress controlled by @wbc.  Perform
  * writeback specific initialization.  This is used to apply the cgroup
- * writeback context.  Must be called after the bio has been associated with
- * a device.
+ * writeback context.
  */
 static inline void wbc_init_bio(struct writeback_control *wbc, struct bio *bio)
 {
@@ -285,7 +257,7 @@ static inline void wbc_init_bio(struct writeback_control *wbc, struct bio *bio)
 	 * regular writeback instead of writing things out itself.
 	 */
 	if (wbc->wb)
-		bio_associate_blkg_from_css(bio, wbc->wb->blkcg_css);
+		bio_associate_blkcg(bio, wbc->wb->blkcg_css);
 }
 
 #else	/* CONFIG_CGROUP_WRITEBACK */
@@ -318,8 +290,8 @@ static inline void wbc_init_bio(struct writeback_control *wbc, struct bio *bio)
 {
 }
 
-static inline void wbc_account_cgroup_owner(struct writeback_control *wbc,
-					    struct page *page, size_t bytes)
+static inline void wbc_account_io(struct writeback_control *wbc,
+				  struct page *page, size_t bytes)
 {
 }
 
@@ -332,9 +304,14 @@ static inline void cgroup_writeback_umount(void)
 /*
  * mm/page-writeback.c
  */
+#ifdef CONFIG_BLOCK
 void laptop_io_completion(struct backing_dev_info *info);
 void laptop_sync_completion(void);
+void laptop_mode_sync(struct work_struct *work);
 void laptop_mode_timer_fn(struct timer_list *t);
+#else
+static inline void laptop_sync_completion(void) { }
+#endif
 bool node_dirty_ok(struct pglist_data *pgdat);
 int wb_domain_init(struct wb_domain *dom, gfp_t gfp);
 #ifdef CONFIG_CGROUP_WRITEBACK
@@ -344,26 +321,41 @@ void wb_domain_exit(struct wb_domain *dom);
 extern struct wb_domain global_wb_domain;
 
 /* These are exported to sysctl. */
+extern int dirty_background_ratio;
+extern unsigned long dirty_background_bytes;
+extern int vm_dirty_ratio;
+extern unsigned long vm_dirty_bytes;
 extern unsigned int dirty_writeback_interval;
 extern unsigned int dirty_expire_interval;
 extern unsigned int dirtytime_expire_interval;
+extern int vm_highmem_is_dirtyable;
+extern int block_dump;
 extern int laptop_mode;
 
+extern int dirty_background_ratio_handler(struct ctl_table *table, int write,
+		void __user *buffer, size_t *lenp,
+		loff_t *ppos);
+extern int dirty_background_bytes_handler(struct ctl_table *table, int write,
+		void __user *buffer, size_t *lenp,
+		loff_t *ppos);
+extern int dirty_ratio_handler(struct ctl_table *table, int write,
+		void __user *buffer, size_t *lenp,
+		loff_t *ppos);
+extern int dirty_bytes_handler(struct ctl_table *table, int write,
+		void __user *buffer, size_t *lenp,
+		loff_t *ppos);
 int dirtytime_interval_handler(struct ctl_table *table, int write,
-		void *buffer, size_t *lenp, loff_t *ppos);
+			       void __user *buffer, size_t *lenp, loff_t *ppos);
+
+struct ctl_table;
+int dirty_writeback_centisecs_handler(struct ctl_table *, int,
+				      void __user *, size_t *, loff_t *);
 
 void global_dirty_limits(unsigned long *pbackground, unsigned long *pdirty);
 unsigned long wb_calc_thresh(struct bdi_writeback *wb, unsigned long thresh);
 
-void wb_update_bandwidth(struct bdi_writeback *wb);
-
-/* Invoke balance dirty pages in async mode. */
-#define BDP_ASYNC 0x0001
-
+void wb_update_bandwidth(struct bdi_writeback *wb, unsigned long start_time);
 void balance_dirty_pages_ratelimited(struct address_space *mapping);
-int balance_dirty_pages_ratelimited_flags(struct address_space *mapping,
-		unsigned int flags);
-
 bool wb_over_bg_thresh(struct bdi_writeback *wb);
 
 typedef int (*writepage_t)(struct page *page, struct writeback_control *wbc,
@@ -381,14 +373,7 @@ void writeback_set_ratelimit(void);
 void tag_pages_for_writeback(struct address_space *mapping,
 			     pgoff_t start, pgoff_t end);
 
-bool filemap_dirty_folio(struct address_space *mapping, struct folio *folio);
-void folio_account_redirty(struct folio *folio);
-static inline void account_page_redirty(struct page *page)
-{
-	folio_account_redirty(page_folio(page));
-}
-bool folio_redirty_for_writepage(struct writeback_control *, struct folio *);
-bool redirty_page_for_writepage(struct writeback_control *, struct page *);
+void account_page_redirty(struct page *page);
 
 void sb_mark_inode_writeback(struct inode *inode);
 void sb_clear_inode_writeback(struct inode *inode);

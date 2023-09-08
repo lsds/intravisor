@@ -28,9 +28,6 @@
  *
  *  Multiple Nameservers in /proc/net/pnp
  *              --  Josef Siemes <jsiemes@web.de>, Aug 2002
- *
- *  NTP servers in /proc/net/ipconfig/ntp_servers
- *              --  Chris Novakovic <chris@chrisn.me.uk>, April 2018
  */
 
 #include <linux/types.h>
@@ -61,6 +58,7 @@
 #include <linux/export.h>
 #include <net/net_namespace.h>
 #include <net/arp.h>
+#include <net/dsa.h>
 #include <net/ip.h>
 #include <net/ipconfig.h>
 #include <net/route.h>
@@ -84,6 +82,7 @@
 
 /* Define the friendly delay before and after opening net devices */
 #define CONF_POST_OPEN		10	/* After opening: 10 msecs */
+#define CONF_CARRIER_TIMEOUT	120000	/* Wait for carrier timeout */
 
 /* Define the timeout for waiting for a DHCP/BOOTP/RARP reply */
 #define CONF_OPEN_RETRIES 	2	/* (Re)open devices twice */
@@ -94,13 +93,9 @@
 #define CONF_TIMEOUT_MAX	(HZ*30)	/* Maximum allowed timeout */
 #define CONF_NAMESERVERS_MAX   3       /* Maximum number of nameservers
 					   - '3' from resolv.h */
-#define CONF_NTP_SERVERS_MAX   3	/* Maximum number of NTP servers */
 
 #define NONE cpu_to_be32(INADDR_NONE)
 #define ANY cpu_to_be32(INADDR_ANY)
-
-/* Wait for carrier timeout default in seconds */
-static unsigned int carrier_timeout = 120;
 
 /*
  * Public IP configuration
@@ -157,7 +152,6 @@ static int ic_proto_used;			/* Protocol used, if any */
 #define ic_proto_used 0
 #endif
 static __be32 ic_nameservers[CONF_NAMESERVERS_MAX]; /* DNS Server IP addresses */
-static __be32 ic_ntp_servers[CONF_NTP_SERVERS_MAX]; /* NTP server IP addresses */
 static u8 ic_domain[64];		/* DNS (not NIS) domain name */
 
 /*
@@ -217,11 +211,11 @@ static int __init ic_open_devs(void)
 	last = &ic_first_dev;
 	rtnl_lock();
 
-	/* bring loopback device up first */
+	/* bring loopback and DSA master network devices up first */
 	for_each_netdev(&init_net, dev) {
-		if (!(dev->flags & IFF_LOOPBACK))
+		if (!(dev->flags & IFF_LOOPBACK) && !netdev_uses_dsa(dev))
 			continue;
-		if (dev_change_flags(dev, dev->flags | IFF_UP, NULL) < 0)
+		if (dev_change_flags(dev, dev->flags | IFF_UP) < 0)
 			pr_err("IP-Config: Failed to open %s\n", dev->name);
 	}
 
@@ -239,7 +233,7 @@ static int __init ic_open_devs(void)
 			if (ic_proto_enabled && !able)
 				continue;
 			oflags = dev->flags;
-			if (dev_change_flags(dev, oflags | IFF_UP, NULL) < 0) {
+			if (dev_change_flags(dev, oflags | IFF_UP) < 0) {
 				pr_err("IP-Config: Failed to open %s\n",
 				       dev->name);
 				continue;
@@ -262,11 +256,6 @@ static int __init ic_open_devs(void)
 				 dev->name, able, d->xid);
 		}
 	}
-	/* Devices with a complex topology like SFP ethernet interfaces needs
-	 * the rtnl_lock at init. The carrier wait-loop must therefore run
-	 * without holding it.
-	 */
-	rtnl_unlock();
 
 	/* no point in waiting if we could not bring up at least one device */
 	if (!ic_first_dev)
@@ -274,18 +263,14 @@ static int __init ic_open_devs(void)
 
 	/* wait for a carrier on at least one device */
 	start = jiffies;
-	next_msg = start + msecs_to_jiffies(20000);
+	next_msg = start + msecs_to_jiffies(CONF_CARRIER_TIMEOUT/12);
 	while (time_before(jiffies, start +
-			   msecs_to_jiffies(carrier_timeout * 1000))) {
+			   msecs_to_jiffies(CONF_CARRIER_TIMEOUT))) {
 		int wait, elapsed;
 
-		rtnl_lock();
 		for_each_netdev(&init_net, dev)
-			if (ic_is_init_dev(dev) && netif_carrier_ok(dev)) {
-				rtnl_unlock();
+			if (ic_is_init_dev(dev) && netif_carrier_ok(dev))
 				goto have_carrier;
-			}
-		rtnl_unlock();
 
 		msleep(1);
 
@@ -293,11 +278,12 @@ static int __init ic_open_devs(void)
 			continue;
 
 		elapsed = jiffies_to_msecs(jiffies - start);
-		wait = (carrier_timeout * 1000 - elapsed + 500) / 1000;
+		wait = (CONF_CARRIER_TIMEOUT - elapsed + 500)/1000;
 		pr_info("Waiting up to %d more seconds for network.\n", wait);
-		next_msg = jiffies + msecs_to_jiffies(20000);
+		next_msg = jiffies + msecs_to_jiffies(CONF_CARRIER_TIMEOUT/12);
 	}
 have_carrier:
+	rtnl_unlock();
 
 	*last = NULL;
 
@@ -312,36 +298,19 @@ have_carrier:
 	return 0;
 }
 
-/* Close all network interfaces except the one we've autoconfigured, and its
- * lowers, in case it's a stacked virtual interface.
- */
 static void __init ic_close_devs(void)
 {
-	struct net_device *selected_dev = ic_dev ? ic_dev->dev : NULL;
 	struct ic_device *d, *next;
 	struct net_device *dev;
 
 	rtnl_lock();
 	next = ic_first_dev;
 	while ((d = next)) {
-		bool bring_down = (d != ic_dev);
-		struct net_device *lower;
-		struct list_head *iter;
-
 		next = d->next;
 		dev = d->dev;
-
-		if (selected_dev) {
-			netdev_for_each_lower_dev(selected_dev, lower, iter) {
-				if (dev == lower) {
-					bring_down = false;
-					break;
-				}
-			}
-		}
-		if (bring_down) {
+		if (d != ic_dev && !netdev_uses_dsa(dev)) {
 			pr_debug("IP-Config: Downing %s\n", dev->name);
-			dev_change_flags(dev, d->flags, NULL);
+			dev_change_flags(dev, d->flags);
 		}
 		kfree(d);
 	}
@@ -455,8 +424,6 @@ static int __init ic_defaults(void)
 			ic_netmask = htonl(IN_CLASSB_NET);
 		else if (IN_CLASSC(ntohl(ic_myaddr)))
 			ic_netmask = htonl(IN_CLASSC_NET);
-		else if (IN_CLASSE(ntohl(ic_myaddr)))
-			ic_netmask = htonl(IN_CLASSE_NET);
 		else {
 			pr_err("IP-Config: Unable to guess netmask for address %pI4\n",
 			       &ic_myaddr);
@@ -609,15 +576,6 @@ static inline void __init ic_nameservers_predef(void)
 		ic_nameservers[i] = NONE;
 }
 
-/* Predefine NTP servers */
-static inline void __init ic_ntp_servers_predef(void)
-{
-	int i;
-
-	for (i = 0; i < CONF_NTP_SERVERS_MAX; i++)
-		ic_ntp_servers[i] = NONE;
-}
-
 /*
  *	DHCP/BOOTP support.
  */
@@ -713,7 +671,6 @@ ic_dhcp_init_options(u8 *options, struct ic_device *d)
 			17,	/* Boot path */
 			26,	/* MTU */
 			40,	/* NIS domain name */
-			42,	/* NTP servers */
 		};
 
 		*e++ = 55;	/* Parameter request list */
@@ -764,11 +721,9 @@ static void __init ic_bootp_init_ext(u8 *e)
 	*e++ = 3;		/* Default gateway request */
 	*e++ = 4;
 	e += 4;
-#if CONF_NAMESERVERS_MAX > 0
-	*e++ = 6;		/* (DNS) name server request */
-	*e++ = 4 * CONF_NAMESERVERS_MAX;
-	e += 4 * CONF_NAMESERVERS_MAX;
-#endif
+	*e++ = 5;		/* Name server request */
+	*e++ = 8;
+	e += 8;
 	*e++ = 12;		/* Host name request */
 	*e++ = 32;
 	e += 32;
@@ -793,13 +748,7 @@ static void __init ic_bootp_init_ext(u8 *e)
  */
 static inline void __init ic_bootp_init(void)
 {
-	/* Re-initialise all name servers and NTP servers to NONE, in case any
-	 * were set via the "ip=" or "nfsaddrs=" kernel command line parameters:
-	 * any IP addresses specified there will already have been decoded but
-	 * are no longer needed
-	 */
 	ic_nameservers_predef();
-	ic_ntp_servers_predef();
 
 	dev_add_pack(&bootp_packet_type);
 }
@@ -894,7 +843,7 @@ static void __init ic_bootp_send_if(struct ic_device *d, unsigned long jiffies_d
 
 
 /*
- *  Copy BOOTP-supplied string
+ *  Copy BOOTP-supplied string if not already set.
  */
 static int __init ic_bootp_string(char *dest, char *src, int len, int max)
 {
@@ -943,15 +892,12 @@ static void __init ic_do_bootp_ext(u8 *ext)
 		}
 		break;
 	case 12:	/* Host name */
-		if (!ic_host_name_set) {
-			ic_bootp_string(utsname()->nodename, ext+1, *ext,
-					__NEW_UTS_LEN);
-			ic_host_name_set = 1;
-		}
+		ic_bootp_string(utsname()->nodename, ext+1, *ext,
+				__NEW_UTS_LEN);
+		ic_host_name_set = 1;
 		break;
 	case 15:	/* Domain name (DNS) */
-		if (!ic_domain[0])
-			ic_bootp_string(ic_domain, ext+1, *ext, sizeof(ic_domain));
+		ic_bootp_string(ic_domain, ext+1, *ext, sizeof(ic_domain));
 		break;
 	case 17:	/* Root path */
 		if (!root_server_path[0])
@@ -965,15 +911,6 @@ static void __init ic_do_bootp_ext(u8 *ext)
 	case 40:	/* NIS Domain name (_not_ DNS) */
 		ic_bootp_string(utsname()->domainname, ext+1, *ext,
 				__NEW_UTS_LEN);
-		break;
-	case 42:	/* NTP servers */
-		servers = *ext / 4;
-		if (servers > CONF_NTP_SERVERS_MAX)
-			servers = CONF_NTP_SERVERS_MAX;
-		for (i = 0; i < servers; i++) {
-			if (ic_ntp_servers[i] == NONE)
-				memcpy(&ic_ntp_servers[i], ext+1+4*i, 4);
-		}
 		break;
 	}
 }
@@ -1320,10 +1257,7 @@ static int __init ic_dynamic(void)
 #endif /* IPCONFIG_DYNAMIC */
 
 #ifdef CONFIG_PROC_FS
-/* proc_dir_entry for /proc/net/ipconfig */
-static struct proc_dir_entry *ipconfig_dir;
 
-/* Name servers: */
 static int pnp_seq_show(struct seq_file *seq, void *v)
 {
 	int i;
@@ -1349,50 +1283,17 @@ static int pnp_seq_show(struct seq_file *seq, void *v)
 	return 0;
 }
 
-/* Create the /proc/net/ipconfig directory */
-static int __init ipconfig_proc_net_init(void)
+static int pnp_seq_open(struct inode *indoe, struct file *file)
 {
-	ipconfig_dir = proc_net_mkdir(&init_net, "ipconfig", init_net.proc_net);
-	if (!ipconfig_dir)
-		return -ENOMEM;
-
-	return 0;
+	return single_open(file, pnp_seq_show, NULL);
 }
 
-/* Create a new file under /proc/net/ipconfig */
-static int ipconfig_proc_net_create(const char *name,
-				    const struct proc_ops *proc_ops)
-{
-	char *pname;
-	struct proc_dir_entry *p;
-
-	if (!ipconfig_dir)
-		return -ENOMEM;
-
-	pname = kasprintf(GFP_KERNEL, "%s%s", "ipconfig/", name);
-	if (!pname)
-		return -ENOMEM;
-
-	p = proc_create(pname, 0444, init_net.proc_net, proc_ops);
-	kfree(pname);
-	if (!p)
-		return -ENOMEM;
-
-	return 0;
-}
-
-/* Write NTP server IP addresses to /proc/net/ipconfig/ntp_servers */
-static int ntp_servers_show(struct seq_file *seq, void *v)
-{
-	int i;
-
-	for (i = 0; i < CONF_NTP_SERVERS_MAX; i++) {
-		if (ic_ntp_servers[i] != NONE)
-			seq_printf(seq, "%pI4\n", &ic_ntp_servers[i]);
-	}
-	return 0;
-}
-DEFINE_PROC_SHOW_ATTRIBUTE(ntp_servers);
+static const struct file_operations pnp_seq_fops = {
+	.open		= pnp_seq_open,
+	.read		= seq_read,
+	.llseek		= seq_lseek,
+	.release	= single_release,
+};
 #endif /* CONFIG_PROC_FS */
 
 /*
@@ -1434,14 +1335,10 @@ __be32 __init root_nfs_parse_addr(char *name)
 static int __init wait_for_devices(void)
 {
 	int i;
-	bool try_init_devs = true;
 
 	for (i = 0; i < DEVICE_WAIT_MAX; i++) {
 		struct net_device *dev;
 		int found = 0;
-
-		/* make sure deferred device probes are finished */
-		wait_for_device_probe();
 
 		rtnl_lock();
 		for_each_netdev(&init_net, dev) {
@@ -1453,11 +1350,6 @@ static int __init wait_for_devices(void)
 		rtnl_unlock();
 		if (found)
 			return 0;
-		if (try_init_devs &&
-		    (ROOT_DEV == Root_NFS || ROOT_DEV == Root_CIFS)) {
-			try_init_devs = false;
-			wait_for_init_devices_probe();
-		}
 		ssleep(1);
 	}
 	return -ENODEV;
@@ -1474,22 +1366,10 @@ static int __init ip_auto_config(void)
 	int retries = CONF_OPEN_RETRIES;
 #endif
 	int err;
-	unsigned int i, count;
-
-	/* Initialise all name servers and NTP servers to NONE (but only if the
-	 * "ip=" or "nfsaddrs=" kernel command line parameters weren't decoded,
-	 * otherwise we'll overwrite the IP addresses specified there)
-	 */
-	if (ic_set_manually == 0) {
-		ic_nameservers_predef();
-		ic_ntp_servers_predef();
-	}
+	unsigned int i;
 
 #ifdef CONFIG_PROC_FS
-	proc_create_single("pnp", 0444, init_net.proc_net, pnp_seq_show);
-
-	if (ipconfig_proc_net_init() == 0)
-		ipconfig_proc_net_create("ntp_servers", &ntp_servers_proc_ops);
+	proc_create("pnp", 0444, init_net.proc_net, &pnp_seq_fops);
 #endif /* CONFIG_PROC_FS */
 
 	if (!ic_enable)
@@ -1519,10 +1399,10 @@ static int __init ip_auto_config(void)
 	 * missing values.
 	 */
 	if (ic_myaddr == NONE ||
-#if defined(CONFIG_ROOT_NFS) || defined(CONFIG_CIFS_ROOT)
+#ifdef CONFIG_ROOT_NFS
 	    (root_server_addr == NONE &&
 	     ic_servaddr == NONE &&
-	     (ROOT_DEV == Root_NFS || ROOT_DEV == Root_CIFS)) ||
+	     ROOT_DEV == Root_NFS) ||
 #endif
 	    ic_first_dev->next) {
 #ifdef IPCONFIG_DYNAMIC
@@ -1546,12 +1426,6 @@ static int __init ip_auto_config(void)
 #ifdef CONFIG_ROOT_NFS
 			if (ROOT_DEV ==  Root_NFS) {
 				pr_err("IP-Config: Retrying forever (NFS root)...\n");
-				goto try_try_again;
-			}
-#endif
-#ifdef CONFIG_CIFS_ROOT
-			if (ROOT_DEV == Root_CIFS) {
-				pr_err("IP-Config: Retrying forever (CIFS root)...\n");
 				goto try_try_again;
 			}
 #endif
@@ -1607,36 +1481,16 @@ static int __init ip_auto_config(void)
 		&ic_servaddr, &root_server_addr, root_server_path);
 	if (ic_dev_mtu)
 		pr_cont(", mtu=%d", ic_dev_mtu);
-	/* Name servers (if any): */
-	for (i = 0, count = 0; i < CONF_NAMESERVERS_MAX; i++) {
+	for (i = 0; i < CONF_NAMESERVERS_MAX; i++)
 		if (ic_nameservers[i] != NONE) {
-			if (i == 0)
-				pr_info("     nameserver%u=%pI4",
-					i, &ic_nameservers[i]);
-			else
-				pr_cont(", nameserver%u=%pI4",
-					i, &ic_nameservers[i]);
-
-			count++;
+			pr_cont("     nameserver%u=%pI4",
+				i, &ic_nameservers[i]);
+			break;
 		}
-		if ((i + 1 == CONF_NAMESERVERS_MAX) && count > 0)
-			pr_cont("\n");
-	}
-	/* NTP servers (if any): */
-	for (i = 0, count = 0; i < CONF_NTP_SERVERS_MAX; i++) {
-		if (ic_ntp_servers[i] != NONE) {
-			if (i == 0)
-				pr_info("     ntpserver%u=%pI4",
-					i, &ic_ntp_servers[i]);
-			else
-				pr_cont(", ntpserver%u=%pI4",
-					i, &ic_ntp_servers[i]);
-
-			count++;
-		}
-		if ((i + 1 == CONF_NTP_SERVERS_MAX) && count > 0)
-			pr_cont("\n");
-	}
+	for (i++; i < CONF_NAMESERVERS_MAX; i++)
+		if (ic_nameservers[i] != NONE)
+			pr_cont(", nameserver%u=%pI4", i, &ic_nameservers[i]);
+	pr_cont("\n");
 #endif /* !SILENT */
 
 	/*
@@ -1658,7 +1512,7 @@ late_initcall(ip_auto_config);
 
 /*
  *  Decode any IP configuration options in the "ip=" or "nfsaddrs=" kernel
- *  command line parameter.  See Documentation/admin-guide/nfs/nfsroot.rst.
+ *  command line parameter.  See Documentation/filesystems/nfs/nfsroot.txt.
  */
 static int __init ic_proto_name(char *name)
 {
@@ -1734,9 +1588,7 @@ static int __init ip_auto_config_setup(char *addrs)
 		return 1;
 	}
 
-	/* Initialise all name servers and NTP servers to NONE */
 	ic_nameservers_predef();
-	ic_ntp_servers_predef();
 
 	/* Parse string for static IP assignment.  */
 	ip = addrs;
@@ -1765,15 +1617,15 @@ static int __init ip_auto_config_setup(char *addrs)
 			case 4:
 				if ((dp = strchr(ip, '.'))) {
 					*dp++ = '\0';
-					strscpy(utsname()->domainname, dp,
+					strlcpy(utsname()->domainname, dp,
 						sizeof(utsname()->domainname));
 				}
-				strscpy(utsname()->nodename, ip,
+				strlcpy(utsname()->nodename, ip,
 					sizeof(utsname()->nodename));
 				ic_host_name_set = 1;
 				break;
 			case 5:
-				strscpy(user_dev_name, ip, sizeof(user_dev_name));
+				strlcpy(user_dev_name, ip, sizeof(user_dev_name));
 				break;
 			case 6:
 				if (ic_proto_name(ip) == 0 &&
@@ -1795,13 +1647,6 @@ static int __init ip_auto_config_setup(char *addrs)
 						ic_nameservers[1] = NONE;
 				}
 				break;
-			case 9:
-				if (CONF_NTP_SERVERS_MAX >= 1) {
-					ic_ntp_servers[0] = in_aton(ip);
-					if (ic_ntp_servers[0] == ANY)
-						ic_ntp_servers[0] = NONE;
-				}
-				break;
 			}
 		}
 		ip = cp;
@@ -1820,7 +1665,7 @@ __setup("nfsaddrs=", nfsaddrs_config_setup);
 
 static int __init vendor_class_identifier_setup(char *addrs)
 {
-	if (strscpy(vendor_class_identifier, addrs,
+	if (strlcpy(vendor_class_identifier, addrs,
 		    sizeof(vendor_class_identifier))
 	    >= sizeof(vendor_class_identifier))
 		pr_warn("DHCP: vendorclass too long, truncated to \"%s\"\n",
@@ -1828,18 +1673,3 @@ static int __init vendor_class_identifier_setup(char *addrs)
 	return 1;
 }
 __setup("dhcpclass=", vendor_class_identifier_setup);
-
-static int __init set_carrier_timeout(char *str)
-{
-	ssize_t ret;
-
-	if (!str)
-		return 0;
-
-	ret = kstrtouint(str, 0, &carrier_timeout);
-	if (ret)
-		return 0;
-
-	return 1;
-}
-__setup("carrier_timeout=", set_carrier_timeout);

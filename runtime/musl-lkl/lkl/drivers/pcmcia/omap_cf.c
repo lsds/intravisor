@@ -1,8 +1,12 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * omap_cf.c -- OMAP 16xx CompactFlash controller driver
  *
  * Copyright (c) 2005 David Brownell
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
  */
 
 #include <linux/module.h>
@@ -16,12 +20,13 @@
 
 #include <pcmcia/ss.h>
 
+#include <mach/hardware.h>
 #include <asm/io.h>
-#include <linux/sizes.h>
+#include <asm/sizes.h>
 
-#include <linux/soc/ti/omap1-io.h>
-#include <linux/soc/ti/omap1-soc.h>
-#include <linux/soc/ti/omap1-mux.h>
+#include <mach/mux.h>
+#include <mach/tc.h>
+
 
 /* NOTE:  don't expect this to support many I/O cards.  The 16xx chips have
  * hard-wired timings to support Compact Flash memory cards; they won't work
@@ -124,6 +129,8 @@ static int omap_cf_get_status(struct pcmcia_socket *s, u_int *sp)
 static int
 omap_cf_set_socket(struct pcmcia_socket *sock, struct socket_state_t *s)
 {
+	u16		control;
+
 	/* REVISIT some non-OSK boards may support power switching */
 	switch (s->Vcc) {
 	case 0:
@@ -133,7 +140,7 @@ omap_cf_set_socket(struct pcmcia_socket *sock, struct socket_state_t *s)
 		return -EINVAL;
 	}
 
-	omap_readw(CF_CONTROL);
+	control = omap_readw(CF_CONTROL);
 	if (s->flags & SS_RESET)
 		omap_writew(CF_CONTROL_RESET, CF_CONTROL);
 	else
@@ -202,8 +209,6 @@ static int __init omap_cf_probe(struct platform_device *pdev)
 	struct omap_cf_socket	*cf;
 	int			irq;
 	int			status;
-	struct resource		*res;
-	struct resource		iospace = DEFINE_RES_IO(SZ_64, SZ_4K);
 
 	seg = (int) pdev->dev.platform_data;
 	if (seg == 0 || seg > 3)
@@ -213,8 +218,6 @@ static int __init omap_cf_probe(struct platform_device *pdev)
 	irq = platform_get_irq(pdev, 0);
 	if (irq < 0)
 		return -EINVAL;
-
-	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 
 	cf = kzalloc(sizeof *cf, GFP_KERNEL);
 	if (!cf)
@@ -231,20 +234,33 @@ static int __init omap_cf_probe(struct platform_device *pdev)
 		goto fail0;
 	cf->irq = irq;
 	cf->socket.pci_irq = irq;
-	cf->phys_cf = res->start;
+
+	switch (seg) {
+	/* NOTE: CS0 could be configured too ... */
+	case 1:
+		cf->phys_cf = OMAP_CS1_PHYS;
+		break;
+	case 2:
+		cf->phys_cf = OMAP_CS2_PHYS;
+		break;
+	case 3:
+		cf->phys_cf = omap_cs3_phys();
+		break;
+	default:
+		goto  fail1;
+	}
+	cf->iomem.start = cf->phys_cf;
+	cf->iomem.end = cf->iomem.end + SZ_8K - 1;
+	cf->iomem.flags = IORESOURCE_MEM;
 
 	/* pcmcia layer only remaps "real" memory */
-	cf->socket.io_offset = iospace.start;
-	status = pci_remap_iospace(&iospace, cf->phys_cf + SZ_4K);
-	if (status) {
-		status = -ENOMEM;
+	cf->socket.io_offset = (unsigned long)
+			ioremap(cf->phys_cf + SZ_4K, SZ_2K);
+	if (!cf->socket.io_offset)
 		goto fail1;
-	}
 
-	if (!request_mem_region(cf->phys_cf, SZ_8K, driver_name)) {
-		status = -ENXIO;
+	if (!request_mem_region(cf->phys_cf, SZ_8K, driver_name))
 		goto fail1;
-	}
 
 	/* NOTE:  CF conflicts with MMC1 */
 	omap_cfg_reg(W11_1610_CF_CD1);
@@ -256,6 +272,15 @@ static int __init omap_cf_probe(struct platform_device *pdev)
 	omap_writew(~(1 << seg), CF_CFG);
 
 	pr_info("%s: cs%d on irq %d\n", driver_name, seg, irq);
+
+	/* NOTE:  better EMIFS setup might support more cards; but the
+	 * TRM only shows how to affect regular flash signals, not their
+	 * CF/PCMCIA variants...
+	 */
+	pr_debug("%s: cs%d, previous ccs %08x acs %08x\n", driver_name,
+		seg, omap_readl(EMIFS_CCS(seg)), omap_readl(EMIFS_ACS(seg)));
+	omap_writel(0x0004a1b3, EMIFS_CCS(seg));	/* synch mode 4 etc */
+	omap_writel(0x00000000, EMIFS_ACS(seg));	/* OE hold/setup */
 
 	/* CF uses armxor_ck, which is "always" available */
 
@@ -284,6 +309,8 @@ static int __init omap_cf_probe(struct platform_device *pdev)
 fail2:
 	release_mem_region(cf->phys_cf, SZ_8K);
 fail1:
+	if (cf->socket.io_offset)
+		iounmap((void __iomem *) cf->socket.io_offset);
 	free_irq(irq, cf);
 fail0:
 	kfree(cf);
@@ -297,6 +324,7 @@ static int __exit omap_cf_remove(struct platform_device *pdev)
 	cf->active = 0;
 	pcmcia_unregister_socket(&cf->socket);
 	del_timer_sync(&cf->timer);
+	iounmap((void __iomem *) cf->socket.io_offset);
 	release_mem_region(cf->phys_cf, SZ_8K);
 	free_irq(cf->irq, cf);
 	kfree(cf);
@@ -305,7 +333,7 @@ static int __exit omap_cf_remove(struct platform_device *pdev)
 
 static struct platform_driver omap_cf_driver = {
 	.driver = {
-		.name	= driver_name,
+		.name	= (char *) driver_name,
 	},
 	.remove		= __exit_p(omap_cf_remove),
 };

@@ -19,29 +19,37 @@
 
 #include <asm/sgidefs.h>
 #include <asm/asm-eva.h>
-#include <asm/isa-rev.h>
 
-#ifndef __VDSO__
-/*
- * Emit CFI data in .debug_frame sections, not .eh_frame sections.
- * We don't do DWARF unwinding at runtime, so only the offline DWARF
- * information is useful to anyone. Note we should change this if we
- * ever decide to enable DWARF unwinding at runtime.
- */
-#define CFI_SECTIONS	.cfi_sections .debug_frame
+#ifndef CAT
+#ifdef __STDC__
+#define __CAT(str1, str2) str1##str2
 #else
- /*
-  * For the vDSO, emit both runtime unwind information and debug
-  * symbols for the .dbg file.
-  */
-#define CFI_SECTIONS
+#define __CAT(str1, str2) str1/**/str2
+#endif
+#define CAT(str1, str2) __CAT(str1, str2)
+#endif
+
+/*
+ * PIC specific declarations
+ * Not used for the kernel but here seems to be the right place.
+ */
+#ifdef __PIC__
+#define CPRESTORE(register)				\
+		.cprestore register
+#define CPADD(register)					\
+		.cpadd	register
+#define CPLOAD(register)				\
+		.cpload register
+#else
+#define CPRESTORE(register)
+#define CPADD(register)
+#define CPLOAD(register)
 #endif
 
 /*
  * LEAF - declare leaf routine
  */
 #define LEAF(symbol)					\
-		CFI_SECTIONS;				\
 		.globl	symbol;				\
 		.align	2;				\
 		.type	symbol, @function;		\
@@ -54,7 +62,6 @@ symbol:		.frame	sp, 0, ra;			\
  * NESTED - declare nested routine entry point
  */
 #define NESTED(symbol, framesize, rpc)			\
-		CFI_SECTIONS;				\
 		.globl	symbol;				\
 		.align	2;				\
 		.type	symbol, @function;		\
@@ -93,15 +100,10 @@ symbol:		.insn
 		.globl	symbol;				\
 symbol		=	value
 
-#define TEXT(msg)					\
-		.pushsection .data;			\
-8:		.asciiz msg;				\
-		.popsection;
-
-#define ASM_PANIC(msg)					\
+#define PANIC(msg)					\
 		.set	push;				\
 		.set	reorder;			\
-		PTR_LA	a0, 8f;				\
+		PTR_LA	a0, 8f;				 \
 		jal	panic;				\
 9:		b	9b;				\
 		.set	pop;				\
@@ -111,16 +113,111 @@ symbol		=	value
  * Print formatted string
  */
 #ifdef CONFIG_PRINTK
-#define ASM_PRINT(string)				\
+#define PRINT(string)					\
 		.set	push;				\
 		.set	reorder;			\
-		PTR_LA	a0, 8f;				\
-		jal	_printk;			\
+		PTR_LA	a0, 8f;				 \
+		jal	printk;				\
 		.set	pop;				\
 		TEXT(string)
 #else
-#define ASM_PRINT(string)
+#define PRINT(string)
 #endif
+
+#define TEXT(msg)					\
+		.pushsection .data;			\
+8:		.asciiz msg;				\
+		.popsection;
+
+/*
+ * Build text tables
+ */
+#define TTABLE(string)					\
+		.pushsection .text;			\
+		.word	1f;				\
+		.popsection				\
+		.pushsection .data;			\
+1:		.asciiz string;				\
+		.popsection
+
+/*
+ * MIPS IV pref instruction.
+ * Use with .set noreorder only!
+ *
+ * MIPS IV implementations are free to treat this as a nop.  The R5000
+ * is one of them.  So we should have an option not to use this instruction.
+ */
+#ifdef CONFIG_CPU_HAS_PREFETCH
+
+#define PREF(hint,addr)					\
+		.set	push;				\
+		.set	arch=r5000;			\
+		pref	hint, addr;			\
+		.set	pop
+
+#define PREFE(hint, addr)				\
+		.set	push;				\
+		.set	mips0;				\
+		.set	eva;				\
+		prefe	hint, addr;			\
+		.set	pop
+
+#define PREFX(hint,addr)				\
+		.set	push;				\
+		.set	arch=r5000;			\
+		prefx	hint, addr;			\
+		.set	pop
+
+#else /* !CONFIG_CPU_HAS_PREFETCH */
+
+#define PREF(hint, addr)
+#define PREFE(hint, addr)
+#define PREFX(hint, addr)
+
+#endif /* !CONFIG_CPU_HAS_PREFETCH */
+
+/*
+ * MIPS ISA IV/V movn/movz instructions and equivalents for older CPUs.
+ */
+#if (_MIPS_ISA == _MIPS_ISA_MIPS1)
+#define MOVN(rd, rs, rt)				\
+		.set	push;				\
+		.set	reorder;			\
+		beqz	rt, 9f;				\
+		move	rd, rs;				\
+		.set	pop;				\
+9:
+#define MOVZ(rd, rs, rt)				\
+		.set	push;				\
+		.set	reorder;			\
+		bnez	rt, 9f;				\
+		move	rd, rs;				\
+		.set	pop;				\
+9:
+#endif /* _MIPS_ISA == _MIPS_ISA_MIPS1 */
+#if (_MIPS_ISA == _MIPS_ISA_MIPS2) || (_MIPS_ISA == _MIPS_ISA_MIPS3)
+#define MOVN(rd, rs, rt)				\
+		.set	push;				\
+		.set	noreorder;			\
+		bnezl	rt, 9f;				\
+		 move	rd, rs;				\
+		.set	pop;				\
+9:
+#define MOVZ(rd, rs, rt)				\
+		.set	push;				\
+		.set	noreorder;			\
+		beqzl	rt, 9f;				\
+		 move	rd, rs;				\
+		.set	pop;				\
+9:
+#endif /* (_MIPS_ISA == _MIPS_ISA_MIPS2) || (_MIPS_ISA == _MIPS_ISA_MIPS3) */
+#if (_MIPS_ISA == _MIPS_ISA_MIPS4 ) || (_MIPS_ISA == _MIPS_ISA_MIPS5) || \
+    (_MIPS_ISA == _MIPS_ISA_MIPS32) || (_MIPS_ISA == _MIPS_ISA_MIPS64)
+#define MOVN(rd, rs, rt)				\
+		movn	rd, rs, rt
+#define MOVZ(rd, rs, rt)				\
+		movz	rd, rs, rt
+#endif /* MIPS IV, MIPS V, MIPS32 or MIPS64 */
 
 /*
  * Stack alignment
@@ -212,8 +309,6 @@ symbol		=	value
 #define LONG_SUB	sub
 #define LONG_SUBU	subu
 #define LONG_L		lw
-#define LONG_LL		ll
-#define LONG_SC		sc
 #define LONG_S		sw
 #define LONG_SP		swp
 #define LONG_SLL	sll
@@ -222,12 +317,8 @@ symbol		=	value
 #define LONG_SRLV	srlv
 #define LONG_SRA	sra
 #define LONG_SRAV	srav
-#define LONG_INS	ins
-#define LONG_EXT	ext
 
-#ifdef __ASSEMBLY__
 #define LONG		.word
-#endif
 #define LONGSIZE	4
 #define LONGMASK	3
 #define LONGLOG		2
@@ -241,8 +332,6 @@ symbol		=	value
 #define LONG_SUB	dsub
 #define LONG_SUBU	dsubu
 #define LONG_L		ld
-#define LONG_LL		lld
-#define LONG_SC		scd
 #define LONG_S		sd
 #define LONG_SP		sdp
 #define LONG_SLL	dsll
@@ -251,12 +340,8 @@ symbol		=	value
 #define LONG_SRLV	dsrlv
 #define LONG_SRA	dsra
 #define LONG_SRAV	dsrav
-#define LONG_INS	dins
-#define LONG_EXT	dext
 
-#ifdef __ASSEMBLY__
 #define LONG		.dword
-#endif
 #define LONGSIZE	8
 #define LONGMASK	7
 #define LONGLOG		3
@@ -285,7 +370,7 @@ symbol		=	value
 
 #define PTR_SCALESHIFT	2
 
-#define PTR_WD		.word
+#define PTR		.word
 #define PTRSIZE		4
 #define PTRLOG		2
 #endif
@@ -310,7 +395,7 @@ symbol		=	value
 
 #define PTR_SCALESHIFT	3
 
-#define PTR_WD		.dword
+#define PTR		.dword
 #define PTRSIZE		8
 #define PTRLOG		3
 #endif
@@ -328,19 +413,6 @@ symbol		=	value
 #endif
 
 #define SSNOP		sll zero, zero, 1
-
-/*
- * Using a branch-likely instruction to check the result of an sc instruction
- * works around a bug present in R10000 CPUs prior to revision 3.0 that could
- * cause ll-sc sequences to execute non-atomically.
- */
-#ifdef CONFIG_WAR_R10000_LLSC
-# define SC_BEQZ	beqzl
-#elif MIPS_ISA_REV >= 6
-# define SC_BEQZ	beqzc
-#else
-# define SC_BEQZ	beqz
-#endif
 
 #ifdef CONFIG_SGI_IP28
 /* Inhibit speculative stores to volatile (e.g.DMA) or invalid addresses. */

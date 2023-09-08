@@ -1,7 +1,6 @@
 #!/bin/bash
 # SPDX-License-Identifier: GPL-2.0
 
-ALL_TESTS="ping_ipv4 ping_ipv6 learning flooding"
 NUM_NETIFS=4
 source lib.sh
 
@@ -27,9 +26,8 @@ h2_destroy()
 
 switch_create()
 {
-	ip link add dev br0 type bridge \
-		ageing_time $LOW_AGEING_TIME \
-		mcast_snooping 0
+	# 10 Seconds ageing time.
+	ip link add dev br0 type bridge ageing_time 1000 mcast_snooping 0
 
 	ip link set dev $swp1 master br0
 	ip link set dev $swp2 master br0
@@ -75,31 +73,14 @@ cleanup()
 	vrf_cleanup
 }
 
-ping_ipv4()
-{
-	ping_test $h1 192.0.2.2
-}
-
-ping_ipv6()
-{
-	ping6_test $h1 2001:db8:1::2
-}
-
-learning()
-{
-	learning_test "br0" $swp1 $h1 $h2
-}
-
-flooding()
-{
-	flood_test $swp2 $h1 $h2
-}
-
 trap cleanup EXIT
 
 setup_prepare
 setup_wait
 
-tests_run
+ping_test $h1 192.0.2.2
+ping6_test $h1 2001:db8:1::2
+learning_test "br0" $swp1 $h1 $h2
+flood_test $swp2 $h1 $h2
 
 exit $EXIT_STATUS

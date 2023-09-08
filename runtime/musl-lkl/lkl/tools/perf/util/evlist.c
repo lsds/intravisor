@@ -1,38 +1,26 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (C) 2011, Red Hat Inc, Arnaldo Carvalho de Melo <acme@redhat.com>
  *
  * Parts came from builtin-{top,stat,record}.c, see those files for further
  * copyright notes.
+ *
+ * Released under the GPL v2. (and only v2, not any later version)
  */
+#include "util.h"
 #include <api/fs/fs.h>
 #include <errno.h>
 #include <inttypes.h>
 #include <poll.h>
 #include "cpumap.h"
-#include "util/mmap.h"
 #include "thread_map.h"
 #include "target.h"
 #include "evlist.h"
 #include "evsel.h"
-#include "record.h"
 #include "debug.h"
 #include "units.h"
-#include "bpf_counter.h"
-#include <internal/lib.h> // page_size
-#include "affinity.h"
-#include "../perf.h"
 #include "asm/bug.h"
-#include "bpf-event.h"
-#include "util/string2.h"
-#include "util/perf_api_probe.h"
-#include "util/evsel_fprintf.h"
-#include "util/evlist-hybrid.h"
-#include "util/pmu.h"
 #include <signal.h>
 #include <unistd.h>
-#include <sched.h>
-#include <stdlib.h>
 
 #include "parse-events.h"
 #include <subcmd/parse-options.h>
@@ -40,70 +28,57 @@
 #include <fcntl.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
-#include <sys/prctl.h>
-#include <sys/timerfd.h>
 
 #include <linux/bitops.h>
 #include <linux/hash.h>
 #include <linux/log2.h>
 #include <linux/err.h>
-#include <linux/string.h>
-#include <linux/time64.h>
-#include <linux/zalloc.h>
-#include <perf/evlist.h>
-#include <perf/evsel.h>
-#include <perf/cpumap.h>
-#include <perf/mmap.h>
 
-#include <internal/xyarray.h>
+#define FD(e, x, y) (*(int *)xyarray__entry(e->fd, x, y))
+#define SID(e, x, y) xyarray__entry(e->sample_id, x, y)
 
-#ifdef LACKS_SIGQUEUE_PROTOTYPE
-int sigqueue(pid_t pid, int sig, const union sigval value);
-#endif
-
-#define FD(e, x, y) (*(int *)xyarray__entry(e->core.fd, x, y))
-#define SID(e, x, y) xyarray__entry(e->core.sample_id, x, y)
-
-void evlist__init(struct evlist *evlist, struct perf_cpu_map *cpus,
-		  struct perf_thread_map *threads)
+void perf_evlist__init(struct perf_evlist *evlist, struct cpu_map *cpus,
+		       struct thread_map *threads)
 {
-	perf_evlist__init(&evlist->core);
-	perf_evlist__set_maps(&evlist->core, cpus, threads);
+	int i;
+
+	for (i = 0; i < PERF_EVLIST__HLIST_SIZE; ++i)
+		INIT_HLIST_HEAD(&evlist->heads[i]);
+	INIT_LIST_HEAD(&evlist->entries);
+	perf_evlist__set_maps(evlist, cpus, threads);
+	fdarray__init(&evlist->pollfd, 64);
 	evlist->workload.pid = -1;
 	evlist->bkw_mmap_state = BKW_MMAP_NOTREADY;
-	evlist->ctl_fd.fd = -1;
-	evlist->ctl_fd.ack = -1;
-	evlist->ctl_fd.pos = -1;
 }
 
-struct evlist *evlist__new(void)
+struct perf_evlist *perf_evlist__new(void)
 {
-	struct evlist *evlist = zalloc(sizeof(*evlist));
+	struct perf_evlist *evlist = zalloc(sizeof(*evlist));
 
 	if (evlist != NULL)
-		evlist__init(evlist, NULL, NULL);
+		perf_evlist__init(evlist, NULL, NULL);
 
 	return evlist;
 }
 
-struct evlist *evlist__new_default(void)
+struct perf_evlist *perf_evlist__new_default(void)
 {
-	struct evlist *evlist = evlist__new();
+	struct perf_evlist *evlist = perf_evlist__new();
 
-	if (evlist && evlist__add_default(evlist)) {
-		evlist__delete(evlist);
+	if (evlist && perf_evlist__add_default(evlist)) {
+		perf_evlist__delete(evlist);
 		evlist = NULL;
 	}
 
 	return evlist;
 }
 
-struct evlist *evlist__new_dummy(void)
+struct perf_evlist *perf_evlist__new_dummy(void)
 {
-	struct evlist *evlist = evlist__new();
+	struct perf_evlist *evlist = perf_evlist__new();
 
-	if (evlist && evlist__add_dummy(evlist)) {
-		evlist__delete(evlist);
+	if (evlist && perf_evlist__add_dummy(evlist)) {
+		perf_evlist__delete(evlist);
 		evlist = NULL;
 	}
 
@@ -111,262 +86,244 @@ struct evlist *evlist__new_dummy(void)
 }
 
 /**
- * evlist__set_id_pos - set the positions of event ids.
+ * perf_evlist__set_id_pos - set the positions of event ids.
  * @evlist: selected event list
  *
  * Events with compatible sample types all have the same id_pos
  * and is_pos.  For convenience, put a copy on evlist.
  */
-void evlist__set_id_pos(struct evlist *evlist)
+void perf_evlist__set_id_pos(struct perf_evlist *evlist)
 {
-	struct evsel *first = evlist__first(evlist);
+	struct perf_evsel *first = perf_evlist__first(evlist);
 
 	evlist->id_pos = first->id_pos;
 	evlist->is_pos = first->is_pos;
 }
 
-static void evlist__update_id_pos(struct evlist *evlist)
+static void perf_evlist__update_id_pos(struct perf_evlist *evlist)
 {
-	struct evsel *evsel;
+	struct perf_evsel *evsel;
 
 	evlist__for_each_entry(evlist, evsel)
-		evsel__calc_id_pos(evsel);
+		perf_evsel__calc_id_pos(evsel);
 
-	evlist__set_id_pos(evlist);
+	perf_evlist__set_id_pos(evlist);
 }
 
-static void evlist__purge(struct evlist *evlist)
+static void perf_evlist__purge(struct perf_evlist *evlist)
 {
-	struct evsel *pos, *n;
+	struct perf_evsel *pos, *n;
 
 	evlist__for_each_entry_safe(evlist, n, pos) {
-		list_del_init(&pos->core.node);
+		list_del_init(&pos->node);
 		pos->evlist = NULL;
-		evsel__delete(pos);
+		perf_evsel__delete(pos);
 	}
 
-	evlist->core.nr_entries = 0;
+	evlist->nr_entries = 0;
 }
 
-void evlist__exit(struct evlist *evlist)
+void perf_evlist__exit(struct perf_evlist *evlist)
 {
-	event_enable_timer__exit(&evlist->eet);
 	zfree(&evlist->mmap);
 	zfree(&evlist->overwrite_mmap);
-	perf_evlist__exit(&evlist->core);
+	fdarray__exit(&evlist->pollfd);
 }
 
-void evlist__delete(struct evlist *evlist)
+void perf_evlist__delete(struct perf_evlist *evlist)
 {
 	if (evlist == NULL)
 		return;
 
-	evlist__munmap(evlist);
-	evlist__close(evlist);
-	evlist__purge(evlist);
-	evlist__exit(evlist);
+	perf_evlist__munmap(evlist);
+	perf_evlist__close(evlist);
+	cpu_map__put(evlist->cpus);
+	thread_map__put(evlist->threads);
+	evlist->cpus = NULL;
+	evlist->threads = NULL;
+	perf_evlist__purge(evlist);
+	perf_evlist__exit(evlist);
 	free(evlist);
 }
 
-void evlist__add(struct evlist *evlist, struct evsel *entry)
+static void __perf_evlist__propagate_maps(struct perf_evlist *evlist,
+					  struct perf_evsel *evsel)
 {
-	perf_evlist__add(&evlist->core, &entry->core);
-	entry->evlist = evlist;
-	entry->tracking = !entry->core.idx;
+	/*
+	 * We already have cpus for evsel (via PMU sysfs) so
+	 * keep it, if there's no target cpu list defined.
+	 */
+	if (!evsel->own_cpus || evlist->has_user_cpus) {
+		cpu_map__put(evsel->cpus);
+		evsel->cpus = cpu_map__get(evlist->cpus);
+	} else if (evsel->cpus != evsel->own_cpus) {
+		cpu_map__put(evsel->cpus);
+		evsel->cpus = cpu_map__get(evsel->own_cpus);
+	}
 
-	if (evlist->core.nr_entries == 1)
-		evlist__set_id_pos(evlist);
+	thread_map__put(evsel->threads);
+	evsel->threads = thread_map__get(evlist->threads);
 }
 
-void evlist__remove(struct evlist *evlist, struct evsel *evsel)
+static void perf_evlist__propagate_maps(struct perf_evlist *evlist)
+{
+	struct perf_evsel *evsel;
+
+	evlist__for_each_entry(evlist, evsel)
+		__perf_evlist__propagate_maps(evlist, evsel);
+}
+
+void perf_evlist__add(struct perf_evlist *evlist, struct perf_evsel *entry)
+{
+	entry->evlist = evlist;
+	list_add_tail(&entry->node, &evlist->entries);
+	entry->idx = evlist->nr_entries;
+	entry->tracking = !entry->idx;
+
+	if (!evlist->nr_entries++)
+		perf_evlist__set_id_pos(evlist);
+
+	__perf_evlist__propagate_maps(evlist, entry);
+}
+
+void perf_evlist__remove(struct perf_evlist *evlist, struct perf_evsel *evsel)
 {
 	evsel->evlist = NULL;
-	perf_evlist__remove(&evlist->core, &evsel->core);
+	list_del_init(&evsel->node);
+	evlist->nr_entries -= 1;
 }
 
-void evlist__splice_list_tail(struct evlist *evlist, struct list_head *list)
+void perf_evlist__splice_list_tail(struct perf_evlist *evlist,
+				   struct list_head *list)
 {
-	while (!list_empty(list)) {
-		struct evsel *evsel, *temp, *leader = NULL;
+	struct perf_evsel *evsel, *temp;
 
-		__evlist__for_each_entry_safe(list, temp, evsel) {
-			list_del_init(&evsel->core.node);
-			evlist__add(evlist, evsel);
-			leader = evsel;
+	__evlist__for_each_entry_safe(list, temp, evsel) {
+		list_del_init(&evsel->node);
+		perf_evlist__add(evlist, evsel);
+	}
+}
+
+void __perf_evlist__set_leader(struct list_head *list)
+{
+	struct perf_evsel *evsel, *leader;
+
+	leader = list_entry(list->next, struct perf_evsel, node);
+	evsel = list_entry(list->prev, struct perf_evsel, node);
+
+	leader->nr_members = evsel->idx - leader->idx + 1;
+
+	__evlist__for_each_entry(list, evsel) {
+		evsel->leader = leader;
+	}
+}
+
+void perf_evlist__set_leader(struct perf_evlist *evlist)
+{
+	if (evlist->nr_entries) {
+		evlist->nr_groups = evlist->nr_entries > 1 ? 1 : 0;
+		__perf_evlist__set_leader(&evlist->entries);
+	}
+}
+
+void perf_event_attr__set_max_precise_ip(struct perf_event_attr *attr)
+{
+	attr->precise_ip = 3;
+
+	while (attr->precise_ip != 0) {
+		int fd = sys_perf_event_open(attr, 0, -1, -1, 0);
+		if (fd != -1) {
+			close(fd);
 			break;
 		}
-
-		__evlist__for_each_entry_safe(list, temp, evsel) {
-			if (evsel__has_leader(evsel, leader)) {
-				list_del_init(&evsel->core.node);
-				evlist__add(evlist, evsel);
-			}
-		}
+		--attr->precise_ip;
 	}
 }
 
-int __evlist__set_tracepoints_handlers(struct evlist *evlist,
-				       const struct evsel_str_handler *assocs, size_t nr_assocs)
+int __perf_evlist__add_default(struct perf_evlist *evlist, bool precise)
 {
-	size_t i;
-	int err;
+	struct perf_evsel *evsel = perf_evsel__new_cycles(precise);
 
-	for (i = 0; i < nr_assocs; i++) {
-		// Adding a handler for an event not in this evlist, just ignore it.
-		struct evsel *evsel = evlist__find_tracepoint_by_name(evlist, assocs[i].name);
-		if (evsel == NULL)
-			continue;
-
-		err = -EEXIST;
-		if (evsel->handler != NULL)
-			goto out;
-		evsel->handler = assocs[i].handler;
-	}
-
-	err = 0;
-out:
-	return err;
-}
-
-void evlist__set_leader(struct evlist *evlist)
-{
-	perf_evlist__set_leader(&evlist->core);
-}
-
-int __evlist__add_default(struct evlist *evlist, bool precise)
-{
-	struct evsel *evsel;
-
-	evsel = evsel__new_cycles(precise, PERF_TYPE_HARDWARE,
-				  PERF_COUNT_HW_CPU_CYCLES);
 	if (evsel == NULL)
 		return -ENOMEM;
 
-	evlist__add(evlist, evsel);
+	perf_evlist__add(evlist, evsel);
 	return 0;
 }
 
-static struct evsel *evlist__dummy_event(struct evlist *evlist)
+int perf_evlist__add_dummy(struct perf_evlist *evlist)
 {
 	struct perf_event_attr attr = {
 		.type	= PERF_TYPE_SOFTWARE,
 		.config = PERF_COUNT_SW_DUMMY,
 		.size	= sizeof(attr), /* to capture ABI version */
 	};
-
-	return evsel__new_idx(&attr, evlist->core.nr_entries);
-}
-
-int evlist__add_dummy(struct evlist *evlist)
-{
-	struct evsel *evsel = evlist__dummy_event(evlist);
+	struct perf_evsel *evsel = perf_evsel__new_idx(&attr, evlist->nr_entries);
 
 	if (evsel == NULL)
 		return -ENOMEM;
 
-	evlist__add(evlist, evsel);
+	perf_evlist__add(evlist, evsel);
 	return 0;
 }
 
-struct evsel *evlist__add_aux_dummy(struct evlist *evlist, bool system_wide)
+static int perf_evlist__add_attrs(struct perf_evlist *evlist,
+				  struct perf_event_attr *attrs, size_t nr_attrs)
 {
-	struct evsel *evsel = evlist__dummy_event(evlist);
-
-	if (!evsel)
-		return NULL;
-
-	evsel->core.attr.exclude_kernel = 1;
-	evsel->core.attr.exclude_guest = 1;
-	evsel->core.attr.exclude_hv = 1;
-	evsel->core.attr.freq = 0;
-	evsel->core.attr.sample_period = 1;
-	evsel->core.system_wide = system_wide;
-	evsel->no_aux_samples = true;
-	evsel->name = strdup("dummy:u");
-
-	evlist__add(evlist, evsel);
-	return evsel;
-}
-
-struct evsel *evlist__add_sched_switch(struct evlist *evlist, bool system_wide)
-{
-	struct evsel *evsel = evsel__newtp_idx("sched", "sched_switch", 0);
-
-	if (IS_ERR(evsel))
-		return evsel;
-
-	evsel__set_sample_bit(evsel, CPU);
-	evsel__set_sample_bit(evsel, TIME);
-
-	evsel->core.system_wide = system_wide;
-	evsel->no_aux_samples = true;
-
-	evlist__add(evlist, evsel);
-	return evsel;
-};
-
-int evlist__add_attrs(struct evlist *evlist, struct perf_event_attr *attrs, size_t nr_attrs)
-{
-	struct evsel *evsel, *n;
+	struct perf_evsel *evsel, *n;
 	LIST_HEAD(head);
 	size_t i;
 
 	for (i = 0; i < nr_attrs; i++) {
-		evsel = evsel__new_idx(attrs + i, evlist->core.nr_entries + i);
+		evsel = perf_evsel__new_idx(attrs + i, evlist->nr_entries + i);
 		if (evsel == NULL)
 			goto out_delete_partial_list;
-		list_add_tail(&evsel->core.node, &head);
+		list_add_tail(&evsel->node, &head);
 	}
 
-	evlist__splice_list_tail(evlist, &head);
+	perf_evlist__splice_list_tail(evlist, &head);
 
 	return 0;
 
 out_delete_partial_list:
 	__evlist__for_each_entry_safe(&head, n, evsel)
-		evsel__delete(evsel);
+		perf_evsel__delete(evsel);
 	return -1;
 }
 
-int __evlist__add_default_attrs(struct evlist *evlist, struct perf_event_attr *attrs, size_t nr_attrs)
+int __perf_evlist__add_default_attrs(struct perf_evlist *evlist,
+				     struct perf_event_attr *attrs, size_t nr_attrs)
 {
 	size_t i;
 
 	for (i = 0; i < nr_attrs; i++)
 		event_attr_init(attrs + i);
 
-	return evlist__add_attrs(evlist, attrs, nr_attrs);
+	return perf_evlist__add_attrs(evlist, attrs, nr_attrs);
 }
 
-__weak int arch_evlist__add_default_attrs(struct evlist *evlist,
-					  struct perf_event_attr *attrs,
-					  size_t nr_attrs)
+struct perf_evsel *
+perf_evlist__find_tracepoint_by_id(struct perf_evlist *evlist, int id)
 {
-	if (!nr_attrs)
-		return 0;
-
-	return __evlist__add_default_attrs(evlist, attrs, nr_attrs);
-}
-
-struct evsel *evlist__find_tracepoint_by_id(struct evlist *evlist, int id)
-{
-	struct evsel *evsel;
+	struct perf_evsel *evsel;
 
 	evlist__for_each_entry(evlist, evsel) {
-		if (evsel->core.attr.type   == PERF_TYPE_TRACEPOINT &&
-		    (int)evsel->core.attr.config == id)
+		if (evsel->attr.type   == PERF_TYPE_TRACEPOINT &&
+		    (int)evsel->attr.config == id)
 			return evsel;
 	}
 
 	return NULL;
 }
 
-struct evsel *evlist__find_tracepoint_by_name(struct evlist *evlist, const char *name)
+struct perf_evsel *
+perf_evlist__find_tracepoint_by_name(struct perf_evlist *evlist,
+				     const char *name)
 {
-	struct evsel *evsel;
+	struct perf_evsel *evsel;
 
 	evlist__for_each_entry(evlist, evsel) {
-		if ((evsel->core.attr.type == PERF_TYPE_TRACEPOINT) &&
+		if ((evsel->attr.type == PERF_TYPE_TRACEPOINT) &&
 		    (strcmp(evsel->name, name) == 0))
 			return evsel;
 	}
@@ -374,272 +331,253 @@ struct evsel *evlist__find_tracepoint_by_name(struct evlist *evlist, const char 
 	return NULL;
 }
 
-int evlist__add_newtp(struct evlist *evlist, const char *sys, const char *name, void *handler)
+int perf_evlist__add_newtp(struct perf_evlist *evlist,
+			   const char *sys, const char *name, void *handler)
 {
-	struct evsel *evsel = evsel__newtp(sys, name);
+	struct perf_evsel *evsel = perf_evsel__newtp(sys, name);
 
 	if (IS_ERR(evsel))
 		return -1;
 
 	evsel->handler = handler;
-	evlist__add(evlist, evsel);
+	perf_evlist__add(evlist, evsel);
 	return 0;
 }
 
-struct evlist_cpu_iterator evlist__cpu_begin(struct evlist *evlist, struct affinity *affinity)
+static int perf_evlist__nr_threads(struct perf_evlist *evlist,
+				   struct perf_evsel *evsel)
 {
-	struct evlist_cpu_iterator itr = {
-		.container = evlist,
-		.evsel = NULL,
-		.cpu_map_idx = 0,
-		.evlist_cpu_map_idx = 0,
-		.evlist_cpu_map_nr = perf_cpu_map__nr(evlist->core.all_cpus),
-		.cpu = (struct perf_cpu){ .cpu = -1},
-		.affinity = affinity,
-	};
-
-	if (evlist__empty(evlist)) {
-		/* Ensure the empty list doesn't iterate. */
-		itr.evlist_cpu_map_idx = itr.evlist_cpu_map_nr;
-	} else {
-		itr.evsel = evlist__first(evlist);
-		if (itr.affinity) {
-			itr.cpu = perf_cpu_map__cpu(evlist->core.all_cpus, 0);
-			affinity__set(itr.affinity, itr.cpu.cpu);
-			itr.cpu_map_idx = perf_cpu_map__idx(itr.evsel->core.cpus, itr.cpu);
-			/*
-			 * If this CPU isn't in the evsel's cpu map then advance
-			 * through the list.
-			 */
-			if (itr.cpu_map_idx == -1)
-				evlist_cpu_iterator__next(&itr);
-		}
-	}
-	return itr;
-}
-
-void evlist_cpu_iterator__next(struct evlist_cpu_iterator *evlist_cpu_itr)
-{
-	while (evlist_cpu_itr->evsel != evlist__last(evlist_cpu_itr->container)) {
-		evlist_cpu_itr->evsel = evsel__next(evlist_cpu_itr->evsel);
-		evlist_cpu_itr->cpu_map_idx =
-			perf_cpu_map__idx(evlist_cpu_itr->evsel->core.cpus,
-					  evlist_cpu_itr->cpu);
-		if (evlist_cpu_itr->cpu_map_idx != -1)
-			return;
-	}
-	evlist_cpu_itr->evlist_cpu_map_idx++;
-	if (evlist_cpu_itr->evlist_cpu_map_idx < evlist_cpu_itr->evlist_cpu_map_nr) {
-		evlist_cpu_itr->evsel = evlist__first(evlist_cpu_itr->container);
-		evlist_cpu_itr->cpu =
-			perf_cpu_map__cpu(evlist_cpu_itr->container->core.all_cpus,
-					  evlist_cpu_itr->evlist_cpu_map_idx);
-		if (evlist_cpu_itr->affinity)
-			affinity__set(evlist_cpu_itr->affinity, evlist_cpu_itr->cpu.cpu);
-		evlist_cpu_itr->cpu_map_idx =
-			perf_cpu_map__idx(evlist_cpu_itr->evsel->core.cpus,
-					  evlist_cpu_itr->cpu);
-		/*
-		 * If this CPU isn't in the evsel's cpu map then advance through
-		 * the list.
-		 */
-		if (evlist_cpu_itr->cpu_map_idx == -1)
-			evlist_cpu_iterator__next(evlist_cpu_itr);
-	}
-}
-
-bool evlist_cpu_iterator__end(const struct evlist_cpu_iterator *evlist_cpu_itr)
-{
-	return evlist_cpu_itr->evlist_cpu_map_idx >= evlist_cpu_itr->evlist_cpu_map_nr;
-}
-
-static int evsel__strcmp(struct evsel *pos, char *evsel_name)
-{
-	if (!evsel_name)
-		return 0;
-	if (evsel__is_dummy_event(pos))
+	if (evsel->system_wide)
 		return 1;
-	return strcmp(pos->name, evsel_name);
-}
-
-static int evlist__is_enabled(struct evlist *evlist)
-{
-	struct evsel *pos;
-
-	evlist__for_each_entry(evlist, pos) {
-		if (!evsel__is_group_leader(pos) || !pos->core.fd)
-			continue;
-		/* If at least one event is enabled, evlist is enabled. */
-		if (!pos->disabled)
-			return true;
-	}
-	return false;
-}
-
-static void __evlist__disable(struct evlist *evlist, char *evsel_name, bool excl_dummy)
-{
-	struct evsel *pos;
-	struct evlist_cpu_iterator evlist_cpu_itr;
-	struct affinity saved_affinity, *affinity = NULL;
-	bool has_imm = false;
-
-	// See explanation in evlist__close()
-	if (!cpu_map__is_dummy(evlist->core.user_requested_cpus)) {
-		if (affinity__setup(&saved_affinity) < 0)
-			return;
-		affinity = &saved_affinity;
-	}
-
-	/* Disable 'immediate' events last */
-	for (int imm = 0; imm <= 1; imm++) {
-		evlist__for_each_cpu(evlist_cpu_itr, evlist, affinity) {
-			pos = evlist_cpu_itr.evsel;
-			if (evsel__strcmp(pos, evsel_name))
-				continue;
-			if (pos->disabled || !evsel__is_group_leader(pos) || !pos->core.fd)
-				continue;
-			if (excl_dummy && evsel__is_dummy_event(pos))
-				continue;
-			if (pos->immediate)
-				has_imm = true;
-			if (pos->immediate != imm)
-				continue;
-			evsel__disable_cpu(pos, evlist_cpu_itr.cpu_map_idx);
-		}
-		if (!has_imm)
-			break;
-	}
-
-	affinity__cleanup(affinity);
-	evlist__for_each_entry(evlist, pos) {
-		if (evsel__strcmp(pos, evsel_name))
-			continue;
-		if (!evsel__is_group_leader(pos) || !pos->core.fd)
-			continue;
-		if (excl_dummy && evsel__is_dummy_event(pos))
-			continue;
-		pos->disabled = true;
-	}
-
-	/*
-	 * If we disabled only single event, we need to check
-	 * the enabled state of the evlist manually.
-	 */
-	if (evsel_name)
-		evlist->enabled = evlist__is_enabled(evlist);
 	else
-		evlist->enabled = false;
+		return thread_map__nr(evlist->threads);
 }
 
-void evlist__disable(struct evlist *evlist)
+void perf_evlist__disable(struct perf_evlist *evlist)
 {
-	__evlist__disable(evlist, NULL, false);
-}
+	struct perf_evsel *pos;
 
-void evlist__disable_non_dummy(struct evlist *evlist)
-{
-	__evlist__disable(evlist, NULL, true);
-}
-
-void evlist__disable_evsel(struct evlist *evlist, char *evsel_name)
-{
-	__evlist__disable(evlist, evsel_name, false);
-}
-
-static void __evlist__enable(struct evlist *evlist, char *evsel_name, bool excl_dummy)
-{
-	struct evsel *pos;
-	struct evlist_cpu_iterator evlist_cpu_itr;
-	struct affinity saved_affinity, *affinity = NULL;
-
-	// See explanation in evlist__close()
-	if (!cpu_map__is_dummy(evlist->core.user_requested_cpus)) {
-		if (affinity__setup(&saved_affinity) < 0)
-			return;
-		affinity = &saved_affinity;
-	}
-
-	evlist__for_each_cpu(evlist_cpu_itr, evlist, affinity) {
-		pos = evlist_cpu_itr.evsel;
-		if (evsel__strcmp(pos, evsel_name))
-			continue;
-		if (!evsel__is_group_leader(pos) || !pos->core.fd)
-			continue;
-		if (excl_dummy && evsel__is_dummy_event(pos))
-			continue;
-		evsel__enable_cpu(pos, evlist_cpu_itr.cpu_map_idx);
-	}
-	affinity__cleanup(affinity);
 	evlist__for_each_entry(evlist, pos) {
-		if (evsel__strcmp(pos, evsel_name))
+		if (!perf_evsel__is_group_leader(pos) || !pos->fd)
 			continue;
-		if (!evsel__is_group_leader(pos) || !pos->core.fd)
-			continue;
-		if (excl_dummy && evsel__is_dummy_event(pos))
-			continue;
-		pos->disabled = false;
+		perf_evsel__disable(pos);
 	}
 
-	/*
-	 * Even single event sets the 'enabled' for evlist,
-	 * so the toggle can work properly and toggle to
-	 * 'disabled' state.
-	 */
+	evlist->enabled = false;
+}
+
+void perf_evlist__enable(struct perf_evlist *evlist)
+{
+	struct perf_evsel *pos;
+
+	evlist__for_each_entry(evlist, pos) {
+		if (!perf_evsel__is_group_leader(pos) || !pos->fd)
+			continue;
+		perf_evsel__enable(pos);
+	}
+
 	evlist->enabled = true;
 }
 
-void evlist__enable(struct evlist *evlist)
+void perf_evlist__toggle_enable(struct perf_evlist *evlist)
 {
-	__evlist__enable(evlist, NULL, false);
+	(evlist->enabled ? perf_evlist__disable : perf_evlist__enable)(evlist);
 }
 
-void evlist__enable_non_dummy(struct evlist *evlist)
+static int perf_evlist__enable_event_cpu(struct perf_evlist *evlist,
+					 struct perf_evsel *evsel, int cpu)
 {
-	__evlist__enable(evlist, NULL, true);
+	int thread;
+	int nr_threads = perf_evlist__nr_threads(evlist, evsel);
+
+	if (!evsel->fd)
+		return -EINVAL;
+
+	for (thread = 0; thread < nr_threads; thread++) {
+		int err = ioctl(FD(evsel, cpu, thread), PERF_EVENT_IOC_ENABLE, 0);
+		if (err)
+			return err;
+	}
+	return 0;
 }
 
-void evlist__enable_evsel(struct evlist *evlist, char *evsel_name)
+static int perf_evlist__enable_event_thread(struct perf_evlist *evlist,
+					    struct perf_evsel *evsel,
+					    int thread)
 {
-	__evlist__enable(evlist, evsel_name, false);
+	int cpu;
+	int nr_cpus = cpu_map__nr(evlist->cpus);
+
+	if (!evsel->fd)
+		return -EINVAL;
+
+	for (cpu = 0; cpu < nr_cpus; cpu++) {
+		int err = ioctl(FD(evsel, cpu, thread), PERF_EVENT_IOC_ENABLE, 0);
+		if (err)
+			return err;
+	}
+	return 0;
 }
 
-void evlist__toggle_enable(struct evlist *evlist)
+int perf_evlist__enable_event_idx(struct perf_evlist *evlist,
+				  struct perf_evsel *evsel, int idx)
 {
-	(evlist->enabled ? evlist__disable : evlist__enable)(evlist);
+	bool per_cpu_mmaps = !cpu_map__empty(evlist->cpus);
+
+	if (per_cpu_mmaps)
+		return perf_evlist__enable_event_cpu(evlist, evsel, idx);
+	else
+		return perf_evlist__enable_event_thread(evlist, evsel, idx);
 }
 
-int evlist__add_pollfd(struct evlist *evlist, int fd)
+int perf_evlist__alloc_pollfd(struct perf_evlist *evlist)
 {
-	return perf_evlist__add_pollfd(&evlist->core, fd, NULL, POLLIN, fdarray_flag__default);
+	int nr_cpus = cpu_map__nr(evlist->cpus);
+	int nr_threads = thread_map__nr(evlist->threads);
+	int nfds = 0;
+	struct perf_evsel *evsel;
+
+	evlist__for_each_entry(evlist, evsel) {
+		if (evsel->system_wide)
+			nfds += nr_cpus;
+		else
+			nfds += nr_cpus * nr_threads;
+	}
+
+	if (fdarray__available_entries(&evlist->pollfd) < nfds &&
+	    fdarray__grow(&evlist->pollfd, nfds) < 0)
+		return -ENOMEM;
+
+	return 0;
 }
 
-int evlist__filter_pollfd(struct evlist *evlist, short revents_and_mask)
+static int __perf_evlist__add_pollfd(struct perf_evlist *evlist, int fd,
+				     struct perf_mmap *map, short revent)
 {
-	return perf_evlist__filter_pollfd(&evlist->core, revents_and_mask);
+	int pos = fdarray__add(&evlist->pollfd, fd, revent | POLLERR | POLLHUP);
+	/*
+	 * Save the idx so that when we filter out fds POLLHUP'ed we can
+	 * close the associated evlist->mmap[] entry.
+	 */
+	if (pos >= 0) {
+		evlist->pollfd.priv[pos].ptr = map;
+
+		fcntl(fd, F_SETFL, O_NONBLOCK);
+	}
+
+	return pos;
 }
 
-#ifdef HAVE_EVENTFD_SUPPORT
-int evlist__add_wakeup_eventfd(struct evlist *evlist, int fd)
+int perf_evlist__add_pollfd(struct perf_evlist *evlist, int fd)
 {
-	return perf_evlist__add_pollfd(&evlist->core, fd, NULL, POLLIN,
-				       fdarray_flag__nonfilterable |
-				       fdarray_flag__non_perf_event);
-}
-#endif
-
-int evlist__poll(struct evlist *evlist, int timeout)
-{
-	return perf_evlist__poll(&evlist->core, timeout);
+	return __perf_evlist__add_pollfd(evlist, fd, NULL, POLLIN);
 }
 
-struct perf_sample_id *evlist__id2sid(struct evlist *evlist, u64 id)
+static void perf_evlist__munmap_filtered(struct fdarray *fda, int fd,
+					 void *arg __maybe_unused)
+{
+	struct perf_mmap *map = fda->priv[fd].ptr;
+
+	if (map)
+		perf_mmap__put(map);
+}
+
+int perf_evlist__filter_pollfd(struct perf_evlist *evlist, short revents_and_mask)
+{
+	return fdarray__filter(&evlist->pollfd, revents_and_mask,
+			       perf_evlist__munmap_filtered, NULL);
+}
+
+int perf_evlist__poll(struct perf_evlist *evlist, int timeout)
+{
+	return fdarray__poll(&evlist->pollfd, timeout);
+}
+
+static void perf_evlist__id_hash(struct perf_evlist *evlist,
+				 struct perf_evsel *evsel,
+				 int cpu, int thread, u64 id)
+{
+	int hash;
+	struct perf_sample_id *sid = SID(evsel, cpu, thread);
+
+	sid->id = id;
+	sid->evsel = evsel;
+	hash = hash_64(sid->id, PERF_EVLIST__HLIST_BITS);
+	hlist_add_head(&sid->node, &evlist->heads[hash]);
+}
+
+void perf_evlist__id_add(struct perf_evlist *evlist, struct perf_evsel *evsel,
+			 int cpu, int thread, u64 id)
+{
+	perf_evlist__id_hash(evlist, evsel, cpu, thread, id);
+	evsel->id[evsel->ids++] = id;
+}
+
+int perf_evlist__id_add_fd(struct perf_evlist *evlist,
+			   struct perf_evsel *evsel,
+			   int cpu, int thread, int fd)
+{
+	u64 read_data[4] = { 0, };
+	int id_idx = 1; /* The first entry is the counter value */
+	u64 id;
+	int ret;
+
+	ret = ioctl(fd, PERF_EVENT_IOC_ID, &id);
+	if (!ret)
+		goto add;
+
+	if (errno != ENOTTY)
+		return -1;
+
+	/* Legacy way to get event id.. All hail to old kernels! */
+
+	/*
+	 * This way does not work with group format read, so bail
+	 * out in that case.
+	 */
+	if (perf_evlist__read_format(evlist) & PERF_FORMAT_GROUP)
+		return -1;
+
+	if (!(evsel->attr.read_format & PERF_FORMAT_ID) ||
+	    read(fd, &read_data, sizeof(read_data)) == -1)
+		return -1;
+
+	if (evsel->attr.read_format & PERF_FORMAT_TOTAL_TIME_ENABLED)
+		++id_idx;
+	if (evsel->attr.read_format & PERF_FORMAT_TOTAL_TIME_RUNNING)
+		++id_idx;
+
+	id = read_data[id_idx];
+
+ add:
+	perf_evlist__id_add(evlist, evsel, cpu, thread, id);
+	return 0;
+}
+
+static void perf_evlist__set_sid_idx(struct perf_evlist *evlist,
+				     struct perf_evsel *evsel, int idx, int cpu,
+				     int thread)
+{
+	struct perf_sample_id *sid = SID(evsel, cpu, thread);
+	sid->idx = idx;
+	if (evlist->cpus && cpu >= 0)
+		sid->cpu = evlist->cpus->map[cpu];
+	else
+		sid->cpu = -1;
+	if (!evsel->system_wide && evlist->threads && thread >= 0)
+		sid->tid = thread_map__pid(evlist->threads, thread);
+	else
+		sid->tid = -1;
+}
+
+struct perf_sample_id *perf_evlist__id2sid(struct perf_evlist *evlist, u64 id)
 {
 	struct hlist_head *head;
 	struct perf_sample_id *sid;
 	int hash;
 
 	hash = hash_64(id, PERF_EVLIST__HLIST_BITS);
-	head = &evlist->core.heads[hash];
+	head = &evlist->heads[hash];
 
 	hlist_for_each_entry(sid, head, node)
 		if (sid->id == id)
@@ -648,40 +586,42 @@ struct perf_sample_id *evlist__id2sid(struct evlist *evlist, u64 id)
 	return NULL;
 }
 
-struct evsel *evlist__id2evsel(struct evlist *evlist, u64 id)
+struct perf_evsel *perf_evlist__id2evsel(struct perf_evlist *evlist, u64 id)
 {
 	struct perf_sample_id *sid;
 
-	if (evlist->core.nr_entries == 1 || !id)
-		return evlist__first(evlist);
+	if (evlist->nr_entries == 1 || !id)
+		return perf_evlist__first(evlist);
 
-	sid = evlist__id2sid(evlist, id);
+	sid = perf_evlist__id2sid(evlist, id);
 	if (sid)
-		return container_of(sid->evsel, struct evsel, core);
+		return sid->evsel;
 
-	if (!evlist__sample_id_all(evlist))
-		return evlist__first(evlist);
+	if (!perf_evlist__sample_id_all(evlist))
+		return perf_evlist__first(evlist);
 
 	return NULL;
 }
 
-struct evsel *evlist__id2evsel_strict(struct evlist *evlist, u64 id)
+struct perf_evsel *perf_evlist__id2evsel_strict(struct perf_evlist *evlist,
+						u64 id)
 {
 	struct perf_sample_id *sid;
 
 	if (!id)
 		return NULL;
 
-	sid = evlist__id2sid(evlist, id);
+	sid = perf_evlist__id2sid(evlist, id);
 	if (sid)
-		return container_of(sid->evsel, struct evsel, core);
+		return sid->evsel;
 
 	return NULL;
 }
 
-static int evlist__event2id(struct evlist *evlist, union perf_event *event, u64 *id)
+static int perf_evlist__event2id(struct perf_evlist *evlist,
+				 union perf_event *event, u64 *id)
 {
-	const __u64 *array = event->sample.array;
+	const u64 *array = event->sample.array;
 	ssize_t n;
 
 	n = (event->header.size - sizeof(event->header)) >> 3;
@@ -699,22 +639,23 @@ static int evlist__event2id(struct evlist *evlist, union perf_event *event, u64 
 	return 0;
 }
 
-struct evsel *evlist__event2evsel(struct evlist *evlist, union perf_event *event)
+struct perf_evsel *perf_evlist__event2evsel(struct perf_evlist *evlist,
+					    union perf_event *event)
 {
-	struct evsel *first = evlist__first(evlist);
+	struct perf_evsel *first = perf_evlist__first(evlist);
 	struct hlist_head *head;
 	struct perf_sample_id *sid;
 	int hash;
 	u64 id;
 
-	if (evlist->core.nr_entries == 1)
+	if (evlist->nr_entries == 1)
 		return first;
 
-	if (!first->core.attr.sample_id_all &&
+	if (!first->attr.sample_id_all &&
 	    event->header.type != PERF_RECORD_SAMPLE)
 		return first;
 
-	if (evlist__event2id(evlist, event, &id))
+	if (perf_evlist__event2id(evlist, event, &id))
 		return NULL;
 
 	/* Synthesized events have an id of zero */
@@ -722,24 +663,24 @@ struct evsel *evlist__event2evsel(struct evlist *evlist, union perf_event *event
 		return first;
 
 	hash = hash_64(id, PERF_EVLIST__HLIST_BITS);
-	head = &evlist->core.heads[hash];
+	head = &evlist->heads[hash];
 
 	hlist_for_each_entry(sid, head, node) {
 		if (sid->id == id)
-			return container_of(sid->evsel, struct evsel, core);
+			return sid->evsel;
 	}
 	return NULL;
 }
 
-static int evlist__set_paused(struct evlist *evlist, bool value)
+static int perf_evlist__set_paused(struct perf_evlist *evlist, bool value)
 {
 	int i;
 
 	if (!evlist->overwrite_mmap)
 		return 0;
 
-	for (i = 0; i < evlist->core.nr_mmaps; i++) {
-		int fd = evlist->overwrite_mmap[i].core.fd;
+	for (i = 0; i < evlist->nr_mmaps; i++) {
+		int fd = evlist->overwrite_mmap[i].fd;
 		int err;
 
 		if (fd < 0)
@@ -751,56 +692,52 @@ static int evlist__set_paused(struct evlist *evlist, bool value)
 	return 0;
 }
 
-static int evlist__pause(struct evlist *evlist)
+static int perf_evlist__pause(struct perf_evlist *evlist)
 {
-	return evlist__set_paused(evlist, true);
+	return perf_evlist__set_paused(evlist, true);
 }
 
-static int evlist__resume(struct evlist *evlist)
+static int perf_evlist__resume(struct perf_evlist *evlist)
 {
-	return evlist__set_paused(evlist, false);
+	return perf_evlist__set_paused(evlist, false);
 }
 
-static void evlist__munmap_nofree(struct evlist *evlist)
+static void perf_evlist__munmap_nofree(struct perf_evlist *evlist)
 {
 	int i;
 
 	if (evlist->mmap)
-		for (i = 0; i < evlist->core.nr_mmaps; i++)
-			perf_mmap__munmap(&evlist->mmap[i].core);
+		for (i = 0; i < evlist->nr_mmaps; i++)
+			perf_mmap__munmap(&evlist->mmap[i]);
 
 	if (evlist->overwrite_mmap)
-		for (i = 0; i < evlist->core.nr_mmaps; i++)
-			perf_mmap__munmap(&evlist->overwrite_mmap[i].core);
+		for (i = 0; i < evlist->nr_mmaps; i++)
+			perf_mmap__munmap(&evlist->overwrite_mmap[i]);
 }
 
-void evlist__munmap(struct evlist *evlist)
+void perf_evlist__munmap(struct perf_evlist *evlist)
 {
-	evlist__munmap_nofree(evlist);
+	perf_evlist__munmap_nofree(evlist);
 	zfree(&evlist->mmap);
 	zfree(&evlist->overwrite_mmap);
 }
 
-static void perf_mmap__unmap_cb(struct perf_mmap *map)
-{
-	struct mmap *m = container_of(map, struct mmap, core);
-
-	mmap__munmap(m);
-}
-
-static struct mmap *evlist__alloc_mmap(struct evlist *evlist,
-				       bool overwrite)
+static struct perf_mmap *perf_evlist__alloc_mmap(struct perf_evlist *evlist,
+						 bool overwrite)
 {
 	int i;
-	struct mmap *map;
+	struct perf_mmap *map;
 
-	map = zalloc(evlist->core.nr_mmaps * sizeof(struct mmap));
+	evlist->nr_mmaps = cpu_map__nr(evlist->cpus);
+	if (cpu_map__empty(evlist->cpus))
+		evlist->nr_mmaps = thread_map__nr(evlist->threads);
+	map = zalloc(evlist->nr_mmaps * sizeof(struct perf_mmap));
 	if (!map)
 		return NULL;
 
-	for (i = 0; i < evlist->core.nr_mmaps; i++) {
-		struct perf_mmap *prev = i ? &map[i - 1].core : NULL;
-
+	for (i = 0; i < evlist->nr_mmaps; i++) {
+		map[i].fd = -1;
+		map[i].overwrite = overwrite;
 		/*
 		 * When the perf_mmap() call is made we grab one refcount, plus
 		 * one extra to let perf_mmap__consume() get the last
@@ -810,58 +747,151 @@ static struct mmap *evlist__alloc_mmap(struct evlist *evlist,
 		 * Each PERF_EVENT_IOC_SET_OUTPUT points to this mmap and
 		 * thus does perf_mmap__get() on it.
 		 */
-		perf_mmap__init(&map[i].core, prev, overwrite, perf_mmap__unmap_cb);
+		refcount_set(&map[i].refcnt, 0);
 	}
-
 	return map;
 }
 
-static void
-perf_evlist__mmap_cb_idx(struct perf_evlist *_evlist,
-			 struct perf_evsel *_evsel,
-			 struct perf_mmap_param *_mp,
-			 int idx)
+static bool
+perf_evlist__should_poll(struct perf_evlist *evlist __maybe_unused,
+			 struct perf_evsel *evsel)
 {
-	struct evlist *evlist = container_of(_evlist, struct evlist, core);
-	struct mmap_params *mp = container_of(_mp, struct mmap_params, core);
-	struct evsel *evsel = container_of(_evsel, struct evsel, core);
-
-	auxtrace_mmap_params__set_idx(&mp->auxtrace_mp, evlist, evsel, idx);
+	if (evsel->attr.write_backward)
+		return false;
+	return true;
 }
 
-static struct perf_mmap*
-perf_evlist__mmap_cb_get(struct perf_evlist *_evlist, bool overwrite, int idx)
+static int perf_evlist__mmap_per_evsel(struct perf_evlist *evlist, int idx,
+				       struct mmap_params *mp, int cpu_idx,
+				       int thread, int *_output, int *_output_overwrite)
 {
-	struct evlist *evlist = container_of(_evlist, struct evlist, core);
-	struct mmap *maps;
+	struct perf_evsel *evsel;
+	int revent;
+	int evlist_cpu = cpu_map__cpu(evlist->cpus, cpu_idx);
 
-	maps = overwrite ? evlist->overwrite_mmap : evlist->mmap;
+	evlist__for_each_entry(evlist, evsel) {
+		struct perf_mmap *maps = evlist->mmap;
+		int *output = _output;
+		int fd;
+		int cpu;
 
-	if (!maps) {
-		maps = evlist__alloc_mmap(evlist, overwrite);
-		if (!maps)
-			return NULL;
+		mp->prot = PROT_READ | PROT_WRITE;
+		if (evsel->attr.write_backward) {
+			output = _output_overwrite;
+			maps = evlist->overwrite_mmap;
 
-		if (overwrite) {
-			evlist->overwrite_mmap = maps;
-			if (evlist->bkw_mmap_state == BKW_MMAP_NOTREADY)
-				evlist__toggle_bkw_mmap(evlist, BKW_MMAP_RUNNING);
+			if (!maps) {
+				maps = perf_evlist__alloc_mmap(evlist, true);
+				if (!maps)
+					return -1;
+				evlist->overwrite_mmap = maps;
+				if (evlist->bkw_mmap_state == BKW_MMAP_NOTREADY)
+					perf_evlist__toggle_bkw_mmap(evlist, BKW_MMAP_RUNNING);
+			}
+			mp->prot &= ~PROT_WRITE;
+		}
+
+		if (evsel->system_wide && thread)
+			continue;
+
+		cpu = cpu_map__idx(evsel->cpus, evlist_cpu);
+		if (cpu == -1)
+			continue;
+
+		fd = FD(evsel, cpu, thread);
+
+		if (*output == -1) {
+			*output = fd;
+
+			if (perf_mmap__mmap(&maps[idx], mp, *output)  < 0)
+				return -1;
 		} else {
-			evlist->mmap = maps;
+			if (ioctl(fd, PERF_EVENT_IOC_SET_OUTPUT, *output) != 0)
+				return -1;
+
+			perf_mmap__get(&maps[idx]);
+		}
+
+		revent = perf_evlist__should_poll(evlist, evsel) ? POLLIN : 0;
+
+		/*
+		 * The system_wide flag causes a selected event to be opened
+		 * always without a pid.  Consequently it will never get a
+		 * POLLHUP, but it is used for tracking in combination with
+		 * other events, so it should not need to be polled anyway.
+		 * Therefore don't add it for polling.
+		 */
+		if (!evsel->system_wide &&
+		    __perf_evlist__add_pollfd(evlist, fd, &maps[idx], revent) < 0) {
+			perf_mmap__put(&maps[idx]);
+			return -1;
+		}
+
+		if (evsel->attr.read_format & PERF_FORMAT_ID) {
+			if (perf_evlist__id_add_fd(evlist, evsel, cpu, thread,
+						   fd) < 0)
+				return -1;
+			perf_evlist__set_sid_idx(evlist, evsel, idx, cpu,
+						 thread);
 		}
 	}
 
-	return &maps[idx].core;
+	return 0;
 }
 
-static int
-perf_evlist__mmap_cb_mmap(struct perf_mmap *_map, struct perf_mmap_param *_mp,
-			  int output, struct perf_cpu cpu)
+static int perf_evlist__mmap_per_cpu(struct perf_evlist *evlist,
+				     struct mmap_params *mp)
 {
-	struct mmap *map = container_of(_map, struct mmap, core);
-	struct mmap_params *mp = container_of(_mp, struct mmap_params, core);
+	int cpu, thread;
+	int nr_cpus = cpu_map__nr(evlist->cpus);
+	int nr_threads = thread_map__nr(evlist->threads);
 
-	return mmap__mmap(map, mp, output, cpu);
+	pr_debug2("perf event ring buffer mmapped per cpu\n");
+	for (cpu = 0; cpu < nr_cpus; cpu++) {
+		int output = -1;
+		int output_overwrite = -1;
+
+		auxtrace_mmap_params__set_idx(&mp->auxtrace_mp, evlist, cpu,
+					      true);
+
+		for (thread = 0; thread < nr_threads; thread++) {
+			if (perf_evlist__mmap_per_evsel(evlist, cpu, mp, cpu,
+							thread, &output, &output_overwrite))
+				goto out_unmap;
+		}
+	}
+
+	return 0;
+
+out_unmap:
+	perf_evlist__munmap_nofree(evlist);
+	return -1;
+}
+
+static int perf_evlist__mmap_per_thread(struct perf_evlist *evlist,
+					struct mmap_params *mp)
+{
+	int thread;
+	int nr_threads = thread_map__nr(evlist->threads);
+
+	pr_debug2("perf event ring buffer mmapped per thread\n");
+	for (thread = 0; thread < nr_threads; thread++) {
+		int output = -1;
+		int output_overwrite = -1;
+
+		auxtrace_mmap_params__set_idx(&mp->auxtrace_mp, evlist, thread,
+					      false);
+
+		if (perf_evlist__mmap_per_evsel(evlist, thread, mp, 0, thread,
+						&output, &output_overwrite))
+			goto out_unmap;
+	}
+
+	return 0;
+
+out_unmap:
+	perf_evlist__munmap_nofree(evlist);
+	return -1;
 }
 
 unsigned long perf_event_mlock_kb_in_pages(void)
@@ -887,7 +917,7 @@ unsigned long perf_event_mlock_kb_in_pages(void)
 	return pages;
 }
 
-size_t evlist__mmap_size(unsigned long pages)
+size_t perf_evlist__mmap_size(unsigned long pages)
 {
 	if (pages == UINT_MAX)
 		pages = perf_event_mlock_kb_in_pages();
@@ -945,7 +975,7 @@ static long parse_pages_arg(const char *str, unsigned long min,
 	return pages;
 }
 
-int __evlist__parse_mmap_pages(unsigned int *mmap_pages, const char *str)
+int __perf_evlist__parse_mmap_pages(unsigned int *mmap_pages, const char *str)
 {
 	unsigned long max = UINT_MAX;
 	long pages;
@@ -963,13 +993,14 @@ int __evlist__parse_mmap_pages(unsigned int *mmap_pages, const char *str)
 	return 0;
 }
 
-int evlist__parse_mmap_pages(const struct option *opt, const char *str, int unset __maybe_unused)
+int perf_evlist__parse_mmap_pages(const struct option *opt, const char *str,
+				  int unset __maybe_unused)
 {
-	return __evlist__parse_mmap_pages(opt->value, str);
+	return __perf_evlist__parse_mmap_pages(opt->value, str);
 }
 
 /**
- * evlist__mmap_ex - Create mmaps to receive events.
+ * perf_evlist__mmap_ex - Create mmaps to receive events.
  * @evlist: list of events
  * @pages: map length in pages
  * @overwrite: overwrite older events?
@@ -977,7 +1008,7 @@ int evlist__parse_mmap_pages(const struct option *opt, const char *str, int unse
  * @auxtrace_overwrite - overwrite older auxtrace data?
  *
  * If @overwrite is %false the user needs to signal event consumption using
- * perf_mmap__write_tail().  Using evlist__mmap_read() does this
+ * perf_mmap__write_tail().  Using perf_evlist__mmap_read() does this
  * automatically.
  *
  * Similarly, if @auxtrace_overwrite is %false the user needs to signal data
@@ -985,47 +1016,58 @@ int evlist__parse_mmap_pages(const struct option *opt, const char *str, int unse
  *
  * Return: %0 on success, negative error code otherwise.
  */
-int evlist__mmap_ex(struct evlist *evlist, unsigned int pages,
+int perf_evlist__mmap_ex(struct perf_evlist *evlist, unsigned int pages,
 			 unsigned int auxtrace_pages,
-			 bool auxtrace_overwrite, int nr_cblocks, int affinity, int flush,
-			 int comp_level)
+			 bool auxtrace_overwrite)
 {
+	struct perf_evsel *evsel;
+	const struct cpu_map *cpus = evlist->cpus;
+	const struct thread_map *threads = evlist->threads;
 	/*
 	 * Delay setting mp.prot: set it before calling perf_mmap__mmap.
 	 * Its value is decided by evsel's write_backward.
 	 * So &mp should not be passed through const pointer.
 	 */
-	struct mmap_params mp = {
-		.nr_cblocks	= nr_cblocks,
-		.affinity	= affinity,
-		.flush		= flush,
-		.comp_level	= comp_level
-	};
-	struct perf_evlist_mmap_ops ops = {
-		.idx  = perf_evlist__mmap_cb_idx,
-		.get  = perf_evlist__mmap_cb_get,
-		.mmap = perf_evlist__mmap_cb_mmap,
-	};
+	struct mmap_params mp;
 
-	evlist->core.mmap_len = evlist__mmap_size(pages);
-	pr_debug("mmap size %zuB\n", evlist->core.mmap_len);
+	if (!evlist->mmap)
+		evlist->mmap = perf_evlist__alloc_mmap(evlist, false);
+	if (!evlist->mmap)
+		return -ENOMEM;
 
-	auxtrace_mmap_params__init(&mp.auxtrace_mp, evlist->core.mmap_len,
+	if (evlist->pollfd.entries == NULL && perf_evlist__alloc_pollfd(evlist) < 0)
+		return -ENOMEM;
+
+	evlist->mmap_len = perf_evlist__mmap_size(pages);
+	pr_debug("mmap size %zuB\n", evlist->mmap_len);
+	mp.mask = evlist->mmap_len - page_size - 1;
+
+	auxtrace_mmap_params__init(&mp.auxtrace_mp, evlist->mmap_len,
 				   auxtrace_pages, auxtrace_overwrite);
 
-	return perf_evlist__mmap_ops(&evlist->core, &ops, &mp.core);
+	evlist__for_each_entry(evlist, evsel) {
+		if ((evsel->attr.read_format & PERF_FORMAT_ID) &&
+		    evsel->sample_id == NULL &&
+		    perf_evsel__alloc_id(evsel, cpu_map__nr(cpus), threads->nr) < 0)
+			return -ENOMEM;
+	}
+
+	if (cpu_map__empty(cpus))
+		return perf_evlist__mmap_per_thread(evlist, &mp);
+
+	return perf_evlist__mmap_per_cpu(evlist, &mp);
 }
 
-int evlist__mmap(struct evlist *evlist, unsigned int pages)
+int perf_evlist__mmap(struct perf_evlist *evlist, unsigned int pages)
 {
-	return evlist__mmap_ex(evlist, pages, 0, false, 0, PERF_AFFINITY_SYS, 1, 0);
+	return perf_evlist__mmap_ex(evlist, pages, 0, false);
 }
 
-int evlist__create_maps(struct evlist *evlist, struct target *target)
+int perf_evlist__create_maps(struct perf_evlist *evlist, struct target *target)
 {
 	bool all_threads = (target->per_thread && target->system_wide);
-	struct perf_cpu_map *cpus;
-	struct perf_thread_map *threads;
+	struct cpu_map *cpus;
+	struct thread_map *threads;
 
 	/*
 	 * If specify '-a' and '--per-thread' to perf record, perf record
@@ -1052,31 +1094,68 @@ int evlist__create_maps(struct evlist *evlist, struct target *target)
 		return -1;
 
 	if (target__uses_dummy_map(target))
-		cpus = perf_cpu_map__dummy_new();
+		cpus = cpu_map__dummy_new();
 	else
-		cpus = perf_cpu_map__new(target->cpu_list);
+		cpus = cpu_map__new(target->cpu_list);
 
 	if (!cpus)
 		goto out_delete_threads;
 
-	evlist->core.has_user_cpus = !!target->cpu_list && !target->hybrid;
+	evlist->has_user_cpus = !!target->cpu_list;
 
-	perf_evlist__set_maps(&evlist->core, cpus, threads);
-
-	/* as evlist now has references, put count here */
-	perf_cpu_map__put(cpus);
-	perf_thread_map__put(threads);
+	perf_evlist__set_maps(evlist, cpus, threads);
 
 	return 0;
 
 out_delete_threads:
-	perf_thread_map__put(threads);
+	thread_map__put(threads);
 	return -1;
 }
 
-int evlist__apply_filters(struct evlist *evlist, struct evsel **err_evsel)
+void perf_evlist__set_maps(struct perf_evlist *evlist, struct cpu_map *cpus,
+			   struct thread_map *threads)
 {
-	struct evsel *evsel;
+	/*
+	 * Allow for the possibility that one or another of the maps isn't being
+	 * changed i.e. don't put it.  Note we are assuming the maps that are
+	 * being applied are brand new and evlist is taking ownership of the
+	 * original reference count of 1.  If that is not the case it is up to
+	 * the caller to increase the reference count.
+	 */
+	if (cpus != evlist->cpus) {
+		cpu_map__put(evlist->cpus);
+		evlist->cpus = cpu_map__get(cpus);
+	}
+
+	if (threads != evlist->threads) {
+		thread_map__put(evlist->threads);
+		evlist->threads = thread_map__get(threads);
+	}
+
+	perf_evlist__propagate_maps(evlist);
+}
+
+void __perf_evlist__set_sample_bit(struct perf_evlist *evlist,
+				   enum perf_event_sample_format bit)
+{
+	struct perf_evsel *evsel;
+
+	evlist__for_each_entry(evlist, evsel)
+		__perf_evsel__set_sample_bit(evsel, bit);
+}
+
+void __perf_evlist__reset_sample_bit(struct perf_evlist *evlist,
+				     enum perf_event_sample_format bit)
+{
+	struct perf_evsel *evsel;
+
+	evlist__for_each_entry(evlist, evsel)
+		__perf_evsel__reset_sample_bit(evsel, bit);
+}
+
+int perf_evlist__apply_filters(struct perf_evlist *evlist, struct perf_evsel **err_evsel)
+{
+	struct perf_evsel *evsel;
 	int err = 0;
 
 	evlist__for_each_entry(evlist, evsel) {
@@ -1087,7 +1166,7 @@ int evlist__apply_filters(struct evlist *evlist, struct evsel **err_evsel)
 		 * filters only work for tracepoint event, which doesn't have cpu limit.
 		 * So evlist and evsel should always be same.
 		 */
-		err = perf_evsel__apply_filter(&evsel->core, evsel->filter);
+		err = perf_evsel__apply_filter(evsel, evsel->filter);
 		if (err) {
 			*err_evsel = evsel;
 			break;
@@ -1097,19 +1176,16 @@ int evlist__apply_filters(struct evlist *evlist, struct evsel **err_evsel)
 	return err;
 }
 
-int evlist__set_tp_filter(struct evlist *evlist, const char *filter)
+int perf_evlist__set_filter(struct perf_evlist *evlist, const char *filter)
 {
-	struct evsel *evsel;
+	struct perf_evsel *evsel;
 	int err = 0;
 
-	if (filter == NULL)
-		return -1;
-
 	evlist__for_each_entry(evlist, evsel) {
-		if (evsel->core.attr.type != PERF_TYPE_TRACEPOINT)
+		if (evsel->attr.type != PERF_TYPE_TRACEPOINT)
 			continue;
 
-		err = evsel__set_filter(evsel, filter);
+		err = perf_evsel__set_filter(evsel, filter);
 		if (err)
 			break;
 	}
@@ -1117,35 +1193,16 @@ int evlist__set_tp_filter(struct evlist *evlist, const char *filter)
 	return err;
 }
 
-int evlist__append_tp_filter(struct evlist *evlist, const char *filter)
-{
-	struct evsel *evsel;
-	int err = 0;
-
-	if (filter == NULL)
-		return -1;
-
-	evlist__for_each_entry(evlist, evsel) {
-		if (evsel->core.attr.type != PERF_TYPE_TRACEPOINT)
-			continue;
-
-		err = evsel__append_tp_filter(evsel, filter);
-		if (err)
-			break;
-	}
-
-	return err;
-}
-
-char *asprintf__tp_filter_pids(size_t npids, pid_t *pids)
+int perf_evlist__set_filter_pids(struct perf_evlist *evlist, size_t npids, pid_t *pids)
 {
 	char *filter;
+	int ret = -1;
 	size_t i;
 
 	for (i = 0; i < npids; ++i) {
 		if (i == 0) {
 			if (asprintf(&filter, "common_pid != %d", pids[i]) < 0)
-				return NULL;
+				return -1;
 		} else {
 			char *tmp;
 
@@ -1157,45 +1214,22 @@ char *asprintf__tp_filter_pids(size_t npids, pid_t *pids)
 		}
 	}
 
-	return filter;
+	ret = perf_evlist__set_filter(evlist, filter);
 out_free:
 	free(filter);
-	return NULL;
-}
-
-int evlist__set_tp_filter_pids(struct evlist *evlist, size_t npids, pid_t *pids)
-{
-	char *filter = asprintf__tp_filter_pids(npids, pids);
-	int ret = evlist__set_tp_filter(evlist, filter);
-
-	free(filter);
 	return ret;
 }
 
-int evlist__set_tp_filter_pid(struct evlist *evlist, pid_t pid)
+int perf_evlist__set_filter_pid(struct perf_evlist *evlist, pid_t pid)
 {
-	return evlist__set_tp_filter_pids(evlist, 1, &pid);
+	return perf_evlist__set_filter_pids(evlist, 1, &pid);
 }
 
-int evlist__append_tp_filter_pids(struct evlist *evlist, size_t npids, pid_t *pids)
+bool perf_evlist__valid_sample_type(struct perf_evlist *evlist)
 {
-	char *filter = asprintf__tp_filter_pids(npids, pids);
-	int ret = evlist__append_tp_filter(evlist, filter);
+	struct perf_evsel *pos;
 
-	free(filter);
-	return ret;
-}
-
-int evlist__append_tp_filter_pid(struct evlist *evlist, pid_t pid)
-{
-	return evlist__append_tp_filter_pids(evlist, 1, &pid);
-}
-
-bool evlist__valid_sample_type(struct evlist *evlist)
-{
-	struct evsel *pos;
-
-	if (evlist->core.nr_entries == 1)
+	if (evlist->nr_entries == 1)
 		return true;
 
 	if (evlist->id_pos < 0 || evlist->is_pos < 0)
@@ -1210,49 +1244,47 @@ bool evlist__valid_sample_type(struct evlist *evlist)
 	return true;
 }
 
-u64 __evlist__combined_sample_type(struct evlist *evlist)
+u64 __perf_evlist__combined_sample_type(struct perf_evlist *evlist)
 {
-	struct evsel *evsel;
+	struct perf_evsel *evsel;
 
 	if (evlist->combined_sample_type)
 		return evlist->combined_sample_type;
 
 	evlist__for_each_entry(evlist, evsel)
-		evlist->combined_sample_type |= evsel->core.attr.sample_type;
+		evlist->combined_sample_type |= evsel->attr.sample_type;
 
 	return evlist->combined_sample_type;
 }
 
-u64 evlist__combined_sample_type(struct evlist *evlist)
+u64 perf_evlist__combined_sample_type(struct perf_evlist *evlist)
 {
 	evlist->combined_sample_type = 0;
-	return __evlist__combined_sample_type(evlist);
+	return __perf_evlist__combined_sample_type(evlist);
 }
 
-u64 evlist__combined_branch_type(struct evlist *evlist)
+u64 perf_evlist__combined_branch_type(struct perf_evlist *evlist)
 {
-	struct evsel *evsel;
+	struct perf_evsel *evsel;
 	u64 branch_type = 0;
 
 	evlist__for_each_entry(evlist, evsel)
-		branch_type |= evsel->core.attr.branch_sample_type;
+		branch_type |= evsel->attr.branch_sample_type;
 	return branch_type;
 }
 
-bool evlist__valid_read_format(struct evlist *evlist)
+bool perf_evlist__valid_read_format(struct perf_evlist *evlist)
 {
-	struct evsel *first = evlist__first(evlist), *pos = first;
-	u64 read_format = first->core.attr.read_format;
-	u64 sample_type = first->core.attr.sample_type;
+	struct perf_evsel *first = perf_evlist__first(evlist), *pos = first;
+	u64 read_format = first->attr.read_format;
+	u64 sample_type = first->attr.sample_type;
 
 	evlist__for_each_entry(evlist, pos) {
-		if (read_format != pos->core.attr.read_format) {
-			pr_debug("Read format differs %#" PRIx64 " vs %#" PRIx64 "\n",
-				 read_format, (u64)pos->core.attr.read_format);
-		}
+		if (read_format != pos->attr.read_format)
+			return false;
 	}
 
-	/* PERF_SAMPLE_READ implies PERF_FORMAT_ID. */
+	/* PERF_SAMPLE_READ imples PERF_FORMAT_ID. */
 	if ((sample_type & PERF_SAMPLE_READ) &&
 	    !(read_format & PERF_FORMAT_ID)) {
 		return false;
@@ -1261,73 +1293,82 @@ bool evlist__valid_read_format(struct evlist *evlist)
 	return true;
 }
 
-u16 evlist__id_hdr_size(struct evlist *evlist)
+u64 perf_evlist__read_format(struct perf_evlist *evlist)
 {
-	struct evsel *first = evlist__first(evlist);
-
-	return first->core.attr.sample_id_all ? evsel__id_hdr_size(first) : 0;
+	struct perf_evsel *first = perf_evlist__first(evlist);
+	return first->attr.read_format;
 }
 
-bool evlist__valid_sample_id_all(struct evlist *evlist)
+u16 perf_evlist__id_hdr_size(struct perf_evlist *evlist)
 {
-	struct evsel *first = evlist__first(evlist), *pos = first;
+	struct perf_evsel *first = perf_evlist__first(evlist);
+	struct perf_sample *data;
+	u64 sample_type;
+	u16 size = 0;
+
+	if (!first->attr.sample_id_all)
+		goto out;
+
+	sample_type = first->attr.sample_type;
+
+	if (sample_type & PERF_SAMPLE_TID)
+		size += sizeof(data->tid) * 2;
+
+       if (sample_type & PERF_SAMPLE_TIME)
+		size += sizeof(data->time);
+
+	if (sample_type & PERF_SAMPLE_ID)
+		size += sizeof(data->id);
+
+	if (sample_type & PERF_SAMPLE_STREAM_ID)
+		size += sizeof(data->stream_id);
+
+	if (sample_type & PERF_SAMPLE_CPU)
+		size += sizeof(data->cpu) * 2;
+
+	if (sample_type & PERF_SAMPLE_IDENTIFIER)
+		size += sizeof(data->id);
+out:
+	return size;
+}
+
+bool perf_evlist__valid_sample_id_all(struct perf_evlist *evlist)
+{
+	struct perf_evsel *first = perf_evlist__first(evlist), *pos = first;
 
 	evlist__for_each_entry_continue(evlist, pos) {
-		if (first->core.attr.sample_id_all != pos->core.attr.sample_id_all)
+		if (first->attr.sample_id_all != pos->attr.sample_id_all)
 			return false;
 	}
 
 	return true;
 }
 
-bool evlist__sample_id_all(struct evlist *evlist)
+bool perf_evlist__sample_id_all(struct perf_evlist *evlist)
 {
-	struct evsel *first = evlist__first(evlist);
-	return first->core.attr.sample_id_all;
+	struct perf_evsel *first = perf_evlist__first(evlist);
+	return first->attr.sample_id_all;
 }
 
-void evlist__set_selected(struct evlist *evlist, struct evsel *evsel)
+void perf_evlist__set_selected(struct perf_evlist *evlist,
+			       struct perf_evsel *evsel)
 {
 	evlist->selected = evsel;
 }
 
-void evlist__close(struct evlist *evlist)
+void perf_evlist__close(struct perf_evlist *evlist)
 {
-	struct evsel *evsel;
-	struct evlist_cpu_iterator evlist_cpu_itr;
-	struct affinity affinity;
+	struct perf_evsel *evsel;
 
-	/*
-	 * With perf record core.user_requested_cpus is usually NULL.
-	 * Use the old method to handle this for now.
-	 */
-	if (!evlist->core.user_requested_cpus ||
-	    cpu_map__is_dummy(evlist->core.user_requested_cpus)) {
-		evlist__for_each_entry_reverse(evlist, evsel)
-			evsel__close(evsel);
-		return;
-	}
-
-	if (affinity__setup(&affinity) < 0)
-		return;
-
-	evlist__for_each_cpu(evlist_cpu_itr, evlist, &affinity) {
-		perf_evsel__close_cpu(&evlist_cpu_itr.evsel->core,
-				      evlist_cpu_itr.cpu_map_idx);
-	}
-
-	affinity__cleanup(&affinity);
-	evlist__for_each_entry_reverse(evlist, evsel) {
-		perf_evsel__free_fd(&evsel->core);
-		perf_evsel__free_id(&evsel->core);
-	}
-	perf_evlist__reset_id_hash(&evlist->core);
+	evlist__for_each_entry_reverse(evlist, evsel)
+		perf_evsel__close(evsel);
 }
 
-static int evlist__create_syswide_maps(struct evlist *evlist)
+static int perf_evlist__create_syswide_maps(struct perf_evlist *evlist)
 {
-	struct perf_cpu_map *cpus;
-	struct perf_thread_map *threads;
+	struct cpu_map	  *cpus;
+	struct thread_map *threads;
+	int err = -ENOMEM;
 
 	/*
 	 * Try reading /sys/devices/system/cpu/online to get
@@ -1338,55 +1379,55 @@ static int evlist__create_syswide_maps(struct evlist *evlist)
 	 * error, and we may not want to do that fallback to a
 	 * default cpu identity map :-\
 	 */
-	cpus = perf_cpu_map__new(NULL);
+	cpus = cpu_map__new(NULL);
 	if (!cpus)
 		goto out;
 
-	threads = perf_thread_map__new_dummy();
+	threads = thread_map__new_dummy();
 	if (!threads)
 		goto out_put;
 
-	perf_evlist__set_maps(&evlist->core, cpus, threads);
-
-	perf_thread_map__put(threads);
-out_put:
-	perf_cpu_map__put(cpus);
+	perf_evlist__set_maps(evlist, cpus, threads);
 out:
-	return -ENOMEM;
+	return err;
+out_put:
+	cpu_map__put(cpus);
+	goto out;
 }
 
-int evlist__open(struct evlist *evlist)
+int perf_evlist__open(struct perf_evlist *evlist)
 {
-	struct evsel *evsel;
+	struct perf_evsel *evsel;
 	int err;
 
 	/*
 	 * Default: one fd per CPU, all threads, aka systemwide
 	 * as sys_perf_event_open(cpu = -1, thread = -1) is EINVAL
 	 */
-	if (evlist->core.threads == NULL && evlist->core.user_requested_cpus == NULL) {
-		err = evlist__create_syswide_maps(evlist);
+	if (evlist->threads == NULL && evlist->cpus == NULL) {
+		err = perf_evlist__create_syswide_maps(evlist);
 		if (err < 0)
 			goto out_err;
 	}
 
-	evlist__update_id_pos(evlist);
+	perf_evlist__update_id_pos(evlist);
 
 	evlist__for_each_entry(evlist, evsel) {
-		err = evsel__open(evsel, evsel->core.cpus, evsel->core.threads);
+		err = perf_evsel__open(evsel, evsel->cpus, evsel->threads);
 		if (err < 0)
 			goto out_err;
 	}
 
 	return 0;
 out_err:
-	evlist__close(evlist);
+	perf_evlist__close(evlist);
 	errno = -err;
 	return err;
 }
 
-int evlist__prepare_workload(struct evlist *evlist, struct target *target, const char *argv[],
-			     bool pipe_output, void (*exec_error)(int signo, siginfo_t *info, void *ucontext))
+int perf_evlist__prepare_workload(struct perf_evlist *evlist, struct target *target,
+				  const char *argv[], bool pipe_output,
+				  void (*exec_error)(int signo, siginfo_t *info, void *ucontext))
 {
 	int child_ready_pipe[2], go_pipe[2];
 	char bf;
@@ -1420,13 +1461,6 @@ int evlist__prepare_workload(struct evlist *evlist, struct target *target, const
 		fcntl(go_pipe[0], F_SETFD, FD_CLOEXEC);
 
 		/*
-		 * Change the name of this process not to confuse --exclude-perf users
-		 * that sees 'perf' in the window up to the execvp() and thinks that
-		 * perf samples are not being excluded.
-		 */
-		prctl(PR_SET_NAME, "perf-exec");
-
-		/*
 		 * Tell the parent we're ready to go
 		 */
 		close(child_ready_pipe[1]);
@@ -1438,7 +1472,7 @@ int evlist__prepare_workload(struct evlist *evlist, struct target *target, const
 		/*
 		 * The parent will ask for the execvp() to be performed by
 		 * writing exactly one byte, in workload.cork_fd, usually via
-		 * evlist__start_workload().
+		 * perf_evlist__start_workload().
 		 *
 		 * For cancelling the workload without actually running it,
 		 * the parent will just close workload.cork_fd, without writing
@@ -1473,12 +1507,12 @@ int evlist__prepare_workload(struct evlist *evlist, struct target *target, const
 	}
 
 	if (target__none(target)) {
-		if (evlist->core.threads == NULL) {
+		if (evlist->threads == NULL) {
 			fprintf(stderr, "FATAL: evlist->threads need to be set at this point (%s:%d).\n",
 				__func__, __LINE__);
 			goto out_close_pipes;
 		}
-		perf_thread_map__set_pid(evlist->core.threads, 0, evlist->workload.pid);
+		thread_map__set_pid(evlist->threads, 0, evlist->workload.pid);
 	}
 
 	close(child_ready_pipe[1]);
@@ -1505,7 +1539,7 @@ out_close_ready_pipe:
 	return -1;
 }
 
-int evlist__start_workload(struct evlist *evlist)
+int perf_evlist__start_workload(struct perf_evlist *evlist)
 {
 	if (evlist->workload.cork_fd > 0) {
 		char bf = 0;
@@ -1524,37 +1558,42 @@ int evlist__start_workload(struct evlist *evlist)
 	return 0;
 }
 
-int evlist__parse_sample(struct evlist *evlist, union perf_event *event, struct perf_sample *sample)
+int perf_evlist__parse_sample(struct perf_evlist *evlist, union perf_event *event,
+			      struct perf_sample *sample)
 {
-	struct evsel *evsel = evlist__event2evsel(evlist, event);
-	int ret;
+	struct perf_evsel *evsel = perf_evlist__event2evsel(evlist, event);
 
 	if (!evsel)
 		return -EFAULT;
-	ret = evsel__parse_sample(evsel, event, sample);
-	if (ret)
-		return ret;
-	if (perf_guest && sample->id) {
-		struct perf_sample_id *sid = evlist__id2sid(evlist, sample->id);
+	return perf_evsel__parse_sample(evsel, event, sample);
+}
 
-		if (sid) {
-			sample->machine_pid = sid->machine_pid;
-			sample->vcpu = sid->vcpu.cpu;
-		}
+int perf_evlist__parse_sample_timestamp(struct perf_evlist *evlist,
+					union perf_event *event,
+					u64 *timestamp)
+{
+	struct perf_evsel *evsel = perf_evlist__event2evsel(evlist, event);
+
+	if (!evsel)
+		return -EFAULT;
+	return perf_evsel__parse_sample_timestamp(evsel, event, timestamp);
+}
+
+size_t perf_evlist__fprintf(struct perf_evlist *evlist, FILE *fp)
+{
+	struct perf_evsel *evsel;
+	size_t printed = 0;
+
+	evlist__for_each_entry(evlist, evsel) {
+		printed += fprintf(fp, "%s%s", evsel->idx ? ", " : "",
+				   perf_evsel__name(evsel));
 	}
-	return 0;
+
+	return printed + fprintf(fp, "\n");
 }
 
-int evlist__parse_sample_timestamp(struct evlist *evlist, union perf_event *event, u64 *timestamp)
-{
-	struct evsel *evsel = evlist__event2evsel(evlist, event);
-
-	if (!evsel)
-		return -EFAULT;
-	return evsel__parse_sample_timestamp(evsel, event, timestamp);
-}
-
-int evlist__strerror_open(struct evlist *evlist, int err, char *buf, size_t size)
+int perf_evlist__strerror_open(struct perf_evlist *evlist,
+			       int err, char *buf, size_t size)
 {
 	int printed, value;
 	char sbuf[STRERR_BUFSIZE], *emsg = str_error_r(err, sbuf, sizeof(sbuf));
@@ -1582,20 +1621,20 @@ int evlist__strerror_open(struct evlist *evlist, int err, char *buf, size_t size
 				    "Hint:\tThe current value is %d.", value);
 		break;
 	case EINVAL: {
-		struct evsel *first = evlist__first(evlist);
+		struct perf_evsel *first = perf_evlist__first(evlist);
 		int max_freq;
 
 		if (sysctl__read_int("kernel/perf_event_max_sample_rate", &max_freq) < 0)
 			goto out_default;
 
-		if (first->core.attr.sample_freq < (u64)max_freq)
+		if (first->attr.sample_freq < (u64)max_freq)
 			goto out_default;
 
 		printed = scnprintf(buf, size,
 				    "Error:\t%s.\n"
 				    "Hint:\tCheck /proc/sys/kernel/perf_event_max_sample_rate.\n"
 				    "Hint:\tThe current value is %d and %" PRIu64 " is being requested.",
-				    emsg, max_freq, first->core.attr.sample_freq);
+				    emsg, max_freq, first->attr.sample_freq);
 		break;
 	}
 	default:
@@ -1607,10 +1646,10 @@ out_default:
 	return 0;
 }
 
-int evlist__strerror_mmap(struct evlist *evlist, int err, char *buf, size_t size)
+int perf_evlist__strerror_mmap(struct perf_evlist *evlist, int err, char *buf, size_t size)
 {
 	char sbuf[STRERR_BUFSIZE], *emsg = str_error_r(err, sbuf, sizeof(sbuf));
-	int pages_attempted = evlist->core.mmap_len / 1024, pages_max_per_user, printed = 0;
+	int pages_attempted = evlist->mmap_len / 1024, pages_max_per_user, printed = 0;
 
 	switch (err) {
 	case EPERM:
@@ -1638,37 +1677,27 @@ int evlist__strerror_mmap(struct evlist *evlist, int err, char *buf, size_t size
 	return 0;
 }
 
-void evlist__to_front(struct evlist *evlist, struct evsel *move_evsel)
+void perf_evlist__to_front(struct perf_evlist *evlist,
+			   struct perf_evsel *move_evsel)
 {
-	struct evsel *evsel, *n;
+	struct perf_evsel *evsel, *n;
 	LIST_HEAD(move);
 
-	if (move_evsel == evlist__first(evlist))
+	if (move_evsel == perf_evlist__first(evlist))
 		return;
 
 	evlist__for_each_entry_safe(evlist, n, evsel) {
-		if (evsel__leader(evsel) == evsel__leader(move_evsel))
-			list_move_tail(&evsel->core.node, &move);
+		if (evsel->leader == move_evsel->leader)
+			list_move_tail(&evsel->node, &move);
 	}
 
-	list_splice(&move, &evlist->core.entries);
+	list_splice(&move, &evlist->entries);
 }
 
-struct evsel *evlist__get_tracking_event(struct evlist *evlist)
+void perf_evlist__set_tracking_event(struct perf_evlist *evlist,
+				     struct perf_evsel *tracking_evsel)
 {
-	struct evsel *evsel;
-
-	evlist__for_each_entry(evlist, evsel) {
-		if (evsel->tracking)
-			return evsel;
-	}
-
-	return evlist__first(evlist);
-}
-
-void evlist__set_tracking_event(struct evlist *evlist, struct evsel *tracking_evsel)
-{
-	struct evsel *evsel;
+	struct perf_evsel *evsel;
 
 	if (tracking_evsel->tracking)
 		return;
@@ -1681,9 +1710,11 @@ void evlist__set_tracking_event(struct evlist *evlist, struct evsel *tracking_ev
 	tracking_evsel->tracking = true;
 }
 
-struct evsel *evlist__find_evsel_by_str(struct evlist *evlist, const char *str)
+struct perf_evsel *
+perf_evlist__find_evsel_by_str(struct perf_evlist *evlist,
+			       const char *str)
 {
-	struct evsel *evsel;
+	struct perf_evsel *evsel;
 
 	evlist__for_each_entry(evlist, evsel) {
 		if (!evsel->name)
@@ -1695,7 +1726,8 @@ struct evsel *evlist__find_evsel_by_str(struct evlist *evlist, const char *str)
 	return NULL;
 }
 
-void evlist__toggle_bkw_mmap(struct evlist *evlist, enum bkw_mmap_state state)
+void perf_evlist__toggle_bkw_mmap(struct perf_evlist *evlist,
+				  enum bkw_mmap_state state)
 {
 	enum bkw_mmap_state old_state = evlist->bkw_mmap_state;
 	enum action {
@@ -1738,10 +1770,10 @@ void evlist__toggle_bkw_mmap(struct evlist *evlist, enum bkw_mmap_state state)
 
 	switch (action) {
 	case PAUSE:
-		evlist__pause(evlist);
+		perf_evlist__pause(evlist);
 		break;
 	case RESUME:
-		evlist__resume(evlist);
+		perf_evlist__resume(evlist);
 		break;
 	case NONE:
 	default:
@@ -1752,698 +1784,14 @@ state_err:
 	return;
 }
 
-bool evlist__exclude_kernel(struct evlist *evlist)
+bool perf_evlist__exclude_kernel(struct perf_evlist *evlist)
 {
-	struct evsel *evsel;
+	struct perf_evsel *evsel;
 
 	evlist__for_each_entry(evlist, evsel) {
-		if (!evsel->core.attr.exclude_kernel)
+		if (!evsel->attr.exclude_kernel)
 			return false;
 	}
 
 	return true;
-}
-
-/*
- * Events in data file are not collect in groups, but we still want
- * the group display. Set the artificial group and set the leader's
- * forced_leader flag to notify the display code.
- */
-void evlist__force_leader(struct evlist *evlist)
-{
-	if (!evlist->core.nr_groups) {
-		struct evsel *leader = evlist__first(evlist);
-
-		evlist__set_leader(evlist);
-		leader->forced_leader = true;
-	}
-}
-
-struct evsel *evlist__reset_weak_group(struct evlist *evsel_list, struct evsel *evsel, bool close)
-{
-	struct evsel *c2, *leader;
-	bool is_open = true;
-
-	leader = evsel__leader(evsel);
-
-	pr_debug("Weak group for %s/%d failed\n",
-			leader->name, leader->core.nr_members);
-
-	/*
-	 * for_each_group_member doesn't work here because it doesn't
-	 * include the first entry.
-	 */
-	evlist__for_each_entry(evsel_list, c2) {
-		if (c2 == evsel)
-			is_open = false;
-		if (evsel__has_leader(c2, leader)) {
-			if (is_open && close)
-				perf_evsel__close(&c2->core);
-			/*
-			 * We want to close all members of the group and reopen
-			 * them. Some events, like Intel topdown, require being
-			 * in a group and so keep these in the group.
-			 */
-			evsel__remove_from_group(c2, leader);
-
-			/*
-			 * Set this for all former members of the group
-			 * to indicate they get reopened.
-			 */
-			c2->reset_group = true;
-		}
-	}
-	/* Reset the leader count if all entries were removed. */
-	if (leader->core.nr_members == 1)
-		leader->core.nr_members = 0;
-	return leader;
-}
-
-static int evlist__parse_control_fifo(const char *str, int *ctl_fd, int *ctl_fd_ack, bool *ctl_fd_close)
-{
-	char *s, *p;
-	int ret = 0, fd;
-
-	if (strncmp(str, "fifo:", 5))
-		return -EINVAL;
-
-	str += 5;
-	if (!*str || *str == ',')
-		return -EINVAL;
-
-	s = strdup(str);
-	if (!s)
-		return -ENOMEM;
-
-	p = strchr(s, ',');
-	if (p)
-		*p = '\0';
-
-	/*
-	 * O_RDWR avoids POLLHUPs which is necessary to allow the other
-	 * end of a FIFO to be repeatedly opened and closed.
-	 */
-	fd = open(s, O_RDWR | O_NONBLOCK | O_CLOEXEC);
-	if (fd < 0) {
-		pr_err("Failed to open '%s'\n", s);
-		ret = -errno;
-		goto out_free;
-	}
-	*ctl_fd = fd;
-	*ctl_fd_close = true;
-
-	if (p && *++p) {
-		/* O_RDWR | O_NONBLOCK means the other end need not be open */
-		fd = open(p, O_RDWR | O_NONBLOCK | O_CLOEXEC);
-		if (fd < 0) {
-			pr_err("Failed to open '%s'\n", p);
-			ret = -errno;
-			goto out_free;
-		}
-		*ctl_fd_ack = fd;
-	}
-
-out_free:
-	free(s);
-	return ret;
-}
-
-int evlist__parse_control(const char *str, int *ctl_fd, int *ctl_fd_ack, bool *ctl_fd_close)
-{
-	char *comma = NULL, *endptr = NULL;
-
-	*ctl_fd_close = false;
-
-	if (strncmp(str, "fd:", 3))
-		return evlist__parse_control_fifo(str, ctl_fd, ctl_fd_ack, ctl_fd_close);
-
-	*ctl_fd = strtoul(&str[3], &endptr, 0);
-	if (endptr == &str[3])
-		return -EINVAL;
-
-	comma = strchr(str, ',');
-	if (comma) {
-		if (endptr != comma)
-			return -EINVAL;
-
-		*ctl_fd_ack = strtoul(comma + 1, &endptr, 0);
-		if (endptr == comma + 1 || *endptr != '\0')
-			return -EINVAL;
-	}
-
-	return 0;
-}
-
-void evlist__close_control(int ctl_fd, int ctl_fd_ack, bool *ctl_fd_close)
-{
-	if (*ctl_fd_close) {
-		*ctl_fd_close = false;
-		close(ctl_fd);
-		if (ctl_fd_ack >= 0)
-			close(ctl_fd_ack);
-	}
-}
-
-int evlist__initialize_ctlfd(struct evlist *evlist, int fd, int ack)
-{
-	if (fd == -1) {
-		pr_debug("Control descriptor is not initialized\n");
-		return 0;
-	}
-
-	evlist->ctl_fd.pos = perf_evlist__add_pollfd(&evlist->core, fd, NULL, POLLIN,
-						     fdarray_flag__nonfilterable |
-						     fdarray_flag__non_perf_event);
-	if (evlist->ctl_fd.pos < 0) {
-		evlist->ctl_fd.pos = -1;
-		pr_err("Failed to add ctl fd entry: %m\n");
-		return -1;
-	}
-
-	evlist->ctl_fd.fd = fd;
-	evlist->ctl_fd.ack = ack;
-
-	return 0;
-}
-
-bool evlist__ctlfd_initialized(struct evlist *evlist)
-{
-	return evlist->ctl_fd.pos >= 0;
-}
-
-int evlist__finalize_ctlfd(struct evlist *evlist)
-{
-	struct pollfd *entries = evlist->core.pollfd.entries;
-
-	if (!evlist__ctlfd_initialized(evlist))
-		return 0;
-
-	entries[evlist->ctl_fd.pos].fd = -1;
-	entries[evlist->ctl_fd.pos].events = 0;
-	entries[evlist->ctl_fd.pos].revents = 0;
-
-	evlist->ctl_fd.pos = -1;
-	evlist->ctl_fd.ack = -1;
-	evlist->ctl_fd.fd = -1;
-
-	return 0;
-}
-
-static int evlist__ctlfd_recv(struct evlist *evlist, enum evlist_ctl_cmd *cmd,
-			      char *cmd_data, size_t data_size)
-{
-	int err;
-	char c;
-	size_t bytes_read = 0;
-
-	*cmd = EVLIST_CTL_CMD_UNSUPPORTED;
-	memset(cmd_data, 0, data_size);
-	data_size--;
-
-	do {
-		err = read(evlist->ctl_fd.fd, &c, 1);
-		if (err > 0) {
-			if (c == '\n' || c == '\0')
-				break;
-			cmd_data[bytes_read++] = c;
-			if (bytes_read == data_size)
-				break;
-			continue;
-		} else if (err == -1) {
-			if (errno == EINTR)
-				continue;
-			if (errno == EAGAIN || errno == EWOULDBLOCK)
-				err = 0;
-			else
-				pr_err("Failed to read from ctlfd %d: %m\n", evlist->ctl_fd.fd);
-		}
-		break;
-	} while (1);
-
-	pr_debug("Message from ctl_fd: \"%s%s\"\n", cmd_data,
-		 bytes_read == data_size ? "" : c == '\n' ? "\\n" : "\\0");
-
-	if (bytes_read > 0) {
-		if (!strncmp(cmd_data, EVLIST_CTL_CMD_ENABLE_TAG,
-			     (sizeof(EVLIST_CTL_CMD_ENABLE_TAG)-1))) {
-			*cmd = EVLIST_CTL_CMD_ENABLE;
-		} else if (!strncmp(cmd_data, EVLIST_CTL_CMD_DISABLE_TAG,
-				    (sizeof(EVLIST_CTL_CMD_DISABLE_TAG)-1))) {
-			*cmd = EVLIST_CTL_CMD_DISABLE;
-		} else if (!strncmp(cmd_data, EVLIST_CTL_CMD_SNAPSHOT_TAG,
-				    (sizeof(EVLIST_CTL_CMD_SNAPSHOT_TAG)-1))) {
-			*cmd = EVLIST_CTL_CMD_SNAPSHOT;
-			pr_debug("is snapshot\n");
-		} else if (!strncmp(cmd_data, EVLIST_CTL_CMD_EVLIST_TAG,
-				    (sizeof(EVLIST_CTL_CMD_EVLIST_TAG)-1))) {
-			*cmd = EVLIST_CTL_CMD_EVLIST;
-		} else if (!strncmp(cmd_data, EVLIST_CTL_CMD_STOP_TAG,
-				    (sizeof(EVLIST_CTL_CMD_STOP_TAG)-1))) {
-			*cmd = EVLIST_CTL_CMD_STOP;
-		} else if (!strncmp(cmd_data, EVLIST_CTL_CMD_PING_TAG,
-				    (sizeof(EVLIST_CTL_CMD_PING_TAG)-1))) {
-			*cmd = EVLIST_CTL_CMD_PING;
-		}
-	}
-
-	return bytes_read ? (int)bytes_read : err;
-}
-
-int evlist__ctlfd_ack(struct evlist *evlist)
-{
-	int err;
-
-	if (evlist->ctl_fd.ack == -1)
-		return 0;
-
-	err = write(evlist->ctl_fd.ack, EVLIST_CTL_CMD_ACK_TAG,
-		    sizeof(EVLIST_CTL_CMD_ACK_TAG));
-	if (err == -1)
-		pr_err("failed to write to ctl_ack_fd %d: %m\n", evlist->ctl_fd.ack);
-
-	return err;
-}
-
-static int get_cmd_arg(char *cmd_data, size_t cmd_size, char **arg)
-{
-	char *data = cmd_data + cmd_size;
-
-	/* no argument */
-	if (!*data)
-		return 0;
-
-	/* there's argument */
-	if (*data == ' ') {
-		*arg = data + 1;
-		return 1;
-	}
-
-	/* malformed */
-	return -1;
-}
-
-static int evlist__ctlfd_enable(struct evlist *evlist, char *cmd_data, bool enable)
-{
-	struct evsel *evsel;
-	char *name;
-	int err;
-
-	err = get_cmd_arg(cmd_data,
-			  enable ? sizeof(EVLIST_CTL_CMD_ENABLE_TAG) - 1 :
-				   sizeof(EVLIST_CTL_CMD_DISABLE_TAG) - 1,
-			  &name);
-	if (err < 0) {
-		pr_info("failed: wrong command\n");
-		return -1;
-	}
-
-	if (err) {
-		evsel = evlist__find_evsel_by_str(evlist, name);
-		if (evsel) {
-			if (enable)
-				evlist__enable_evsel(evlist, name);
-			else
-				evlist__disable_evsel(evlist, name);
-			pr_info("Event %s %s\n", evsel->name,
-				enable ? "enabled" : "disabled");
-		} else {
-			pr_info("failed: can't find '%s' event\n", name);
-		}
-	} else {
-		if (enable) {
-			evlist__enable(evlist);
-			pr_info(EVLIST_ENABLED_MSG);
-		} else {
-			evlist__disable(evlist);
-			pr_info(EVLIST_DISABLED_MSG);
-		}
-	}
-
-	return 0;
-}
-
-static int evlist__ctlfd_list(struct evlist *evlist, char *cmd_data)
-{
-	struct perf_attr_details details = { .verbose = false, };
-	struct evsel *evsel;
-	char *arg;
-	int err;
-
-	err = get_cmd_arg(cmd_data,
-			  sizeof(EVLIST_CTL_CMD_EVLIST_TAG) - 1,
-			  &arg);
-	if (err < 0) {
-		pr_info("failed: wrong command\n");
-		return -1;
-	}
-
-	if (err) {
-		if (!strcmp(arg, "-v")) {
-			details.verbose = true;
-		} else if (!strcmp(arg, "-g")) {
-			details.event_group = true;
-		} else if (!strcmp(arg, "-F")) {
-			details.freq = true;
-		} else {
-			pr_info("failed: wrong command\n");
-			return -1;
-		}
-	}
-
-	evlist__for_each_entry(evlist, evsel)
-		evsel__fprintf(evsel, &details, stderr);
-
-	return 0;
-}
-
-int evlist__ctlfd_process(struct evlist *evlist, enum evlist_ctl_cmd *cmd)
-{
-	int err = 0;
-	char cmd_data[EVLIST_CTL_CMD_MAX_LEN];
-	int ctlfd_pos = evlist->ctl_fd.pos;
-	struct pollfd *entries = evlist->core.pollfd.entries;
-
-	if (!evlist__ctlfd_initialized(evlist) || !entries[ctlfd_pos].revents)
-		return 0;
-
-	if (entries[ctlfd_pos].revents & POLLIN) {
-		err = evlist__ctlfd_recv(evlist, cmd, cmd_data,
-					 EVLIST_CTL_CMD_MAX_LEN);
-		if (err > 0) {
-			switch (*cmd) {
-			case EVLIST_CTL_CMD_ENABLE:
-			case EVLIST_CTL_CMD_DISABLE:
-				err = evlist__ctlfd_enable(evlist, cmd_data,
-							   *cmd == EVLIST_CTL_CMD_ENABLE);
-				break;
-			case EVLIST_CTL_CMD_EVLIST:
-				err = evlist__ctlfd_list(evlist, cmd_data);
-				break;
-			case EVLIST_CTL_CMD_SNAPSHOT:
-			case EVLIST_CTL_CMD_STOP:
-			case EVLIST_CTL_CMD_PING:
-				break;
-			case EVLIST_CTL_CMD_ACK:
-			case EVLIST_CTL_CMD_UNSUPPORTED:
-			default:
-				pr_debug("ctlfd: unsupported %d\n", *cmd);
-				break;
-			}
-			if (!(*cmd == EVLIST_CTL_CMD_ACK || *cmd == EVLIST_CTL_CMD_UNSUPPORTED ||
-			      *cmd == EVLIST_CTL_CMD_SNAPSHOT))
-				evlist__ctlfd_ack(evlist);
-		}
-	}
-
-	if (entries[ctlfd_pos].revents & (POLLHUP | POLLERR))
-		evlist__finalize_ctlfd(evlist);
-	else
-		entries[ctlfd_pos].revents = 0;
-
-	return err;
-}
-
-/**
- * struct event_enable_time - perf record -D/--delay single time range.
- * @start: start of time range to enable events in milliseconds
- * @end: end of time range to enable events in milliseconds
- *
- * N.B. this structure is also accessed as an array of int.
- */
-struct event_enable_time {
-	int	start;
-	int	end;
-};
-
-static int parse_event_enable_time(const char *str, struct event_enable_time *range, bool first)
-{
-	const char *fmt = first ? "%u - %u %n" : " , %u - %u %n";
-	int ret, start, end, n;
-
-	ret = sscanf(str, fmt, &start, &end, &n);
-	if (ret != 2 || end <= start)
-		return -EINVAL;
-	if (range) {
-		range->start = start;
-		range->end = end;
-	}
-	return n;
-}
-
-static ssize_t parse_event_enable_times(const char *str, struct event_enable_time *range)
-{
-	int incr = !!range;
-	bool first = true;
-	ssize_t ret, cnt;
-
-	for (cnt = 0; *str; cnt++) {
-		ret = parse_event_enable_time(str, range, first);
-		if (ret < 0)
-			return ret;
-		/* Check no overlap */
-		if (!first && range && range->start <= range[-1].end)
-			return -EINVAL;
-		str += ret;
-		range += incr;
-		first = false;
-	}
-	return cnt;
-}
-
-/**
- * struct event_enable_timer - control structure for perf record -D/--delay.
- * @evlist: event list
- * @times: time ranges that events are enabled (N.B. this is also accessed as an
- *         array of int)
- * @times_cnt: number of time ranges
- * @timerfd: timer file descriptor
- * @pollfd_pos: position in @evlist array of file descriptors to poll (fdarray)
- * @times_step: current position in (int *)@times)[],
- *              refer event_enable_timer__process()
- *
- * Note, this structure is only used when there are time ranges, not when there
- * is only an initial delay.
- */
-struct event_enable_timer {
-	struct evlist *evlist;
-	struct event_enable_time *times;
-	size_t	times_cnt;
-	int	timerfd;
-	int	pollfd_pos;
-	size_t	times_step;
-};
-
-static int str_to_delay(const char *str)
-{
-	char *endptr;
-	long d;
-
-	d = strtol(str, &endptr, 10);
-	if (*endptr || d > INT_MAX || d < -1)
-		return 0;
-	return d;
-}
-
-int evlist__parse_event_enable_time(struct evlist *evlist, struct record_opts *opts,
-				    const char *str, int unset)
-{
-	enum fdarray_flags flags = fdarray_flag__nonfilterable | fdarray_flag__non_perf_event;
-	struct event_enable_timer *eet;
-	ssize_t times_cnt;
-	ssize_t ret;
-	int err;
-
-	if (unset)
-		return 0;
-
-	opts->initial_delay = str_to_delay(str);
-	if (opts->initial_delay)
-		return 0;
-
-	ret = parse_event_enable_times(str, NULL);
-	if (ret < 0)
-		return ret;
-
-	times_cnt = ret;
-	if (times_cnt == 0)
-		return -EINVAL;
-
-	eet = zalloc(sizeof(*eet));
-	if (!eet)
-		return -ENOMEM;
-
-	eet->times = calloc(times_cnt, sizeof(*eet->times));
-	if (!eet->times) {
-		err = -ENOMEM;
-		goto free_eet;
-	}
-
-	if (parse_event_enable_times(str, eet->times) != times_cnt) {
-		err = -EINVAL;
-		goto free_eet_times;
-	}
-
-	eet->times_cnt = times_cnt;
-
-	eet->timerfd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC);
-	if (eet->timerfd == -1) {
-		err = -errno;
-		pr_err("timerfd_create failed: %s\n", strerror(errno));
-		goto free_eet_times;
-	}
-
-	eet->pollfd_pos = perf_evlist__add_pollfd(&evlist->core, eet->timerfd, NULL, POLLIN, flags);
-	if (eet->pollfd_pos < 0) {
-		err = eet->pollfd_pos;
-		goto close_timerfd;
-	}
-
-	eet->evlist = evlist;
-	evlist->eet = eet;
-	opts->initial_delay = eet->times[0].start;
-
-	return 0;
-
-close_timerfd:
-	close(eet->timerfd);
-free_eet_times:
-	free(eet->times);
-free_eet:
-	free(eet);
-	return err;
-}
-
-static int event_enable_timer__set_timer(struct event_enable_timer *eet, int ms)
-{
-	struct itimerspec its = {
-		.it_value.tv_sec = ms / MSEC_PER_SEC,
-		.it_value.tv_nsec = (ms % MSEC_PER_SEC) * NSEC_PER_MSEC,
-	};
-	int err = 0;
-
-	if (timerfd_settime(eet->timerfd, 0, &its, NULL) < 0) {
-		err = -errno;
-		pr_err("timerfd_settime failed: %s\n", strerror(errno));
-	}
-	return err;
-}
-
-int event_enable_timer__start(struct event_enable_timer *eet)
-{
-	int ms;
-
-	if (!eet)
-		return 0;
-
-	ms = eet->times[0].end - eet->times[0].start;
-	eet->times_step = 1;
-
-	return event_enable_timer__set_timer(eet, ms);
-}
-
-int event_enable_timer__process(struct event_enable_timer *eet)
-{
-	struct pollfd *entries;
-	short revents;
-
-	if (!eet)
-		return 0;
-
-	entries = eet->evlist->core.pollfd.entries;
-	revents = entries[eet->pollfd_pos].revents;
-	entries[eet->pollfd_pos].revents = 0;
-
-	if (revents & POLLIN) {
-		size_t step = eet->times_step;
-		size_t pos = step / 2;
-
-		if (step & 1) {
-			evlist__disable_non_dummy(eet->evlist);
-			pr_info(EVLIST_DISABLED_MSG);
-			if (pos >= eet->times_cnt - 1) {
-				/* Disarm timer */
-				event_enable_timer__set_timer(eet, 0);
-				return 1; /* Stop */
-			}
-		} else {
-			evlist__enable_non_dummy(eet->evlist);
-			pr_info(EVLIST_ENABLED_MSG);
-		}
-
-		step += 1;
-		pos = step / 2;
-
-		if (pos < eet->times_cnt) {
-			int *times = (int *)eet->times; /* Accessing 'times' as array of int */
-			int ms = times[step] - times[step - 1];
-
-			eet->times_step = step;
-			return event_enable_timer__set_timer(eet, ms);
-		}
-	}
-
-	return 0;
-}
-
-void event_enable_timer__exit(struct event_enable_timer **ep)
-{
-	if (!ep || !*ep)
-		return;
-	free((*ep)->times);
-	zfree(ep);
-}
-
-struct evsel *evlist__find_evsel(struct evlist *evlist, int idx)
-{
-	struct evsel *evsel;
-
-	evlist__for_each_entry(evlist, evsel) {
-		if (evsel->core.idx == idx)
-			return evsel;
-	}
-	return NULL;
-}
-
-int evlist__scnprintf_evsels(struct evlist *evlist, size_t size, char *bf)
-{
-	struct evsel *evsel;
-	int printed = 0;
-
-	evlist__for_each_entry(evlist, evsel) {
-		if (evsel__is_dummy_event(evsel))
-			continue;
-		if (size > (strlen(evsel__name(evsel)) + (printed ? 2 : 1))) {
-			printed += scnprintf(bf + printed, size - printed, "%s%s", printed ? "," : "", evsel__name(evsel));
-		} else {
-			printed += scnprintf(bf + printed, size - printed, "%s...", printed ? "," : "");
-			break;
-		}
-	}
-
-	return printed;
-}
-
-void evlist__check_mem_load_aux(struct evlist *evlist)
-{
-	struct evsel *leader, *evsel, *pos;
-
-	/*
-	 * For some platforms, the 'mem-loads' event is required to use
-	 * together with 'mem-loads-aux' within a group and 'mem-loads-aux'
-	 * must be the group leader. Now we disable this group before reporting
-	 * because 'mem-loads-aux' is just an auxiliary event. It doesn't carry
-	 * any valid memory load information.
-	 */
-	evlist__for_each_entry(evlist, evsel) {
-		leader = evsel__leader(evsel);
-		if (leader == evsel)
-			continue;
-
-		if (leader->name && strstr(leader->name, "mem-loads-aux")) {
-			for_each_group_evsel(pos, leader) {
-				evsel__set_leader(pos, pos);
-				pos->core.nr_members = 0;
-			}
-		}
-	}
 }

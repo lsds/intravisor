@@ -2,14 +2,11 @@
 #ifndef _NFT_META_H_
 #define _NFT_META_H_
 
-#include <net/netfilter/nf_tables.h>
-
 struct nft_meta {
 	enum nft_meta_keys	key:8;
-	u8			len;
 	union {
-		u8		dreg;
-		u8		sreg;
+		enum nft_registers	dreg:8;
+		enum nft_registers	sreg:8;
 	};
 };
 
@@ -44,6 +41,4 @@ int nft_meta_set_validate(const struct nft_ctx *ctx,
 			  const struct nft_expr *expr,
 			  const struct nft_data **data);
 
-bool nft_meta_get_reduce(struct nft_regs_track *track,
-			 const struct nft_expr *expr);
 #endif

@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: GPL-2.0
+#include "perf.h"
 #include "util/debug.h"
-#include "util/map.h"
 #include "util/symbol.h"
 #include "util/sort.h"
 #include "util/evsel.h"
 #include "util/event.h"
 #include "util/evlist.h"
 #include "util/machine.h"
+#include "util/thread.h"
 #include "util/parse-events.h"
 #include "tests/tests.h"
 #include "tests/hists_common.h"
@@ -45,10 +46,10 @@ static struct sample fake_samples[] = {
 	{ .pid = FAKE_PID_BASH,  .ip = FAKE_IP_KERNEL_PAGE_FAULT, .socket = 3 },
 };
 
-static int add_hist_entries(struct evlist *evlist,
+static int add_hist_entries(struct perf_evlist *evlist,
 			    struct machine *machine)
 {
-	struct evsel *evsel;
+	struct perf_evsel *evsel;
 	struct addr_location al;
 	struct perf_sample sample = { .period = 100, };
 	size_t i;
@@ -101,20 +102,20 @@ out:
 	return TEST_FAIL;
 }
 
-static int test__hists_filter(struct test_suite *test __maybe_unused, int subtest __maybe_unused)
+int test__hists_filter(struct test *test __maybe_unused, int subtest __maybe_unused)
 {
 	int err = TEST_FAIL;
 	struct machines machines;
 	struct machine *machine;
-	struct evsel *evsel;
-	struct evlist *evlist = evlist__new();
+	struct perf_evsel *evsel;
+	struct perf_evlist *evlist = perf_evlist__new();
 
 	TEST_ASSERT_VAL("No memory", evlist);
 
-	err = parse_event(evlist, "cpu-clock");
+	err = parse_events(evlist, "cpu-clock", NULL);
 	if (err)
 		goto out;
-	err = parse_event(evlist, "task-clock");
+	err = parse_events(evlist, "task-clock", NULL);
 	if (err)
 		goto out;
 	err = TEST_FAIL;
@@ -142,7 +143,7 @@ static int test__hists_filter(struct test_suite *test __maybe_unused, int subtes
 		struct hists *hists = evsel__hists(evsel);
 
 		hists__collapse_resort(hists, NULL);
-		evsel__output_resort(evsel, NULL);
+		perf_evsel__output_resort(evsel, NULL);
 
 		if (verbose > 2) {
 			pr_info("Normal histogram\n");
@@ -150,13 +151,13 @@ static int test__hists_filter(struct test_suite *test __maybe_unused, int subtes
 		}
 
 		TEST_ASSERT_VAL("Invalid nr samples",
-				hists->stats.nr_samples == 10);
+				hists->stats.nr_events[PERF_RECORD_SAMPLE] == 10);
 		TEST_ASSERT_VAL("Invalid nr hist entries",
 				hists->nr_entries == 9);
 		TEST_ASSERT_VAL("Invalid total period",
 				hists->stats.total_period == 1000);
 		TEST_ASSERT_VAL("Unmatched nr samples",
-				hists->stats.nr_samples ==
+				hists->stats.nr_events[PERF_RECORD_SAMPLE] ==
 				hists->stats.nr_non_filtered_samples);
 		TEST_ASSERT_VAL("Unmatched nr hist entries",
 				hists->nr_entries == hists->nr_non_filtered_entries);
@@ -175,7 +176,7 @@ static int test__hists_filter(struct test_suite *test __maybe_unused, int subtes
 
 		/* normal stats should be invariant */
 		TEST_ASSERT_VAL("Invalid nr samples",
-				hists->stats.nr_samples == 10);
+				hists->stats.nr_events[PERF_RECORD_SAMPLE] == 10);
 		TEST_ASSERT_VAL("Invalid nr hist entries",
 				hists->nr_entries == 9);
 		TEST_ASSERT_VAL("Invalid total period",
@@ -204,7 +205,7 @@ static int test__hists_filter(struct test_suite *test __maybe_unused, int subtes
 
 		/* normal stats should be invariant */
 		TEST_ASSERT_VAL("Invalid nr samples",
-				hists->stats.nr_samples == 10);
+				hists->stats.nr_events[PERF_RECORD_SAMPLE] == 10);
 		TEST_ASSERT_VAL("Invalid nr hist entries",
 				hists->nr_entries == 9);
 		TEST_ASSERT_VAL("Invalid total period",
@@ -239,7 +240,7 @@ static int test__hists_filter(struct test_suite *test __maybe_unused, int subtes
 
 		/* normal stats should be invariant */
 		TEST_ASSERT_VAL("Invalid nr samples",
-				hists->stats.nr_samples == 10);
+				hists->stats.nr_events[PERF_RECORD_SAMPLE] == 10);
 		TEST_ASSERT_VAL("Invalid nr hist entries",
 				hists->nr_entries == 9);
 		TEST_ASSERT_VAL("Invalid total period",
@@ -268,7 +269,7 @@ static int test__hists_filter(struct test_suite *test __maybe_unused, int subtes
 
 		/* normal stats should be invariant */
 		TEST_ASSERT_VAL("Invalid nr samples",
-				hists->stats.nr_samples == 10);
+				hists->stats.nr_events[PERF_RECORD_SAMPLE] == 10);
 		TEST_ASSERT_VAL("Invalid nr hist entries",
 				hists->nr_entries == 9);
 		TEST_ASSERT_VAL("Invalid total period",
@@ -299,7 +300,7 @@ static int test__hists_filter(struct test_suite *test __maybe_unused, int subtes
 
 		/* normal stats should be invariant */
 		TEST_ASSERT_VAL("Invalid nr samples",
-				hists->stats.nr_samples == 10);
+				hists->stats.nr_events[PERF_RECORD_SAMPLE] == 10);
 		TEST_ASSERT_VAL("Invalid nr hist entries",
 				hists->nr_entries == 9);
 		TEST_ASSERT_VAL("Invalid total period",
@@ -319,11 +320,9 @@ static int test__hists_filter(struct test_suite *test __maybe_unused, int subtes
 
 out:
 	/* tear down everything */
-	evlist__delete(evlist);
+	perf_evlist__delete(evlist);
 	reset_output_field();
 	machines__exit(&machines);
 
 	return err;
 }
-
-DEFINE_SUITE("Filter hist entries", hists_filter);

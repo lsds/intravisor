@@ -1,50 +1,30 @@
-// SPDX-License-Identifier: GPL-2.0
-//
-// soc-apci.c - support for ACPI enumeration.
-//
-// Copyright (c) 2013-15, Intel Corporation.
+/*
+ * soc-apci.c - support for ACPI enumeration.
+ *
+ * Copyright (c) 2013-15, Intel Corporation.
+ *
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms and conditions of the GNU General Public License,
+ * version 2, as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+ * more details.
+ */
 
-#include <linux/export.h>
-#include <linux/module.h>
 #include <sound/soc-acpi.h>
-
-static bool snd_soc_acpi_id_present(struct snd_soc_acpi_mach *machine)
-{
-	const struct snd_soc_acpi_codecs *comp_ids = machine->comp_ids;
-	int i;
-
-	if (machine->id[0]) {
-		if (acpi_dev_present(machine->id, NULL, -1))
-			return true;
-	}
-
-	if (comp_ids) {
-		for (i = 0; i < comp_ids->num_codecs; i++) {
-			if (acpi_dev_present(comp_ids->codecs[i], NULL, -1)) {
-				strscpy(machine->id, comp_ids->codecs[i], ACPI_ID_LEN);
-				return true;
-			}
-		}
-	}
-
-	return false;
-}
 
 struct snd_soc_acpi_mach *
 snd_soc_acpi_find_machine(struct snd_soc_acpi_mach *machines)
 {
 	struct snd_soc_acpi_mach *mach;
-	struct snd_soc_acpi_mach *mach_alt;
 
-	for (mach = machines; mach->id[0] || mach->comp_ids; mach++) {
-		if (snd_soc_acpi_id_present(mach)) {
-			if (mach->machine_quirk) {
-				mach_alt = mach->machine_quirk(mach);
-				if (!mach_alt)
-					continue; /* not full match, ignore */
-				mach = mach_alt;
-			}
-
+	for (mach = machines; mach->id[0]; mach++) {
+		if (acpi_dev_present(mach->id, NULL, -1)) {
+			if (mach->machine_quirk)
+				mach = mach->machine_quirk(mach);
 			return mach;
 		}
 	}
@@ -55,13 +35,16 @@ EXPORT_SYMBOL_GPL(snd_soc_acpi_find_machine);
 static acpi_status snd_soc_acpi_find_package(acpi_handle handle, u32 level,
 					     void *context, void **ret)
 {
-	struct acpi_device *adev = acpi_fetch_acpi_dev(handle);
-	acpi_status status;
+	struct acpi_device *adev;
+	acpi_status status = AE_OK;
 	struct snd_soc_acpi_package_context *pkg_ctx = context;
 
 	pkg_ctx->data_valid = false;
 
-	if (adev && adev->status.present && adev->status.functional) {
+	if (acpi_bus_get_device(handle, &adev))
+		return AE_OK;
+
+	if (adev->status.present && adev->status.functional) {
 		struct acpi_buffer buffer = {ACPI_ALLOCATE_BUFFER, NULL};
 		union acpi_object  *myobj = NULL;
 

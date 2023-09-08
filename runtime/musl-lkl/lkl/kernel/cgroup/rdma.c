@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * RDMA resource limiting controller for cgroups.
  *
@@ -6,6 +5,10 @@
  * additional RDMA resources after a certain limit is reached.
  *
  * Copyright (C) 2016 Parav Pandit <pandit.parav@gmail.com>
+ *
+ * This file is subject to the terms and conditions of version 2 of the GNU
+ * General Public License. See the file COPYING in the main directory of the
+ * Linux distribution for more details.
  */
 
 #include <linux/bitops.h>
@@ -244,7 +247,7 @@ EXPORT_SYMBOL(rdmacg_uncharge);
  * This function follows charging resource in hierarchical way.
  * It will fail if the charge would cause the new value to exceed the
  * hierarchical limit.
- * Returns 0 if the charge succeeded, otherwise -EAGAIN, -ENOMEM or -EINVAL.
+ * Returns 0 if the charge succeded, otherwise -EAGAIN, -ENOMEM or -EINVAL.
  * Returns pointer to rdmacg for this resource when charging is successful.
  *
  * Charger needs to account resources on two criteria.
@@ -310,8 +313,10 @@ EXPORT_SYMBOL(rdmacg_try_charge);
  * If IB stack wish a device to participate in rdma cgroup resource
  * tracking, it must invoke this API to register with rdma cgroup before
  * any user space application can start using the RDMA resources.
+ * Returns 0 on success or EINVAL when table length given is beyond
+ * supported size.
  */
-void rdmacg_register_device(struct rdmacg_device *device)
+int rdmacg_register_device(struct rdmacg_device *device)
 {
 	INIT_LIST_HEAD(&device->dev_node);
 	INIT_LIST_HEAD(&device->rpools);
@@ -319,6 +324,7 @@ void rdmacg_register_device(struct rdmacg_device *device)
 	mutex_lock(&rdmacg_mutex);
 	list_add_tail(&device->dev_node, &rdmacg_devices);
 	mutex_unlock(&rdmacg_mutex);
+	return 0;
 }
 EXPORT_SYMBOL(rdmacg_register_device);
 
@@ -356,32 +362,35 @@ EXPORT_SYMBOL(rdmacg_unregister_device);
 static int parse_resource(char *c, int *intval)
 {
 	substring_t argstr;
+	const char **table = &rdmacg_resource_names[0];
 	char *name, *value = c;
 	size_t len;
-	int ret, i;
+	int ret, i = 0;
 
 	name = strsep(&value, "=");
 	if (!name || !value)
 		return -EINVAL;
 
-	i = match_string(rdmacg_resource_names, RDMACG_RESOURCE_MAX, name);
-	if (i < 0)
-		return i;
-
 	len = strlen(value);
 
-	argstr.from = value;
-	argstr.to = value + len;
+	for (i = 0; i < RDMACG_RESOURCE_MAX; i++) {
+		if (strcmp(table[i], name))
+			continue;
 
-	ret = match_int(&argstr, intval);
-	if (ret >= 0) {
-		if (*intval < 0)
-			return -EINVAL;
-		return i;
-	}
-	if (strncmp(value, RDMACG_MAX_STR, len) == 0) {
-		*intval = S32_MAX;
-		return i;
+		argstr.from = value;
+		argstr.to = value + len;
+
+		ret = match_int(&argstr, intval);
+		if (ret >= 0) {
+			if (*intval < 0)
+				break;
+			return i;
+		}
+		if (strncmp(value, RDMACG_MAX_STR, len) == 0) {
+			*intval = S32_MAX;
+			return i;
+		}
+		break;
 	}
 	return -EINVAL;
 }

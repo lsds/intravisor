@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0 */
 /*
  * Support for OmniVision OV2722 1080p HD camera sensor.
  *
@@ -201,13 +200,14 @@ struct ov2722_device {
 	struct media_pad pad;
 	struct v4l2_mbus_framefmt format;
 	struct mutex input_lock;
-	struct ov2722_resolution *res;
 
 	struct camera_sensor_platform_data *platform_data;
 	int vt_pix_clk_freq_mhz;
+	int fmt_idx;
 	int run_mode;
 	u16 pixels_per_line;
 	u16 lines_per_frame;
+	u8 res;
 	u8 type;
 
 	struct v4l2_ctrl_handler ctrl_handler;
@@ -254,7 +254,6 @@ struct ov2722_write_ctrl {
 /*
  * Register settings for various resolution
  */
-#if 0
 static struct ov2722_reg const ov2722_QVGA_30fps[] = {
 	{OV2722_8BIT, 0x3718, 0x10},
 	{OV2722_8BIT, 0x3702, 0x0c},
@@ -582,7 +581,6 @@ static struct ov2722_reg const ov2722_VGA_30fps[] = {
 	{OV2722_8BIT, 0x3509, 0x10},
 	{OV2722_TOK_TERM, 0, 0},
 };
-#endif
 
 static struct ov2722_reg const ov2722_1632_1092_30fps[] = {
 	{OV2722_8BIT, 0x3021, 0x03}, /* For stand wait for
@@ -786,8 +784,6 @@ static struct ov2722_reg const ov2722_1452_1092_30fps[] = {
 	{OV2722_8BIT, 0x3509, 0x00},
 	{OV2722_TOK_TERM, 0, 0}
 };
-
-#if 0
 static struct ov2722_reg const ov2722_1M3_30fps[] = {
 	{OV2722_8BIT, 0x3718, 0x10},
 	{OV2722_8BIT, 0x3702, 0x24},
@@ -894,7 +890,6 @@ static struct ov2722_reg const ov2722_1M3_30fps[] = {
 	{OV2722_8BIT, 0x3509, 0x10},
 	{OV2722_TOK_TERM, 0, 0},
 };
-#endif
 
 static struct ov2722_reg const ov2722_1080p_30fps[] = {
 	{OV2722_8BIT, 0x3021, 0x03}, /* For stand wait for a whole
@@ -1001,7 +996,6 @@ static struct ov2722_reg const ov2722_1080p_30fps[] = {
 	{OV2722_TOK_TERM, 0, 0}
 };
 
-#if 0 /* Currently unused */
 static struct ov2722_reg const ov2722_720p_30fps[] = {
 	{OV2722_8BIT, 0x3021, 0x03},
 	{OV2722_8BIT, 0x3718, 0x10},
@@ -1101,7 +1095,6 @@ static struct ov2722_reg const ov2722_720p_30fps[] = {
 	{OV2722_8BIT, 0x3509, 0x00},
 	{OV2722_TOK_TERM, 0, 0},
 };
-#endif
 
 static struct ov2722_resolution ov2722_res_preview[] = {
 	{
@@ -1153,7 +1146,6 @@ static struct ov2722_resolution ov2722_res_preview[] = {
 		.mipi_freq = 345600,
 	},
 };
-
 #define N_RES_PREVIEW (ARRAY_SIZE(ov2722_res_preview))
 
 /*
@@ -1211,7 +1203,6 @@ struct ov2722_resolution ov2722_res_still[] = {
 		.mipi_freq = 345600,
 	},
 };
-
 #define N_RES_STILL (ARRAY_SIZE(ov2722_res_still))
 
 struct ov2722_resolution ov2722_res_video[] = {
@@ -1263,7 +1254,6 @@ struct ov2722_resolution ov2722_res_video[] = {
 		.mipi_freq = 345600,
 	},
 };
-
 #define N_RES_VIDEO (ARRAY_SIZE(ov2722_res_video))
 #endif
 

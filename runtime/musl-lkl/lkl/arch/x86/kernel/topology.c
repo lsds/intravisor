@@ -25,14 +25,12 @@
  *
  * Send feedback to <colpatch@us.ibm.com>
  */
-#include <linux/interrupt.h>
 #include <linux/nodemask.h>
 #include <linux/export.h>
 #include <linux/mmzone.h>
 #include <linux/init.h>
 #include <linux/smp.h>
 #include <linux/irq.h>
-#include <asm/io_apic.h>
 #include <asm/cpu.h>
 
 static DEFINE_PER_CPU(struct x86_cpu, cpu_devices);
@@ -61,28 +59,38 @@ __setup("cpu0_hotplug", enable_cpu0_hotplug);
  */
 int _debug_hotplug_cpu(int cpu, int action)
 {
+	struct device *dev = get_cpu_device(cpu);
 	int ret;
 
 	if (!cpu_is_hotpluggable(cpu))
 		return -EINVAL;
 
+	lock_device_hotplug();
+
 	switch (action) {
 	case 0:
-		ret = remove_cpu(cpu);
-		if (!ret)
-			pr_info("DEBUG_HOTPLUG_CPU0: CPU %u is now offline\n", cpu);
-		else
+		ret = cpu_down(cpu);
+		if (!ret) {
+			pr_info("CPU %u is now offline\n", cpu);
+			dev->offline = true;
+			kobject_uevent(&dev->kobj, KOBJ_OFFLINE);
+		} else
 			pr_debug("Can't offline CPU%d.\n", cpu);
 		break;
 	case 1:
-		ret = add_cpu(cpu);
-		if (ret)
+		ret = cpu_up(cpu);
+		if (!ret) {
+			dev->offline = false;
+			kobject_uevent(&dev->kobj, KOBJ_ONLINE);
+		} else {
 			pr_debug("Can't online CPU%d.\n", cpu);
-
+		}
 		break;
 	default:
 		ret = -EINVAL;
 	}
+
+	unlock_device_hotplug();
 
 	return ret;
 }
@@ -103,17 +111,15 @@ int arch_register_cpu(int num)
 	/*
 	 * Currently CPU0 is only hotpluggable on Intel platforms. Other
 	 * vendors can add hotplug support later.
-	 * Xen PV guests don't support CPU0 hotplug at all.
 	 */
-	if (c->x86_vendor != X86_VENDOR_INTEL ||
-	    boot_cpu_has(X86_FEATURE_XENPV))
+	if (c->x86_vendor != X86_VENDOR_INTEL)
 		cpu0_hotpluggable = 0;
 
 	/*
 	 * Two known BSP/CPU0 dependencies: Resume from suspend/hibernate
 	 * depends on BSP. PIC interrupts depend on BSP.
 	 *
-	 * If the BSP dependencies are under control, one can tell kernel to
+	 * If the BSP depencies are under control, one can tell kernel to
 	 * enable BSP hotplug. This basically adds a control file and
 	 * one can attempt to offline BSP.
 	 */
@@ -153,6 +159,11 @@ static int __init arch_register_cpu(int num)
 static int __init topology_init(void)
 {
 	int i;
+
+#ifdef CONFIG_NUMA
+	for_each_online_node(i)
+		register_one_node(i);
+#endif
 
 	for_each_present_cpu(i)
 		arch_register_cpu(i);

@@ -33,11 +33,6 @@
 	};
 };
 
-&L2 {
-	arm,parity-enable;
-	marvell,ecc-enable;
-};
-
 &devbus_bootcs {
 	status = "okay";
 
@@ -72,24 +67,20 @@
 	status = "okay";
 };
 
-&nand_controller {
+&nand {
 	status = "okay";
-
-	nand@0 {
-		reg = <0>;
-		label = "pxa3xx_nand-0";
-		nand-rb = <0>;
-		marvell,nand-keep-config;
-		nand-on-flash-bbt;
-		nand-ecc-strength = <4>;
-		nand-ecc-step-size = <512>;
-	};
+	num-cs = <1>;
+	marvell,nand-keep-config;
+	marvell,nand-enable-arbiter;
+	nand-on-flash-bbt;
+	nand-ecc-strength = <4>;
+	nand-ecc-step-size = <512>;
 };
 
 &spi0 {
 	status = "okay";
 
-	flash@0 {
+	spi-flash@0 {
 		#address-cells = <1>;
 		#size-cells = <1>;
 		compatible = "m25p64";

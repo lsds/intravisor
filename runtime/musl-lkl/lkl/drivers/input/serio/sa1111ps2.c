@@ -1,8 +1,11 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  *  linux/drivers/input/serio/sa1111ps2.c
  *
  *  Copyright (C) 2002 Russell King
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License.
  */
 #include <linux/module.h>
 #include <linux/init.h>
@@ -267,8 +270,8 @@ static int ps2_probe(struct sa1111_dev *dev)
 	serio->write		= ps2_write;
 	serio->open		= ps2_open;
 	serio->close		= ps2_close;
-	strscpy(serio->name, dev_name(&dev->dev), sizeof(serio->name));
-	strscpy(serio->phys, dev_name(&dev->dev), sizeof(serio->phys));
+	strlcpy(serio->name, dev_name(&dev->dev), sizeof(serio->name));
+	strlcpy(serio->phys, dev_name(&dev->dev), sizeof(serio->phys));
 	serio->port_data	= ps2if;
 	serio->dev.parent	= &dev->dev;
 	ps2if->io		= serio;
@@ -344,7 +347,7 @@ static int ps2_probe(struct sa1111_dev *dev)
 /*
  * Remove one device from this driver.
  */
-static void ps2_remove(struct sa1111_dev *dev)
+static int ps2_remove(struct sa1111_dev *dev)
 {
 	struct ps2if *ps2if = sa1111_get_drvdata(dev);
 
@@ -353,6 +356,8 @@ static void ps2_remove(struct sa1111_dev *dev)
 	sa1111_set_drvdata(dev, NULL);
 
 	kfree(ps2if);
+
+	return 0;
 }
 
 /*

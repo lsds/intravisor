@@ -12,9 +12,9 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include "../perf.h"
 #include "parse-events.h"
 #include "parse-events-bison.h"
-#include "evsel.h"
 
 char *parse_events_get_text(yyscan_t yyscanner);
 YYSTYPE *parse_events_get_lval(yyscan_t yyscanner);
@@ -40,38 +40,21 @@ static int value(yyscan_t scanner, int base)
 	return __value(yylval, text, base, PE_VALUE);
 }
 
-static int str(yyscan_t scanner, int token)
-{
-	YYSTYPE *yylval = parse_events_get_lval(scanner);
-	char *text = parse_events_get_text(scanner);
-
-	if (text[0] != '\'') {
-		yylval->str = strdup(text);
-	} else {
-		/*
-		 * If a text tag specified on the command line
-		 * contains opening single quite ' then it is
-		 * expected that the tag ends with single quote
-		 * as well, like this:
-		 *     name=\'CPU_CLK_UNHALTED.THREAD:cmask=1\'
-		 * quotes need to be escaped to bypass shell
-		 * processing.
-		 */
-		yylval->str = strndup(&text[1], strlen(text) - 2);
-	}
-
-	return token;
-}
-
 static int raw(yyscan_t scanner)
 {
 	YYSTYPE *yylval = parse_events_get_lval(scanner);
 	char *text = parse_events_get_text(scanner);
 
-	if (perf_pmu__parse_check(text) == PMU_EVENT_SYMBOL)
-		return str(scanner, PE_NAME);
-
 	return __value(yylval, text + 1, 16, PE_RAW);
+}
+
+static int str(yyscan_t scanner, int token)
+{
+	YYSTYPE *yylval = parse_events_get_lval(scanner);
+	char *text = parse_events_get_text(scanner);
+
+	yylval->str = strdup(text);
+	return token;
 }
 
 static bool isbpf_suffix(char *text)
@@ -131,32 +114,21 @@ do {								\
 	yyless(0);						\
 } while (0)
 
-static int pmu_str_check(yyscan_t scanner, struct parse_events_state *parse_state)
+static int pmu_str_check(yyscan_t scanner)
 {
 	YYSTYPE *yylval = parse_events_get_lval(scanner);
 	char *text = parse_events_get_text(scanner);
 
 	yylval->str = strdup(text);
-
-	/*
-	 * If we're not testing then parse check determines the PMU event type
-	 * which if it isn't a PMU returns PE_NAME. When testing the result of
-	 * parse check can't be trusted so we return PE_PMU_EVENT_FAKE unless
-	 * an '!' is present in which case the text can't be a PMU name.
-	 */
 	switch (perf_pmu__parse_check(text)) {
 		case PMU_EVENT_SYMBOL_PREFIX:
 			return PE_PMU_EVENT_PRE;
 		case PMU_EVENT_SYMBOL_SUFFIX:
 			return PE_PMU_EVENT_SUF;
-		case PMU_EVENT_SYMBOL_SUFFIX2:
-			return PE_PMU_EVENT_SUF2;
 		case PMU_EVENT_SYMBOL:
-			return parse_state->fake_pmu
-				? PE_PMU_EVENT_FAKE : PE_KERNEL_PMU_EVENT;
+			return PE_KERNEL_PMU_EVENT;
 		default:
-			return parse_state->fake_pmu && !strchr(text,'!')
-				? PE_PMU_EVENT_FAKE : PE_NAME;
+			return PE_NAME;
 	}
 }
 
@@ -166,14 +138,6 @@ static int sym(yyscan_t scanner, int type, int config)
 
 	yylval->num = (type << 16) + config;
 	return type == PERF_TYPE_HARDWARE ? PE_VALUE_SYM_HW : PE_VALUE_SYM_SW;
-}
-
-static int tool(yyscan_t scanner, enum perf_tool_event event)
-{
-	YYSTYPE *yylval = parse_events_get_lval(scanner);
-
-	yylval->num = event;
-	return PE_VALUE_SYM_TOOL;
 }
 
 static int term(yyscan_t scanner, int type)
@@ -211,21 +175,20 @@ bpf_source	[^,{}]+\.c[a-zA-Z0-9._]*
 num_dec		[0-9]+
 num_hex		0x[a-fA-F0-9]+
 num_raw_hex	[a-fA-F0-9]+
-name		[a-zA-Z_*?\[\]][a-zA-Z0-9_*?.\[\]!]*
-name_tag	[\'][a-zA-Z_*?\[\]][a-zA-Z0-9_*?\-,\.\[\]:=]*[\']
+name		[a-zA-Z_*?\[\]][a-zA-Z0-9_*?.\[\]]*
 name_minus	[a-zA-Z_*?][a-zA-Z0-9\-_*?.:]*
 drv_cfg_term	[a-zA-Z0-9_\.]+(=[a-zA-Z0-9_*?\.:]+)?
 /* If you add a modifier you need to update check_modifier() */
-modifier_event	[ukhpPGHSDIWeb]+
+modifier_event	[ukhpPGHSDIW]+
 modifier_bp	[rwx]{1,3}
 
 %%
 
 %{
-	struct parse_events_state *_parse_state = parse_events_get_extra(yyscanner);
-
 	{
-		int start_token = _parse_state->stoken;
+		int start_token;
+
+		start_token = parse_events_get_extra(yyscanner);
 
 		if (start_token == PE_START_TERMS)
 			BEGIN(config);
@@ -233,7 +196,7 @@ modifier_bp	[rwx]{1,3}
 			BEGIN(event);
 
 		if (start_token) {
-			_parse_state->stoken = 0;
+			parse_events_set_extra(NULL, yyscanner);
 			/*
 			 * The flex parser does not init locations variable
 			 * via the scan_string interface, so we need do the
@@ -265,9 +228,7 @@ modifier_bp	[rwx]{1,3}
 			BEGIN(INITIAL);
 			REWIND(0);
 		}
-,		{
-			return ',';
-		}
+
 }
 
 <array>{
@@ -293,17 +254,10 @@ time			{ return term(yyscanner, PARSE_EVENTS__TERM_TYPE_TIME); }
 call-graph		{ return term(yyscanner, PARSE_EVENTS__TERM_TYPE_CALLGRAPH); }
 stack-size		{ return term(yyscanner, PARSE_EVENTS__TERM_TYPE_STACKSIZE); }
 max-stack		{ return term(yyscanner, PARSE_EVENTS__TERM_TYPE_MAX_STACK); }
-nr			{ return term(yyscanner, PARSE_EVENTS__TERM_TYPE_MAX_EVENTS); }
 inherit			{ return term(yyscanner, PARSE_EVENTS__TERM_TYPE_INHERIT); }
 no-inherit		{ return term(yyscanner, PARSE_EVENTS__TERM_TYPE_NOINHERIT); }
 overwrite		{ return term(yyscanner, PARSE_EVENTS__TERM_TYPE_OVERWRITE); }
 no-overwrite		{ return term(yyscanner, PARSE_EVENTS__TERM_TYPE_NOOVERWRITE); }
-percore			{ return term(yyscanner, PARSE_EVENTS__TERM_TYPE_PERCORE); }
-aux-output		{ return term(yyscanner, PARSE_EVENTS__TERM_TYPE_AUX_OUTPUT); }
-aux-sample-size		{ return term(yyscanner, PARSE_EVENTS__TERM_TYPE_AUX_SAMPLE_SIZE); }
-metric-id		{ return term(yyscanner, PARSE_EVENTS__TERM_TYPE_METRIC_ID); }
-r{num_raw_hex}		{ return raw(yyscanner); }
-r0x{num_raw_hex}	{ return raw(yyscanner); }
 ,			{ return ','; }
 "/"			{ BEGIN(INITIAL); return '/'; }
 {name_minus}		{ return str(yyscanner, PE_NAME); }
@@ -352,25 +306,19 @@ cpu-migrations|migrations			{ return sym(yyscanner, PERF_TYPE_SOFTWARE, PERF_COU
 alignment-faults				{ return sym(yyscanner, PERF_TYPE_SOFTWARE, PERF_COUNT_SW_ALIGNMENT_FAULTS); }
 emulation-faults				{ return sym(yyscanner, PERF_TYPE_SOFTWARE, PERF_COUNT_SW_EMULATION_FAULTS); }
 dummy						{ return sym(yyscanner, PERF_TYPE_SOFTWARE, PERF_COUNT_SW_DUMMY); }
-duration_time					{ return tool(yyscanner, PERF_TOOL_DURATION_TIME); }
-user_time						{ return tool(yyscanner, PERF_TOOL_USER_TIME); }
-system_time						{ return tool(yyscanner, PERF_TOOL_SYSTEM_TIME); }
+duration_time					{ return sym(yyscanner, PERF_TYPE_SOFTWARE, PERF_COUNT_SW_DUMMY); }
 bpf-output					{ return sym(yyscanner, PERF_TYPE_SOFTWARE, PERF_COUNT_SW_BPF_OUTPUT); }
-cgroup-switches					{ return sym(yyscanner, PERF_TYPE_SOFTWARE, PERF_COUNT_SW_CGROUP_SWITCHES); }
 
 	/*
 	 * We have to handle the kernel PMU event cycles-ct/cycles-t/mem-loads/mem-stores separately.
 	 * Because the prefix cycles is mixed up with cpu-cycles.
 	 * loads and stores are mixed up with cache event
 	 */
-cycles-ct				|
-cycles-t				|
-mem-loads				|
-mem-loads-aux				|
-mem-stores				|
-topdown-[a-z-]+				|
-tx-capacity-[a-z-]+			|
-el-capacity-[a-z-]+			{ return str(yyscanner, PE_KERNEL_PMU_EVENT); }
+cycles-ct					{ return str(yyscanner, PE_KERNEL_PMU_EVENT); }
+cycles-t					{ return str(yyscanner, PE_KERNEL_PMU_EVENT); }
+mem-loads					{ return str(yyscanner, PE_KERNEL_PMU_EVENT); }
+mem-stores					{ return str(yyscanner, PE_KERNEL_PMU_EVENT); }
+topdown-[a-z-]+					{ return str(yyscanner, PE_KERNEL_PMU_EVENT); }
 
 L1-dcache|l1-d|l1d|L1-data		|
 L1-icache|l1-i|l1i|L1-instruction	|
@@ -395,8 +343,7 @@ r{num_raw_hex}		{ return raw(yyscanner); }
 {modifier_event}	{ return str(yyscanner, PE_MODIFIER_EVENT); }
 {bpf_object}		{ if (!isbpf(yyscanner)) { USER_REJECT }; return str(yyscanner, PE_BPF_OBJECT); }
 {bpf_source}		{ if (!isbpf(yyscanner)) { USER_REJECT }; return str(yyscanner, PE_BPF_SOURCE); }
-{name}			{ return pmu_str_check(yyscanner, _parse_state); }
-{name_tag}		{ return str(yyscanner, PE_NAME); }
+{name}			{ return pmu_str_check(yyscanner); }
 "/"			{ BEGIN(config); return '/'; }
 -			{ return '-'; }
 ,			{ BEGIN(event); return ','; }

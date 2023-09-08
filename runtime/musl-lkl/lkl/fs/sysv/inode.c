@@ -35,7 +35,7 @@
 static int sysv_sync_fs(struct super_block *sb, int wait)
 {
 	struct sysv_sb_info *sbi = SYSV_SB(sb);
-	u32 time = (u32)ktime_get_real_seconds(), old_time;
+	unsigned long time = get_seconds(), old_time;
 
 	mutex_lock(&sbi->s_lock);
 
@@ -46,8 +46,8 @@ static int sysv_sync_fs(struct super_block *sb, int wait)
 	 */
 	old_time = fs32_to_cpu(sbi, *sbi->s_sb_time);
 	if (sbi->s_type == FSTYPE_SYSV4) {
-		if (*sbi->s_sb_state == cpu_to_fs32(sbi, 0x7c269d38u - old_time))
-			*sbi->s_sb_state = cpu_to_fs32(sbi, 0x7c269d38u - time);
+		if (*sbi->s_sb_state == cpu_to_fs32(sbi, 0x7c269d38 - old_time))
+			*sbi->s_sb_state = cpu_to_fs32(sbi, 0x7c269d38 - time);
 		*sbi->s_sb_time = cpu_to_fs32(sbi, time);
 		mark_buffer_dirty(sbi->s_bh2);
 	}
@@ -98,7 +98,8 @@ static int sysv_statfs(struct dentry *dentry, struct kstatfs *buf)
 	buf->f_files = sbi->s_ninodes;
 	buf->f_ffree = sysv_count_free_inodes(sb);
 	buf->f_namelen = SYSV_NAMELEN;
-	buf->f_fsid = u64_to_fsid(id);
+	buf->f_fsid.val[0] = (u32)id;
+	buf->f_fsid.val[1] = (u32)(id >> 32);
 	return 0;
 }
 
@@ -274,7 +275,7 @@ static int __sysv_write_inode(struct inode *inode, int wait)
                 }
         }
 	brelse(bh);
-	return err;
+	return 0;
 }
 
 int sysv_write_inode(struct inode *inode, struct writeback_control *wbc)
@@ -306,15 +307,21 @@ static struct inode *sysv_alloc_inode(struct super_block *sb)
 {
 	struct sysv_inode_info *si;
 
-	si = alloc_inode_sb(sb, sysv_inode_cachep, GFP_KERNEL);
+	si = kmem_cache_alloc(sysv_inode_cachep, GFP_KERNEL);
 	if (!si)
 		return NULL;
 	return &si->vfs_inode;
 }
 
-static void sysv_free_in_core_inode(struct inode *inode)
+static void sysv_i_callback(struct rcu_head *head)
 {
+	struct inode *inode = container_of(head, struct inode, i_rcu);
 	kmem_cache_free(sysv_inode_cachep, SYSV_I(inode));
+}
+
+static void sysv_destroy_inode(struct inode *inode)
+{
+	call_rcu(&inode->i_rcu, sysv_i_callback);
 }
 
 static void init_once(void *p)
@@ -326,7 +333,7 @@ static void init_once(void *p)
 
 const struct super_operations sysv_sops = {
 	.alloc_inode	= sysv_alloc_inode,
-	.free_inode	= sysv_free_in_core_inode,
+	.destroy_inode	= sysv_destroy_inode,
 	.write_inode	= sysv_write_inode,
 	.evict_inode	= sysv_evict_inode,
 	.put_super	= sysv_put_super,

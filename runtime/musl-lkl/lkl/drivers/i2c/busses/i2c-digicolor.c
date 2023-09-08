@@ -1,10 +1,13 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * I2C bus driver for Conexant Digicolor SoCs
  *
  * Author: Baruch Siach <baruch@tkos.co.il>
  *
  * Copyright (C) 2015 Paradox Innovation Ltd.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 
 #include <linux/clk.h>
@@ -18,6 +21,7 @@
 #include <linux/of.h>
 #include <linux/platform_device.h>
 
+#define DEFAULT_FREQ		100000
 #define TIMEOUT_MS		100
 
 #define II_CONTROL		0x0
@@ -160,11 +164,12 @@ static irqreturn_t dc_i2c_irq(int irq, void *dev_id)
 {
 	struct dc_i2c *i2c = dev_id;
 	int cmd_status = dc_i2c_cmd_status(i2c);
+	unsigned long flags;
 	u8 addr_cmd;
 
 	writeb_relaxed(1, i2c->regs + II_INTFLAG_CLEAR);
 
-	spin_lock(&i2c->lock);
+	spin_lock_irqsave(&i2c->lock, flags);
 
 	if (cmd_status == II_CMD_STATUS_ACK_BAD
 	    || cmd_status == II_CMD_STATUS_ABORT) {
@@ -186,7 +191,7 @@ static irqreturn_t dc_i2c_irq(int irq, void *dev_id)
 			break;
 		}
 		i2c->state = STATE_WRITE;
-		fallthrough;
+		/* fall through */
 	case STATE_WRITE:
 		if (i2c->msgbuf_ptr < i2c->msg->len)
 			dc_i2c_write_buf(i2c);
@@ -206,7 +211,7 @@ static irqreturn_t dc_i2c_irq(int irq, void *dev_id)
 	}
 
 out:
-	spin_unlock(&i2c->lock);
+	spin_unlock_irqrestore(&i2c->lock, flags);
 	return IRQ_HANDLED;
 }
 
@@ -289,6 +294,7 @@ static int dc_i2c_probe(struct platform_device *pdev)
 {
 	struct device_node *np = pdev->dev.of_node;
 	struct dc_i2c *i2c;
+	struct resource *r;
 	int ret = 0, irq;
 
 	i2c = devm_kzalloc(&pdev->dev, sizeof(struct dc_i2c), GFP_KERNEL);
@@ -297,7 +303,7 @@ static int dc_i2c_probe(struct platform_device *pdev)
 
 	if (of_property_read_u32(pdev->dev.of_node, "clock-frequency",
 				 &i2c->frequency))
-		i2c->frequency = I2C_MAX_STANDARD_MODE_FREQ;
+		i2c->frequency = DEFAULT_FREQ;
 
 	i2c->dev = &pdev->dev;
 	platform_set_drvdata(pdev, i2c);
@@ -309,7 +315,8 @@ static int dc_i2c_probe(struct platform_device *pdev)
 	if (IS_ERR(i2c->clk))
 		return PTR_ERR(i2c->clk);
 
-	i2c->regs = devm_platform_ioremap_resource(pdev, 0);
+	r = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	i2c->regs = devm_ioremap_resource(&pdev->dev, r);
 	if (IS_ERR(i2c->regs))
 		return PTR_ERR(i2c->regs);
 
@@ -322,7 +329,7 @@ static int dc_i2c_probe(struct platform_device *pdev)
 	if (ret < 0)
 		return ret;
 
-	strscpy(i2c->adap.name, "Conexant Digicolor I2C adapter",
+	strlcpy(i2c->adap.name, "Conexant Digicolor I2C adapter",
 		sizeof(i2c->adap.name));
 	i2c->adap.owner = THIS_MODULE;
 	i2c->adap.algo = &dc_i2c_algorithm;

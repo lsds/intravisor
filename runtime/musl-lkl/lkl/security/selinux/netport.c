@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Network port table
  *
@@ -11,10 +10,21 @@
  * This code is heavily based on the "netif" concept originally developed by
  * James Morris <jmorris@redhat.com>
  *   (see security/selinux/netif.c for more information)
+ *
  */
 
 /*
  * (c) Copyright Hewlett-Packard Development Company, L.P., 2008
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of version 2 of the GNU General Public License as
+ * published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
  */
 
 #include <linux/types.h>
@@ -53,6 +63,7 @@ struct sel_netport {
  * if this becomes a problem we can always add a hash table for each address
  * family later */
 
+static LIST_HEAD(sel_netport_list);
 static DEFINE_SPINLOCK(sel_netport_lock);
 static struct sel_netport_bkt sel_netport_hash[SEL_NETPORT_HASH_SIZE];
 
@@ -73,7 +84,7 @@ static unsigned int sel_netport_hashfn(u16 pnum)
 /**
  * sel_netport_find - Search for a port record
  * @protocol: protocol
- * @pnum: port
+ * @port: pnum
  *
  * Description:
  * Search the network port table and return the matching record.  If an entry
@@ -113,7 +124,7 @@ static void sel_netport_insert(struct sel_netport *port)
 		struct sel_netport *tail;
 		tail = list_entry(
 			rcu_dereference_protected(
-				list_tail_rcu(&sel_netport_hash[idx].list),
+				sel_netport_hash[idx].list.prev,
 				lockdep_is_held(&sel_netport_lock)),
 			struct sel_netport, list);
 		list_del_rcu(&tail->list);
@@ -129,16 +140,16 @@ static void sel_netport_insert(struct sel_netport *port)
  * @sid: port SID
  *
  * Description:
- * This function determines the SID of a network port by querying the security
+ * This function determines the SID of a network port by quering the security
  * policy.  The result is added to the network port table to speedup future
  * queries.  Returns zero on success, negative values on failure.
  *
  */
 static int sel_netport_sid_slow(u8 protocol, u16 pnum, u32 *sid)
 {
-	int ret;
+	int ret = -ENOMEM;
 	struct sel_netport *port;
-	struct sel_netport *new;
+	struct sel_netport *new = NULL;
 
 	spin_lock_bh(&sel_netport_lock);
 	port = sel_netport_find(protocol, pnum);
@@ -147,23 +158,26 @@ static int sel_netport_sid_slow(u8 protocol, u16 pnum, u32 *sid)
 		spin_unlock_bh(&sel_netport_lock);
 		return 0;
 	}
-
+	new = kzalloc(sizeof(*new), GFP_ATOMIC);
+	if (new == NULL)
+		goto out;
 	ret = security_port_sid(&selinux_state, protocol, pnum, sid);
 	if (ret != 0)
 		goto out;
-	new = kzalloc(sizeof(*new), GFP_ATOMIC);
-	if (new) {
-		new->psec.port = pnum;
-		new->psec.protocol = protocol;
-		new->psec.sid = *sid;
-		sel_netport_insert(new);
-	}
+
+	new->psec.port = pnum;
+	new->psec.protocol = protocol;
+	new->psec.sid = *sid;
+	sel_netport_insert(new);
 
 out:
 	spin_unlock_bh(&sel_netport_lock);
-	if (unlikely(ret))
-		pr_warn("SELinux: failure in %s(), unable to determine network port label\n",
-			__func__);
+	if (unlikely(ret)) {
+		printk(KERN_WARNING
+		       "SELinux: failure in sel_netport_sid_slow(),"
+		       " unable to determine network port label\n");
+		kfree(new);
+	}
 	return ret;
 }
 
@@ -224,7 +238,7 @@ static __init int sel_netport_init(void)
 {
 	int iter;
 
-	if (!selinux_enabled_boot)
+	if (!selinux_enabled)
 		return 0;
 
 	for (iter = 0; iter < SEL_NETPORT_HASH_SIZE; iter++) {

@@ -28,6 +28,7 @@
 #include <asm/octeon/cvmx-agl-defs.h>
 
 #define DRV_NAME "octeon_mgmt"
+#define DRV_VERSION "2.0"
 #define DRV_DESCRIPTION \
 	"Cavium Networks Octeon MII (management) port Network Driver"
 
@@ -234,11 +235,6 @@ static void octeon_mgmt_rx_fill_ring(struct net_device *netdev)
 
 		/* Put it in the ring.  */
 		p->rx_ring[p->rx_next_fill] = re.d64;
-		/* Make sure there is no reorder of filling the ring and ringing
-		 * the bell
-		 */
-		wmb();
-
 		dma_sync_single_for_device(p->dev, p->rx_ring_handle,
 					   ring_size_to_bytes(OCTEON_MGMT_RX_RING_SIZE),
 					   DMA_BIDIRECTIONAL);
@@ -315,9 +311,9 @@ static void octeon_mgmt_clean_tx_buffers(struct octeon_mgmt *p)
 		netif_wake_queue(p->netdev);
 }
 
-static void octeon_mgmt_clean_tx_tasklet(struct tasklet_struct *t)
+static void octeon_mgmt_clean_tx_tasklet(unsigned long arg)
 {
-	struct octeon_mgmt *p = from_tasklet(p, t, tx_clean_tasklet);
+	struct octeon_mgmt *p = (struct octeon_mgmt *)arg;
 	octeon_mgmt_clean_tx_buffers(p);
 	octeon_mgmt_enable_tx_irq(p);
 }
@@ -548,7 +544,7 @@ struct octeon_mgmt_cam_state {
 };
 
 static void octeon_mgmt_cam_state_add(struct octeon_mgmt_cam_state *cs,
-				      const unsigned char *addr)
+				      unsigned char *addr)
 {
 	int i;
 
@@ -647,21 +643,13 @@ static int octeon_mgmt_set_mac_address(struct net_device *netdev, void *addr)
 static int octeon_mgmt_change_mtu(struct net_device *netdev, int new_mtu)
 {
 	struct octeon_mgmt *p = netdev_priv(netdev);
-	int max_packet = new_mtu + ETH_HLEN + ETH_FCS_LEN;
+	int size_without_fcs = new_mtu + OCTEON_MGMT_RX_HEADROOM;
 
 	netdev->mtu = new_mtu;
 
-	/* HW lifts the limit if the frame is VLAN tagged
-	 * (+4 bytes per each tag, up to two tags)
-	 */
-	cvmx_write_csr(p->agl + AGL_GMX_RX_FRM_MAX, max_packet);
-	/* Set the hardware to truncate packets larger than the MTU. The jabber
-	 * register must be set to a multiple of 8 bytes, so round up. JABBER is
-	 * an unconditional limit, so we need to account for two possible VLAN
-	 * tags.
-	 */
+	cvmx_write_csr(p->agl + AGL_GMX_RX_FRM_MAX, size_without_fcs);
 	cvmx_write_csr(p->agl + AGL_GMX_RX_JABBER,
-		       (max_packet + 7 + VLAN_HLEN * 2) & 0xfff8);
+		       (size_without_fcs + 7) & 0xfff8);
 
 	return 0;
 }
@@ -701,6 +689,9 @@ static int octeon_mgmt_ioctl_hwtstamp(struct net_device *netdev,
 
 	if (copy_from_user(&config, rq->ifr_data, sizeof(config)))
 		return -EFAULT;
+
+	if (config.flags) /* reserved for future extensions */
+		return -EINVAL;
 
 	/* Check the status of hardware for tiemstamps */
 	if (OCTEON_IS_MODEL(OCTEON_CN6XXX)) {
@@ -791,7 +782,9 @@ static int octeon_mgmt_ioctl(struct net_device *netdev,
 	case SIOCSHWTSTAMP:
 		return octeon_mgmt_ioctl_hwtstamp(netdev, rq, cmd);
 	default:
-		return phy_do_ioctl(netdev, rq, cmd);
+		if (netdev->phydev)
+			return phy_mii_ioctl(netdev->phydev, rq, cmd);
+		return -EINVAL;
 	}
 }
 
@@ -958,7 +951,7 @@ static int octeon_mgmt_init_phy(struct net_device *netdev)
 				PHY_INTERFACE_MODE_MII);
 
 	if (!phydev)
-		return -EPROBE_DEFER;
+		return -ENODEV;
 
 	return 0;
 }
@@ -1079,11 +1072,8 @@ static int octeon_mgmt_open(struct net_device *netdev)
 	/* Set the mode of the interface, RGMII/MII. */
 	if (OCTEON_IS_MODEL(OCTEON_CN6XXX) && netdev->phydev) {
 		union cvmx_agl_prtx_ctl agl_prtx_ctl;
-		int rgmii_mode =
-			(linkmode_test_bit(ETHTOOL_LINK_MODE_1000baseT_Half_BIT,
-					   netdev->phydev->supported) |
-			 linkmode_test_bit(ETHTOOL_LINK_MODE_1000baseT_Full_BIT,
-					   netdev->phydev->supported)) != 0;
+		int rgmii_mode = (netdev->phydev->supported &
+				  (SUPPORTED_1000baseT_Half | SUPPORTED_1000baseT_Full)) != 0;
 
 		agl_prtx_ctl.u64 = cvmx_read_csr(p->agl_prt_ctl);
 		agl_prtx_ctl.s.mode = rgmii_mode ? 0 : 1;
@@ -1216,7 +1206,7 @@ static int octeon_mgmt_open(struct net_device *netdev)
 	 */
 	if (netdev->phydev) {
 		netif_carrier_off(netdev);
-		phy_start(netdev->phydev);
+		phy_start_aneg(netdev->phydev);
 	}
 
 	netif_wake_queue(netdev);
@@ -1244,10 +1234,8 @@ static int octeon_mgmt_stop(struct net_device *netdev)
 	napi_disable(&p->napi);
 	netif_stop_queue(netdev);
 
-	if (netdev->phydev) {
-		phy_stop(netdev->phydev);
+	if (netdev->phydev)
 		phy_disconnect(netdev->phydev);
-	}
 
 	netif_carrier_off(netdev);
 
@@ -1272,13 +1260,12 @@ static int octeon_mgmt_stop(struct net_device *netdev)
 	return 0;
 }
 
-static netdev_tx_t
-octeon_mgmt_xmit(struct sk_buff *skb, struct net_device *netdev)
+static int octeon_mgmt_xmit(struct sk_buff *skb, struct net_device *netdev)
 {
 	struct octeon_mgmt *p = netdev_priv(netdev);
 	union mgmt_port_ring_entry re;
 	unsigned long flags;
-	netdev_tx_t rv = NETDEV_TX_BUSY;
+	int rv = NETDEV_TX_BUSY;
 
 	re.d64 = 0;
 	re.s.tstamp = ((skb_shinfo(skb)->tx_flags & SKBTX_HW_TSTAMP) != 0);
@@ -1342,7 +1329,10 @@ static void octeon_mgmt_poll_controller(struct net_device *netdev)
 static void octeon_mgmt_get_drvinfo(struct net_device *netdev,
 				    struct ethtool_drvinfo *info)
 {
-	strscpy(info->driver, DRV_NAME, sizeof(info->driver));
+	strlcpy(info->driver, DRV_NAME, sizeof(info->driver));
+	strlcpy(info->version, DRV_VERSION, sizeof(info->version));
+	strlcpy(info->fw_version, "N/A", sizeof(info->fw_version));
+	strlcpy(info->bus_info, "N/A", sizeof(info->bus_info));
 }
 
 static int octeon_mgmt_nway_reset(struct net_device *dev)
@@ -1370,7 +1360,7 @@ static const struct net_device_ops octeon_mgmt_ops = {
 	.ndo_start_xmit =		octeon_mgmt_xmit,
 	.ndo_set_rx_mode =		octeon_mgmt_set_rx_filtering,
 	.ndo_set_mac_address =		octeon_mgmt_set_mac_address,
-	.ndo_eth_ioctl =			octeon_mgmt_ioctl,
+	.ndo_do_ioctl =			octeon_mgmt_ioctl,
 	.ndo_change_mtu =		octeon_mgmt_change_mtu,
 #ifdef CONFIG_NET_POLL_CONTROLLER
 	.ndo_poll_controller =		octeon_mgmt_poll_controller,
@@ -1382,6 +1372,7 @@ static int octeon_mgmt_probe(struct platform_device *pdev)
 	struct net_device *netdev;
 	struct octeon_mgmt *p;
 	const __be32 *data;
+	const u8 *mac;
 	struct resource *res_mix;
 	struct resource *res_agl;
 	struct resource *res_agl_prt_ctl;
@@ -1396,8 +1387,8 @@ static int octeon_mgmt_probe(struct platform_device *pdev)
 
 	platform_set_drvdata(pdev, netdev);
 	p = netdev_priv(netdev);
-	netif_napi_add_weight(netdev, &p->napi, octeon_mgmt_napi_poll,
-			      OCTEON_MGMT_NAPI_WEIGHT);
+	netif_napi_add(netdev, &p->napi, octeon_mgmt_napi_poll,
+		       OCTEON_MGMT_NAPI_WEIGHT);
 
 	p->netdev = netdev;
 	p->dev = &pdev->dev;
@@ -1487,8 +1478,8 @@ static int octeon_mgmt_probe(struct platform_device *pdev)
 
 	skb_queue_head_init(&p->tx_list);
 	skb_queue_head_init(&p->rx_list);
-	tasklet_setup(&p->tx_clean_tasklet,
-		      octeon_mgmt_clean_tx_tasklet);
+	tasklet_init(&p->tx_clean_tasklet,
+		     octeon_mgmt_clean_tx_tasklet, (unsigned long)p);
 
 	netdev->priv_flags |= IFF_UNICAST_FLT;
 
@@ -1496,10 +1487,13 @@ static int octeon_mgmt_probe(struct platform_device *pdev)
 	netdev->ethtool_ops = &octeon_mgmt_ethtool_ops;
 
 	netdev->min_mtu = 64 - OCTEON_MGMT_RX_HEADROOM;
-	netdev->max_mtu = 16383 - OCTEON_MGMT_RX_HEADROOM - VLAN_HLEN;
+	netdev->max_mtu = 16383 - OCTEON_MGMT_RX_HEADROOM;
 
-	result = of_get_ethdev_address(pdev->dev.of_node, netdev);
-	if (result)
+	mac = of_get_mac_address(pdev->dev.of_node);
+
+	if (mac)
+		memcpy(netdev->dev_addr, mac, ETH_ALEN);
+	else
 		eth_hw_addr_random(netdev);
 
 	p->phy_np = of_parse_phandle(pdev->dev.of_node, "phy-handle", 0);
@@ -1513,6 +1507,7 @@ static int octeon_mgmt_probe(struct platform_device *pdev)
 	if (result)
 		goto err;
 
+	dev_info(&pdev->dev, "Version " DRV_VERSION "\n");
 	return 0;
 
 err:
@@ -1549,9 +1544,24 @@ static struct platform_driver octeon_mgmt_driver = {
 	.remove		= octeon_mgmt_remove,
 };
 
-module_platform_driver(octeon_mgmt_driver);
+extern void octeon_mdiobus_force_mod_depencency(void);
 
-MODULE_SOFTDEP("pre: mdio-cavium");
+static int __init octeon_mgmt_mod_init(void)
+{
+	/* Force our mdiobus driver module to be loaded first. */
+	octeon_mdiobus_force_mod_depencency();
+	return platform_driver_register(&octeon_mgmt_driver);
+}
+
+static void __exit octeon_mgmt_mod_exit(void)
+{
+	platform_driver_unregister(&octeon_mgmt_driver);
+}
+
+module_init(octeon_mgmt_mod_init);
+module_exit(octeon_mgmt_mod_exit);
+
 MODULE_DESCRIPTION(DRV_DESCRIPTION);
 MODULE_AUTHOR("David Daney");
 MODULE_LICENSE("GPL");
+MODULE_VERSION(DRV_VERSION);

@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0+
 /*
  *	Eurotech CPU-1220/1410/1420 on board WDT driver
  *
@@ -11,6 +10,11 @@
  *
  *	(c) Copyright 1996-1997 Alan Cox <alan@lxorguk.ukuu.org.uk>,
  *						All Rights Reserved.
+ *
+ *	This program is free software; you can redistribute it and/or
+ *	modify it under the terms of the GNU General Public License
+ *	as published by the Free Software Foundation; either version
+ *	2 of the License, or (at your option) any later version.
  *
  *	Neither Alan Cox nor CymruNet Ltd. admit liability nor provide
  *	warranty for any of this software. This material is provided
@@ -192,7 +196,7 @@ static void eurwdt_ping(void)
  * @ppos: pointer to the position to write. No seeks allowed
  *
  * A write to a watchdog device is defined as a keepalive signal. Any
- * write of data will do, as we don't define content meaning.
+ * write of data will do, as we we don't define content meaning.
  */
 
 static ssize_t eurwdt_write(struct file *file, const char __user *buf,
@@ -286,7 +290,7 @@ static long eurwdt_ioctl(struct file *file,
 		eurwdt_timeout = time;
 		eurwdt_set_timeout(time);
 		spin_unlock(&eurwdt_lock);
-		fallthrough;
+		/* fall through */
 
 	case WDIOC_GETTIMEOUT:
 		return put_user(eurwdt_timeout, p);
@@ -312,7 +316,7 @@ static int eurwdt_open(struct inode *inode, struct file *file)
 	eurwdt_timeout = WDT_TIMEOUT;	/* initial timeout */
 	/* Activate the WDT */
 	eurwdt_activate_timer();
-	return stream_open(inode, file);
+	return nonseekable_open(inode, file);
 }
 
 /**
@@ -371,7 +375,6 @@ static const struct file_operations eurwdt_fops = {
 	.llseek		= no_llseek,
 	.write		= eurwdt_write,
 	.unlocked_ioctl	= eurwdt_ioctl,
-	.compat_ioctl	= compat_ptr_ioctl,
 	.open		= eurwdt_open,
 	.release	= eurwdt_release,
 };
@@ -392,7 +395,7 @@ static struct notifier_block eurwdt_notifier = {
 };
 
 /**
- * eurwdt_exit:
+ * cleanup_module:
  *
  * Unload the watchdog. You cannot do this with any file handles open.
  * If your watchdog is set to continue ticking on close and you unload

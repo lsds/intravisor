@@ -28,6 +28,21 @@ static int add_nondir(struct dentry *dentry, struct inode *inode)
 	return err;
 }
 
+static int sysv_hash(const struct dentry *dentry, struct qstr *qstr)
+{
+	/* Truncate the name in place, avoids having to define a compare
+	   function. */
+	if (qstr->len > SYSV_NAMELEN) {
+		qstr->len = SYSV_NAMELEN;
+		qstr->hash = full_name_hash(dentry, qstr->name, qstr->len);
+	}
+	return 0;
+}
+
+const struct dentry_operations sysv_dentry_operations = {
+	.d_hash		= sysv_hash,
+};
+
 static struct dentry *sysv_lookup(struct inode * dir, struct dentry * dentry, unsigned int flags)
 {
 	struct inode * inode = NULL;
@@ -36,13 +51,17 @@ static struct dentry *sysv_lookup(struct inode * dir, struct dentry * dentry, un
 	if (dentry->d_name.len > SYSV_NAMELEN)
 		return ERR_PTR(-ENAMETOOLONG);
 	ino = sysv_inode_by_name(dentry);
-	if (ino)
+
+	if (ino) {
 		inode = sysv_iget(dir->i_sb, ino);
-	return d_splice_alias(inode, dentry);
+		if (IS_ERR(inode))
+			return ERR_CAST(inode);
+	}
+	d_add(dentry, inode);
+	return NULL;
 }
 
-static int sysv_mknod(struct user_namespace *mnt_userns, struct inode *dir,
-		      struct dentry *dentry, umode_t mode, dev_t rdev)
+static int sysv_mknod(struct inode * dir, struct dentry * dentry, umode_t mode, dev_t rdev)
 {
 	struct inode * inode;
 	int err;
@@ -61,14 +80,13 @@ static int sysv_mknod(struct user_namespace *mnt_userns, struct inode *dir,
 	return err;
 }
 
-static int sysv_create(struct user_namespace *mnt_userns, struct inode *dir,
-		       struct dentry *dentry, umode_t mode, bool excl)
+static int sysv_create(struct inode * dir, struct dentry * dentry, umode_t mode, bool excl)
 {
-	return sysv_mknod(&init_user_ns, dir, dentry, mode, 0);
+	return sysv_mknod(dir, dentry, mode, 0);
 }
 
-static int sysv_symlink(struct user_namespace *mnt_userns, struct inode *dir,
-			struct dentry *dentry, const char *symname)
+static int sysv_symlink(struct inode * dir, struct dentry * dentry, 
+	const char * symname)
 {
 	int err = -ENAMETOOLONG;
 	int l = strlen(symname)+1;
@@ -110,8 +128,7 @@ static int sysv_link(struct dentry * old_dentry, struct inode * dir,
 	return add_nondir(dentry, inode);
 }
 
-static int sysv_mkdir(struct user_namespace *mnt_userns, struct inode *dir,
-		      struct dentry *dentry, umode_t mode)
+static int sysv_mkdir(struct inode * dir, struct dentry *dentry, umode_t mode)
 {
 	struct inode * inode;
 	int err;
@@ -189,9 +206,9 @@ static int sysv_rmdir(struct inode * dir, struct dentry * dentry)
  * Anybody can rename anything with this: the permission checks are left to the
  * higher-level routines.
  */
-static int sysv_rename(struct user_namespace *mnt_userns, struct inode *old_dir,
-		       struct dentry *old_dentry, struct inode *new_dir,
-		       struct dentry *new_dentry, unsigned int flags)
+static int sysv_rename(struct inode * old_dir, struct dentry * old_dentry,
+		       struct inode * new_dir, struct dentry * new_dentry,
+		       unsigned int flags)
 {
 	struct inode * old_inode = d_inode(old_dentry);
 	struct inode * new_inode = d_inode(new_dentry);

@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Epson HWA742 LCD controller driver
  *
@@ -6,6 +5,20 @@
  * Authors:     Juha Yrjölä   <juha.yrjola@nokia.com>
  *	        Imre Deak     <imre.deak@nokia.com>
  * YUV support: Jussi Laako   <jussi.laako@nokia.com>
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License as published by the
+ * Free Software Foundation; either version 2 of the License, or (at your
+ * option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
  */
 #include <linux/module.h>
 #include <linux/mm.h>
@@ -100,14 +113,6 @@ struct {
 	struct hwa742_request	req_pool[REQ_POOL_SIZE];
 	struct list_head	pending_req_list;
 	struct list_head	free_req_list;
-
-	/*
-	 * @req_lock: protect request slots pool and its tracking lists
-	 * @req_sema: counter; slot allocators from task contexts must
-	 *            push it down before acquiring a slot. This
-	 *            guarantees that atomic contexts will always have
-	 *            a minimum of IRQ_REQ_POOL_SIZE slots available.
-	 */
 	struct semaphore	req_sema;
 	spinlock_t		req_lock;
 
@@ -232,13 +237,13 @@ static void disable_tearsync(void)
 	hwa742_write_reg(HWA742_NDP_CTRL, b);
 }
 
-static inline struct hwa742_request *alloc_req(bool can_sleep)
+static inline struct hwa742_request *alloc_req(void)
 {
 	unsigned long flags;
 	struct hwa742_request *req;
 	int req_flags = 0;
 
-	if (can_sleep)
+	if (!in_interrupt())
 		down(&hwa742.req_sema);
 	else
 		req_flags = REQ_FROM_IRQ_POOL;
@@ -407,8 +412,8 @@ static void send_frame_complete(void *data)
 	hwa742.int_ctrl->enable_plane(OMAPFB_PLANE_GFX, 0);
 }
 
-#define ADD_PREQ(_x, _y, _w, _h, can_sleep) do {\
-	req = alloc_req(can_sleep);		\
+#define ADD_PREQ(_x, _y, _w, _h) do {		\
+	req = alloc_req();			\
 	req->handler	= send_frame_handler;	\
 	req->complete	= send_frame_complete;	\
 	req->par.update.x = _x;			\
@@ -421,8 +426,7 @@ static void send_frame_complete(void *data)
 } while(0)
 
 static void create_req_list(struct omapfb_update_window *win,
-			    struct list_head *req_head,
-			    bool can_sleep)
+			    struct list_head *req_head)
 {
 	struct hwa742_request *req;
 	int x = win->x;
@@ -436,7 +440,7 @@ static void create_req_list(struct omapfb_update_window *win,
 	color_mode = win->format & OMAPFB_FORMAT_MASK;
 
 	if (x & 1) {
-		ADD_PREQ(x, y, 1, height, can_sleep);
+		ADD_PREQ(x, y, 1, height);
 		width--;
 		x++;
 		flags &= ~OMAPFB_FORMAT_FLAG_TEARSYNC;
@@ -448,19 +452,19 @@ static void create_req_list(struct omapfb_update_window *win,
 
 		if (xspan * height * 2 > hwa742.max_transmit_size) {
 			yspan = hwa742.max_transmit_size / (xspan * 2);
-			ADD_PREQ(x, ystart, xspan, yspan, can_sleep);
+			ADD_PREQ(x, ystart, xspan, yspan);
 			ystart += yspan;
 			yspan = height - yspan;
 			flags &= ~OMAPFB_FORMAT_FLAG_TEARSYNC;
 		}
 
-		ADD_PREQ(x, ystart, xspan, yspan, can_sleep);
+		ADD_PREQ(x, ystart, xspan, yspan);
 		x += xspan;
 		width -= xspan;
 		flags &= ~OMAPFB_FORMAT_FLAG_TEARSYNC;
 	}
 	if (width)
-		ADD_PREQ(x, y, 1, height, can_sleep);
+		ADD_PREQ(x, y, 1, height);
 }
 
 static void auto_update_complete(void *data)
@@ -470,12 +474,12 @@ static void auto_update_complete(void *data)
 			  jiffies + HWA742_AUTO_UPDATE_TIME);
 }
 
-static void __hwa742_update_window_auto(bool can_sleep)
+static void hwa742_update_window_auto(struct timer_list *unused)
 {
 	LIST_HEAD(req_list);
 	struct hwa742_request *last;
 
-	create_req_list(&hwa742.auto_update_window, &req_list, can_sleep);
+	create_req_list(&hwa742.auto_update_window, &req_list);
 	last = list_entry(req_list.prev, struct hwa742_request, entry);
 
 	last->complete = auto_update_complete;
@@ -484,12 +488,7 @@ static void __hwa742_update_window_auto(bool can_sleep)
 	submit_req_list(&req_list);
 }
 
-static void hwa742_update_window_auto(struct timer_list *unused)
-{
-	__hwa742_update_window_auto(false);
-}
-
-static int hwa742_update_window_async(struct fb_info *fbi,
+int hwa742_update_window_async(struct fb_info *fbi,
 				 struct omapfb_update_window *win,
 				 void (*complete_callback)(void *arg),
 				 void *complete_callback_data)
@@ -511,7 +510,7 @@ static int hwa742_update_window_async(struct fb_info *fbi,
 		goto out;
 	}
 
-	create_req_list(win, &req_list, true);
+	create_req_list(win, &req_list);
 	last = list_entry(req_list.prev, struct hwa742_request, entry);
 
 	last->complete = complete_callback;
@@ -522,6 +521,7 @@ static int hwa742_update_window_async(struct fb_info *fbi,
 out:
 	return r;
 }
+EXPORT_SYMBOL(hwa742_update_window_async);
 
 static int hwa742_setup_plane(int plane, int channel_out,
 				  unsigned long offset, int screen_width,
@@ -557,7 +557,7 @@ static void hwa742_sync(void)
 	struct hwa742_request *req;
 	struct completion comp;
 
-	req = alloc_req(true);
+	req = alloc_req();
 
 	req->handler = sync_handler;
 	req->complete = NULL;
@@ -612,7 +612,7 @@ static int hwa742_set_update_mode(enum omapfb_update_mode mode)
 		omapfb_notify_clients(hwa742.fbdev, OMAPFB_EVENT_READY);
 		break;
 	case OMAPFB_AUTO_UPDATE:
-		__hwa742_update_window_auto(true);
+		hwa742_update_window_auto(0);
 		break;
 	case OMAPFB_UPDATE_DISABLED:
 		break;
@@ -963,7 +963,7 @@ static int hwa742_init(struct omapfb_device *fbdev, int ext_mode,
 	if ((r = calc_extif_timings(ext_clk, &extif_mem_div)) < 0)
 		goto err3;
 	hwa742.extif->set_timings(&hwa742.reg_timings);
-	clk_prepare_enable(hwa742.sys_ck);
+	clk_enable(hwa742.sys_ck);
 
 	calc_hwa742_clk_rates(ext_clk, &sys_clk, &pix_clk);
 	if ((r = calc_extif_timings(sys_clk, &extif_mem_div)) < 0)
@@ -1022,7 +1022,7 @@ static int hwa742_init(struct omapfb_device *fbdev, int ext_mode,
 
 	return 0;
 err4:
-	clk_disable_unprepare(hwa742.sys_ck);
+	clk_disable(hwa742.sys_ck);
 err3:
 	hwa742.extif->cleanup();
 err2:
@@ -1036,7 +1036,7 @@ static void hwa742_cleanup(void)
 	hwa742_set_update_mode(OMAPFB_UPDATE_DISABLED);
 	hwa742.extif->cleanup();
 	hwa742.int_ctrl->cleanup();
-	clk_disable_unprepare(hwa742.sys_ck);
+	clk_disable(hwa742.sys_ck);
 }
 
 struct lcd_ctrl hwa742_ctrl = {

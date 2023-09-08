@@ -34,6 +34,8 @@
 #ifndef _LINUX_SUNRPC_GSS_ERR_H
 #define _LINUX_SUNRPC_GSS_ERR_H
 
+#ifdef __KERNEL__
+
 typedef unsigned int OM_uint32;
 
 /*
@@ -161,4 +163,5 @@ typedef unsigned int OM_uint32;
 /* XXXX This is a necessary evil until the spec is fixed */
 #define GSS_S_CRED_UNAVAIL GSS_S_FAILURE
 
+#endif /* __KERNEL__ */
 #endif /* __LINUX_SUNRPC_GSS_ERR_H */

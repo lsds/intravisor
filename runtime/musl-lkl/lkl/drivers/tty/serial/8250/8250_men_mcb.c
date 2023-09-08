@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0
 #include <linux/device.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
@@ -7,6 +6,7 @@
 #include <linux/serial.h>
 #include <linux/serial_core.h>
 #include <linux/serial_8250.h>
+#include <uapi/linux/serial_core.h>
 
 #define MEN_UART_ID_Z025 0x19
 #define MEN_UART_ID_Z057 0x39
@@ -50,7 +50,7 @@ static u32 men_lookup_uartclk(struct mcb_device *mdev)
 	return clkval;
 }
 
-static int get_num_ports(struct mcb_device *mdev,
+static unsigned int get_num_ports(struct mcb_device *mdev,
 				  void __iomem *membase)
 {
 	switch (mdev->id) {
@@ -71,8 +71,8 @@ static int serial_8250_men_mcb_probe(struct mcb_device *mdev,
 {
 	struct serial_8250_men_mcb_data *data;
 	struct resource *mem;
-	int num_ports;
-	int i;
+	unsigned int num_ports;
+	unsigned int i;
 	void __iomem *membase;
 
 	mem = mcb_get_resource(mdev, IORESOURCE_MEM);
@@ -87,7 +87,7 @@ static int serial_8250_men_mcb_probe(struct mcb_device *mdev,
 	dev_dbg(&mdev->dev, "found a 16z%03u with %u ports\n",
 		mdev->id, num_ports);
 
-	if (num_ports <= 0 || num_ports > 4) {
+	if (num_ports == 0 || num_ports > 4) {
 		dev_err(&mdev->dev, "unexpected number of ports: %u\n",
 			num_ports);
 		return -ENODEV;
@@ -132,14 +132,14 @@ static int serial_8250_men_mcb_probe(struct mcb_device *mdev,
 
 static void serial_8250_men_mcb_remove(struct mcb_device *mdev)
 {
-	int num_ports, i;
+	unsigned int num_ports, i;
 	struct serial_8250_men_mcb_data *data = mcb_get_drvdata(mdev);
 
 	if (!data)
 		return;
 
 	num_ports = get_num_ports(mdev, data[0].uart.port.membase);
-	if (num_ports <= 0 || num_ports > 4) {
+	if (num_ports < 0 || num_ports > 4) {
 		dev_err(&mdev->dev, "error retrieving number of ports!\n");
 		return;
 	}
@@ -173,4 +173,3 @@ MODULE_AUTHOR("Michael Moese <michael.moese@men.de");
 MODULE_ALIAS("mcb:16z125");
 MODULE_ALIAS("mcb:16z025");
 MODULE_ALIAS("mcb:16z057");
-MODULE_IMPORT_NS(MCB);

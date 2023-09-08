@@ -1,13 +1,22 @@
-// SPDX-License-Identifier: ISC
 /*
  * Copyright (c) 2010 Broadcom Corporation
+ *
+ * Permission to use, copy, modify, and/or distribute this software for any
+ * purpose with or without fee is hereby granted, provided that the above
+ * copyright notice and this permission notice appear in all copies.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+ * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+ * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY
+ * SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+ * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION
+ * OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN
+ * CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
 #ifndef BRCMFMAC_BUS_H
 #define BRCMFMAC_BUS_H
 
-#include <linux/kernel.h>
-#include <linux/firmware.h>
 #include "debug.h"
 
 /* IDs of the 6 default common rings of msgbuf protocol */
@@ -36,11 +45,6 @@ enum brcmf_bus_protocol_type {
 	BRCMF_PROTO_MSGBUF
 };
 
-/* Firmware blobs that may be available */
-enum brcmf_blob_type {
-	BRCMF_BLOB_CLM,
-};
-
 struct brcmf_mp_device;
 
 struct brcmf_bus_dcmd {
@@ -67,7 +71,7 @@ struct brcmf_bus_dcmd {
  * @wowl_config: specify if dongle is configured for wowl when going to suspend
  * @get_ramsize: obtain size of device memory.
  * @get_memdump: obtain device memory dump in provided buffer.
- * @get_blob: obtain a firmware blob.
+ * @get_fwname: obtain firmware name.
  *
  * This structure provides an abstract interface towards the
  * bus specific driver. For control messages to common driver
@@ -84,10 +88,8 @@ struct brcmf_bus_ops {
 	void (*wowl_config)(struct device *dev, bool enabled);
 	size_t (*get_ramsize)(struct device *dev);
 	int (*get_memdump)(struct device *dev, void *data, size_t len);
-	int (*get_blob)(struct device *dev, const struct firmware **fw,
-			enum brcmf_blob_type type);
-	void (*debugfs_create)(struct device *dev);
-	int (*reset)(struct device *dev);
+	int (*get_fwname)(struct device *dev, const char *ext,
+			  unsigned char *fw_name);
 };
 
 
@@ -96,7 +98,7 @@ struct brcmf_bus_ops {
  *
  * @commonrings: commonrings which are always there.
  * @flowrings: commonrings which are dynamically created and destroyed for data.
- * @rx_dataoffset: if set then all rx data has this offset.
+ * @rx_dataoffset: if set then all rx data has this this offset.
  * @max_rxbufpost: maximum number of buffers to post for rx.
  * @max_flowrings: maximum number of tx flow rings supported.
  * @max_submissionrings: maximum number of submission rings(h2d) supported.
@@ -227,28 +229,10 @@ int brcmf_bus_get_memdump(struct brcmf_bus *bus, void *data, size_t len)
 }
 
 static inline
-int brcmf_bus_get_blob(struct brcmf_bus *bus, const struct firmware **fw,
-		       enum brcmf_blob_type type)
+int brcmf_bus_get_fwname(struct brcmf_bus *bus, const char *ext,
+			 unsigned char *fw_name)
 {
-	return bus->ops->get_blob(bus->dev, fw, type);
-}
-
-static inline
-void brcmf_bus_debugfs_create(struct brcmf_bus *bus)
-{
-	if (!bus->ops->debugfs_create)
-		return;
-
-	return bus->ops->debugfs_create(bus->dev);
-}
-
-static inline
-int brcmf_bus_reset(struct brcmf_bus *bus)
-{
-	if (!bus->ops->reset)
-		return -EOPNOTSUPP;
-
-	return bus->ops->reset(bus->dev);
+	return bus->ops->get_fwname(bus->dev, ext, fw_name);
 }
 
 /*
@@ -256,23 +240,16 @@ int brcmf_bus_reset(struct brcmf_bus *bus)
  */
 
 /* Receive frame for delivery to OS.  Callee disposes of rxp. */
-void brcmf_rx_frame(struct device *dev, struct sk_buff *rxp, bool handle_event,
-		    bool inirq);
+void brcmf_rx_frame(struct device *dev, struct sk_buff *rxp, bool handle_event);
 /* Receive async event packet from firmware. Callee disposes of rxp. */
 void brcmf_rx_event(struct device *dev, struct sk_buff *rxp);
 
-int brcmf_alloc(struct device *dev, struct brcmf_mp_device *settings);
 /* Indication from bus module regarding presence/insertion of dongle. */
-int brcmf_attach(struct device *dev);
+int brcmf_attach(struct device *dev, struct brcmf_mp_device *settings);
 /* Indication from bus module regarding removal/absence of dongle */
 void brcmf_detach(struct device *dev);
-void brcmf_free(struct device *dev);
 /* Indication from bus module that dongle should be reset */
 void brcmf_dev_reset(struct device *dev);
-/* Request from bus module to initiate a coredump */
-void brcmf_dev_coredump(struct device *dev);
-/* Indication that firmware has halted or crashed */
-void brcmf_fw_crashed(struct device *dev);
 
 /* Configure the "global" bus state used by upper layers */
 void brcmf_bus_change_state(struct brcmf_bus *bus, enum brcmf_bus_state state);
@@ -282,26 +259,11 @@ void brcmf_bus_add_txhdrlen(struct device *dev, uint len);
 
 #ifdef CONFIG_BRCMFMAC_SDIO
 void brcmf_sdio_exit(void);
-int brcmf_sdio_register(void);
-#else
-static inline void brcmf_sdio_exit(void) { }
-static inline int brcmf_sdio_register(void) { return 0; }
+void brcmf_sdio_register(void);
 #endif
-
 #ifdef CONFIG_BRCMFMAC_USB
 void brcmf_usb_exit(void);
-int brcmf_usb_register(void);
-#else
-static inline void brcmf_usb_exit(void) { }
-static inline int brcmf_usb_register(void) { return 0; }
-#endif
-
-#ifdef CONFIG_BRCMFMAC_PCIE
-void brcmf_pcie_exit(void);
-int brcmf_pcie_register(void);
-#else
-static inline void brcmf_pcie_exit(void) { }
-static inline int brcmf_pcie_register(void) { return 0; }
+void brcmf_usb_register(void);
 #endif
 
 #endif /* BRCMFMAC_BUS_H */

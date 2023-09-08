@@ -146,13 +146,13 @@ static int sparc64_setup_msi_irq(unsigned int *irq_p,
 	msiqid = pick_msiq(pbm);
 
 	err = ops->msi_setup(pbm, msiqid, msi,
-			     (entry->pci.msi_attrib.is_64 ? 1 : 0));
+			     (entry->msi_attrib.is_64 ? 1 : 0));
 	if (err)
 		goto out_msi_free;
 
 	pbm->msi_irq_table[msi - pbm->msi_first] = *irq_p;
 
-	if (entry->pci.msi_attrib.is_64) {
+	if (entry->msi_attrib.is_64) {
 		msg.address_hi = pbm->msi64_start >> 32;
 		msg.address_lo = pbm->msi64_start & 0xffffffff;
 	} else {
@@ -191,8 +191,8 @@ static void sparc64_teardown_msi_irq(unsigned int irq,
 			break;
 	}
 	if (i >= pbm->msi_num) {
-		pci_err(pdev, "%s: teardown: No MSI for irq %u\n", pbm->name,
-			irq);
+		printk(KERN_ERR "%s: teardown: No MSI for irq %u\n",
+		       pbm->name, irq);
 		return;
 	}
 
@@ -201,9 +201,9 @@ static void sparc64_teardown_msi_irq(unsigned int irq,
 
 	err = ops->msi_teardown(pbm, msi_num);
 	if (err) {
-		pci_err(pdev, "%s: teardown: ops->teardown() on MSI %u, "
-			"irq %u, gives error %d\n", pbm->name, msi_num, irq,
-			err);
+		printk(KERN_ERR "%s: teardown: ops->teardown() on MSI %u, "
+		       "irq %u, gives error %d\n",
+		       pbm->name, msi_num, irq, err);
 		return;
 	}
 

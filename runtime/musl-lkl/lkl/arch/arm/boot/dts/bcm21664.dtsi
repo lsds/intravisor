@@ -1,14 +1,24 @@
-// SPDX-License-Identifier: GPL-2.0-only
-// Copyright (C) 2014 Broadcom Corporation
+/*
+ * Copyright (C) 2014 Broadcom Corporation
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License as
+ * published by the Free Software Foundation version 2.
+ *
+ * This program is distributed "as is" WITHOUT ANY WARRANTY of any
+ * kind, whether express or implied; without even the implied warranty
+ * of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ */
 
 #include <dt-bindings/interrupt-controller/arm-gic.h>
 #include <dt-bindings/interrupt-controller/irq.h>
 
 #include "dt-bindings/clock/bcm21664.h"
 
+#include "skeleton.dtsi"
+
 / {
-	#address-cells = <1>;
-	#size-cells = <1>;
 	model = "BCM21664 SoC";
 	compatible = "brcm,bcm21664";
 	interrupt-parent = <&gic>;
@@ -17,7 +27,7 @@
 		bootargs = "console=ttyS0,115200n8";
 	};
 
-	cpus {
+       cpus {
 		#address-cells = <1>;
 		#size-cells = <0>;
 
@@ -80,7 +90,7 @@
 		reg-io-width = <4>;
 	};
 
-	L2: cache-controller@3ff20000 {
+	L2: l2-cache {
 		compatible = "arm,pl310-cache";
 		reg = <0x3ff20000 0x1000>;
 		cache-unified;
@@ -285,21 +295,21 @@
 			clock-frequency = <156000000>;
 		};
 
-		root_ccu: root_ccu@35001000 {
+		root_ccu: root_ccu {
 			compatible = BCM21664_DT_ROOT_CCU_COMPAT;
 			reg = <0x35001000 0x0f00>;
 			#clock-cells = <1>;
 			clock-output-names = "frac_1m";
 		};
 
-		aon_ccu: aon_ccu@35002000 {
+		aon_ccu: aon_ccu {
 			compatible = BCM21664_DT_AON_CCU_COMPAT;
 			reg = <0x35002000 0x0f00>;
 			#clock-cells = <1>;
 			clock-output-names = "hub_timer";
 		};
 
-		master_ccu: master_ccu@3f001000 {
+		master_ccu: master_ccu {
 			compatible = BCM21664_DT_MASTER_CCU_COMPAT;
 			reg = <0x3f001000 0x0f00>;
 			#clock-cells = <1>;
@@ -313,7 +323,7 @@
 					     "sdio4_sleep";
 		};
 
-		slave_ccu: slave_ccu@3e011000 {
+		slave_ccu: slave_ccu {
 			compatible = BCM21664_DT_SLAVE_CCU_COMPAT;
 			reg = <0x3e011000 0x0f00>;
 			#clock-cells = <1>;

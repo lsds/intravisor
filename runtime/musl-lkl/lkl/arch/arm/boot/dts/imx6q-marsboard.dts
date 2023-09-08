@@ -48,7 +48,6 @@
 	compatible = "embest,imx6q-marsboard", "fsl,imx6q";
 
 	memory@10000000 {
-		device_type = "memory";
 		reg = <0x10000000 0x40000000>;
 	};
 
@@ -100,7 +99,7 @@
 	cs-gpios = <&gpio2 30 GPIO_ACTIVE_LOW>;
 	status = "okay";
 
-	flash@0 {
+	m25p80@0 {
 		compatible = "microchip,sst25vf016b";
 		spi-max-frequency = <20000000>;
 		reg = <0>;
@@ -110,23 +109,9 @@
 &fec {
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_enet>;
-	phy-mode = "rgmii-id";
-	phy-handle = <&rgmii_phy>;
+	phy-mode = "rgmii";
+	phy-reset-gpios = <&gpio3 31 GPIO_ACTIVE_LOW>;
 	status = "okay";
-
-	mdio {
-		#address-cells = <1>;
-		#size-cells = <0>;
-
-		/* Atheros AR8035 PHY */
-		rgmii_phy: ethernet-phy@4 {
-			reg = <4>;
-			interrupts-extended = <&gpio1 28 IRQ_TYPE_LEVEL_LOW>;
-			reset-gpios = <&gpio3 31 GPIO_ACTIVE_LOW>;
-			reset-assert-us = <10000>;
-			reset-deassert-us = <1000>;
-		};
-	};
 };
 
 &hdmi {

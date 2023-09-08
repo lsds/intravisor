@@ -10,12 +10,9 @@
 
 #include "cavium_ptp.h"
 
-#define DRV_NAME "cavium_ptp"
+#define DRV_NAME	"Cavium PTP Driver"
 
 #define PCI_DEVICE_ID_CAVIUM_PTP	0xA00C
-#define PCI_SUBSYS_DEVID_88XX_PTP	0xA10C
-#define PCI_SUBSYS_DEVID_81XX_PTP	0XA20C
-#define PCI_SUBSYS_DEVID_83XX_PTP	0xA30C
 #define PCI_DEVICE_ID_CAVIUM_RST	0xA00E
 
 #define PCI_PTP_BAR_NO	0
@@ -86,7 +83,7 @@ EXPORT_SYMBOL(cavium_ptp_put);
 
 /**
  * cavium_ptp_adjfine() - Adjust ptp frequency
- * @ptp_info: PTP clock info
+ * @ptp: PTP clock info
  * @scaled_ppm: how much to adjust by, in parts per million, but with a
  *              16 bit binary fractional field
  */
@@ -134,7 +131,7 @@ static int cavium_ptp_adjfine(struct ptp_clock_info *ptp_info, long scaled_ppm)
 
 /**
  * cavium_ptp_adjtime() - Adjust ptp time
- * @ptp_info:   PTP clock info
+ * @ptp:   PTP clock info
  * @delta: how much to adjust by, in nanosecs
  */
 static int cavium_ptp_adjtime(struct ptp_clock_info *ptp_info, s64 delta)
@@ -155,7 +152,7 @@ static int cavium_ptp_adjtime(struct ptp_clock_info *ptp_info, s64 delta)
 
 /**
  * cavium_ptp_gettime() - Get hardware clock time with adjustment
- * @ptp_info: PTP clock info
+ * @ptp: PTP clock info
  * @ts:  timespec
  */
 static int cavium_ptp_gettime(struct ptp_clock_info *ptp_info,
@@ -177,7 +174,7 @@ static int cavium_ptp_gettime(struct ptp_clock_info *ptp_info,
 
 /**
  * cavium_ptp_settime() - Set hardware clock time. Reset adjustment
- * @ptp_info: PTP clock info
+ * @ptp: PTP clock info
  * @ts:  timespec
  */
 static int cavium_ptp_settime(struct ptp_clock_info *ptp_info,
@@ -199,7 +196,7 @@ static int cavium_ptp_settime(struct ptp_clock_info *ptp_info,
 
 /**
  * cavium_ptp_enable() - Request to enable or disable an ancillary feature.
- * @ptp_info: PTP clock info
+ * @ptp: PTP clock info
  * @rq:  request
  * @on:  is it on
  */
@@ -280,6 +277,10 @@ static int cavium_ptp_probe(struct pci_dev *pdev,
 	writeq(clock_comp, clock->reg_base + PTP_CLOCK_COMP);
 
 	clock->ptp_clock = ptp_clock_register(&clock->ptp_info, dev);
+	if (!clock->ptp_clock) {
+		err = -ENODEV;
+		goto error_stop;
+	}
 	if (IS_ERR(clock->ptp_clock)) {
 		err = PTR_ERR(clock->ptp_clock);
 		goto error_stop;
@@ -324,12 +325,7 @@ static void cavium_ptp_remove(struct pci_dev *pdev)
 }
 
 static const struct pci_device_id cavium_ptp_id_table[] = {
-	{ PCI_DEVICE_SUB(PCI_VENDOR_ID_CAVIUM, PCI_DEVICE_ID_CAVIUM_PTP,
-			PCI_VENDOR_ID_CAVIUM, PCI_SUBSYS_DEVID_88XX_PTP) },
-	{ PCI_DEVICE_SUB(PCI_VENDOR_ID_CAVIUM, PCI_DEVICE_ID_CAVIUM_PTP,
-			PCI_VENDOR_ID_CAVIUM, PCI_SUBSYS_DEVID_81XX_PTP) },
-	{ PCI_DEVICE_SUB(PCI_VENDOR_ID_CAVIUM, PCI_DEVICE_ID_CAVIUM_PTP,
-			PCI_VENDOR_ID_CAVIUM, PCI_SUBSYS_DEVID_83XX_PTP) },
+	{ PCI_DEVICE(PCI_VENDOR_ID_CAVIUM, PCI_DEVICE_ID_CAVIUM_PTP) },
 	{ 0, }
 };
 

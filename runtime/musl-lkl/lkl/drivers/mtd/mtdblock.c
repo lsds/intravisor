@@ -1,9 +1,23 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Direct MTD block device access
  *
  * Copyright © 1999-2010 David Woodhouse <dwmw2@infradead.org>
  * Copyright © 2000-2003 Nicolas Pitre <nico@fluxnic.net>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+ *
  */
 
 #include <linux/fs.h>
@@ -42,7 +56,7 @@ struct mtdblk_dev {
  */
 
 static int erase_write (struct mtd_info *mtd, unsigned long pos,
-			unsigned int len, const char *buf)
+			int len, const char *buf)
 {
 	struct erase_info erase;
 	size_t retlen;
@@ -89,6 +103,8 @@ static int write_cached_data (struct mtdblk_dev *mtdblk)
 
 	ret = erase_write (mtd, mtdblk->cache_offset,
 			   mtdblk->cache_size, mtdblk->cache_data);
+	if (ret)
+		return ret;
 
 	/*
 	 * Here we could arguably set the cache state to STATE_CLEAN.
@@ -96,14 +112,9 @@ static int write_cached_data (struct mtdblk_dev *mtdblk)
 	 * be notified if this content is altered on the flash by other
 	 * means.  Let's declare it empty and leave buffering tasks to
 	 * the buffer cache instead.
-	 *
-	 * If this cache_offset points to a bad block, data cannot be
-	 * written to the device. Clear cache_state to avoid writing to
-	 * bad blocks repeatedly.
 	 */
-	if (ret == 0 || ret == -EIO)
-		mtdblk->cache_state = STATE_EMPTY;
-	return ret;
+	mtdblk->cache_state = STATE_EMPTY;
+	return 0;
 }
 
 
@@ -257,10 +268,6 @@ static int mtdblock_open(struct mtd_blktrans_dev *mbd)
 		return 0;
 	}
 
-	if (mtd_type_is_nand(mbd->mtd))
-		pr_warn("%s: MTD device '%s' is NAND, please consider using UBI block devices instead.\n",
-			mbd->tr->name, mbd->mtd->name);
-
 	/* OK, it's not open. Create cache info for it */
 	mtdblk->count = 1;
 	mutex_init(&mtdblk->cache_mutex);
@@ -301,13 +308,12 @@ static void mtdblock_release(struct mtd_blktrans_dev *mbd)
 static int mtdblock_flush(struct mtd_blktrans_dev *dev)
 {
 	struct mtdblk_dev *mtdblk = container_of(dev, struct mtdblk_dev, mbd);
-	int ret;
 
 	mutex_lock(&mtdblk->cache_mutex);
-	ret = write_cached_data(mtdblk);
+	write_cached_data(mtdblk);
 	mutex_unlock(&mtdblk->cache_mutex);
 	mtd_sync(dev->mtd);
-	return ret;
+	return 0;
 }
 
 static void mtdblock_add_mtd(struct mtd_blktrans_ops *tr, struct mtd_info *mtd)
@@ -350,7 +356,19 @@ static struct mtd_blktrans_ops mtdblock_tr = {
 	.owner		= THIS_MODULE,
 };
 
-module_mtd_blktrans(mtdblock_tr);
+static int __init init_mtdblock(void)
+{
+	return register_mtd_blktrans(&mtdblock_tr);
+}
+
+static void __exit cleanup_mtdblock(void)
+{
+	deregister_mtd_blktrans(&mtdblock_tr);
+}
+
+module_init(init_mtdblock);
+module_exit(cleanup_mtdblock);
+
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Nicolas Pitre <nico@fluxnic.net> et al.");

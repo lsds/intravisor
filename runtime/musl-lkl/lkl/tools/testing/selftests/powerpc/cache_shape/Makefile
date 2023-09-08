@@ -1,7 +1,11 @@
 # SPDX-License-Identifier: GPL-2.0
-TEST_GEN_PROGS := cache_shape
+TEST_PROGS := cache_shape
 
-top_srcdir = ../../../../..
+all: $(TEST_PROGS)
+
+$(TEST_PROGS): ../harness.c ../utils.c
+
 include ../../lib.mk
 
-$(TEST_GEN_PROGS): ../harness.c ../utils.c
+clean:
+	rm -f $(TEST_PROGS) *.o

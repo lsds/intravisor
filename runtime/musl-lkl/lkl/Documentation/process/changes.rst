@@ -7,7 +7,7 @@ Intro
 =====
 
 This document is designed to provide a list of the minimum levels of
-software necessary to run the current kernel version.
+software necessary to run the 4.x kernels.
 
 This document is originally based on my "Changes" file for 2.0.x kernels
 and therefore owes credit to the same people as that file (Jared Mauch,
@@ -23,24 +23,19 @@ running, the suggested command should tell you.
 
 Again, keep in mind that this list assumes you are already functionally
 running a Linux kernel.  Also, not all tools are necessary on all
-systems; obviously, if you don't have any PC Card hardware, for example,
-you probably needn't concern yourself with pcmciautils.
+systems; obviously, if you don't have any ISDN hardware, for example,
+you probably needn't concern yourself with isdn4k-utils.
 
 ====================== ===============  ========================================
         Program        Minimal version       Command to check the version
 ====================== ===============  ========================================
-GNU C                  5.1              gcc --version
-Clang/LLVM (optional)  11.0.0           clang --version
-Rust (optional)        1.62.0           rustc --version
-bindgen (optional)     0.56.0           bindgen --version
-GNU make               3.82             make --version
-bash                   4.2              bash --version
-binutils               2.23             ld -v
+GNU C                  3.2              gcc --version
+GNU make               3.81             make --version
+binutils               2.20             ld -v
 flex                   2.5.35           flex --version
 bison                  2.0              bison --version
-pahole                 1.16             pahole --version
 util-linux             2.10o            fdformat --version
-kmod                   13               depmod -V
+module-init-tools      0.9.10           depmod -V
 e2fsprogs              1.41.4           e2fsck -V
 jfsutils               1.1.3            fsck.jfs -V
 reiserfsprogs          3.6.3            reiserfsck -V
@@ -50,16 +45,17 @@ btrfs-progs            0.18             btrfsck
 pcmciautils            004              pccardctl -V
 quota-tools            3.09             quota -V
 PPP                    2.4.0            pppd --version
+isdn4k-utils           3.1pre1          isdnctrl 2>&1|grep version
 nfs-utils              1.0.5            showmount --version
 procps                 3.2.0            ps --version
+oprofile               0.9              oprofiled --version
 udev                   081              udevd --version
 grub                   0.93             grub --version || grub-install --version
 mcelog                 0.6              mcelog --version
 iptables               1.4.2            iptables -V
 openssl & libcrypto    1.0.0            openssl version
 bc                     1.06.95          bc --version
-Sphinx\ [#f1]_         1.7              sphinx-build --version
-cpio                   any              cpio --version
+Sphinx\ [#f1]_	       1.3		sphinx-build --version
 ====================== ===============  ========================================
 
 .. [#f1] Sphinx is needed only to build the Kernel documentation
@@ -73,61 +69,17 @@ GCC
 The gcc version requirements may vary depending on the type of CPU in your
 computer.
 
-Clang/LLVM (optional)
----------------------
-
-The latest formal release of clang and LLVM utils (according to
-`releases.llvm.org <https://releases.llvm.org>`_) are supported for building
-kernels. Older releases aren't guaranteed to work, and we may drop workarounds
-from the kernel that were used to support older versions. Please see additional
-docs on :ref:`Building Linux with Clang/LLVM <kbuild_llvm>`.
-
-Rust (optional)
----------------
-
-A particular version of the Rust toolchain is required. Newer versions may or
-may not work because the kernel depends on some unstable Rust features, for
-the moment.
-
-Each Rust toolchain comes with several "components", some of which are required
-(like ``rustc``) and some that are optional. The ``rust-src`` component (which
-is optional) needs to be installed to build the kernel. Other components are
-useful for developing.
-
-Please see Documentation/rust/quick-start.rst for instructions on how to
-satisfy the build requirements of Rust support. In particular, the ``Makefile``
-target ``rustavailable`` is useful to check why the Rust toolchain may not
-be detected.
-
-bindgen (optional)
-------------------
-
-``bindgen`` is used to generate the Rust bindings to the C side of the kernel.
-It depends on ``libclang``.
-
 Make
 ----
 
-You will need GNU make 3.82 or later to build the kernel.
-
-Bash
-----
-
-Some bash scripts are used for the kernel build.
-Bash 4.2 or newer is needed.
+You will need GNU make 3.81 or later to build the kernel.
 
 Binutils
 --------
 
-Binutils 2.23 or newer is needed to build the kernel.
-
-pkg-config
-----------
-
-The build system, as of 4.18, requires pkg-config to check for installed
-kconfig tools and to determine flags settings for use in
-'make {g,x}config'.  Previously pkg-config was being used but not
-verified or documented.
+The build system has, as of 4.13, switched to using thin archives (`ar T`)
+rather than incremental linking (`ld -r`) for built-in.a intermediate steps.
+This requires binutils 2.20 or newer.
 
 Flex
 ----
@@ -141,16 +93,6 @@ Bison
 
 Since Linux 4.16, the build system generates parsers
 during build.  This requires bison 2.0 or later.
-
-pahole:
--------
-
-Since Linux 5.2, if CONFIG_DEBUG_INFO_BTF is selected, the build system
-generates BTF (BPF Type Format) from DWARF in vmlinux, a bit later from kernel
-modules as well.  This requires pahole v1.16 or later.
-
-It is found in the 'dwarves' or 'pahole' distro packages or from
-https://fedorapeople.org/~acme/dwarves/.
 
 Perl
 ----
@@ -182,7 +124,7 @@ Architectural changes
 ---------------------
 
 DevFS has been obsoleted in favour of udev
-(https://www.kernel.org/pub/linux/utils/kernel/hotplug/)
+(http://www.kernel.org/pub/linux/utils/kernel/hotplug/)
 
 32-bit UID support is now in place.  Have fun!
 
@@ -213,6 +155,12 @@ produces better output than ksymoops).  If for some reason your kernel
 is not build with ``CONFIG_KALLSYMS`` and you have no way to rebuild and
 reproduce the Oops with that option, then you can still decode that Oops
 with ksymoops.
+
+Module-Init-Tools
+-----------------
+
+A new module loader is now in the kernel that requires ``module-init-tools``
+to use.  It is backward compatible with the 2.4.x series kernels.
 
 Mkinitrd
 --------
@@ -329,6 +277,12 @@ which can be made by::
 
 as root.
 
+Isdn4k-utils
+------------
+
+Due to changes in the length of the phone number field, isdn4k-utils
+needs to be recompiled or (preferably) upgraded.
+
 NFS-utils
 ---------
 
@@ -370,14 +324,8 @@ Kernel documentation
 Sphinx
 ------
 
-Please see :ref:`sphinx_install` in :ref:`Documentation/doc-guide/sphinx.rst <sphinxdoc>`
+Please see :ref:`sphinx_install` in ``Documentation/doc-guide/sphinx.rst``
 for details about Sphinx requirements.
-
-rustdoc
--------
-
-``rustdoc`` is used to generate the documentation for Rust code. Please see
-Documentation/rust/general-information.rst for more information.
 
 Getting updated software
 ========================
@@ -390,30 +338,10 @@ gcc
 
 - <ftp://ftp.gnu.org/gnu/gcc/>
 
-Clang/LLVM
-----------
-
-- :ref:`Getting LLVM <getting_llvm>`.
-
-Rust
-----
-
-- Documentation/rust/quick-start.rst.
-
-bindgen
--------
-
-- Documentation/rust/quick-start.rst.
-
 Make
 ----
 
 - <ftp://ftp.gnu.org/gnu/make/>
-
-Bash
-----
-
-- <ftp://ftp.gnu.org/gnu/bash/>
 
 Binutils
 --------
@@ -443,16 +371,15 @@ Util-linux
 
 - <https://www.kernel.org/pub/linux/utils/util-linux/>
 
-Kmod
-----
-
-- <https://www.kernel.org/pub/linux/utils/kernel/kmod/>
-- <https://git.kernel.org/pub/scm/utils/kernel/kmod/kmod.git>
-
 Ksymoops
 --------
 
 - <https://www.kernel.org/pub/linux/utils/kernel/ksymoops/v2.4/>
+
+Module-Init-Tools
+-----------------
+
+- <https://www.kernel.org/pub/linux/utils/kernel/module-init-tools/>
 
 Mkinitrd
 --------
@@ -462,8 +389,7 @@ Mkinitrd
 E2fsprogs
 ---------
 
-- <https://www.kernel.org/pub/linux/kernel/people/tytso/e2fsprogs/>
-- <https://git.kernel.org/pub/scm/fs/ext2/e2fsprogs.git/>
+- <http://prdownloads.sourceforge.net/e2fsprogs/e2fsprogs-1.29.tar.gz>
 
 JFSutils
 --------
@@ -473,13 +399,12 @@ JFSutils
 Reiserfsprogs
 -------------
 
-- <https://git.kernel.org/pub/scm/linux/kernel/git/jeffm/reiserfsprogs.git/>
+- <http://www.kernel.org/pub/linux/utils/fs/reiserfs/>
 
 Xfsprogs
 --------
 
-- <https://git.kernel.org/pub/scm/fs/xfs/xfsprogs-dev.git>
-- <https://www.kernel.org/pub/linux/utils/fs/xfs/xfsprogs/>
+- <ftp://oss.sgi.com/projects/xfs/>
 
 Pcmciautils
 -----------
@@ -500,7 +425,7 @@ Intel P6 microcode
 udev
 ----
 
-- <https://www.freedesktop.org/software/systemd/man/udev.html>
+- <http://www.freedesktop.org/software/systemd/man/udev.html>
 
 FUSE
 ----
@@ -512,20 +437,18 @@ mcelog
 
 - <http://www.mcelog.org/>
 
-cpio
-----
-
-- <https://www.gnu.org/software/cpio/>
-
 Networking
 **********
 
 PPP
 ---
 
-- <https://download.samba.org/pub/ppp/>
-- <https://git.ozlabs.org/?p=ppp.git>
-- <https://github.com/paulusmack/ppp/>
+- <ftp://ftp.samba.org/pub/ppp/>
+
+Isdn4k-utils
+------------
+
+- <ftp://ftp.isdn4linux.de/pub/isdn4linux/utils/>
 
 NFS-utils
 ---------
@@ -535,7 +458,7 @@ NFS-utils
 Iptables
 --------
 
-- <https://netfilter.org/projects/iptables/index.html>
+- <http://www.iptables.org/downloads.html>
 
 Ip-route2
 ---------
@@ -558,4 +481,4 @@ Kernel documentation
 Sphinx
 ------
 
-- <https://www.sphinx-doc.org/>
+- <http://www.sphinx-doc.org/>

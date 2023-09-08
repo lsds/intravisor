@@ -99,7 +99,6 @@
 
 #include <linux/types.h>
 #include <asm/fpu.h>
-#include <asm/intrinsics.h>
 
 /*
  * Data types needed to pass information into PAL procedures and
@@ -751,7 +750,7 @@ typedef union pal_mc_error_info_u {
  * for PAL.
  */
 
-struct pal_min_state_area {
+typedef struct pal_min_state_area_s {
 	u64	pmsa_nat_bits;		/* nat bits for saved GRs  */
 	u64	pmsa_gr[15];		/* GR1	- GR15		   */
 	u64	pmsa_bank0_gr[16];	/* GR16 - GR31		   */
@@ -767,7 +766,7 @@ struct pal_min_state_area {
 	u64	pmsa_xfs;		/* previous ifs		   */
 	u64	pmsa_br1;		/* branch register 1	   */
 	u64	pmsa_reserved[70];	/* pal_min_state_area should total to 1KB */
-};
+} pal_min_state_area_t;
 
 
 struct ia64_pal_retval {
@@ -1087,7 +1086,7 @@ static inline long ia64_pal_freq_base(unsigned long *platform_base_freq)
 
 /*
  * Get the ratios for processor frequency, bus frequency and interval timer to
- * the base frequency of the platform
+ * to base frequency of the platform
  */
 static inline s64
 ia64_pal_freq_ratios (struct pal_freq_ratio *proc_ratio, struct pal_freq_ratio *bus_ratio,

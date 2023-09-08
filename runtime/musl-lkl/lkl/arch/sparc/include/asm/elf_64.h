@@ -8,6 +8,7 @@
 
 #include <asm/ptrace.h>
 #include <asm/processor.h>
+#include <asm/extable_64.h>
 #include <asm/spitfire.h>
 #include <asm/adi.h>
 

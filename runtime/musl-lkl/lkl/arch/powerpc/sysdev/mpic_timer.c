@@ -1,10 +1,14 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * MPIC timer driver
  *
  * Copyright 2013 Freescale Semiconductor, Inc.
  * Author: Dongsheng Wang <Dongsheng.Wang@freescale.com>
  *	   Li Yang <leoli@freescale.com>
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License as published by the
+ * Free Software Foundation; either version 2 of the License, or (at your
+ * option) any later version.
  */
 
 #include <linux/kernel.h>
@@ -255,7 +259,7 @@ EXPORT_SYMBOL(mpic_start_timer);
 
 /**
  * mpic_stop_timer - stop hardware timer
- * @handle: the timer to be stopped
+ * @handle: the timer to be stoped
  *
  * The timer periodically generates an interrupt. Unless user stops the timer.
  */
@@ -384,7 +388,7 @@ struct mpic_timer *mpic_request_timer(irq_handler_t fn, void *dev,
 }
 EXPORT_SYMBOL(mpic_request_timer);
 
-static int __init timer_group_get_freq(struct device_node *np,
+static int timer_group_get_freq(struct device_node *np,
 			struct timer_group_priv *priv)
 {
 	u32 div;
@@ -411,7 +415,7 @@ static int __init timer_group_get_freq(struct device_node *np,
 	return 0;
 }
 
-static int __init timer_group_get_irq(struct device_node *np,
+static int timer_group_get_irq(struct device_node *np,
 		struct timer_group_priv *priv)
 {
 	const u32 all_timer[] = { 0, TIMERS_PER_GROUP };
@@ -459,7 +463,7 @@ static int __init timer_group_get_irq(struct device_node *np,
 	return 0;
 }
 
-static void __init timer_group_init(struct device_node *np)
+static void timer_group_init(struct device_node *np)
 {
 	struct timer_group_priv *priv;
 	unsigned int i = 0;

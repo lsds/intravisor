@@ -392,12 +392,12 @@ static void bot_set_alt(struct f_uas *fu)
 
 	fu->flags = USBG_IS_BOT;
 
-	config_ep_by_speed_and_alt(gadget, f, fu->ep_in, USB_G_ALT_INT_BBB);
+	config_ep_by_speed(gadget, f, fu->ep_in);
 	ret = usb_ep_enable(fu->ep_in);
 	if (ret)
 		goto err_b_in;
 
-	config_ep_by_speed_and_alt(gadget, f, fu->ep_out, USB_G_ALT_INT_BBB);
+	config_ep_by_speed(gadget, f, fu->ep_out);
 	ret = usb_ep_enable(fu->ep_out);
 	if (ret)
 		goto err_b_out;
@@ -531,7 +531,6 @@ static int uasp_prepare_r_request(struct usbg_cmd *cmd)
 		stream->req_in->sg = se_cmd->t_data_sg;
 	}
 
-	stream->req_in->is_last = 1;
 	stream->req_in->complete = uasp_status_data_cmpl;
 	stream->req_in->length = se_cmd->data_length;
 	stream->req_in->context = cmd;
@@ -555,7 +554,6 @@ static void uasp_prepare_status(struct usbg_cmd *cmd)
 	 */
 	iu->len = cpu_to_be16(se_cmd->scsi_sense_length);
 	iu->status = se_cmd->scsi_status;
-	stream->req_status->is_last = 1;
 	stream->req_status->context = cmd;
 	stream->req_status->length = se_cmd->scsi_sense_length + 16;
 	stream->req_status->buf = iu;
@@ -753,13 +751,12 @@ static int uasp_alloc_stream_res(struct f_uas *fu, struct uas_stream *stream)
 		goto err_sts;
 
 	return 0;
-
 err_sts:
+	usb_ep_free_request(fu->ep_status, stream->req_status);
+	stream->req_status = NULL;
+err_out:
 	usb_ep_free_request(fu->ep_out, stream->req_out);
 	stream->req_out = NULL;
-err_out:
-	usb_ep_free_request(fu->ep_in, stream->req_in);
-	stream->req_in = NULL;
 out:
 	return -ENOMEM;
 }
@@ -849,24 +846,24 @@ static void uasp_set_alt(struct f_uas *fu)
 
 	fu->flags = USBG_IS_UAS;
 
-	if (gadget->speed >= USB_SPEED_SUPER)
+	if (gadget->speed == USB_SPEED_SUPER)
 		fu->flags |= USBG_USE_STREAMS;
 
-	config_ep_by_speed_and_alt(gadget, f, fu->ep_in, USB_G_ALT_INT_UAS);
+	config_ep_by_speed(gadget, f, fu->ep_in);
 	ret = usb_ep_enable(fu->ep_in);
 	if (ret)
 		goto err_b_in;
 
-	config_ep_by_speed_and_alt(gadget, f, fu->ep_out, USB_G_ALT_INT_UAS);
+	config_ep_by_speed(gadget, f, fu->ep_out);
 	ret = usb_ep_enable(fu->ep_out);
 	if (ret)
 		goto err_b_out;
 
-	config_ep_by_speed_and_alt(gadget, f, fu->ep_cmd, USB_G_ALT_INT_UAS);
+	config_ep_by_speed(gadget, f, fu->ep_cmd);
 	ret = usb_ep_enable(fu->ep_cmd);
 	if (ret)
 		goto err_cmd;
-	config_ep_by_speed_and_alt(gadget, f, fu->ep_status, USB_G_ALT_INT_UAS);
+	config_ep_by_speed(gadget, f, fu->ep_status);
 	ret = usb_ep_enable(fu->ep_status);
 	if (ret)
 		goto err_status;
@@ -994,7 +991,6 @@ static int usbg_prepare_w_request(struct usbg_cmd *cmd, struct usb_request *req)
 		req->sg = se_cmd->t_data_sg;
 	}
 
-	req->is_last = 1;
 	req->complete = usbg_data_write_cmpl;
 	req->length = se_cmd->data_length;
 	req->context = cmd;
@@ -1050,17 +1046,18 @@ static void usbg_cmd_work(struct work_struct *work)
 	tv_nexus = tpg->tpg_nexus;
 	dir = get_cmd_dir(cmd->cmd_buf);
 	if (dir < 0) {
-		__target_init_cmd(se_cmd,
-				  tv_nexus->tvn_se_sess->se_tpg->se_tpg_tfo,
-				  tv_nexus->tvn_se_sess, cmd->data_len, DMA_NONE,
-				  cmd->prio_attr, cmd->sense_iu.sense,
-				  cmd->unpacked_lun);
+		transport_init_se_cmd(se_cmd,
+				tv_nexus->tvn_se_sess->se_tpg->se_tpg_tfo,
+				tv_nexus->tvn_se_sess, cmd->data_len, DMA_NONE,
+				cmd->prio_attr, cmd->sense_iu.sense);
 		goto out;
 	}
 
-	target_submit_cmd(se_cmd, tv_nexus->tvn_se_sess, cmd->cmd_buf,
-			  cmd->sense_iu.sense, cmd->unpacked_lun, 0,
-			  cmd->prio_attr, dir, flags);
+	if (target_submit_cmd(se_cmd, tv_nexus->tvn_se_sess, cmd->cmd_buf,
+			      cmd->sense_iu.sense, cmd->unpacked_lun, 0,
+			      cmd->prio_attr, dir, flags) < 0)
+		goto out;
+
 	return;
 
 out:
@@ -1074,16 +1071,15 @@ static struct usbg_cmd *usbg_get_cmd(struct f_uas *fu,
 {
 	struct se_session *se_sess = tv_nexus->tvn_se_sess;
 	struct usbg_cmd *cmd;
-	int tag, cpu;
+	int tag;
 
-	tag = sbitmap_queue_get(&se_sess->sess_tag_pool, &cpu);
+	tag = percpu_ida_alloc(&se_sess->sess_tag_pool, TASK_RUNNING);
 	if (tag < 0)
 		return ERR_PTR(-ENOMEM);
 
 	cmd = &((struct usbg_cmd *)se_sess->sess_cmd_map)[tag];
 	memset(cmd, 0, sizeof(*cmd));
 	cmd->se_cmd.map_tag = tag;
-	cmd->se_cmd.map_cpu = cpu;
 	cmd->se_cmd.tag = cmd->tag = scsi_tag;
 	cmd->fu = fu;
 
@@ -1149,7 +1145,7 @@ static int usbg_submit_command(struct f_uas *fu,
 	default:
 		pr_debug_once("Unsupported prio_attr: %02x.\n",
 				cmd_iu->prio_attr);
-		fallthrough;
+		/* fall through */
 	case UAS_SIMPLE_TAG:
 		cmd->prio_attr = TCM_SIMPLE_TAG;
 		break;
@@ -1179,17 +1175,18 @@ static void bot_cmd_work(struct work_struct *work)
 	tv_nexus = tpg->tpg_nexus;
 	dir = get_cmd_dir(cmd->cmd_buf);
 	if (dir < 0) {
-		__target_init_cmd(se_cmd,
-				  tv_nexus->tvn_se_sess->se_tpg->se_tpg_tfo,
-				  tv_nexus->tvn_se_sess, cmd->data_len, DMA_NONE,
-				  cmd->prio_attr, cmd->sense_iu.sense,
-				  cmd->unpacked_lun);
+		transport_init_se_cmd(se_cmd,
+				tv_nexus->tvn_se_sess->se_tpg->se_tpg_tfo,
+				tv_nexus->tvn_se_sess, cmd->data_len, DMA_NONE,
+				cmd->prio_attr, cmd->sense_iu.sense);
 		goto out;
 	}
 
-	target_submit_cmd(se_cmd, tv_nexus->tvn_se_sess,
-			  cmd->cmd_buf, cmd->sense_iu.sense, cmd->unpacked_lun,
-			  cmd->data_len, cmd->prio_attr, dir, 0);
+	if (target_submit_cmd(se_cmd, tv_nexus->tvn_se_sess,
+			cmd->cmd_buf, cmd->sense_iu.sense, cmd->unpacked_lun,
+			cmd->data_len, cmd->prio_attr, dir, 0) < 0)
+		goto out;
+
 	return;
 
 out:
@@ -1258,6 +1255,11 @@ static int usbg_check_false(struct se_portal_group *se_tpg)
 	return 0;
 }
 
+static char *usbg_get_fabric_name(void)
+{
+	return "usb_gadget";
+}
+
 static char *usbg_get_fabric_wwn(struct se_portal_group *se_tpg)
 {
 	struct usbg_tpg *tpg = container_of(se_tpg,
@@ -1286,10 +1288,18 @@ static void usbg_release_cmd(struct se_cmd *se_cmd)
 	struct se_session *se_sess = se_cmd->se_sess;
 
 	kfree(cmd->data_buf);
-	target_free_tag(se_sess, se_cmd);
+	percpu_ida_free(&se_sess->sess_tag_pool, se_cmd->map_tag);
 }
 
 static u32 usbg_sess_get_index(struct se_session *se_sess)
+{
+	return 0;
+}
+
+/*
+ * XXX Error recovery: return != 0 if we expect writes. Dunno when that could be
+ */
+static int usbg_write_pending_status(struct se_cmd *se_cmd)
 {
 	return 0;
 }
@@ -1333,8 +1343,10 @@ static int usbg_init_nodeacl(struct se_node_acl *se_nacl, const char *name)
 	return 0;
 }
 
-static struct se_portal_group *usbg_make_tpg(struct se_wwn *wwn,
-					     const char *name)
+static struct se_portal_group *usbg_make_tpg(
+	struct se_wwn *wwn,
+	struct config_group *group,
+	const char *name)
 {
 	struct usbg_tport *tport = container_of(wwn, struct usbg_tport,
 			tport_wwn);
@@ -1367,7 +1379,7 @@ static struct se_portal_group *usbg_make_tpg(struct se_wwn *wwn,
 			goto unlock_dep;
 	} else {
 		ret = configfs_depend_item_unlocked(
-			wwn->wwn_group.cg_subsys,
+			group->cg_subsys,
 			&opts->func_inst.group.cg_item);
 		if (ret)
 			goto unlock_dep;
@@ -1495,24 +1507,42 @@ static struct configfs_attribute *usbg_wwn_attrs[] = {
 	NULL,
 };
 
+static ssize_t tcm_usbg_tpg_enable_show(struct config_item *item, char *page)
+{
+	struct se_portal_group *se_tpg = to_tpg(item);
+	struct usbg_tpg  *tpg = container_of(se_tpg, struct usbg_tpg, se_tpg);
+
+	return snprintf(page, PAGE_SIZE, "%u\n", tpg->gadget_connect);
+}
+
 static int usbg_attach(struct usbg_tpg *);
 static void usbg_detach(struct usbg_tpg *);
 
-static int usbg_enable_tpg(struct se_portal_group *se_tpg, bool enable)
+static ssize_t tcm_usbg_tpg_enable_store(struct config_item *item,
+		const char *page, size_t count)
 {
+	struct se_portal_group *se_tpg = to_tpg(item);
 	struct usbg_tpg  *tpg = container_of(se_tpg, struct usbg_tpg, se_tpg);
-	int ret = 0;
+	bool op;
+	ssize_t ret;
 
-	if (enable)
+	ret = strtobool(page, &op);
+	if (ret)
+		return ret;
+
+	if ((op && tpg->gadget_connect) || (!op && !tpg->gadget_connect))
+		return -EINVAL;
+
+	if (op)
 		ret = usbg_attach(tpg);
 	else
 		usbg_detach(tpg);
 	if (ret)
 		return ret;
 
-	tpg->gadget_connect = enable;
+	tpg->gadget_connect = op;
 
-	return 0;
+	return count;
 }
 
 static ssize_t tcm_usbg_tpg_nexus_show(struct config_item *item, char *page)
@@ -1563,7 +1593,7 @@ static int tcm_usbg_make_nexus(struct usbg_tpg *tpg, char *name)
 		goto out_unlock;
 	}
 
-	tv_nexus->tvn_se_sess = target_setup_session(&tpg->se_tpg,
+	tv_nexus->tvn_se_sess = target_alloc_session(&tpg->se_tpg,
 						     USB_G_DEFAULT_SESSION_TAGS,
 						     sizeof(struct usbg_cmd),
 						     TARGET_PROT_NORMAL, name,
@@ -1609,7 +1639,7 @@ static int tcm_usbg_drop_nexus(struct usbg_tpg *tpg)
 	/*
 	 * Release the SCSI I_T Nexus to the emulated vHost Target Port
 	 */
-	target_remove_session(se_sess);
+	transport_deregister_session(tv_nexus->tvn_se_sess);
 	tpg->tpg_nexus = NULL;
 
 	kfree(tv_nexus);
@@ -1655,9 +1685,11 @@ static ssize_t tcm_usbg_tpg_nexus_store(struct config_item *item,
 	return count;
 }
 
+CONFIGFS_ATTR(tcm_usbg_tpg_, enable);
 CONFIGFS_ATTR(tcm_usbg_tpg_, nexus);
 
 static struct configfs_attribute *usbg_base_attrs[] = {
+	&tcm_usbg_tpg_attr_enable,
 	&tcm_usbg_tpg_attr_nexus,
 	NULL,
 };
@@ -1687,7 +1719,8 @@ static int usbg_check_stop_free(struct se_cmd *se_cmd)
 
 static const struct target_core_fabric_ops usbg_ops = {
 	.module				= THIS_MODULE,
-	.fabric_name			= "usb_gadget",
+	.name				= "usb_gadget",
+	.get_fabric_name		= usbg_get_fabric_name,
 	.tpg_get_wwn			= usbg_get_fabric_wwn,
 	.tpg_get_tag			= usbg_get_tag,
 	.tpg_check_demo_mode		= usbg_check_true,
@@ -1699,6 +1732,7 @@ static const struct target_core_fabric_ops usbg_ops = {
 	.sess_get_index			= usbg_sess_get_index,
 	.sess_get_initiator_sid		= NULL,
 	.write_pending			= usbg_send_write_request,
+	.write_pending_status		= usbg_write_pending_status,
 	.set_default_node_attributes	= usbg_set_default_node_attrs,
 	.get_cmd_state			= usbg_get_cmd_state,
 	.queue_data_in			= usbg_send_read_response,
@@ -1710,7 +1744,6 @@ static const struct target_core_fabric_ops usbg_ops = {
 	.fabric_make_wwn		= usbg_make_tport,
 	.fabric_drop_wwn		= usbg_drop_tport,
 	.fabric_make_tpg		= usbg_make_tpg,
-	.fabric_enable_tpg		= usbg_enable_tpg,
 	.fabric_drop_tpg		= usbg_drop_tpg,
 	.fabric_post_link		= usbg_port_link,
 	.fabric_pre_unlink		= usbg_port_unlink,
@@ -2038,8 +2071,7 @@ static int tcm_bind(struct usb_configuration *c, struct usb_function *f)
 	uasp_fs_cmd_desc.bEndpointAddress = uasp_ss_cmd_desc.bEndpointAddress;
 
 	ret = usb_assign_descriptors(f, uasp_fs_function_desc,
-			uasp_hs_function_desc, uasp_ss_function_desc,
-			uasp_ss_function_desc);
+			uasp_hs_function_desc, uasp_ss_function_desc, NULL);
 	if (ret)
 		goto ep_fail;
 
@@ -2075,16 +2107,6 @@ static void tcm_delayed_set_alt(struct work_struct *wq)
 	else if (alt == USB_G_ALT_INT_UAS)
 		uasp_set_alt(fu);
 	usb_composite_setup_continue(fu->function.config->cdev);
-}
-
-static int tcm_get_alt(struct usb_function *f, unsigned intf)
-{
-	if (intf == bot_intf_desc.bInterfaceNumber)
-		return USB_G_ALT_INT_BBB;
-	if (intf == uasp_intf_desc.bInterfaceNumber)
-		return USB_G_ALT_INT_UAS;
-
-	return -EOPNOTSUPP;
 }
 
 static int tcm_set_alt(struct usb_function *f, unsigned intf, unsigned alt)
@@ -2294,7 +2316,6 @@ static struct usb_function *tcm_alloc(struct usb_function_instance *fi)
 	fu->function.bind = tcm_bind;
 	fu->function.unbind = tcm_unbind;
 	fu->function.set_alt = tcm_set_alt;
-	fu->function.get_alt = tcm_get_alt;
 	fu->function.setup = tcm_setup;
 	fu->function.disable = tcm_disable;
 	fu->function.free_func = tcm_free;
@@ -2306,7 +2327,7 @@ static struct usb_function *tcm_alloc(struct usb_function_instance *fi)
 
 DECLARE_USB_FUNCTION(tcm, tcm_alloc_inst, tcm_alloc);
 
-static int __init tcm_init(void)
+static int tcm_init(void)
 {
 	int ret;
 
@@ -2322,7 +2343,7 @@ static int __init tcm_init(void)
 }
 module_init(tcm_init);
 
-static void __exit tcm_exit(void)
+static void tcm_exit(void)
 {
 	target_unregister_template(&usbg_ops);
 	usb_function_unregister(&tcmusb_func);

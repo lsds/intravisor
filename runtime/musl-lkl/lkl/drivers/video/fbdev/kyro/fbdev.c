@@ -9,7 +9,6 @@
  * for more details.
  */
 
-#include <linux/aperture.h>
 #include <linux/module.h>
 #include <linux/types.h>
 #include <linux/kernel.h>
@@ -373,11 +372,6 @@ static int kyro_dev_overlay_viewport_set(u32 x, u32 y, u32 ulWidth, u32 ulHeight
 		/* probably haven't called CreateOverlay yet */
 		return -EINVAL;
 
-	if (ulWidth == 0 || ulWidth == 0xffffffff ||
-	    ulHeight == 0 || ulHeight == 0xffffffff ||
-	    (x < 2 && ulWidth + 2 == 0))
-		return -EINVAL;
-
 	/* Stop Ramdac Output */
 	DisableRamdacOutput(deviceInfo.pSTGReg);
 
@@ -399,9 +393,6 @@ static inline unsigned long get_line_length(int x, int bpp)
 static int kyrofb_check_var(struct fb_var_screeninfo *var, struct fb_info *info)
 {
 	struct kyrofb_info *par = info->par;
-
-	if (!var->pixclock)
-		return -EINVAL;
 
 	if (var->bits_per_pixel != 16 && var->bits_per_pixel != 32) {
 		printk(KERN_WARNING "kyrofb: depth not supported: %u\n", var->bits_per_pixel);
@@ -495,8 +486,6 @@ static int kyrofb_set_par(struct fb_info *info)
 				    info->var.hsync_len +
 				    info->var.left_margin)) / 1000;
 
-	if (!lineclock)
-		return -EINVAL;
 
 	/* time for a frame in ns (precision in 32bpp) */
 	frameclock = lineclock * (info->var.yres +
@@ -659,7 +648,7 @@ static struct pci_driver kyrofb_pci_driver = {
 	.remove		= kyrofb_remove,
 };
 
-static const struct fb_ops kyrofb_ops = {
+static struct fb_ops kyrofb_ops = {
 	.owner		= THIS_MODULE,
 	.fb_check_var	= kyrofb_check_var,
 	.fb_set_par	= kyrofb_set_par,
@@ -676,10 +665,6 @@ static int kyrofb_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	struct kyrofb_info *currentpar;
 	unsigned long size;
 	int err;
-
-	err = aperture_remove_conflicting_pci_devices(pdev, "kyrofb");
-	if (err)
-		return err;
 
 	if ((err = pci_enable_device(pdev))) {
 		printk(KERN_WARNING "kyrofb: Can't enable pdev: %d\n", err);
@@ -698,7 +683,7 @@ static int kyrofb_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	kyro_fix.mmio_len   = pci_resource_len(pdev, 1);
 
 	currentpar->regbase = deviceInfo.pSTGReg =
-		ioremap(kyro_fix.mmio_start, kyro_fix.mmio_len);
+		ioremap_nocache(kyro_fix.mmio_start, kyro_fix.mmio_len);
 	if (!currentpar->regbase)
 		goto out_free_fb;
 

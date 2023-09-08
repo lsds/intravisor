@@ -45,9 +45,6 @@ int gb_audio_manager_add(struct gb_audio_manager_module_descriptor *desc)
 	int err;
 
 	id = ida_simple_get(&module_id, 0, 0, GFP_KERNEL);
-	if (id < 0)
-		return id;
-
 	err = gb_audio_manager_module_create(&module, manager_kset,
 					     id, desc);
 	if (err) {
@@ -86,14 +83,14 @@ EXPORT_SYMBOL_GPL(gb_audio_manager_remove);
 void gb_audio_manager_remove_all(void)
 {
 	struct gb_audio_manager_module *module, *next;
-	int is_empty;
+	int is_empty = 1;
 
 	down_write(&modules_rwsem);
 
 	list_for_each_entry_safe(module, next, &modules_list, list) {
 		list_del(&module->list);
-		ida_simple_remove(&module_id, module->id);
 		kobject_put(&module->kobj);
+		ida_simple_remove(&module_id, module->id);
 	}
 
 	is_empty = list_empty(&modules_list);

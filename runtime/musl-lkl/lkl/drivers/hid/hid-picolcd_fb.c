@@ -1,10 +1,20 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /***************************************************************************
  *   Copyright (C) 2010-2012 by Bruno Prémont <bonbons@linux-vserver.org>  *
  *                                                                         *
  *   Based on Logitech G13 driver (v0.4)                                   *
  *     Copyright (C) 2009 by Rick L. Vinyard, Jr. <rvinyard@cs.nmsu.edu>   *
  *                                                                         *
+ *   This program is free software: you can redistribute it and/or modify  *
+ *   it under the terms of the GNU General Public License as published by  *
+ *   the Free Software Foundation, version 2 of the License.               *
+ *                                                                         *
+ *   This driver is distributed in the hope that it will be useful, but    *
+ *   WITHOUT ANY WARRANTY; without even the implied warranty of            *
+ *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU      *
+ *   General Public License for more details.                              *
+ *                                                                         *
+ *   You should have received a copy of the GNU General Public License     *
+ *   along with this software. If not see <http://www.gnu.org/licenses/>.  *
  ***************************************************************************/
 
 #include <linux/hid.h>
@@ -384,8 +394,7 @@ static int picolcd_set_par(struct fb_info *info)
 		return -EINVAL;
 
 	o_fb   = fbdata->bitmap;
-	tmp_fb = kmalloc_array(PICOLCDFB_SIZE, info->var.bits_per_pixel,
-			       GFP_KERNEL);
+	tmp_fb = kmalloc(PICOLCDFB_SIZE*info->var.bits_per_pixel, GFP_KERNEL);
 	if (!tmp_fb)
 		return -ENOMEM;
 
@@ -417,7 +426,8 @@ static int picolcd_set_par(struct fb_info *info)
 	return 0;
 }
 
-static const struct fb_ops picolcdfb_ops = {
+/* Note this can't be const because of struct fb_info definition */
+static struct fb_ops picolcdfb_ops = {
 	.owner        = THIS_MODULE,
 	.fb_destroy   = picolcd_fb_destroy,
 	.fb_read      = fb_sys_read,
@@ -428,12 +438,11 @@ static const struct fb_ops picolcdfb_ops = {
 	.fb_imageblit = picolcd_fb_imageblit,
 	.fb_check_var = picolcd_fb_check_var,
 	.fb_set_par   = picolcd_set_par,
-	.fb_mmap      = fb_deferred_io_mmap,
 };
 
 
 /* Callback from deferred IO workqueue */
-static void picolcd_fb_deferred_io(struct fb_info *info, struct list_head *pagereflist)
+static void picolcd_fb_deferred_io(struct fb_info *info, struct list_head *pagelist)
 {
 	picolcd_fb_update(info);
 }
@@ -459,9 +468,9 @@ static ssize_t picolcd_fb_update_rate_show(struct device *dev,
 		if (ret >= PAGE_SIZE)
 			break;
 		else if (i == fb_update_rate)
-			ret += scnprintf(buf+ret, PAGE_SIZE-ret, "[%u] ", i);
+			ret += snprintf(buf+ret, PAGE_SIZE-ret, "[%u] ", i);
 		else
-			ret += scnprintf(buf+ret, PAGE_SIZE-ret, "%u ", i);
+			ret += snprintf(buf+ret, PAGE_SIZE-ret, "%u ", i);
 	if (ret > 0)
 		buf[min(ret, (size_t)PAGE_SIZE)-1] = '\n';
 	return ret;
@@ -512,8 +521,10 @@ int picolcd_init_framebuffer(struct picolcd_data *data)
 			sizeof(struct fb_deferred_io) +
 			sizeof(struct picolcd_fb_data) +
 			PICOLCDFB_SIZE, dev);
-	if (!info)
+	if (info == NULL) {
+		dev_err(dev, "failed to allocate a framebuffer\n");
 		goto err_nomem;
+	}
 
 	info->fbdefio = info->par;
 	*info->fbdefio = picolcd_fb_defio;

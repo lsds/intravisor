@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * DVB USB library - provides a generic interface for a DVB USB device driver.
  *
@@ -6,7 +5,11 @@
  *
  * Copyright (C) 2004-6 Patrick Boettcher (patrick.boettcher@posteo.de)
  *
- * see Documentation/driver-api/media/drivers/dvb-usb.rst for more information
+ *	This program is free software; you can redistribute it and/or modify it
+ *	under the terms of the GNU General Public License as published by the Free
+ *	Software Foundation, version 2.
+ *
+ * see Documentation/dvb/README.dvb-usb for more information
  */
 #include "dvb-usb-common.h"
 
@@ -79,17 +82,11 @@ static int dvb_usb_adapter_init(struct dvb_usb_device *d, short *adapter_nrs)
 			}
 		}
 
-		ret = dvb_usb_adapter_stream_init(adap);
-		if (ret)
+		if ((ret = dvb_usb_adapter_stream_init(adap)) ||
+			(ret = dvb_usb_adapter_dvb_init(adap, adapter_nrs)) ||
+			(ret = dvb_usb_adapter_frontend_init(adap))) {
 			return ret;
-
-		ret = dvb_usb_adapter_dvb_init(adap, adapter_nrs);
-		if (ret)
-			goto dvb_init_err;
-
-		ret = dvb_usb_adapter_frontend_init(adap);
-		if (ret)
-			goto frontend_init_err;
+		}
 
 		/* use exclusive FE lock if there is multiple shared FEs */
 		if (adap->fe_adap[1].fe)
@@ -101,7 +98,7 @@ static int dvb_usb_adapter_init(struct dvb_usb_device *d, short *adapter_nrs)
 
 	/*
 	 * when reloading the driver w/o replugging the device
-	 * sometimes a timeout occurs, this helps
+	 * sometimes a timeout occures, this helps
 	 */
 	if (d->props.generic_bulk_ctrl_endpoint != 0) {
 		usb_clear_halt(d->udev, usb_sndbulkpipe(d->udev, d->props.generic_bulk_ctrl_endpoint));
@@ -109,12 +106,6 @@ static int dvb_usb_adapter_init(struct dvb_usb_device *d, short *adapter_nrs)
 	}
 
 	return 0;
-
-frontend_init_err:
-	dvb_usb_adapter_dvb_exit(adap);
-dvb_init_err:
-	dvb_usb_adapter_stream_exit(adap);
-	return ret;
 }
 
 static int dvb_usb_adapter_exit(struct dvb_usb_device *d)
@@ -142,10 +133,6 @@ static int dvb_usb_exit(struct dvb_usb_device *d)
 	dvb_usb_i2c_exit(d);
 	deb_info("state should be zero now: %x\n", d->state);
 	d->state = DVB_USB_STATE_INIT;
-
-	if (d->priv != NULL && d->props.priv_destroy != NULL)
-		d->props.priv_destroy(d);
-
 	kfree(d->priv);
 	kfree(d);
 	return 0;
@@ -167,23 +154,16 @@ static int dvb_usb_init(struct dvb_usb_device *d, short *adapter_nums)
 			err("no memory for priv in 'struct dvb_usb_device'");
 			return -ENOMEM;
 		}
-
-		if (d->props.priv_init != NULL) {
-			ret = d->props.priv_init(d);
-			if (ret != 0)
-				goto err_priv_init;
-		}
 	}
 
 	/* check the capabilities and set appropriate variables */
 	dvb_usb_device_power_ctrl(d, 1);
 
-	ret = dvb_usb_i2c_init(d);
-	if (ret)
-		goto err_i2c_init;
-	ret = dvb_usb_adapter_init(d, adapter_nums);
-	if (ret)
-		goto err_adapter_init;
+	if ((ret = dvb_usb_i2c_init(d)) ||
+		(ret = dvb_usb_adapter_init(d, adapter_nums))) {
+		dvb_usb_exit(d);
+		return ret;
+	}
 
 	if ((ret = dvb_usb_remote_init(d)))
 		err("could not initialize remote control.");
@@ -191,24 +171,13 @@ static int dvb_usb_init(struct dvb_usb_device *d, short *adapter_nums)
 	dvb_usb_device_power_ctrl(d, 0);
 
 	return 0;
-
-err_adapter_init:
-	dvb_usb_adapter_exit(d);
-	dvb_usb_i2c_exit(d);
-err_i2c_init:
-	if (d->priv && d->props.priv_destroy)
-		d->props.priv_destroy(d);
-err_priv_init:
-	kfree(d->priv);
-	d->priv = NULL;
-	return ret;
 }
 
 /* determine the name and the state of the just found USB device */
-static const struct dvb_usb_device_description *dvb_usb_find_device(struct usb_device *udev, const struct dvb_usb_device_properties *props, int *cold)
+static struct dvb_usb_device_description *dvb_usb_find_device(struct usb_device *udev, struct dvb_usb_device_properties *props, int *cold)
 {
 	int i, j;
-	const struct dvb_usb_device_description *desc = NULL;
+	struct dvb_usb_device_description *desc = NULL;
 
 	*cold = -1;
 
@@ -263,63 +232,54 @@ int dvb_usb_device_power_ctrl(struct dvb_usb_device *d, int onoff)
  * USB
  */
 int dvb_usb_device_init(struct usb_interface *intf,
-			const struct dvb_usb_device_properties *props,
+			struct dvb_usb_device_properties *props,
 			struct module *owner, struct dvb_usb_device **du,
 			short *adapter_nums)
 {
 	struct usb_device *udev = interface_to_usbdev(intf);
 	struct dvb_usb_device *d = NULL;
-	const struct dvb_usb_device_description *desc = NULL;
+	struct dvb_usb_device_description *desc = NULL;
 
 	int ret = -ENOMEM, cold = 0;
 
 	if (du != NULL)
 		*du = NULL;
 
-	d = kzalloc(sizeof(*d), GFP_KERNEL);
-	if (!d) {
-		err("no memory for 'struct dvb_usb_device'");
-		return -ENOMEM;
-	}
-
-	memcpy(&d->props, props, sizeof(struct dvb_usb_device_properties));
-
-	desc = dvb_usb_find_device(udev, &d->props, &cold);
-	if (!desc) {
+	if ((desc = dvb_usb_find_device(udev, props, &cold)) == NULL) {
 		deb_err("something went very wrong, device was not found in current device list - let's see what comes next.\n");
-		ret = -ENODEV;
-		goto error;
+		return -ENODEV;
 	}
 
 	if (cold) {
 		info("found a '%s' in cold state, will try to load a firmware", desc->name);
 		ret = dvb_usb_download_firmware(udev, props);
 		if (!props->no_reconnect || ret != 0)
-			goto error;
+			return ret;
 	}
 
 	info("found a '%s' in warm state.", desc->name);
+	d = kzalloc(sizeof(struct dvb_usb_device), GFP_KERNEL);
+	if (d == NULL) {
+		err("no memory for 'struct dvb_usb_device'");
+		return -ENOMEM;
+	}
+
 	d->udev = udev;
+	memcpy(&d->props, props, sizeof(struct dvb_usb_device_properties));
 	d->desc = desc;
 	d->owner = owner;
 
 	usb_set_intfdata(intf, d);
 
-	ret = dvb_usb_init(d, adapter_nums);
-	if (ret) {
-		info("%s error while loading driver (%d)", desc->name, ret);
-		goto error;
-	}
-
-	if (du)
+	if (du != NULL)
 		*du = d;
 
-	info("%s successfully initialized and connected.", desc->name);
-	return 0;
+	ret = dvb_usb_init(d, adapter_nums);
 
- error:
-	usb_set_intfdata(intf, NULL);
-	kfree(d);
+	if (ret == 0)
+		info("%s successfully initialized and connected.", desc->name);
+	else
+		info("%s error while loading driver (%d)", desc->name, ret);
 	return ret;
 }
 EXPORT_SYMBOL(dvb_usb_device_init);
@@ -327,15 +287,12 @@ EXPORT_SYMBOL(dvb_usb_device_init);
 void dvb_usb_device_exit(struct usb_interface *intf)
 {
 	struct dvb_usb_device *d = usb_get_intfdata(intf);
-	const char *default_name = "generic DVB-USB module";
-	char name[40];
+	const char *name = "generic DVB-USB module";
 
 	usb_set_intfdata(intf, NULL);
 	if (d != NULL && d->desc != NULL) {
-		strscpy(name, d->desc->name, sizeof(name));
+		name = d->desc->name;
 		dvb_usb_exit(d);
-	} else {
-		strscpy(name, default_name, sizeof(name));
 	}
 	info("%s successfully deinitialized and disconnected.", name);
 

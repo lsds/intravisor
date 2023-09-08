@@ -18,7 +18,6 @@
 #include <linux/module.h>
 #include <linux/of_irq.h>
 #include <linux/platform_device.h>
-#include <linux/seq_file.h>
 
 #define PIC_CAUSE	       0x0
 #define PIC_MASK	       0x4
@@ -30,7 +29,7 @@ struct mvebu_pic {
 	void __iomem *base;
 	u32 parent_irq;
 	struct irq_domain *domain;
-	struct platform_device *pdev;
+	struct irq_chip irq_chip;
 };
 
 static void mvebu_pic_reset(struct mvebu_pic *pic)
@@ -67,20 +66,6 @@ static void mvebu_pic_unmask_irq(struct irq_data *d)
 	writel(reg, pic->base + PIC_MASK);
 }
 
-static void mvebu_pic_print_chip(struct irq_data *d, struct seq_file *p)
-{
-	struct mvebu_pic *pic = irq_data_get_irq_chip_data(d);
-
-	seq_printf(p, dev_name(&pic->pdev->dev));
-}
-
-static const struct irq_chip mvebu_pic_chip = {
-	.irq_mask	= mvebu_pic_mask_irq,
-	.irq_unmask	= mvebu_pic_unmask_irq,
-	.irq_eoi	= mvebu_pic_eoi_irq,
-	.irq_print_chip	= mvebu_pic_print_chip,
-};
-
 static int mvebu_pic_irq_map(struct irq_domain *domain, unsigned int virq,
 			     irq_hw_number_t hwirq)
 {
@@ -88,7 +73,8 @@ static int mvebu_pic_irq_map(struct irq_domain *domain, unsigned int virq,
 
 	irq_set_percpu_devid(virq);
 	irq_set_chip_data(virq, pic);
-	irq_set_chip_and_handler(virq, &mvebu_pic_chip, handle_percpu_devid_irq);
+	irq_set_chip_and_handler(virq, &pic->irq_chip,
+				 handle_percpu_devid_irq);
 	irq_set_status_flags(virq, IRQ_LEVEL);
 	irq_set_probe(virq);
 
@@ -105,12 +91,15 @@ static void mvebu_pic_handle_cascade_irq(struct irq_desc *desc)
 	struct mvebu_pic *pic = irq_desc_get_handler_data(desc);
 	struct irq_chip *chip = irq_desc_get_chip(desc);
 	unsigned long irqmap, irqn;
+	unsigned int cascade_irq;
 
 	irqmap = readl_relaxed(pic->base + PIC_CAUSE);
 	chained_irq_enter(chip, desc);
 
-	for_each_set_bit(irqn, &irqmap, BITS_PER_LONG)
-		generic_handle_domain_irq(pic->domain, irqn);
+	for_each_set_bit(irqn, &irqmap, BITS_PER_LONG) {
+		cascade_irq = irq_find_mapping(pic->domain, irqn);
+		generic_handle_irq(cascade_irq);
+	}
 
 	chained_irq_exit(chip, desc);
 }
@@ -134,15 +123,23 @@ static int mvebu_pic_probe(struct platform_device *pdev)
 {
 	struct device_node *node = pdev->dev.of_node;
 	struct mvebu_pic *pic;
+	struct irq_chip *irq_chip;
+	struct resource *res;
 
 	pic = devm_kzalloc(&pdev->dev, sizeof(struct mvebu_pic), GFP_KERNEL);
 	if (!pic)
 		return -ENOMEM;
 
-	pic->pdev = pdev;
-	pic->base = devm_platform_ioremap_resource(pdev, 0);
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	pic->base = devm_ioremap_resource(&pdev->dev, res);
 	if (IS_ERR(pic->base))
 		return PTR_ERR(pic->base);
+
+	irq_chip = &pic->irq_chip;
+	irq_chip->name = dev_name(&pdev->dev);
+	irq_chip->irq_mask = mvebu_pic_mask_irq;
+	irq_chip->irq_unmask = mvebu_pic_unmask_irq;
+	irq_chip->irq_eoi = mvebu_pic_eoi_irq;
 
 	pic->parent_irq = irq_of_parse_and_map(node, 0);
 	if (pic->parent_irq <= 0) {

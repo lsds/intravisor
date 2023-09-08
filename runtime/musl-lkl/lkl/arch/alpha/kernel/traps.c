@@ -121,34 +121,36 @@ dik_show_code(unsigned int *pc)
 }
 
 static void
-dik_show_trace(unsigned long *sp, const char *loglvl)
+dik_show_trace(unsigned long *sp)
 {
 	long i = 0;
-	printk("%sTrace:\n", loglvl);
+	printk("Trace:\n");
 	while (0x1ff8 & (unsigned long) sp) {
 		extern char _stext[], _etext[];
 		unsigned long tmp = *sp;
 		sp++;
-		if (!is_kernel_text(tmp))
+		if (tmp < (unsigned long) &_stext)
 			continue;
-		printk("%s[<%lx>] %pSR\n", loglvl, tmp, (void *)tmp);
+		if (tmp >= (unsigned long) &_etext)
+			continue;
+		printk("[<%lx>] %pSR\n", tmp, (void *)tmp);
 		if (i > 40) {
-			printk("%s ...", loglvl);
+			printk(" ...");
 			break;
 		}
 	}
-	printk("%s\n", loglvl);
+	printk("\n");
 }
 
 static int kstack_depth_to_print = 24;
 
-void show_stack(struct task_struct *task, unsigned long *sp, const char *loglvl)
+void show_stack(struct task_struct *task, unsigned long *sp)
 {
 	unsigned long *stack;
 	int i;
 
 	/*
-	 * debugging aid: "show_stack(NULL, NULL, KERN_EMERG);" prints the
+	 * debugging aid: "show_stack(NULL);" prints the
 	 * back trace for this cpu.
 	 */
 	if(sp==NULL)
@@ -161,14 +163,14 @@ void show_stack(struct task_struct *task, unsigned long *sp, const char *loglvl)
 		if ((i % 4) == 0) {
 			if (i)
 				pr_cont("\n");
-			printk("%s       ", loglvl);
+			printk("       ");
 		} else {
 			pr_cont(" ");
 		}
 		pr_cont("%016lx", *stack++);
 	}
 	pr_cont("\n");
-	dik_show_trace(sp, loglvl);
+	dik_show_trace(sp);
 }
 
 void
@@ -182,7 +184,7 @@ die_if_kernel(char * str, struct pt_regs *regs, long err, unsigned long *r9_15)
 	printk("%s(%d): %s %ld\n", current->comm, task_pid_nr(current), str, err);
 	dik_show_regs(regs, r9_15);
 	add_taint(TAINT_DIE, LOCKDEP_NOW_UNRELIABLE);
-	dik_show_trace((unsigned long *)(regs+1), KERN_DEFAULT);
+	dik_show_trace((unsigned long *)(regs+1));
 	dik_show_code((unsigned int *)regs->pc);
 
 	if (test_and_set_thread_flag (TIF_DIE_IF_KERNEL)) {
@@ -190,7 +192,7 @@ die_if_kernel(char * str, struct pt_regs *regs, long err, unsigned long *r9_15)
 		local_irq_enable();
 		while (1);
 	}
-	make_task_dead(SIGSEGV);
+	do_exit(SIGSEGV);
 }
 
 #ifndef CONFIG_MATHEMU
@@ -211,6 +213,7 @@ do_entArith(unsigned long summary, unsigned long write_mask,
 	    struct pt_regs *regs)
 {
 	long si_code = FPE_FLTINV;
+	siginfo_t info;
 
 	if (summary & 1) {
 		/* Software-completion summary bit is set, so try to
@@ -225,12 +228,17 @@ do_entArith(unsigned long summary, unsigned long write_mask,
 	}
 	die_if_kernel("Arithmetic fault", regs, 0, NULL);
 
-	send_sig_fault_trapno(SIGFPE, si_code, (void __user *) regs->pc, 0, current);
+	info.si_signo = SIGFPE;
+	info.si_errno = 0;
+	info.si_code = si_code;
+	info.si_addr = (void __user *) regs->pc;
+	send_sig_info(SIGFPE, &info, current);
 }
 
 asmlinkage void
 do_entIF(unsigned long type, struct pt_regs *regs)
 {
+	siginfo_t info;
 	int signo, code;
 
 	if ((regs->ps & ~IPL_MAX) == 0) {
@@ -262,20 +270,31 @@ do_entIF(unsigned long type, struct pt_regs *regs)
 
 	switch (type) {
 	      case 0: /* breakpoint */
+		info.si_signo = SIGTRAP;
+		info.si_errno = 0;
+		info.si_code = TRAP_BRKPT;
+		info.si_trapno = 0;
+		info.si_addr = (void __user *) regs->pc;
+
 		if (ptrace_cancel_bpt(current)) {
 			regs->pc -= 4;	/* make pc point to former bpt */
 		}
 
-		send_sig_fault(SIGTRAP, TRAP_BRKPT, (void __user *)regs->pc,
-			       current);
+		send_sig_info(SIGTRAP, &info, current);
 		return;
 
 	      case 1: /* bugcheck */
-		send_sig_fault_trapno(SIGTRAP, TRAP_UNK,
-				      (void __user *) regs->pc, 0, current);
+		info.si_signo = SIGTRAP;
+		info.si_errno = 0;
+		info.si_code = TRAP_FIXME;
+		info.si_addr = (void __user *) regs->pc;
+		info.si_trapno = 0;
+		send_sig_info(SIGTRAP, &info, current);
 		return;
 		
 	      case 2: /* gentrap */
+		info.si_addr = (void __user *) regs->pc;
+		info.si_trapno = regs->r16;
 		switch ((long) regs->r16) {
 		case GEN_INTOVF:
 			signo = SIGFPE;
@@ -307,7 +326,7 @@ do_entIF(unsigned long type, struct pt_regs *regs)
 			break;
 		case GEN_ROPRAND:
 			signo = SIGFPE;
-			code = FPE_FLTUNK;
+			code = FPE_FIXME;
 			break;
 
 		case GEN_DECOVF:
@@ -329,12 +348,15 @@ do_entIF(unsigned long type, struct pt_regs *regs)
 		case GEN_SUBRNG7:
 		default:
 			signo = SIGTRAP;
-			code = TRAP_UNK;
+			code = TRAP_FIXME;
 			break;
 		}
 
-		send_sig_fault_trapno(signo, code, (void __user *) regs->pc,
-				      regs->r16, current);
+		info.si_signo = signo;
+		info.si_errno = 0;
+		info.si_code = code;
+		info.si_addr = (void __user *) regs->pc;
+		send_sig_info(signo, &info, current);
 		return;
 
 	      case 4: /* opDEC */
@@ -358,9 +380,11 @@ do_entIF(unsigned long type, struct pt_regs *regs)
 			if (si_code == 0)
 				return;
 			if (si_code > 0) {
-				send_sig_fault_trapno(SIGFPE, si_code,
-						      (void __user *) regs->pc,
-						      0, current);
+				info.si_signo = SIGFPE;
+				info.si_errno = 0;
+				info.si_code = si_code;
+				info.si_addr = (void __user *) regs->pc;
+				send_sig_info(SIGFPE, &info, current);
 				return;
 			}
 		}
@@ -385,7 +409,11 @@ do_entIF(unsigned long type, struct pt_regs *regs)
 		      ;
 	}
 
-	send_sig_fault(SIGILL, ILL_ILLOPC, (void __user *)regs->pc, current);
+	info.si_signo = SIGILL;
+	info.si_errno = 0;
+	info.si_code = ILL_ILLOPC;
+	info.si_addr = (void __user *) regs->pc;
+	send_sig_info(SIGILL, &info, current);
 }
 
 /* There is an ifdef in the PALcode in MILO that enables a 
@@ -398,9 +426,15 @@ do_entIF(unsigned long type, struct pt_regs *regs)
 asmlinkage void
 do_entDbg(struct pt_regs *regs)
 {
+	siginfo_t info;
+
 	die_if_kernel("Instruction fault", regs, 0, NULL);
 
-	force_sig_fault(SIGILL, ILL_ILLOPC, (void __user *)regs->pc);
+	info.si_signo = SIGILL;
+	info.si_errno = 0;
+	info.si_code = ILL_ILLOPC;
+	info.si_addr = (void __user *) regs->pc;
+	force_sig_info(SIGILL, &info, current);
 }
 
 
@@ -575,7 +609,7 @@ do_entUna(void * va, unsigned long opcode, unsigned long reg,
 
 	printk("Bad unaligned kernel access at %016lx: %p %lx %lu\n",
 		pc, va, opcode, reg);
-	make_task_dead(SIGSEGV);
+	do_exit(SIGSEGV);
 
 got_exception:
 	/* Ok, we caught the exception, but we don't want it.  Is there
@@ -623,14 +657,14 @@ got_exception:
 	printk("gp = %016lx  sp = %p\n", regs->gp, regs+1);
 
 	dik_show_code((unsigned int *)pc);
-	dik_show_trace((unsigned long *)(regs+1), KERN_DEFAULT);
+	dik_show_trace((unsigned long *)(regs+1));
 
 	if (test_and_set_thread_flag (TIF_DIE_IF_KERNEL)) {
 		printk("die_if_kernel recursion detected.\n");
 		local_irq_enable();
 		while (1);
 	}
-	make_task_dead(SIGSEGV);
+	do_exit(SIGSEGV);
 }
 
 /*
@@ -724,11 +758,11 @@ do_entUnaUser(void __user * va, unsigned long opcode,
 
 	unsigned long tmp1, tmp2, tmp3, tmp4;
 	unsigned long fake_reg, *reg_addr = &fake_reg;
-	int si_code;
+	siginfo_t info;
 	long error;
 
 	/* Check the UAC bits to decide what the user wants us to do
-	   with the unaligned access.  */
+	   with the unaliged access.  */
 
 	if (!(current_thread_info()->status & TS_UAC_NOPRINT)) {
 		if (__ratelimit(&ratelimit)) {
@@ -881,7 +915,7 @@ do_entUnaUser(void __user * va, unsigned long opcode,
 
 	case 0x26: /* sts */
 		fake_reg = s_reg_to_mem(alpha_read_fp_reg(reg));
-		fallthrough;
+		/* FALLTHRU */
 
 	case 0x2c: /* stl */
 		__asm__ __volatile__(
@@ -909,7 +943,7 @@ do_entUnaUser(void __user * va, unsigned long opcode,
 
 	case 0x27: /* stt */
 		fake_reg = alpha_read_fp_reg(reg);
-		fallthrough;
+		/* FALLTHRU */
 
 	case 0x2d: /* stq */
 		__asm__ __volatile__(
@@ -947,27 +981,34 @@ do_entUnaUser(void __user * va, unsigned long opcode,
 
 give_sigsegv:
 	regs->pc -= 4;  /* make pc point to faulting insn */
+	info.si_signo = SIGSEGV;
+	info.si_errno = 0;
 
 	/* We need to replicate some of the logic in mm/fault.c,
 	   since we don't have access to the fault code in the
 	   exception handling return path.  */
 	if ((unsigned long)va >= TASK_SIZE)
-		si_code = SEGV_ACCERR;
+		info.si_code = SEGV_ACCERR;
 	else {
 		struct mm_struct *mm = current->mm;
-		mmap_read_lock(mm);
+		down_read(&mm->mmap_sem);
 		if (find_vma(mm, (unsigned long)va))
-			si_code = SEGV_ACCERR;
+			info.si_code = SEGV_ACCERR;
 		else
-			si_code = SEGV_MAPERR;
-		mmap_read_unlock(mm);
+			info.si_code = SEGV_MAPERR;
+		up_read(&mm->mmap_sem);
 	}
-	send_sig_fault(SIGSEGV, si_code, va, current);
+	info.si_addr = va;
+	send_sig_info(SIGSEGV, &info, current);
 	return;
 
 give_sigbus:
 	regs->pc -= 4;
-	send_sig_fault(SIGBUS, BUS_ADRALN, va, current);
+	info.si_signo = SIGBUS;
+	info.si_errno = 0;
+	info.si_code = BUS_ADRALN;
+	info.si_addr = va;
+	send_sig_info(SIGBUS, &info, current);
 	return;
 }
 

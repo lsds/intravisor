@@ -55,12 +55,8 @@
 #include <asm/dma.h>
 #include <asm/io.h>
 
-#include <scsi/scsi.h>
-#include <scsi/scsi_cmnd.h>
-#include <scsi/scsi_device.h>
-#include <scsi/scsi_eh.h>
+#include "scsi.h"
 #include <scsi/scsi_host.h>
-#include <scsi/scsi_tcq.h>
 #include "aha1740.h"
 
 /* IF YOU ARE HAVING PROBLEMS WITH THIS DRIVER, AND WANT TO WATCH
@@ -156,7 +152,6 @@ static int aha1740_makecode(unchar *sense, unchar *status)
 					retval=DID_ERROR; /* It's an Overrun */
 				/* If not overrun, assume underrun and
 				 * ignore it! */
-				break;
 			case 0x00: /* No info, assume no error, should
 				    * not occur */
 				break;
@@ -212,11 +207,11 @@ static int aha1740_test_port(unsigned int base)
 static irqreturn_t aha1740_intr_handle(int irq, void *dev_id)
 {
 	struct Scsi_Host *host = (struct Scsi_Host *) dev_id;
-        void (*my_done)(struct scsi_cmnd *);
+        void (*my_done)(Scsi_Cmnd *);
 	int errstatus, adapstat;
 	int number_serviced;
 	struct ecb *ecbptr;
-	struct scsi_cmnd *SCtmp;
+	Scsi_Cmnd *SCtmp;
 	unsigned int base;
 	unsigned long flags;
 	int handled = 0;
@@ -271,11 +266,8 @@ static irqreturn_t aha1740_intr_handle(int irq, void *dev_id)
 			   guarantee that we will still have it in the
 			   cdb when we come back */
 			if ( (adapstat & G2INTST_MASK) == G2INTST_CCBERROR ) {
-				memcpy_and_pad(SCtmp->sense_buffer,
-					       SCSI_SENSE_BUFFERSIZE,
-					       ecbptr->sense,
-					       sizeof(ecbptr->sense),
-					       0);
+				memcpy(SCtmp->sense_buffer, ecbptr->sense, 
+				       SCSI_SENSE_BUFFERSIZE);
 				errstatus = aha1740_makecode(ecbptr->sense,ecbptr->status);
 			} else
 				errstatus = 0;
@@ -319,9 +311,8 @@ static irqreturn_t aha1740_intr_handle(int irq, void *dev_id)
 	return IRQ_RETVAL(handled);
 }
 
-static int aha1740_queuecommand_lck(struct scsi_cmnd *SCpnt)
+static int aha1740_queuecommand_lck(Scsi_Cmnd * SCpnt, void (*done)(Scsi_Cmnd *))
 {
-	void (*done)(struct scsi_cmnd *) = scsi_done;
 	unchar direction;
 	unchar *cmd = (unchar *) SCpnt->cmnd;
 	unchar target = scmd_id(SCpnt);
@@ -529,7 +520,7 @@ static int aha1740_biosparam(struct scsi_device *sdev,
 	return 0;
 }
 
-static int aha1740_eh_abort_handler (struct scsi_cmnd *dummy)
+static int aha1740_eh_abort_handler (Scsi_Cmnd *dummy)
 {
 /*
  * From Alan Cox :
@@ -553,6 +544,7 @@ static struct scsi_host_template aha1740_template = {
 	.can_queue        = AHA1740_ECBS,
 	.this_id          = 7,
 	.sg_tablesize     = AHA1740_SCATTER,
+	.use_clustering   = ENABLE_CLUSTERING,
 	.eh_abort_handler = aha1740_eh_abort_handler,
 };
 
@@ -600,6 +592,7 @@ static int aha1740_probe (struct device *dev)
 					     DMA_BIDIRECTIONAL);
 	if (!host->ecb_dma_addr) {
 		printk (KERN_ERR "aha1740_probe: Couldn't map ECB, giving up\n");
+		scsi_host_put (shpnt);
 		goto err_host_put;
 	}
 	

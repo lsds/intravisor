@@ -1,10 +1,23 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Copyright © 2004-2008 Simtec Electronics
  *	http://armlinux.simtec.co.uk/
  *	Ben Dooks <ben@simtec.co.uk>
  *
  * Samsung S3C2410/S3C2440/S3C2412 NAND driver
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 */
 
 #define pr_fmt(fmt) "nand-s3c2410: " fmt
@@ -30,6 +43,7 @@
 
 #include <linux/mtd/mtd.h>
 #include <linux/mtd/rawnand.h>
+#include <linux/mtd/nand_ecc.h>
 #include <linux/mtd/partitions.h>
 
 #include <linux/platform_data/mtd-nand-s3c2410.h>
@@ -133,8 +147,7 @@ enum s3c_nand_clk_state {
 
 /**
  * struct s3c2410_nand_info - NAND controller state.
- * @controller: Base controller structure.
- * @mtds: An array of MTD instances on this controller.
+ * @mtds: An array of MTD instances on this controoler.
  * @platform: The platform data for this board.
  * @device: The platform device we bound to.
  * @clk: The clock resource for this controller.
@@ -146,11 +159,10 @@ enum s3c_nand_clk_state {
  * @clk_rate: The clock rate from @clk.
  * @clk_state: The current clock state.
  * @cpu_type: The exact type of this controller.
- * @freq_transition: CPUFreq notifier block
  */
 struct s3c2410_nand_info {
 	/* mtd info */
-	struct nand_controller		controller;
+	struct nand_hw_control		controller;
 	struct s3c2410_nand_mtd		*mtds;
 	struct s3c2410_platform_nand	*platform;
 
@@ -292,7 +304,7 @@ static int s3c2410_nand_setrate(struct s3c2410_nand_info *info)
 	int tacls_max = (info->cpu_type == TYPE_S3C2412) ? 8 : 4;
 	int tacls, twrph0, twrph1;
 	unsigned long clkrate = clk_get_rate(info->clk);
-	unsigned long set, cfg, mask;
+	unsigned long uninitialized_var(set), cfg, uninitialized_var(mask);
 	unsigned long flags;
 
 	/* calculate the timing information for the controller */
@@ -392,7 +404,7 @@ static int s3c2410_nand_inithw(struct s3c2410_nand_info *info)
 
 /**
  * s3c2410_nand_select_chip - select the given nand chip
- * @this: NAND chip object.
+ * @mtd: The MTD instance for this chip.
  * @chip: The chip number.
  *
  * This is called by the MTD layer to either select a given chip for the
@@ -403,10 +415,11 @@ static int s3c2410_nand_inithw(struct s3c2410_nand_info *info)
  * platform specific selection code is called to route nFCE to the specific
  * chip.
  */
-static void s3c2410_nand_select_chip(struct nand_chip *this, int chip)
+static void s3c2410_nand_select_chip(struct mtd_info *mtd, int chip)
 {
 	struct s3c2410_nand_info *info;
 	struct s3c2410_nand_mtd *nmtd;
+	struct nand_chip *this = mtd_to_nand(mtd);
 	unsigned long cur;
 
 	nmtd = nand_get_controller_data(this);
@@ -444,10 +457,9 @@ static void s3c2410_nand_select_chip(struct nand_chip *this, int chip)
  * Issue command and address cycles to the chip
 */
 
-static void s3c2410_nand_hwcontrol(struct nand_chip *chip, int cmd,
+static void s3c2410_nand_hwcontrol(struct mtd_info *mtd, int cmd,
 				   unsigned int ctrl)
 {
-	struct mtd_info *mtd = nand_to_mtd(chip);
 	struct s3c2410_nand_info *info = s3c2410_nand_mtd_toinfo(mtd);
 
 	if (cmd == NAND_CMD_NONE)
@@ -461,10 +473,9 @@ static void s3c2410_nand_hwcontrol(struct nand_chip *chip, int cmd,
 
 /* command and control functions */
 
-static void s3c2440_nand_hwcontrol(struct nand_chip *chip, int cmd,
+static void s3c2440_nand_hwcontrol(struct mtd_info *mtd, int cmd,
 				   unsigned int ctrl)
 {
-	struct mtd_info *mtd = nand_to_mtd(chip);
 	struct s3c2410_nand_info *info = s3c2410_nand_mtd_toinfo(mtd);
 
 	if (cmd == NAND_CMD_NONE)
@@ -481,33 +492,29 @@ static void s3c2440_nand_hwcontrol(struct nand_chip *chip, int cmd,
  * returns 0 if the nand is busy, 1 if it is ready
 */
 
-static int s3c2410_nand_devready(struct nand_chip *chip)
+static int s3c2410_nand_devready(struct mtd_info *mtd)
 {
-	struct mtd_info *mtd = nand_to_mtd(chip);
 	struct s3c2410_nand_info *info = s3c2410_nand_mtd_toinfo(mtd);
 	return readb(info->regs + S3C2410_NFSTAT) & S3C2410_NFSTAT_BUSY;
 }
 
-static int s3c2440_nand_devready(struct nand_chip *chip)
+static int s3c2440_nand_devready(struct mtd_info *mtd)
 {
-	struct mtd_info *mtd = nand_to_mtd(chip);
 	struct s3c2410_nand_info *info = s3c2410_nand_mtd_toinfo(mtd);
 	return readb(info->regs + S3C2440_NFSTAT) & S3C2440_NFSTAT_READY;
 }
 
-static int s3c2412_nand_devready(struct nand_chip *chip)
+static int s3c2412_nand_devready(struct mtd_info *mtd)
 {
-	struct mtd_info *mtd = nand_to_mtd(chip);
 	struct s3c2410_nand_info *info = s3c2410_nand_mtd_toinfo(mtd);
 	return readb(info->regs + S3C2412_NFSTAT) & S3C2412_NFSTAT_READY;
 }
 
 /* ECC handling functions */
 
-static int s3c2410_nand_correct_data(struct nand_chip *chip, u_char *dat,
+static int s3c2410_nand_correct_data(struct mtd_info *mtd, u_char *dat,
 				     u_char *read_ecc, u_char *calc_ecc)
 {
-	struct mtd_info *mtd = nand_to_mtd(chip);
 	struct s3c2410_nand_info *info = s3c2410_nand_mtd_toinfo(mtd);
 	unsigned int diff0, diff1, diff2;
 	unsigned int bit, byte;
@@ -584,42 +591,38 @@ static int s3c2410_nand_correct_data(struct nand_chip *chip, u_char *dat,
  * generator block to ECC the data as it passes through]
 */
 
-static void s3c2410_nand_enable_hwecc(struct nand_chip *chip, int mode)
+static void s3c2410_nand_enable_hwecc(struct mtd_info *mtd, int mode)
 {
-	struct s3c2410_nand_info *info;
+	struct s3c2410_nand_info *info = s3c2410_nand_mtd_toinfo(mtd);
 	unsigned long ctrl;
 
-	info = s3c2410_nand_mtd_toinfo(nand_to_mtd(chip));
 	ctrl = readl(info->regs + S3C2410_NFCONF);
 	ctrl |= S3C2410_NFCONF_INITECC;
 	writel(ctrl, info->regs + S3C2410_NFCONF);
 }
 
-static void s3c2412_nand_enable_hwecc(struct nand_chip *chip, int mode)
+static void s3c2412_nand_enable_hwecc(struct mtd_info *mtd, int mode)
 {
-	struct s3c2410_nand_info *info;
+	struct s3c2410_nand_info *info = s3c2410_nand_mtd_toinfo(mtd);
 	unsigned long ctrl;
 
-	info = s3c2410_nand_mtd_toinfo(nand_to_mtd(chip));
 	ctrl = readl(info->regs + S3C2440_NFCONT);
 	writel(ctrl | S3C2412_NFCONT_INIT_MAIN_ECC,
 	       info->regs + S3C2440_NFCONT);
 }
 
-static void s3c2440_nand_enable_hwecc(struct nand_chip *chip, int mode)
+static void s3c2440_nand_enable_hwecc(struct mtd_info *mtd, int mode)
 {
-	struct s3c2410_nand_info *info;
+	struct s3c2410_nand_info *info = s3c2410_nand_mtd_toinfo(mtd);
 	unsigned long ctrl;
 
-	info = s3c2410_nand_mtd_toinfo(nand_to_mtd(chip));
 	ctrl = readl(info->regs + S3C2440_NFCONT);
 	writel(ctrl | S3C2440_NFCONT_INITECC, info->regs + S3C2440_NFCONT);
 }
 
-static int s3c2410_nand_calculate_ecc(struct nand_chip *chip,
-				      const u_char *dat, u_char *ecc_code)
+static int s3c2410_nand_calculate_ecc(struct mtd_info *mtd, const u_char *dat,
+				      u_char *ecc_code)
 {
-	struct mtd_info *mtd = nand_to_mtd(chip);
 	struct s3c2410_nand_info *info = s3c2410_nand_mtd_toinfo(mtd);
 
 	ecc_code[0] = readb(info->regs + S3C2410_NFECC + 0);
@@ -631,10 +634,9 @@ static int s3c2410_nand_calculate_ecc(struct nand_chip *chip,
 	return 0;
 }
 
-static int s3c2412_nand_calculate_ecc(struct nand_chip *chip,
-				      const u_char *dat, u_char *ecc_code)
+static int s3c2412_nand_calculate_ecc(struct mtd_info *mtd, const u_char *dat,
+				      u_char *ecc_code)
 {
-	struct mtd_info *mtd = nand_to_mtd(chip);
 	struct s3c2410_nand_info *info = s3c2410_nand_mtd_toinfo(mtd);
 	unsigned long ecc = readl(info->regs + S3C2412_NFMECC0);
 
@@ -647,10 +649,9 @@ static int s3c2412_nand_calculate_ecc(struct nand_chip *chip,
 	return 0;
 }
 
-static int s3c2440_nand_calculate_ecc(struct nand_chip *chip,
-				      const u_char *dat, u_char *ecc_code)
+static int s3c2440_nand_calculate_ecc(struct mtd_info *mtd, const u_char *dat,
+				      u_char *ecc_code)
 {
-	struct mtd_info *mtd = nand_to_mtd(chip);
 	struct s3c2410_nand_info *info = s3c2410_nand_mtd_toinfo(mtd);
 	unsigned long ecc = readl(info->regs + S3C2440_NFMECC0);
 
@@ -667,14 +668,14 @@ static int s3c2440_nand_calculate_ecc(struct nand_chip *chip,
  * use read/write block to move the data buffers to/from the controller
 */
 
-static void s3c2410_nand_read_buf(struct nand_chip *this, u_char *buf, int len)
+static void s3c2410_nand_read_buf(struct mtd_info *mtd, u_char *buf, int len)
 {
-	readsb(this->legacy.IO_ADDR_R, buf, len);
+	struct nand_chip *this = mtd_to_nand(mtd);
+	readsb(this->IO_ADDR_R, buf, len);
 }
 
-static void s3c2440_nand_read_buf(struct nand_chip *this, u_char *buf, int len)
+static void s3c2440_nand_read_buf(struct mtd_info *mtd, u_char *buf, int len)
 {
-	struct mtd_info *mtd = nand_to_mtd(this);
 	struct s3c2410_nand_info *info = s3c2410_nand_mtd_toinfo(mtd);
 
 	readsl(info->regs + S3C2440_NFDATA, buf, len >> 2);
@@ -688,16 +689,16 @@ static void s3c2440_nand_read_buf(struct nand_chip *this, u_char *buf, int len)
 	}
 }
 
-static void s3c2410_nand_write_buf(struct nand_chip *this, const u_char *buf,
+static void s3c2410_nand_write_buf(struct mtd_info *mtd, const u_char *buf,
 				   int len)
 {
-	writesb(this->legacy.IO_ADDR_W, buf, len);
+	struct nand_chip *this = mtd_to_nand(mtd);
+	writesb(this->IO_ADDR_W, buf, len);
 }
 
-static void s3c2440_nand_write_buf(struct nand_chip *this, const u_char *buf,
+static void s3c2440_nand_write_buf(struct mtd_info *mtd, const u_char *buf,
 				   int len)
 {
-	struct mtd_info *mtd = nand_to_mtd(this);
 	struct s3c2410_nand_info *info = s3c2410_nand_mtd_toinfo(mtd);
 
 	writesl(info->regs + S3C2440_NFDATA, buf, len >> 2);
@@ -780,8 +781,7 @@ static int s3c24xx_nand_remove(struct platform_device *pdev)
 
 		for (mtdno = 0; mtdno < info->mtd_count; mtdno++, ptr++) {
 			pr_debug("releasing mtd %d (%p)\n", mtdno, ptr);
-			WARN_ON(mtd_device_unregister(nand_to_mtd(&ptr->chip)));
-			nand_cleanup(&ptr->chip);
+			nand_release(nand_to_mtd(&ptr->chip));
 		}
 	}
 
@@ -802,17 +802,16 @@ static int s3c2410_nand_add_partition(struct s3c2410_nand_info *info,
 
 		mtdinfo->name = set->name;
 
-		return mtd_device_register(mtdinfo, set->partitions,
-					   set->nr_partitions);
+		return mtd_device_parse_register(mtdinfo, NULL, NULL,
+					 set->partitions, set->nr_partitions);
 	}
 
 	return -ENODEV;
 }
 
-static int s3c2410_nand_setup_interface(struct nand_chip *chip, int csline,
-					const struct nand_interface_config *conf)
+static int s3c2410_nand_setup_data_interface(struct mtd_info *mtd, int csline,
+					const struct nand_data_interface *conf)
 {
-	struct mtd_info *mtd = nand_to_mtd(chip);
 	struct s3c2410_nand_info *info = s3c2410_nand_mtd_toinfo(mtd);
 	struct s3c2410_platform_nand *pdata = info->platform;
 	const struct nand_sdr_timings *timings;
@@ -853,10 +852,10 @@ static void s3c2410_nand_init_chip(struct s3c2410_nand_info *info,
 
 	nand_set_flash_node(chip, set->of_node);
 
-	chip->legacy.write_buf    = s3c2410_nand_write_buf;
-	chip->legacy.read_buf     = s3c2410_nand_read_buf;
-	chip->legacy.select_chip  = s3c2410_nand_select_chip;
-	chip->legacy.chip_delay   = 50;
+	chip->write_buf    = s3c2410_nand_write_buf;
+	chip->read_buf     = s3c2410_nand_read_buf;
+	chip->select_chip  = s3c2410_nand_select_chip;
+	chip->chip_delay   = 50;
 	nand_set_controller_data(chip, nmtd);
 	chip->options	   = set->options;
 	chip->controller   = &info->controller;
@@ -865,34 +864,34 @@ static void s3c2410_nand_init_chip(struct s3c2410_nand_info *info,
 	 * let's keep behavior unchanged for legacy boards booting via pdata and
 	 * auto-detect timings only when booting with a device tree.
 	 */
-	if (!np)
-		chip->options |= NAND_KEEP_TIMINGS;
+	if (np)
+		chip->setup_data_interface = s3c2410_nand_setup_data_interface;
 
 	switch (info->cpu_type) {
 	case TYPE_S3C2410:
-		chip->legacy.IO_ADDR_W = regs + S3C2410_NFDATA;
+		chip->IO_ADDR_W = regs + S3C2410_NFDATA;
 		info->sel_reg   = regs + S3C2410_NFCONF;
 		info->sel_bit	= S3C2410_NFCONF_nFCE;
-		chip->legacy.cmd_ctrl  = s3c2410_nand_hwcontrol;
-		chip->legacy.dev_ready = s3c2410_nand_devready;
+		chip->cmd_ctrl  = s3c2410_nand_hwcontrol;
+		chip->dev_ready = s3c2410_nand_devready;
 		break;
 
 	case TYPE_S3C2440:
-		chip->legacy.IO_ADDR_W = regs + S3C2440_NFDATA;
+		chip->IO_ADDR_W = regs + S3C2440_NFDATA;
 		info->sel_reg   = regs + S3C2440_NFCONT;
 		info->sel_bit	= S3C2440_NFCONT_nFCE;
-		chip->legacy.cmd_ctrl  = s3c2440_nand_hwcontrol;
-		chip->legacy.dev_ready = s3c2440_nand_devready;
-		chip->legacy.read_buf  = s3c2440_nand_read_buf;
-		chip->legacy.write_buf	= s3c2440_nand_write_buf;
+		chip->cmd_ctrl  = s3c2440_nand_hwcontrol;
+		chip->dev_ready = s3c2440_nand_devready;
+		chip->read_buf  = s3c2440_nand_read_buf;
+		chip->write_buf	= s3c2440_nand_write_buf;
 		break;
 
 	case TYPE_S3C2412:
-		chip->legacy.IO_ADDR_W = regs + S3C2440_NFDATA;
+		chip->IO_ADDR_W = regs + S3C2440_NFDATA;
 		info->sel_reg   = regs + S3C2440_NFCONT;
 		info->sel_bit	= S3C2412_NFCONT_nFCE0;
-		chip->legacy.cmd_ctrl  = s3c2440_nand_hwcontrol;
-		chip->legacy.dev_ready = s3c2412_nand_devready;
+		chip->cmd_ctrl  = s3c2440_nand_hwcontrol;
+		chip->dev_ready = s3c2412_nand_devready;
 
 		if (readl(regs + S3C2410_NFCONF) & S3C2412_NFCONF_NANDBOOT)
 			dev_info(info->device, "System booted from NAND\n");
@@ -900,12 +899,12 @@ static void s3c2410_nand_init_chip(struct s3c2410_nand_info *info,
 		break;
 	}
 
-	chip->legacy.IO_ADDR_R = chip->legacy.IO_ADDR_W;
+	chip->IO_ADDR_R = chip->IO_ADDR_W;
 
 	nmtd->info	   = info;
 	nmtd->set	   = set;
 
-	chip->ecc.engine_type = info->platform->engine_type;
+	chip->ecc.mode = info->platform->ecc_mode;
 
 	/*
 	 * If you use u-boot BBT creation code, specifying this flag will
@@ -916,38 +915,39 @@ static void s3c2410_nand_init_chip(struct s3c2410_nand_info *info,
 }
 
 /**
- * s3c2410_nand_attach_chip - Init the ECC engine after NAND scan
- * @chip: The NAND chip
+ * s3c2410_nand_update_chip - post probe update
+ * @info: The controller instance.
+ * @nmtd: The driver version of the MTD instance.
  *
- * This hook is called by the core after the identification of the NAND chip,
- * once the relevant per-chip information is up to date.. This call ensure that
+ * This routine is called after the chip probe has successfully completed
+ * and the relevant per-chip information updated. This call ensure that
  * we update the internal state accordingly.
  *
  * The internal state is currently limited to the ECC state information.
 */
-static int s3c2410_nand_attach_chip(struct nand_chip *chip)
+static int s3c2410_nand_update_chip(struct s3c2410_nand_info *info,
+				    struct s3c2410_nand_mtd *nmtd)
 {
-	struct mtd_info *mtd = nand_to_mtd(chip);
-	struct s3c2410_nand_info *info = s3c2410_nand_mtd_toinfo(mtd);
+	struct nand_chip *chip = &nmtd->chip;
 
-	switch (chip->ecc.engine_type) {
+	switch (chip->ecc.mode) {
 
-	case NAND_ECC_ENGINE_TYPE_NONE:
+	case NAND_ECC_NONE:
 		dev_info(info->device, "ECC disabled\n");
 		break;
 
-	case NAND_ECC_ENGINE_TYPE_SOFT:
+	case NAND_ECC_SOFT:
 		/*
-		 * This driver expects Hamming based ECC when engine_type is set
-		 * to NAND_ECC_ENGINE_TYPE_SOFT. Force ecc.algo to
-		 * NAND_ECC_ALGO_HAMMING to avoid adding an extra ecc_algo field
-		 * to s3c2410_platform_nand.
+		 * This driver expects Hamming based ECC when ecc_mode is set
+		 * to NAND_ECC_SOFT. Force ecc.algo to NAND_ECC_HAMMING to
+		 * avoid adding an extra ecc_algo field to
+		 * s3c2410_platform_nand.
 		 */
-		chip->ecc.algo = NAND_ECC_ALGO_HAMMING;
+		chip->ecc.algo = NAND_ECC_HAMMING;
 		dev_info(info->device, "soft ECC\n");
 		break;
 
-	case NAND_ECC_ENGINE_TYPE_ON_HOST:
+	case NAND_ECC_HW:
 		chip->ecc.calculate = s3c2410_nand_calculate_ecc;
 		chip->ecc.correct   = s3c2410_nand_correct_data;
 		chip->ecc.strength  = 1;
@@ -998,11 +998,6 @@ static int s3c2410_nand_attach_chip(struct nand_chip *chip)
 	return 0;
 }
 
-static const struct nand_controller_ops s3c24xx_nand_controller_ops = {
-	.attach_chip = s3c2410_nand_attach_chip,
-	.setup_interface = s3c2410_nand_setup_interface,
-};
-
 static const struct of_device_id s3c24xx_nand_dt_ids[] = {
 	{
 		.compatible = "samsung,s3c2410-nand",
@@ -1043,7 +1038,7 @@ static int s3c24xx_nand_probe_dt(struct platform_device *pdev)
 	if (!pdata->nr_sets)
 		return 0;
 
-	sets = devm_kcalloc(&pdev->dev, pdata->nr_sets, sizeof(*sets),
+	sets = devm_kzalloc(&pdev->dev, sizeof(*sets) * pdata->nr_sets,
 			    GFP_KERNEL);
 	if (!sets)
 		return -ENOMEM;
@@ -1099,8 +1094,7 @@ static int s3c24xx_nand_probe(struct platform_device *pdev)
 
 	platform_set_drvdata(pdev, info);
 
-	nand_controller_init(&info->controller);
-	info->controller.ops = &s3c24xx_nand_controller_ops;
+	nand_hw_control_init(&info->controller);
 
 	/* get the clock source and enable it */
 
@@ -1140,13 +1134,8 @@ static int s3c24xx_nand_probe(struct platform_device *pdev)
 
 	dev_dbg(&pdev->dev, "mapped registers at %p\n", info->regs);
 
-	if (!plat->sets || plat->nr_sets < 1) {
-		err = -EINVAL;
-		goto exit_error;
-	}
-
-	sets = plat->sets;
-	nr_sets = plat->nr_sets;
+	sets = (plat != NULL) ? plat->sets : NULL;
+	nr_sets = (plat != NULL) ? plat->nr_sets : 1;
 
 	info->mtd_count = nr_sets;
 
@@ -1163,7 +1152,7 @@ static int s3c24xx_nand_probe(struct platform_device *pdev)
 
 	nmtd = info->mtds;
 
-	for (setno = 0; setno < nr_sets; setno++, nmtd++, sets++) {
+	for (setno = 0; setno < nr_sets; setno++, nmtd++) {
 		struct mtd_info *mtd = nand_to_mtd(&nmtd->chip);
 
 		pr_debug("initialising set %d (%p, info %p)\n",
@@ -1172,11 +1161,22 @@ static int s3c24xx_nand_probe(struct platform_device *pdev)
 		mtd->dev.parent = &pdev->dev;
 		s3c2410_nand_init_chip(info, nmtd, sets);
 
-		err = nand_scan(&nmtd->chip, sets ? sets->nr_chips : 1);
+		err = nand_scan_ident(mtd, (sets) ? sets->nr_chips : 1, NULL);
+		if (err)
+			goto exit_error;
+
+		err = s3c2410_nand_update_chip(info, nmtd);
+		if (err < 0)
+			goto exit_error;
+
+		err = nand_scan_tail(mtd);
 		if (err)
 			goto exit_error;
 
 		s3c2410_nand_add_partition(info, nmtd, sets);
+
+		if (sets != NULL)
+			sets++;
 	}
 
 	/* initialise the hardware */

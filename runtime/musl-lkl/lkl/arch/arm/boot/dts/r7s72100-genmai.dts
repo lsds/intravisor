@@ -1,9 +1,12 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * Device Tree Source for the Genmai board
  *
  * Copyright (C) 2013-14 Renesas Solutions Corp.
  * Copyright (C) 2014 Wolfram Sang, Sang Engineering <wsa@sang-engineering.com>
+ *
+ * This file is licensed under the terms of the GNU General Public License
+ * version 2.  This program is licensed "as is" without any warranty of any
+ * kind, whether express or implied.
  */
 
 /dts-v1/;
@@ -20,7 +23,7 @@
 	};
 
 	chosen {
-		bootargs = "ignore_loglevel rw root=/dev/nfs ip=on";
+		bootargs = "ignore_loglevel rw root=/dev/nfs ip=dhcp";
 		stdout-path = "serial0:115200n8";
 	};
 
@@ -108,8 +111,6 @@
 	renesas,no-ether-link;
 	phy-handle = <&phy0>;
 	phy0: ethernet-phy@0 {
-		compatible = "ethernet-phy-idb824.2814",
-			     "ethernet-phy-ieee802.3-c22";
 		reg = <0>;
 	};
 };

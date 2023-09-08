@@ -1,10 +1,13 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * rl6231.c - RL6231 class device shared support
  *
  * Copyright 2014 Realtek Semiconductor Corp.
  *
  * Author: Oder Chiou <oder_chiou@realtek.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 
 #include <linux/module.h>
@@ -80,8 +83,8 @@ int rl6231_calc_dmic_clk(int rate)
 	for (i = 0; i < ARRAY_SIZE(div); i++) {
 		if ((div[i] % 3) == 0)
 			continue;
-		/* find divider that gives DMIC frequency below 1.536MHz */
-		if (1536000 * div[i] >= rate)
+		/* find divider that gives DMIC frequency below 3.072MHz */
+		if (3072000 * div[i] >= rate)
 			return i;
 	}
 
@@ -97,15 +100,11 @@ struct pll_calc_map {
 	int n;
 	int m;
 	bool m_bp;
-	bool k_bp;
 };
 
 static const struct pll_calc_map pll_preset_table[] = {
-	{19200000,  4096000,  23, 14, 1, false, false},
-	{19200000,  24576000,  3, 30, 3, false, false},
-	{48000000,  3840000,  23,  2, 0, false, false},
-	{3840000,   24576000,  3, 30, 0, true, false},
-	{3840000,   22579200,  3,  5, 0, true, false},
+	{19200000,  4096000,  23, 14, 1, false},
+	{19200000,  24576000,  3, 30, 3, false},
 };
 
 static unsigned int find_best_div(unsigned int in,
@@ -131,7 +130,7 @@ static unsigned int find_best_div(unsigned int in,
  * rl6231_pll_calc - Calcualte PLL M/N/K code.
  * @freq_in: external clock provided to codec.
  * @freq_out: target clock which codec works on.
- * @pll_code: Pointer to structure with M, N, K, m_bypass and k_bypass flag.
+ * @pll_code: Pointer to structure with M, N, K and bypass flag.
  *
  * Calcualte M/N/K code to configure PLL for codec.
  *
@@ -146,7 +145,7 @@ int rl6231_pll_calc(const unsigned int freq_in,
 	unsigned int red, pll_out, in_t, out_t, div, div_t;
 	unsigned int red_t = abs(freq_out - freq_in);
 	unsigned int f_in, f_out, f_max;
-	bool m_bypass = false, k_bypass = false;
+	bool bypass = false;
 
 	if (RL6231_PLL_INP_MAX < freq_in || RL6231_PLL_INP_MIN > freq_in)
 		return -EINVAL;
@@ -157,8 +156,7 @@ int rl6231_pll_calc(const unsigned int freq_in,
 			k = pll_preset_table[i].k;
 			m = pll_preset_table[i].m;
 			n = pll_preset_table[i].n;
-			m_bypass = pll_preset_table[i].m_bp;
-			k_bypass = pll_preset_table[i].k_bp;
+			bypass = pll_preset_table[i].m_bp;
 			pr_debug("Use preset PLL parameter table\n");
 			goto code_find;
 		}
@@ -176,14 +174,12 @@ int rl6231_pll_calc(const unsigned int freq_in,
 	f_in = freq_in / div;
 	f_out = freq_out / div;
 	k = min_k;
-	if (min_k < -1)
-		min_k = -1;
 	for (k_t = min_k; k_t <= max_k; k_t++) {
 		for (n_t = 0; n_t <= max_n; n_t++) {
 			in_t = f_in * (n_t + 2);
 			pll_out = f_out * (k_t + 2);
 			if (in_t == pll_out) {
-				m_bypass = true;
+				bypass = true;
 				n = n_t;
 				k = k_t;
 				goto code_find;
@@ -191,7 +187,7 @@ int rl6231_pll_calc(const unsigned int freq_in,
 			out_t = in_t / (k_t + 2);
 			red = abs(f_out - out_t);
 			if (red < red_t) {
-				m_bypass = true;
+				bypass = true;
 				n = n_t;
 				m = 0;
 				k = k_t;
@@ -203,7 +199,7 @@ int rl6231_pll_calc(const unsigned int freq_in,
 				out_t = in_t / ((m_t + 2) * (k_t + 2));
 				red = abs(f_out - out_t);
 				if (red < red_t) {
-					m_bypass = false;
+					bypass = false;
 					n = n_t;
 					m = m_t;
 					k = k_t;
@@ -217,13 +213,8 @@ int rl6231_pll_calc(const unsigned int freq_in,
 	pr_debug("Only get approximation about PLL\n");
 
 code_find:
-	if (k == -1) {
-		k_bypass = true;
-		k = 0;
-	}
 
-	pll_code->m_bp = m_bypass;
-	pll_code->k_bp = k_bypass;
+	pll_code->m_bp = bypass;
 	pll_code->m_code = m;
 	pll_code->n_code = n;
 	pll_code->k_code = k;

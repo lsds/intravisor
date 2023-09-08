@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * sgiseeq.c: Seeq8003 ethernet driver for SGI machines.
  *
@@ -112,18 +111,14 @@ struct sgiseeq_private {
 
 static inline void dma_sync_desc_cpu(struct net_device *dev, void *addr)
 {
-	struct sgiseeq_private *sp = netdev_priv(dev);
-
-	dma_sync_single_for_cpu(dev->dev.parent, VIRT_TO_DMA(sp, addr),
-			sizeof(struct sgiseeq_rx_desc), DMA_BIDIRECTIONAL);
+	dma_cache_sync(dev->dev.parent, addr, sizeof(struct sgiseeq_rx_desc),
+		       DMA_FROM_DEVICE);
 }
 
 static inline void dma_sync_desc_dev(struct net_device *dev, void *addr)
 {
-	struct sgiseeq_private *sp = netdev_priv(dev);
-
-	dma_sync_single_for_device(dev->dev.parent, VIRT_TO_DMA(sp, addr),
-			sizeof(struct sgiseeq_rx_desc), DMA_BIDIRECTIONAL);
+	dma_cache_sync(dev->dev.parent, addr, sizeof(struct sgiseeq_rx_desc),
+		       DMA_TO_DEVICE);
 }
 
 static inline void hpc3_eth_reset(struct hpc3_ethregs *hregs)
@@ -167,7 +162,7 @@ static int sgiseeq_set_mac_address(struct net_device *dev, void *addr)
 	struct sgiseeq_private *sp = netdev_priv(dev);
 	struct sockaddr *sa = addr;
 
-	eth_hw_addr_set(dev, sa->sa_data);
+	memcpy(dev->dev_addr, sa->sa_data, dev->addr_len);
 
 	spin_lock_irq(&sp->tx_lock);
 	__sgiseeq_set_mac_address(dev);
@@ -407,8 +402,6 @@ memory_squeeze:
 		rd = &sp->rx_desc[sp->rx_new];
 		dma_sync_desc_cpu(dev, rd);
 	}
-	dma_sync_desc_dev(dev, rd);
-
 	dma_sync_desc_cpu(dev, &sp->rx_desc[orig_end]);
 	sp->rx_desc[orig_end].rdma.cntinfo &= ~(HPCDMA_EOR);
 	dma_sync_desc_dev(dev, &sp->rx_desc[orig_end]);
@@ -449,7 +442,6 @@ static inline void kick_tx(struct net_device *dev,
 		dma_sync_desc_cpu(dev, td);
 	}
 	if (td->tdma.cntinfo & HPCDMA_XIU) {
-		dma_sync_desc_dev(dev, td);
 		hregs->tx_ndptr = VIRT_TO_DMA(sp, td);
 		hregs->tx_ctrl = HPC3_ETXCTRL_ACTIVE;
 	}
@@ -483,7 +475,6 @@ static inline void sgiseeq_tx(struct net_device *dev, struct sgiseeq_private *sp
 		if (!(td->tdma.cntinfo & (HPCDMA_XIU)))
 			break;
 		if (!(td->tdma.cntinfo & (HPCDMA_ETXD))) {
-			dma_sync_desc_dev(dev, td);
 			if (!(status & HPC3_ETXCTRL_ACTIVE)) {
 				hregs->tx_ndptr = VIRT_TO_DMA(sp, td);
 				hregs->tx_ctrl = HPC3_ETXCTRL_ACTIVE;
@@ -587,8 +578,7 @@ static inline int sgiseeq_reset(struct net_device *dev)
 	return 0;
 }
 
-static netdev_tx_t
-sgiseeq_start_xmit(struct sk_buff *skb, struct net_device *dev)
+static int sgiseeq_start_xmit(struct sk_buff *skb, struct net_device *dev)
 {
 	struct sgiseeq_private *sp = netdev_priv(dev);
 	struct hpc3_ethregs *hregs = sp->hregs;
@@ -653,7 +643,7 @@ sgiseeq_start_xmit(struct sk_buff *skb, struct net_device *dev)
 	return NETDEV_TX_OK;
 }
 
-static void timeout(struct net_device *dev, unsigned int txqueue)
+static void timeout(struct net_device *dev)
 {
 	printk(KERN_NOTICE "%s: transmit timed out, resetting\n", dev->name);
 	sgiseeq_reset(dev);
@@ -744,12 +734,11 @@ static int sgiseeq_probe(struct platform_device *pdev)
 	}
 
 	platform_set_drvdata(pdev, dev);
-	SET_NETDEV_DEV(dev, &pdev->dev);
 	sp = netdev_priv(dev);
 
 	/* Make private data page aligned */
-	sr = dma_alloc_noncoherent(&pdev->dev, sizeof(*sp->srings),
-			&sp->srings_dma, DMA_BIDIRECTIONAL, GFP_KERNEL);
+	sr = dma_alloc_attrs(&pdev->dev, sizeof(*sp->srings), &sp->srings_dma,
+			     GFP_KERNEL, DMA_ATTR_NON_CONSISTENT);
 	if (!sr) {
 		printk(KERN_ERR "Sgiseeq: Page alloc failed, aborting.\n");
 		err = -ENOMEM;
@@ -764,7 +753,7 @@ static int sgiseeq_probe(struct platform_device *pdev)
 	setup_rx_ring(dev, sp->rx_desc, SEEQ_RX_BUFFERS);
 	setup_tx_ring(dev, sp->tx_desc, SEEQ_TX_BUFFERS);
 
-	eth_hw_addr_set(dev, pd->mac);
+	memcpy(dev->dev_addr, pd->mac, ETH_ALEN);
 
 #ifdef DEBUG
 	gpriv = sp;
@@ -802,16 +791,15 @@ static int sgiseeq_probe(struct platform_device *pdev)
 		printk(KERN_ERR "Sgiseeq: Cannot register net device, "
 		       "aborting.\n");
 		err = -ENODEV;
-		goto err_out_free_attrs;
+		goto err_out_free_page;
 	}
 
 	printk(KERN_INFO "%s: %s %pM\n", dev->name, sgiseeqstr, dev->dev_addr);
 
 	return 0;
 
-err_out_free_attrs:
-	dma_free_noncoherent(&pdev->dev, sizeof(*sp->srings), sp->srings,
-		       sp->srings_dma, DMA_BIDIRECTIONAL);
+err_out_free_page:
+	free_page((unsigned long) sp->srings);
 err_out_free_dev:
 	free_netdev(dev);
 
@@ -825,8 +813,8 @@ static int sgiseeq_remove(struct platform_device *pdev)
 	struct sgiseeq_private *sp = netdev_priv(dev);
 
 	unregister_netdev(dev);
-	dma_free_noncoherent(&pdev->dev, sizeof(*sp->srings), sp->srings,
-		       sp->srings_dma, DMA_BIDIRECTIONAL);
+	dma_free_attrs(&pdev->dev, sizeof(*sp->srings), sp->srings,
+		       sp->srings_dma, DMA_ATTR_NON_CONSISTENT);
 	free_netdev(dev);
 
 	return 0;

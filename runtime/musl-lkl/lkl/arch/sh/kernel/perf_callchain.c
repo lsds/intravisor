@@ -1,8 +1,11 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * Performance event callchain support - SuperH architecture code
  *
  * Copyright (C) 2009  Paul Mundt
+ *
+ * This file is subject to the terms and conditions of the GNU General Public
+ * License.  See the file "COPYING" in the main directory of this archive
+ * for more details.
  */
 #include <linux/kernel.h>
 #include <linux/sched.h>
@@ -10,6 +13,11 @@
 #include <linux/percpu.h>
 #include <asm/unwinder.h>
 #include <asm/ptrace.h>
+
+static int callchain_stack(void *data, char *name)
+{
+	return 0;
+}
 
 static void callchain_address(void *data, unsigned long addr, int reliable)
 {
@@ -20,6 +28,7 @@ static void callchain_address(void *data, unsigned long addr, int reliable)
 }
 
 static const struct stacktrace_ops callchain_ops = {
+	.stack		= callchain_stack,
 	.address	= callchain_address,
 };
 

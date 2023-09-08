@@ -1,7 +1,15 @@
-/* SPDX-License-Identifier: GPL-2.0 */
 /******************************************************************************
  *
  * Copyright(c) 2007 - 2011 Realtek Corporation. All rights reserved.
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of version 2 of the GNU General Public License as
+ * published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for
+ * more details.
  *
  ******************************************************************************/
 #ifndef __HALPWRSEQCMD_H__
@@ -82,12 +90,14 @@
 #define	PWR_CUT_ALL_MSK			0xFF
 
 
-enum {
+typedef enum _PWRSEQ_CMD_DELAY_UNIT_
+{
 	PWRSEQ_DELAY_US,
 	PWRSEQ_DELAY_MS,
-};
+} PWRSEQ_DELAY_UNIT;
 
-struct wlan_pwr_cfg {
+typedef struct _WL_PWR_CFG_
+{
 	u16 offset;
 	u8 cut_msk;
 	u8 fab_msk:4;
@@ -96,7 +106,7 @@ struct wlan_pwr_cfg {
 	u8 cmd:4;
 	u8 msk;
 	u8 value;
-};
+} WLAN_PWR_CFG, *PWLAN_PWR_CFG;
 
 
 #define GET_PWR_CFG_OFFSET(__PWR_CMD)		__PWR_CMD.offset
@@ -113,10 +123,10 @@ struct wlan_pwr_cfg {
 /* 	Prototype of protected function. */
 /*  */
 u8 HalPwrSeqCmdParsing(
-	struct adapter *padapter,
+	struct adapter *	padapter,
 	u8 		CutVersion,
 	u8 		FabVersion,
 	u8 		InterfaceType,
-	struct wlan_pwr_cfg	PwrCfgCmd[]);
+	WLAN_PWR_CFG	PwrCfgCmd[]);
 
 #endif

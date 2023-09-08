@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  *	ALi M7101 PMU Computer Watchdog Timer driver
  *
@@ -215,7 +214,7 @@ static int fop_open(struct inode *inode, struct file *file)
 		return -EBUSY;
 	/* Good, fire up the show */
 	wdt_startup();
-	return stream_open(inode, file);
+	return nonseekable_open(inode, file);
 }
 
 static int fop_close(struct inode *inode, struct file *file)
@@ -278,8 +277,8 @@ static long fop_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 			return -EINVAL;
 		timeout = new_timeout;
 		wdt_keepalive();
+		/* Fall through */
 	}
-		fallthrough;
 	case WDIOC_GETTIMEOUT:
 		return put_user(timeout, p);
 	default:
@@ -294,7 +293,6 @@ static const struct file_operations wdt_fops = {
 	.open		=	fop_open,
 	.release	=	fop_close,
 	.unlocked_ioctl	=	fop_ioctl,
-	.compat_ioctl	= 	compat_ptr_ioctl,
 };
 
 static struct miscdevice wdt_miscdev = {

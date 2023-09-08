@@ -27,20 +27,9 @@
 # include <asm/smp.h>
 #endif
 
-static void delay_loop(u64 __loops);
-
-/*
- * Calibration and selection of the delay mechanism happens only once
- * during boot.
- */
-static void (*delay_fn)(u64) __ro_after_init = delay_loop;
-static void (*delay_halt_fn)(u64 start, u64 cycles) __ro_after_init;
-
 /* simple loop based delay: */
-static void delay_loop(u64 __loops)
+static void delay_loop(unsigned long loops)
 {
-	unsigned long loops = (unsigned long)__loops;
-
 	asm volatile(
 		"	test %0,%0	\n"
 		"	jz 3f		\n"
@@ -54,15 +43,15 @@ static void delay_loop(u64 __loops)
 		"	jnz 2b		\n"
 		"3:	dec %0		\n"
 
-		: "+a" (loops)
-		:
+		: /* we don't need output */
+		:"a" (loops)
 	);
 }
 
 /* TSC based delay: */
-static void delay_tsc(u64 cycles)
+static void delay_tsc(unsigned long __loops)
 {
-	u64 bclock, now;
+	u64 bclock, now, loops = __loops;
 	int cpu;
 
 	preempt_disable();
@@ -70,7 +59,7 @@ static void delay_tsc(u64 cycles)
 	bclock = rdtsc_ordered();
 	for (;;) {
 		now = rdtsc_ordered();
-		if ((now - bclock) >= cycles)
+		if ((now - bclock) >= loops)
 			break;
 
 		/* Allow RT tasks to run */
@@ -88,7 +77,7 @@ static void delay_tsc(u64 cycles)
 		 * counter for this CPU.
 		 */
 		if (unlikely(cpu != smp_processor_id())) {
-			cycles -= (now - bclock);
+			loops -= (now - bclock);
 			cpu = smp_processor_id();
 			bclock = rdtsc_ordered();
 		}
@@ -97,96 +86,65 @@ static void delay_tsc(u64 cycles)
 }
 
 /*
- * On Intel the TPAUSE instruction waits until any of:
- * 1) the TSC counter exceeds the value provided in EDX:EAX
- * 2) global timeout in IA32_UMWAIT_CONTROL is exceeded
- * 3) an external interrupt occurs
- */
-static void delay_halt_tpause(u64 start, u64 cycles)
-{
-	u64 until = start + cycles;
-	u32 eax, edx;
-
-	eax = lower_32_bits(until);
-	edx = upper_32_bits(until);
-
-	/*
-	 * Hard code the deeper (C0.2) sleep state because exit latency is
-	 * small compared to the "microseconds" that usleep() will delay.
-	 */
-	__tpause(TPAUSE_C02_STATE, edx, eax);
-}
-
-/*
  * On some AMD platforms, MWAITX has a configurable 32-bit timer, that
- * counts with TSC frequency. The input value is the number of TSC cycles
- * to wait. MWAITX will also exit when the timer expires.
+ * counts with TSC frequency. The input value is the loop of the
+ * counter, it will exit when the timer expires.
  */
-static void delay_halt_mwaitx(u64 unused, u64 cycles)
+static void delay_mwaitx(unsigned long __loops)
 {
-	u64 delay;
-
-	delay = min_t(u64, MWAITX_MAX_WAIT_CYCLES, cycles);
-	/*
-	 * Use cpu_tss_rw as a cacheline-aligned, seldomly accessed per-cpu
-	 * variable as the monitor target.
-	 */
-	 __monitorx(raw_cpu_ptr(&cpu_tss_rw), 0, 0);
-
-	/*
-	 * AMD, like Intel, supports the EAX hint and EAX=0xf means, do not
-	 * enter any deep C-state and we use it here in delay() to minimize
-	 * wakeup latency.
-	 */
-	__mwaitx(MWAITX_DISABLE_CSTATES, delay, MWAITX_ECX_TIMER_ENABLE);
-}
-
-/*
- * Call a vendor specific function to delay for a given amount of time. Because
- * these functions may return earlier than requested, check for actual elapsed
- * time and call again until done.
- */
-static void delay_halt(u64 __cycles)
-{
-	u64 start, end, cycles = __cycles;
+	u64 start, end, delay, loops = __loops;
 
 	/*
 	 * Timer value of 0 causes MWAITX to wait indefinitely, unless there
 	 * is a store on the memory monitored by MONITORX.
 	 */
-	if (!cycles)
+	if (loops == 0)
 		return;
 
 	start = rdtsc_ordered();
 
 	for (;;) {
-		delay_halt_fn(start, cycles);
+		delay = min_t(u64, MWAITX_MAX_LOOPS, loops);
+
+		/*
+		 * Use cpu_tss_rw as a cacheline-aligned, seldomly
+		 * accessed per-cpu variable as the monitor target.
+		 */
+		__monitorx(raw_cpu_ptr(&cpu_tss_rw), 0, 0);
+
+		/*
+		 * AMD, like Intel, supports the EAX hint and EAX=0xf
+		 * means, do not enter any deep C-state and we use it
+		 * here in delay() to minimize wakeup latency.
+		 */
+		__mwaitx(MWAITX_DISABLE_CSTATES, delay, MWAITX_ECX_TIMER_ENABLE);
+
 		end = rdtsc_ordered();
 
-		if (cycles <= end - start)
+		if (loops <= end - start)
 			break;
 
-		cycles -= end - start;
+		loops -= end - start;
+
 		start = end;
 	}
 }
 
-void __init use_tsc_delay(void)
+/*
+ * Since we calibrate only once at boot, this
+ * function should be set once at boot and not changed
+ */
+static void (*delay_fn)(unsigned long) = delay_loop;
+
+void use_tsc_delay(void)
 {
 	if (delay_fn == delay_loop)
 		delay_fn = delay_tsc;
 }
 
-void __init use_tpause_delay(void)
-{
-	delay_halt_fn = delay_halt_tpause;
-	delay_fn = delay_halt;
-}
-
 void use_mwaitx_delay(void)
 {
-	delay_halt_fn = delay_halt_mwaitx;
-	delay_fn = delay_halt;
+	delay_fn = delay_mwaitx;
 }
 
 int read_current_timer(unsigned long *timer_val)
@@ -204,7 +162,7 @@ void __delay(unsigned long loops)
 }
 EXPORT_SYMBOL(__delay);
 
-noinline void __const_udelay(unsigned long xloops)
+void __const_udelay(unsigned long xloops)
 {
 	unsigned long lpj = this_cpu_read(cpu_info.loops_per_jiffy) ? : loops_per_jiffy;
 	int d0;

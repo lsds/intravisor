@@ -1,8 +1,11 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Driver for Linear Technology LTC4245 I2C Multiple Supply Hot Swap Controller
  *
  * Copyright (C) 2008 Ira W. Snyder <iws@ovro.caltech.edu>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; version 2 of the License.
  *
  * This driver is based on the ds1621 and ina209 drivers.
  *
@@ -359,11 +362,11 @@ static umode_t ltc4245_is_visible(const void *_data,
 		case hwmon_in_input:
 			if (channel > 9 && !data->use_extra_gpios)
 				return 0;
-			return 0444;
+			return S_IRUGO;
 		case hwmon_in_min_alarm:
 			if (channel > 8)
 				return 0;
-			return 0444;
+			return S_IRUGO;
 		default:
 			return 0;
 		}
@@ -371,14 +374,14 @@ static umode_t ltc4245_is_visible(const void *_data,
 		switch (attr) {
 		case hwmon_curr_input:
 		case hwmon_curr_max_alarm:
-			return 0444;
+			return S_IRUGO;
 		default:
 			return 0;
 		}
 	case hwmon_power:
 		switch (attr) {
 		case hwmon_power_input:
-			return 0444;
+			return S_IRUGO;
 		default:
 			return 0;
 		}
@@ -387,30 +390,57 @@ static umode_t ltc4245_is_visible(const void *_data,
 	}
 }
 
+static const u32 ltc4245_in_config[] = {
+	HWMON_I_INPUT,			/* dummy, skipped in is_visible */
+	HWMON_I_INPUT | HWMON_I_MIN_ALARM,
+	HWMON_I_INPUT | HWMON_I_MIN_ALARM,
+	HWMON_I_INPUT | HWMON_I_MIN_ALARM,
+	HWMON_I_INPUT | HWMON_I_MIN_ALARM,
+	HWMON_I_INPUT | HWMON_I_MIN_ALARM,
+	HWMON_I_INPUT | HWMON_I_MIN_ALARM,
+	HWMON_I_INPUT | HWMON_I_MIN_ALARM,
+	HWMON_I_INPUT | HWMON_I_MIN_ALARM,
+	HWMON_I_INPUT,
+	HWMON_I_INPUT,
+	HWMON_I_INPUT,
+	0
+};
+
+static const struct hwmon_channel_info ltc4245_in = {
+	.type = hwmon_in,
+	.config = ltc4245_in_config,
+};
+
+static const u32 ltc4245_curr_config[] = {
+	HWMON_C_INPUT | HWMON_C_MAX_ALARM,
+	HWMON_C_INPUT | HWMON_C_MAX_ALARM,
+	HWMON_C_INPUT | HWMON_C_MAX_ALARM,
+	HWMON_C_INPUT | HWMON_C_MAX_ALARM,
+	0
+};
+
+static const struct hwmon_channel_info ltc4245_curr = {
+	.type = hwmon_curr,
+	.config = ltc4245_curr_config,
+};
+
+static const u32 ltc4245_power_config[] = {
+	HWMON_P_INPUT,
+	HWMON_P_INPUT,
+	HWMON_P_INPUT,
+	HWMON_P_INPUT,
+	0
+};
+
+static const struct hwmon_channel_info ltc4245_power = {
+	.type = hwmon_power,
+	.config = ltc4245_power_config,
+};
+
 static const struct hwmon_channel_info *ltc4245_info[] = {
-	HWMON_CHANNEL_INFO(in,
-			   HWMON_I_INPUT,
-			   HWMON_I_INPUT | HWMON_I_MIN_ALARM,
-			   HWMON_I_INPUT | HWMON_I_MIN_ALARM,
-			   HWMON_I_INPUT | HWMON_I_MIN_ALARM,
-			   HWMON_I_INPUT | HWMON_I_MIN_ALARM,
-			   HWMON_I_INPUT | HWMON_I_MIN_ALARM,
-			   HWMON_I_INPUT | HWMON_I_MIN_ALARM,
-			   HWMON_I_INPUT | HWMON_I_MIN_ALARM,
-			   HWMON_I_INPUT | HWMON_I_MIN_ALARM,
-			   HWMON_I_INPUT,
-			   HWMON_I_INPUT,
-			   HWMON_I_INPUT),
-	HWMON_CHANNEL_INFO(curr,
-			   HWMON_C_INPUT | HWMON_C_MAX_ALARM,
-			   HWMON_C_INPUT | HWMON_C_MAX_ALARM,
-			   HWMON_C_INPUT | HWMON_C_MAX_ALARM,
-			   HWMON_C_INPUT | HWMON_C_MAX_ALARM),
-	HWMON_CHANNEL_INFO(power,
-			   HWMON_P_INPUT,
-			   HWMON_P_INPUT,
-			   HWMON_P_INPUT,
-			   HWMON_P_INPUT),
+	&ltc4245_in,
+	&ltc4245_curr,
+	&ltc4245_power,
 	NULL
 };
 
@@ -440,7 +470,8 @@ static bool ltc4245_use_extra_gpios(struct i2c_client *client)
 	return false;
 }
 
-static int ltc4245_probe(struct i2c_client *client)
+static int ltc4245_probe(struct i2c_client *client,
+			 const struct i2c_device_id *id)
 {
 	struct i2c_adapter *adapter = client->adapter;
 	struct ltc4245_data *data;
@@ -479,7 +510,7 @@ static struct i2c_driver ltc4245_driver = {
 	.driver = {
 		.name	= "ltc4245",
 	},
-	.probe_new	= ltc4245_probe,
+	.probe		= ltc4245_probe,
 	.id_table	= ltc4245_id,
 };
 

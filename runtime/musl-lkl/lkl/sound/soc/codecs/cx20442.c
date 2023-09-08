@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * cx20442.c  --  CX20442 ALSA Soc Audio driver
  *
@@ -7,6 +6,11 @@
  * Initially based on sound/soc/codecs/wm8400.c
  * Copyright 2008, 2009 Wolfson Microelectronics PLC.
  * Author: Mark Brown <broonie@opensource.wolfsonmicro.com>
+ *
+ *  This program is free software; you can redistribute  it and/or modify it
+ *  under  the terms of  the GNU General  Public License as published by the
+ *  Free Software Foundation;  either version 2 of the  License, or (at your
+ *  option) any later version.
  */
 
 #include <linux/tty.h>
@@ -206,7 +210,7 @@ static int cx20442_write(struct snd_soc_component *component, unsigned int reg,
  */
 
 /* Modem init: echo off, digital speaker off, quiet off, voice mode */
-static const char v253_init[] = "ate0m0q0+fclass=8\r";
+static const char *v253_init = "ate0m0q0+fclass=8\r";
 
 /* Line discipline .open() */
 static int v253_open(struct tty_struct *tty)
@@ -252,14 +256,15 @@ static void v253_close(struct tty_struct *tty)
 }
 
 /* Line discipline .hangup() */
-static void v253_hangup(struct tty_struct *tty)
+static int v253_hangup(struct tty_struct *tty)
 {
 	v253_close(tty);
+	return 0;
 }
 
 /* Line discipline .receive_buf() */
-static void v253_receive(struct tty_struct *tty, const unsigned char *cp,
-		const char *fp, int count)
+static void v253_receive(struct tty_struct *tty,
+				const unsigned char *cp, char *fp, int count)
 {
 	struct snd_soc_component *component = tty->disc_data;
 	struct cx20442_priv *cx20442;
@@ -278,13 +283,20 @@ static void v253_receive(struct tty_struct *tty, const unsigned char *cp,
 	}
 }
 
+/* Line discipline .write_wakeup() */
+static void v253_wakeup(struct tty_struct *tty)
+{
+}
+
 struct tty_ldisc_ops v253_ops = {
+	.magic = TTY_LDISC_MAGIC,
 	.name = "cx20442",
 	.owner = THIS_MODULE,
 	.open = v253_open,
 	.close = v253_close,
 	.hangup = v253_hangup,
 	.receive_buf = v253_receive,
+	.write_wakeup = v253_wakeup,
 };
 EXPORT_SYMBOL_GPL(v253_ops);
 
@@ -350,27 +362,8 @@ static int cx20442_component_probe(struct snd_soc_component *component)
 		return -ENOMEM;
 
 	cx20442->por = regulator_get(component->dev, "POR");
-	if (IS_ERR(cx20442->por)) {
-		int err = PTR_ERR(cx20442->por);
-
-		dev_warn(component->dev, "failed to get POR supply (%d)", err);
-		/*
-		 * When running on a non-dt platform and requested regulator
-		 * is not available, regulator_get() never returns
-		 * -EPROBE_DEFER as it is not able to justify if the regulator
-		 * may still appear later.  On the other hand, the board can
-		 * still set full constraints flag at late_initcall in order
-		 * to instruct regulator_get() to return a dummy one if
-		 * sufficient.  Hence, if we get -ENODEV here, let's convert
-		 * it to -EPROBE_DEFER and wait for the board to decide or
-		 * let Deferred Probe infrastructure handle this error.
-		 */
-		if (err == -ENODEV)
-			err = -EPROBE_DEFER;
-		kfree(cx20442);
-		return err;
-	}
-
+	if (IS_ERR(cx20442->por))
+		dev_warn(component->dev, "failed to get the regulator");
 	cx20442->tty = NULL;
 
 	snd_soc_component_set_drvdata(component, cx20442);
@@ -411,6 +404,7 @@ static const struct snd_soc_component_driver cx20442_component_dev = {
 	.idle_bias_on		= 1,
 	.use_pmdown_time	= 1,
 	.endianness		= 1,
+	.non_legacy_dai_naming	= 1,
 };
 
 static int cx20442_platform_probe(struct platform_device *pdev)

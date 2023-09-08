@@ -31,6 +31,8 @@
  * SOFTWARE.
  */
 
+#include <linux/module.h>
+#include <linux/moduleparam.h>
 #include <linux/string.h>
 #include <linux/slab.h>
 
@@ -77,7 +79,7 @@ s64 mthca_make_profile(struct mthca_dev *dev,
 	struct mthca_resource *profile;
 	int i, j;
 
-	profile = kcalloc(MTHCA_RES_NUM, sizeof(*profile), GFP_KERNEL);
+	profile = kzalloc(MTHCA_RES_NUM * sizeof *profile, GFP_KERNEL);
 	if (!profile)
 		return -ENOMEM;
 

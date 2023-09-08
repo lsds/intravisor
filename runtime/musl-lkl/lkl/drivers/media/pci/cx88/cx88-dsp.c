@@ -1,8 +1,17 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  *  Stereo and SAP detection for cx88
  *
  *  Copyright (c) 2009 Marton Balint <cus@fazekas.hu>
+ *
+ *  This program is free software; you can redistribute it and/or modify
+ *  it under the terms of the GNU General Public License as published by
+ *  the Free Software Foundation; either version 2 of the License, or
+ *  (at your option) any later version.
+ *
+ *  This program is distributed in the hope that it will be useful,
+ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *  GNU General Public License for more details.
  */
 
 #include "cx88.h"
@@ -24,7 +33,7 @@
 
 /*
  * We calculate the baseband frequencies of the carrier and the pilot tones
- * based on the sampling rate of the audio rds fifo.
+ * based on the the sampling rate of the audio rds fifo.
  */
 
 #define FREQ_A2_CARRIER         baseband_freq(54687.5, 2689.36, 0.0)

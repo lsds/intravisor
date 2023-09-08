@@ -88,6 +88,7 @@ HYPERCALL2(hvm_op);
 HYPERCALL2(memory_op);
 HYPERCALL2(physdev_op);
 HYPERCALL3(vcpu_op);
+HYPERCALL1(tmem_op);
 HYPERCALL1(platform_op_raw);
 HYPERCALL2(multicall);
 HYPERCALL2(vm_assist);
@@ -112,7 +113,8 @@ ENTRY(privcmd_call)
 
 	/*
 	 * Disable userspace access from kernel. This is fine to do it
-	 * unconditionally as no set_fs(KERNEL_DS) is called before.
+	 * unconditionally as no set_fs(KERNEL_DS)/set_fs(get_ds()) is
+	 * called before.
 	 */
 	uaccess_disable r4
 

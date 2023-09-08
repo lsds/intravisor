@@ -1,8 +1,11 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * linux/arch/arm/common/locomo.c
  *
  * Sharp LoCoMo support
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  *
  * This file contains all generic LoCoMo support.
  *
@@ -23,6 +26,7 @@
 #include <linux/spinlock.h>
 #include <linux/io.h>
 
+#include <mach/hardware.h>
 #include <asm/irq.h>
 #include <asm/mach/irq.h>
 
@@ -833,13 +837,15 @@ static int locomo_bus_probe(struct device *dev)
 	return ret;
 }
 
-static void locomo_bus_remove(struct device *dev)
+static int locomo_bus_remove(struct device *dev)
 {
 	struct locomo_dev *ldev = LOCOMO_DEV(dev);
 	struct locomo_driver *drv = LOCOMO_DRV(dev->driver);
+	int ret = 0;
 
 	if (drv->remove)
-		drv->remove(ldev);
+		ret = drv->remove(ldev);
+	return ret;
 }
 
 struct bus_type locomo_bus_type = {

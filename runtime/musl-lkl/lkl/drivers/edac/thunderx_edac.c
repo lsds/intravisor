@@ -408,29 +408,26 @@ static ssize_t thunderx_lmc_inject_ecc_write(struct file *file,
 					     size_t count, loff_t *ppos)
 {
 	struct thunderx_lmc *lmc = file->private_data;
+
 	unsigned int cline_size = cache_line_size();
-	u8 *tmp;
+
+	u8 tmp[cline_size];
 	void __iomem *addr;
 	unsigned int offs, timeout = 100000;
 
 	atomic_set(&lmc->ecc_int, 0);
 
 	lmc->mem = alloc_pages_node(lmc->node, GFP_KERNEL, 0);
+
 	if (!lmc->mem)
 		return -ENOMEM;
-
-	tmp = kmalloc(cline_size, GFP_KERNEL);
-	if (!tmp) {
-		__free_pages(lmc->mem, 0);
-		return -ENOMEM;
-	}
 
 	addr = page_address(lmc->mem);
 
 	while (!atomic_read(&lmc->ecc_int) && timeout--) {
 		stop_machine(inject_ecc_fn, lmc, NULL);
 
-		for (offs = 0; offs < PAGE_SIZE; offs += cline_size) {
+		for (offs = 0; offs < PAGE_SIZE; offs += sizeof(tmp)) {
 			/*
 			 * Do a load from the previously rigged location
 			 * This should generate an error interrupt.
@@ -440,7 +437,6 @@ static ssize_t thunderx_lmc_inject_ecc_write(struct file *file,
 		}
 	}
 
-	kfree(tmp);
 	__free_pages(lmc->mem, 0);
 
 	return count;
@@ -454,7 +450,7 @@ DEBUGFS_STRUCT(inject_int, 0200, thunderx_lmc_inject_int_write, NULL);
 DEBUGFS_STRUCT(inject_ecc, 0200, thunderx_lmc_inject_ecc_write, NULL);
 DEBUGFS_STRUCT(int_w1c, 0400, NULL, thunderx_lmc_int_read);
 
-static struct debugfs_entry *lmc_dfs_ents[] = {
+struct debugfs_entry *lmc_dfs_ents[] = {
 	&debugfs_mask0,
 	&debugfs_mask2,
 	&debugfs_parity_test,
@@ -1278,7 +1274,7 @@ OCX_DEBUGFS_ATTR(lne23_badcnt, OCX_LNE_BAD_CNT(23));
 
 OCX_DEBUGFS_ATTR(com_int, OCX_COM_INT_W1S);
 
-static struct debugfs_entry *ocx_dfs_ents[] = {
+struct debugfs_entry *ocx_dfs_ents[] = {
 	&debugfs_tlk0_ecc_ctl,
 	&debugfs_tlk1_ecc_ctl,
 	&debugfs_tlk2_ecc_ctl,
@@ -1368,7 +1364,7 @@ static int thunderx_ocx_probe(struct pci_dev *pdev,
 					      name, 1, "CCPI", 1,
 					      0, NULL, 0, idx);
 	if (!edac_dev) {
-		dev_err(&pdev->dev, "Cannot allocate EDAC device\n");
+		dev_err(&pdev->dev, "Cannot allocate EDAC device: %d\n", ret);
 		return -ENOMEM;
 	}
 	ocx = edac_dev->pvt_info;
@@ -1380,7 +1376,7 @@ static int thunderx_ocx_probe(struct pci_dev *pdev,
 
 	ocx->regs = pcim_iomap_table(pdev)[0];
 	if (!ocx->regs) {
-		dev_err(&pdev->dev, "Cannot map PCI resources\n");
+		dev_err(&pdev->dev, "Cannot map PCI resources: %d\n", ret);
 		ret = -ENODEV;
 		goto err_free;
 	}
@@ -1884,7 +1880,7 @@ static irqreturn_t thunderx_l2c_threaded_isr(int irq, void *irq_id)
 	default:
 		dev_err(&l2c->pdev->dev, "Unsupported device: %04x\n",
 			l2c->pdev->device);
-		goto err_free;
+		return IRQ_NONE;
 	}
 
 	while (CIRC_CNT(l2c->ring_head, l2c->ring_tail,
@@ -1906,7 +1902,7 @@ static irqreturn_t thunderx_l2c_threaded_isr(int irq, void *irq_id)
 		l2c->ring_tail++;
 	}
 
-	ret = IRQ_HANDLED;
+	return IRQ_HANDLED;
 
 err_free:
 	kfree(other);
@@ -1919,19 +1915,19 @@ err_free:
 
 L2C_DEBUGFS_ATTR(tad_int, L2C_TAD_INT_W1S);
 
-static struct debugfs_entry *l2c_tad_dfs_ents[] = {
+struct debugfs_entry *l2c_tad_dfs_ents[] = {
 	&debugfs_tad_int,
 };
 
 L2C_DEBUGFS_ATTR(cbc_int, L2C_CBC_INT_W1S);
 
-static struct debugfs_entry *l2c_cbc_dfs_ents[] = {
+struct debugfs_entry *l2c_cbc_dfs_ents[] = {
 	&debugfs_cbc_int,
 };
 
 L2C_DEBUGFS_ATTR(mci_int, L2C_MCI_INT_W1S);
 
-static struct debugfs_entry *l2c_mci_dfs_ents[] = {
+struct debugfs_entry *l2c_mci_dfs_ents[] = {
 	&debugfs_mci_int,
 };
 

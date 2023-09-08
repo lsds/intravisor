@@ -1,11 +1,16 @@
-// SPDX-License-Identifier: GPL-2.0-only
-/*
+/* This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2
+ * as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
  *
  * Authors:
  * (C) 2015 Pengutronix, Alexander Aring <aar@pengutronix.de>
  */
 
-#include <linux/if_arp.h>
 #include <linux/module.h>
 
 #include <net/6lowpan.h>
@@ -43,7 +48,9 @@ int lowpan_register_netdevice(struct net_device *dev,
 	if (ret < 0)
 		return ret;
 
-	lowpan_dev_debugfs_init(dev);
+	ret = lowpan_dev_debugfs_init(dev);
+	if (ret < 0)
+		unregister_netdevice(dev);
 
 	return ret;
 }
@@ -151,7 +158,9 @@ static int __init lowpan_module_init(void)
 {
 	int ret;
 
-	lowpan_debugfs_init();
+	ret = lowpan_debugfs_init();
+	if (ret < 0)
+		return ret;
 
 	ret = register_netdevice_notifier(&lowpan_notifier);
 	if (ret < 0) {

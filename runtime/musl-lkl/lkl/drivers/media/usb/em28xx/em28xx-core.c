@@ -7,6 +7,16 @@
 //		      Mauro Carvalho Chehab <mchehab@kernel.org>
 //		      Sascha Sommer <saschasommer@freenet.de>
 // Copyright (C) 2012 Frank Schäfer <fschaefer.oss@googlemail.com>
+//
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation; either version 2 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
 
 #include "em28xx.h"
 
@@ -79,7 +89,7 @@ int em28xx_read_reg_req_len(struct em28xx *dev, u8 req, u16 reg,
 	mutex_lock(&dev->ctrl_urb_lock);
 	ret = usb_control_msg(udev, pipe, req,
 			      USB_DIR_IN | USB_TYPE_VENDOR | USB_RECIP_DEVICE,
-			      0x0000, reg, dev->urb_buf, len, 1000);
+			      0x0000, reg, dev->urb_buf, len, HZ);
 	if (ret < 0) {
 		em28xx_regdbg("(pipe 0x%08x): IN:  %02x %02x %02x %02x %02x %02x %02x %02x  failed with error %i\n",
 			      pipe,
@@ -148,7 +158,7 @@ int em28xx_write_regs_req(struct em28xx *dev, u8 req, u16 reg, char *buf,
 	memcpy(dev->urb_buf, buf, len);
 	ret = usb_control_msg(udev, pipe, req,
 			      USB_DIR_OUT | USB_TYPE_VENDOR | USB_RECIP_DEVICE,
-			      0x0000, reg, dev->urb_buf, len, 1000);
+			      0x0000, reg, dev->urb_buf, len, HZ);
 	mutex_unlock(&dev->ctrl_urb_lock);
 
 	if (ret < 0) {
@@ -645,12 +655,12 @@ int em28xx_capture_start(struct em28xx *dev, int start)
 			rc = em28xx_write_reg_bits(dev,
 						   EM2874_R5F_TS_ENABLE,
 						   start ? EM2874_TS1_CAPTURE_ENABLE : 0x00,
-						   EM2874_TS1_CAPTURE_ENABLE | EM2874_TS1_FILTER_ENABLE | EM2874_TS1_NULL_DISCARD);
+						   EM2874_TS1_CAPTURE_ENABLE);
 		else
 			rc = em28xx_write_reg_bits(dev,
 						   EM2874_R5F_TS_ENABLE,
 						   start ? EM2874_TS2_CAPTURE_ENABLE : 0x00,
-						   EM2874_TS2_CAPTURE_ENABLE | EM2874_TS2_FILTER_ENABLE | EM2874_TS2_NULL_DISCARD);
+						   EM2874_TS2_CAPTURE_ENABLE);
 	} else {
 		/* FIXME: which is the best order? */
 		/* video registers are sampled by VREF */
@@ -688,10 +698,8 @@ int em28xx_capture_start(struct em28xx *dev, int start)
 
 	if (dev->mode == EM28XX_ANALOG_MODE)
 		led = em28xx_find_led(dev, EM28XX_LED_ANALOG_CAPTURING);
-	else if (dev->ts == PRIMARY_TS)
-		led = em28xx_find_led(dev, EM28XX_LED_DIGITAL_CAPTURING);
 	else
-		led = em28xx_find_led(dev, EM28XX_LED_DIGITAL_CAPTURING_TS2);
+		led = em28xx_find_led(dev, EM28XX_LED_DIGITAL_CAPTURING);
 
 	if (led)
 		em28xx_write_reg_bits(dev, led->gpio_reg,
@@ -769,7 +777,6 @@ EXPORT_SYMBOL_GPL(em28xx_set_mode);
 static void em28xx_irq_callback(struct urb *urb)
 {
 	struct em28xx *dev = urb->context;
-	unsigned long flags;
 	int i;
 
 	switch (urb->status) {
@@ -786,9 +793,9 @@ static void em28xx_irq_callback(struct urb *urb)
 	}
 
 	/* Copy data from URB */
-	spin_lock_irqsave(&dev->slock, flags);
+	spin_lock(&dev->slock);
 	dev->usb_ctl.urb_data_copy(dev, urb);
-	spin_unlock_irqrestore(&dev->slock, flags);
+	spin_unlock(&dev->slock);
 
 	/* Reset urb buffers */
 	for (i = 0; i < urb->number_of_packets; i++) {
@@ -923,7 +930,7 @@ int em28xx_alloc_urbs(struct em28xx *dev, enum em28xx_mode mode, int xfer_bulk,
 
 	usb_bufs->buf = kcalloc(num_bufs, sizeof(void *), GFP_KERNEL);
 	if (!usb_bufs->buf) {
-		kfree(usb_bufs->urb);
+		kfree(usb_bufs->buf);
 		return -ENOMEM;
 	}
 
@@ -948,10 +955,14 @@ int em28xx_alloc_urbs(struct em28xx *dev, enum em28xx_mode mode, int xfer_bulk,
 
 		usb_bufs->buf[i] = kzalloc(sb_size, GFP_KERNEL);
 		if (!usb_bufs->buf[i]) {
+			em28xx_uninit_usb_xfer(dev, mode);
+
 			for (i--; i >= 0; i--)
 				kfree(usb_bufs->buf[i]);
 
-			em28xx_uninit_usb_xfer(dev, mode);
+			kfree(usb_bufs->buf);
+			usb_bufs->buf = NULL;
+
 			return -ENOMEM;
 		}
 
@@ -1042,7 +1053,7 @@ int em28xx_init_usb_xfer(struct em28xx *dev, enum em28xx_mode mode,
 
 	/* submit urbs and enables IRQ */
 	for (i = 0; i < usb_bufs->num_bufs; i++) {
-		rc = usb_submit_urb(usb_bufs->urb[i], GFP_KERNEL);
+		rc = usb_submit_urb(usb_bufs->urb[i], GFP_ATOMIC);
 		if (rc) {
 			dev_err(&dev->intf->dev,
 				"submit of urb %i failed (error=%i)\n", i, rc);
@@ -1144,9 +1155,8 @@ int em28xx_suspend_extension(struct em28xx *dev)
 	dev_info(&dev->intf->dev, "Suspending extensions\n");
 	mutex_lock(&em28xx_devlist_mutex);
 	list_for_each_entry(ops, &em28xx_extension_devlist, next) {
-		if (!ops->suspend)
-			continue;
-		ops->suspend(dev);
+		if (ops->suspend)
+			ops->suspend(dev);
 		if (dev->dev_next)
 			ops->suspend(dev->dev_next);
 	}
@@ -1161,9 +1171,8 @@ int em28xx_resume_extension(struct em28xx *dev)
 	dev_info(&dev->intf->dev, "Resuming extensions\n");
 	mutex_lock(&em28xx_devlist_mutex);
 	list_for_each_entry(ops, &em28xx_extension_devlist, next) {
-		if (!ops->resume)
-			continue;
-		ops->resume(dev);
+		if (ops->resume)
+			ops->resume(dev);
 		if (dev->dev_next)
 			ops->resume(dev->dev_next);
 	}

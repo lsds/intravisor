@@ -1,11 +1,24 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Copyright 2008 Juergen Beisert, kernel@pengutronix.de
  * Copyright 2009 Sascha Hauer, s.hauer@pengutronix.de
  * Copyright 2012 Philippe Retornaz, philippe.retornaz@epfl.ch
  *
  * Initial development of this code was funded by
- * Phytec Messtechnik GmbH, https://www.phytec.de
+ * Phytec Messtechnik GmbH, http://www.phytec.de
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version 2
+ * of the License, or (at your option) any later version.
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston,
+ * MA  02110-1301, USA.
  */
 #include <linux/module.h>
 #include <linux/device.h>
@@ -181,14 +194,15 @@ static int mc13783_set_fmt(struct snd_soc_dai *dai, unsigned int fmt,
 	}
 
 	/* DAI clock master masks */
-	switch (fmt & SND_SOC_DAIFMT_CLOCK_PROVIDER_MASK) {
-	case SND_SOC_DAIFMT_CBP_CFP:
+	switch (fmt & SND_SOC_DAIFMT_MASTER_MASK) {
+	case SND_SOC_DAIFMT_CBM_CFM:
 		val |= AUDIO_C_CLK_EN;
 		break;
-	case SND_SOC_DAIFMT_CBC_CFC:
+	case SND_SOC_DAIFMT_CBS_CFS:
 		val |= AUDIO_CSM;
 		break;
-	default:
+	case SND_SOC_DAIFMT_CBM_CFS:
+	case SND_SOC_DAIFMT_CBS_CFM:
 		return -EINVAL;
 	}
 
@@ -216,11 +230,11 @@ static int mc13783_set_fmt_sync(struct snd_soc_dai *dai, unsigned int fmt)
 		return ret;
 
 	/*
-	 * In synchronous mode force the voice codec into consumer mode
+	 * In synchronous mode force the voice codec into slave mode
 	 * so that the clock / framesync from the stereo DAC is used
 	 */
-	fmt &= ~SND_SOC_DAIFMT_CLOCK_PROVIDER_MASK;
-	fmt |= SND_SOC_DAIFMT_CBC_CFC;
+	fmt &= ~SND_SOC_DAIFMT_MASTER_MASK;
+	fmt |= SND_SOC_DAIFMT_CBS_CFS;
 	ret = mc13783_set_fmt(dai, fmt, MC13783_AUDIO_CODEC);
 
 	return ret;
@@ -711,7 +725,7 @@ static struct snd_soc_dai_driver mc13783_dai_sync[] = {
 			.formats = MC13783_FORMATS,
 		},
 		.ops = &mc13783_ops_sync,
-		.symmetric_rate = 1,
+		.symmetric_rates = 1,
 	}
 };
 
@@ -727,6 +741,7 @@ static const struct snd_soc_component_driver soc_component_dev_mc13783 = {
 	.idle_bias_on		= 1,
 	.use_pmdown_time	= 1,
 	.endianness		= 1,
+	.non_legacy_dai_naming	= 1,
 };
 
 static int __init mc13783_codec_probe(struct platform_device *pdev)

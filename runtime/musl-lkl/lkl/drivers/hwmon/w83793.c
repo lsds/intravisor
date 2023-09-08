@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * w83793.c - Linux kernel driver for hardware monitoring
  * Copyright (C) 2006 Winbond Electronics Corp.
@@ -8,6 +7,20 @@
  *		Watchdog driver part
  *		(Based partially on fschmd driver,
  *		 Copyright 2007-2008 by Hans de Goede)
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation - version 2.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+ * 02110-1301 USA.
  */
 
 /*
@@ -202,9 +215,10 @@ static inline s8 TEMP_TO_REG(long val, s8 min, s8 max)
 }
 
 struct w83793_data {
+	struct i2c_client *lm75[2];
 	struct device *hwmon_dev;
 	struct mutex update_lock;
-	bool valid;			/* true if following fields are valid */
+	char valid;			/* !=0 if following fields are valid */
 	unsigned long last_updated;	/* In jiffies */
 	unsigned long last_nonvolatile;	/* In jiffies, last time we update the
 					 * nonvolatile registers
@@ -282,10 +296,11 @@ static void w83793_release_resources(struct kref *ref)
 
 static u8 w83793_read_value(struct i2c_client *client, u16 reg);
 static int w83793_write_value(struct i2c_client *client, u16 reg, u8 value);
-static int w83793_probe(struct i2c_client *client);
+static int w83793_probe(struct i2c_client *client,
+			const struct i2c_device_id *id);
 static int w83793_detect(struct i2c_client *client,
 			 struct i2c_board_info *info);
-static void w83793_remove(struct i2c_client *client);
+static int w83793_remove(struct i2c_client *client);
 static void w83793_init_client(struct i2c_client *client);
 static void w83793_update_nonvolatile(struct device *dev);
 static struct w83793_data *w83793_update_device(struct device *dev);
@@ -301,7 +316,7 @@ static struct i2c_driver w83793_driver = {
 	.driver = {
 		   .name = "w83793",
 	},
-	.probe_new	= w83793_probe,
+	.probe		= w83793_probe,
 	.remove		= w83793_remove,
 	.id_table	= w83793_id,
 	.detect		= w83793_detect,
@@ -452,7 +467,7 @@ store_chassis_clear(struct device *dev,
 	mutex_lock(&data->update_lock);
 	reg = w83793_read_value(client, W83793_REG_CLR_CHASSIS);
 	w83793_write_value(client, W83793_REG_CLR_CHASSIS, reg | 0x80);
-	data->valid = false;		/* Force cache refresh */
+	data->valid = 0;		/* Force cache refresh */
 	mutex_unlock(&data->update_lock);
 	return count;
 }
@@ -1326,7 +1341,7 @@ static int watchdog_open(struct inode *inode, struct file *filp)
 	/* Store pointer to data into filp's private data */
 	filp->private_data = data;
 
-	return stream_open(inode, filp);
+	return nonseekable_open(inode, filp);
 }
 
 static int watchdog_close(struct inode *inode, struct file *filp)
@@ -1456,7 +1471,6 @@ static const struct file_operations watchdog_fops = {
 	.release = watchdog_close,
 	.write = watchdog_write,
 	.unlocked_ioctl = watchdog_ioctl,
-	.compat_ioctl = compat_ptr_ioctl,
 };
 
 /*
@@ -1495,7 +1509,7 @@ static struct notifier_block watchdog_notifier = {
  * Init / remove routines
  */
 
-static void w83793_remove(struct i2c_client *client)
+static int w83793_remove(struct i2c_client *client)
 {
 	struct w83793_data *data = i2c_get_clientdata(client);
 	struct device *dev = &client->dev;
@@ -1550,19 +1564,25 @@ static void w83793_remove(struct i2c_client *client)
 	for (i = 0; i < ARRAY_SIZE(w83793_temp); i++)
 		device_remove_file(dev, &w83793_temp[i].dev_attr);
 
+	i2c_unregister_device(data->lm75[0]);
+	i2c_unregister_device(data->lm75[1]);
+
 	/* Decrease data reference counter */
 	mutex_lock(&watchdog_data_mutex);
 	kref_put(&data->kref, w83793_release_resources);
 	mutex_unlock(&watchdog_data_mutex);
+
+	return 0;
 }
 
 static int
 w83793_detect_subclients(struct i2c_client *client)
 {
-	int i, id;
+	int i, id, err;
 	int address = client->addr;
 	u8 tmp;
 	struct i2c_adapter *adapter = client->adapter;
+	struct w83793_data *data = i2c_get_clientdata(client);
 
 	id = i2c_adapter_id(adapter);
 	if (force_subclients[0] == id && force_subclients[1] == address) {
@@ -1573,7 +1593,8 @@ w83793_detect_subclients(struct i2c_client *client)
 					"invalid subclient "
 					"address %d; must be 0x48-0x4f\n",
 					force_subclients[i]);
-				return -EINVAL;
+				err = -EINVAL;
+				goto ERROR_SC_0;
 			}
 		}
 		w83793_write_value(client, W83793_REG_I2C_SUBADDR,
@@ -1582,20 +1603,29 @@ w83793_detect_subclients(struct i2c_client *client)
 	}
 
 	tmp = w83793_read_value(client, W83793_REG_I2C_SUBADDR);
-
-	if (!(tmp & 0x88) && (tmp & 0x7) == ((tmp >> 4) & 0x7)) {
-		dev_err(&client->dev,
-			"duplicate addresses 0x%x, use force_subclient\n", 0x48 + (tmp & 0x7));
-		return -ENODEV;
+	if (!(tmp & 0x08))
+		data->lm75[0] = i2c_new_dummy(adapter, 0x48 + (tmp & 0x7));
+	if (!(tmp & 0x80)) {
+		if ((data->lm75[0] != NULL)
+		    && ((tmp & 0x7) == ((tmp >> 4) & 0x7))) {
+			dev_err(&client->dev,
+				"duplicate addresses 0x%x, "
+				"use force_subclients\n", data->lm75[0]->addr);
+			err = -ENODEV;
+			goto ERROR_SC_1;
+		}
+		data->lm75[1] = i2c_new_dummy(adapter,
+					      0x48 + ((tmp >> 4) & 0x7));
 	}
 
-	if (!(tmp & 0x08))
-		devm_i2c_new_dummy_device(&client->dev, adapter, 0x48 + (tmp & 0x7));
-
-	if (!(tmp & 0x80))
-		devm_i2c_new_dummy_device(&client->dev, adapter, 0x48 + ((tmp >> 4) & 0x7));
-
 	return 0;
+
+	/* Undo inits in case of errors */
+
+ERROR_SC_1:
+	i2c_unregister_device(data->lm75[0]);
+ERROR_SC_0:
+	return err;
 }
 
 /* Return 0 if detection is successful, -ENODEV otherwise */
@@ -1634,12 +1664,13 @@ static int w83793_detect(struct i2c_client *client,
 	if (chip_id != 0x7b)
 		return -ENODEV;
 
-	strscpy(info->type, "w83793", I2C_NAME_SIZE);
+	strlcpy(info->type, "w83793", I2C_NAME_SIZE);
 
 	return 0;
 }
 
-static int w83793_probe(struct i2c_client *client)
+static int w83793_probe(struct i2c_client *client,
+			const struct i2c_device_id *id)
 {
 	struct device *dev = &client->dev;
 	static const int watchdog_minors[] = {
@@ -1927,6 +1958,9 @@ exit_remove:
 
 	for (i = 0; i < ARRAY_SIZE(w83793_temp); i++)
 		device_remove_file(dev, &w83793_temp[i].dev_attr);
+
+	i2c_unregister_device(data->lm75[0]);
+	i2c_unregister_device(data->lm75[1]);
 free_mem:
 	kfree(data);
 exit:
@@ -2075,7 +2109,7 @@ static struct w83793_data *w83793_update_device(struct device *dev)
 		data->vid[1] = w83793_read_value(client, W83793_REG_VID_INB);
 	w83793_update_nonvolatile(dev);
 	data->last_updated = jiffies;
-	data->valid = true;
+	data->valid = 1;
 
 END:
 	mutex_unlock(&data->update_lock);
@@ -2089,7 +2123,7 @@ END:
 static u8 w83793_read_value(struct i2c_client *client, u16 reg)
 {
 	struct w83793_data *data = i2c_get_clientdata(client);
-	u8 res;
+	u8 res = 0xff;
 	u8 new_bank = reg >> 8;
 
 	new_bank |= data->bank & 0xfc;

@@ -1,6 +1,17 @@
-// SPDX-License-Identifier: ISC
 /*
  * Copyright (c) 2013-2017 Qualcomm Atheros, Inc.
+ *
+ * Permission to use, copy, modify, and/or distribute this software for any
+ * purpose with or without fee is hereby granted, provided that the above
+ * copyright notice and this permission notice appear in all copies.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+ * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+ * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+ * ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+ * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+ * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+ * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
 #include <linux/relay.h>
@@ -134,7 +145,7 @@ int ath10k_spectral_process_fft(struct ath10k *ar,
 	fft_sample->noise = __cpu_to_be16(phyerr->nf_chains[chain_idx]);
 
 	bins = (u8 *)fftr;
-	bins += sizeof(*fftr) + ar->hw_params.spectral_bin_offset;
+	bins += sizeof(*fftr);
 
 	fft_sample->tsf = __cpu_to_be64(tsf);
 
@@ -483,9 +494,6 @@ static struct dentry *create_buf_file_handler(const char *filename,
 
 	buf_file = debugfs_create_file(filename, mode, parent, buf,
 				       &relay_file_operations);
-	if (IS_ERR(buf_file))
-		return NULL;
-
 	*is_global = 1;
 	return buf_file;
 }
@@ -497,7 +505,7 @@ static int remove_buf_file_handler(struct dentry *dentry)
 	return 0;
 }
 
-static const struct rchan_callbacks rfs_spec_scan_cb = {
+static struct rchan_callbacks rfs_spec_scan_cb = {
 	.create_buf_file = create_buf_file_handler,
 	.remove_buf_file = remove_buf_file_handler,
 };

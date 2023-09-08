@@ -129,6 +129,10 @@ static int mlx4_reset_slave(struct mlx4_dev *dev)
 	comm_flags = rst_req << COM_CHAN_RST_REQ_OFFSET;
 	__raw_writel((__force u32)cpu_to_be32(comm_flags),
 		     (__iomem char *)priv->mfunc.comm + MLX4_COMM_CHAN_FLAGS);
+	/* Make sure that our comm channel write doesn't
+	 * get mixed in with writes from another CPU.
+	 */
+	mmiowb();
 
 	end = msecs_to_jiffies(MLX4_COMM_TIME) + jiffies;
 	while (time_before(jiffies, end)) {
@@ -174,12 +178,10 @@ void mlx4_enter_error_state(struct mlx4_dev_persistent *persist)
 
 	dev = persist->dev;
 	mlx4_err(dev, "device is going to be reset\n");
-	if (mlx4_is_slave(dev)) {
+	if (mlx4_is_slave(dev))
 		err = mlx4_reset_slave(dev);
-	} else {
-		mlx4_crdump_collect(dev);
+	else
 		err = mlx4_reset_master(dev);
-	}
 
 	if (!err) {
 		mlx4_err(dev, "device was reset successfully\n");
@@ -204,13 +206,9 @@ out:
 
 static void mlx4_handle_error_state(struct mlx4_dev_persistent *persist)
 {
-	struct mlx4_dev *dev = persist->dev;
-	struct devlink *devlink;
 	int err = 0;
 
 	mlx4_enter_error_state(persist);
-	devlink = priv_to_devlink(mlx4_priv(dev));
-	devl_lock(devlink);
 	mutex_lock(&persist->interface_state_mutex);
 	if (persist->interface_state & MLX4_INTERFACE_STATE_UP &&
 	    !(persist->interface_state & MLX4_INTERFACE_STATE_DELETION)) {
@@ -219,7 +217,6 @@ static void mlx4_handle_error_state(struct mlx4_dev_persistent *persist)
 			  err);
 	}
 	mutex_unlock(&persist->interface_state_mutex);
-	devl_unlock(devlink);
 }
 
 static void dump_err_buf(struct mlx4_dev *dev)

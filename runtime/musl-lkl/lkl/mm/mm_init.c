@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * mm_init.c - Memory initialisation verification and debugging
  *
@@ -13,11 +12,14 @@
 #include <linux/memory.h>
 #include <linux/notifier.h>
 #include <linux/sched.h>
-#include <linux/mman.h>
 #include "internal.h"
 
 #ifdef CONFIG_DEBUG_MEMORY_INIT
 int __meminitdata mminit_loglevel;
+
+#ifndef SECTIONS_SHIFT
+#define SECTIONS_SHIFT	0
+#endif
 
 /* The zonelists are simply reported, validation is manual. */
 void __init mminit_verify_zonelist(void)
@@ -34,7 +36,7 @@ void __init mminit_verify_zonelist(void)
 		struct zonelist *zonelist;
 		int i, listid, zoneid;
 
-		BUILD_BUG_ON(MAX_ZONELISTS > 2);
+		BUG_ON(MAX_ZONELISTS > 2);
 		for (i = 0; i < MAX_ZONELISTS * MAX_NR_ZONES; i++) {
 
 			/* Identify the zone and nodelist */
@@ -51,8 +53,13 @@ void __init mminit_verify_zonelist(void)
 				zone->name);
 
 			/* Iterate the zonelist */
-			for_each_zone_zonelist(zone, z, zonelist, zoneid)
-				pr_cont("%d:%s ", zone_to_nid(zone), zone->name);
+			for_each_zone_zonelist(zone, z, zonelist, zoneid) {
+#ifdef CONFIG_NUMA
+				pr_cont("%d:%s ", zone->node, zone->name);
+#else
+				pr_cont("0:%s ", zone->name);
+#endif /* CONFIG_NUMA */
+			}
 			pr_cont("\n");
 		}
 	}
@@ -64,32 +71,26 @@ void __init mminit_verify_pageflags_layout(void)
 	unsigned long or_mask, add_mask;
 
 	shift = 8 * sizeof(unsigned long);
-	width = shift - SECTIONS_WIDTH - NODES_WIDTH - ZONES_WIDTH
-		- LAST_CPUPID_SHIFT - KASAN_TAG_WIDTH - LRU_GEN_WIDTH - LRU_REFS_WIDTH;
+	width = shift - SECTIONS_WIDTH - NODES_WIDTH - ZONES_WIDTH - LAST_CPUPID_SHIFT;
 	mminit_dprintk(MMINIT_TRACE, "pageflags_layout_widths",
-		"Section %d Node %d Zone %d Lastcpupid %d Kasantag %d Gen %d Tier %d Flags %d\n",
+		"Section %d Node %d Zone %d Lastcpupid %d Flags %d\n",
 		SECTIONS_WIDTH,
 		NODES_WIDTH,
 		ZONES_WIDTH,
 		LAST_CPUPID_WIDTH,
-		KASAN_TAG_WIDTH,
-		LRU_GEN_WIDTH,
-		LRU_REFS_WIDTH,
 		NR_PAGEFLAGS);
 	mminit_dprintk(MMINIT_TRACE, "pageflags_layout_shifts",
-		"Section %d Node %d Zone %d Lastcpupid %d Kasantag %d\n",
+		"Section %d Node %d Zone %d Lastcpupid %d\n",
 		SECTIONS_SHIFT,
 		NODES_SHIFT,
 		ZONES_SHIFT,
-		LAST_CPUPID_SHIFT,
-		KASAN_TAG_WIDTH);
+		LAST_CPUPID_SHIFT);
 	mminit_dprintk(MMINIT_TRACE, "pageflags_layout_pgshifts",
-		"Section %lu Node %lu Zone %lu Lastcpupid %lu Kasantag %lu\n",
+		"Section %lu Node %lu Zone %lu Lastcpupid %lu\n",
 		(unsigned long)SECTIONS_PGSHIFT,
 		(unsigned long)NODES_PGSHIFT,
 		(unsigned long)ZONES_PGSHIFT,
-		(unsigned long)LAST_CPUPID_PGSHIFT,
-		(unsigned long)KASAN_TAG_PGSHIFT);
+		(unsigned long)LAST_CPUPID_PGSHIFT);
 	mminit_dprintk(MMINIT_TRACE, "pageflags_layout_nodezoneid",
 		"Node/Zone ID: %lu -> %lu\n",
 		(unsigned long)(ZONEID_PGOFF + ZONEID_SHIFT),
@@ -143,23 +144,14 @@ EXPORT_SYMBOL_GPL(mm_kobj);
 #ifdef CONFIG_SMP
 s32 vm_committed_as_batch = 32;
 
-void mm_compute_batch(int overcommit_policy)
+static void __meminit mm_compute_batch(void)
 {
 	u64 memsized_batch;
 	s32 nr = num_present_cpus();
 	s32 batch = max_t(s32, nr*2, 32);
-	unsigned long ram_pages = totalram_pages();
 
-	/*
-	 * For policy OVERCOMMIT_NEVER, set batch size to 0.4% of
-	 * (total memory/#cpus), and lift it to 25% for other policies
-	 * to easy the possible lock contention for percpu_counter
-	 * vm_committed_as, while the max limit is INT_MAX
-	 */
-	if (overcommit_policy == OVERCOMMIT_NEVER)
-		memsized_batch = min_t(u64, ram_pages/nr/256, INT_MAX);
-	else
-		memsized_batch = min_t(u64, ram_pages/nr/4, INT_MAX);
+	/* batch size set to 0.4% of (total memory/#cpus), or max int32 */
+	memsized_batch = min_t(u64, (totalram_pages/nr)/256, 0x7fffffff);
 
 	vm_committed_as_batch = max_t(s32, memsized_batch, batch);
 }
@@ -170,8 +162,7 @@ static int __meminit mm_compute_batch_notifier(struct notifier_block *self,
 	switch (action) {
 	case MEM_ONLINE:
 	case MEM_OFFLINE:
-		mm_compute_batch(sysctl_overcommit_memory);
-		break;
+		mm_compute_batch();
 	default:
 		break;
 	}
@@ -185,7 +176,7 @@ static struct notifier_block compute_batch_nb __meminitdata = {
 
 static int __init mm_compute_batch_init(void)
 {
-	mm_compute_batch(sysctl_overcommit_memory);
+	mm_compute_batch();
 	register_hotmemory_notifier(&compute_batch_nb);
 
 	return 0;

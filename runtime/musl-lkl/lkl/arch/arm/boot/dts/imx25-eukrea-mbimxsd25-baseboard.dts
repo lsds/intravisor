@@ -1,6 +1,14 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Copyright 2013 Eukréa Electromatique <denis@eukrea.com>
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version 2
+ * of the License, or (at your option) any later version.
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
  */
 
 /dts-v1/;
@@ -13,12 +21,12 @@
 	model = "Eukrea MBIMXSD25";
 	compatible = "eukrea,mbimxsd25-baseboard", "eukrea,cpuimx25", "fsl,imx25";
 
-	gpio-keys {
+	gpio_keys {
 		compatible = "gpio-keys";
 		pinctrl-names = "default";
 		pinctrl-0 = <&pinctrl_gpiokeys>;
 
-		button {
+		bp1 {
 			label = "BP1";
 			gpios = <&gpio3 18 GPIO_ACTIVE_LOW>;
 			linux,code = <BTN_MISC>;
@@ -165,6 +173,8 @@
 };
 
 &usbhost1 {
+	phy_type = "serial";
+	dr_mode = "host";
 	status = "okay";
 };
 

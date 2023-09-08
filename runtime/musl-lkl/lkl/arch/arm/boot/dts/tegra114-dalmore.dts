@@ -23,7 +23,7 @@
 		stdout-path = "serial0:115200n8";
 	};
 
-	memory@80000000 {
+	memory {
 		reg = <0x80000000 0x40000000>;
 	};
 
@@ -46,7 +46,8 @@
 			avdd-dsi-csi-supply = <&avdd_1v2_reg>;
 
 			panel@0 {
-				compatible = "panasonic,vvx10f004b00";
+				compatible = "panasonic,vvx10f004b00",
+					     "simple-panel";
 				reg = <0>;
 
 				power-supply = <&avdd_lcd_reg>;
@@ -769,6 +770,7 @@
 		battery: smart-battery@b {
 			compatible = "ti,bq20z45", "sbs,sbs-battery";
 			reg = <0xb>;
+			battery-name = "battery";
 			sbs,i2c-retry-count = <2>;
 			sbs,poll-retry-count = <100>;
 			power-supplies = <&charger>;
@@ -788,7 +790,7 @@
 			reg = <0x4c>;
 			vcc-supply = <&palmas_ldo6_reg>;
 			interrupt-parent = <&gpio>;
-			interrupts = <TEGRA_GPIO(O, 4) IRQ_TYPE_EDGE_FALLING>;
+			interrupts = <TEGRA_GPIO(O, 4) IRQ_TYPE_LEVEL_LOW>;
 		};
 	};
 
@@ -894,7 +896,7 @@
 		};
 
 		palmas: tps65913@58 {
-			compatible = "ti,tps65913", "ti,palmas";
+			compatible = "ti,palmas";
 			reg = <0x58>;
 			interrupts = <0 86 IRQ_TYPE_LEVEL_HIGH>;
 
@@ -1084,9 +1086,8 @@
 	spi@7000da00 {
 		status = "okay";
 		spi-max-frequency = <25000000>;
-
-		flash@0 {
-			compatible = "winbond,w25q32dw", "jedec,spi-nor";
+		spi-flash@0 {
+			compatible = "winbond,w25q32dw";
 			reg = <0>;
 			spi-max-frequency = <20000000>;
 		};
@@ -1109,14 +1110,14 @@
 		};
 	};
 
-	mmc@78000400 {
+	sdhci@78000400 {
 		cd-gpios = <&gpio TEGRA_GPIO(V, 2) GPIO_ACTIVE_LOW>;
 		wp-gpios = <&gpio TEGRA_GPIO(Q, 4) GPIO_ACTIVE_HIGH>;
 		bus-width = <4>;
 		status = "okay";
 	};
 
-	mmc@78000600 {
+	sdhci@78000600 {
 		bus-width = <8>;
 		status = "okay";
 		non-removable;
@@ -1152,105 +1153,125 @@
 		default-brightness-level = <6>;
 	};
 
-	clk32k_in: clock-32k {
-		compatible = "fixed-clock";
-		clock-frequency = <32768>;
-		#clock-cells = <0>;
+	clocks {
+		compatible = "simple-bus";
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		clk32k_in: clock@0 {
+			compatible = "fixed-clock";
+			reg = <0>;
+			#clock-cells = <0>;
+			clock-frequency = <32768>;
+		};
 	};
 
 	gpio-keys {
 		compatible = "gpio-keys";
 
-		key-home {
+		home {
 			label = "Home";
 			gpios = <&gpio TEGRA_GPIO(I, 5) GPIO_ACTIVE_LOW>;
 			linux,code = <KEY_HOME>;
 		};
 
-		key-power {
+		power {
 			label = "Power";
 			gpios = <&gpio TEGRA_GPIO(Q, 0) GPIO_ACTIVE_LOW>;
 			linux,code = <KEY_POWER>;
 			wakeup-source;
 		};
 
-		key-volume-down {
+		volume_down {
 			label = "Volume Down";
 			gpios = <&gpio TEGRA_GPIO(R, 1) GPIO_ACTIVE_LOW>;
 			linux,code = <KEY_VOLUMEDOWN>;
 		};
 
-		key-volume-up {
+		volume_up {
 			label = "Volume Up";
 			gpios = <&gpio TEGRA_GPIO(R, 2) GPIO_ACTIVE_LOW>;
 			linux,code = <KEY_VOLUMEUP>;
 		};
 	};
 
-	vdd_ac_bat_reg: regulator-acbat {
-		compatible = "regulator-fixed";
-		regulator-name = "vdd_ac_bat";
-		regulator-min-microvolt = <5000000>;
-		regulator-max-microvolt = <5000000>;
-		regulator-always-on;
-	};
+	regulators {
+		compatible = "simple-bus";
+		#address-cells = <1>;
+		#size-cells = <0>;
 
-	dvdd_ts_reg: regulator-ts {
-		compatible = "regulator-fixed";
-		regulator-name = "dvdd_ts";
-		regulator-min-microvolt = <1800000>;
-		regulator-max-microvolt = <1800000>;
-		enable-active-high;
-		gpio = <&gpio TEGRA_GPIO(H, 5) GPIO_ACTIVE_HIGH>;
-	};
+		vdd_ac_bat_reg: regulator@0 {
+			compatible = "regulator-fixed";
+			reg = <0>;
+			regulator-name = "vdd_ac_bat";
+			regulator-min-microvolt = <5000000>;
+			regulator-max-microvolt = <5000000>;
+			regulator-always-on;
+		};
 
-	usb1_vbus_reg: regulator-usb1 {
-		compatible = "regulator-fixed";
-		regulator-name = "usb1_vbus";
-		regulator-min-microvolt = <5000000>;
-		regulator-max-microvolt = <5000000>;
-		enable-active-high;
-		gpio = <&gpio TEGRA_GPIO(N, 4) GPIO_ACTIVE_HIGH>;
-		gpio-open-drain;
-		vin-supply = <&tps65090_dcdc1_reg>;
-	};
+		dvdd_ts_reg: regulator@1 {
+			compatible = "regulator-fixed";
+			reg = <1>;
+			regulator-name = "dvdd_ts";
+			regulator-min-microvolt = <1800000>;
+			regulator-max-microvolt = <1800000>;
+			enable-active-high;
+			gpio = <&gpio TEGRA_GPIO(H, 5) GPIO_ACTIVE_HIGH>;
+		};
 
-	usb3_vbus_reg: regulator-usb3 {
-		compatible = "regulator-fixed";
-		regulator-name = "usb2_vbus";
-		regulator-min-microvolt = <5000000>;
-		regulator-max-microvolt = <5000000>;
-		enable-active-high;
-		gpio = <&gpio TEGRA_GPIO(K, 6) GPIO_ACTIVE_HIGH>;
-		gpio-open-drain;
-		vin-supply = <&tps65090_dcdc1_reg>;
-	};
+		usb1_vbus_reg: regulator@3 {
+			compatible = "regulator-fixed";
+			reg = <3>;
+			regulator-name = "usb1_vbus";
+			regulator-min-microvolt = <5000000>;
+			regulator-max-microvolt = <5000000>;
+			enable-active-high;
+			gpio = <&gpio TEGRA_GPIO(N, 4) GPIO_ACTIVE_HIGH>;
+			gpio-open-drain;
+			vin-supply = <&tps65090_dcdc1_reg>;
+		};
 
-	vdd_hdmi_reg: regulator-hdmi {
-		compatible = "regulator-fixed";
-		regulator-name = "vdd_hdmi_5v0";
-		regulator-min-microvolt = <5000000>;
-		regulator-max-microvolt = <5000000>;
-		vin-supply = <&tps65090_dcdc1_reg>;
-	};
+		usb3_vbus_reg: regulator@4 {
+			compatible = "regulator-fixed";
+			reg = <4>;
+			regulator-name = "usb2_vbus";
+			regulator-min-microvolt = <5000000>;
+			regulator-max-microvolt = <5000000>;
+			enable-active-high;
+			gpio = <&gpio TEGRA_GPIO(K, 6) GPIO_ACTIVE_HIGH>;
+			gpio-open-drain;
+			vin-supply = <&tps65090_dcdc1_reg>;
+		};
 
-	vdd_cam_1v8_reg: regulator-cam {
-		compatible = "regulator-fixed";
-		regulator-name = "vdd_cam_1v8_reg";
-		regulator-min-microvolt = <1800000>;
-		regulator-max-microvolt = <1800000>;
-		enable-active-high;
-		gpio = <&palmas_gpio 6 0>;
-	};
+		vdd_hdmi_reg: regulator@5 {
+			compatible = "regulator-fixed";
+			reg = <5>;
+			regulator-name = "vdd_hdmi_5v0";
+			regulator-min-microvolt = <5000000>;
+			regulator-max-microvolt = <5000000>;
+			vin-supply = <&tps65090_dcdc1_reg>;
+		};
 
-	vdd_5v0_hdmi: regulator-hdmicon {
-		compatible = "regulator-fixed";
-		regulator-name = "VDD_5V0_HDMI_CON";
-		regulator-min-microvolt = <5000000>;
-		regulator-max-microvolt = <5000000>;
-		gpio = <&gpio TEGRA_GPIO(K, 1) GPIO_ACTIVE_HIGH>;
-		enable-active-high;
-		vin-supply = <&tps65090_dcdc1_reg>;
+		vdd_cam_1v8_reg: regulator@6 {
+			compatible = "regulator-fixed";
+			reg = <6>;
+			regulator-name = "vdd_cam_1v8_reg";
+			regulator-min-microvolt = <1800000>;
+			regulator-max-microvolt = <1800000>;
+			enable-active-high;
+			gpio = <&palmas_gpio 6 0>;
+		};
+
+		vdd_5v0_hdmi: regulator@7 {
+			compatible = "regulator-fixed";
+			reg = <7>;
+			regulator-name = "VDD_5V0_HDMI_CON";
+			regulator-min-microvolt = <5000000>;
+			regulator-max-microvolt = <5000000>;
+			gpio = <&gpio TEGRA_GPIO(K, 1) GPIO_ACTIVE_HIGH>;
+			enable-active-high;
+			vin-supply = <&tps65090_dcdc1_reg>;
+		};
 	};
 
 	sound {
@@ -1275,13 +1296,7 @@
 
 		clocks = <&tegra_car TEGRA114_CLK_PLL_A>,
 			 <&tegra_car TEGRA114_CLK_PLL_A_OUT0>,
-			 <&tegra_pmc TEGRA_PMC_CLK_OUT_1>;
+			 <&tegra_car TEGRA114_CLK_EXTERN1>;
 		clock-names = "pll_a", "pll_a_out0", "mclk";
-
-		assigned-clocks = <&tegra_car TEGRA114_CLK_EXTERN1>,
-				  <&tegra_pmc TEGRA_PMC_CLK_OUT_1>;
-
-		assigned-clock-parents = <&tegra_car TEGRA114_CLK_PLL_A_OUT0>,
-					 <&tegra_car TEGRA114_CLK_EXTERN1>;
 	};
 };

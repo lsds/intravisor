@@ -1,28 +1,29 @@
 // SPDX-License-Identifier: GPL-2.0
 #include <linux/compiler.h>
 #include <linux/bitmap.h>
-#include <perf/cpumap.h>
-#include <internal/cpumap.h>
 #include "tests.h"
+#include "cpumap.h"
 #include "debug.h"
 
 #define NBITS 100
 
 static unsigned long *get_bitmap(const char *str, int nbits)
 {
-	struct perf_cpu_map *map = perf_cpu_map__new(str);
+	struct cpu_map *map = cpu_map__new(str);
 	unsigned long *bm = NULL;
 	int i;
 
-	bm = bitmap_zalloc(nbits);
+	bm = bitmap_alloc(nbits);
 
 	if (map && bm) {
-		for (i = 0; i < perf_cpu_map__nr(map); i++)
-			set_bit(perf_cpu_map__cpu(map, i).cpu, bm);
+		bitmap_zero(bm, nbits);
+
+		for (i = 0; i < map->nr; i++)
+			set_bit(map->map[i], bm);
 	}
 
 	if (map)
-		perf_cpu_map__put(map);
+		cpu_map__put(map);
 	return bm;
 }
 
@@ -40,7 +41,7 @@ static int test_bitmap(const char *str)
 	return ret;
 }
 
-static int test__bitmap_print(struct test_suite *test __maybe_unused, int subtest __maybe_unused)
+int test__bitmap_print(struct test *test __maybe_unused, int subtest __maybe_unused)
 {
 	TEST_ASSERT_VAL("failed to convert map", test_bitmap("1"));
 	TEST_ASSERT_VAL("failed to convert map", test_bitmap("1,5"));
@@ -51,5 +52,3 @@ static int test__bitmap_print(struct test_suite *test __maybe_unused, int subtes
 	TEST_ASSERT_VAL("failed to convert map", test_bitmap("1-10,12-20,22-30,32-40"));
 	return 0;
 }
-
-DEFINE_SUITE("Print bitmap", bitmap_print);

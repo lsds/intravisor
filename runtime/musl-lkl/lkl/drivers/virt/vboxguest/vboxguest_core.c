@@ -6,7 +6,6 @@
  */
 
 #include <linux/device.h>
-#include <linux/io.h>
 #include <linux/mm.h>
 #include <linux/sched.h>
 #include <linux/sizes.h>
@@ -27,10 +26,6 @@
 		(u8 *)(a) + sizeof(struct vbg_ioctl_hgcm_call)))
 
 #define GUEST_MAPPINGS_TRIES	5
-
-#define VBG_KERNEL_REQUEST \
-	(VMMDEV_REQUESTOR_KERNEL | VMMDEV_REQUESTOR_USR_DRV | \
-	 VMMDEV_REQUESTOR_CON_DONT_KNOW | VMMDEV_REQUESTOR_TRUST_NOT_GIVEN)
 
 /**
  * Reserves memory in which the VMM can relocate any guest mappings
@@ -53,8 +48,7 @@ static void vbg_guest_mappings_init(struct vbg_dev *gdev)
 	int i, rc;
 
 	/* Query the required space. */
-	req = vbg_req_alloc(sizeof(*req), VMMDEVREQ_GET_HYPERVISOR_INFO,
-			    VBG_KERNEL_REQUEST);
+	req = vbg_req_alloc(sizeof(*req), VMMDEVREQ_GET_HYPERVISOR_INFO);
 	if (!req)
 		return;
 
@@ -75,7 +69,7 @@ static void vbg_guest_mappings_init(struct vbg_dev *gdev)
 	/* Add 4M so that we can align the vmap to 4MiB as the host requires. */
 	size = PAGE_ALIGN(req->hypervisor_size) + SZ_4M;
 
-	pages = kmalloc_array(size >> PAGE_SHIFT, sizeof(*pages), GFP_KERNEL);
+	pages = kmalloc(sizeof(*pages) * (size >> PAGE_SHIFT), GFP_KERNEL);
 	if (!pages)
 		goto out;
 
@@ -141,8 +135,7 @@ static void vbg_guest_mappings_exit(struct vbg_dev *gdev)
 	 * Tell the host that we're going to free the memory we reserved for
 	 * it, the free it up. (Leak the memory if anything goes wrong here.)
 	 */
-	req = vbg_req_alloc(sizeof(*req), VMMDEVREQ_SET_HYPERVISOR_INFO,
-			    VBG_KERNEL_REQUEST);
+	req = vbg_req_alloc(sizeof(*req), VMMDEVREQ_SET_HYPERVISOR_INFO);
 	if (!req)
 		return;
 
@@ -179,10 +172,8 @@ static int vbg_report_guest_info(struct vbg_dev *gdev)
 	struct vmmdev_guest_info2 *req2 = NULL;
 	int rc, ret = -ENOMEM;
 
-	req1 = vbg_req_alloc(sizeof(*req1), VMMDEVREQ_REPORT_GUEST_INFO,
-			     VBG_KERNEL_REQUEST);
-	req2 = vbg_req_alloc(sizeof(*req2), VMMDEVREQ_REPORT_GUEST_INFO2,
-			     VBG_KERNEL_REQUEST);
+	req1 = vbg_req_alloc(sizeof(*req1), VMMDEVREQ_REPORT_GUEST_INFO);
+	req2 = vbg_req_alloc(sizeof(*req2), VMMDEVREQ_REPORT_GUEST_INFO2);
 	if (!req1 || !req2)
 		goto out_free;
 
@@ -196,9 +187,9 @@ static int vbg_report_guest_info(struct vbg_dev *gdev)
 	req2->additions_minor = VBG_VERSION_MINOR;
 	req2->additions_build = VBG_VERSION_BUILD;
 	req2->additions_revision = VBG_SVN_REV;
-	req2->additions_features =
-		VMMDEV_GUEST_INFO2_ADDITIONS_FEATURES_REQUESTOR_INFO;
-	strscpy(req2->name, VBG_VERSION_STRING,
+	/* (no features defined yet) */
+	req2->additions_features = 0;
+	strlcpy(req2->name, VBG_VERSION_STRING,
 		sizeof(req2->name));
 
 	/*
@@ -239,8 +230,7 @@ static int vbg_report_driver_status(struct vbg_dev *gdev, bool active)
 	struct vmmdev_guest_status *req;
 	int rc;
 
-	req = vbg_req_alloc(sizeof(*req), VMMDEVREQ_REPORT_GUEST_STATUS,
-			    VBG_KERNEL_REQUEST);
+	req = vbg_req_alloc(sizeof(*req), VMMDEVREQ_REPORT_GUEST_STATUS);
 	if (!req)
 		return -ENOMEM;
 
@@ -272,9 +262,8 @@ static int vbg_balloon_inflate(struct vbg_dev *gdev, u32 chunk_idx)
 	struct page **pages;
 	int i, rc, ret;
 
-	pages = kmalloc_array(VMMDEV_MEMORY_BALLOON_CHUNK_PAGES,
-			      sizeof(*pages),
-			      GFP_KERNEL | __GFP_NOWARN);
+	pages = kmalloc(sizeof(*pages) * VMMDEV_MEMORY_BALLOON_CHUNK_PAGES,
+			GFP_KERNEL | __GFP_NOWARN);
 	if (!pages)
 		return -ENOMEM;
 
@@ -433,8 +422,7 @@ static int vbg_heartbeat_host_config(struct vbg_dev *gdev, bool enabled)
 	struct vmmdev_heartbeat *req;
 	int rc;
 
-	req = vbg_req_alloc(sizeof(*req), VMMDEVREQ_HEARTBEAT_CONFIGURE,
-			    VBG_KERNEL_REQUEST);
+	req = vbg_req_alloc(sizeof(*req), VMMDEVREQ_HEARTBEAT_CONFIGURE);
 	if (!req)
 		return -ENOMEM;
 
@@ -468,8 +456,7 @@ static int vbg_heartbeat_init(struct vbg_dev *gdev)
 
 	gdev->guest_heartbeat_req = vbg_req_alloc(
 					sizeof(*gdev->guest_heartbeat_req),
-					VMMDEVREQ_GUEST_HEARTBEAT,
-					VBG_KERNEL_REQUEST);
+					VMMDEVREQ_GUEST_HEARTBEAT);
 	if (!gdev->guest_heartbeat_req)
 		return -ENOMEM;
 
@@ -540,8 +527,7 @@ static int vbg_reset_host_event_filter(struct vbg_dev *gdev,
 	struct vmmdev_mask *req;
 	int rc;
 
-	req = vbg_req_alloc(sizeof(*req), VMMDEVREQ_CTL_GUEST_FILTER_MASK,
-			    VBG_KERNEL_REQUEST);
+	req = vbg_req_alloc(sizeof(*req), VMMDEVREQ_CTL_GUEST_FILTER_MASK);
 	if (!req)
 		return -ENOMEM;
 
@@ -559,7 +545,7 @@ static int vbg_reset_host_event_filter(struct vbg_dev *gdev,
  * Changes the event filter mask for the given session.
  *
  * This is called in response to VBG_IOCTL_CHANGE_FILTER_MASK as well as to
- * do session cleanup. Takes the session mutex.
+ * do session cleanup. Takes the session spinlock.
  *
  * Return: 0 or negative errno value.
  * @gdev:			The Guest extension device.
@@ -580,14 +566,8 @@ static int vbg_set_session_event_filter(struct vbg_dev *gdev,
 	u32 changed, previous;
 	int rc, ret = 0;
 
-	/*
-	 * Allocate a request buffer before taking the spinlock, when
-	 * the session is being terminated the requestor is the kernel,
-	 * as we're cleaning up.
-	 */
-	req = vbg_req_alloc(sizeof(*req), VMMDEVREQ_CTL_GUEST_FILTER_MASK,
-			    session_termination ? VBG_KERNEL_REQUEST :
-						  session->requestor);
+	/* Allocate a request buffer before taking the spinlock */
+	req = vbg_req_alloc(sizeof(*req), VMMDEVREQ_CTL_GUEST_FILTER_MASK);
 	if (!req) {
 		if (!session_termination)
 			return -ENOMEM;
@@ -646,8 +626,7 @@ static int vbg_reset_host_capabilities(struct vbg_dev *gdev)
 	struct vmmdev_mask *req;
 	int rc;
 
-	req = vbg_req_alloc(sizeof(*req), VMMDEVREQ_SET_GUEST_CAPABILITIES,
-			    VBG_KERNEL_REQUEST);
+	req = vbg_req_alloc(sizeof(*req), VMMDEVREQ_SET_GUEST_CAPABILITIES);
 	if (!req)
 		return -ENOMEM;
 
@@ -662,156 +641,7 @@ static int vbg_reset_host_capabilities(struct vbg_dev *gdev)
 }
 
 /**
- * Set guest capabilities on the host.
- * Must be called with gdev->session_mutex hold.
- * Return: 0 or negative errno value.
- * @gdev:			The Guest extension device.
- * @session:			The session.
- * @session_termination:	Set if we're called by the session cleanup code.
- */
-static int vbg_set_host_capabilities(struct vbg_dev *gdev,
-				     struct vbg_session *session,
-				     bool session_termination)
-{
-	struct vmmdev_mask *req;
-	u32 caps;
-	int rc;
-
-	WARN_ON(!mutex_is_locked(&gdev->session_mutex));
-
-	caps = gdev->acquired_guest_caps | gdev->set_guest_caps_tracker.mask;
-
-	if (gdev->guest_caps_host == caps)
-		return 0;
-
-	/* On termination the requestor is the kernel, as we're cleaning up. */
-	req = vbg_req_alloc(sizeof(*req), VMMDEVREQ_SET_GUEST_CAPABILITIES,
-			    session_termination ? VBG_KERNEL_REQUEST :
-						  session->requestor);
-	if (!req) {
-		gdev->guest_caps_host = U32_MAX;
-		return -ENOMEM;
-	}
-
-	req->or_mask = caps;
-	req->not_mask = ~caps;
-	rc = vbg_req_perform(gdev, req);
-	vbg_req_free(req, sizeof(*req));
-
-	gdev->guest_caps_host = (rc >= 0) ? caps : U32_MAX;
-
-	return vbg_status_code_to_errno(rc);
-}
-
-/**
- * Acquire (get exclusive access) guest capabilities for a session.
- * Takes the session mutex.
- * Return: 0 or negative errno value.
- * @gdev:			The Guest extension device.
- * @session:			The session.
- * @flags:			Flags (VBGL_IOC_AGC_FLAGS_XXX).
- * @or_mask:			The capabilities to add.
- * @not_mask:			The capabilities to remove.
- * @session_termination:	Set if we're called by the session cleanup code.
- *				This tweaks the error handling so we perform
- *				proper session cleanup even if the host
- *				misbehaves.
- */
-static int vbg_acquire_session_capabilities(struct vbg_dev *gdev,
-					    struct vbg_session *session,
-					    u32 or_mask, u32 not_mask,
-					    u32 flags, bool session_termination)
-{
-	unsigned long irqflags;
-	bool wakeup = false;
-	int ret = 0;
-
-	mutex_lock(&gdev->session_mutex);
-
-	if (gdev->set_guest_caps_tracker.mask & or_mask) {
-		vbg_err("%s error: cannot acquire caps which are currently set\n",
-			__func__);
-		ret = -EINVAL;
-		goto out;
-	}
-
-	/*
-	 * Mark any caps in the or_mask as now being in acquire-mode. Note
-	 * once caps are in acquire_mode they always stay in this mode.
-	 * This impacts event handling, so we take the event-lock.
-	 */
-	spin_lock_irqsave(&gdev->event_spinlock, irqflags);
-	gdev->acquire_mode_guest_caps |= or_mask;
-	spin_unlock_irqrestore(&gdev->event_spinlock, irqflags);
-
-	/* If we only have to switch the caps to acquire mode, we're done. */
-	if (flags & VBGL_IOC_AGC_FLAGS_CONFIG_ACQUIRE_MODE)
-		goto out;
-
-	not_mask &= ~or_mask; /* or_mask takes priority over not_mask */
-	not_mask &= session->acquired_guest_caps;
-	or_mask &= ~session->acquired_guest_caps;
-
-	if (or_mask == 0 && not_mask == 0)
-		goto out;
-
-	if (gdev->acquired_guest_caps & or_mask) {
-		ret = -EBUSY;
-		goto out;
-	}
-
-	gdev->acquired_guest_caps |= or_mask;
-	gdev->acquired_guest_caps &= ~not_mask;
-	/* session->acquired_guest_caps impacts event handling, take the lock */
-	spin_lock_irqsave(&gdev->event_spinlock, irqflags);
-	session->acquired_guest_caps |= or_mask;
-	session->acquired_guest_caps &= ~not_mask;
-	spin_unlock_irqrestore(&gdev->event_spinlock, irqflags);
-
-	ret = vbg_set_host_capabilities(gdev, session, session_termination);
-	/* Roll back on failure, unless it's session termination time. */
-	if (ret < 0 && !session_termination) {
-		gdev->acquired_guest_caps &= ~or_mask;
-		gdev->acquired_guest_caps |= not_mask;
-		spin_lock_irqsave(&gdev->event_spinlock, irqflags);
-		session->acquired_guest_caps &= ~or_mask;
-		session->acquired_guest_caps |= not_mask;
-		spin_unlock_irqrestore(&gdev->event_spinlock, irqflags);
-	}
-
-	/*
-	 * If we added a capability, check if that means some other thread in
-	 * our session should be unblocked because there are events pending
-	 * (the result of vbg_get_allowed_event_mask_for_session() may change).
-	 *
-	 * HACK ALERT! When the seamless support capability is added we generate
-	 *	a seamless change event so that the ring-3 client can sync with
-	 *	the seamless state.
-	 */
-	if (ret == 0 && or_mask != 0) {
-		spin_lock_irqsave(&gdev->event_spinlock, irqflags);
-
-		if (or_mask & VMMDEV_GUEST_SUPPORTS_SEAMLESS)
-			gdev->pending_events |=
-				VMMDEV_EVENT_SEAMLESS_MODE_CHANGE_REQUEST;
-
-		if (gdev->pending_events)
-			wakeup = true;
-
-		spin_unlock_irqrestore(&gdev->event_spinlock, irqflags);
-
-		if (wakeup)
-			wake_up(&gdev->event_wq);
-	}
-
-out:
-	mutex_unlock(&gdev->session_mutex);
-
-	return ret;
-}
-
-/**
- * Sets the guest capabilities for a session. Takes the session mutex.
+ * Sets the guest capabilities for a session. Takes the session spinlock.
  * Return: 0 or negative errno value.
  * @gdev:			The Guest extension device.
  * @session:			The session.
@@ -827,40 +657,56 @@ static int vbg_set_session_capabilities(struct vbg_dev *gdev,
 					u32 or_mask, u32 not_mask,
 					bool session_termination)
 {
+	struct vmmdev_mask *req;
 	u32 changed, previous;
-	int ret = 0;
+	int rc, ret = 0;
+
+	/* Allocate a request buffer before taking the spinlock */
+	req = vbg_req_alloc(sizeof(*req), VMMDEVREQ_SET_GUEST_CAPABILITIES);
+	if (!req) {
+		if (!session_termination)
+			return -ENOMEM;
+		/* Ignore allocation failure, we must do session cleanup. */
+	}
 
 	mutex_lock(&gdev->session_mutex);
 
-	if (gdev->acquire_mode_guest_caps & or_mask) {
-		vbg_err("%s error: cannot set caps which are in acquire_mode\n",
-			__func__);
-		ret = -EBUSY;
-		goto out;
-	}
-
 	/* Apply the changes to the session mask. */
-	previous = session->set_guest_caps;
-	session->set_guest_caps |= or_mask;
-	session->set_guest_caps &= ~not_mask;
+	previous = session->guest_caps;
+	session->guest_caps |= or_mask;
+	session->guest_caps &= ~not_mask;
 
 	/* If anything actually changed, update the global usage counters. */
-	changed = previous ^ session->set_guest_caps;
+	changed = previous ^ session->guest_caps;
 	if (!changed)
 		goto out;
 
-	vbg_track_bit_usage(&gdev->set_guest_caps_tracker, changed, previous);
+	vbg_track_bit_usage(&gdev->guest_caps_tracker, changed, previous);
+	or_mask = gdev->guest_caps_tracker.mask;
 
-	ret = vbg_set_host_capabilities(gdev, session, session_termination);
-	/* Roll back on failure, unless it's session termination time. */
-	if (ret < 0 && !session_termination) {
-		vbg_track_bit_usage(&gdev->set_guest_caps_tracker, changed,
-				    session->set_guest_caps);
-		session->set_guest_caps = previous;
+	if (gdev->guest_caps_host == or_mask || !req)
+		goto out;
+
+	gdev->guest_caps_host = or_mask;
+	req->or_mask = or_mask;
+	req->not_mask = ~or_mask;
+	rc = vbg_req_perform(gdev, req);
+	if (rc < 0) {
+		ret = vbg_status_code_to_errno(rc);
+
+		/* Failed, roll back (unless it's session termination time). */
+		gdev->guest_caps_host = U32_MAX;
+		if (session_termination)
+			goto out;
+
+		vbg_track_bit_usage(&gdev->guest_caps_tracker, changed,
+				    session->guest_caps);
+		session->guest_caps = previous;
 	}
 
 out:
 	mutex_unlock(&gdev->session_mutex);
+	vbg_req_free(req, sizeof(*req));
 
 	return ret;
 }
@@ -875,8 +721,7 @@ static int vbg_query_host_version(struct vbg_dev *gdev)
 	struct vmmdev_host_version *req;
 	int rc, ret;
 
-	req = vbg_req_alloc(sizeof(*req), VMMDEVREQ_GET_HOST_VERSION,
-			    VBG_KERNEL_REQUEST);
+	req = vbg_req_alloc(sizeof(*req), VMMDEVREQ_GET_HOST_VERSION);
 	if (!req)
 		return -ENOMEM;
 
@@ -937,24 +782,19 @@ int vbg_core_init(struct vbg_dev *gdev, u32 fixed_events)
 
 	gdev->mem_balloon.get_req =
 		vbg_req_alloc(sizeof(*gdev->mem_balloon.get_req),
-			      VMMDEVREQ_GET_MEMBALLOON_CHANGE_REQ,
-			      VBG_KERNEL_REQUEST);
+			      VMMDEVREQ_GET_MEMBALLOON_CHANGE_REQ);
 	gdev->mem_balloon.change_req =
 		vbg_req_alloc(sizeof(*gdev->mem_balloon.change_req),
-			      VMMDEVREQ_CHANGE_MEMBALLOON,
-			      VBG_KERNEL_REQUEST);
+			      VMMDEVREQ_CHANGE_MEMBALLOON);
 	gdev->cancel_req =
 		vbg_req_alloc(sizeof(*(gdev->cancel_req)),
-			      VMMDEVREQ_HGCM_CANCEL2,
-			      VBG_KERNEL_REQUEST);
+			      VMMDEVREQ_HGCM_CANCEL2);
 	gdev->ack_events_req =
 		vbg_req_alloc(sizeof(*gdev->ack_events_req),
-			      VMMDEVREQ_ACKNOWLEDGE_EVENTS,
-			      VBG_KERNEL_REQUEST);
+			      VMMDEVREQ_ACKNOWLEDGE_EVENTS);
 	gdev->mouse_status_req =
 		vbg_req_alloc(sizeof(*gdev->mouse_status_req),
-			      VMMDEVREQ_GET_MOUSE_STATUS,
-			      VBG_KERNEL_REQUEST);
+			      VMMDEVREQ_GET_MOUSE_STATUS);
 
 	if (!gdev->mem_balloon.get_req || !gdev->mem_balloon.change_req ||
 	    !gdev->cancel_req || !gdev->ack_events_req ||
@@ -1051,9 +891,9 @@ void vbg_core_exit(struct vbg_dev *gdev)
  * vboxguest_linux.c calls this when userspace opens the char-device.
  * Return: A pointer to the new session or an ERR_PTR on error.
  * @gdev:		The Guest extension device.
- * @requestor:		VMMDEV_REQUESTOR_* flags
+ * @user:		Set if this is a session for the vboxuser device.
  */
-struct vbg_session *vbg_core_open_session(struct vbg_dev *gdev, u32 requestor)
+struct vbg_session *vbg_core_open_session(struct vbg_dev *gdev, bool user)
 {
 	struct vbg_session *session;
 
@@ -1062,7 +902,7 @@ struct vbg_session *vbg_core_open_session(struct vbg_dev *gdev, u32 requestor)
 		return ERR_PTR(-ENOMEM);
 
 	session->gdev = gdev;
-	session->requestor = requestor;
+	session->user_session = user;
 
 	return session;
 }
@@ -1076,7 +916,6 @@ void vbg_core_close_session(struct vbg_session *session)
 	struct vbg_dev *gdev = session->gdev;
 	int i, rc;
 
-	vbg_acquire_session_capabilities(gdev, session, 0, U32_MAX, 0, true);
 	vbg_set_session_capabilities(gdev, session, 0, U32_MAX, true);
 	vbg_set_session_event_filter(gdev, session, 0, U32_MAX, true);
 
@@ -1084,9 +923,7 @@ void vbg_core_close_session(struct vbg_session *session)
 		if (!session->hgcm_client_ids[i])
 			continue;
 
-		/* requestor is kernel here, as we're cleaning up. */
-		vbg_hgcm_disconnect(gdev, VBG_KERNEL_REQUEST,
-				    session->hgcm_client_ids[i], &rc);
+		vbg_hgcm_disconnect(gdev, session->hgcm_client_ids[i], &rc);
 	}
 
 	kfree(session);
@@ -1134,25 +971,6 @@ static int vbg_ioctl_driver_version_info(
 	return 0;
 }
 
-/* Must be called with the event_lock held */
-static u32 vbg_get_allowed_event_mask_for_session(struct vbg_dev *gdev,
-						  struct vbg_session *session)
-{
-	u32 acquire_mode_caps = gdev->acquire_mode_guest_caps;
-	u32 session_acquired_caps = session->acquired_guest_caps;
-	u32 allowed_events = VMMDEV_EVENT_VALID_EVENT_MASK;
-
-	if ((acquire_mode_caps & VMMDEV_GUEST_SUPPORTS_GRAPHICS) &&
-	    !(session_acquired_caps & VMMDEV_GUEST_SUPPORTS_GRAPHICS))
-		allowed_events &= ~VMMDEV_EVENT_DISPLAY_CHANGE_REQUEST;
-
-	if ((acquire_mode_caps & VMMDEV_GUEST_SUPPORTS_SEAMLESS) &&
-	    !(session_acquired_caps & VMMDEV_GUEST_SUPPORTS_SEAMLESS))
-		allowed_events &= ~VMMDEV_EVENT_SEAMLESS_MODE_CHANGE_REQUEST;
-
-	return allowed_events;
-}
-
 static bool vbg_wait_event_cond(struct vbg_dev *gdev,
 				struct vbg_session *session,
 				u32 event_mask)
@@ -1164,7 +982,6 @@ static bool vbg_wait_event_cond(struct vbg_dev *gdev,
 	spin_lock_irqsave(&gdev->event_spinlock, flags);
 
 	events = gdev->pending_events & event_mask;
-	events &= vbg_get_allowed_event_mask_for_session(gdev, session);
 	wakeup = events || session->cancel_waiters;
 
 	spin_unlock_irqrestore(&gdev->event_spinlock, flags);
@@ -1179,7 +996,6 @@ static u32 vbg_consume_events_locked(struct vbg_dev *gdev,
 {
 	u32 events = gdev->pending_events & event_mask;
 
-	events &= vbg_get_allowed_event_mask_for_session(gdev, session);
 	gdev->pending_events &= ~events;
 	return events;
 }
@@ -1299,9 +1115,7 @@ static int vbg_req_allowed(struct vbg_dev *gdev, struct vbg_session *session,
 	case VMMDEVREQ_VIDEO_ACCEL_ENABLE:
 	case VMMDEVREQ_VIDEO_ACCEL_FLUSH:
 	case VMMDEVREQ_VIDEO_SET_VISIBLE_REGION:
-	case VMMDEVREQ_VIDEO_UPDATE_MONITOR_POSITIONS:
 	case VMMDEVREQ_GET_DISPLAY_CHANGE_REQEX:
-	case VMMDEVREQ_GET_DISPLAY_CHANGE_REQ_MULTI:
 	case VMMDEVREQ_GET_SEAMLESS_CHANGE_REQ:
 	case VMMDEVREQ_GET_VRDPCHANGE_REQ:
 	case VMMDEVREQ_LOG_STRING:
@@ -1337,8 +1151,7 @@ static int vbg_req_allowed(struct vbg_dev *gdev, struct vbg_session *session,
 		return -EPERM;
 	}
 
-	if (trusted_apps_only &&
-	    (session->requestor & VMMDEV_REQUESTOR_USER_DEVICE)) {
+	if (trusted_apps_only && session->user_session) {
 		vbg_err("Denying userspace vmm call type %#08x through vboxuser device node\n",
 			req->request_type);
 		return -EPERM;
@@ -1395,8 +1208,8 @@ static int vbg_ioctl_hgcm_connect(struct vbg_dev *gdev,
 	if (i >= ARRAY_SIZE(session->hgcm_client_ids))
 		return -EMFILE;
 
-	ret = vbg_hgcm_connect(gdev, session->requestor, &conn->u.in.loc,
-			       &client_id, &conn->hdr.rc);
+	ret = vbg_hgcm_connect(gdev, &conn->u.in.loc, &client_id,
+			       &conn->hdr.rc);
 
 	mutex_lock(&gdev->session_mutex);
 	if (ret == 0 && conn->hdr.rc >= 0) {
@@ -1437,8 +1250,7 @@ static int vbg_ioctl_hgcm_disconnect(struct vbg_dev *gdev,
 	if (i >= ARRAY_SIZE(session->hgcm_client_ids))
 		return -EINVAL;
 
-	ret = vbg_hgcm_disconnect(gdev, session->requestor, client_id,
-				  &disconn->hdr.rc);
+	ret = vbg_hgcm_disconnect(gdev, client_id, &disconn->hdr.rc);
 
 	mutex_lock(&gdev->session_mutex);
 	if (ret == 0 && disconn->hdr.rc >= 0)
@@ -1448,20 +1260,6 @@ static int vbg_ioctl_hgcm_disconnect(struct vbg_dev *gdev,
 	mutex_unlock(&gdev->session_mutex);
 
 	return ret;
-}
-
-static bool vbg_param_valid(enum vmmdev_hgcm_function_parameter_type type)
-{
-	switch (type) {
-	case VMMDEV_HGCM_PARM_TYPE_32BIT:
-	case VMMDEV_HGCM_PARM_TYPE_64BIT:
-	case VMMDEV_HGCM_PARM_TYPE_LINADDR:
-	case VMMDEV_HGCM_PARM_TYPE_LINADDR_IN:
-	case VMMDEV_HGCM_PARM_TYPE_LINADDR_OUT:
-		return true;
-	default:
-		return false;
-	}
 }
 
 static int vbg_ioctl_hgcm_call(struct vbg_dev *gdev,
@@ -1499,23 +1297,6 @@ static int vbg_ioctl_hgcm_call(struct vbg_dev *gdev,
 	}
 	call->hdr.size_out = actual_size;
 
-	/* Validate parameter types */
-	if (f32bit) {
-		struct vmmdev_hgcm_function_parameter32 *parm =
-			VBG_IOCTL_HGCM_CALL_PARMS32(call);
-
-		for (i = 0; i < call->parm_count; i++)
-			if (!vbg_param_valid(parm[i].type))
-				return -EINVAL;
-	} else {
-		struct vmmdev_hgcm_function_parameter *parm =
-			VBG_IOCTL_HGCM_CALL_PARMS(call);
-
-		for (i = 0; i < call->parm_count; i++)
-			if (!vbg_param_valid(parm[i].type))
-				return -EINVAL;
-	}
-
 	/*
 	 * Validate the client id.
 	 */
@@ -1530,13 +1311,13 @@ static int vbg_ioctl_hgcm_call(struct vbg_dev *gdev,
 		return -EINVAL;
 	}
 
-	if (IS_ENABLED(CONFIG_COMPAT) && f32bit)
-		ret = vbg_hgcm_call32(gdev, session->requestor, client_id,
+	if (f32bit)
+		ret = vbg_hgcm_call32(gdev, client_id,
 				      call->function, call->timeout_ms,
 				      VBG_IOCTL_HGCM_CALL_PARMS32(call),
 				      call->parm_count, &call->hdr.rc);
 	else
-		ret = vbg_hgcm_call(gdev, session->requestor, client_id,
+		ret = vbg_hgcm_call(gdev, client_id,
 				    call->function, call->timeout_ms,
 				    VBG_IOCTL_HGCM_CALL_PARMS(call),
 				    call->parm_count, &call->hdr.rc);
@@ -1583,29 +1364,6 @@ static int vbg_ioctl_change_filter_mask(struct vbg_dev *gdev,
 					    false);
 }
 
-static int vbg_ioctl_acquire_guest_capabilities(struct vbg_dev *gdev,
-	     struct vbg_session *session,
-	     struct vbg_ioctl_acquire_guest_caps *caps)
-{
-	u32 flags, or_mask, not_mask;
-
-	if (vbg_ioctl_chk(&caps->hdr, sizeof(caps->u.in), 0))
-		return -EINVAL;
-
-	flags = caps->u.in.flags;
-	or_mask = caps->u.in.or_mask;
-	not_mask = caps->u.in.not_mask;
-
-	if (flags & ~VBGL_IOC_AGC_FLAGS_VALID_MASK)
-		return -EINVAL;
-
-	if ((or_mask | not_mask) & ~VMMDEV_GUEST_CAPABILITIES_MASK)
-		return -EINVAL;
-
-	return vbg_acquire_session_capabilities(gdev, session, or_mask,
-						not_mask, flags, false);
-}
-
 static int vbg_ioctl_change_guest_capabilities(struct vbg_dev *gdev,
 	     struct vbg_session *session, struct vbg_ioctl_set_guest_caps *caps)
 {
@@ -1618,7 +1376,7 @@ static int vbg_ioctl_change_guest_capabilities(struct vbg_dev *gdev,
 	or_mask = caps->u.in.or_mask;
 	not_mask = caps->u.in.not_mask;
 
-	if ((or_mask | not_mask) & ~VMMDEV_GUEST_CAPABILITIES_MASK)
+	if ((or_mask | not_mask) & ~VMMDEV_EVENT_VALID_EVENT_MASK)
 		return -EINVAL;
 
 	ret = vbg_set_session_capabilities(gdev, session, or_mask, not_mask,
@@ -1626,7 +1384,7 @@ static int vbg_ioctl_change_guest_capabilities(struct vbg_dev *gdev,
 	if (ret)
 		return ret;
 
-	caps->u.out.session_caps = session->set_guest_caps;
+	caps->u.out.session_caps = session->guest_caps;
 	caps->u.out.global_caps = gdev->guest_caps_host;
 
 	return 0;
@@ -1649,7 +1407,6 @@ static int vbg_ioctl_check_balloon(struct vbg_dev *gdev,
 }
 
 static int vbg_ioctl_write_core_dump(struct vbg_dev *gdev,
-				     struct vbg_session *session,
 				     struct vbg_ioctl_write_coredump *dump)
 {
 	struct vmmdev_write_core_dump *req;
@@ -1657,8 +1414,7 @@ static int vbg_ioctl_write_core_dump(struct vbg_dev *gdev,
 	if (vbg_ioctl_chk(&dump->hdr, sizeof(dump->u.in), 0))
 		return -EINVAL;
 
-	req = vbg_req_alloc(sizeof(*req), VMMDEVREQ_WRITE_COREDUMP,
-			    session->requestor);
+	req = vbg_req_alloc(sizeof(*req), VMMDEVREQ_WRITE_COREDUMP);
 	if (!req)
 		return -ENOMEM;
 
@@ -1694,8 +1450,7 @@ int vbg_core_ioctl(struct vbg_session *session, unsigned int req, void *data)
 
 	/* For VMMDEV_REQUEST hdr->type != VBG_IOCTL_HDR_TYPE_DEFAULT */
 	if (req_no_size == VBG_IOCTL_VMMDEV_REQUEST(0) ||
-	    req == VBG_IOCTL_VMMDEV_REQUEST_BIG ||
-	    req == VBG_IOCTL_VMMDEV_REQUEST_BIG_ALT)
+	    req == VBG_IOCTL_VMMDEV_REQUEST_BIG)
 		return vbg_ioctl_vmmrequest(gdev, session, data);
 
 	if (hdr->type != VBG_IOCTL_HDR_TYPE_DEFAULT)
@@ -1715,14 +1470,12 @@ int vbg_core_ioctl(struct vbg_session *session, unsigned int req, void *data)
 		return vbg_ioctl_interrupt_all_wait_events(gdev, session, data);
 	case VBG_IOCTL_CHANGE_FILTER_MASK:
 		return vbg_ioctl_change_filter_mask(gdev, session, data);
-	case VBG_IOCTL_ACQUIRE_GUEST_CAPABILITIES:
-		return vbg_ioctl_acquire_guest_capabilities(gdev, session, data);
 	case VBG_IOCTL_CHANGE_GUEST_CAPABILITIES:
 		return vbg_ioctl_change_guest_capabilities(gdev, session, data);
 	case VBG_IOCTL_CHECK_BALLOON:
 		return vbg_ioctl_check_balloon(gdev, data);
 	case VBG_IOCTL_WRITE_CORE_DUMP:
-		return vbg_ioctl_write_core_dump(gdev, session, data);
+		return vbg_ioctl_write_core_dump(gdev, data);
 	}
 
 	/* Variable sized requests. */
@@ -1730,16 +1483,15 @@ int vbg_core_ioctl(struct vbg_session *session, unsigned int req, void *data)
 #ifdef CONFIG_COMPAT
 	case VBG_IOCTL_HGCM_CALL_32(0):
 		f32bit = true;
-		fallthrough;
+		/* Fall through */
 #endif
 	case VBG_IOCTL_HGCM_CALL(0):
 		return vbg_ioctl_hgcm_call(gdev, session, f32bit, data);
 	case VBG_IOCTL_LOG(0):
-	case VBG_IOCTL_LOG_ALT(0):
 		return vbg_ioctl_log(data);
 	}
 
-	vbg_err_ratelimited("Userspace made an unknown ioctl req %#08x\n", req);
+	vbg_debug("VGDrvCommonIoCtl: Unknown req %#08x\n", req);
 	return -ENOTTY;
 }
 
@@ -1755,8 +1507,7 @@ int vbg_core_set_mouse_status(struct vbg_dev *gdev, u32 features)
 	struct vmmdev_mouse_status *req;
 	int rc;
 
-	req = vbg_req_alloc(sizeof(*req), VMMDEVREQ_SET_MOUSE_STATUS,
-			    VBG_KERNEL_REQUEST);
+	req = vbg_req_alloc(sizeof(*req), VMMDEVREQ_SET_MOUSE_STATUS);
 	if (!req)
 		return -ENOMEM;
 

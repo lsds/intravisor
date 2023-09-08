@@ -1,6 +1,17 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2012-2015, NVIDIA Corporation.
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms and conditions of the GNU General Public License,
+ * version 2, as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+ * more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
 #ifndef HOST1X_DEV_H
@@ -14,7 +25,6 @@
 
 #include "cdma.h"
 #include "channel.h"
-#include "context.h"
 #include "intr.h"
 #include "job.h"
 #include "syncpt.h"
@@ -38,7 +48,7 @@ struct host1x_cdma_ops {
 	void (*start)(struct host1x_cdma *cdma);
 	void (*stop)(struct host1x_cdma *cdma);
 	void (*flush)(struct  host1x_cdma *cdma);
-	int (*timeout_init)(struct host1x_cdma *cdma);
+	int (*timeout_init)(struct host1x_cdma *cdma, unsigned int syncpt);
 	void (*timeout_destroy)(struct host1x_cdma *cdma);
 	void (*freeze)(struct host1x_cdma *cdma);
 	void (*resume)(struct host1x_cdma *cdma, u32 getptr);
@@ -68,6 +78,7 @@ struct host1x_syncpt_ops {
 	void (*load_wait_base)(struct host1x_syncpt *syncpt);
 	u32 (*load)(struct host1x_syncpt *syncpt);
 	int (*cpu_incr)(struct host1x_syncpt *syncpt);
+	int (*patch_wait)(struct host1x_syncpt *syncpt, void *patch_addr);
 	void (*assign_to_channel)(struct host1x_syncpt *syncpt,
 	                          struct host1x_channel *channel);
 	void (*enable_protection)(struct host1x *host);
@@ -84,17 +95,6 @@ struct host1x_intr_ops {
 	int (*free_syncpt_irq)(struct host1x *host);
 };
 
-struct host1x_sid_entry {
-	unsigned int base;
-	unsigned int offset;
-	unsigned int limit;
-};
-
-struct host1x_table_desc {
-	unsigned int base;
-	unsigned int count;
-};
-
 struct host1x_info {
 	unsigned int nb_channels; /* host1x: number of channels supported */
 	unsigned int nb_pts; /* host1x: number of syncpoints supported */
@@ -103,20 +103,7 @@ struct host1x_info {
 	int (*init)(struct host1x *host1x); /* initialize per SoC ops */
 	unsigned int sync_offset; /* offset of syncpoint registers */
 	u64 dma_mask; /* mask of addressable memory */
-	bool has_wide_gather; /* supports GATHER_W opcode */
 	bool has_hypervisor; /* has hypervisor registers */
-	bool has_common; /* has common registers separate from hypervisor */
-	unsigned int num_sid_entries;
-	const struct host1x_sid_entry *sid_table;
-	struct host1x_table_desc streamid_vm_table;
-	struct host1x_table_desc classid_vm_table;
-	struct host1x_table_desc mmio_vm_table;
-	/*
-	 * On T20-T148, the boot chain may setup DC to increment syncpoints
-	 * 26/27 on VBLANK. As such we cannot use these syncpoints until
-	 * the display driver disables VBLANK increments.
-	 */
-	bool reserve_vblank_syncpts;
 };
 
 struct host1x {
@@ -124,13 +111,11 @@ struct host1x {
 
 	void __iomem *regs;
 	void __iomem *hv_regs; /* hypervisor region */
-	void __iomem *common_regs;
 	struct host1x_syncpt *syncpt;
 	struct host1x_syncpt_base *bases;
 	struct device *dev;
 	struct clk *clk;
-	struct reset_control_bulk_data resets[2];
-	unsigned int nresets;
+	struct reset_control *rst;
 
 	struct iommu_group *group;
 	struct iommu_domain *domain;
@@ -152,7 +137,6 @@ struct host1x {
 	struct mutex syncpt_mutex;
 
 	struct host1x_channel_list channel_list;
-	struct host1x_memory_context_list context_list;
 
 	struct dentry *debugfs;
 
@@ -160,13 +144,8 @@ struct host1x {
 	struct list_head devices;
 
 	struct list_head list;
-
-	struct device_dma_parameters dma_parms;
-
-	struct host1x_bo_cache cache;
 };
 
-void host1x_common_writel(struct host1x *host1x, u32 v, u32 r);
 void host1x_hypervisor_writel(struct host1x *host1x, u32 r, u32 v);
 u32 host1x_hypervisor_readl(struct host1x *host1x, u32 r);
 void host1x_sync_writel(struct host1x *host1x, u32 r, u32 v);
@@ -202,6 +181,13 @@ static inline int host1x_hw_syncpt_cpu_incr(struct host1x *host,
 					    struct host1x_syncpt *sp)
 {
 	return host->syncpt_op->cpu_incr(sp);
+}
+
+static inline int host1x_hw_syncpt_patch_wait(struct host1x *host,
+					      struct host1x_syncpt *sp,
+					      void *patch_addr)
+{
+	return host->syncpt_op->patch_wait(sp, patch_addr);
 }
 
 static inline void host1x_hw_syncpt_assign_to_channel(
@@ -283,9 +269,10 @@ static inline void host1x_hw_cdma_flush(struct host1x *host,
 }
 
 static inline int host1x_hw_cdma_timeout_init(struct host1x *host,
-					      struct host1x_cdma *cdma)
+					      struct host1x_cdma *cdma,
+					      unsigned int syncpt)
 {
-	return host->cdma_op->timeout_init(cdma);
+	return host->cdma_op->timeout_init(cdma, syncpt);
 }
 
 static inline void host1x_hw_cdma_timeout_destroy(struct host1x *host,

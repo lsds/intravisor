@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  *  Driver for Gallant SC-6000 soundcard. This card is also known as
  *  Audio Excel DSP 16 or Zoltrix AV302.
@@ -10,6 +9,20 @@
  *
  *  I don't have documentation for this card. I used the driver
  *  for OSS/Free included in the kernel source as reference.
+ *
+ *  This program is free software; you can redistribute it and/or modify
+ *  it under the terms of the GNU General Public License as published by
+ *  the Free Software Foundation; either version 2 of the License, or
+ *  (at your option) any later version.
+ *
+ *  This program is distributed in the hope that it will be useful,
+ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *  GNU General Public License for more details.
+ *
+ *  You should have received a copy of the GNU General Public License
+ *  along with this program; if not, write to the Free Software
+ *  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307 USA
  */
 
 #include <linux/module.h>
@@ -29,6 +42,9 @@
 MODULE_AUTHOR("Krzysztof Helt");
 MODULE_DESCRIPTION("Gallant SC-6000");
 MODULE_LICENSE("GPL");
+MODULE_SUPPORTED_DEVICE("{{Gallant, SC-6000},"
+			"{AudioExcel, Audio Excel DSP 16},"
+			"{Zoltrix, AV302}}");
 
 static int index[SNDRV_CARDS] = SNDRV_DEFAULT_IDX;	/* Index 0-MAX */
 static char *id[SNDRV_CARDS] = SNDRV_DEFAULT_STR;	/* ID for this card */
@@ -529,37 +545,32 @@ static int snd_sc6000_match(struct device *devptr, unsigned int dev)
 	return 1;
 }
 
-static void snd_sc6000_free(struct snd_card *card)
+static int snd_sc6000_probe(struct device *devptr, unsigned int dev)
 {
-	char __iomem *vport = (char __force __iomem *)card->private_data;
-
-	if (vport)
-		sc6000_setup_board(vport, 0);
-}
-
-static int __snd_sc6000_probe(struct device *devptr, unsigned int dev)
-{
-	static const int possible_irqs[] = { 5, 7, 9, 10, 11, -1 };
-	static const int possible_dmas[] = { 1, 3, 0, -1 };
+	static int possible_irqs[] = { 5, 7, 9, 10, 11, -1 };
+	static int possible_dmas[] = { 1, 3, 0, -1 };
 	int err;
 	int xirq = irq[dev];
 	int xdma = dma[dev];
 	struct snd_card *card;
 	struct snd_wss *chip;
 	struct snd_opl3 *opl3;
-	char __iomem *vport;
+	char __iomem **vport;
 	char __iomem *vmss_port;
 
-	err = snd_devm_card_new(devptr, index[dev], id[dev], THIS_MODULE,
-				0, &card);
+
+	err = snd_card_new(devptr, index[dev], id[dev], THIS_MODULE,
+			   sizeof(vport), &card);
 	if (err < 0)
 		return err;
 
+	vport = card->private_data;
 	if (xirq == SNDRV_AUTO_IRQ) {
 		xirq = snd_legacy_find_free_irq(possible_irqs);
 		if (xirq < 0) {
 			snd_printk(KERN_ERR PFX "unable to find a free IRQ\n");
-			return -EBUSY;
+			err = -EBUSY;
+			goto err_exit;
 		}
 	}
 
@@ -567,65 +578,68 @@ static int __snd_sc6000_probe(struct device *devptr, unsigned int dev)
 		xdma = snd_legacy_find_free_dma(possible_dmas);
 		if (xdma < 0) {
 			snd_printk(KERN_ERR PFX "unable to find a free DMA\n");
-			return -EBUSY;
+			err = -EBUSY;
+			goto err_exit;
 		}
 	}
 
-	if (!devm_request_region(devptr, port[dev], 0x10, DRV_NAME)) {
+	if (!request_region(port[dev], 0x10, DRV_NAME)) {
 		snd_printk(KERN_ERR PFX
 			   "I/O port region is already in use.\n");
-		return -EBUSY;
+		err = -EBUSY;
+		goto err_exit;
 	}
-	vport = devm_ioport_map(devptr, port[dev], 0x10);
-	if (!vport) {
+	*vport = devm_ioport_map(devptr, port[dev], 0x10);
+	if (*vport == NULL) {
 		snd_printk(KERN_ERR PFX
-			   "I/O port cannot be iomapped.\n");
-		return -EBUSY;
+			   "I/O port cannot be iomaped.\n");
+		err = -EBUSY;
+		goto err_unmap1;
 	}
-	card->private_data = (void __force *)vport;
 
 	/* to make it marked as used */
-	if (!devm_request_region(devptr, mss_port[dev], 4, DRV_NAME)) {
+	if (!request_region(mss_port[dev], 4, DRV_NAME)) {
 		snd_printk(KERN_ERR PFX
 			   "SC-6000 port I/O port region is already in use.\n");
-		return -EBUSY;
+		err = -EBUSY;
+		goto err_unmap1;
 	}
 	vmss_port = devm_ioport_map(devptr, mss_port[dev], 4);
 	if (!vmss_port) {
 		snd_printk(KERN_ERR PFX
-			   "MSS port I/O cannot be iomapped.\n");
-		return -EBUSY;
+			   "MSS port I/O cannot be iomaped.\n");
+		err = -EBUSY;
+		goto err_unmap2;
 	}
 
 	snd_printd("Initializing BASE[0x%lx] IRQ[%d] DMA[%d] MIRQ[%d]\n",
 		   port[dev], xirq, xdma,
 		   mpu_irq[dev] == SNDRV_AUTO_IRQ ? 0 : mpu_irq[dev]);
 
-	err = sc6000_init_board(vport, vmss_port, dev);
+	err = sc6000_init_board(*vport, vmss_port, dev);
 	if (err < 0)
-		return err;
-	card->private_free = snd_sc6000_free;
+		goto err_unmap2;
 
 	err = snd_wss_create(card, mss_port[dev] + 4,  -1, xirq, xdma, -1,
 			     WSS_HW_DETECT, 0, &chip);
 	if (err < 0)
-		return err;
+		goto err_unmap2;
 
 	err = snd_wss_pcm(chip, 0);
 	if (err < 0) {
 		snd_printk(KERN_ERR PFX
 			   "error creating new WSS PCM device\n");
-		return err;
+		goto err_unmap2;
 	}
 	err = snd_wss_mixer(chip);
 	if (err < 0) {
 		snd_printk(KERN_ERR PFX "error creating new WSS mixer\n");
-		return err;
+		goto err_unmap2;
 	}
 	err = snd_sc6000_mixer(chip);
 	if (err < 0) {
 		snd_printk(KERN_ERR PFX "the mixer rewrite failed\n");
-		return err;
+		goto err_unmap2;
 	}
 	if (snd_opl3_create(card,
 			    0x388, 0x388 + 2,
@@ -635,7 +649,7 @@ static int __snd_sc6000_probe(struct device *devptr, unsigned int dev)
 	} else {
 		err = snd_opl3_hwdep_new(opl3, 0, 1, NULL);
 		if (err < 0)
-			return err;
+			goto err_unmap2;
 	}
 
 	if (mpu_port[dev] != SNDRV_AUTO_PORT) {
@@ -656,20 +670,40 @@ static int __snd_sc6000_probe(struct device *devptr, unsigned int dev)
 
 	err = snd_card_register(card);
 	if (err < 0)
-		return err;
+		goto err_unmap2;
 
 	dev_set_drvdata(devptr, card);
 	return 0;
+
+err_unmap2:
+	sc6000_setup_board(*vport, 0);
+	release_region(mss_port[dev], 4);
+err_unmap1:
+	release_region(port[dev], 0x10);
+err_exit:
+	snd_card_free(card);
+	return err;
 }
 
-static int snd_sc6000_probe(struct device *devptr, unsigned int dev)
+static int snd_sc6000_remove(struct device *devptr, unsigned int dev)
 {
-	return snd_card_free_on_error(devptr, __snd_sc6000_probe(devptr, dev));
+	struct snd_card *card = dev_get_drvdata(devptr);
+	char __iomem **vport = card->private_data;
+
+	if (sc6000_setup_board(*vport, 0) < 0)
+		snd_printk(KERN_WARNING "sc6000_setup_board failed on exit!\n");
+
+	release_region(port[dev], 0x10);
+	release_region(mss_port[dev], 4);
+
+	snd_card_free(card);
+	return 0;
 }
 
 static struct isa_driver snd_sc6000_driver = {
 	.match		= snd_sc6000_match,
 	.probe		= snd_sc6000_probe,
+	.remove		= snd_sc6000_remove,
 	/* FIXME: suspend/resume */
 	.driver		= {
 		.name	= DRV_NAME,

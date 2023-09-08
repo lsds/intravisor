@@ -1,6 +1,10 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Copyright 2014 IBM Corp.
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version
+ * 2 of the License, or (at your option) any later version.
  */
 
 #include <linux/spinlock.h>
@@ -11,7 +15,6 @@
 #include <linux/mm.h>
 #include <linux/uaccess.h>
 #include <linux/delay.h>
-#include <linux/irqdomain.h>
 #include <asm/synch.h>
 #include <asm/switch_to.h>
 #include <misc/cxl-base.h>
@@ -602,7 +605,6 @@ u64 cxl_calculate_sr(bool master, bool kernel, bool real_mode, bool p9)
 		sr |= CXL_PSL_SR_An_MP;
 	if (mfspr(SPRN_LPCR) & LPCR_TC)
 		sr |= CXL_PSL_SR_An_TC;
-
 	if (kernel) {
 		if (!real_mode)
 			sr |= CXL_PSL_SR_An_R;
@@ -627,7 +629,7 @@ u64 cxl_calculate_sr(bool master, bool kernel, bool real_mode, bool p9)
 
 static u64 calculate_sr(struct cxl_context *ctx)
 {
-	return cxl_calculate_sr(ctx->master, ctx->kernel, false,
+	return cxl_calculate_sr(ctx->master, ctx->kernel, ctx->real_mode,
 				cxl_is_power9());
 }
 

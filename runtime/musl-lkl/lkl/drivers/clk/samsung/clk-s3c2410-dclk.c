@@ -1,6 +1,9 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2013 Heiko Stuebner <heiko@sntech.de>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  *
  * Common Clock Framework support for s3c24xx external clock output.
  */
@@ -9,11 +12,13 @@
 #include <linux/slab.h>
 #include <linux/clk.h>
 #include <linux/clk-provider.h>
-#include <linux/io.h>
 #include <linux/platform_device.h>
-#include <linux/platform_data/clk-s3c2410.h>
 #include <linux/module.h>
 #include "clk.h"
+
+/* legacy access to misccr, until dt conversion is finished */
+#include <mach/hardware.h>
+#include <mach/regs-gpio.h>
 
 #define MUX_DCLK0	0
 #define MUX_DCLK1	1
@@ -49,7 +54,6 @@ struct s3c24xx_clkout {
 	struct clk_hw		hw;
 	u32			mask;
 	u8			shift;
-	unsigned int (*modify_misccr)(unsigned int clr, unsigned int chg);
 };
 
 #define to_s3c24xx_clkout(_hw) container_of(_hw, struct s3c24xx_clkout, hw)
@@ -60,7 +64,7 @@ static u8 s3c24xx_clkout_get_parent(struct clk_hw *hw)
 	int num_parents = clk_hw_get_num_parents(hw);
 	u32 val;
 
-	val = clkout->modify_misccr(0, 0) >> clkout->shift;
+	val = readl_relaxed(S3C24XX_MISCCR) >> clkout->shift;
 	val >>= clkout->shift;
 	val &= clkout->mask;
 
@@ -74,7 +78,7 @@ static int s3c24xx_clkout_set_parent(struct clk_hw *hw, u8 index)
 {
 	struct s3c24xx_clkout *clkout = to_s3c24xx_clkout(hw);
 
-	clkout->modify_misccr((clkout->mask << clkout->shift),
+	s3c2410_modify_misccr((clkout->mask << clkout->shift),
 			      (index << clkout->shift));
 
 	return 0;
@@ -90,13 +94,9 @@ static struct clk_hw *s3c24xx_register_clkout(struct device *dev,
 		const char *name, const char **parent_names, u8 num_parents,
 		u8 shift, u32 mask)
 {
-	struct s3c2410_clk_platform_data *pdata = dev_get_platdata(dev);
 	struct s3c24xx_clkout *clkout;
 	struct clk_init_data init;
 	int ret;
-
-	if (!pdata)
-		return ERR_PTR(-EINVAL);
 
 	/* allocate the clkout */
 	clkout = kzalloc(sizeof(*clkout), GFP_KERNEL);
@@ -105,14 +105,13 @@ static struct clk_hw *s3c24xx_register_clkout(struct device *dev,
 
 	init.name = name;
 	init.ops = &s3c24xx_clkout_ops;
-	init.flags = 0;
+	init.flags = CLK_IS_BASIC;
 	init.parent_names = parent_names;
 	init.num_parents = num_parents;
 
 	clkout->shift = shift;
 	clkout->mask = mask;
 	clkout->hw.init = &init;
-	clkout->modify_misccr = pdata->modify_misccr;
 
 	ret = clk_hw_register(dev, &clkout->hw);
 	if (ret)
@@ -220,7 +219,8 @@ static int s3c24xx_dclk1_div_notify(struct notifier_block *nb,
 #ifdef CONFIG_PM_SLEEP
 static int s3c24xx_dclk_suspend(struct device *dev)
 {
-	struct s3c24xx_dclk *s3c24xx_dclk = dev_get_drvdata(dev);
+	struct platform_device *pdev = to_platform_device(dev);
+	struct s3c24xx_dclk *s3c24xx_dclk = platform_get_drvdata(pdev);
 
 	s3c24xx_dclk->reg_save = readl_relaxed(s3c24xx_dclk->base);
 	return 0;
@@ -228,7 +228,8 @@ static int s3c24xx_dclk_suspend(struct device *dev)
 
 static int s3c24xx_dclk_resume(struct device *dev)
 {
-	struct s3c24xx_dclk *s3c24xx_dclk = dev_get_drvdata(dev);
+	struct platform_device *pdev = to_platform_device(dev);
+	struct s3c24xx_dclk *s3c24xx_dclk = platform_get_drvdata(pdev);
 
 	writel_relaxed(s3c24xx_dclk->reg_save, s3c24xx_dclk->base);
 	return 0;
@@ -241,14 +242,14 @@ static SIMPLE_DEV_PM_OPS(s3c24xx_dclk_pm_ops,
 static int s3c24xx_dclk_probe(struct platform_device *pdev)
 {
 	struct s3c24xx_dclk *s3c24xx_dclk;
+	struct resource *mem;
 	struct s3c24xx_dclk_drv_data *dclk_variant;
 	struct clk_hw **clk_table;
 	int ret, i;
 
-	s3c24xx_dclk = devm_kzalloc(&pdev->dev,
-				    struct_size(s3c24xx_dclk, clk_data.hws,
-						DCLK_MAX_CLKS),
-				    GFP_KERNEL);
+	s3c24xx_dclk = devm_kzalloc(&pdev->dev, sizeof(*s3c24xx_dclk) +
+			    sizeof(*s3c24xx_dclk->clk_data.hws) * DCLK_MAX_CLKS,
+			    GFP_KERNEL);
 	if (!s3c24xx_dclk)
 		return -ENOMEM;
 
@@ -259,7 +260,8 @@ static int s3c24xx_dclk_probe(struct platform_device *pdev)
 	platform_set_drvdata(pdev, s3c24xx_dclk);
 	spin_lock_init(&s3c24xx_dclk->dclk_lock);
 
-	s3c24xx_dclk->base = devm_platform_ioremap_resource(pdev, 0);
+	mem = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	s3c24xx_dclk->base = devm_ioremap_resource(&pdev->dev, mem);
 	if (IS_ERR(s3c24xx_dclk->base))
 		return PTR_ERR(s3c24xx_dclk->base);
 

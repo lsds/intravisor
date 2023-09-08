@@ -9,7 +9,6 @@
  */
 
 #include <linux/async.h>
-#include <linux/device/bus.h>
 #include <linux/device.h>
 #include <linux/module.h>
 #include <linux/errno.h>
@@ -32,9 +31,6 @@ static struct kset *system_kset;
 
 #define to_drv_attr(_attr) container_of(_attr, struct driver_attribute, attr)
 
-#define DRIVER_ATTR_IGNORE_LOCKDEP(_name, _mode, _show, _store) \
-	struct driver_attribute driver_attr_##_name =		\
-		__ATTR_IGNORE_LOCKDEP(_name, _mode, _show, _store)
 
 static int __must_check bus_rescan_devices_helper(struct device *dev,
 						void *data);
@@ -163,9 +159,9 @@ static struct kobj_type bus_ktype = {
 	.release	= bus_release,
 };
 
-static int bus_uevent_filter(struct kobject *kobj)
+static int bus_uevent_filter(struct kset *kset, struct kobject *kobj)
 {
-	const struct kobj_type *ktype = get_ktype(kobj);
+	struct kobj_type *ktype = get_ktype(kobj);
 
 	if (ktype == &bus_ktype)
 		return 1;
@@ -188,14 +184,18 @@ static ssize_t unbind_store(struct device_driver *drv, const char *buf,
 
 	dev = bus_find_device_by_name(bus, NULL, buf);
 	if (dev && dev->driver == drv) {
-		device_driver_detach(dev);
+		if (dev->parent)	/* Needed for USB */
+			device_lock(dev->parent);
+		device_release_driver(dev);
+		if (dev->parent)
+			device_unlock(dev->parent);
 		err = count;
 	}
 	put_device(dev);
 	bus_put(bus);
 	return err;
 }
-static DRIVER_ATTR_IGNORE_LOCKDEP(unbind, 0200, NULL, unbind_store);
+static DRIVER_ATTR_WO(unbind);
 
 /*
  * Manually attach a device to a driver.
@@ -210,25 +210,35 @@ static ssize_t bind_store(struct device_driver *drv, const char *buf,
 	int err = -ENODEV;
 
 	dev = bus_find_device_by_name(bus, NULL, buf);
-	if (dev && driver_match_device(drv, dev)) {
-		err = device_driver_attach(drv, dev);
-		if (!err) {
+	if (dev && dev->driver == NULL && driver_match_device(drv, dev)) {
+		if (dev->parent)	/* Needed for USB */
+			device_lock(dev->parent);
+		device_lock(dev);
+		err = driver_probe_device(drv, dev);
+		device_unlock(dev);
+		if (dev->parent)
+			device_unlock(dev->parent);
+
+		if (err > 0) {
 			/* success */
 			err = count;
+		} else if (err == 0) {
+			/* driver didn't accept device */
+			err = -ENODEV;
 		}
 	}
 	put_device(dev);
 	bus_put(bus);
 	return err;
 }
-static DRIVER_ATTR_IGNORE_LOCKDEP(bind, 0200, NULL, bind_store);
+static DRIVER_ATTR_WO(bind);
 
-static ssize_t drivers_autoprobe_show(struct bus_type *bus, char *buf)
+static ssize_t show_drivers_autoprobe(struct bus_type *bus, char *buf)
 {
-	return sysfs_emit(buf, "%d\n", bus->p->drivers_autoprobe);
+	return sprintf(buf, "%d\n", bus->p->drivers_autoprobe);
 }
 
-static ssize_t drivers_autoprobe_store(struct bus_type *bus,
+static ssize_t store_drivers_autoprobe(struct bus_type *bus,
 				       const char *buf, size_t count)
 {
 	if (buf[0] == '0')
@@ -238,7 +248,7 @@ static ssize_t drivers_autoprobe_store(struct bus_type *bus,
 	return count;
 }
 
-static ssize_t drivers_probe_store(struct bus_type *bus,
+static ssize_t store_drivers_probe(struct bus_type *bus,
 				   const char *buf, size_t count)
 {
 	struct device *dev;
@@ -320,8 +330,8 @@ EXPORT_SYMBOL_GPL(bus_for_each_dev);
  * return to the caller and not iterate over any more devices.
  */
 struct device *bus_find_device(struct bus_type *bus,
-			       struct device *start, const void *data,
-			       int (*match)(struct device *dev, const void *data))
+			       struct device *start, void *data,
+			       int (*match)(struct device *dev, void *data))
 {
 	struct klist_iter i;
 	struct device *dev;
@@ -338,6 +348,30 @@ struct device *bus_find_device(struct bus_type *bus,
 	return dev;
 }
 EXPORT_SYMBOL_GPL(bus_find_device);
+
+static int match_name(struct device *dev, void *data)
+{
+	const char *name = data;
+
+	return sysfs_streq(name, dev_name(dev));
+}
+
+/**
+ * bus_find_device_by_name - device iterator for locating a particular device of a specific name
+ * @bus: bus type
+ * @start: Device to begin with
+ * @name: name of the device to match
+ *
+ * This is similar to the bus_find_device() function above, but it handles
+ * searching by a name automatically, no need to write another strcmp matching
+ * function.
+ */
+struct device *bus_find_device_by_name(struct bus_type *bus,
+				       struct device *start, const char *name)
+{
+	return bus_find_device(bus, start, (void *)name, match_name);
+}
+EXPORT_SYMBOL_GPL(bus_find_device_by_name);
 
 /**
  * subsys_find_device_by_id - find a device with a specific enumeration number
@@ -549,8 +583,9 @@ static void remove_bind_files(struct device_driver *drv)
 	driver_remove_file(drv, &driver_attr_unbind);
 }
 
-static BUS_ATTR_WO(drivers_probe);
-static BUS_ATTR_RW(drivers_autoprobe);
+static BUS_ATTR(drivers_probe, S_IWUSR, NULL, store_drivers_probe);
+static BUS_ATTR(drivers_autoprobe, S_IWUSR | S_IRUGO,
+		show_drivers_autoprobe, store_drivers_autoprobe);
 
 static int add_probe_files(struct bus_type *bus)
 {
@@ -576,12 +611,21 @@ static void remove_probe_files(struct bus_type *bus)
 static ssize_t uevent_store(struct device_driver *drv, const char *buf,
 			    size_t count)
 {
-	int rc;
-
-	rc = kobject_synth_uevent(&drv->p->kobj, buf, count);
-	return rc ? rc : count;
+	kobject_synth_uevent(&drv->p->kobj, buf, count);
+	return count;
 }
 static DRIVER_ATTR_WO(uevent);
+
+static void driver_attach_async(void *_drv, async_cookie_t cookie)
+{
+	struct device_driver *drv = _drv;
+	int ret;
+
+	ret = driver_attach(drv);
+
+	pr_debug("bus: '%s': driver %s async attach completed: %d\n",
+		 drv->bus->name, drv->name, ret);
+}
 
 /**
  * bus_add_driver - Add a driver to the bus.
@@ -615,9 +659,15 @@ int bus_add_driver(struct device_driver *drv)
 
 	klist_add_tail(&priv->knode_bus, &bus->p->klist_drivers);
 	if (drv->bus->p->drivers_autoprobe) {
-		error = driver_attach(drv);
-		if (error)
-			goto out_del_list;
+		if (driver_allows_async_probing(drv)) {
+			pr_debug("bus: '%s': probing driver %s asynchronously\n",
+				drv->bus->name, drv->name);
+			async_schedule(driver_attach_async, drv);
+		} else {
+			error = driver_attach(drv);
+			if (error)
+				goto out_unregister;
+		}
 	}
 	module_add_driver(drv->owner, drv);
 
@@ -629,7 +679,7 @@ int bus_add_driver(struct device_driver *drv)
 	error = driver_add_groups(drv, bus->drv_groups);
 	if (error) {
 		/* How the hell do we get out of this pickle? Give up */
-		printk(KERN_ERR "%s: driver_add_groups(%s) failed\n",
+		printk(KERN_ERR "%s: driver_create_groups(%s) failed\n",
 			__func__, drv->name);
 	}
 
@@ -644,8 +694,6 @@ int bus_add_driver(struct device_driver *drv)
 
 	return 0;
 
-out_del_list:
-	klist_del(&priv->knode_bus);
 out_unregister:
 	kobject_put(&priv->kobj);
 	/* drv->p is freed in driver_release()  */
@@ -687,10 +735,10 @@ static int __must_check bus_rescan_devices_helper(struct device *dev,
 	int ret = 0;
 
 	if (!dev->driver) {
-		if (dev->parent && dev->bus->need_parent_lock)
+		if (dev->parent)	/* Needed for USB */
 			device_lock(dev->parent);
 		ret = device_attach(dev);
-		if (dev->parent && dev->bus->need_parent_lock)
+		if (dev->parent)
 			device_unlock(dev->parent);
 	}
 	return ret < 0 ? ret : 0;
@@ -721,11 +769,33 @@ EXPORT_SYMBOL_GPL(bus_rescan_devices);
  */
 int device_reprobe(struct device *dev)
 {
-	if (dev->driver)
-		device_driver_detach(dev);
+	if (dev->driver) {
+		if (dev->parent)        /* Needed for USB */
+			device_lock(dev->parent);
+		device_release_driver(dev);
+		if (dev->parent)
+			device_unlock(dev->parent);
+	}
 	return bus_rescan_devices_helper(dev, NULL);
 }
 EXPORT_SYMBOL_GPL(device_reprobe);
+
+/**
+ * find_bus - locate bus by name.
+ * @name: name of bus.
+ *
+ * Call kset_find_obj() to iterate over list of buses to
+ * find a bus by name. Return bus if found.
+ *
+ * Note that kset_find_obj increments bus' reference count.
+ */
+#if 0
+struct bus_type *find_bus(char *name)
+{
+	struct kobject *k = kset_find_obj(bus_kset, name);
+	return k ? to_bus(k) : NULL;
+}
+#endif  /*  0  */
 
 static int bus_add_groups(struct bus_type *bus,
 			  const struct attribute_group **groups)
@@ -758,19 +828,10 @@ static void klist_devices_put(struct klist_node *n)
 static ssize_t bus_uevent_store(struct bus_type *bus,
 				const char *buf, size_t count)
 {
-	int rc;
-
-	rc = kobject_synth_uevent(&bus->p->subsys.kobj, buf, count);
-	return rc ? rc : count;
+	kobject_synth_uevent(&bus->p->subsys.kobj, buf, count);
+	return count;
 }
-/*
- * "open code" the old BUS_ATTR() macro here.  We want to use BUS_ATTR_WO()
- * here, but can not use it as earlier in the file we have
- * DEVICE_ATTR_WO(uevent), which would cause a clash with the with the store
- * function name.
- */
-static struct bus_attribute bus_attr_uevent = __ATTR(uevent, 0200, NULL,
-						     bus_uevent_store);
+static BUS_ATTR(uevent, S_IWUSR, NULL, bus_uevent_store);
 
 /**
  * bus_register - register a driver-core subsystem

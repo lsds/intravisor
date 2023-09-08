@@ -9,7 +9,6 @@ extern "C" {
 #include <lkl.h>
 
 extern struct lkl_host_operations lkl_host_ops;
-extern void lkl_change_tls_mode(void);
 
 /**
  * lkl_printf - print a message via the host print operation
@@ -20,7 +19,7 @@ int lkl_printf(const char *fmt, ...);
 
 extern char lkl_virtio_devs[4096];
 
-#if defined(LKL_HOST_CONFIG_POSIX) || defined(__MSYS__)
+#ifdef LKL_HOST_CONFIG_POSIX
 #include <sys/uio.h>
 #else
 struct iovec {
@@ -80,7 +79,6 @@ struct lkl_netdev {
 	struct lkl_dev_net_ops *ops;
 	int id;
 	uint8_t has_vnet_hdr: 1;
-	uint8_t mac[6];
 };
 
 /**

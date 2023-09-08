@@ -1,10 +1,16 @@
-/* SPDX-License-Identifier: GPL-2.0-or-later */
 /***************************************************************************
  * Linux PPP over X - Generic PPP transport layer sockets
  * Linux PPP over Ethernet (PPPoE) Socket Implementation (RFC 2516) 
  *
  * This file supplies definitions required by the PPP over Ethernet driver
  * (pppox.c).  All version information wrt this file is located in pppox.c
+ *
+ * License:
+ *		This program is free software; you can redistribute it and/or
+ *		modify it under the terms of the GNU General Public License
+ *		as published by the Free Software Foundation; either version
+ *		2 of the License, or (at your option) any later version.
+ *
  */
 #ifndef __LINUX_IF_PPPOX_H
 #define __LINUX_IF_PPPOX_H
@@ -78,9 +84,6 @@ extern int register_pppox_proto(int proto_num, const struct pppox_proto *pp);
 extern void unregister_pppox_proto(int proto_num);
 extern void pppox_unbind_sock(struct sock *sk);/* delete ppp-channel binding */
 extern int pppox_ioctl(struct socket *sock, unsigned int cmd, unsigned long arg);
-extern int pppox_compat_ioctl(struct socket *sock, unsigned int cmd, unsigned long arg);
-
-#define PPPOEIOCSFWD32    _IOW(0xB1 ,0, compat_size_t)
 
 /* PPPoX socket states */
 enum {

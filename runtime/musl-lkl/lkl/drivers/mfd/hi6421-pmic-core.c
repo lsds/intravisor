@@ -1,13 +1,16 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Device driver for Hi6421 PMIC
  *
  * Copyright (c) <2011-2014> HiSilicon Technologies Co., Ltd.
  *              http://www.hisilicon.com
  * Copyright (c) <2013-2017> Linaro Ltd.
- *              https://www.linaro.org
+ *              http://www.linaro.org
  *
  * Author: Guodong Xu <guodong.xu@linaro.org>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 
 #include <linux/device.h>

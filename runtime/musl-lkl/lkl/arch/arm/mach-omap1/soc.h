@@ -1,6 +1,4 @@
 /*
- * We can move linux/soc/ti/omap1-soc.h here once the drivers are fixed
+ * We can move mach/soc.h here once the drivers are fixed
  */
-#include "hardware.h"
-#include "irqs.h"
-#include <asm/irq.h>
+#include <mach/soc.h>

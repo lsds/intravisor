@@ -60,6 +60,8 @@
 */
 
 #define DRV_NAME	"3c509"
+#define DRV_VERSION	"1.20"
+#define DRV_RELDATE	"04Feb2008"
 
 /* A few values that may be tweaked. */
 
@@ -89,6 +91,8 @@
 #include <linux/uaccess.h>
 #include <asm/io.h>
 #include <asm/irq.h>
+
+static char version[] = DRV_NAME ".c:" DRV_VERSION " " DRV_RELDATE " becker@scyld.com\n";
 
 #ifdef EL3_DEBUG
 static int el3_debug = EL3_DEBUG;
@@ -192,7 +196,7 @@ static struct net_device_stats *el3_get_stats(struct net_device *dev);
 static int el3_rx(struct net_device *dev);
 static int el3_close(struct net_device *dev);
 static void set_multicast_list(struct net_device *dev);
-static void el3_tx_timeout (struct net_device *dev, unsigned int txqueue);
+static void el3_tx_timeout (struct net_device *dev);
 static void el3_down(struct net_device *dev);
 static void el3_up(struct net_device *dev);
 static const struct ethtool_ops ethtool_ops;
@@ -270,7 +274,7 @@ static void el3_dev_fill(struct net_device *dev, __be16 *phys_addr, int ioaddr,
 {
 	struct el3_private *lp = netdev_priv(dev);
 
-	eth_hw_addr_set(dev, (u8 *)phys_addr);
+	memcpy(dev->dev_addr, phys_addr, ETH_ALEN);
 	dev->base_addr = ioaddr;
 	dev->irq = irq;
 	dev->if_port = if_port;
@@ -302,6 +306,7 @@ static int el3_isa_match(struct device *pdev, unsigned int ndev)
 		return -ENOMEM;
 
 	SET_NETDEV_DEV(dev, pdev);
+	netdev_boot_setup_check(dev);
 
 	if (!request_region(ioaddr, EL3_IO_EXTENT, "3c509-isa")) {
 		free_netdev(dev);
@@ -334,11 +339,12 @@ static int el3_isa_match(struct device *pdev, unsigned int ndev)
 	return 1;
 }
 
-static void el3_isa_remove(struct device *pdev,
+static int el3_isa_remove(struct device *pdev,
 				    unsigned int ndev)
 {
 	el3_device_remove(pdev);
 	dev_set_drvdata(pdev, NULL);
+	return 0;
 }
 
 #ifdef CONFIG_PM
@@ -420,6 +426,7 @@ static int el3_pnp_probe(struct pnp_dev *pdev, const struct pnp_device_id *id)
 		return -ENOMEM;
 	}
 	SET_NETDEV_DEV(dev, &pdev->dev);
+	netdev_boot_setup_check(dev);
 
 	el3_dev_fill(dev, phys_addr, ioaddr, irq, if_port, EL3_PNP);
 	pnp_set_drvdata(pdev, dev);
@@ -512,9 +519,7 @@ static int el3_common_init(struct net_device *dev)
 {
 	struct el3_private *lp = netdev_priv(dev);
 	int err;
-	static const char * const if_names[] = {
-		"10baseT", "AUI", "undefined", "BNC"
-	};
+	const char *if_names[] = {"10baseT", "AUI", "undefined", "BNC"};
 
 	spin_lock_init(&lp->lock);
 
@@ -542,6 +547,8 @@ static int el3_common_init(struct net_device *dev)
 	       dev->name, dev->base_addr, if_names[(dev->if_port & 0x03)],
 	       dev->dev_addr, dev->irq);
 
+	if (el3_debug > 0)
+		pr_info("%s", version);
 	return 0;
 
 }
@@ -588,6 +595,7 @@ static int el3_eisa_probe(struct device *device)
 	}
 
 	SET_NETDEV_DEV(dev, device);
+	netdev_boot_setup_check(dev);
 
 	el3_dev_fill(dev, phys_addr, ioaddr, irq, if_port, EL3_EISA);
 	eisa_set_drvdata (edev, dev);
@@ -681,7 +689,7 @@ el3_open(struct net_device *dev)
 }
 
 static void
-el3_tx_timeout (struct net_device *dev, unsigned int txqueue)
+el3_tx_timeout (struct net_device *dev)
 {
 	int ioaddr = dev->base_addr;
 
@@ -1050,7 +1058,6 @@ el3_netdev_get_ecmd(struct net_device *dev, struct ethtool_link_ksettings *cmd)
 		break;
 	case 3:
 		cmd->base.port = PORT_BNC;
-		break;
 	default:
 		break;
 	}
@@ -1135,7 +1142,8 @@ el3_netdev_set_ecmd(struct net_device *dev,
 
 static void el3_get_drvinfo(struct net_device *dev, struct ethtool_drvinfo *info)
 {
-	strscpy(info->driver, DRV_NAME, sizeof(info->driver));
+	strlcpy(info->driver, DRV_NAME, sizeof(info->driver));
+	strlcpy(info->version, DRV_VERSION, sizeof(info->version));
 }
 
 static int el3_get_link_ksettings(struct net_device *dev,
@@ -1258,14 +1266,12 @@ el3_up(struct net_device *dev)
 					pr_cont("Forcing 3c5x9b full-duplex mode");
 					break;
 				}
-				fallthrough;
 			case 8:
 				/* set full-duplex mode based on eeprom config setting */
 				if ((sw_info & 0x000f) && (sw_info & 0x8000)) {
 					pr_cont("Setting 3c5x9b full-duplex mode (from EEPROM configuration bit)");
 					break;
 				}
-				fallthrough;
 			default:
 				/* xcvr=(0 || 4) OR user has an old 3c5x9 non "B" model */
 				pr_cont("Setting 3c5x9/3c5x9B half-duplex mode");

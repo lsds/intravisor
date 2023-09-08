@@ -1,9 +1,21 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (c) 2000-2002,2005 Silicon Graphics, Inc.
  * Copyright (c) 2010 David Chinner.
  * Copyright (c) 2011 Christoph Hellwig.
  * All Rights Reserved.
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License as
+ * published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it would be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write the Free Software Foundation,
+ * Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
  */
 #include "xfs.h"
 #include "xfs_fs.h"
@@ -11,37 +23,39 @@
 #include "xfs_log_format.h"
 #include "xfs_shared.h"
 #include "xfs_trans_resv.h"
+#include "xfs_sb.h"
 #include "xfs_mount.h"
 #include "xfs_alloc.h"
 #include "xfs_extent_busy.h"
 #include "xfs_trace.h"
 #include "xfs_trans.h"
 #include "xfs_log.h"
-#include "xfs_ag.h"
 
 void
 xfs_extent_busy_insert(
 	struct xfs_trans	*tp,
-	struct xfs_perag	*pag,
+	xfs_agnumber_t		agno,
 	xfs_agblock_t		bno,
 	xfs_extlen_t		len,
 	unsigned int		flags)
 {
 	struct xfs_extent_busy	*new;
 	struct xfs_extent_busy	*busyp;
+	struct xfs_perag	*pag;
 	struct rb_node		**rbp;
 	struct rb_node		*parent = NULL;
 
-	new = kmem_zalloc(sizeof(struct xfs_extent_busy), 0);
-	new->agno = pag->pag_agno;
+	new = kmem_zalloc(sizeof(struct xfs_extent_busy), KM_SLEEP);
+	new->agno = agno;
 	new->bno = bno;
 	new->length = len;
 	INIT_LIST_HEAD(&new->list);
 	new->flags = flags;
 
 	/* trace before insert to be able to see failed inserts */
-	trace_xfs_extent_busy(tp->t_mountp, pag->pag_agno, bno, len);
+	trace_xfs_extent_busy(tp->t_mountp, agno, bno, len);
 
+	pag = xfs_perag_get(tp->t_mountp, new->agno);
 	spin_lock(&pag->pagb_lock);
 	rbp = &pag->pagb_tree.rb_node;
 	while (*rbp) {
@@ -64,6 +78,7 @@ xfs_extent_busy_insert(
 
 	list_add(&new->list, &tp->t_busy);
 	spin_unlock(&pag->pagb_lock);
+	xfs_perag_put(pag);
 }
 
 /*
@@ -78,17 +93,21 @@ xfs_extent_busy_insert(
 int
 xfs_extent_busy_search(
 	struct xfs_mount	*mp,
-	struct xfs_perag	*pag,
+	xfs_agnumber_t		agno,
 	xfs_agblock_t		bno,
 	xfs_extlen_t		len)
 {
+	struct xfs_perag	*pag;
 	struct rb_node		*rbp;
 	struct xfs_extent_busy	*busyp;
 	int			match = 0;
 
-	/* find closest start bno overlap */
+	pag = xfs_perag_get(mp, agno);
 	spin_lock(&pag->pagb_lock);
+
 	rbp = pag->pagb_tree.rb_node;
+
+	/* find closest start bno overlap */
 	while (rbp) {
 		busyp = rb_entry(rbp, struct xfs_extent_busy, rb_node);
 		if (bno < busyp->bno) {
@@ -108,6 +127,7 @@ xfs_extent_busy_search(
 		}
 	}
 	spin_unlock(&pag->pagb_lock);
+	xfs_perag_put(pag);
 	return match;
 }
 
@@ -273,14 +293,17 @@ out_force_log:
 void
 xfs_extent_busy_reuse(
 	struct xfs_mount	*mp,
-	struct xfs_perag	*pag,
+	xfs_agnumber_t		agno,
 	xfs_agblock_t		fbno,
 	xfs_extlen_t		flen,
 	bool			userdata)
 {
+	struct xfs_perag	*pag;
 	struct rb_node		*rbp;
 
 	ASSERT(flen > 0);
+
+	pag = xfs_perag_get(mp, agno);
 	spin_lock(&pag->pagb_lock);
 restart:
 	rbp = pag->pagb_tree.rb_node;
@@ -303,6 +326,7 @@ restart:
 			goto restart;
 	}
 	spin_unlock(&pag->pagb_lock);
+	xfs_perag_put(pag);
 }
 
 /*
@@ -332,6 +356,7 @@ xfs_extent_busy_trim(
 	ASSERT(*len > 0);
 
 	spin_lock(&args->pag->pagb_lock);
+restart:
 	fbno = *bno;
 	flen = *len;
 	rbp = args->pag->pagb_tree.rb_node;
@@ -347,6 +372,19 @@ xfs_extent_busy_trim(
 			continue;
 		} else if (fbno >= bend) {
 			rbp = rbp->rb_right;
+			continue;
+		}
+
+		/*
+		 * If this is a metadata allocation, try to reuse the busy
+		 * extent instead of trimming the allocation.
+		 */
+		if (!xfs_alloc_is_userdata(args->datatype) &&
+		    !(busyp->flags & XFS_EXTENT_BUSY_DISCARDED)) {
+			if (!xfs_extent_busy_update_extent(args->mp, args->pag,
+							  busyp, fbno, flen,
+							  false))
+				goto restart;
 			continue;
 		}
 
@@ -593,11 +631,12 @@ void
 xfs_extent_busy_wait_all(
 	struct xfs_mount	*mp)
 {
-	struct xfs_perag	*pag;
 	DEFINE_WAIT		(wait);
 	xfs_agnumber_t		agno;
 
-	for_each_perag(mp, agno, pag) {
+	for (agno = 0; agno < mp->m_sb.sb_agcount; agno++) {
+		struct xfs_perag *pag = xfs_perag_get(mp, agno);
+
 		do {
 			prepare_to_wait(&pag->pagb_wait, &wait, TASK_KILLABLE);
 			if  (RB_EMPTY_ROOT(&pag->pagb_tree))
@@ -605,6 +644,8 @@ xfs_extent_busy_wait_all(
 			schedule();
 		} while (1);
 		finish_wait(&pag->pagb_wait, &wait);
+
+		xfs_perag_put(pag);
 	}
 }
 
@@ -614,8 +655,8 @@ xfs_extent_busy_wait_all(
 int
 xfs_extent_busy_ag_cmp(
 	void			*priv,
-	const struct list_head	*l1,
-	const struct list_head	*l2)
+	struct list_head	*l1,
+	struct list_head	*l2)
 {
 	struct xfs_extent_busy	*b1 =
 		container_of(l1, struct xfs_extent_busy, list);

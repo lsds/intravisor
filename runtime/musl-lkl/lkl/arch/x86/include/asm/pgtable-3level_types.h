@@ -20,9 +20,11 @@ typedef union {
 } pte_t;
 #endif	/* !__ASSEMBLY__ */
 
-#define SHARED_KERNEL_PMD	(!static_cpu_has(X86_FEATURE_PTI))
-
-#define ARCH_PAGE_TABLE_SYNC_MASK	(SHARED_KERNEL_PMD ? 0 : PGTBL_PMD_MODIFIED)
+#ifdef CONFIG_PARAVIRT
+#define SHARED_KERNEL_PMD	(pv_info.shared_kernel_pmd)
+#else
+#define SHARED_KERNEL_PMD	1
+#endif
 
 /*
  * PGDIR_SHIFT determines what a top-level page table entry can map
@@ -43,6 +45,5 @@ typedef union {
 #define PTRS_PER_PTE	512
 
 #define MAX_POSSIBLE_PHYSMEM_BITS	36
-#define PGD_KERNEL_START	(CONFIG_PAGE_OFFSET >> PGDIR_SHIFT)
 
 #endif /* _ASM_X86_PGTABLE_3LEVEL_DEFS_H */

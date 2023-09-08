@@ -1,8 +1,20 @@
-/* SPDX-License-Identifier: GPL-2.0-or-later */
 /* ZD1211 USB-WLAN driver for Linux
  *
  * Copyright (C) 2005-2007 Ulrich Kunitz <kune@deine-taler.de>
  * Copyright (C) 2006-2007 Daniel Drake <dsd@gentoo.org>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, see <http://www.gnu.org/licenses/>.
  */
 
 #ifndef _ZD_USB_H
@@ -69,7 +81,7 @@ enum control_requests {
 
 struct usb_req_read_regs {
 	__le16 id;
-	__le16 addr[];
+	__le16 addr[0];
 } __packed;
 
 struct reg_data {
@@ -79,7 +91,7 @@ struct reg_data {
 
 struct usb_req_write_regs {
 	__le16 id;
-	struct reg_data reg_writes[];
+	struct reg_data reg_writes[0];
 } __packed;
 
 enum {
@@ -95,7 +107,7 @@ struct usb_req_rfwrite {
 	/* 2: other (default) */
 	__le16 bits;
 	/* RF2595: 24 */
-	__le16 bit_values[];
+	__le16 bit_values[0];
 	/* (ZD_CR203 & ~(RF_IF_LE | RF_CLK | RF_DATA)) | (bit ? RF_DATA : 0) */
 } __packed;
 
@@ -118,7 +130,7 @@ struct usb_int_header {
 
 struct usb_int_regs {
 	struct usb_int_header hdr;
-	struct reg_data regs[];
+	struct reg_data regs[0];
 } __packed;
 
 struct usb_int_retry_fail {

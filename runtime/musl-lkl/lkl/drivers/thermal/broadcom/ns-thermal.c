@@ -1,6 +1,9 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (C) 2017 Rafał Miłecki <rafal@milecki.pl>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 
 #include <linux/module.h>
@@ -14,14 +17,19 @@
 #define PVTMON_CONTROL0_SEL_TEST_MODE			0x0000000e
 #define PVTMON_STATUS					0x08
 
-static int ns_thermal_get_temp(struct thermal_zone_device *tz, int *temp)
+struct ns_thermal {
+	struct thermal_zone_device *tz;
+	void __iomem *pvtmon;
+};
+
+static int ns_thermal_get_temp(void *data, int *temp)
 {
-	void __iomem *pvtmon = tz->devdata;
-	int offset = thermal_zone_get_offset(tz);
-	int slope = thermal_zone_get_slope(tz);
+	struct ns_thermal *ns_thermal = data;
+	int offset = thermal_zone_get_offset(ns_thermal->tz);
+	int slope = thermal_zone_get_slope(ns_thermal->tz);
 	u32 val;
 
-	val = readl(pvtmon + PVTMON_CONTROL0);
+	val = readl(ns_thermal->pvtmon + PVTMON_CONTROL0);
 	if ((val & PVTMON_CONTROL0_SEL_MASK) != PVTMON_CONTROL0_SEL_TEMP_MONITOR) {
 		/* Clear current mode selection */
 		val &= ~PVTMON_CONTROL0_SEL_MASK;
@@ -29,47 +37,50 @@ static int ns_thermal_get_temp(struct thermal_zone_device *tz, int *temp)
 		/* Set temp monitor mode (it's the default actually) */
 		val |= PVTMON_CONTROL0_SEL_TEMP_MONITOR;
 
-		writel(val, pvtmon + PVTMON_CONTROL0);
+		writel(val, ns_thermal->pvtmon + PVTMON_CONTROL0);
 	}
 
-	val = readl(pvtmon + PVTMON_STATUS);
+	val = readl(ns_thermal->pvtmon + PVTMON_STATUS);
 	*temp = slope * val + offset;
 
 	return 0;
 }
 
-static const struct thermal_zone_device_ops ns_thermal_ops = {
+static const struct thermal_zone_of_device_ops ns_thermal_ops = {
 	.get_temp = ns_thermal_get_temp,
 };
 
 static int ns_thermal_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
-	struct thermal_zone_device *tz;
-	void __iomem *pvtmon;
+	struct ns_thermal *ns_thermal;
 
-	pvtmon = of_iomap(dev_of_node(dev), 0);
-	if (WARN_ON(!pvtmon))
+	ns_thermal = devm_kzalloc(dev, sizeof(*ns_thermal), GFP_KERNEL);
+	if (!ns_thermal)
+		return -ENOMEM;
+
+	ns_thermal->pvtmon = of_iomap(dev_of_node(dev), 0);
+	if (WARN_ON(!ns_thermal->pvtmon))
 		return -ENOENT;
 
-	tz = devm_thermal_of_zone_register(dev, 0,
-					   pvtmon,
-					   &ns_thermal_ops);
-	if (IS_ERR(tz)) {
-		iounmap(pvtmon);
-		return PTR_ERR(tz);
+	ns_thermal->tz = devm_thermal_zone_of_sensor_register(dev, 0,
+							      ns_thermal,
+							      &ns_thermal_ops);
+	if (IS_ERR(ns_thermal->tz)) {
+		iounmap(ns_thermal->pvtmon);
+		return PTR_ERR(ns_thermal->tz);
 	}
 
-	platform_set_drvdata(pdev, pvtmon);
+	platform_set_drvdata(pdev, ns_thermal);
 
 	return 0;
 }
 
 static int ns_thermal_remove(struct platform_device *pdev)
 {
-	void __iomem *pvtmon = platform_get_drvdata(pdev);
+	struct ns_thermal *ns_thermal = platform_get_drvdata(pdev);
 
-	iounmap(pvtmon);
+	iounmap(ns_thermal->pvtmon);
 
 	return 0;
 }

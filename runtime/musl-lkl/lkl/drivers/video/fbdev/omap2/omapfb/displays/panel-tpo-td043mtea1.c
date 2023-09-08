@@ -1,9 +1,13 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * TPO TD043MTEA1 Panel driver
  *
  * Author: Gražvydas Ignotas <notasas@gmail.com>
  * Converted to new DSS device model: Tomi Valkeinen <tomi.valkeinen@ti.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
  */
 
 #include <linux/module.h>
@@ -169,7 +173,7 @@ static ssize_t tpo_td043_vmirror_show(struct device *dev,
 {
 	struct panel_drv_data *ddata = dev_get_drvdata(dev);
 
-	return sysfs_emit(buf, "%d\n", ddata->vmirror);
+	return snprintf(buf, PAGE_SIZE, "%d\n", ddata->vmirror);
 }
 
 static ssize_t tpo_td043_vmirror_store(struct device *dev,
@@ -199,7 +203,7 @@ static ssize_t tpo_td043_mode_show(struct device *dev,
 {
 	struct panel_drv_data *ddata = dev_get_drvdata(dev);
 
-	return sysfs_emit(buf, "%d\n", ddata->mode);
+	return snprintf(buf, PAGE_SIZE, "%d\n", ddata->mode);
 }
 
 static ssize_t tpo_td043_mode_store(struct device *dev,
@@ -337,11 +341,16 @@ static int tpo_td043_connect(struct omap_dss_device *dssdev)
 {
 	struct panel_drv_data *ddata = to_panel_data(dssdev);
 	struct omap_dss_device *in = ddata->in;
+	int r;
 
 	if (omapdss_device_is_connected(dssdev))
 		return 0;
 
-	return in->ops.dpi->connect(in, dssdev);
+	r = in->ops.dpi->connect(in, dssdev);
+	if (r)
+		return r;
+
+	return 0;
 }
 
 static void tpo_td043_disconnect(struct omap_dss_device *dssdev)
@@ -517,7 +526,8 @@ static int tpo_td043_probe(struct spi_device *spi)
 
 	ddata->vcc_reg = devm_regulator_get(&spi->dev, "vcc");
 	if (IS_ERR(ddata->vcc_reg)) {
-		r = dev_err_probe(&spi->dev, r, "failed to get LCD VCC regulator\n");
+		dev_err(&spi->dev, "failed to get LCD VCC regulator\n");
+		r = PTR_ERR(ddata->vcc_reg);
 		goto err_regulator;
 	}
 
@@ -563,7 +573,7 @@ err_regulator:
 	return r;
 }
 
-static void tpo_td043_remove(struct spi_device *spi)
+static int tpo_td043_remove(struct spi_device *spi)
 {
 	struct panel_drv_data *ddata = dev_get_drvdata(&spi->dev);
 	struct omap_dss_device *dssdev = &ddata->dssdev;
@@ -579,6 +589,8 @@ static void tpo_td043_remove(struct spi_device *spi)
 	omap_dss_put_device(in);
 
 	sysfs_remove_group(&spi->dev.kobj, &tpo_td043_attr_group);
+
+	return 0;
 }
 
 #ifdef CONFIG_PM_SLEEP

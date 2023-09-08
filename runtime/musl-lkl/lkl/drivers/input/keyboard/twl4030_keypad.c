@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * twl4030_keypad.c - driver for 8x8 keypad controller in twl4030 chips
  *
@@ -10,6 +9,20 @@
  *
  * Initial Code:
  * Manjunatha G K <manjugk@ti.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
  */
 
 #include <linux/kernel.h>
@@ -50,7 +63,7 @@ struct twl4030_keypad {
 	bool		autorepeat;
 	unsigned int	n_rows;
 	unsigned int	n_cols;
-	int		irq;
+	unsigned int	irq;
 
 	struct device *dbg_dev;
 	struct input_dev *input;
@@ -376,8 +389,10 @@ static int twl4030_kp_probe(struct platform_device *pdev)
 	}
 
 	kp->irq = platform_get_irq(pdev, 0);
-	if (kp->irq < 0)
-		return kp->irq;
+	if (!kp->irq) {
+		dev_err(&pdev->dev, "no keyboard irq assigned\n");
+		return -EINVAL;
+	}
 
 	error = matrix_keypad_build_keymap(keymap_data, NULL,
 					   TWL4030_MAX_ROWS,

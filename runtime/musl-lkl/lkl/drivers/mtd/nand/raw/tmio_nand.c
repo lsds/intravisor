@@ -35,6 +35,7 @@
 #include <linux/ioport.h>
 #include <linux/mtd/mtd.h>
 #include <linux/mtd/rawnand.h>
+#include <linux/mtd/nand_ecc.h>
 #include <linux/mtd/partitions.h>
 #include <linux/slab.h>
 
@@ -102,9 +103,7 @@
 /*--------------------------------------------------------------------------*/
 
 struct tmio_nand {
-	struct nand_controller controller;
 	struct nand_chip chip;
-	struct completion comp;
 
 	struct platform_device *dev;
 
@@ -127,10 +126,11 @@ static inline struct tmio_nand *mtd_to_tmio(struct mtd_info *mtd)
 
 /*--------------------------------------------------------------------------*/
 
-static void tmio_nand_hwcontrol(struct nand_chip *chip, int cmd,
-				unsigned int ctrl)
+static void tmio_nand_hwcontrol(struct mtd_info *mtd, int cmd,
+				   unsigned int ctrl)
 {
-	struct tmio_nand *tmio = mtd_to_tmio(nand_to_mtd(chip));
+	struct tmio_nand *tmio = mtd_to_tmio(mtd);
+	struct nand_chip *chip = mtd_to_nand(mtd);
 
 	if (ctrl & NAND_CTRL_CHANGE) {
 		u8 mode;
@@ -156,12 +156,12 @@ static void tmio_nand_hwcontrol(struct nand_chip *chip, int cmd,
 	}
 
 	if (cmd != NAND_CMD_NONE)
-		tmio_iowrite8(cmd, chip->legacy.IO_ADDR_W);
+		tmio_iowrite8(cmd, chip->IO_ADDR_W);
 }
 
-static int tmio_nand_dev_ready(struct nand_chip *chip)
+static int tmio_nand_dev_ready(struct mtd_info *mtd)
 {
-	struct tmio_nand *tmio = mtd_to_tmio(nand_to_mtd(chip));
+	struct tmio_nand *tmio = mtd_to_tmio(mtd);
 
 	return !(tmio_ioread8(tmio->fcr + FCR_STATUS) & FCR_STATUS_BUSY);
 }
@@ -169,11 +169,15 @@ static int tmio_nand_dev_ready(struct nand_chip *chip)
 static irqreturn_t tmio_irq(int irq, void *__tmio)
 {
 	struct tmio_nand *tmio = __tmio;
+	struct nand_chip *nand_chip = &tmio->chip;
 
 	/* disable RDYREQ interrupt */
 	tmio_iowrite8(0x00, tmio->fcr + FCR_IMR);
-	complete(&tmio->comp);
 
+	if (unlikely(!waitqueue_active(&nand_chip->controller->wq)))
+		dev_warn(&tmio->dev->dev, "spurious interrupt\n");
+
+	wake_up(&nand_chip->controller->wq);
 	return IRQ_HANDLED;
 }
 
@@ -183,25 +187,26 @@ static irqreturn_t tmio_irq(int irq, void *__tmio)
   *erase and write, we enable it to wake us up.  The irq handler
   *disables the interrupt.
  */
-static int tmio_nand_wait(struct nand_chip *nand_chip)
+static int
+tmio_nand_wait(struct mtd_info *mtd, struct nand_chip *nand_chip)
 {
-	struct tmio_nand *tmio = mtd_to_tmio(nand_to_mtd(nand_chip));
+	struct tmio_nand *tmio = mtd_to_tmio(mtd);
 	long timeout;
 	u8 status;
 
 	/* enable RDYREQ interrupt */
-
 	tmio_iowrite8(0x0f, tmio->fcr + FCR_ISR);
-	reinit_completion(&tmio->comp);
 	tmio_iowrite8(0x81, tmio->fcr + FCR_IMR);
 
-	timeout = 400;
-	timeout = wait_for_completion_timeout(&tmio->comp,
-					      msecs_to_jiffies(timeout));
+	timeout = wait_event_timeout(nand_chip->controller->wq,
+		tmio_nand_dev_ready(mtd),
+		msecs_to_jiffies(nand_chip->state == FL_ERASING ? 400 : 20));
 
-	if (unlikely(!tmio_nand_dev_ready(nand_chip))) {
+	if (unlikely(!tmio_nand_dev_ready(mtd))) {
 		tmio_iowrite8(0x00, tmio->fcr + FCR_IMR);
-		dev_warn(&tmio->dev->dev, "still busy after 400 ms\n");
+		dev_warn(&tmio->dev->dev, "still busy with %s after %d ms\n",
+			nand_chip->state == FL_ERASING ? "erase" : "program",
+			nand_chip->state == FL_ERASING ? 400 : 20);
 
 	} else if (unlikely(!timeout)) {
 		tmio_iowrite8(0x00, tmio->fcr + FCR_IMR);
@@ -220,9 +225,9 @@ static int tmio_nand_wait(struct nand_chip *nand_chip)
   *To prevent stale data from being read, tmio_nand_hwcontrol() clears
   *tmio->read_good.
  */
-static u_char tmio_nand_read_byte(struct nand_chip *chip)
+static u_char tmio_nand_read_byte(struct mtd_info *mtd)
 {
-	struct tmio_nand *tmio = mtd_to_tmio(nand_to_mtd(chip));
+	struct tmio_nand *tmio = mtd_to_tmio(mtd);
 	unsigned int data;
 
 	if (tmio->read_good--)
@@ -240,33 +245,33 @@ static u_char tmio_nand_read_byte(struct nand_chip *chip)
   *buffer functions.
  */
 static void
-tmio_nand_write_buf(struct nand_chip *chip, const u_char *buf, int len)
+tmio_nand_write_buf(struct mtd_info *mtd, const u_char *buf, int len)
 {
-	struct tmio_nand *tmio = mtd_to_tmio(nand_to_mtd(chip));
+	struct tmio_nand *tmio = mtd_to_tmio(mtd);
 
 	tmio_iowrite16_rep(tmio->fcr + FCR_DATA, buf, len >> 1);
 }
 
-static void tmio_nand_read_buf(struct nand_chip *chip, u_char *buf, int len)
+static void tmio_nand_read_buf(struct mtd_info *mtd, u_char *buf, int len)
 {
-	struct tmio_nand *tmio = mtd_to_tmio(nand_to_mtd(chip));
+	struct tmio_nand *tmio = mtd_to_tmio(mtd);
 
 	tmio_ioread16_rep(tmio->fcr + FCR_DATA, buf, len >> 1);
 }
 
-static void tmio_nand_enable_hwecc(struct nand_chip *chip, int mode)
+static void tmio_nand_enable_hwecc(struct mtd_info *mtd, int mode)
 {
-	struct tmio_nand *tmio = mtd_to_tmio(nand_to_mtd(chip));
+	struct tmio_nand *tmio = mtd_to_tmio(mtd);
 
 	tmio_iowrite8(FCR_MODE_HWECC_RESET, tmio->fcr + FCR_MODE);
 	tmio_ioread8(tmio->fcr + FCR_DATA);	/* dummy read */
 	tmio_iowrite8(FCR_MODE_HWECC_CALC, tmio->fcr + FCR_MODE);
 }
 
-static int tmio_nand_calculate_ecc(struct nand_chip *chip, const u_char *dat,
-				   u_char *ecc_code)
+static int tmio_nand_calculate_ecc(struct mtd_info *mtd, const u_char *dat,
+							u_char *ecc_code)
 {
-	struct tmio_nand *tmio = mtd_to_tmio(nand_to_mtd(chip));
+	struct tmio_nand *tmio = mtd_to_tmio(mtd);
 	unsigned int ecc;
 
 	tmio_iowrite8(FCR_MODE_HWECC_RESULT, tmio->fcr + FCR_MODE);
@@ -285,18 +290,16 @@ static int tmio_nand_calculate_ecc(struct nand_chip *chip, const u_char *dat,
 	return 0;
 }
 
-static int tmio_nand_correct_data(struct nand_chip *chip, unsigned char *buf,
-				  unsigned char *read_ecc,
-				  unsigned char *calc_ecc)
+static int tmio_nand_correct_data(struct mtd_info *mtd, unsigned char *buf,
+		unsigned char *read_ecc, unsigned char *calc_ecc)
 {
 	int r0, r1;
 
 	/* assume ecc.size = 512 and ecc.bytes = 6 */
-	r0 = rawnand_sw_hamming_correct(chip, buf, read_ecc, calc_ecc);
+	r0 = __nand_correct_data(buf, read_ecc, calc_ecc, 256);
 	if (r0 < 0)
 		return r0;
-	r1 = rawnand_sw_hamming_correct(chip, buf + 256, read_ecc + 3,
-					calc_ecc + 3);
+	r1 = __nand_correct_data(buf + 256, read_ecc + 3, calc_ecc + 3, 256);
 	if (r1 < 0)
 		return r1;
 	return r0 + r1;
@@ -355,25 +358,6 @@ static void tmio_hw_stop(struct platform_device *dev, struct tmio_nand *tmio)
 		cell->disable(dev);
 }
 
-static int tmio_attach_chip(struct nand_chip *chip)
-{
-	if (chip->ecc.engine_type != NAND_ECC_ENGINE_TYPE_ON_HOST)
-		return 0;
-
-	chip->ecc.size = 512;
-	chip->ecc.bytes = 6;
-	chip->ecc.strength = 2;
-	chip->ecc.hwctl = tmio_nand_enable_hwecc;
-	chip->ecc.calculate = tmio_nand_calculate_ecc;
-	chip->ecc.correct = tmio_nand_correct_data;
-
-	return 0;
-}
-
-static const struct nand_controller_ops tmio_ops = {
-	.attach_chip = tmio_attach_chip,
-};
-
 static int tmio_probe(struct platform_device *dev)
 {
 	struct tmio_nand_data *data = dev_get_platdata(&dev->dev);
@@ -390,14 +374,9 @@ static int tmio_probe(struct platform_device *dev)
 	if (data == NULL)
 		dev_warn(&dev->dev, "NULL platform data!\n");
 
-	if (!ccr || !fcr)
-		return -EINVAL;
-
 	tmio = devm_kzalloc(&dev->dev, sizeof(*tmio), GFP_KERNEL);
 	if (!tmio)
 		return -ENOMEM;
-
-	init_completion(&tmio->comp);
 
 	tmio->dev = dev;
 
@@ -406,10 +385,6 @@ static int tmio_probe(struct platform_device *dev)
 	mtd = nand_to_mtd(nand_chip);
 	mtd->name = "tmio-nand";
 	mtd->dev.parent = &dev->dev;
-
-	nand_controller_init(&tmio->controller);
-	tmio->controller.ops = &tmio_ops;
-	nand_chip->controller = &tmio->controller;
 
 	tmio->ccr = devm_ioremap(&dev->dev, ccr->start, resource_size(ccr));
 	if (!tmio->ccr)
@@ -425,21 +400,30 @@ static int tmio_probe(struct platform_device *dev)
 		return retval;
 
 	/* Set address of NAND IO lines */
-	nand_chip->legacy.IO_ADDR_R = tmio->fcr;
-	nand_chip->legacy.IO_ADDR_W = tmio->fcr;
+	nand_chip->IO_ADDR_R = tmio->fcr;
+	nand_chip->IO_ADDR_W = tmio->fcr;
 
 	/* Set address of hardware control function */
-	nand_chip->legacy.cmd_ctrl = tmio_nand_hwcontrol;
-	nand_chip->legacy.dev_ready = tmio_nand_dev_ready;
-	nand_chip->legacy.read_byte = tmio_nand_read_byte;
-	nand_chip->legacy.write_buf = tmio_nand_write_buf;
-	nand_chip->legacy.read_buf = tmio_nand_read_buf;
+	nand_chip->cmd_ctrl = tmio_nand_hwcontrol;
+	nand_chip->dev_ready = tmio_nand_dev_ready;
+	nand_chip->read_byte = tmio_nand_read_byte;
+	nand_chip->write_buf = tmio_nand_write_buf;
+	nand_chip->read_buf = tmio_nand_read_buf;
+
+	/* set eccmode using hardware ECC */
+	nand_chip->ecc.mode = NAND_ECC_HW;
+	nand_chip->ecc.size = 512;
+	nand_chip->ecc.bytes = 6;
+	nand_chip->ecc.strength = 2;
+	nand_chip->ecc.hwctl = tmio_nand_enable_hwecc;
+	nand_chip->ecc.calculate = tmio_nand_calculate_ecc;
+	nand_chip->ecc.correct = tmio_nand_correct_data;
 
 	if (data)
 		nand_chip->badblock_pattern = data->badblock_pattern;
 
 	/* 15 us command delay time */
-	nand_chip->legacy.chip_delay = 15;
+	nand_chip->chip_delay = 15;
 
 	retval = devm_request_irq(&dev->dev, irq, &tmio_irq, 0,
 				  dev_name(&dev->dev), tmio);
@@ -449,10 +433,10 @@ static int tmio_probe(struct platform_device *dev)
 	}
 
 	tmio->irq = irq;
-	nand_chip->legacy.waitfunc = tmio_nand_wait;
+	nand_chip->waitfunc = tmio_nand_wait;
 
 	/* Scan to find existence of the device */
-	retval = nand_scan(nand_chip, 1);
+	retval = nand_scan(mtd, 1);
 	if (retval)
 		goto err_irq;
 
@@ -465,7 +449,7 @@ static int tmio_probe(struct platform_device *dev)
 	if (!retval)
 		return retval;
 
-	nand_cleanup(nand_chip);
+	nand_release(mtd);
 
 err_irq:
 	tmio_hw_stop(dev, tmio);
@@ -475,12 +459,8 @@ err_irq:
 static int tmio_remove(struct platform_device *dev)
 {
 	struct tmio_nand *tmio = platform_get_drvdata(dev);
-	struct nand_chip *chip = &tmio->chip;
-	int ret;
 
-	ret = mtd_device_unregister(nand_to_mtd(chip));
-	WARN_ON(ret);
-	nand_cleanup(chip);
+	nand_release(nand_to_mtd(&tmio->chip));
 	tmio_hw_stop(dev, tmio);
 	return 0;
 }

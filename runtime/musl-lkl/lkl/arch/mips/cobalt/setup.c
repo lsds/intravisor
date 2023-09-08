@@ -13,7 +13,6 @@
 #include <linux/interrupt.h>
 #include <linux/io.h>
 #include <linux/ioport.h>
-#include <linux/memblock.h>
 #include <linux/pm.h>
 
 #include <asm/bootinfo.h>
@@ -113,7 +112,12 @@ void __init prom_init(void)
 			strlcat(arcs_cmdline, " ", COMMAND_LINE_SIZE);
 	}
 
-	memblock_add(0, memsz);
+	add_memory_region(0x0, memsz, BOOT_MEM_RAM);
 
 	setup_8250_early_printk_port(CKSEG1ADDR(0x1c800000), 0, 0);
+}
+
+void __init prom_free_prom_memory(void)
+{
+	/* Nothing to do! */
 }

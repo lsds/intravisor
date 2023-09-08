@@ -23,7 +23,7 @@
 
 
 .text
-SYM_FUNC_START(round_Xsig)
+ENTRY(round_Xsig)
 	pushl	%ebp
 	movl	%esp,%ebp
 	pushl	%ebx		/* Reserve some space */
@@ -78,12 +78,12 @@ L_exit:
 	popl	%esi
 	popl	%ebx
 	leave
-	RET
-SYM_FUNC_END(round_Xsig)
+	ret
+ENDPROC(round_Xsig)
 
 
 
-SYM_FUNC_START(norm_Xsig)
+ENTRY(norm_Xsig)
 	pushl	%ebp
 	movl	%esp,%ebp
 	pushl	%ebx		/* Reserve some space */
@@ -138,5 +138,5 @@ L_n_exit:
 	popl	%esi
 	popl	%ebx
 	leave
-	RET
-SYM_FUNC_END(norm_Xsig)
+	ret
+ENDPROC(norm_Xsig)

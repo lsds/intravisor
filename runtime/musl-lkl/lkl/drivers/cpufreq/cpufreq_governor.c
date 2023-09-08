@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * drivers/cpufreq/cpufreq_governor.c
  *
@@ -9,6 +8,10 @@
  *		(C) 2003 Jun Nakajima <jun.nakajima@intel.com>
  *		(C) 2009 Alexander Clouter <alex@digriz.org.uk>
  *		(c) 2012 Viresh Kumar <viresh.kumar@linaro.org>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
@@ -26,8 +29,8 @@ static DEFINE_PER_CPU(struct cpu_dbs_info, cpu_dbs);
 static DEFINE_MUTEX(gov_dbs_data_mutex);
 
 /* Common sysfs tunables */
-/*
- * sampling_rate_store - update sampling rate effective immediately if needed.
+/**
+ * store_sampling_rate - update sampling rate effective immediately if needed.
  *
  * If new rate is smaller than the old, simply updating
  * dbs.sampling_rate might not be appropriate. For example, if the
@@ -41,7 +44,7 @@ static DEFINE_MUTEX(gov_dbs_data_mutex);
  * This must be called with dbs_data->mutex held, otherwise traversing
  * policy_dbs_list isn't safe.
  */
-ssize_t sampling_rate_store(struct gov_attr_set *attr_set, const char *buf,
+ssize_t store_sampling_rate(struct gov_attr_set *attr_set, const char *buf,
 			    size_t count)
 {
 	struct dbs_data *dbs_data = to_dbs_data(attr_set);
@@ -80,7 +83,7 @@ ssize_t sampling_rate_store(struct gov_attr_set *attr_set, const char *buf,
 
 	return count;
 }
-EXPORT_SYMBOL_GPL(sampling_rate_store);
+EXPORT_SYMBOL_GPL(store_sampling_rate);
 
 /**
  * gov_update_cpu_data - Update CPU load data.
@@ -105,7 +108,7 @@ void gov_update_cpu_data(struct dbs_data *dbs_data)
 			j_cdbs->prev_cpu_idle = get_cpu_idle_time(j, &j_cdbs->prev_update_time,
 								  dbs_data->io_is_busy);
 			if (dbs_data->ignore_nice_load)
-				j_cdbs->prev_cpu_nice = kcpustat_field(&kcpustat_cpu(j), CPUTIME_NICE, j);
+				j_cdbs->prev_cpu_nice = kcpustat_cpu(j).cpustat[CPUTIME_NICE];
 		}
 	}
 }
@@ -149,7 +152,7 @@ unsigned int dbs_update(struct cpufreq_policy *policy)
 		j_cdbs->prev_cpu_idle = cur_idle_time;
 
 		if (ignore_nice) {
-			u64 cur_nice = kcpustat_field(&kcpustat_cpu(j), CPUTIME_NICE, j);
+			u64 cur_nice = kcpustat_cpu(j).cpustat[CPUTIME_NICE];
 
 			idle_time += div_u64(cur_nice - j_cdbs->prev_cpu_nice, NSEC_PER_USEC);
 			j_cdbs->prev_cpu_nice = cur_nice;
@@ -162,7 +165,7 @@ unsigned int dbs_update(struct cpufreq_policy *policy)
 			 * calls, so the previous load value can be used then.
 			 */
 			load = j_cdbs->prev_load;
-		} else if (unlikely((int)idle_time > 2 * sampling_rate &&
+		} else if (unlikely(time_elapsed > 2 * sampling_rate &&
 				    j_cdbs->prev_load)) {
 			/*
 			 * If the CPU had gone completely idle and a task has
@@ -182,8 +185,10 @@ unsigned int dbs_update(struct cpufreq_policy *policy)
 			 * clear prev_load to guarantee that the load will be
 			 * computed again next time.
 			 *
-			 * Detecting this situation is easy: an unusually large
-			 * 'idle_time' (as compared to the sampling rate)
+			 * Detecting this situation is easy: the governor's
+			 * utilization update handler would not have run during
+			 * CPU-idle periods.  Hence, an unusually large
+			 * 'time_elapsed' (as compared to the sampling rate)
 			 * indicates this scenario.
 			 */
 			load = j_cdbs->prev_load;
@@ -212,8 +217,8 @@ unsigned int dbs_update(struct cpufreq_policy *policy)
 			j_cdbs->prev_load = load;
 		}
 
-		if (unlikely((int)idle_time > 2 * sampling_rate)) {
-			unsigned int periods = idle_time / sampling_rate;
+		if (time_elapsed > 2 * sampling_rate) {
+			unsigned int periods = time_elapsed / sampling_rate;
 
 			if (periods < idle_periods)
 				idle_periods = periods;
@@ -273,7 +278,7 @@ static void dbs_update_util_handler(struct update_util_data *data, u64 time,
 	struct policy_dbs_info *policy_dbs = cdbs->policy_dbs;
 	u64 delta_ns, lst;
 
-	if (!cpufreq_this_cpu_can_update(policy_dbs->policy))
+	if (!cpufreq_can_do_remote_dvfs(policy_dbs->policy))
 		return;
 
 	/*
@@ -343,7 +348,7 @@ static inline void gov_clear_update_util(struct cpufreq_policy *policy)
 	for_each_cpu(i, policy->cpus)
 		cpufreq_remove_update_util_hook(i);
 
-	synchronize_rcu();
+	synchronize_sched();
 }
 
 static struct policy_dbs_info *alloc_policy_dbs_info(struct cpufreq_policy *policy,
@@ -388,15 +393,6 @@ static void free_policy_dbs_info(struct policy_dbs_info *policy_dbs,
 	gov->free(policy_dbs);
 }
 
-static void cpufreq_dbs_data_release(struct kobject *kobj)
-{
-	struct dbs_data *dbs_data = to_dbs_data(to_gov_attr_set(kobj));
-	struct dbs_governor *gov = dbs_data->gov;
-
-	gov->exit(dbs_data);
-	kfree(dbs_data);
-}
-
 int cpufreq_dbs_governor_init(struct cpufreq_policy *policy)
 {
 	struct dbs_governor *gov = dbs_governor_of(policy);
@@ -434,7 +430,6 @@ int cpufreq_dbs_governor_init(struct cpufreq_policy *policy)
 		goto free_policy_dbs_info;
 	}
 
-	dbs_data->gov = gov;
 	gov_attr_set_init(&dbs_data->attr_set, &policy_dbs->list);
 
 	ret = gov->init(dbs_data);
@@ -457,7 +452,6 @@ int cpufreq_dbs_governor_init(struct cpufreq_policy *policy)
 	policy->governor_data = policy_dbs;
 
 	gov->kobj_type.sysfs_ops = &governor_sysfs_ops;
-	gov->kobj_type.release = cpufreq_dbs_data_release;
 	ret = kobject_init_and_add(&dbs_data->attr_set.kobj, &gov->kobj_type,
 				   get_governor_parent_kobj(policy),
 				   "%s", gov->gov.name);
@@ -466,8 +460,6 @@ int cpufreq_dbs_governor_init(struct cpufreq_policy *policy)
 
 	/* Failure, so roll back. */
 	pr_err("initialization failed (dbs_data kobject init error %d)\n", ret);
-
-	kobject_put(&dbs_data->attr_set.kobj);
 
 	policy->governor_data = NULL;
 
@@ -499,8 +491,13 @@ void cpufreq_dbs_governor_exit(struct cpufreq_policy *policy)
 
 	policy->governor_data = NULL;
 
-	if (!count && !have_governor_per_policy())
-		gov->gdbs_data = NULL;
+	if (!count) {
+		if (!have_governor_per_policy())
+			gov->gdbs_data = NULL;
+
+		gov->exit(dbs_data);
+		kfree(dbs_data);
+	}
 
 	free_policy_dbs_info(policy_dbs, gov);
 
@@ -536,7 +533,7 @@ int cpufreq_dbs_governor_start(struct cpufreq_policy *policy)
 		j_cdbs->prev_load = 0;
 
 		if (ignore_nice)
-			j_cdbs->prev_cpu_nice = kcpustat_field(&kcpustat_cpu(j), CPUTIME_NICE, j);
+			j_cdbs->prev_cpu_nice = kcpustat_cpu(j).cpustat[CPUTIME_NICE];
 	}
 
 	gov->start(policy);
@@ -560,20 +557,12 @@ EXPORT_SYMBOL_GPL(cpufreq_dbs_governor_stop);
 
 void cpufreq_dbs_governor_limits(struct cpufreq_policy *policy)
 {
-	struct policy_dbs_info *policy_dbs;
-
-	/* Protect gov->gdbs_data against cpufreq_dbs_governor_exit() */
-	mutex_lock(&gov_dbs_data_mutex);
-	policy_dbs = policy->governor_data;
-	if (!policy_dbs)
-		goto out;
+	struct policy_dbs_info *policy_dbs = policy->governor_data;
 
 	mutex_lock(&policy_dbs->update_mutex);
 	cpufreq_policy_apply_limits(policy);
 	gov_update_sample_delay(policy_dbs, 0);
-	mutex_unlock(&policy_dbs->update_mutex);
 
-out:
-	mutex_unlock(&gov_dbs_data_mutex);
+	mutex_unlock(&policy_dbs->update_mutex);
 }
 EXPORT_SYMBOL_GPL(cpufreq_dbs_governor_limits);

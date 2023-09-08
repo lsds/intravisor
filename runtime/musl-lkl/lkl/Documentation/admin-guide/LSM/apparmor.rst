@@ -44,8 +44,8 @@ Links
 
 Mailing List - apparmor@lists.ubuntu.com
 
-Wiki - http://wiki.apparmor.net
+Wiki - http://apparmor.wiki.kernel.org/
 
-User space tools - https://gitlab.com/apparmor
+User space tools - https://launchpad.net/apparmor
 
-Kernel module - git://git.kernel.org/pub/scm/linux/kernel/git/jj/linux-apparmor
+Kernel module - git://git.kernel.org/pub/scm/linux/kernel/git/jj/apparmor-dev.git

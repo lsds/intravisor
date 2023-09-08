@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0
 #include <linux/init.h>
-#include <linux/memblock.h>
+#include <linux/bootmem.h>
 #include <linux/fs.h>
 #include <linux/sysfs.h>
 #include <linux/kobject.h>
-#include <linux/memory_hotplug.h>
 #include <linux/mm.h>
 #include <linux/mmzone.h>
 #include <linux/pagemap.h>
@@ -12,8 +11,6 @@
 #include <linux/mmu_notifier.h>
 #include <linux/page_ext.h>
 #include <linux/page_idle.h>
-
-#include "internal.h"
 
 #define BITMAP_CHUNK_SIZE	sizeof(u64)
 #define BITMAP_CHUNK_BITS	(BITMAP_CHUNK_SIZE * BITS_PER_BYTE)
@@ -33,24 +30,36 @@
  */
 static struct page *page_idle_get_page(unsigned long pfn)
 {
-	struct page *page = pfn_to_online_page(pfn);
+	struct page *page;
+	struct zone *zone;
 
+	if (!pfn_valid(pfn))
+		return NULL;
+
+	page = pfn_to_page(pfn);
 	if (!page || !PageLRU(page) ||
 	    !get_page_unless_zero(page))
 		return NULL;
 
+	zone = page_zone(page);
+	spin_lock_irq(zone_lru_lock(zone));
 	if (unlikely(!PageLRU(page))) {
 		put_page(page);
 		page = NULL;
 	}
+	spin_unlock_irq(zone_lru_lock(zone));
 	return page;
 }
 
-static bool page_idle_clear_pte_refs_one(struct folio *folio,
+static bool page_idle_clear_pte_refs_one(struct page *page,
 					struct vm_area_struct *vma,
 					unsigned long addr, void *arg)
 {
-	DEFINE_FOLIO_VMA_WALK(pvmw, folio, vma, addr, 0);
+	struct page_vma_mapped_walk pvmw = {
+		.page = page,
+		.vma = vma,
+		.address = addr,
+	};
 	bool referenced = false;
 
 	while (page_vma_mapped_walk(&pvmw)) {
@@ -72,42 +81,41 @@ static bool page_idle_clear_pte_refs_one(struct folio *folio,
 	}
 
 	if (referenced) {
-		folio_clear_idle(folio);
+		clear_page_idle(page);
 		/*
 		 * We cleared the referenced bit in a mapping to this page. To
 		 * avoid interference with page reclaim, mark it young so that
-		 * folio_referenced() will return > 0.
+		 * page_referenced() will return > 0.
 		 */
-		folio_set_young(folio);
+		set_page_young(page);
 	}
 	return true;
 }
 
 static void page_idle_clear_pte_refs(struct page *page)
 {
-	struct folio *folio = page_folio(page);
-
 	/*
-	 * Since rwc.try_lock is unused, rwc is effectively immutable, so we
-	 * can make it static to save some cycles and stack.
+	 * Since rwc.arg is unused, rwc is effectively immutable, so we
+	 * can make it static const to save some cycles and stack.
 	 */
-	static struct rmap_walk_control rwc = {
+	static const struct rmap_walk_control rwc = {
 		.rmap_one = page_idle_clear_pte_refs_one,
-		.anon_lock = folio_lock_anon_vma_read,
+		.anon_lock = page_lock_anon_vma_read,
 	};
 	bool need_lock;
 
-	if (!folio_mapped(folio) || !folio_raw_mapping(folio))
+	if (!page_mapped(page) ||
+	    !page_rmapping(page))
 		return;
 
-	need_lock = !folio_test_anon(folio) || folio_test_ksm(folio);
-	if (need_lock && !folio_trylock(folio))
+	need_lock = !PageAnon(page) || PageKsm(page);
+	if (need_lock && !trylock_page(page))
 		return;
 
-	rmap_walk(folio, &rwc);
+	rmap_walk(page, (struct rmap_walk_control *)&rwc);
 
 	if (need_lock)
-		folio_unlock(folio);
+		unlock_page(page);
 }
 
 static ssize_t page_idle_bitmap_read(struct file *file, struct kobject *kobj,
@@ -128,7 +136,7 @@ static ssize_t page_idle_bitmap_read(struct file *file, struct kobject *kobj,
 
 	end_pfn = pfn + count * BITS_PER_BYTE;
 	if (end_pfn > max_pfn)
-		end_pfn = max_pfn;
+		end_pfn = ALIGN(max_pfn, BITMAP_CHUNK_BITS);
 
 	for (; pfn < end_pfn; pfn++) {
 		bit = pfn % BITMAP_CHUNK_BITS;
@@ -173,7 +181,7 @@ static ssize_t page_idle_bitmap_write(struct file *file, struct kobject *kobj,
 
 	end_pfn = pfn + count * BITS_PER_BYTE;
 	if (end_pfn > max_pfn)
-		end_pfn = max_pfn;
+		end_pfn = ALIGN(max_pfn, BITMAP_CHUNK_BITS);
 
 	for (; pfn < end_pfn; pfn++) {
 		bit = pfn % BITMAP_CHUNK_BITS;
@@ -193,7 +201,7 @@ static ssize_t page_idle_bitmap_write(struct file *file, struct kobject *kobj,
 }
 
 static struct bin_attribute page_idle_bitmap_attr =
-		__BIN_ATTR(bitmap, 0600,
+		__BIN_ATTR(bitmap, S_IRUSR | S_IWUSR,
 			   page_idle_bitmap_read, page_idle_bitmap_write, 0);
 
 static struct bin_attribute *page_idle_bin_attrs[] = {
@@ -205,6 +213,16 @@ static const struct attribute_group page_idle_attr_group = {
 	.bin_attrs = page_idle_bin_attrs,
 	.name = "page_idle",
 };
+
+#ifndef CONFIG_64BIT
+static bool need_page_idle(void)
+{
+	return true;
+}
+struct page_ext_operations page_idle_ops = {
+	.need = need_page_idle,
+};
+#endif
 
 static int __init page_idle_init(void)
 {

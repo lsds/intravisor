@@ -1,9 +1,17 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * BQ27xxx battery monitor I2C driver
  *
- * Copyright (C) 2015 Texas Instruments Incorporated - https://www.ti.com/
+ * Copyright (C) 2015 Texas Instruments Incorporated - http://www.ti.com/
  *	Andrew F. Davis <afd@ti.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ *
+ * This program is distributed "as is" WITHOUT ANY WARRANTY of any
+ * kind, whether express or implied; without even the implied warranty
+ * of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
  */
 
 #include <linux/i2c.h>
@@ -187,8 +195,7 @@ static int bq27xxx_battery_i2c_probe(struct i2c_client *client,
 			dev_err(&client->dev,
 				"Unable to register IRQ %d error %d\n",
 				client->irq, ret);
-			bq27xxx_battery_teardown(di);
-			goto err_failed;
+			return ret;
 		}
 	}
 
@@ -205,7 +212,7 @@ err_failed:
 	return ret;
 }
 
-static void bq27xxx_battery_i2c_remove(struct i2c_client *client)
+static int bq27xxx_battery_i2c_remove(struct i2c_client *client)
 {
 	struct bq27xxx_device_info *di = i2c_get_clientdata(client);
 
@@ -214,6 +221,8 @@ static void bq27xxx_battery_i2c_remove(struct i2c_client *client)
 	mutex_lock(&battery_mutex);
 	idr_remove(&battery_id, di->id);
 	mutex_unlock(&battery_mutex);
+
+	return 0;
 }
 
 static const struct i2c_device_id bq27xxx_i2c_id_table[] = {
@@ -238,16 +247,10 @@ static const struct i2c_device_id bq27xxx_i2c_id_table[] = {
 	{ "bq27546", BQ27546 },
 	{ "bq27742", BQ27742 },
 	{ "bq27545", BQ27545 },
-	{ "bq27411", BQ27411 },
 	{ "bq27421", BQ27421 },
 	{ "bq27425", BQ27425 },
-	{ "bq27426", BQ27426 },
 	{ "bq27441", BQ27441 },
 	{ "bq27621", BQ27621 },
-	{ "bq27z561", BQ27Z561 },
-	{ "bq28z610", BQ28Z610 },
-	{ "bq34z100", BQ34Z100 },
-	{ "bq78z100", BQ78Z100 },
 	{},
 };
 MODULE_DEVICE_TABLE(i2c, bq27xxx_i2c_id_table);
@@ -275,16 +278,10 @@ static const struct of_device_id bq27xxx_battery_i2c_of_match_table[] = {
 	{ .compatible = "ti,bq27546" },
 	{ .compatible = "ti,bq27742" },
 	{ .compatible = "ti,bq27545" },
-	{ .compatible = "ti,bq27411" },
 	{ .compatible = "ti,bq27421" },
 	{ .compatible = "ti,bq27425" },
-	{ .compatible = "ti,bq27426" },
 	{ .compatible = "ti,bq27441" },
 	{ .compatible = "ti,bq27621" },
-	{ .compatible = "ti,bq27z561" },
-	{ .compatible = "ti,bq28z610" },
-	{ .compatible = "ti,bq34z100" },
-	{ .compatible = "ti,bq78z100" },
 	{},
 };
 MODULE_DEVICE_TABLE(of, bq27xxx_battery_i2c_of_match_table);

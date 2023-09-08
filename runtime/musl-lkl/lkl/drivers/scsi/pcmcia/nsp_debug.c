@@ -145,7 +145,7 @@ static void show_command(struct scsi_cmnd *SCpnt)
 
 static void show_phase(struct scsi_cmnd *SCpnt)
 {
-	int i = nsp_scsi_pointer(SCpnt)->phase;
+	int i = SCpnt->SCp.phase;
 
 	char *ph[] = {
 		"PH_UNDETERMINED",

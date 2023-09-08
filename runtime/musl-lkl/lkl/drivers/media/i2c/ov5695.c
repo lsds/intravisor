@@ -806,7 +806,7 @@ ov5695_find_best_fit(struct v4l2_subdev_format *fmt)
 }
 
 static int ov5695_set_fmt(struct v4l2_subdev *sd,
-			  struct v4l2_subdev_state *sd_state,
+			  struct v4l2_subdev_pad_config *cfg,
 			  struct v4l2_subdev_format *fmt)
 {
 	struct ov5695 *ov5695 = to_ov5695(sd);
@@ -822,7 +822,10 @@ static int ov5695_set_fmt(struct v4l2_subdev *sd,
 	fmt->format.field = V4L2_FIELD_NONE;
 	if (fmt->which == V4L2_SUBDEV_FORMAT_TRY) {
 #ifdef CONFIG_VIDEO_V4L2_SUBDEV_API
-		*v4l2_subdev_get_try_format(sd, sd_state, fmt->pad) = fmt->format;
+		*v4l2_subdev_get_try_format(sd, cfg, fmt->pad) = fmt->format;
+#else
+		mutex_unlock(&ov5695->mutex);
+		return -ENOTTY;
 #endif
 	} else {
 		ov5695->cur_mode = mode;
@@ -841,7 +844,7 @@ static int ov5695_set_fmt(struct v4l2_subdev *sd,
 }
 
 static int ov5695_get_fmt(struct v4l2_subdev *sd,
-			  struct v4l2_subdev_state *sd_state,
+			  struct v4l2_subdev_pad_config *cfg,
 			  struct v4l2_subdev_format *fmt)
 {
 	struct ov5695 *ov5695 = to_ov5695(sd);
@@ -850,11 +853,10 @@ static int ov5695_get_fmt(struct v4l2_subdev *sd,
 	mutex_lock(&ov5695->mutex);
 	if (fmt->which == V4L2_SUBDEV_FORMAT_TRY) {
 #ifdef CONFIG_VIDEO_V4L2_SUBDEV_API
-		fmt->format = *v4l2_subdev_get_try_format(sd, sd_state,
-							  fmt->pad);
+		fmt->format = *v4l2_subdev_get_try_format(sd, cfg, fmt->pad);
 #else
 		mutex_unlock(&ov5695->mutex);
-		return -EINVAL;
+		return -ENOTTY;
 #endif
 	} else {
 		fmt->format.width = mode->width;
@@ -868,7 +870,7 @@ static int ov5695_get_fmt(struct v4l2_subdev *sd,
 }
 
 static int ov5695_enum_mbus_code(struct v4l2_subdev *sd,
-				 struct v4l2_subdev_state *sd_state,
+				 struct v4l2_subdev_pad_config *cfg,
 				 struct v4l2_subdev_mbus_code_enum *code)
 {
 	if (code->index != 0)
@@ -879,7 +881,7 @@ static int ov5695_enum_mbus_code(struct v4l2_subdev *sd,
 }
 
 static int ov5695_enum_frame_sizes(struct v4l2_subdev *sd,
-				   struct v4l2_subdev_state *sd_state,
+				   struct v4l2_subdev_pad_config *cfg,
 				   struct v4l2_subdev_frame_size_enum *fse)
 {
 	if (fse->index >= ARRAY_SIZE(supported_modes))
@@ -947,9 +949,11 @@ static int ov5695_s_stream(struct v4l2_subdev *sd, int on)
 		goto unlock_and_return;
 
 	if (on) {
-		ret = pm_runtime_resume_and_get(&client->dev);
-		if (ret < 0)
+		ret = pm_runtime_get_sync(&client->dev);
+		if (ret < 0) {
+			pm_runtime_put_noidle(&client->dev);
 			goto unlock_and_return;
+		}
 
 		ret = __ov5695_start_stream(ov5695);
 		if (ret) {
@@ -970,9 +974,16 @@ unlock_and_return:
 	return ret;
 }
 
+/* Calculate the delay in us by clock rate and clock cycles */
+static inline u32 ov5695_cal_delay(u32 cycles)
+{
+	return DIV_ROUND_UP(cycles, OV5695_XVCLK_FREQ / 1000 / 1000);
+}
+
 static int __ov5695_power_on(struct ov5695 *ov5695)
 {
-	int i, ret;
+	int ret;
+	u32 delay_us;
 	struct device *dev = &ov5695->client->dev;
 
 	ret = clk_prepare_enable(ov5695->xvclk);
@@ -983,28 +994,21 @@ static int __ov5695_power_on(struct ov5695 *ov5695)
 
 	gpiod_set_value_cansleep(ov5695->reset_gpio, 1);
 
-	/*
-	 * The hardware requires the regulators to be powered on in order,
-	 * so enable them one by one.
-	 */
-	for (i = 0; i < OV5695_NUM_SUPPLIES; i++) {
-		ret = regulator_enable(ov5695->supplies[i].consumer);
-		if (ret) {
-			dev_err(dev, "Failed to enable %s: %d\n",
-				ov5695->supplies[i].supply, ret);
-			goto disable_reg_clk;
-		}
+	ret = regulator_bulk_enable(OV5695_NUM_SUPPLIES, ov5695->supplies);
+	if (ret < 0) {
+		dev_err(dev, "Failed to enable regulators\n");
+		goto disable_clk;
 	}
 
 	gpiod_set_value_cansleep(ov5695->reset_gpio, 0);
 
-	usleep_range(1000, 1200);
+	/* 8192 cycles prior to first SCCB transaction */
+	delay_us = ov5695_cal_delay(8192);
+	usleep_range(delay_us, delay_us * 2);
 
 	return 0;
 
-disable_reg_clk:
-	for (--i; i >= 0; i--)
-		regulator_disable(ov5695->supplies[i].consumer);
+disable_clk:
 	clk_disable_unprepare(ov5695->xvclk);
 
 	return ret;
@@ -1012,27 +1016,15 @@ disable_reg_clk:
 
 static void __ov5695_power_off(struct ov5695 *ov5695)
 {
-	struct device *dev = &ov5695->client->dev;
-	int i, ret;
-
 	clk_disable_unprepare(ov5695->xvclk);
 	gpiod_set_value_cansleep(ov5695->reset_gpio, 1);
-
-	/*
-	 * The hardware requires the regulators to be powered off in order,
-	 * so disable them one by one.
-	 */
-	for (i = OV5695_NUM_SUPPLIES - 1; i >= 0; i--) {
-		ret = regulator_disable(ov5695->supplies[i].consumer);
-		if (ret)
-			dev_err(dev, "Failed to disable %s: %d\n",
-				ov5695->supplies[i].supply, ret);
-	}
+	regulator_bulk_disable(OV5695_NUM_SUPPLIES, ov5695->supplies);
 }
 
 static int __maybe_unused ov5695_runtime_resume(struct device *dev)
 {
-	struct v4l2_subdev *sd = dev_get_drvdata(dev);
+	struct i2c_client *client = to_i2c_client(dev);
+	struct v4l2_subdev *sd = i2c_get_clientdata(client);
 	struct ov5695 *ov5695 = to_ov5695(sd);
 
 	return __ov5695_power_on(ov5695);
@@ -1040,7 +1032,8 @@ static int __maybe_unused ov5695_runtime_resume(struct device *dev)
 
 static int __maybe_unused ov5695_runtime_suspend(struct device *dev)
 {
-	struct v4l2_subdev *sd = dev_get_drvdata(dev);
+	struct i2c_client *client = to_i2c_client(dev);
+	struct v4l2_subdev *sd = i2c_get_clientdata(client);
 	struct ov5695 *ov5695 = to_ov5695(sd);
 
 	__ov5695_power_off(ov5695);
@@ -1053,7 +1046,7 @@ static int ov5695_open(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
 {
 	struct ov5695 *ov5695 = to_ov5695(sd);
 	struct v4l2_mbus_framefmt *try_fmt =
-				v4l2_subdev_get_try_format(sd, fh->state, 0);
+				v4l2_subdev_get_try_format(sd, fh->pad, 0);
 	const struct ov5695_mode *def_mode = &supported_modes[0];
 
 	mutex_lock(&ov5695->mutex);
@@ -1117,12 +1110,12 @@ static int ov5695_set_ctrl(struct v4l2_ctrl *ctrl)
 		break;
 	}
 
-	if (!pm_runtime_get_if_in_use(&client->dev))
+	if (pm_runtime_get_if_in_use(&client->dev) <= 0)
 		return 0;
 
 	switch (ctrl->id) {
 	case V4L2_CID_EXPOSURE:
-		/* 4 least significant bits of exposure are fractional part */
+		/* 4 least significant bits of expsoure are fractional part */
 		ret = ov5695_write_reg(ov5695->client, OV5695_REG_EXPOSURE,
 				       OV5695_REG_VALUE_24BIT, ctrl->val << 4);
 		break;
@@ -1150,7 +1143,7 @@ static int ov5695_set_ctrl(struct v4l2_ctrl *ctrl)
 		dev_warn(&client->dev, "%s Unhandled id:0x%x, val:0x%x\n",
 			 __func__, ctrl->id, ctrl->val);
 		break;
-	}
+	};
 
 	pm_runtime_put(&client->dev);
 
@@ -1295,7 +1288,7 @@ static int ov5695_probe(struct i2c_client *client,
 	if (clk_get_rate(ov5695->xvclk) != OV5695_XVCLK_FREQ)
 		dev_warn(dev, "xvclk mismatched, modes are based on 24MHz\n");
 
-	ov5695->reset_gpio = devm_gpiod_get(dev, "reset", GPIOD_OUT_HIGH);
+	ov5695->reset_gpio = devm_gpiod_get(dev, "reset", GPIOD_OUT_LOW);
 	if (IS_ERR(ov5695->reset_gpio)) {
 		dev_err(dev, "Failed to get reset-gpios\n");
 		return -EINVAL;
@@ -1335,7 +1328,7 @@ static int ov5695_probe(struct i2c_client *client,
 		goto err_power_off;
 #endif
 
-	ret = v4l2_async_register_subdev_sensor(sd);
+	ret = v4l2_async_register_subdev(sd);
 	if (ret) {
 		dev_err(dev, "v4l2 async register subdev failed\n");
 		goto err_clean_entity;
@@ -1361,7 +1354,7 @@ err_destroy_mutex:
 	return ret;
 }
 
-static void ov5695_remove(struct i2c_client *client)
+static int ov5695_remove(struct i2c_client *client)
 {
 	struct v4l2_subdev *sd = i2c_get_clientdata(client);
 	struct ov5695 *ov5695 = to_ov5695(sd);
@@ -1377,6 +1370,8 @@ static void ov5695_remove(struct i2c_client *client)
 	if (!pm_runtime_status_suspended(&client->dev))
 		__ov5695_power_off(ov5695);
 	pm_runtime_set_suspended(&client->dev);
+
+	return 0;
 }
 
 #if IS_ENABLED(CONFIG_OF)
@@ -1390,6 +1385,7 @@ MODULE_DEVICE_TABLE(of, ov5695_of_match);
 static struct i2c_driver ov5695_i2c_driver = {
 	.driver = {
 		.name = "ov5695",
+		.owner = THIS_MODULE,
 		.pm = &ov5695_pm_ops,
 		.of_match_table = of_match_ptr(ov5695_of_match),
 	},

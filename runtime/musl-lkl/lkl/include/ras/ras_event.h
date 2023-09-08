@@ -27,7 +27,7 @@
 TRACE_EVENT(extlog_mem_event,
 	TP_PROTO(struct cper_sec_mem_err *mem,
 		 u32 err_seq,
-		 const guid_t *fru_id,
+		 const uuid_le *fru_id,
 		 const char *fru_text,
 		 u8 sev),
 
@@ -39,7 +39,7 @@ TRACE_EVENT(extlog_mem_event,
 		__field(u8, sev)
 		__field(u64, pa)
 		__field(u8, pa_mask_lsb)
-		__field_struct(guid_t, fru_id)
+		__field_struct(uuid_le, fru_id)
 		__string(fru_text, fru_text)
 		__field_struct(struct cper_mem_err_compact, data)
 	),
@@ -218,8 +218,8 @@ TRACE_EVENT(arm_event,
  */
 TRACE_EVENT(non_standard_event,
 
-	TP_PROTO(const guid_t *sec_type,
-		 const guid_t *fru_id,
+	TP_PROTO(const uuid_le *sec_type,
+		 const uuid_le *fru_id,
 		 const char *fru_text,
 		 const u8 sev,
 		 const u8 *err,
@@ -298,44 +298,30 @@ TRACE_EVENT(non_standard_event,
 TRACE_EVENT(aer_event,
 	TP_PROTO(const char *dev_name,
 		 const u32 status,
-		 const u8 severity,
-		 const u8 tlp_header_valid,
-		 struct aer_header_log_regs *tlp),
+		 const u8 severity),
 
-	TP_ARGS(dev_name, status, severity, tlp_header_valid, tlp),
+	TP_ARGS(dev_name, status, severity),
 
 	TP_STRUCT__entry(
 		__string(	dev_name,	dev_name	)
 		__field(	u32,		status		)
 		__field(	u8,		severity	)
-		__field(	u8, 		tlp_header_valid)
-		__array(	u32, 		tlp_header, 4	)
 	),
 
 	TP_fast_assign(
 		__assign_str(dev_name, dev_name);
 		__entry->status		= status;
 		__entry->severity	= severity;
-		__entry->tlp_header_valid = tlp_header_valid;
-		if (tlp_header_valid) {
-			__entry->tlp_header[0] = tlp->dw0;
-			__entry->tlp_header[1] = tlp->dw1;
-			__entry->tlp_header[2] = tlp->dw2;
-			__entry->tlp_header[3] = tlp->dw3;
-		}
 	),
 
-	TP_printk("%s PCIe Bus Error: severity=%s, %s, TLP Header=%s\n",
+	TP_printk("%s PCIe Bus Error: severity=%s, %s\n",
 		__get_str(dev_name),
 		__entry->severity == AER_CORRECTABLE ? "Corrected" :
 			__entry->severity == AER_FATAL ?
 			"Fatal" : "Uncorrected, non-fatal",
 		__entry->severity == AER_CORRECTABLE ?
 		__print_flags(__entry->status, "|", aer_correctable_errors) :
-		__print_flags(__entry->status, "|", aer_uncorrectable_errors),
-		__entry->tlp_header_valid ?
-			__print_array(__entry->tlp_header, 4, 4) :
-			"Not available")
+		__print_flags(__entry->status, "|", aer_uncorrectable_errors))
 );
 
 /*
@@ -358,6 +344,7 @@ TRACE_EVENT(aer_event,
 	EM ( MF_MSG_KERNEL_HIGH_ORDER, "high-order kernel page" )	\
 	EM ( MF_MSG_SLAB, "kernel slab page" )				\
 	EM ( MF_MSG_DIFFERENT_COMPOUND, "different compound page after locking" ) \
+	EM ( MF_MSG_POISONED_HUGE, "huge page already hardware poisoned" )	\
 	EM ( MF_MSG_HUGE, "huge page" )					\
 	EM ( MF_MSG_FREE_HUGE, "free huge page" )			\
 	EM ( MF_MSG_UNMAP_FAILED, "unmapping failed page" )		\
@@ -371,8 +358,7 @@ TRACE_EVENT(aer_event,
 	EM ( MF_MSG_CLEAN_LRU, "clean LRU page" )			\
 	EM ( MF_MSG_TRUNCATED_LRU, "already truncated LRU page" )	\
 	EM ( MF_MSG_BUDDY, "free buddy page" )				\
-	EM ( MF_MSG_DAX, "dax page" )					\
-	EM ( MF_MSG_UNSPLIT_THP, "unsplit thp" )			\
+	EM ( MF_MSG_BUDDY_2ND, "free buddy page (2nd try)" )		\
 	EMe ( MF_MSG_UNKNOWN, "unknown page" )
 
 /*

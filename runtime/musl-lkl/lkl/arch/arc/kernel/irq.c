@@ -1,13 +1,15 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (C) 2011-12 Synopsys, Inc. (www.synopsys.com)
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ *
  */
 
 #include <linux/interrupt.h>
 #include <linux/irqchip.h>
 #include <asm/mach_desc.h>
-
-#include <asm/irq_regs.h>
 #include <asm/smp.h>
 
 /*
@@ -29,10 +31,10 @@ void __init init_IRQ(void)
 	/* a SMP H/w block could do IPI IRQ request here */
 	if (plat_smp_ops.init_per_cpu)
 		plat_smp_ops.init_per_cpu(smp_processor_id());
-#endif
 
 	if (machine_desc->init_per_cpu)
 		machine_desc->init_per_cpu(smp_processor_id());
+#endif
 }
 
 /*
@@ -41,11 +43,5 @@ void __init init_IRQ(void)
  */
 void arch_do_IRQ(unsigned int hwirq, struct pt_regs *regs)
 {
-	struct pt_regs *old_regs;
-
-	irq_enter();
-	old_regs = set_irq_regs(regs);
-	generic_handle_domain_irq(NULL, hwirq);
-	set_irq_regs(old_regs);
-	irq_exit();
+	handle_domain_irq(NULL, hwirq, regs);
 }

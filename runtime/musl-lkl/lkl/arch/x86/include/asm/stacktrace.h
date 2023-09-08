@@ -9,8 +9,6 @@
 
 #include <linux/uaccess.h>
 #include <linux/ptrace.h>
-
-#include <asm/cpu_entry_area.h>
 #include <asm/switch_to.h>
 
 enum stack_type {
@@ -35,18 +33,6 @@ bool in_entry_stack(unsigned long *stack, struct stack_info *info);
 
 int get_stack_info(unsigned long *stack, struct task_struct *task,
 		   struct stack_info *info, unsigned long *visit_mask);
-bool get_stack_info_noinstr(unsigned long *stack, struct task_struct *task,
-			    struct stack_info *info);
-
-static __always_inline
-bool get_stack_guard_info(unsigned long *stack, struct stack_info *info)
-{
-	/* make sure it's not in the stack proper */
-	if (get_stack_info_noinstr(stack, current, info))
-		return false;
-	/* but if it is in the page below it, we hit a guard */
-	return get_stack_info_noinstr((void *)stack + PAGE_SIZE, current, info);
-}
 
 const char *stack_type_name(enum stack_type type);
 
@@ -90,13 +76,16 @@ static inline unsigned long *
 get_stack_pointer(struct task_struct *task, struct pt_regs *regs)
 {
 	if (regs)
-		return (unsigned long *)regs->sp;
+		return (unsigned long *)kernel_stack_pointer(regs);
 
 	if (task == current)
 		return __builtin_frame_address(0);
 
 	return (unsigned long *)task->thread.sp;
 }
+
+void show_trace_log_lvl(struct task_struct *task, struct pt_regs *regs,
+			unsigned long *stack, char *log_lvl);
 
 /* The form of the top of the frame on the stack */
 struct stack_frame {
@@ -109,6 +98,17 @@ struct stack_frame_ia32 {
     u32 return_address;
 };
 
-void show_opcodes(struct pt_regs *regs, const char *loglvl);
-void show_ip(struct pt_regs *regs, const char *loglvl);
+static inline unsigned long caller_frame_pointer(void)
+{
+	struct stack_frame *frame;
+
+	frame = __builtin_frame_address(0);
+
+#ifdef CONFIG_FRAME_POINTER
+	frame = frame->next_frame;
+#endif
+
+	return (unsigned long)frame;
+}
+
 #endif /* _ASM_X86_STACKTRACE_H */

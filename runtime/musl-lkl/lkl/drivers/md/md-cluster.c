@@ -1,6 +1,11 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Copyright (C) 2015, SUSE
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2, or (at your option)
+ * any later version.
+ *
  */
 
 
@@ -28,6 +33,13 @@ struct dlm_lock_resource {
 	int mode;
 };
 
+struct suspend_info {
+	int slot;
+	sector_t lo;
+	sector_t hi;
+	struct list_head list;
+};
+
 struct resync_info {
 	__le64 lo;
 	__le64 hi;
@@ -40,7 +52,7 @@ struct resync_info {
 
 /* Lock the send communication. This is done through
  * bit manipulation as opposed to a mutex in order to
- * accommodate lock and hold. See next comment.
+ * accomodate lock and hold. See next comment.
  */
 #define		MD_CLUSTER_SEND_LOCK			4
 /* If cluster operations (such as adding a disk) must lock the
@@ -68,13 +80,7 @@ struct md_cluster_info {
 	struct dlm_lock_resource **other_bitmap_lockres;
 	struct dlm_lock_resource *resync_lockres;
 	struct list_head suspend_list;
-
 	spinlock_t suspend_lock;
-	/* record the region which write should be suspended */
-	sector_t suspend_lo;
-	sector_t suspend_hi;
-	int suspend_from; /* the slot which broadcast suspend_lo/hi */
-
 	struct md_thread *recovery_thread;
 	unsigned long recovery_map;
 	/* communication loc resources */
@@ -99,7 +105,6 @@ enum msg_type {
 	RE_ADD,
 	BITMAP_NEEDS_SYNC,
 	CHANGE_CAPACITY,
-	BITMAP_RESIZE,
 };
 
 struct cluster_msg {
@@ -201,7 +206,7 @@ static struct dlm_lock_resource *lockres_init(struct mddev *mddev,
 		pr_err("md-cluster: Unable to allocate resource name for resource %s\n", name);
 		goto out_err;
 	}
-	strscpy(res->name, name, namelen + 1);
+	strlcpy(res->name, name, namelen + 1);
 	if (with_lvb) {
 		res->lksb.sb_lvbptr = kzalloc(LVB_SIZE, GFP_KERNEL);
 		if (!res->lksb.sb_lvbptr) {
@@ -265,22 +270,25 @@ static void add_resync_info(struct dlm_lock_resource *lockres,
 	ri->hi = cpu_to_le64(hi);
 }
 
-static int read_resync_info(struct mddev *mddev,
-			    struct dlm_lock_resource *lockres)
+static struct suspend_info *read_resync_info(struct mddev *mddev, struct dlm_lock_resource *lockres)
 {
 	struct resync_info ri;
-	struct md_cluster_info *cinfo = mddev->cluster_info;
-	int ret = 0;
+	struct suspend_info *s = NULL;
+	sector_t hi = 0;
 
 	dlm_lock_sync(lockres, DLM_LOCK_CR);
 	memcpy(&ri, lockres->lksb.sb_lvbptr, sizeof(struct resync_info));
-	if (le64_to_cpu(ri.hi) > 0) {
-		cinfo->suspend_hi = le64_to_cpu(ri.hi);
-		cinfo->suspend_lo = le64_to_cpu(ri.lo);
-		ret = 1;
+	hi = le64_to_cpu(ri.hi);
+	if (hi > 0) {
+		s = kzalloc(sizeof(struct suspend_info), GFP_KERNEL);
+		if (!s)
+			goto out;
+		s->hi = hi;
+		s->lo = le64_to_cpu(ri.lo);
 	}
 	dlm_unlock_sync(lockres);
-	return ret;
+out:
+	return s;
 }
 
 static void recover_bitmaps(struct md_thread *thread)
@@ -290,10 +298,20 @@ static void recover_bitmaps(struct md_thread *thread)
 	struct dlm_lock_resource *bm_lockres;
 	char str[64];
 	int slot, ret;
+	struct suspend_info *s, *tmp;
 	sector_t lo, hi;
 
 	while (cinfo->recovery_map) {
 		slot = fls64((u64)cinfo->recovery_map) - 1;
+
+		/* Clear suspend_area associated with the bitmap */
+		spin_lock_irq(&cinfo->suspend_lock);
+		list_for_each_entry_safe(s, tmp, &cinfo->suspend_list, list)
+			if (slot == s->slot) {
+				list_del(&s->list);
+				kfree(s);
+			}
+		spin_unlock_irq(&cinfo->suspend_lock);
 
 		snprintf(str, 64, "bitmap%04d", slot);
 		bm_lockres = lockres_init(mddev, str, NULL, 1);
@@ -308,39 +326,19 @@ static void recover_bitmaps(struct md_thread *thread)
 					str, ret);
 			goto clear_bit;
 		}
-		ret = md_bitmap_copy_from_slot(mddev, slot, &lo, &hi, true);
+		ret = bitmap_copy_from_slot(mddev, slot, &lo, &hi, true);
 		if (ret) {
 			pr_err("md-cluster: Could not copy data from bitmap %d\n", slot);
 			goto clear_bit;
 		}
-
-		/* Clear suspend_area associated with the bitmap */
-		spin_lock_irq(&cinfo->suspend_lock);
-		cinfo->suspend_hi = 0;
-		cinfo->suspend_lo = 0;
-		cinfo->suspend_from = -1;
-		spin_unlock_irq(&cinfo->suspend_lock);
-
-		/* Kick off a reshape if needed */
-		if (test_bit(MD_RESYNCING_REMOTE, &mddev->recovery) &&
-		    test_bit(MD_RECOVERY_RESHAPE, &mddev->recovery) &&
-		    mddev->reshape_position != MaxSector)
-			md_wakeup_thread(mddev->sync_thread);
-
 		if (hi > 0) {
 			if (lo < mddev->recovery_cp)
 				mddev->recovery_cp = lo;
 			/* wake up thread to continue resync in case resync
 			 * is not finished */
 			if (mddev->recovery_cp != MaxSector) {
-				/*
-				 * clear the REMOTE flag since we will launch
-				 * resync thread in current node.
-				 */
-				clear_bit(MD_RESYNCING_REMOTE,
-					  &mddev->recovery);
-				set_bit(MD_RECOVERY_NEEDED, &mddev->recovery);
-				md_wakeup_thread(mddev->thread);
+			    set_bit(MD_RECOVERY_NEEDED, &mddev->recovery);
+			    md_wakeup_thread(mddev->thread);
 			}
 		}
 clear_bit:
@@ -429,41 +427,41 @@ static void ack_bast(void *arg, int mode)
 	}
 }
 
+static void __remove_suspend_info(struct md_cluster_info *cinfo, int slot)
+{
+	struct suspend_info *s, *tmp;
+
+	list_for_each_entry_safe(s, tmp, &cinfo->suspend_list, list)
+		if (slot == s->slot) {
+			list_del(&s->list);
+			kfree(s);
+			break;
+		}
+}
+
 static void remove_suspend_info(struct mddev *mddev, int slot)
 {
 	struct md_cluster_info *cinfo = mddev->cluster_info;
 	mddev->pers->quiesce(mddev, 1);
 	spin_lock_irq(&cinfo->suspend_lock);
-	cinfo->suspend_hi = 0;
-	cinfo->suspend_lo = 0;
+	__remove_suspend_info(cinfo, slot);
 	spin_unlock_irq(&cinfo->suspend_lock);
 	mddev->pers->quiesce(mddev, 0);
 }
+
 
 static void process_suspend_info(struct mddev *mddev,
 		int slot, sector_t lo, sector_t hi)
 {
 	struct md_cluster_info *cinfo = mddev->cluster_info;
-	struct mdp_superblock_1 *sb = NULL;
-	struct md_rdev *rdev;
+	struct suspend_info *s;
 
 	if (!hi) {
-		/*
-		 * clear the REMOTE flag since resync or recovery is finished
-		 * in remote node.
-		 */
-		clear_bit(MD_RESYNCING_REMOTE, &mddev->recovery);
 		remove_suspend_info(mddev, slot);
 		set_bit(MD_RECOVERY_NEEDED, &mddev->recovery);
 		md_wakeup_thread(mddev->thread);
 		return;
 	}
-
-	rdev_for_each(rdev, mddev)
-		if (rdev->raid_disk > -1 && !test_bit(Faulty, &rdev->flags)) {
-			sb = page_address(rdev->sb_page);
-			break;
-		}
 
 	/*
 	 * The bitmaps are not same for different nodes
@@ -477,26 +475,28 @@ static void process_suspend_info(struct mddev *mddev,
 	 * sync_low/hi is used to record the region which
 	 * arrived in the previous RESYNCING message,
 	 *
-	 * Call md_bitmap_sync_with_cluster to clear NEEDED_MASK
-	 * and set RESYNC_MASK since  resync thread is running
-	 * in another node, so we don't need to do the resync
-	 * again with the same section.
-	 *
-	 * Skip md_bitmap_sync_with_cluster in case reshape
-	 * happening, because reshaping region is small and
-	 * we don't want to trigger lots of WARN.
-	 */
-	if (sb && !(le32_to_cpu(sb->feature_map) & MD_FEATURE_RESHAPE_ACTIVE))
-		md_bitmap_sync_with_cluster(mddev, cinfo->sync_low,
-					    cinfo->sync_hi, lo, hi);
+	 * Call bitmap_sync_with_cluster to clear
+	 * NEEDED_MASK and set RESYNC_MASK since
+	 * resync thread is running in another node,
+	 * so we don't need to do the resync again
+	 * with the same section */
+	bitmap_sync_with_cluster(mddev, cinfo->sync_low,
+					cinfo->sync_hi,
+					lo, hi);
 	cinfo->sync_low = lo;
 	cinfo->sync_hi = hi;
 
+	s = kzalloc(sizeof(struct suspend_info), GFP_KERNEL);
+	if (!s)
+		return;
+	s->slot = slot;
+	s->lo = lo;
+	s->hi = hi;
 	mddev->pers->quiesce(mddev, 1);
 	spin_lock_irq(&cinfo->suspend_lock);
-	cinfo->suspend_from = slot;
-	cinfo->suspend_lo = lo;
-	cinfo->suspend_hi = hi;
+	/* Remove existing entry (if exists) before adding */
+	__remove_suspend_info(cinfo, slot);
+	list_add(&s->list, &cinfo->suspend_list);
 	spin_unlock_irq(&cinfo->suspend_lock);
 	mddev->pers->quiesce(mddev, 0);
 }
@@ -574,17 +574,17 @@ static int process_recvd_msg(struct mddev *mddev, struct cluster_msg *msg)
 	int ret = 0;
 
 	if (WARN(mddev->cluster_info->slot_number - 1 == le32_to_cpu(msg->slot),
-		"node %d received its own msg\n", le32_to_cpu(msg->slot)))
+		"node %d received it's own msg\n", le32_to_cpu(msg->slot)))
 		return -1;
 	switch (le32_to_cpu(msg->type)) {
 	case METADATA_UPDATED:
 		process_metadata_update(mddev, msg);
 		break;
 	case CHANGE_CAPACITY:
-		set_capacity_and_notify(mddev->gendisk, mddev->array_sectors);
+		set_capacity(mddev->gendisk, mddev->array_sectors);
+		revalidate_disk(mddev->gendisk);
 		break;
 	case RESYNCING:
-		set_bit(MD_RESYNCING_REMOTE, &mddev->recovery);
 		process_suspend_info(mddev, le32_to_cpu(msg->slot),
 				     le64_to_cpu(msg->low),
 				     le64_to_cpu(msg->high));
@@ -600,11 +600,6 @@ static int process_recvd_msg(struct mddev *mddev, struct cluster_msg *msg)
 		break;
 	case BITMAP_NEEDS_SYNC:
 		__recover_slot(mddev, le32_to_cpu(msg->slot));
-		break;
-	case BITMAP_RESIZE:
-		if (le64_to_cpu(msg->high) != mddev->pers->size(mddev, 0, 0))
-			ret = md_bitmap_resize(mddev->bitmap,
-					    le64_to_cpu(msg->high), 0, 0);
 		break;
 	default:
 		ret = -1;
@@ -663,18 +658,35 @@ out:
  * Takes the lock on the TOKEN lock resource so no other
  * node can communicate while the operation is underway.
  */
-static int lock_token(struct md_cluster_info *cinfo)
+static int lock_token(struct md_cluster_info *cinfo, bool mddev_locked)
 {
-	int error;
+	int error, set_bit = 0;
+	struct mddev *mddev = cinfo->mddev;
 
+	/*
+	 * If resync thread run after raid1d thread, then process_metadata_update
+	 * could not continue if raid1d held reconfig_mutex (and raid1d is blocked
+	 * since another node already got EX on Token and waitting the EX of Ack),
+	 * so let resync wake up thread in case flag is set.
+	 */
+	if (mddev_locked && !test_bit(MD_CLUSTER_HOLDING_MUTEX_FOR_RECVD,
+				      &cinfo->state)) {
+		error = test_and_set_bit_lock(MD_CLUSTER_HOLDING_MUTEX_FOR_RECVD,
+					      &cinfo->state);
+		WARN_ON_ONCE(error);
+		md_wakeup_thread(mddev->thread);
+		set_bit = 1;
+	}
 	error = dlm_lock_sync(cinfo->token_lockres, DLM_LOCK_EX);
-	if (error) {
+	if (set_bit)
+		clear_bit_unlock(MD_CLUSTER_HOLDING_MUTEX_FOR_RECVD, &cinfo->state);
+
+	if (error)
 		pr_err("md-cluster(%s:%d): failed to get EX on TOKEN (%d)\n",
 				__func__, __LINE__, error);
-	} else {
-		/* Lock the receive sequence */
-		mutex_lock(&cinfo->recv_mutex);
-	}
+
+	/* Lock the receive sequence */
+	mutex_lock(&cinfo->recv_mutex);
 	return error;
 }
 
@@ -683,30 +695,10 @@ static int lock_token(struct md_cluster_info *cinfo)
  */
 static int lock_comm(struct md_cluster_info *cinfo, bool mddev_locked)
 {
-	int rv, set_bit = 0;
-	struct mddev *mddev = cinfo->mddev;
-
-	/*
-	 * If resync thread run after raid1d thread, then process_metadata_update
-	 * could not continue if raid1d held reconfig_mutex (and raid1d is blocked
-	 * since another node already got EX on Token and waiting the EX of Ack),
-	 * so let resync wake up thread in case flag is set.
-	 */
-	if (mddev_locked && !test_bit(MD_CLUSTER_HOLDING_MUTEX_FOR_RECVD,
-				      &cinfo->state)) {
-		rv = test_and_set_bit_lock(MD_CLUSTER_HOLDING_MUTEX_FOR_RECVD,
-					      &cinfo->state);
-		WARN_ON_ONCE(rv);
-		md_wakeup_thread(mddev->thread);
-		set_bit = 1;
-	}
-
 	wait_event(cinfo->wait,
 		   !test_and_set_bit(MD_CLUSTER_SEND_LOCK, &cinfo->state));
-	rv = lock_token(cinfo);
-	if (set_bit)
-		clear_bit_unlock(MD_CLUSTER_HOLDING_MUTEX_FOR_RECVD, &cinfo->state);
-	return rv;
+
+	return lock_token(cinfo, mddev_locked);
 }
 
 static void unlock_comm(struct md_cluster_info *cinfo)
@@ -786,11 +778,9 @@ static int sendmsg(struct md_cluster_info *cinfo, struct cluster_msg *cmsg,
 {
 	int ret;
 
-	ret = lock_comm(cinfo, mddev_locked);
-	if (!ret) {
-		ret = __sendmsg(cinfo, cmsg);
-		unlock_comm(cinfo);
-	}
+	lock_comm(cinfo, mddev_locked);
+	ret = __sendmsg(cinfo, cmsg);
+	unlock_comm(cinfo);
 	return ret;
 }
 
@@ -799,6 +789,7 @@ static int gather_all_resync_info(struct mddev *mddev, int total_slots)
 	struct md_cluster_info *cinfo = mddev->cluster_info;
 	int i, ret = 0;
 	struct dlm_lock_resource *bm_lockres;
+	struct suspend_info *s;
 	char str[64];
 	sector_t lo, hi;
 
@@ -817,13 +808,16 @@ static int gather_all_resync_info(struct mddev *mddev, int total_slots)
 		bm_lockres->flags |= DLM_LKF_NOQUEUE;
 		ret = dlm_lock_sync(bm_lockres, DLM_LOCK_PW);
 		if (ret == -EAGAIN) {
-			if (read_resync_info(mddev, bm_lockres)) {
+			s = read_resync_info(mddev, bm_lockres);
+			if (s) {
 				pr_info("%s:%d Resync[%llu..%llu] in progress on %d\n",
 						__func__, __LINE__,
-					(unsigned long long) cinfo->suspend_lo,
-					(unsigned long long) cinfo->suspend_hi,
-					i);
-				cinfo->suspend_from = i;
+						(unsigned long long) s->lo,
+						(unsigned long long) s->hi, i);
+				spin_lock_irq(&cinfo->suspend_lock);
+				s->slot = i;
+				list_add(&s->list, &cinfo->suspend_list);
+				spin_unlock_irq(&cinfo->suspend_lock);
 			}
 			ret = 0;
 			lockres_free(bm_lockres);
@@ -835,7 +829,7 @@ static int gather_all_resync_info(struct mddev *mddev, int total_slots)
 		}
 
 		/* Read the disk bitmap sb and check if it needs recovery */
-		ret = md_bitmap_copy_from_slot(mddev, i, &lo, &hi, false);
+		ret = bitmap_copy_from_slot(mddev, i, &lo, &hi, false);
 		if (ret) {
 			pr_warn("md-cluster: Could not gather bitmaps from slot %d", i);
 			lockres_free(bm_lockres);
@@ -876,8 +870,8 @@ static int join(struct mddev *mddev, int nodes)
 	memset(str, 0, 64);
 	sprintf(str, "%pU", mddev->uuid);
 	ret = dlm_new_lockspace(str, mddev->bitmap_info.cluster_name,
-				0, LVB_SIZE, &md_ls_ops, mddev,
-				&ops_rv, &cinfo->lockspace);
+				DLM_LSFL_FS, LVB_SIZE,
+				&md_ls_ops, mddev, &ops_rv, &cinfo->lockspace);
 	if (ret)
 		goto err;
 	wait_for_completion(&cinfo->completion);
@@ -996,17 +990,10 @@ static int leave(struct mddev *mddev)
 	if (!cinfo)
 		return 0;
 
-	/*
-	 * BITMAP_NEEDS_SYNC message should be sent when node
+	/* BITMAP_NEEDS_SYNC message should be sent when node
 	 * is leaving the cluster with dirty bitmap, also we
-	 * can only deliver it when dlm connection is available.
-	 *
-	 * Also, we should send BITMAP_NEEDS_SYNC message in
-	 * case reshaping is interrupted.
-	 */
-	if ((cinfo->slot_number > 0 && mddev->recovery_cp != MaxSector) ||
-	    (mddev->reshape_position != MaxSector &&
-	     test_bit(MD_CLOSING, &mddev->flags)))
+	 * can only deliver it when dlm connection is available */
+	if (cinfo->slot_number > 0 && mddev->recovery_cp != MaxSector)
 		resync_bitmap(mddev);
 
 	set_bit(MD_CLUSTER_HOLDING_MUTEX_FOR_RECVD, &cinfo->state);
@@ -1065,7 +1052,7 @@ static int metadata_update_start(struct mddev *mddev)
 		return 0;
 	}
 
-	ret = lock_token(cinfo);
+	ret = lock_token(cinfo, 1);
 	clear_bit_unlock(MD_CLUSTER_HOLDING_MUTEX_FOR_RECVD, &cinfo->state);
 	return ret;
 }
@@ -1104,82 +1091,6 @@ static void metadata_update_cancel(struct mddev *mddev)
 	unlock_comm(cinfo);
 }
 
-static int update_bitmap_size(struct mddev *mddev, sector_t size)
-{
-	struct md_cluster_info *cinfo = mddev->cluster_info;
-	struct cluster_msg cmsg = {0};
-	int ret;
-
-	cmsg.type = cpu_to_le32(BITMAP_RESIZE);
-	cmsg.high = cpu_to_le64(size);
-	ret = sendmsg(cinfo, &cmsg, 0);
-	if (ret)
-		pr_err("%s:%d: failed to send BITMAP_RESIZE message (%d)\n",
-			__func__, __LINE__, ret);
-	return ret;
-}
-
-static int resize_bitmaps(struct mddev *mddev, sector_t newsize, sector_t oldsize)
-{
-	struct bitmap_counts *counts;
-	char str[64];
-	struct dlm_lock_resource *bm_lockres;
-	struct bitmap *bitmap = mddev->bitmap;
-	unsigned long my_pages = bitmap->counts.pages;
-	int i, rv;
-
-	/*
-	 * We need to ensure all the nodes can grow to a larger
-	 * bitmap size before make the reshaping.
-	 */
-	rv = update_bitmap_size(mddev, newsize);
-	if (rv)
-		return rv;
-
-	for (i = 0; i < mddev->bitmap_info.nodes; i++) {
-		if (i == md_cluster_ops->slot_number(mddev))
-			continue;
-
-		bitmap = get_bitmap_from_slot(mddev, i);
-		if (IS_ERR(bitmap)) {
-			pr_err("can't get bitmap from slot %d\n", i);
-			bitmap = NULL;
-			goto out;
-		}
-		counts = &bitmap->counts;
-
-		/*
-		 * If we can hold the bitmap lock of one node then
-		 * the slot is not occupied, update the pages.
-		 */
-		snprintf(str, 64, "bitmap%04d", i);
-		bm_lockres = lockres_init(mddev, str, NULL, 1);
-		if (!bm_lockres) {
-			pr_err("Cannot initialize %s lock\n", str);
-			goto out;
-		}
-		bm_lockres->flags |= DLM_LKF_NOQUEUE;
-		rv = dlm_lock_sync(bm_lockres, DLM_LOCK_PW);
-		if (!rv)
-			counts->pages = my_pages;
-		lockres_free(bm_lockres);
-
-		if (my_pages != counts->pages)
-			/*
-			 * Let's revert the bitmap size if one node
-			 * can't resize bitmap
-			 */
-			goto out;
-		md_bitmap_free(bitmap);
-	}
-
-	return 0;
-out:
-	md_bitmap_free(bitmap);
-	update_bitmap_size(mddev, oldsize);
-	return -1;
-}
-
 /*
  * return 0 if all the bitmaps have the same sync_size
  */
@@ -1216,13 +1127,13 @@ static int cluster_check_sync_size(struct mddev *mddev)
 		bm_lockres = lockres_init(mddev, str, NULL, 1);
 		if (!bm_lockres) {
 			pr_err("md-cluster: Cannot initialize %s\n", str);
-			md_bitmap_free(bitmap);
+			bitmap_free(bitmap);
 			return -1;
 		}
 		bm_lockres->flags |= DLM_LKF_NOQUEUE;
 		rv = dlm_lock_sync(bm_lockres, DLM_LOCK_PW);
 		if (!rv)
-			md_bitmap_update_sb(bitmap);
+			bitmap_update_sb(bitmap);
 		lockres_free(bm_lockres);
 
 		sb = kmap_atomic(bitmap->storage.sb_page);
@@ -1230,11 +1141,11 @@ static int cluster_check_sync_size(struct mddev *mddev)
 			sync_size = sb->sync_size;
 		else if (sync_size != sb->sync_size) {
 			kunmap_atomic(sb);
-			md_bitmap_free(bitmap);
+			bitmap_free(bitmap);
 			return -1;
 		}
 		kunmap_atomic(sb);
-		md_bitmap_free(bitmap);
+		bitmap_free(bitmap);
 	}
 
 	return (my_sync_size == sync_size) ? 0 : -1;
@@ -1259,10 +1170,7 @@ static void update_size(struct mddev *mddev, sector_t old_dev_sectors)
 	int raid_slot = -1;
 
 	md_update_sb(mddev, 1);
-	if (lock_comm(cinfo, 1)) {
-		pr_err("%s: lock_comm failed\n", __func__);
-		return;
-	}
+	lock_comm(cinfo, 1);
 
 	memset(&cmsg, 0, sizeof(cmsg));
 	cmsg.type = cpu_to_le32(METADATA_UPDATED);
@@ -1303,10 +1211,13 @@ static void update_size(struct mddev *mddev, sector_t old_dev_sectors)
 		if (ret)
 			pr_err("%s:%d: failed to send CHANGE_CAPACITY msg\n",
 			       __func__, __LINE__);
-		set_capacity_and_notify(mddev->gendisk, mddev->array_sectors);
+		set_capacity(mddev->gendisk, mddev->array_sectors);
+		revalidate_disk(mddev->gendisk);
 	} else {
 		/* revert to previous sectors */
 		ret = mddev->pers->resize(mddev, old_dev_sectors);
+		if (!ret)
+			revalidate_disk(mddev->gendisk);
 		ret = __sendmsg(cinfo, &cmsg);
 		if (ret)
 			pr_err("%s:%d: failed to send METADATA_UPDATED msg\n",
@@ -1319,16 +1230,6 @@ static int resync_start(struct mddev *mddev)
 {
 	struct md_cluster_info *cinfo = mddev->cluster_info;
 	return dlm_lock_sync_interruptible(cinfo->resync_lockres, DLM_LOCK_EX, mddev);
-}
-
-static void resync_info_get(struct mddev *mddev, sector_t *lo, sector_t *hi)
-{
-	struct md_cluster_info *cinfo = mddev->cluster_info;
-
-	spin_lock_irq(&cinfo->suspend_lock);
-	*lo = cinfo->suspend_lo;
-	*hi = cinfo->suspend_hi;
-	spin_unlock_irq(&cinfo->suspend_lock);
 }
 
 static int resync_info_update(struct mddev *mddev, sector_t lo, sector_t hi)
@@ -1364,18 +1265,8 @@ static int resync_info_update(struct mddev *mddev, sector_t lo, sector_t hi)
 static int resync_finish(struct mddev *mddev)
 {
 	struct md_cluster_info *cinfo = mddev->cluster_info;
-	int ret = 0;
-
-	clear_bit(MD_RESYNCING_REMOTE, &mddev->recovery);
-
-	/*
-	 * If resync thread is interrupted so we can't say resync is finished,
-	 * another node will launch resync thread to continue.
-	 */
-	if (!test_bit(MD_CLOSING, &mddev->flags))
-		ret = resync_info_update(mddev, 0, 0);
 	dlm_unlock_sync(cinfo->resync_lockres);
-	return ret;
+	return resync_info_update(mddev, 0, 0);
 }
 
 static int area_resyncing(struct mddev *mddev, int direction,
@@ -1383,14 +1274,21 @@ static int area_resyncing(struct mddev *mddev, int direction,
 {
 	struct md_cluster_info *cinfo = mddev->cluster_info;
 	int ret = 0;
+	struct suspend_info *s;
 
 	if ((direction == READ) &&
 		test_bit(MD_CLUSTER_SUSPEND_READ_BALANCING, &cinfo->state))
 		return 1;
 
 	spin_lock_irq(&cinfo->suspend_lock);
-	if (hi > cinfo->suspend_lo && lo < cinfo->suspend_hi)
-		ret = 1;
+	if (list_empty(&cinfo->suspend_list))
+		goto out;
+	list_for_each_entry(s, &cinfo->suspend_list, list)
+		if (hi > s->lo && lo < s->hi) {
+			ret = 1;
+			break;
+		}
+out:
 	spin_unlock_irq(&cinfo->suspend_lock);
 	return ret;
 }
@@ -1411,8 +1309,7 @@ static int add_new_disk(struct mddev *mddev, struct md_rdev *rdev)
 	cmsg.type = cpu_to_le32(NEWDISK);
 	memcpy(cmsg.uuid, uuid, 16);
 	cmsg.raid_slot = cpu_to_le32(rdev->desc_nr);
-	if (lock_comm(cinfo, 1))
-		return -EAGAIN;
+	lock_comm(cinfo, 1);
 	ret = __sendmsg(cinfo, &cmsg);
 	if (ret) {
 		unlock_comm(cinfo);
@@ -1483,9 +1380,9 @@ static int lock_all_bitmaps(struct mddev *mddev)
 	char str[64];
 	struct md_cluster_info *cinfo = mddev->cluster_info;
 
-	cinfo->other_bitmap_lockres =
-		kcalloc(mddev->bitmap_info.nodes - 1,
-			sizeof(struct dlm_lock_resource *), GFP_KERNEL);
+	cinfo->other_bitmap_lockres = kzalloc((mddev->bitmap_info.nodes - 1) *
+					     sizeof(struct dlm_lock_resource *),
+					     GFP_KERNEL);
 	if (!cinfo->other_bitmap_lockres) {
 		pr_err("md: can't alloc mem for other bitmap locks\n");
 		return 0;
@@ -1525,7 +1422,6 @@ static void unlock_all_bitmaps(struct mddev *mddev)
 			}
 		}
 		kfree(cinfo->other_bitmap_lockres);
-		cinfo->other_bitmap_lockres = NULL;
 	}
 }
 
@@ -1546,7 +1442,7 @@ static int gather_bitmaps(struct md_rdev *rdev)
 	for (sn = 0; sn < mddev->bitmap_info.nodes; sn++) {
 		if (sn == (cinfo->slot_number - 1))
 			continue;
-		err = md_bitmap_copy_from_slot(mddev, sn, &lo, &hi, false);
+		err = bitmap_copy_from_slot(mddev, sn, &lo, &hi, false);
 		if (err) {
 			pr_warn("md-cluster: Could not gather bitmaps from slot %d", sn);
 			goto out;
@@ -1565,7 +1461,6 @@ static struct md_cluster_operations cluster_ops = {
 	.resync_start = resync_start,
 	.resync_finish = resync_finish,
 	.resync_info_update = resync_info_update,
-	.resync_info_get = resync_info_get,
 	.metadata_update_start = metadata_update_start,
 	.metadata_update_finish = metadata_update_finish,
 	.metadata_update_cancel = metadata_update_cancel,
@@ -1576,7 +1471,6 @@ static struct md_cluster_operations cluster_ops = {
 	.remove_disk = remove_disk,
 	.load_bitmaps = load_bitmaps,
 	.gather_bitmaps = gather_bitmaps,
-	.resize_bitmaps = resize_bitmaps,
 	.lock_all_bitmaps = lock_all_bitmaps,
 	.unlock_all_bitmaps = unlock_all_bitmaps,
 	.update_size = update_size,

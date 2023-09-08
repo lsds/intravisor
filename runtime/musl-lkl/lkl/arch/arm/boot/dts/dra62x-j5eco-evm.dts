@@ -1,4 +1,8 @@
-// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ */
 /dts-v1/;
 
 #include "dra62x.dtsi"
@@ -23,23 +27,13 @@
 };
 
 &cpsw_emac0 {
-	phy-handle = <&ethphy0>;
-	phy-mode = "rgmii-id";
+	phy_id = <&davinci_mdio>, <0>;
+	phy-mode = "rgmii";
 };
 
 &cpsw_emac1 {
-	phy-handle = <&ethphy1>;
-	phy-mode = "rgmii-id";
-};
-
-&davinci_mdio {
-	ethphy0: ethernet-phy@0 {
-		reg = <0>;
-	};
-
-	ethphy1: ethernet-phy@1 {
-		reg = <1>;
-	};
+	phy_id = <&davinci_mdio>, <1>;
+	phy-mode = "rgmii";
 };
 
 &gpmc {
@@ -51,7 +45,7 @@
 		interrupt-parent = <&gpmc>;
 		interrupts = <0 IRQ_TYPE_NONE>, /* fifoevent */
 			     <1 IRQ_TYPE_NONE>; /* termcount */
-		linux,mtd-name = "micron,mt29f2g16aadwp";
+		linux,mtd-name= "micron,mt29f2g16aadwp";
 		#address-cells = <1>;
 		#size-cells = <1>;
 		ti,nand-ecc-opt = "bch8";

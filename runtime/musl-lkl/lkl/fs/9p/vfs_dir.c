@@ -1,9 +1,26 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
+ * linux/fs/9p/vfs_dir.c
+ *
  * This file contains vfs directory ops for the 9P2000 protocol.
  *
  *  Copyright (C) 2004 by Eric Van Hensbergen <ericvh@gmail.com>
  *  Copyright (C) 2002 by Ron Minnich <rminnich@lanl.gov>
+ *
+ *  This program is free software; you can redistribute it and/or modify
+ *  it under the terms of the GNU General Public License version 2
+ *  as published by the Free Software Foundation.
+ *
+ *  This program is distributed in the hope that it will be useful,
+ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *  GNU General Public License for more details.
+ *
+ *  You should have received a copy of the GNU General Public License
+ *  along with this program; if not, write to:
+ *  Free Software Foundation
+ *  51 Franklin Street, Fifth Floor
+ *  Boston, MA  02111-1301  USA
+ *
  */
 
 #include <linux/module.h>
@@ -17,7 +34,6 @@
 #include <linux/idr.h>
 #include <linux/slab.h>
 #include <linux/uio.h>
-#include <linux/fscache.h>
 #include <net/9p/9p.h>
 #include <net/9p/client.h>
 
@@ -60,6 +76,15 @@ static inline int dt_type(struct p9_wstat *mistat)
 	return rettype;
 }
 
+static void p9stat_init(struct p9_wstat *stbuf)
+{
+	stbuf->name  = NULL;
+	stbuf->uid   = NULL;
+	stbuf->gid   = NULL;
+	stbuf->muid  = NULL;
+	stbuf->extension = NULL;
+}
+
 /**
  * v9fs_alloc_rdir_buf - Allocate buffer used for read and readdir
  * @filp: opened file structure
@@ -70,7 +95,6 @@ static inline int dt_type(struct p9_wstat *mistat)
 static struct p9_rdir *v9fs_alloc_rdir_buf(struct file *filp, int buflen)
 {
 	struct p9_fid *fid = filp->private_data;
-
 	if (!fid->rdir)
 		fid->rdir = kzalloc(sizeof(struct p9_rdir) + buflen, GFP_KERNEL);
 	return fid->rdir;
@@ -90,6 +114,7 @@ static int v9fs_dir_readdir(struct file *file, struct dir_context *ctx)
 	int err = 0;
 	struct p9_fid *fid;
 	int buflen;
+	int reclen = 0;
 	struct p9_rdir *rdir;
 	struct kvec kvec;
 
@@ -108,8 +133,7 @@ static int v9fs_dir_readdir(struct file *file, struct dir_context *ctx)
 		if (rdir->tail == rdir->head) {
 			struct iov_iter to;
 			int n;
-
-			iov_iter_kvec(&to, READ, &kvec, 1, buflen);
+			iov_iter_kvec(&to, READ | ITER_KVEC, &kvec, 1, buflen);
 			n = p9_client_read(file->private_data, ctx->pos, &to,
 					   &err);
 			if (err)
@@ -121,12 +145,15 @@ static int v9fs_dir_readdir(struct file *file, struct dir_context *ctx)
 			rdir->tail = n;
 		}
 		while (rdir->head < rdir->tail) {
+			p9stat_init(&st);
 			err = p9stat_read(fid->clnt, rdir->buf + rdir->head,
 					  rdir->tail - rdir->head, &st);
-			if (err <= 0) {
+			if (err) {
 				p9_debug(P9_DEBUG_VFS, "returned %d\n", err);
+				p9stat_free(&st);
 				return -EIO;
 			}
+			reclen = st.size+2;
 
 			over = !dir_emit(ctx, st.name, strlen(st.name),
 					 v9fs_qid2ino(&st.qid), dt_type(&st));
@@ -134,8 +161,8 @@ static int v9fs_dir_readdir(struct file *file, struct dir_context *ctx)
 			if (over)
 				return 0;
 
-			rdir->head += err;
-			ctx->pos += err;
+			rdir->head += reclen;
+			ctx->pos += reclen;
 		}
 	}
 }
@@ -206,29 +233,13 @@ static int v9fs_dir_readdir_dotl(struct file *file, struct dir_context *ctx)
 
 int v9fs_dir_release(struct inode *inode, struct file *filp)
 {
-	struct v9fs_inode *v9inode = V9FS_I(inode);
 	struct p9_fid *fid;
-	__le32 version;
-	loff_t i_size;
 
 	fid = filp->private_data;
 	p9_debug(P9_DEBUG_VFS, "inode: %p filp: %p fid: %d\n",
 		 inode, filp, fid ? fid->fid : -1);
-	if (fid) {
-		spin_lock(&inode->i_lock);
-		hlist_del(&fid->ilist);
-		spin_unlock(&inode->i_lock);
-		p9_fid_put(fid);
-	}
-
-	if ((filp->f_mode & FMODE_WRITE)) {
-		version = cpu_to_le32(v9inode->qid.version);
-		i_size = i_size_read(inode);
-		fscache_unuse_cookie(v9fs_inode_cookie(v9inode),
-				     &version, &i_size);
-	} else {
-		fscache_unuse_cookie(v9fs_inode_cookie(v9inode), NULL, NULL);
-	}
+	if (fid)
+		p9_client_clunk(fid);
 	return 0;
 }
 
@@ -246,5 +257,5 @@ const struct file_operations v9fs_dir_operations_dotl = {
 	.iterate_shared = v9fs_dir_readdir_dotl,
 	.open = v9fs_file_open,
 	.release = v9fs_dir_release,
-	.fsync = v9fs_file_fsync_dotl,
+        .fsync = v9fs_file_fsync_dotl,
 };

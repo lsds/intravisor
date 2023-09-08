@@ -15,7 +15,7 @@
 #include <asm/visasm.h>
 #include <asm/processor.h>
 
-#ifdef CONFIG_CONTEXT_TRACKING_USER
+#ifdef CONFIG_CONTEXT_TRACKING
 # define SCHEDULE_USER schedule_user
 #else
 # define SCHEDULE_USER schedule
@@ -39,7 +39,6 @@ __handle_preemption:
 		 wrpr			%g0, RTRAP_PSTATE_IRQOFF, %pstate
 
 __handle_user_windows:
-		add			%sp, PTREGS_OFF, %o0
 		call			fault_in_user_windows
 661:		 wrpr			%g0, RTRAP_PSTATE, %pstate
 		/* If userspace is using ADI, it could potentially pass
@@ -85,9 +84,8 @@ __handle_signal:
 		ldx			[%sp + PTREGS_OFF + PT_V9_TSTATE], %l1
 		sethi			%hi(0xf << 20), %l4
 		and			%l1, %l4, %l4
-		andn			%l1, %l4, %l1
 		ba,pt			%xcc, __handle_preemption_continue
-		 srl			%l4, 20, %l4
+		 andn			%l1, %l4, %l1
 
 		/* When returning from a NMI (%pil==15) interrupt we want to
 		 * avoid running softirqs, doing IRQ tracing, preempting, etc.
@@ -310,7 +308,7 @@ kern_rtt_restore:
 		retry
 
 to_kernel:
-#ifdef CONFIG_PREEMPTION
+#ifdef CONFIG_PREEMPT
 		ldsw			[%g6 + TI_PRE_COUNT], %l5
 		brnz			%l5, kern_fpucheck
 		 ldx			[%g6 + TI_FLAGS], %l5

@@ -1,6 +1,9 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (C) 2004, 2007-2010, 2011-2012 Synopsys, Inc. (www.synopsys.com)
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 
 #include <linux/vmalloc.h>
@@ -39,8 +42,7 @@ void __iomem *ioremap(phys_addr_t paddr, unsigned long size)
 	if (arc_uncached_addr_space(paddr))
 		return (void __iomem *)(u32)paddr;
 
-	return ioremap_prot(paddr, size,
-			    pgprot_val(pgprot_noncached(PAGE_KERNEL)));
+	return ioremap_prot(paddr, size, PAGE_KERNEL_NO_CACHE);
 }
 EXPORT_SYMBOL(ioremap);
 
@@ -54,10 +56,9 @@ EXPORT_SYMBOL(ioremap);
 void __iomem *ioremap_prot(phys_addr_t paddr, unsigned long size,
 			   unsigned long flags)
 {
-	unsigned int off;
 	unsigned long vaddr;
 	struct vm_struct *area;
-	phys_addr_t end;
+	phys_addr_t off, end;
 	pgprot_t prot = __pgprot(flags);
 
 	/* Don't allow wraparound, zero size */
@@ -74,7 +75,7 @@ void __iomem *ioremap_prot(phys_addr_t paddr, unsigned long size,
 
 	/* Mappings have to be page-aligned */
 	off = paddr & ~PAGE_MASK;
-	paddr &= PAGE_MASK_PHYS;
+	paddr &= PAGE_MASK;
 	size = PAGE_ALIGN(end + 1) - paddr;
 
 	/*
@@ -94,7 +95,7 @@ void __iomem *ioremap_prot(phys_addr_t paddr, unsigned long size,
 EXPORT_SYMBOL(ioremap_prot);
 
 
-void iounmap(const volatile void __iomem *addr)
+void iounmap(const void __iomem *addr)
 {
 	/* weird double cast to handle phys_addr_t > 32 bits */
 	if (arc_uncached_addr_space((phys_addr_t)(u32)addr))

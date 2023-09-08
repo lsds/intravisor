@@ -1,10 +1,13 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * Device Tree Source for the SILK board
  *
  * Copyright (C) 2014 Renesas Electronics Corporation
  * Copyright (C) 2014-2015 Renesas Solutions Corp.
  * Copyright (C) 2014-2015 Cogent Embedded, Inc.
+ *
+ * This file is licensed under the terms of the GNU General Public License
+ * version 2.  This program is licensed "as is" without any warranty of any
+ * kind, whether express or implied.
  */
 
 /*
@@ -31,12 +34,10 @@
 		serial0 = &scif2;
 		i2c9 = &gpioi2c1;
 		i2c10 = &i2chdmi;
-		mmc0 = &mmcif0;
-		mmc1 = &sdhi1;
 	};
 
 	chosen {
-		bootargs = "ignore_loglevel rw root=/dev/nfs ip=on";
+		bootargs = "ignore_loglevel rw root=/dev/nfs ip=dhcp";
 		stdout-path = "serial0:115200n8";
 	};
 
@@ -45,11 +46,8 @@
 		reg = <0 0x40000000 0 0x40000000>;
 	};
 
-	keyboard {
+	gpio-keys {
 		compatible = "gpio-keys";
-
-		pinctrl-0 = <&keyboard_pins>;
-		pinctrl-names = "default";
 
 		key-3 {
 			gpios = <&gpio5 10 GPIO_ACTIVE_LOW>;
@@ -131,7 +129,8 @@
 
 		gpios = <&gpio4 29 GPIO_ACTIVE_HIGH>;
 		gpios-states = <1>;
-		states = <3300000 1>, <1800000 0>;
+		states = <3300000 1
+			  1800000 0>;
 	};
 
 	vga-encoder {
@@ -241,6 +240,7 @@
 		composite-in@20 {
 			compatible = "adi,adv7180";
 			reg = <0x20>;
+			remote = <&vin0>;
 
 			port {
 				adv7180: endpoint {
@@ -259,6 +259,8 @@
 			adi,input-depth = <8>;
 			adi,input-colorspace = "rgb";
 			adi,input-clock = "1x";
+			adi,input-style = <1>;
+			adi,input-justification = "evenly";
 
 			ports {
 				#address-cells = <1>;
@@ -361,11 +363,6 @@
 		function = "du1";
 	};
 
-	keyboard_pins: keyboard {
-		pins = "GP_3_9", "GP_3_10", "GP_3_11", "GP_3_12";
-		bias-pull-up;
-	};
-
 	ssi_pins: sound {
 		groups = "ssi0129_ctrl", "ssi0_data", "ssi1_data";
 		function = "ssi";
@@ -389,7 +386,7 @@
 };
 
 &ether {
-	pinctrl-0 = <&ether_pins>, <&phy1_pins>;
+	pinctrl-0 = <&ether_pins &phy1_pins>;
 	pinctrl-names = "default";
 
 	phy-handle = <&phy1>;
@@ -397,13 +394,10 @@
 	status = "okay";
 
 	phy1: ethernet-phy@1 {
-		compatible = "ethernet-phy-id0022.1537",
-			     "ethernet-phy-ieee802.3-c22";
 		reg = <1>;
 		interrupt-parent = <&irqc0>;
 		interrupts = <8 IRQ_TYPE_LEVEL_LOW>;
 		micrel,led-mode = <1>;
-		reset-gpios = <&gpio1 24 GPIO_ACTIVE_LOW>;
 	};
 };
 
@@ -412,31 +406,6 @@
 	pinctrl-names = "i2c-hdmi";
 
 	clock-frequency = <400000>;
-};
-
-&i2c7 {
-	status = "okay";
-	clock-frequency = <100000>;
-
-	pmic@58 {
-		compatible = "dlg,da9063";
-		reg = <0x58>;
-		interrupt-parent = <&gpio3>;
-		interrupts = <31 IRQ_TYPE_LEVEL_LOW>;
-		interrupt-controller;
-
-		onkey {
-			compatible = "dlg,da9063-onkey";
-		};
-
-		rtc {
-			compatible = "dlg,da9063-rtc";
-		};
-
-		watchdog {
-			compatible = "dlg,da9063-watchdog";
-		};
-	};
 };
 
 &mmcif0 {
@@ -506,6 +475,9 @@
 	pinctrl-names = "default";
 
 	port {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
 		vin0ep: endpoint {
 			remote-endpoint = <&adv7180>;
 			bus-width = <8>;
@@ -530,7 +502,7 @@
 };
 
 &du {
-	pinctrl-0 = <&du0_pins>, <&du1_pins>;
+	pinctrl-0 = <&du0_pins &du1_pins>;
 	pinctrl-names = "default";
 	status = "okay";
 
@@ -553,7 +525,7 @@
 };
 
 &rcar_sound {
-	pinctrl-0 = <&ssi_pins>, <&audio_clk_pins>;
+	pinctrl-0 = <&ssi_pins &audio_clk_pins>;
 	pinctrl-names = "default";
 	status = "okay";
 
@@ -566,11 +538,6 @@
 			capture  = <&ssi1>;
 		};
 	};
-};
-
-&rwdt {
-	timeout-sec = <60>;
-	status = "okay";
 };
 
 &ssi1 {

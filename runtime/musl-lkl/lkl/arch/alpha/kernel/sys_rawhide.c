@@ -21,6 +21,7 @@
 #include <asm/irq.h>
 #include <asm/mmu_context.h>
 #include <asm/io.h>
+#include <asm/pgtable.h>
 #include <asm/core_mcpcia.h>
 #include <asm/tlbflush.h>
 

@@ -4,7 +4,7 @@
 #include <linux/kernel.h>
 #include <linux/export.h>
 #include <linux/init.h>
-#include <linux/memblock.h>
+#include <linux/bootmem.h>
 #include <linux/percpu.h>
 #include <linux/kexec.h>
 #include <linux/crash_dump.h>
@@ -66,7 +66,7 @@ EXPORT_SYMBOL(__per_cpu_offset);
  */
 static bool __init pcpu_need_numa(void)
 {
-#ifdef CONFIG_NUMA
+#ifdef CONFIG_NEED_MULTIPLE_NODES
 	pg_data_t *last = NULL;
 	unsigned int cpu;
 
@@ -84,9 +84,61 @@ static bool __init pcpu_need_numa(void)
 }
 #endif
 
+/**
+ * pcpu_alloc_bootmem - NUMA friendly alloc_bootmem wrapper for percpu
+ * @cpu: cpu to allocate for
+ * @size: size allocation in bytes
+ * @align: alignment
+ *
+ * Allocate @size bytes aligned at @align for cpu @cpu.  This wrapper
+ * does the right thing for NUMA regardless of the current
+ * configuration.
+ *
+ * RETURNS:
+ * Pointer to the allocated area on success, NULL on failure.
+ */
+static void * __init pcpu_alloc_bootmem(unsigned int cpu, unsigned long size,
+					unsigned long align)
+{
+	const unsigned long goal = __pa(MAX_DMA_ADDRESS);
+#ifdef CONFIG_NEED_MULTIPLE_NODES
+	int node = early_cpu_to_node(cpu);
+	void *ptr;
+
+	if (!node_online(node) || !NODE_DATA(node)) {
+		ptr = __alloc_bootmem_nopanic(size, align, goal);
+		pr_info("cpu %d has no node %d or node-local memory\n",
+			cpu, node);
+		pr_debug("per cpu data for cpu%d %lu bytes at %016lx\n",
+			 cpu, size, __pa(ptr));
+	} else {
+		ptr = __alloc_bootmem_node_nopanic(NODE_DATA(node),
+						   size, align, goal);
+		pr_debug("per cpu data for cpu%d %lu bytes on node%d at %016lx\n",
+			 cpu, size, node, __pa(ptr));
+	}
+	return ptr;
+#else
+	return __alloc_bootmem_nopanic(size, align, goal);
+#endif
+}
+
+/*
+ * Helpers for first chunk memory allocation
+ */
+static void * __init pcpu_fc_alloc(unsigned int cpu, size_t size, size_t align)
+{
+	return pcpu_alloc_bootmem(cpu, size, align);
+}
+
+static void __init pcpu_fc_free(void *ptr, size_t size)
+{
+	free_bootmem(__pa(ptr), size);
+}
+
 static int __init pcpu_cpu_distance(unsigned int from, unsigned int to)
 {
-#ifdef CONFIG_NUMA
+#ifdef CONFIG_NEED_MULTIPLE_NODES
 	if (early_cpu_to_node(from) == early_cpu_to_node(to))
 		return LOCAL_DISTANCE;
 	else
@@ -96,12 +148,7 @@ static int __init pcpu_cpu_distance(unsigned int from, unsigned int to)
 #endif
 }
 
-static int __init pcpu_cpu_to_node(int cpu)
-{
-	return early_cpu_to_node(cpu);
-}
-
-void __init pcpu_populate_pte(unsigned long addr)
+static void __init pcpup_populate_pte(unsigned long addr)
 {
 	populate_extra_pte(addr);
 }
@@ -122,7 +169,7 @@ void __init setup_per_cpu_areas(void)
 	unsigned long delta;
 	int rc;
 
-	pr_info("NR_CPUS:%d nr_cpumask_bits:%d nr_cpu_ids:%u nr_node_ids:%u\n",
+	pr_info("NR_CPUS:%d nr_cpumask_bits:%d nr_cpu_ids:%u nr_node_ids:%d\n",
 		NR_CPUS, nr_cpumask_bits, nr_cpu_ids, nr_node_ids);
 
 	/*
@@ -156,14 +203,15 @@ void __init setup_per_cpu_areas(void)
 		rc = pcpu_embed_first_chunk(PERCPU_FIRST_CHUNK_RESERVE,
 					    dyn_size, atom_size,
 					    pcpu_cpu_distance,
-					    pcpu_cpu_to_node);
+					    pcpu_fc_alloc, pcpu_fc_free);
 		if (rc < 0)
-			pr_warn("%s allocator failed (%d), falling back to page size\n",
-				pcpu_fc_names[pcpu_chosen_fc], rc);
+			pr_warning("%s allocator failed (%d), falling back to page size\n",
+				   pcpu_fc_names[pcpu_chosen_fc], rc);
 	}
 	if (rc < 0)
 		rc = pcpu_page_first_chunk(PERCPU_FIRST_CHUNK_RESERVE,
-					   pcpu_cpu_to_node);
+					   pcpu_fc_alloc, pcpu_fc_free,
+					   pcpup_populate_pte);
 	if (rc < 0)
 		panic("cannot initialize percpu area (err=%d)", rc);
 
@@ -174,6 +222,7 @@ void __init setup_per_cpu_areas(void)
 		per_cpu(this_cpu_off, cpu) = per_cpu_offset(cpu);
 		per_cpu(cpu_number, cpu) = cpu;
 		setup_percpu_segment(cpu);
+		setup_stack_canary_segment(cpu);
 		/*
 		 * Copy data used in early init routines from the
 		 * initial arrays to the per cpu data areas.  These
@@ -192,6 +241,11 @@ void __init setup_per_cpu_areas(void)
 #ifdef CONFIG_X86_32
 		per_cpu(x86_cpu_to_logical_apicid, cpu) =
 			early_per_cpu_map(x86_cpu_to_logical_apicid, cpu);
+#endif
+#ifdef CONFIG_X86_64
+		per_cpu(irq_stack_ptr, cpu) =
+			per_cpu(irq_stack_union.irq_stack, cpu) +
+			IRQ_STACK_SIZE;
 #endif
 #ifdef CONFIG_NUMA
 		per_cpu(x86_cpu_to_node_map, cpu) =
@@ -236,9 +290,9 @@ void __init setup_per_cpu_areas(void)
 	/*
 	 * Sync back kernel address range again.  We already did this in
 	 * setup_arch(), but percpu data also needs to be available in
-	 * the smpboot asm and arch_sync_kernel_mappings() doesn't sync to
-	 * swapper_pg_dir on 32-bit. The per-cpu mappings need to be available
-	 * there too.
+	 * the smpboot asm.  We can't reliably pick up percpu mappings
+	 * using vmalloc_fault(), because exception dispatch needs
+	 * percpu data.
 	 *
 	 * FIXME: Can the later sync in setup_cpu_entry_areas() replace
 	 * this call?

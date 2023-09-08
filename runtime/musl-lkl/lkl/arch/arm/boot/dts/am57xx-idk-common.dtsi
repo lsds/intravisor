@@ -1,6 +1,9 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (C) 2015-2016 Texas Instruments Incorporated - https://www.ti.com/
+ * Copyright (C) 2015-2016 Texas Instruments Incorporated - http://www.ti.com/
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 
 #include "am57xx-industrial-grade.dtsi"
@@ -9,7 +12,6 @@
 	aliases {
 		rtc0 = &tps659038_rtc;
 		rtc1 = &rtc;
-		display0 = &hdmi0;
 	};
 
 	chosen {
@@ -31,16 +33,6 @@
 		vin-supply = <&smps9_reg>;
 		regulator-min-microvolt = <3300000>;
 		regulator-max-microvolt = <3300000>;
-		regulator-always-on;
-		regulator-boot-on;
-	};
-
-	v1_2d: fixedregulator-v1_2d {
-		compatible = "regulator-fixed";
-		regulator-name = "V1_2D";
-		vin-supply = <&vmain>;
-		regulator-min-microvolt = <1200000>;
-		regulator-max-microvolt = <1200000>;
 		regulator-always-on;
 		regulator-boot-on;
 	};
@@ -107,54 +99,6 @@
 			default-state = "off";
 		};
 	};
-
-	hdmi0: connector@0 {
-		compatible = "hdmi-connector";
-		label = "hdmi";
-
-		type = "a";
-
-		port {
-			hdmi_connector_in: endpoint {
-				remote-endpoint = <&tpd12s015_out>;
-			};
-		};
-	};
-
-	tpd12s015: encoder@0 {
-		compatible = "ti,tpd12s016", "ti,tpd12s015";
-
-		gpios = <0>, /* optional CT_CP_HPD */
-			<0>, /* optional LS_OE */
-			<&gpio7 12 GPIO_ACTIVE_HIGH>;	/* HPD */
-
-		ports {
-			#address-cells = <1>;
-			#size-cells = <0>;
-
-			port@0 {
-				reg = <0>;
-
-				tpd12s015_in: endpoint@0 {
-					remote-endpoint = <&hdmi_out>;
-				};
-			};
-
-			port@1 {
-				reg = <1>;
-
-				tpd12s015_out: endpoint@0 {
-					remote-endpoint = <&hdmi_connector_in>;
-				};
-			};
-		};
-	};
-
-	src_clk_x1: src_clk_x1 {
-		#clock-cells = <0>;
-		compatible = "fixed-clock";
-		clock-frequency = <20000000>;
-	};
 };
 
 &dra7_pmx_core {
@@ -169,6 +113,17 @@
 		pinctrl-single,pins = <
 			DRA7XX_CORE_IOPAD(0x37d0, MUX_MODE15 | PULL_UP)	/* dcan1_tx.off */
 			DRA7XX_CORE_IOPAD(0x37d4, MUX_MODE15 | PULL_UP)	/* dcan1_rx.off */
+		>;
+	};
+
+	mmc1_pins_default: mmc1_pins_default {
+		pinctrl-single,pins = <
+			DRA7XX_CORE_IOPAD(0x3754, PIN_INPUT_PULLDOWN | MUX_MODE0) /* mmc1_clk.clk */
+			DRA7XX_CORE_IOPAD(0x3758, PIN_INPUT_PULLUP | MUX_MODE0) /* mmc1_cmd.cmd */
+			DRA7XX_CORE_IOPAD(0x375c, PIN_INPUT_PULLUP | MUX_MODE0) /* mmc1_dat0.dat0 */
+			DRA7XX_CORE_IOPAD(0x3760, PIN_INPUT_PULLUP | MUX_MODE0) /* mmc1_dat1.dat1 */
+			DRA7XX_CORE_IOPAD(0x3764, PIN_INPUT_PULLUP | MUX_MODE0) /* mmc1_dat2.dat2 */
+			DRA7XX_CORE_IOPAD(0x3768, PIN_INPUT_PULLUP | MUX_MODE0) /* mmc1_dat3.dat3 */
 		>;
 	};
 };
@@ -394,32 +349,6 @@
 		gpio-controller;
 		#gpio-cells = <2>;
 	};
-
-	dsi_bridge: tc358778@e {
-		compatible = "toshiba,tc358778", "toshiba,tc358768";
-		reg = <0xe>;
-		status = "disabled";
-
-		clocks = <&src_clk_x1>;
-		clock-names = "refclk";
-
-		vddc-supply = <&v1_2d>;
-		vddmipi-supply = <&v1_2d>;
-		vddio-supply = <&v3_3d>;
-
-		dsi_bridge_ports: ports {
-			#address-cells = <1>;
-			#size-cells = <0>;
-
-			port@0 {
-				reg = <0>;
-				rgb_in: endpoint {
-					remote-endpoint = <&dpi_out>;
-					data-lines = <24>;
-				};
-			};
-		};
-	};
 };
 
 &mcspi3 {
@@ -448,30 +377,21 @@
 	ext-clk-src;
 };
 
-&mac_sw {
+&mac {
 	status = "okay";
+	dual_emac;
 };
 
-&cpsw_port1 {
-	phy-handle = <&ethphy0>;
-	phy-mode = "rgmii-rxid";
-	ti,dual-emac-pvid = <1>;
+&cpsw_emac0 {
+	phy_id = <&davinci_mdio>, <0>;
+	phy-mode = "rgmii";
+	dual_emac_res_vlan = <1>;
 };
 
-&cpsw_port2 {
-	phy-handle = <&ethphy1>;
-	phy-mode = "rgmii-rxid";
-	ti,dual-emac-pvid = <2>;
-};
-
-&davinci_mdio_sw {
-	ethphy0: ethernet-phy@0 {
-		reg = <0>;
-	};
-
-	ethphy1: ethernet-phy@1 {
-		reg = <1>;
-	};
+&cpsw_emac1 {
+	phy_id = <&davinci_mdio>, <1>;
+	phy-mode = "rgmii";
+	dual_emac_res_vlan = <2>;
 };
 
 &usb2_phy1 {
@@ -486,13 +406,8 @@
 	dr_mode = "host";
 };
 
-&omap_dwc3_2 {
-	extcon = <&extcon_usb2>;
-};
-
 &usb2 {
-	extcon = <&extcon_usb2>;
-	dr_mode = "otg";
+	dr_mode = "peripheral";
 };
 
 &mmc1 {
@@ -501,7 +416,6 @@
 	vqmmc-supply = <&ldo1_reg>;
 	bus-width = <4>;
 	cd-gpios = <&gpio6 27 GPIO_ACTIVE_LOW>; /* gpio 219 */
-	no-1-8-v;
 };
 
 &mmc2 {
@@ -509,9 +423,8 @@
 	vmmc-supply = <&v3_3d>;
 	vqmmc-supply = <&v3_3d>;
 	bus-width = <8>;
-	non-removable;
+	ti,non-removable;
 	max-frequency = <96000000>;
-	no-1-8-v;
 };
 
 &dcan1 {
@@ -526,7 +439,7 @@
 	status = "okay";
 
 	spi-max-frequency = <76800000>;
-	flash@0 {
+	m25p80@0 {
 		compatible = "s25fl256s1", "jedec,spi-nor";
 		spi-max-frequency = <76800000>;
 		reg = <0>;
@@ -567,42 +480,6 @@
 		partition@6 {
 			label = "QSPI.file-system";
 			reg = <0x009e0000 0x01620000>;
-		};
-	};
-};
-
-&cpu0 {
-	vdd-supply = <&smps12_reg>;
-};
-
-&hdmi {
-	status = "okay";
-
-	vdda-supply = <&ldo4_reg>;
-
-	port {
-		hdmi_out: endpoint {
-			remote-endpoint = <&tpd12s015_in>;
-		};
-	};
-};
-
-&dss {
-	status = "okay";
-
-	vdda_video-supply = <&ldoln_reg>;
-
-	ports {
-		#address-cells = <1>;
-		#size-cells = <0>;
-
-		port@0 {
-			reg = <0>;
-
-			dpi_out: endpoint {
-				remote-endpoint = <&rgb_in>;
-				data-lines = <24>;
-			};
 		};
 	};
 };

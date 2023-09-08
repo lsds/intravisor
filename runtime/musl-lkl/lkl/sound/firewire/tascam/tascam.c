@@ -1,8 +1,9 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * tascam.c - a part of driver for TASCAM FireWire series
  *
  * Copyright (c) 2015 Takashi Sakamoto
+ *
+ * Licensed under the terms of the GNU General Public License, version 2.
  */
 
 #include "tascam.h"
@@ -84,37 +85,30 @@ static int identify_model(struct snd_tscm *tscm)
 	return 0;
 }
 
-static void tscm_card_free(struct snd_card *card)
+static void tscm_free(struct snd_tscm *tscm)
 {
-	struct snd_tscm *tscm = card->private_data;
-
 	snd_tscm_transaction_unregister(tscm);
 	snd_tscm_stream_destroy_duplex(tscm);
 
-	mutex_destroy(&tscm->mutex);
 	fw_unit_put(tscm->unit);
+
+	mutex_destroy(&tscm->mutex);
 }
 
-static int snd_tscm_probe(struct fw_unit *unit,
-			   const struct ieee1394_device_id *entry)
+static void tscm_card_free(struct snd_card *card)
 {
-	struct snd_card *card;
-	struct snd_tscm *tscm;
+	tscm_free(card->private_data);
+}
+
+static void do_registration(struct work_struct *work)
+{
+	struct snd_tscm *tscm = container_of(work, struct snd_tscm, dwork.work);
 	int err;
 
-	err = snd_card_new(&unit->device, -1, NULL, THIS_MODULE, sizeof(*tscm), &card);
+	err = snd_card_new(&tscm->unit->device, -1, NULL, THIS_MODULE, 0,
+			   &tscm->card);
 	if (err < 0)
-		return err;
-	card->private_free = tscm_card_free;
-
-	tscm = card->private_data;
-	tscm->unit = fw_unit_get(unit);
-	dev_set_drvdata(&unit->device, tscm);
-	tscm->card = card;
-
-	mutex_init(&tscm->mutex);
-	spin_lock_init(&tscm->lock);
-	init_waitqueue_head(&tscm->hwdep_wait);
+		return;
 
 	err = identify_model(tscm);
 	if (err < 0)
@@ -142,70 +136,101 @@ static int snd_tscm_probe(struct fw_unit *unit,
 	if (err < 0)
 		goto error;
 
-	err = snd_card_register(card);
+	err = snd_card_register(tscm->card);
 	if (err < 0)
 		goto error;
 
-	return 0;
+	/*
+	 * After registered, tscm instance can be released corresponding to
+	 * releasing the sound card instance.
+	 */
+	tscm->card->private_free = tscm_card_free;
+	tscm->card->private_data = tscm;
+	tscm->registered = true;
+
+	return;
 error:
-	snd_card_free(card);
-	return err;
+	snd_tscm_transaction_unregister(tscm);
+	snd_tscm_stream_destroy_duplex(tscm);
+	snd_card_free(tscm->card);
+	dev_info(&tscm->unit->device,
+		 "Sound card registration failed: %d\n", err);
+}
+
+static int snd_tscm_probe(struct fw_unit *unit,
+			   const struct ieee1394_device_id *entry)
+{
+	struct snd_tscm *tscm;
+
+	/* Allocate this independent of sound card instance. */
+	tscm = kzalloc(sizeof(struct snd_tscm), GFP_KERNEL);
+	if (tscm == NULL)
+		return -ENOMEM;
+
+	/* initialize myself */
+	tscm->unit = fw_unit_get(unit);
+	dev_set_drvdata(&unit->device, tscm);
+
+	mutex_init(&tscm->mutex);
+	spin_lock_init(&tscm->lock);
+	init_waitqueue_head(&tscm->hwdep_wait);
+
+	/* Allocate and register this sound card later. */
+	INIT_DEFERRABLE_WORK(&tscm->dwork, do_registration);
+	snd_fw_schedule_registration(unit, &tscm->dwork);
+
+	return 0;
 }
 
 static void snd_tscm_update(struct fw_unit *unit)
 {
 	struct snd_tscm *tscm = dev_get_drvdata(&unit->device);
 
+	/* Postpone a workqueue for deferred registration. */
+	if (!tscm->registered)
+		snd_fw_schedule_registration(unit, &tscm->dwork);
+
 	snd_tscm_transaction_reregister(tscm);
 
-	mutex_lock(&tscm->mutex);
-	snd_tscm_stream_update_duplex(tscm);
-	mutex_unlock(&tscm->mutex);
+	/*
+	 * After registration, userspace can start packet streaming, then this
+	 * code block works fine.
+	 */
+	if (tscm->registered) {
+		mutex_lock(&tscm->mutex);
+		snd_tscm_stream_update_duplex(tscm);
+		mutex_unlock(&tscm->mutex);
+	}
 }
 
 static void snd_tscm_remove(struct fw_unit *unit)
 {
 	struct snd_tscm *tscm = dev_get_drvdata(&unit->device);
 
-	// Block till all of ALSA character devices are released.
-	snd_card_free(tscm->card);
+	/*
+	 * Confirm to stop the work for registration before the sound card is
+	 * going to be released. The work is not scheduled again because bus
+	 * reset handler is not called anymore.
+	 */
+	cancel_delayed_work_sync(&tscm->dwork);
+
+	if (tscm->registered) {
+		/* No need to wait for releasing card object in this context. */
+		snd_card_free_when_closed(tscm->card);
+	} else {
+		/* Don't forget this case. */
+		tscm_free(tscm);
+	}
 }
 
 static const struct ieee1394_device_id snd_tscm_id_table[] = {
-	// Tascam, FW-1884.
 	{
 		.match_flags = IEEE1394_MATCH_VENDOR_ID |
-			       IEEE1394_MATCH_SPECIFIER_ID |
-			       IEEE1394_MATCH_VERSION,
+			       IEEE1394_MATCH_SPECIFIER_ID,
 		.vendor_id = 0x00022e,
 		.specifier_id = 0x00022e,
-		.version = 0x800000,
 	},
-	// Tascam, FE-8 (.version = 0x800001)
-	// This kernel module doesn't support FE-8 because the most of features
-	// can be implemented in userspace without any specific support of this
-	// module.
-	//
-	// .version = 0x800002 is unknown.
-	//
-	// Tascam, FW-1082.
-	{
-		.match_flags = IEEE1394_MATCH_VENDOR_ID |
-			       IEEE1394_MATCH_SPECIFIER_ID |
-			       IEEE1394_MATCH_VERSION,
-		.vendor_id = 0x00022e,
-		.specifier_id = 0x00022e,
-		.version = 0x800003,
-	},
-	// Tascam, FW-1804.
-	{
-		.match_flags = IEEE1394_MATCH_VENDOR_ID |
-			       IEEE1394_MATCH_SPECIFIER_ID |
-			       IEEE1394_MATCH_VERSION,
-		.vendor_id = 0x00022e,
-		.specifier_id = 0x00022e,
-		.version = 0x800004,
-	},
+	/* FE-08 requires reverse-engineering because it just has faders. */
 	{}
 };
 MODULE_DEVICE_TABLE(ieee1394, snd_tscm_id_table);
@@ -213,7 +238,7 @@ MODULE_DEVICE_TABLE(ieee1394, snd_tscm_id_table);
 static struct fw_driver tscm_driver = {
 	.driver = {
 		.owner = THIS_MODULE,
-		.name = KBUILD_MODNAME,
+		.name = "snd-firewire-tascam",
 		.bus = &fw_bus_type,
 	},
 	.probe    = snd_tscm_probe,

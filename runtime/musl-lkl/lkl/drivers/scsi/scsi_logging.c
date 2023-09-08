@@ -1,9 +1,10 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * scsi_logging.c
  *
  * Copyright (C) 2014 SUSE Linux Products GmbH
  * Copyright (C) 2014 Hannes Reinecke <hare@suse.de>
+ *
+ * This file is released under the GPLv2
  */
 
 #include <linux/kernel.h>
@@ -15,24 +16,63 @@
 #include <scsi/scsi_eh.h>
 #include <scsi/scsi_dbg.h>
 
+#define SCSI_LOG_SPOOLSIZE 4096
+
+#if (SCSI_LOG_SPOOLSIZE / SCSI_LOG_BUFSIZE) > BITS_PER_LONG
+#warning SCSI logging bitmask too large
+#endif
+
+struct scsi_log_buf {
+	char buffer[SCSI_LOG_SPOOLSIZE];
+	unsigned long map;
+};
+
+static DEFINE_PER_CPU(struct scsi_log_buf, scsi_format_log);
+
 static char *scsi_log_reserve_buffer(size_t *len)
 {
-	*len = 128;
-	return kmalloc(*len, GFP_ATOMIC);
+	struct scsi_log_buf *buf;
+	unsigned long map_bits = sizeof(buf->buffer) / SCSI_LOG_BUFSIZE;
+	unsigned long idx = 0;
+
+	preempt_disable();
+	buf = this_cpu_ptr(&scsi_format_log);
+	idx = find_first_zero_bit(&buf->map, map_bits);
+	if (likely(idx < map_bits)) {
+		while (test_and_set_bit(idx, &buf->map)) {
+			idx = find_next_zero_bit(&buf->map, map_bits, idx);
+			if (idx >= map_bits)
+				break;
+		}
+	}
+	if (WARN_ON(idx >= map_bits)) {
+		preempt_enable();
+		return NULL;
+	}
+	*len = SCSI_LOG_BUFSIZE;
+	return buf->buffer + idx * SCSI_LOG_BUFSIZE;
 }
 
 static void scsi_log_release_buffer(char *bufptr)
 {
-	kfree(bufptr);
+	struct scsi_log_buf *buf;
+	unsigned long idx;
+	int ret;
+
+	buf = this_cpu_ptr(&scsi_format_log);
+	if (bufptr >= buf->buffer &&
+	    bufptr < buf->buffer + SCSI_LOG_SPOOLSIZE) {
+		idx = (bufptr - buf->buffer) / SCSI_LOG_BUFSIZE;
+		ret = test_and_clear_bit(idx, &buf->map);
+		WARN_ON(!ret);
+	}
+	preempt_enable();
 }
 
 static inline const char *scmd_name(const struct scsi_cmnd *scmd)
 {
-	struct request *rq = scsi_cmd_to_rq((struct scsi_cmnd *)scmd);
-
-	if (!rq->q || !rq->q->disk)
-		return NULL;
-	return rq->q->disk->disk_name;
+	return scmd->request->rq_disk ?
+		scmd->request->rq_disk->disk_name : NULL;
 }
 
 static size_t sdev_format_header(char *logbuf, size_t logbuf_len,
@@ -87,14 +127,14 @@ void scmd_printk(const char *level, const struct scsi_cmnd *scmd,
 	char *logbuf;
 	size_t off = 0, logbuf_len;
 
-	if (!scmd)
+	if (!scmd || !scmd->cmnd)
 		return;
 
 	logbuf = scsi_log_reserve_buffer(&logbuf_len);
 	if (!logbuf)
 		return;
 	off = sdev_format_header(logbuf, logbuf_len, scmd_name(scmd),
-				 scsi_cmd_to_rq((struct scsi_cmnd *)scmd)->tag);
+				 scmd->request->tag);
 	if (off < logbuf_len) {
 		va_start(args, fmt);
 		off += vscnprintf(logbuf + off, logbuf_len - off, fmt, args);
@@ -183,12 +223,15 @@ void scsi_print_command(struct scsi_cmnd *cmd)
 	char *logbuf;
 	size_t off, logbuf_len;
 
+	if (!cmd->cmnd)
+		return;
+
 	logbuf = scsi_log_reserve_buffer(&logbuf_len);
 	if (!logbuf)
 		return;
 
 	off = sdev_format_header(logbuf, logbuf_len,
-				 scmd_name(cmd), scsi_cmd_to_rq(cmd)->tag);
+				 scmd_name(cmd), cmd->request->tag);
 	if (off >= logbuf_len)
 		goto out_printk;
 	off += scnprintf(logbuf + off, logbuf_len - off, "CDB: ");
@@ -205,12 +248,16 @@ void scsi_print_command(struct scsi_cmnd *cmd)
 		/* Print opcode in one line and use separate lines for CDB */
 		off += scnprintf(logbuf + off, logbuf_len - off, "\n");
 		dev_printk(KERN_INFO, &cmd->device->sdev_gendev, "%s", logbuf);
+		scsi_log_release_buffer(logbuf);
 		for (k = 0; k < cmd->cmd_len; k += 16) {
 			size_t linelen = min(cmd->cmd_len - k, 16);
 
+			logbuf = scsi_log_reserve_buffer(&logbuf_len);
+			if (!logbuf)
+				break;
 			off = sdev_format_header(logbuf, logbuf_len,
 						 scmd_name(cmd),
-						 scsi_cmd_to_rq(cmd)->tag);
+						 cmd->request->tag);
 			if (!WARN_ON(off > logbuf_len - 58)) {
 				off += scnprintf(logbuf + off, logbuf_len - off,
 						 "CDB[%02x]: ", k);
@@ -220,8 +267,9 @@ void scsi_print_command(struct scsi_cmnd *cmd)
 			}
 			dev_printk(KERN_INFO, &cmd->device->sdev_gendev, "%s",
 				   logbuf);
+			scsi_log_release_buffer(logbuf);
 		}
-		goto out;
+		return;
 	}
 	if (!WARN_ON(off > logbuf_len - 49)) {
 		off += scnprintf(logbuf + off, logbuf_len - off, " ");
@@ -231,7 +279,6 @@ void scsi_print_command(struct scsi_cmnd *cmd)
 	}
 out_printk:
 	dev_printk(KERN_INFO, &cmd->device->sdev_gendev, "%s", logbuf);
-out:
 	scsi_log_release_buffer(logbuf);
 }
 EXPORT_SYMBOL(scsi_print_command);
@@ -373,8 +420,7 @@ EXPORT_SYMBOL(__scsi_print_sense);
 /* Normalize and print sense buffer in SCSI command */
 void scsi_print_sense(const struct scsi_cmnd *cmd)
 {
-	scsi_log_print_sense(cmd->device, scmd_name(cmd),
-			     scsi_cmd_to_rq((struct scsi_cmnd *)cmd)->tag,
+	scsi_log_print_sense(cmd->device, scmd_name(cmd), cmd->request->tag,
 			     cmd->sense_buffer, SCSI_SENSE_BUFFERSIZE);
 }
 EXPORT_SYMBOL(scsi_print_sense);
@@ -386,14 +432,14 @@ void scsi_print_result(const struct scsi_cmnd *cmd, const char *msg,
 	size_t off, logbuf_len;
 	const char *mlret_string = scsi_mlreturn_string(disposition);
 	const char *hb_string = scsi_hostbyte_string(cmd->result);
-	unsigned long cmd_age = (jiffies - cmd->jiffies_at_alloc) / HZ;
+	const char *db_string = scsi_driverbyte_string(cmd->result);
 
 	logbuf = scsi_log_reserve_buffer(&logbuf_len);
 	if (!logbuf)
 		return;
 
-	off = sdev_format_header(logbuf, logbuf_len, scmd_name(cmd),
-				 scsi_cmd_to_rq((struct scsi_cmnd *)cmd)->tag);
+	off = sdev_format_header(logbuf, logbuf_len,
+				 scmd_name(cmd), cmd->request->tag);
 
 	if (off >= logbuf_len)
 		goto out_printk;
@@ -426,12 +472,12 @@ void scsi_print_result(const struct scsi_cmnd *cmd, const char *msg,
 	if (WARN_ON(off >= logbuf_len))
 		goto out_printk;
 
-	off += scnprintf(logbuf + off, logbuf_len - off,
-			 "driverbyte=DRIVER_OK ");
-
-	off += scnprintf(logbuf + off, logbuf_len - off,
-			 "cmd_age=%lus", cmd_age);
-
+	if (db_string)
+		off += scnprintf(logbuf + off, logbuf_len - off,
+				 "driverbyte=%s", db_string);
+	else
+		off += scnprintf(logbuf + off, logbuf_len - off,
+				 "driverbyte=0x%02x", driver_byte(cmd->result));
 out_printk:
 	dev_printk(KERN_INFO, &cmd->device->sdev_gendev, "%s", logbuf);
 	scsi_log_release_buffer(logbuf);

@@ -1,12 +1,9 @@
-.. SPDX-License-Identifier: GPL-2.0
-
-===============================
-CPU and Device Power Management
-===============================
+=======================
+Device Power Management
+=======================
 
 .. toctree::
 
-   cpuidle
    devices
    notifiers
    types

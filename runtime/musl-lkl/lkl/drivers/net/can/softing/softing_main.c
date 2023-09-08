@@ -1,11 +1,21 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (C) 2008-2010
  *
  * - Kurt Van Dijck, EIA Electronics
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the version 2 of the GNU General Public License
+ * as published by the Free Software Foundation
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, see <http://www.gnu.org/licenses/>.
  */
 
-#include <linux/ethtool.h>
 #include <linux/module.h>
 #include <linux/interrupt.h>
 #include <asm/io.h>
@@ -60,7 +70,7 @@ static netdev_tx_t softing_netdev_start_xmit(struct sk_buff *skb,
 	struct can_frame *cf = (struct can_frame *)skb->data;
 	uint8_t buf[DPRAM_TX_SIZE];
 
-	if (can_dev_dropped_skb(dev, skb))
+	if (can_dropped_invalid_skb(dev, skb))
 		return NETDEV_TX_OK;
 
 	spin_lock(&card->spin);
@@ -85,7 +95,7 @@ static netdev_tx_t softing_netdev_start_xmit(struct sk_buff *skb,
 	if (priv->index)
 		*ptr |= CMD_BUS2;
 	++ptr;
-	*ptr++ = cf->len;
+	*ptr++ = cf->can_dlc;
 	*ptr++ = (cf->can_id >> 0);
 	*ptr++ = (cf->can_id >> 8);
 	if (cf->can_id & CAN_EFF_FLAG) {
@@ -96,7 +106,7 @@ static netdev_tx_t softing_netdev_start_xmit(struct sk_buff *skb,
 		ptr += 1;
 	}
 	if (!(cf->can_id & CAN_RTR_FLAG))
-		memcpy(ptr, &cf->data[0], cf->len);
+		memcpy(ptr, &cf->data[0], cf->can_dlc);
 	memcpy_toio(&card->dpram[DPRAM_TX + DPRAM_TX_SIZE * fifo_wr],
 			buf, DPRAM_TX_SIZE);
 	if (++fifo_wr >= DPRAM_TX_CNT)
@@ -105,7 +115,7 @@ static netdev_tx_t softing_netdev_start_xmit(struct sk_buff *skb,
 	card->tx.last_bus = priv->index;
 	++card->tx.pending;
 	++priv->tx.pending;
-	can_put_echo_skb(skb, dev, priv->tx.echo_put, 0);
+	can_put_echo_skb(skb, dev, priv->tx.echo_put);
 	++priv->tx.echo_put;
 	if (priv->tx.echo_put >= TX_ECHO_SKB_MAX)
 		priv->tx.echo_put = 0;
@@ -168,11 +178,11 @@ static int softing_handle_1(struct softing *card)
 		iowrite8(0, &card->dpram[DPRAM_RX_LOST]);
 		/* prepare msg */
 		msg.can_id = CAN_ERR_FLAG | CAN_ERR_CRTL;
-		msg.len = CAN_ERR_DLC;
+		msg.can_dlc = CAN_ERR_DLC;
 		msg.data[1] = CAN_ERR_CRTL_RX_OVERFLOW;
 		/*
-		 * service to all buses, we don't know which it was applicable
-		 * but only service buses that are online
+		 * service to all busses, we don't know which it was applicable
+		 * but only service busses that are online
 		 */
 		for (j = 0; j < ARRAY_SIZE(card->net); ++j) {
 			netdev = card->net[j];
@@ -219,7 +229,7 @@ static int softing_handle_1(struct softing *card)
 		state = *ptr++;
 
 		msg.can_id = CAN_ERR_FLAG;
-		msg.len = CAN_ERR_DLC;
+		msg.can_dlc = CAN_ERR_DLC;
 
 		if (state & SF_MASK_BUSOFF) {
 			can_state = CAN_STATE_BUS_OFF;
@@ -240,6 +250,7 @@ static int softing_handle_1(struct softing *card)
 				DPRAM_INFO_BUSSTATE2 : DPRAM_INFO_BUSSTATE]);
 		/* timestamp */
 		tmp_u32 = le32_to_cpup((void *)ptr);
+		ptr += 4;
 		ktime = softing_raw2ktime(card, tmp_u32);
 
 		++netdev->stats.rx_errors;
@@ -261,7 +272,7 @@ static int softing_handle_1(struct softing *card)
 	} else {
 		if (cmd & CMD_RTR)
 			msg.can_id |= CAN_RTR_FLAG;
-		msg.len = can_cc_dlc2len(*ptr++);
+		msg.can_dlc = get_can_dlc(*ptr++);
 		if (cmd & CMD_XTD) {
 			msg.can_id |= CAN_EFF_FLAG;
 			msg.can_id |= le32_to_cpup((void *)ptr);
@@ -276,6 +287,7 @@ static int softing_handle_1(struct softing *card)
 		ktime = softing_raw2ktime(card, tmp_u32);
 		if (!(msg.can_id & CAN_RTR_FLAG))
 			memcpy(&msg.data[0], ptr, 8);
+		ptr += 8;
 		/* update socket */
 		if (cmd & CMD_ACK) {
 			/* acknowledge, was tx msg */
@@ -283,10 +295,7 @@ static int softing_handle_1(struct softing *card)
 			skb = priv->can.echo_skb[priv->tx.echo_get];
 			if (skb)
 				skb->tstamp = ktime;
-			++netdev->stats.tx_packets;
-			netdev->stats.tx_bytes +=
-				can_get_echo_skb(netdev, priv->tx.echo_get,
-						 NULL);
+			can_get_echo_skb(netdev, priv->tx.echo_get);
 			++priv->tx.echo_get;
 			if (priv->tx.echo_get >= TX_ECHO_SKB_MAX)
 				priv->tx.echo_get = 0;
@@ -294,6 +303,9 @@ static int softing_handle_1(struct softing *card)
 				--priv->tx.pending;
 			if (card->tx.pending)
 				--card->tx.pending;
+			++netdev->stats.tx_packets;
+			if (!(msg.can_id & CAN_RTR_FLAG))
+				netdev->stats.tx_bytes += msg.can_dlc;
 		} else {
 			int ret;
 
@@ -301,7 +313,7 @@ static int softing_handle_1(struct softing *card)
 			if (ret == NET_RX_SUCCESS) {
 				++netdev->stats.rx_packets;
 				if (!(msg.can_id & CAN_RTR_FLAG))
-					netdev->stats.rx_bytes += msg.len;
+					netdev->stats.rx_bytes += msg.can_dlc;
 			} else {
 				++netdev->stats.rx_dropped;
 			}
@@ -338,7 +350,7 @@ static irqreturn_t softing_irq_thread(int irq, void *dev_id)
 			continue;
 		priv = netdev_priv(netdev);
 		if (!canif_is_active(netdev))
-			/* it makes no sense to wake dead buses */
+			/* it makes no sense to wake dead busses */
 			continue;
 		if (priv->tx.pending >= TX_ECHO_SKB_MAX)
 			continue;
@@ -373,7 +385,7 @@ static irqreturn_t softing_irq_v1(int irq, void *dev_id)
 }
 
 /*
- * netdev/candev interoperability
+ * netdev/candev inter-operability
  */
 static int softing_netdev_open(struct net_device *ndev)
 {
@@ -381,22 +393,20 @@ static int softing_netdev_open(struct net_device *ndev)
 
 	/* check or determine and set bittime */
 	ret = open_candev(ndev);
-	if (ret)
-		return ret;
-
-	ret = softing_startstop(ndev, 1);
-	if (ret < 0)
-		close_candev(ndev);
-
+	if (!ret)
+		ret = softing_startstop(ndev, 1);
 	return ret;
 }
 
 static int softing_netdev_stop(struct net_device *ndev)
 {
+	int ret;
+
 	netif_stop_queue(ndev);
 
 	/* softing cycle does close_candev() */
-	return softing_startstop(ndev, 0);
+	ret = softing_startstop(ndev, 0);
+	return ret;
 }
 
 static int softing_candev_set_mode(struct net_device *ndev, enum can_mode mode)
@@ -448,9 +458,8 @@ static void softing_card_shutdown(struct softing *card)
 {
 	int fw_up = 0;
 
-	if (mutex_lock_interruptible(&card->fw.lock)) {
+	if (mutex_lock_interruptible(&card->fw.lock))
 		/* return -ERESTARTSYS */;
-	}
 	fw_up = card->fw.up;
 	card->fw.up = 0;
 
@@ -612,12 +621,8 @@ static const struct net_device_ops softing_netdev_ops = {
 	.ndo_change_mtu = can_change_mtu,
 };
 
-static const struct ethtool_ops softing_ethtool_ops = {
-	.get_ts_info = ethtool_op_get_ts_info,
-};
-
 static const struct can_bittiming_const softing_btr_const = {
-	.name = KBUILD_MODNAME,
+	.name = "softing",
 	.tseg1_min = 1,
 	.tseg1_max = 16,
 	.tseg2_min = 1,
@@ -654,7 +659,6 @@ static struct net_device *softing_netdev_create(struct softing *card,
 
 	netdev->flags |= IFF_ECHO;
 	netdev->netdev_ops = &softing_netdev_ops;
-	netdev->ethtool_ops = &softing_ethtool_ops;
 	priv->can.do_set_mode = softing_candev_set_mode;
 	priv->can.ctrlmode_supported = CAN_CTRLMODE_3_SAMPLES;
 
@@ -690,7 +694,7 @@ static void softing_netdev_cleanup(struct net_device *netdev)
 static ssize_t show_##name(struct device *dev, \
 		struct device_attribute *attr, char *buf) \
 { \
-	struct softing *card = dev_get_drvdata(dev); \
+	struct softing *card = platform_get_drvdata(to_platform_device(dev)); \
 	return sprintf(buf, "%u\n", card->member); \
 } \
 static DEVICE_ATTR(name, 0444, show_##name, NULL)
@@ -699,7 +703,7 @@ static DEVICE_ATTR(name, 0444, show_##name, NULL)
 static ssize_t show_##name(struct device *dev, \
 		struct device_attribute *attr, char *buf) \
 { \
-	struct softing *card = dev_get_drvdata(dev); \
+	struct softing *card = platform_get_drvdata(to_platform_device(dev)); \
 	return sprintf(buf, "%s\n", card->member); \
 } \
 static DEVICE_ATTR(name, 0444, show_##name, NULL)
@@ -784,7 +788,7 @@ static int softing_pdev_probe(struct platform_device *pdev)
 		goto platform_resource_failed;
 	card->dpram_phys = pres->start;
 	card->dpram_size = resource_size(pres);
-	card->dpram = ioremap(card->dpram_phys, card->dpram_size);
+	card->dpram = ioremap_nocache(card->dpram_phys, card->dpram_size);
 	if (!card->dpram) {
 		dev_alert(&card->pdev->dev, "dpram ioremap failed\n");
 		goto ioremap_failed;
@@ -852,7 +856,7 @@ platform_resource_failed:
 
 static struct platform_driver softing_driver = {
 	.driver = {
-		.name = KBUILD_MODNAME,
+		.name = "softing",
 	},
 	.probe = softing_pdev_probe,
 	.remove = softing_pdev_remove,

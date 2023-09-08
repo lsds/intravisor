@@ -126,10 +126,8 @@ struct rsp_desc {		/* response queue descriptor */
 	struct rss_header rss_hdr;
 	__be32 flags;
 	__be32 len_cq;
-	struct_group(immediate,
-		u8 imm_data[47];
-		u8 intr_gen;
-	);
+	u8 imm_data[47];
+	u8 intr_gen;
 };
 
 /*
@@ -246,8 +244,8 @@ static inline void unmap_skb(struct sk_buff *skb, struct sge_txq *q,
 	frag_idx = d->fragidx;
 
 	if (frag_idx == 0 && skb_headlen(skb)) {
-		dma_unmap_single(&pdev->dev, be64_to_cpu(sgp->addr[0]),
-				 skb_headlen(skb), DMA_TO_DEVICE);
+		pci_unmap_single(pdev, be64_to_cpu(sgp->addr[0]),
+				 skb_headlen(skb), PCI_DMA_TODEVICE);
 		j = 1;
 	}
 
@@ -255,9 +253,9 @@ static inline void unmap_skb(struct sk_buff *skb, struct sge_txq *q,
 	nfrags = skb_shinfo(skb)->nr_frags;
 
 	while (frag_idx < nfrags && curflit < WR_FLITS) {
-		dma_unmap_page(&pdev->dev, be64_to_cpu(sgp->addr[j]),
+		pci_unmap_page(pdev, be64_to_cpu(sgp->addr[j]),
 			       skb_frag_size(&skb_shinfo(skb)->frags[frag_idx]),
-			       DMA_TO_DEVICE);
+			       PCI_DMA_TODEVICE);
 		j ^= 1;
 		if (j == 0) {
 			sgp++;
@@ -357,14 +355,15 @@ static void clear_rx_desc(struct pci_dev *pdev, const struct sge_fl *q,
 	if (q->use_pages && d->pg_chunk.page) {
 		(*d->pg_chunk.p_cnt)--;
 		if (!*d->pg_chunk.p_cnt)
-			dma_unmap_page(&pdev->dev, d->pg_chunk.mapping,
-				       q->alloc_size, DMA_FROM_DEVICE);
+			pci_unmap_page(pdev,
+				       d->pg_chunk.mapping,
+				       q->alloc_size, PCI_DMA_FROMDEVICE);
 
 		put_page(d->pg_chunk.page);
 		d->pg_chunk.page = NULL;
 	} else {
-		dma_unmap_single(&pdev->dev, dma_unmap_addr(d, dma_addr),
-				 q->buf_size, DMA_FROM_DEVICE);
+		pci_unmap_single(pdev, dma_unmap_addr(d, dma_addr),
+				 q->buf_size, PCI_DMA_FROMDEVICE);
 		kfree_skb(d->skb);
 		d->skb = NULL;
 	}
@@ -373,7 +372,7 @@ static void clear_rx_desc(struct pci_dev *pdev, const struct sge_fl *q,
 /**
  *	free_rx_bufs - free the Rx buffers on an SGE free list
  *	@pdev: the PCI device associated with the adapter
- *	@q: the SGE free list to clean up
+ *	@rxq: the SGE free list to clean up
  *
  *	Release the buffers on an SGE free-buffer Rx queue.  HW fetching from
  *	this queue should be stopped before calling this function.
@@ -415,8 +414,8 @@ static inline int add_one_rx_buf(void *va, unsigned int len,
 {
 	dma_addr_t mapping;
 
-	mapping = dma_map_single(&pdev->dev, va, len, DMA_FROM_DEVICE);
-	if (unlikely(dma_mapping_error(&pdev->dev, mapping)))
+	mapping = pci_map_single(pdev, va, len, PCI_DMA_FROMDEVICE);
+	if (unlikely(pci_dma_mapping_error(pdev, mapping)))
 		return -ENOMEM;
 
 	dma_unmap_addr_set(sd, dma_addr, mapping);
@@ -454,9 +453,9 @@ static int alloc_pg_chunk(struct adapter *adapter, struct sge_fl *q,
 		q->pg_chunk.p_cnt = q->pg_chunk.va + (PAGE_SIZE << order) -
 				    SGE_PG_RSVD;
 		q->pg_chunk.offset = 0;
-		mapping = dma_map_page(&adapter->pdev->dev, q->pg_chunk.page,
-				       0, q->alloc_size, DMA_FROM_DEVICE);
-		if (unlikely(dma_mapping_error(&adapter->pdev->dev, mapping))) {
+		mapping = pci_map_page(adapter->pdev, q->pg_chunk.page,
+				       0, q->alloc_size, PCI_DMA_FROMDEVICE);
+		if (unlikely(pci_dma_mapping_error(adapter->pdev, mapping))) {
 			__free_pages(q->pg_chunk.page, order);
 			q->pg_chunk.page = NULL;
 			return -EIO;
@@ -494,7 +493,7 @@ static inline void ring_fl_db(struct adapter *adap, struct sge_fl *q)
 
 /**
  *	refill_fl - refill an SGE free-buffer list
- *	@adap: the adapter
+ *	@adapter: the adapter
  *	@q: the free-list to refill
  *	@n: the number of new buffers to allocate
  *	@gfp: the gfp flags for allocating new buffers
@@ -523,9 +522,9 @@ nomem:				q->alloc_failed++;
 			dma_unmap_addr_set(sd, dma_addr, mapping);
 
 			add_one_rx_chunk(mapping, d, q->gen);
-			dma_sync_single_for_device(&adap->pdev->dev, mapping,
-						   q->buf_size - SGE_PG_RSVD,
-						   DMA_FROM_DEVICE);
+			pci_dma_sync_single_for_device(adap->pdev, mapping,
+						q->buf_size - SGE_PG_RSVD,
+						PCI_DMA_FROMDEVICE);
 		} else {
 			void *buf_start;
 
@@ -569,7 +568,7 @@ static inline void __refill_fl(struct adapter *adap, struct sge_fl *fl)
 
 /**
  *	recycle_rx_buf - recycle a receive buffer
- *	@adap: the adapter
+ *	@adapter: the adapter
  *	@q: the SGE free list
  *	@idx: index of buffer to recycle
  *
@@ -634,6 +633,7 @@ static void *alloc_ring(struct pci_dev *pdev, size_t nelem, size_t elem_size,
 		}
 		*(void **)metadata = s;
 	}
+	memset(p, 0, len);
 	return p;
 }
 
@@ -666,7 +666,7 @@ static void t3_reset_qset(struct sge_qset *q)
 
 
 /**
- *	t3_free_qset - free the resources of an SGE queue set
+ *	free_qset - free the resources of an SGE queue set
  *	@adapter: the adapter owning the queue set
  *	@q: the queue set
  *
@@ -794,13 +794,13 @@ static struct sk_buff *get_packet(struct adapter *adap, struct sge_fl *fl,
 		skb = alloc_skb(len, GFP_ATOMIC);
 		if (likely(skb != NULL)) {
 			__skb_put(skb, len);
-			dma_sync_single_for_cpu(&adap->pdev->dev,
-						dma_unmap_addr(sd, dma_addr),
-						len, DMA_FROM_DEVICE);
+			pci_dma_sync_single_for_cpu(adap->pdev,
+					    dma_unmap_addr(sd, dma_addr), len,
+					    PCI_DMA_FROMDEVICE);
 			memcpy(skb->data, sd->skb->data, len);
-			dma_sync_single_for_device(&adap->pdev->dev,
-						   dma_unmap_addr(sd, dma_addr),
-						   len, DMA_FROM_DEVICE);
+			pci_dma_sync_single_for_device(adap->pdev,
+					    dma_unmap_addr(sd, dma_addr), len,
+					    PCI_DMA_FROMDEVICE);
 		} else if (!drop_thres)
 			goto use_orig_buf;
 recycle:
@@ -814,8 +814,8 @@ recycle:
 		goto recycle;
 
 use_orig_buf:
-	dma_unmap_single(&adap->pdev->dev, dma_unmap_addr(sd, dma_addr),
-			 fl->buf_size, DMA_FROM_DEVICE);
+	pci_unmap_single(adap->pdev, dma_unmap_addr(sd, dma_addr),
+			 fl->buf_size, PCI_DMA_FROMDEVICE);
 	skb = sd->skb;
 	skb_put(skb, len);
 	__refill_fl(adap, fl);
@@ -826,7 +826,6 @@ use_orig_buf:
  *	get_packet_pg - return the next ingress packet buffer from a free list
  *	@adap: the adapter that received the packet
  *	@fl: the SGE free list holding the packet
- *	@q: the queue
  *	@len: the packet length including any SGE padding
  *	@drop_thres: # of remaining buffers before we start dropping packets
  *
@@ -855,11 +854,12 @@ static struct sk_buff *get_packet_pg(struct adapter *adap, struct sge_fl *fl,
 		newskb = alloc_skb(len, GFP_ATOMIC);
 		if (likely(newskb != NULL)) {
 			__skb_put(newskb, len);
-			dma_sync_single_for_cpu(&adap->pdev->dev, dma_addr,
-						len, DMA_FROM_DEVICE);
+			pci_dma_sync_single_for_cpu(adap->pdev, dma_addr, len,
+					    PCI_DMA_FROMDEVICE);
 			memcpy(newskb->data, sd->pg_chunk.va, len);
-			dma_sync_single_for_device(&adap->pdev->dev, dma_addr,
-						   len, DMA_FROM_DEVICE);
+			pci_dma_sync_single_for_device(adap->pdev, dma_addr,
+						       len,
+						       PCI_DMA_FROMDEVICE);
 		} else if (!drop_thres)
 			return NULL;
 recycle:
@@ -883,12 +883,14 @@ recycle:
 		goto recycle;
 	}
 
-	dma_sync_single_for_cpu(&adap->pdev->dev, dma_addr, len,
-				DMA_FROM_DEVICE);
+	pci_dma_sync_single_for_cpu(adap->pdev, dma_addr, len,
+				    PCI_DMA_FROMDEVICE);
 	(*sd->pg_chunk.p_cnt)--;
 	if (!*sd->pg_chunk.p_cnt && sd->pg_chunk.page != fl->pg_chunk.page)
-		dma_unmap_page(&adap->pdev->dev, sd->pg_chunk.mapping,
-			       fl->alloc_size, DMA_FROM_DEVICE);
+		pci_unmap_page(adap->pdev,
+			       sd->pg_chunk.mapping,
+			       fl->alloc_size,
+			       PCI_DMA_FROMDEVICE);
 	if (!skb) {
 		__skb_put(newskb, SGE_RX_PULL_LEN);
 		memcpy(newskb->data, sd->pg_chunk.va, SGE_RX_PULL_LEN);
@@ -927,8 +929,7 @@ static inline struct sk_buff *get_imm_packet(const struct rsp_desc *resp)
 
 	if (skb) {
 		__skb_put(skb, IMMED_PKT_SIZE);
-		BUILD_BUG_ON(IMMED_PKT_SIZE != sizeof(resp->immediate));
-		skb_copy_to_linear_data(skb, &resp->immediate, IMMED_PKT_SIZE);
+		skb_copy_to_linear_data(skb, resp->imm_data, IMMED_PKT_SIZE);
 	}
 	return skb;
 }
@@ -967,9 +968,9 @@ static int map_skb(struct pci_dev *pdev, const struct sk_buff *skb,
 	const struct skb_shared_info *si;
 
 	if (skb_headlen(skb)) {
-		*addr = dma_map_single(&pdev->dev, skb->data,
-				       skb_headlen(skb), DMA_TO_DEVICE);
-		if (dma_mapping_error(&pdev->dev, *addr))
+		*addr = pci_map_single(pdev, skb->data, skb_headlen(skb),
+				       PCI_DMA_TODEVICE);
+		if (pci_dma_mapping_error(pdev, *addr))
 			goto out_err;
 		addr++;
 	}
@@ -980,7 +981,7 @@ static int map_skb(struct pci_dev *pdev, const struct sk_buff *skb,
 	for (fp = si->frags; fp < end; fp++) {
 		*addr = skb_frag_dma_map(&pdev->dev, fp, 0, skb_frag_size(fp),
 					 DMA_TO_DEVICE);
-		if (dma_mapping_error(&pdev->dev, *addr))
+		if (pci_dma_mapping_error(pdev, *addr))
 			goto unwind;
 		addr++;
 	}
@@ -991,8 +992,7 @@ unwind:
 		dma_unmap_page(&pdev->dev, *--addr, skb_frag_size(fp),
 			       DMA_TO_DEVICE);
 
-	dma_unmap_single(&pdev->dev, addr[-1], skb_headlen(skb),
-			 DMA_TO_DEVICE);
+	pci_unmap_single(pdev, addr[-1], skb_headlen(skb), PCI_DMA_TODEVICE);
 out_err:
 	return -ENOMEM;
 }
@@ -1174,7 +1174,6 @@ static void write_wr_hdr_sgl(unsigned int ndesc, struct sk_buff *skb,
  *	@q: the Tx queue
  *	@ndesc: number of descriptors the packet will occupy
  *	@compl: the value of the COMPL bit to use
- *	@addr: address
  *
  *	Generate a TX_PKT work request to send the supplied packet.
  */
@@ -1256,7 +1255,7 @@ static inline void t3_stop_tx_queue(struct netdev_queue *txq,
 }
 
 /**
- *	t3_eth_xmit - add a packet to the Ethernet Tx queue
+ *	eth_xmit - add a packet to the Ethernet Tx queue
  *	@skb: the packet
  *	@dev: the egress net device
  *
@@ -1518,15 +1517,14 @@ static int ctrl_xmit(struct adapter *adap, struct sge_txq *q,
 
 /**
  *	restart_ctrlq - restart a suspended control queue
- *	@w: pointer to the work associated with this handler
+ *	@qs: the queue set cotaining the control queue
  *
  *	Resumes transmission on a suspended Tx control queue.
  */
-static void restart_ctrlq(struct work_struct *w)
+static void restart_ctrlq(unsigned long data)
 {
 	struct sk_buff *skb;
-	struct sge_qset *qs = container_of(w, struct sge_qset,
-					   txq[TXQ_CTRL].qresume_task);
+	struct sge_qset *qs = (struct sge_qset *)data;
 	struct sge_txq *q = &qs->txq[TXQ_CTRL];
 
 	spin_lock(&q->lock);
@@ -1592,14 +1590,13 @@ static void deferred_unmap_destructor(struct sk_buff *skb)
 	p = dui->addr;
 
 	if (skb_tail_pointer(skb) - skb_transport_header(skb))
-		dma_unmap_single(&dui->pdev->dev, *p++,
-				 skb_tail_pointer(skb) - skb_transport_header(skb),
-				 DMA_TO_DEVICE);
+		pci_unmap_single(dui->pdev, *p++, skb_tail_pointer(skb) -
+				 skb_transport_header(skb), PCI_DMA_TODEVICE);
 
 	si = skb_shinfo(skb);
 	for (i = 0; i < si->nr_frags; i++)
-		dma_unmap_page(&dui->pdev->dev, *p++,
-			       skb_frag_size(&si->frags[i]), DMA_TO_DEVICE);
+		pci_unmap_page(dui->pdev, *p++, skb_frag_size(&si->frags[i]),
+			       PCI_DMA_TODEVICE);
 }
 
 static void setup_deferred_unmapping(struct sk_buff *skb, struct pci_dev *pdev,
@@ -1626,7 +1623,6 @@ static void setup_deferred_unmapping(struct sk_buff *skb, struct pci_dev *pdev,
  *	@pidx: index of the first Tx descriptor to write
  *	@gen: the generation value to use
  *	@ndesc: number of descriptors the packet will occupy
- *	@addr: the address
  *
  *	Write an offload work request to send the supplied packet.  The packet
  *	data already carry the work request with most fields populated.
@@ -1738,15 +1734,14 @@ again:	reclaim_completed_tx(adap, q, TX_RECLAIM_CHUNK);
 
 /**
  *	restart_offloadq - restart a suspended offload queue
- *	@w: pointer to the work associated with this handler
+ *	@qs: the queue set cotaining the offload queue
  *
  *	Resumes transmission on a suspended Tx offload queue.
  */
-static void restart_offloadq(struct work_struct *w)
+static void restart_offloadq(unsigned long data)
 {
 	struct sk_buff *skb;
-	struct sge_qset *qs = container_of(w, struct sge_qset,
-					   txq[TXQ_OFLD].qresume_task);
+	struct sge_qset *qs = (struct sge_qset *)data;
 	struct sge_txq *q = &qs->txq[TXQ_OFLD];
 	const struct port_info *pi = netdev_priv(qs->netdev);
 	struct adapter *adap = pi->adapter;
@@ -1889,7 +1884,7 @@ static inline void deliver_partial_bundle(struct t3cdev *tdev,
 
 /**
  *	ofld_poll - NAPI handler for offload packets in interrupt mode
- *	@napi: the network device doing the polling
+ *	@dev: the network device doing the polling
  *	@budget: polling budget
  *
  *	The NAPI handler for offload packets when a response queue is serviced
@@ -1956,7 +1951,7 @@ static int ofld_poll(struct napi_struct *napi, int budget)
  *	@rx_gather: a gather list of packets if we are building a bundle
  *	@gather_idx: index of the next available slot in the bundle
  *
- *	Process an ingress offload packet and add it to the offload ingress
+ *	Process an ingress offload pakcet and add it to the offload ingress
  *	queue. 	Returns the index of the next available slot in the bundle.
  */
 static inline int rx_offload(struct t3cdev *tdev, struct sge_rspq *rq,
@@ -2001,23 +1996,19 @@ static void restart_tx(struct sge_qset *qs)
 	    should_restart_tx(&qs->txq[TXQ_OFLD]) &&
 	    test_and_clear_bit(TXQ_OFLD, &qs->txq_stopped)) {
 		qs->txq[TXQ_OFLD].restarts++;
-
-		/* The work can be quite lengthy so we use driver's own queue */
-		queue_work(cxgb3_wq, &qs->txq[TXQ_OFLD].qresume_task);
+		tasklet_schedule(&qs->txq[TXQ_OFLD].qresume_tsk);
 	}
 	if (test_bit(TXQ_CTRL, &qs->txq_stopped) &&
 	    should_restart_tx(&qs->txq[TXQ_CTRL]) &&
 	    test_and_clear_bit(TXQ_CTRL, &qs->txq_stopped)) {
 		qs->txq[TXQ_CTRL].restarts++;
-
-		/* The work can be quite lengthy so we use driver's own queue */
-		queue_work(cxgb3_wq, &qs->txq[TXQ_CTRL].qresume_task);
+		tasklet_schedule(&qs->txq[TXQ_CTRL].qresume_tsk);
 	}
 }
 
 /**
  *	cxgb3_arp_process - process an ARP request probing a private IP address
- *	@pi: the port info
+ *	@adapter: the adapter
  *	@skb: the skbuff containing the ARP request
  *
  *	Check if the ARP request is probing the private IP address
@@ -2079,10 +2070,9 @@ static void cxgb3_process_iscsi_prov_pack(struct port_info *pi,
  *	@adap: the adapter
  *	@rq: the response queue that received the packet
  *	@skb: the packet
- *	@pad: padding
- *	@lro: large receive offload
+ *	@pad: amount of padding at the start of the buffer
  *
- *	Process an ingress ethernet packet and deliver it to the stack.
+ *	Process an ingress ethernet pakcet and deliver it to the stack.
  *	The padding is 2 if the packet was delivered in an Rx buffer and 0
  *	if it was immediate data in a response.
  */
@@ -2143,7 +2133,7 @@ static void lro_add_page(struct adapter *adap, struct sge_qset *qs,
 	struct port_info *pi = netdev_priv(qs->netdev);
 	struct sk_buff *skb = NULL;
 	struct cpl_rx_pkt *cpl;
-	skb_frag_t *rx_frag;
+	struct skb_frag_struct *rx_frag;
 	int nr_frags;
 	int offset = 0;
 
@@ -2154,14 +2144,17 @@ static void lro_add_page(struct adapter *adap, struct sge_qset *qs,
 
 	fl->credits--;
 
-	dma_sync_single_for_cpu(&adap->pdev->dev,
-				dma_unmap_addr(sd, dma_addr),
-				fl->buf_size - SGE_PG_RSVD, DMA_FROM_DEVICE);
+	pci_dma_sync_single_for_cpu(adap->pdev,
+				    dma_unmap_addr(sd, dma_addr),
+				    fl->buf_size - SGE_PG_RSVD,
+				    PCI_DMA_FROMDEVICE);
 
 	(*sd->pg_chunk.p_cnt)--;
 	if (!*sd->pg_chunk.p_cnt && sd->pg_chunk.page != fl->pg_chunk.page)
-		dma_unmap_page(&adap->pdev->dev, sd->pg_chunk.mapping,
-			       fl->alloc_size, DMA_FROM_DEVICE);
+		pci_unmap_page(adap->pdev,
+			       sd->pg_chunk.mapping,
+			       fl->alloc_size,
+			       PCI_DMA_FROMDEVICE);
 
 	if (!skb) {
 		put_page(sd->pg_chunk.page);
@@ -2190,7 +2183,7 @@ static void lro_add_page(struct adapter *adap, struct sge_qset *qs,
 
 	rx_frag += nr_frags;
 	__skb_frag_set_page(rx_frag, sd->pg_chunk.page);
-	skb_frag_off_set(rx_frag, sd->pg_chunk.offset + offset);
+	rx_frag->page_offset = sd->pg_chunk.offset + offset;
 	skb_frag_size_set(rx_frag, len);
 
 	skb->len += len;
@@ -2247,7 +2240,7 @@ static inline void handle_rsp_cntrl_info(struct sge_qset *qs, u32 flags)
 
 /**
  *	check_ring_db - check if we need to ring any doorbells
- *	@adap: the adapter
+ *	@adapter: the adapter
  *	@qs: the queue set whose Tx queues are to be examined
  *	@sleeping: indicates which Tx queue sent GTS
  *
@@ -2380,13 +2373,16 @@ no_mem:
 			if (fl->use_pages) {
 				void *addr = fl->sdesc[fl->cidx].pg_chunk.va;
 
-				net_prefetch(addr);
+				prefetch(addr);
+#if L1_CACHE_BYTES < 128
+				prefetch(addr + L1_CACHE_BYTES);
+#endif
 				__refill_fl(adap, fl);
 				if (lro > 0) {
 					lro_add_page(adap, qs, fl,
 						     G_RSPD_LEN(len),
 						     flags & F_RSPD_EOP);
-					goto next_fl;
+					 goto next_fl;
 				}
 
 				skb = get_packet_pg(adap, fl, q,
@@ -2907,7 +2903,7 @@ void t3_sge_err_intr_handler(struct adapter *adapter)
 
 /**
  *	sge_timer_tx - perform periodic maintenance of an SGE qset
- *	@t: a timer list containing the SGE queue set to maintain
+ *	@data: the SGE queue set to maintain
  *
  *	Runs periodically from a timer to perform maintenance of an SGE queue
  *	set.  It performs two tasks:
@@ -2951,7 +2947,7 @@ static void sge_timer_tx(struct timer_list *t)
 
 /**
  *	sge_timer_rx - perform periodic maintenance of an SGE qset
- *	@t: the timer list containing the SGE queue set to maintain
+ *	@data: the SGE queue set to maintain
  *
  *	a) Replenishes Rx queues that have run out due to memory shortage.
  *	Normally new Rx buffers are added when existing ones are consumed but
@@ -3029,7 +3025,7 @@ void t3_update_qset_coalesce(struct sge_qset *qs, const struct qset_params *p)
  *	@irq_vec_idx: the IRQ vector index for response queue interrupts
  *	@p: configuration parameters for this queue set
  *	@ntxq: number of Tx queues for the queue set
- *	@dev: net device associated with this queue set
+ *	@netdev: net device associated with this queue set
  *	@netdevq: net device TX queue associated with this queue set
  *
  *	Allocate resources and initialize an SGE queue set.  A queue set
@@ -3089,8 +3085,10 @@ int t3_sge_alloc_qset(struct adapter *adapter, unsigned int id, int nports,
 		skb_queue_head_init(&q->txq[i].sendq);
 	}
 
-	INIT_WORK(&q->txq[TXQ_OFLD].qresume_task, restart_offloadq);
-	INIT_WORK(&q->txq[TXQ_CTRL].qresume_task, restart_ctrlq);
+	tasklet_init(&q->txq[TXQ_OFLD].qresume_tsk, restart_offloadq,
+		     (unsigned long)q);
+	tasklet_init(&q->txq[TXQ_CTRL].qresume_tsk, restart_ctrlq,
+		     (unsigned long)q);
 
 	q->fl[0].gen = q->fl[1].gen = 1;
 	q->fl[0].size = p->fl_size;
@@ -3179,7 +3177,6 @@ int t3_sge_alloc_qset(struct adapter *adapter, unsigned int id, int nports,
 			  GFP_KERNEL | __GFP_COMP);
 	if (!avail) {
 		CH_ALERT(adapter, "free list queue 0 initialization failed\n");
-		ret = -ENOMEM;
 		goto err;
 	}
 	if (avail < q->fl[0].size)
@@ -3218,13 +3215,11 @@ void t3_start_sge_timers(struct adapter *adap)
 	for (i = 0; i < SGE_QSETS; ++i) {
 		struct sge_qset *q = &adap->sge.qs[i];
 
-		if (q->tx_reclaim_timer.function)
-			mod_timer(&q->tx_reclaim_timer,
-				  jiffies + TX_RECLAIM_PERIOD);
+	if (q->tx_reclaim_timer.function)
+		mod_timer(&q->tx_reclaim_timer, jiffies + TX_RECLAIM_PERIOD);
 
-		if (q->rx_reclaim_timer.function)
-			mod_timer(&q->rx_reclaim_timer,
-				  jiffies + RX_RECLAIM_PERIOD);
+	if (q->rx_reclaim_timer.function)
+		mod_timer(&q->rx_reclaim_timer, jiffies + RX_RECLAIM_PERIOD);
 	}
 }
 
@@ -3275,43 +3270,30 @@ void t3_sge_start(struct adapter *adap)
 }
 
 /**
- *	t3_sge_stop_dma - Disable SGE DMA engine operation
+ *	t3_sge_stop - disable SGE operation
  *	@adap: the adapter
  *
- *	Can be invoked from interrupt context e.g.  error handler.
- *
- *	Note that this function cannot disable the restart of works as
- *	it cannot wait if called from interrupt context, however the
- *	works will have no effect since the doorbells are disabled. The
- *	driver will call tg3_sge_stop() later from process context, at
- *	which time the works will be stopped if they are still running.
- */
-void t3_sge_stop_dma(struct adapter *adap)
-{
-	t3_set_reg_field(adap, A_SG_CONTROL, F_GLOBALENABLE, 0);
-}
-
-/**
- *	t3_sge_stop - disable SGE operation completly
- *	@adap: the adapter
- *
- *	Called from process context. Disables the DMA engine and any
- *	pending queue restart works.
+ *	Disables the DMA engine.  This can be called in emeregencies (e.g.,
+ *	from error interrupts) or from normal process context.  In the latter
+ *	case it also disables any pending queue restart tasklets.  Note that
+ *	if it is called in interrupt context it cannot disable the restart
+ *	tasklets as it cannot wait, however the tasklets will have no effect
+ *	since the doorbells are disabled and the driver will call this again
+ *	later from process context, at which time the tasklets will be stopped
+ *	if they are still running.
  */
 void t3_sge_stop(struct adapter *adap)
 {
-	int i;
+	t3_set_reg_field(adap, A_SG_CONTROL, F_GLOBALENABLE, 0);
+	if (!in_interrupt()) {
+		int i;
 
-	t3_sge_stop_dma(adap);
+		for (i = 0; i < SGE_QSETS; ++i) {
+			struct sge_qset *qs = &adap->sge.qs[i];
 
-	/* workqueues aren't initialized otherwise */
-	if (!(adap->flags & FULL_INIT_DONE))
-		return;
-	for (i = 0; i < SGE_QSETS; ++i) {
-		struct sge_qset *qs = &adap->sge.qs[i];
-
-		cancel_work_sync(&qs->txq[TXQ_OFLD].qresume_task);
-		cancel_work_sync(&qs->txq[TXQ_CTRL].qresume_task);
+			tasklet_kill(&qs->txq[TXQ_OFLD].qresume_tsk);
+			tasklet_kill(&qs->txq[TXQ_CTRL].qresume_tsk);
+		}
 	}
 }
 
@@ -3378,7 +3360,7 @@ void t3_sge_prep(struct adapter *adap, struct sge_params *p)
 		q->coalesce_usecs = 5;
 		q->rspq_size = 1024;
 		q->fl_size = 1024;
-		q->jumbo_size = 512;
+ 		q->jumbo_size = 512;
 		q->txq_size[TXQ_ETH] = 1024;
 		q->txq_size[TXQ_OFLD] = 1024;
 		q->txq_size[TXQ_CTRL] = 256;

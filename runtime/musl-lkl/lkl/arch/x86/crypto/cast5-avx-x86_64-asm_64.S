@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
  * Cast5 Cipher 16-way parallel algorithm (AVX/x86_64)
  *
@@ -6,6 +5,22 @@
  *     <Johannes.Goetzfried@informatik.stud.uni-erlangen.de>
  *
  * Copyright © 2012 Jussi Kivilinna <jussi.kivilinna@mbnet.fi>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307
+ * USA
+ *
  */
 
 #include <linux/linkage.h>
@@ -209,7 +224,7 @@
 .text
 
 .align 16
-SYM_FUNC_START_LOCAL(__cast5_enc_blk16)
+__cast5_enc_blk16:
 	/* input:
 	 *	%rdi: ctx
 	 *	RL1: blocks 1 and 2
@@ -279,11 +294,11 @@ SYM_FUNC_START_LOCAL(__cast5_enc_blk16)
 	outunpack_blocks(RR3, RL3, RTMP, RX, RKM);
 	outunpack_blocks(RR4, RL4, RTMP, RX, RKM);
 
-	RET;
-SYM_FUNC_END(__cast5_enc_blk16)
+	ret;
+ENDPROC(__cast5_enc_blk16)
 
 .align 16
-SYM_FUNC_START_LOCAL(__cast5_dec_blk16)
+__cast5_dec_blk16:
 	/* input:
 	 *	%rdi: ctx
 	 *	RL1: encrypted blocks 1 and 2
@@ -352,14 +367,14 @@ SYM_FUNC_START_LOCAL(__cast5_dec_blk16)
 	outunpack_blocks(RR3, RL3, RTMP, RX, RKM);
 	outunpack_blocks(RR4, RL4, RTMP, RX, RKM);
 
-	RET;
+	ret;
 
 .L__skip_dec:
 	vpsrldq $4, RKR, RKR;
 	jmp .L__dec_tail;
-SYM_FUNC_END(__cast5_dec_blk16)
+ENDPROC(__cast5_dec_blk16)
 
-SYM_FUNC_START(cast5_ecb_enc_16way)
+ENTRY(cast5_ecb_enc_16way)
 	/* input:
 	 *	%rdi: ctx
 	 *	%rsi: dst
@@ -393,10 +408,10 @@ SYM_FUNC_START(cast5_ecb_enc_16way)
 
 	popq %r15;
 	FRAME_END
-	RET;
-SYM_FUNC_END(cast5_ecb_enc_16way)
+	ret;
+ENDPROC(cast5_ecb_enc_16way)
 
-SYM_FUNC_START(cast5_ecb_dec_16way)
+ENTRY(cast5_ecb_dec_16way)
 	/* input:
 	 *	%rdi: ctx
 	 *	%rsi: dst
@@ -431,10 +446,10 @@ SYM_FUNC_START(cast5_ecb_dec_16way)
 
 	popq %r15;
 	FRAME_END
-	RET;
-SYM_FUNC_END(cast5_ecb_dec_16way)
+	ret;
+ENDPROC(cast5_ecb_dec_16way)
 
-SYM_FUNC_START(cast5_cbc_dec_16way)
+ENTRY(cast5_cbc_dec_16way)
 	/* input:
 	 *	%rdi: ctx
 	 *	%rsi: dst
@@ -483,10 +498,10 @@ SYM_FUNC_START(cast5_cbc_dec_16way)
 	popq %r15;
 	popq %r12;
 	FRAME_END
-	RET;
-SYM_FUNC_END(cast5_cbc_dec_16way)
+	ret;
+ENDPROC(cast5_cbc_dec_16way)
 
-SYM_FUNC_START(cast5_ctr_16way)
+ENTRY(cast5_ctr_16way)
 	/* input:
 	 *	%rdi: ctx
 	 *	%rsi: dst
@@ -559,5 +574,5 @@ SYM_FUNC_START(cast5_ctr_16way)
 	popq %r15;
 	popq %r12;
 	FRAME_END
-	RET;
-SYM_FUNC_END(cast5_ctr_16way)
+	ret;
+ENDPROC(cast5_ctr_16way)

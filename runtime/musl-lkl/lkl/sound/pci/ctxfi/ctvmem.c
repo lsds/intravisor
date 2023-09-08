@@ -1,6 +1,9 @@
-// SPDX-License-Identifier: GPL-2.0-only
-/*
+/**
  * Copyright (C) 2008, Creative Technology Ltd. All Rights Reserved.
+ *
+ * This source file is released under GPL v2 license (no other versions).
+ * See the COPYING file included in the main directory of this source
+ * distribution for the license terms and conditions.
  *
  * @File    ctvmem.c
  *
@@ -183,7 +186,7 @@ int ct_vm_create(struct ct_vm **rvm, struct pci_dev *pci)
 	/* Allocate page table pages */
 	for (i = 0; i < CT_PTP_NUM; i++) {
 		err = snd_dma_alloc_pages(SNDRV_DMA_TYPE_DEV,
-					  &pci->dev,
+					  snd_dma_pci_data(pci),
 					  PAGE_SIZE, &vm->ptp[i]);
 		if (err < 0)
 			break;

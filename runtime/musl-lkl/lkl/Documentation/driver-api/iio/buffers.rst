@@ -2,7 +2,7 @@
 Buffers
 =======
 
-* struct iio_buffer — general buffer structure
+* struct :c:type:`iio_buffer` — general buffer structure
 * :c:func:`iio_validate_scan_mask_onehot` — Validates that exactly one channel
   is selected
 * :c:func:`iio_buffer_get` — Grab a reference to the buffer
@@ -26,28 +26,26 @@ IIO buffer setup
 ================
 
 The meta information associated with a channel reading placed in a buffer is
-called a scan element. The important bits configuring scan elements are
+called a scan element . The important bits configuring scan elements are
 exposed to userspace applications via the
-:file:`/sys/bus/iio/iio:device{X}/scan_elements/` directory. This directory contains
+:file:`/sys/bus/iio/iio:device{X}/scan_elements/*` directory. This file contains
 attributes of the following form:
 
 * :file:`enable`, used for enabling a channel. If and only if its attribute
   is non *zero*, then a triggered capture will contain data samples for this
   channel.
-* :file:`index`, the scan_index of the channel.
 * :file:`type`, description of the scan element data storage within the buffer
   and hence the form in which it is read from user space.
-  Format is [be|le]:[s|u]bits/storagebits[Xrepeat][>>shift] .
-
+  Format is [be|le]:[s|u]bits/storagebitsXrepeat[>>shift] .
   * *be* or *le*, specifies big or little endian.
   * *s* or *u*, specifies if signed (2's complement) or unsigned.
   * *bits*, is the number of valid data bits.
   * *storagebits*, is the number of bits (after padding) that it occupies in the
-    buffer.
-  * *repeat*, specifies the number of bits/storagebits repetitions. When the
-    repeat element is 0 or 1, then the repeat value is omitted.
+  buffer.
   * *shift*, if specified, is the shift that needs to be applied prior to
-    masking out unused bits.
+  masking out unused bits.
+  * *repeat*, specifies the number of bits/storagebits repetitions. When the
+  repeat element is 0 or 1, then the repeat value is omitted.
 
 For example, a driver for a 3-axis accelerometer with 12 bit resolution where
 data is stored in two 8-bits registers as follows::
@@ -90,7 +88,7 @@ fields in iio_chan_spec definition::
 The driver implementing the accelerometer described above will have the
 following channel definition::
 
-   struct iio_chan_spec accel_channels[] = {
+   struct struct iio_chan_spec accel_channels[] = {
            {
                    .type = IIO_ACCEL,
 		   .modified = 1,
@@ -124,3 +122,4 @@ More details
 .. kernel-doc:: include/linux/iio/buffer.h
 .. kernel-doc:: drivers/iio/industrialio-buffer.c
    :export:
+

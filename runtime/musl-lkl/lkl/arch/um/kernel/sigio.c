@@ -1,6 +1,6 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (C) 2002 - 2007 Jeff Dike (jdike@{linux.intel,addtoit}.com)
+ * Licensed under the GPL
  */
 
 #include <linux/interrupt.h>
@@ -16,6 +16,7 @@ static irqreturn_t sigio_interrupt(int irq, void *data)
 	char c;
 
 	os_read_file(sigio_irq_fd, &c, sizeof(c));
+	reactivate_fd(sigio_irq_fd, SIGIO_WRITE_IRQ);
 	return IRQ_HANDLED;
 }
 
@@ -25,7 +26,7 @@ int write_sigio_irq(int fd)
 
 	err = um_request_irq(SIGIO_WRITE_IRQ, fd, IRQ_READ, sigio_interrupt,
 			     0, "write sigio", NULL);
-	if (err < 0) {
+	if (err) {
 		printk(KERN_ERR "write_sigio_irq : um_request_irq failed, "
 		       "err = %d\n", err);
 		return -1;
@@ -35,14 +36,14 @@ int write_sigio_irq(int fd)
 }
 
 /* These are called from os-Linux/sigio.c to protect its pollfds arrays. */
-static DEFINE_MUTEX(sigio_mutex);
+static DEFINE_SPINLOCK(sigio_spinlock);
 
 void sigio_lock(void)
 {
-	mutex_lock(&sigio_mutex);
+	spin_lock(&sigio_spinlock);
 }
 
 void sigio_unlock(void)
 {
-	mutex_unlock(&sigio_mutex);
+	spin_unlock(&sigio_spinlock);
 }

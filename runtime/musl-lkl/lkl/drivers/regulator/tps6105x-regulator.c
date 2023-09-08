@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Driver for TPS61050/61052 boost converters, typically used for white LEDs
  * or audio amplifiers.
@@ -7,6 +6,8 @@
  * Written on behalf of Linaro for ST-Ericsson
  *
  * Author: Linus Walleij <linus.walleij@linaro.org>
+ *
+ * License terms: GNU General Public License (GPL) version 2
  */
 
 #include <linux/module.h>
@@ -26,7 +27,7 @@ static const unsigned int tps6105x_voltages[] = {
 	5000000, /* There is an additional 5V */
 };
 
-static const struct regulator_ops tps6105x_regulator_ops = {
+static struct regulator_ops tps6105x_regulator_ops = {
 	.enable		= regulator_enable_regmap,
 	.disable	= regulator_disable_regmap,
 	.is_enabled	= regulator_is_enabled_regmap,
@@ -37,7 +38,6 @@ static const struct regulator_ops tps6105x_regulator_ops = {
 
 static const struct regulator_desc tps6105x_regulator_desc = {
 	.name		= "tps6105x-boost",
-	.of_match	= of_match_ptr("regulator"),
 	.ops		= &tps6105x_regulator_ops,
 	.type		= REGULATOR_VOLTAGE,
 	.id		= 0,
@@ -72,7 +72,6 @@ static int tps6105x_regulator_probe(struct platform_device *pdev)
 	config.dev = &tps6105x->client->dev;
 	config.init_data = pdata->regulator_data;
 	config.driver_data = tps6105x;
-	config.of_node = pdev->dev.parent->of_node;
 	config.regmap = tps6105x->regmap;
 
 	/* Register regulator with framework */

@@ -1,9 +1,13 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Code borrowed from powerpc/kernel/pci-common.c
  *
  * Copyright (C) 2003 Anton Blanchard <anton@au.ibm.com>, IBM
  * Copyright (C) 2014 ARM Ltd.
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * version 2 as published by the Free Software Foundation.
+ *
  */
 
 #include <linux/acpi.h>
@@ -82,29 +86,14 @@ int acpi_pci_bus_find_domain_nr(struct pci_bus *bus)
 
 int pcibios_root_bridge_prepare(struct pci_host_bridge *bridge)
 {
-	struct pci_config_window *cfg;
-	struct acpi_device *adev;
-	struct device *bus_dev;
+	if (!acpi_disabled) {
+		struct pci_config_window *cfg = bridge->bus->sysdata;
+		struct acpi_device *adev = to_acpi_device(cfg->parent);
+		struct device *bus_dev = &bridge->bus->dev;
 
-	if (acpi_disabled)
-		return 0;
-
-	cfg = bridge->bus->sysdata;
-
-	/*
-	 * On Hyper-V there is no corresponding ACPI device for a root bridge,
-	 * therefore ->parent is set as NULL by the driver. And set 'adev' as
-	 * NULL in this case because there is no proper ACPI device.
-	 */
-	if (!cfg->parent)
-		adev = NULL;
-	else
-		adev = to_acpi_device(cfg->parent);
-
-	bus_dev = &bridge->bus->dev;
-
-	ACPI_COMPANION_SET(&bridge->dev, adev);
-	set_dev_node(bus_dev, acpi_get_node(acpi_device_handle(adev)));
+		ACPI_COMPANION_SET(&bridge->dev, adev);
+		set_dev_node(bus_dev, acpi_get_node(acpi_device_handle(adev)));
+	}
 
 	return 0;
 }
@@ -132,7 +121,7 @@ pci_acpi_setup_ecam_mapping(struct acpi_pci_root *root)
 	struct device *dev = &root->device->dev;
 	struct resource *bus_res = &root->secondary;
 	u16 seg = root->segment;
-	const struct pci_ecam_ops *ecam_ops;
+	struct pci_ecam_ops *ecam_ops;
 	struct resource cfgres;
 	struct acpi_device *adev;
 	struct pci_config_window *cfg;
@@ -176,16 +165,16 @@ static void pci_acpi_generic_release_info(struct acpi_pci_root_info *ci)
 /* Interface called from ACPI code to setup PCI host controller */
 struct pci_bus *pci_acpi_scan_root(struct acpi_pci_root *root)
 {
+	int node = acpi_get_node(root->device->handle);
 	struct acpi_pci_generic_root_info *ri;
 	struct pci_bus *bus, *child;
 	struct acpi_pci_root_ops *root_ops;
-	struct pci_host_bridge *host;
 
-	ri = kzalloc(sizeof(*ri), GFP_KERNEL);
+	ri = kzalloc_node(sizeof(*ri), GFP_KERNEL, node);
 	if (!ri)
 		return NULL;
 
-	root_ops = kzalloc(sizeof(*root_ops), GFP_KERNEL);
+	root_ops = kzalloc_node(sizeof(*root_ops), GFP_KERNEL, node);
 	if (!root_ops) {
 		kfree(ri);
 		return NULL;
@@ -200,21 +189,13 @@ struct pci_bus *pci_acpi_scan_root(struct acpi_pci_root *root)
 
 	root_ops->release_info = pci_acpi_generic_release_info;
 	root_ops->prepare_resources = pci_acpi_root_prepare_resources;
-	root_ops->pci_ops = (struct pci_ops *)&ri->cfg->ops->pci_ops;
+	root_ops->pci_ops = &ri->cfg->ops->pci_ops;
 	bus = acpi_pci_root_create(root, root_ops, &ri->common, ri->cfg);
 	if (!bus)
 		return NULL;
 
-	/* If we must preserve the resource configuration, claim now */
-	host = pci_find_host_bridge(bus);
-	if (host->preserve_config)
-		pci_bus_claim_resources(bus);
-
-	/*
-	 * Assign whatever was left unassigned. If we didn't claim above,
-	 * this will reassign everything.
-	 */
-	pci_assign_unassigned_root_bus_resources(bus);
+	pci_bus_size_bridges(bus);
+	pci_bus_assign_resources(bus);
 
 	list_for_each_entry(child, &bus->children, node)
 		pcie_bus_configure_settings(child);

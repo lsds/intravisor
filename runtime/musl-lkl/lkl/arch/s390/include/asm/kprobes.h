@@ -54,6 +54,7 @@ typedef u16 kprobe_opcode_t;
 struct arch_specific_insn {
 	/* copy of original instruction */
 	kprobe_opcode_t *insn;
+	unsigned int is_ftrace_insn : 1;
 };
 
 struct prev_kprobe {
@@ -67,11 +68,12 @@ struct kprobe_ctlblk {
 	unsigned long kprobe_saved_imask;
 	unsigned long kprobe_saved_ctl[3];
 	struct prev_kprobe prev_kprobe;
+	struct pt_regs jprobe_saved_regs;
+	kprobe_opcode_t jprobes_stack[MAX_STACK_SIZE];
 };
 
 void arch_remove_kprobe(struct kprobe *p);
-void __kretprobe_trampoline(void);
-void trampoline_probe_handler(struct pt_regs *regs);
+void kretprobe_trampoline(void);
 
 int kprobe_fault_handler(struct pt_regs *regs, int trapnr);
 int kprobe_exceptions_notify(struct notifier_block *self,

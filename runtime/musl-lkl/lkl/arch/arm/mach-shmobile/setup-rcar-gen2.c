@@ -1,32 +1,37 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * R-Car Generation 2 support
  *
  * Copyright (C) 2013  Renesas Solutions Corp.
  * Copyright (C) 2013  Magnus Damm
  * Copyright (C) 2014  Ulrich Hecht
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; version 2 of the License.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
  */
 
+#include <linux/clk-provider.h>
 #include <linux/clocksource.h>
 #include <linux/device.h>
-#include <linux/dma-map-ops.h>
+#include <linux/dma-contiguous.h>
 #include <linux/io.h>
 #include <linux/kernel.h>
 #include <linux/memblock.h>
 #include <linux/of.h>
-#include <linux/of_clk.h>
 #include <linux/of_fdt.h>
 #include <linux/of_platform.h>
-#include <linux/psci.h>
 #include <asm/mach/arch.h>
-#include <asm/secure_cntvoff.h>
 #include "common.h"
 #include "rcar-gen2.h"
 
 static const struct of_device_id cpg_matches[] __initconst = {
-	{ .compatible = "renesas,r8a7742-cpg-mssr", .data = "extal" },
+	{ .compatible = "renesas,rcar-gen2-cpg-clocks", },
 	{ .compatible = "renesas,r8a7743-cpg-mssr", .data = "extal" },
-	{ .compatible = "renesas,r8a7744-cpg-mssr", .data = "extal" },
 	{ .compatible = "renesas,r8a7790-cpg-mssr", .data = "extal" },
 	{ .compatible = "renesas,r8a7791-cpg-mssr", .data = "extal" },
 	{ .compatible = "renesas,r8a7793-cpg-mssr", .data = "extal" },
@@ -59,30 +64,15 @@ static unsigned int __init get_extal_freq(void)
 #define CNTCR 0
 #define CNTFID0 0x20
 
-static void __init rcar_gen2_timer_init(void)
+void __init rcar_gen2_timer_init(void)
 {
-	bool need_update = true;
+#ifdef CONFIG_ARM_ARCH_TIMER
 	void __iomem *base;
 	u32 freq;
 
-	/*
-	 * If PSCI is available then most likely we are running on PSCI-enabled
-	 * U-Boot which, we assume, has already taken care of resetting CNTVOFF
-	 * and updating counter module before switching to non-secure mode
-	 * and we don't need to.
-	 */
-#ifdef CONFIG_ARM_PSCI_FW
-	if (psci_ops.cpu_on)
-		need_update = false;
-#endif
-
-	if (need_update == false)
-		goto skip_update;
-
-	secure_cntvoff_init();
+	shmobile_init_cntvoff();
 
 	if (of_machine_is_compatible("renesas,r8a7745") ||
-	    of_machine_is_compatible("renesas,r8a77470") ||
 	    of_machine_is_compatible("renesas,r8a7792") ||
 	    of_machine_is_compatible("renesas,r8a7794")) {
 		freq = 260000000 / 8;	/* ZS / 8 */
@@ -117,8 +107,8 @@ static void __init rcar_gen2_timer_init(void)
 	}
 
 	iounmap(base);
+#endif /* CONFIG_ARM_ARCH_TIMER */
 
-skip_update:
 	of_clk_init(NULL);
 	timer_probe();
 }
@@ -174,7 +164,7 @@ static int __init rcar_gen2_scan_mem(unsigned long node, const char *uname,
 	return 0;
 }
 
-static void __init rcar_gen2_reserve(void)
+void __init rcar_gen2_reserve(void)
 {
 	struct memory_reserve_config mrc;
 
@@ -194,15 +184,18 @@ static void __init rcar_gen2_reserve(void)
 }
 
 static const char * const rcar_gen2_boards_compat_dt[] __initconst = {
-	"renesas,r8a7790",
-	"renesas,r8a7791",
+	/*
+	 * R8A7790 and R8A7791 can't be handled here as long as they need SMP
+	 * initialization fallback.
+	 */
 	"renesas,r8a7792",
 	"renesas,r8a7793",
 	"renesas,r8a7794",
-	NULL
+	NULL,
 };
 
 DT_MACHINE_START(RCAR_GEN2_DT, "Generic R-Car Gen2 (Flattened Device Tree)")
+	.init_early	= shmobile_init_delay,
 	.init_late	= shmobile_init_late,
 	.init_time	= rcar_gen2_timer_init,
 	.reserve	= rcar_gen2_reserve,
@@ -210,15 +203,13 @@ DT_MACHINE_START(RCAR_GEN2_DT, "Generic R-Car Gen2 (Flattened Device Tree)")
 MACHINE_END
 
 static const char * const rz_g1_boards_compat_dt[] __initconst = {
-	"renesas,r8a7742",
 	"renesas,r8a7743",
-	"renesas,r8a7744",
 	"renesas,r8a7745",
-	"renesas,r8a77470",
-	NULL
+	NULL,
 };
 
 DT_MACHINE_START(RZ_G1_DT, "Generic RZ/G1 (Flattened Device Tree)")
+	.init_early	= shmobile_init_delay,
 	.init_late	= shmobile_init_late,
 	.init_time	= rcar_gen2_timer_init,
 	.reserve	= rcar_gen2_reserve,

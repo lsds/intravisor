@@ -1,5 +1,8 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
  *
  * Copyright (C) Jonathan Naylor G4KLX (g4klx@g4klx.demon.co.uk)
  */
@@ -94,11 +97,11 @@ static void rose_t0timer_expiry(struct timer_list *t)
  */
 static int rose_send_frame(struct sk_buff *skb, struct rose_neigh *neigh)
 {
-	const ax25_address *rose_call;
+	ax25_address *rose_call;
 	ax25_cb *ax25s;
 
 	if (ax25cmp(&rose_callsign, &null_ax25_address) == 0)
-		rose_call = (const ax25_address *)neigh->dev->dev_addr;
+		rose_call = (ax25_address *)neigh->dev->dev_addr;
 	else
 		rose_call = &rose_callsign;
 
@@ -117,11 +120,11 @@ static int rose_send_frame(struct sk_buff *skb, struct rose_neigh *neigh)
  */
 static int rose_link_up(struct rose_neigh *neigh)
 {
-	const ax25_address *rose_call;
+	ax25_address *rose_call;
 	ax25_cb *ax25s;
 
 	if (ax25cmp(&rose_callsign, &null_ax25_address) == 0)
-		rose_call = (const ax25_address *)neigh->dev->dev_addr;
+		rose_call = (ax25_address *)neigh->dev->dev_addr;
 	else
 		rose_call = &rose_callsign;
 
@@ -235,9 +238,6 @@ void rose_transmit_clear_request(struct rose_neigh *neigh, unsigned int lci, uns
 	struct sk_buff *skb;
 	unsigned char *dptr;
 	int len;
-
-	if (!neigh->dev)
-		return;
 
 	len = AX25_BPQ_HEADER_LEN + AX25_MAX_HEADER_LEN + ROSE_MIN_LEN + 3;
 

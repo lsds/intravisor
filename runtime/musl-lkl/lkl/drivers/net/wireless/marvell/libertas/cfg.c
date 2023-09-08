@@ -273,10 +273,6 @@ add_ie_rates(u8 *tlv, const u8 *ie, int *nrates)
 	int hw, ap, ap_max = ie[1];
 	u8 hw_rate;
 
-	if (ap_max > MAX_RATES) {
-		lbs_deb_assoc("invalid rates\n");
-		return tlv;
-	}
 	/* Advance past IE header */
 	ie += 2;
 
@@ -546,7 +542,7 @@ static int lbs_ret_scan(struct lbs_private *priv, unsigned long dummy,
 	pos = scanresp->bssdesc_and_tlvbuffer;
 
 	lbs_deb_hex(LBS_DEB_SCAN, "SCAN_RSP", scanresp->bssdesc_and_tlvbuffer,
-		    bsssize);
+			scanresp->bssdescriptsize);
 
 	tsfdesc = pos + bsssize;
 	tsfsize = 4 + 8 * scanresp->nr_sets;
@@ -1053,6 +1049,7 @@ static int lbs_set_authtype(struct lbs_private *priv,
  */
 #define LBS_ASSOC_MAX_CMD_SIZE                     \
 	(sizeof(struct cmd_ds_802_11_associate)    \
+	 - 512 /* cmd_ds_802_11_associate.iebuf */ \
 	 + LBS_MAX_SSID_TLV_SIZE                   \
 	 + LBS_MAX_CHANNEL_TLV_SIZE                \
 	 + LBS_MAX_CF_PARAM_TLV_SIZE               \
@@ -1129,7 +1126,8 @@ static int lbs_associate(struct lbs_private *priv,
 	if (sme->ie && sme->ie_len)
 		pos += lbs_add_wpa_tlv(pos, sme->ie, sme->ie_len);
 
-	len = sizeof(*cmd) + (u16)(pos - (u8 *) &cmd->iebuf);
+	len = (sizeof(*cmd) - sizeof(cmd->iebuf)) +
+		(u16)(pos - (u8 *) &cmd->iebuf);
 	cmd->hdr.size = cpu_to_le16(len);
 
 	lbs_deb_hex(LBS_DEB_ASSOC, "ASSOC_CMD", (u8 *) cmd,
@@ -1435,7 +1433,7 @@ static int lbs_cfg_disconnect(struct wiphy *wiphy, struct net_device *dev,
 }
 
 static int lbs_cfg_set_default_key(struct wiphy *wiphy,
-				   struct net_device *netdev, int link_id,
+				   struct net_device *netdev,
 				   u8 key_index, bool unicast,
 				   bool multicast)
 {
@@ -1455,8 +1453,8 @@ static int lbs_cfg_set_default_key(struct wiphy *wiphy,
 
 
 static int lbs_cfg_add_key(struct wiphy *wiphy, struct net_device *netdev,
-			   int link_id, u8 idx, bool pairwise,
-			   const u8 *mac_addr, struct key_params *params)
+			   u8 idx, bool pairwise, const u8 *mac_addr,
+			   struct key_params *params)
 {
 	struct lbs_private *priv = wiphy_priv(wiphy);
 	u16 key_info;
@@ -1516,8 +1514,7 @@ static int lbs_cfg_add_key(struct wiphy *wiphy, struct net_device *netdev,
 
 
 static int lbs_cfg_del_key(struct wiphy *wiphy, struct net_device *netdev,
-			   int link_id, u8 key_index, bool pairwise,
-			   const u8 *mac_addr)
+			   u8 key_index, bool pairwise, const u8 *mac_addr)
 {
 
 	lbs_deb_assoc("del_key: key_idx %d, mac_addr %pM\n",
@@ -1562,10 +1559,10 @@ static int lbs_cfg_get_station(struct wiphy *wiphy, struct net_device *dev,
 	int ret;
 	size_t i;
 
-	sinfo->filled |= BIT_ULL(NL80211_STA_INFO_TX_BYTES) |
-			 BIT_ULL(NL80211_STA_INFO_TX_PACKETS) |
-			 BIT_ULL(NL80211_STA_INFO_RX_BYTES) |
-			 BIT_ULL(NL80211_STA_INFO_RX_PACKETS);
+	sinfo->filled |= BIT(NL80211_STA_INFO_TX_BYTES) |
+			 BIT(NL80211_STA_INFO_TX_PACKETS) |
+			 BIT(NL80211_STA_INFO_RX_BYTES) |
+			 BIT(NL80211_STA_INFO_RX_PACKETS);
 	sinfo->tx_bytes = priv->dev->stats.tx_bytes;
 	sinfo->tx_packets = priv->dev->stats.tx_packets;
 	sinfo->rx_bytes = priv->dev->stats.rx_bytes;
@@ -1575,14 +1572,14 @@ static int lbs_cfg_get_station(struct wiphy *wiphy, struct net_device *dev,
 	ret = lbs_get_rssi(priv, &signal, &noise);
 	if (ret == 0) {
 		sinfo->signal = signal;
-		sinfo->filled |= BIT_ULL(NL80211_STA_INFO_SIGNAL);
+		sinfo->filled |= BIT(NL80211_STA_INFO_SIGNAL);
 	}
 
 	/* Convert priv->cur_rate from hw_value to NL80211 value */
 	for (i = 0; i < ARRAY_SIZE(lbs_rates); i++) {
 		if (priv->cur_rate == lbs_rates[i].hw_value) {
 			sinfo->txrate.legacy = lbs_rates[i].bitrate;
-			sinfo->filled |= BIT_ULL(NL80211_STA_INFO_TX_BITRATE);
+			sinfo->filled |= BIT(NL80211_STA_INFO_TX_BITRATE);
 			break;
 		}
 	}
@@ -1720,9 +1717,6 @@ static int lbs_ibss_join_existing(struct lbs_private *priv,
 	struct cmd_ds_802_11_ad_hoc_join cmd;
 	u8 preamble = RADIO_PREAMBLE_SHORT;
 	int ret = 0;
-	int hw, i;
-	u8 rates_max;
-	u8 *rates;
 
 	/* TODO: set preamble based on scan result */
 	ret = lbs_set_radio(priv, preamble, 1);
@@ -1781,14 +1775,9 @@ static int lbs_ibss_join_existing(struct lbs_private *priv,
 	if (!rates_eid) {
 		lbs_add_rates(cmd.bss.rates);
 	} else {
-		rates_max = rates_eid[1];
-		if (rates_max > MAX_RATES) {
-			lbs_deb_join("invalid rates");
-			rcu_read_unlock();
-			ret = -EINVAL;
-			goto out;
-		}
-		rates = cmd.bss.rates;
+		int hw, i;
+		u8 rates_max = rates_eid[1];
+		u8 *rates = cmd.bss.rates;
 		for (hw = 0; hw < ARRAY_SIZE(lbs_rates); hw++) {
 			u8 hw_rate = lbs_rates[hw].bitrate / 5;
 			for (i = 0; i < rates_max; i++) {

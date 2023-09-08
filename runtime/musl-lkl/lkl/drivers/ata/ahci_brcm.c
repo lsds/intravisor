@@ -1,8 +1,17 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Broadcom SATA3 AHCI Controller Driver
  *
  * Copyright © 2009-2015 Broadcom Corporation
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2, or (at your option)
+ * any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
  */
 
 #include <linux/ahci_platform.h>
@@ -16,7 +25,6 @@
 #include <linux/module.h>
 #include <linux/of.h>
 #include <linux/platform_device.h>
-#include <linux/reset.h>
 #include <linux/string.h>
 
 #include "ahci.h"
@@ -73,11 +81,11 @@ enum brcm_ahci_version {
 	BRCM_SATA_BCM7425 = 1,
 	BRCM_SATA_BCM7445,
 	BRCM_SATA_NSP,
-	BRCM_SATA_BCM7216,
 };
 
 enum brcm_ahci_quirks {
-	BRCM_AHCI_QUIRK_SKIP_PHY_ENABLE	= BIT(0),
+	BRCM_AHCI_QUIRK_NO_NCQ		= BIT(0),
+	BRCM_AHCI_QUIRK_SKIP_PHY_ENABLE	= BIT(1),
 };
 
 struct brcm_ahci_priv {
@@ -86,8 +94,6 @@ struct brcm_ahci_priv {
 	u32 port_mask;
 	u32 quirks;
 	enum brcm_ahci_version version;
-	struct reset_control *rcdev_rescal;
-	struct reset_control *rcdev_ahci;
 };
 
 static inline u32 brcm_sata_readreg(void __iomem *addr)
@@ -214,18 +220,28 @@ static void brcm_sata_phys_disable(struct brcm_ahci_priv *priv)
 			brcm_sata_phy_disable(priv, i);
 }
 
-static u32 brcm_ahci_get_portmask(struct ahci_host_priv *hpriv,
+static u32 brcm_ahci_get_portmask(struct platform_device *pdev,
 				  struct brcm_ahci_priv *priv)
 {
+	void __iomem *ahci;
+	struct resource *res;
 	u32 impl;
 
-	impl = readl(hpriv->mmio + HOST_PORTS_IMPL);
+	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "ahci");
+	ahci = devm_ioremap_resource(&pdev->dev, res);
+	if (IS_ERR(ahci))
+		return 0;
+
+	impl = readl(ahci + HOST_PORTS_IMPL);
 
 	if (fls(impl) > SATA_TOP_MAX_PHYS)
 		dev_warn(priv->dev, "warning: more ports than PHYs (%#x)\n",
 			 impl);
 	else if (!impl)
 		dev_info(priv->dev, "no ports found\n");
+
+	devm_iounmap(&pdev->dev, ahci);
+	devm_release_mem_region(&pdev->dev, res->start, resource_size(res));
 
 	return impl;
 }
@@ -246,7 +262,7 @@ static void brcm_sata_init(struct brcm_ahci_priv *priv)
 }
 
 static unsigned int brcm_ahci_read_id(struct ata_device *dev,
-				      struct ata_taskfile *tf, __le16 *id)
+				      struct ata_taskfile *tf, u16 *id)
 {
 	struct ata_port *ap = dev->link->ap;
 	struct ata_host *host = ap->host;
@@ -275,13 +291,6 @@ static unsigned int brcm_ahci_read_id(struct ata_device *dev,
 
 	/* Perform the SATA PHY reset sequence */
 	brcm_sata_phy_disable(priv, ap->port_no);
-
-	/* Reset the SATA clock */
-	ahci_platform_disable_clks(hpriv);
-	msleep(10);
-
-	ahci_platform_enable_clks(hpriv);
-	msleep(10);
 
 	/* Bring the PHY back on */
 	brcm_sata_phy_enable(priv, ap->port_no);
@@ -333,12 +342,13 @@ static struct ata_port_operations ahci_brcm_platform_ops = {
 
 static const struct ata_port_info ahci_brcm_port_info = {
 	.flags		= AHCI_FLAG_COMMON | ATA_FLAG_NO_DIPM,
-	.link_flags	= ATA_LFLAG_NO_DEBOUNCE_DELAY,
+	.link_flags	= ATA_LFLAG_NO_DB_DELAY,
 	.pio_mask	= ATA_PIO4,
 	.udma_mask	= ATA_UDMA6,
 	.port_ops	= &ahci_brcm_platform_ops,
 };
 
+#ifdef CONFIG_PM_SLEEP
 static int brcm_ahci_suspend(struct device *dev)
 {
 	struct ata_host *host = dev_get_drvdata(dev);
@@ -346,76 +356,23 @@ static int brcm_ahci_suspend(struct device *dev)
 	struct brcm_ahci_priv *priv = hpriv->plat_data;
 	int ret;
 
+	ret = ahci_platform_suspend(dev);
 	brcm_sata_phys_disable(priv);
-
-	if (IS_ENABLED(CONFIG_PM_SLEEP))
-		ret = ahci_platform_suspend(dev);
-	else
-		ret = 0;
-
-	reset_control_assert(priv->rcdev_ahci);
-	reset_control_rearm(priv->rcdev_rescal);
-
 	return ret;
 }
 
-static int __maybe_unused brcm_ahci_resume(struct device *dev)
+static int brcm_ahci_resume(struct device *dev)
 {
 	struct ata_host *host = dev_get_drvdata(dev);
 	struct ahci_host_priv *hpriv = host->private_data;
 	struct brcm_ahci_priv *priv = hpriv->plat_data;
-	int ret = 0;
-
-	ret = reset_control_deassert(priv->rcdev_ahci);
-	if (ret)
-		return ret;
-	ret = reset_control_reset(priv->rcdev_rescal);
-	if (ret)
-		return ret;
-
-	/* Make sure clocks are turned on before re-configuration */
-	ret = ahci_platform_enable_clks(hpriv);
-	if (ret)
-		return ret;
-
-	ret = ahci_platform_enable_regulators(hpriv);
-	if (ret)
-		goto out_disable_clks;
 
 	brcm_sata_init(priv);
 	brcm_sata_phys_enable(priv);
 	brcm_sata_alpm_init(hpriv);
-
-	/* Since we had to enable clocks earlier on, we cannot use
-	 * ahci_platform_resume() as-is since a second call to
-	 * ahci_platform_enable_resources() would bump up the resources
-	 * (regulators, clocks, PHYs) count artificially so we copy the part
-	 * after ahci_platform_enable_resources().
-	 */
-	ret = ahci_platform_enable_phys(hpriv);
-	if (ret)
-		goto out_disable_phys;
-
-	ret = ahci_platform_resume_host(dev);
-	if (ret)
-		goto out_disable_platform_phys;
-
-	/* We resumed so update PM runtime state */
-	pm_runtime_disable(dev);
-	pm_runtime_set_active(dev);
-	pm_runtime_enable(dev);
-
-	return 0;
-
-out_disable_platform_phys:
-	ahci_platform_disable_phys(hpriv);
-out_disable_phys:
-	brcm_sata_phys_disable(priv);
-	ahci_platform_disable_regulators(hpriv);
-out_disable_clks:
-	ahci_platform_disable_clks(hpriv);
-	return ret;
+	return ahci_platform_resume(dev);
 }
+#endif
 
 static struct scsi_host_template ahci_platform_sht = {
 	AHCI_SHT(DRV_NAME),
@@ -424,10 +381,8 @@ static struct scsi_host_template ahci_platform_sht = {
 static const struct of_device_id ahci_of_match[] = {
 	{.compatible = "brcm,bcm7425-ahci", .data = (void *)BRCM_SATA_BCM7425},
 	{.compatible = "brcm,bcm7445-ahci", .data = (void *)BRCM_SATA_BCM7445},
-	{.compatible = "brcm,bcm63138-ahci", .data = (void *)BRCM_SATA_BCM7445},
 	{.compatible = "brcm,bcm-nsp-ahci", .data = (void *)BRCM_SATA_NSP},
-	{.compatible = "brcm,bcm7216-ahci", .data = (void *)BRCM_SATA_BCM7216},
-	{ /* sentinel */ }
+	{},
 };
 MODULE_DEVICE_TABLE(of, ahci_of_match);
 
@@ -448,7 +403,7 @@ static int brcm_ahci_probe(struct platform_device *pdev)
 	if (!of_id)
 		return -ENODEV;
 
-	priv->version = (unsigned long)of_id->data;
+	priv->version = (enum brcm_ahci_version)of_id->data;
 	priv->dev = dev;
 
 	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "top-ctrl");
@@ -456,92 +411,44 @@ static int brcm_ahci_probe(struct platform_device *pdev)
 	if (IS_ERR(priv->top_ctrl))
 		return PTR_ERR(priv->top_ctrl);
 
-	if (priv->version == BRCM_SATA_BCM7216) {
-		priv->rcdev_rescal = devm_reset_control_get_optional_shared(
-			&pdev->dev, "rescal");
-		if (IS_ERR(priv->rcdev_rescal))
-			return PTR_ERR(priv->rcdev_rescal);
-	}
-	priv->rcdev_ahci = devm_reset_control_get_optional(&pdev->dev, "ahci");
-	if (IS_ERR(priv->rcdev_ahci))
-		return PTR_ERR(priv->rcdev_ahci);
-
-	hpriv = ahci_platform_get_resources(pdev, 0);
-	if (IS_ERR(hpriv))
-		return PTR_ERR(hpriv);
-
-	hpriv->plat_data = priv;
-	hpriv->flags = AHCI_HFLAG_WAKE_BEFORE_STOP | AHCI_HFLAG_NO_WRITE_TO_RO;
-
-	switch (priv->version) {
-	case BRCM_SATA_BCM7425:
-		hpriv->flags |= AHCI_HFLAG_DELAY_ENGINE;
-		fallthrough;
-	case BRCM_SATA_NSP:
-		hpriv->flags |= AHCI_HFLAG_NO_NCQ;
+	if ((priv->version == BRCM_SATA_BCM7425) ||
+		(priv->version == BRCM_SATA_NSP)) {
+		priv->quirks |= BRCM_AHCI_QUIRK_NO_NCQ;
 		priv->quirks |= BRCM_AHCI_QUIRK_SKIP_PHY_ENABLE;
-		break;
-	default:
-		break;
 	}
 
-	ret = reset_control_reset(priv->rcdev_rescal);
-	if (ret)
-		return ret;
-	ret = reset_control_deassert(priv->rcdev_ahci);
-	if (ret)
-		return ret;
-
-	ret = ahci_platform_enable_clks(hpriv);
-	if (ret)
-		goto out_reset;
-
-	ret = ahci_platform_enable_regulators(hpriv);
-	if (ret)
-		goto out_disable_clks;
-
-	/* Must be first so as to configure endianness including that
-	 * of the standard AHCI register space.
-	 */
 	brcm_sata_init(priv);
 
-	/* Initializes priv->port_mask which is used below */
-	priv->port_mask = brcm_ahci_get_portmask(hpriv, priv);
-	if (!priv->port_mask) {
-		ret = -ENODEV;
-		goto out_disable_regulators;
-	}
+	priv->port_mask = brcm_ahci_get_portmask(pdev, priv);
+	if (!priv->port_mask)
+		return -ENODEV;
 
-	/* Must be done before ahci_platform_enable_phys() */
 	brcm_sata_phys_enable(priv);
+
+	hpriv = ahci_platform_get_resources(pdev);
+	if (IS_ERR(hpriv))
+		return PTR_ERR(hpriv);
+	hpriv->plat_data = priv;
+	hpriv->flags = AHCI_HFLAG_WAKE_BEFORE_STOP;
 
 	brcm_sata_alpm_init(hpriv);
 
-	ret = ahci_platform_enable_phys(hpriv);
+	ret = ahci_platform_enable_resources(hpriv);
 	if (ret)
-		goto out_disable_phys;
+		return ret;
+
+	if (priv->quirks & BRCM_AHCI_QUIRK_NO_NCQ)
+		hpriv->flags |= AHCI_HFLAG_NO_NCQ;
+	hpriv->flags |= AHCI_HFLAG_NO_WRITE_TO_RO;
 
 	ret = ahci_platform_init_host(pdev, hpriv, &ahci_brcm_port_info,
 				      &ahci_platform_sht);
 	if (ret)
-		goto out_disable_platform_phys;
+		return ret;
 
 	dev_info(dev, "Broadcom AHCI SATA3 registered\n");
 
 	return 0;
-
-out_disable_platform_phys:
-	ahci_platform_disable_phys(hpriv);
-out_disable_phys:
-	brcm_sata_phys_disable(priv);
-out_disable_regulators:
-	ahci_platform_disable_regulators(hpriv);
-out_disable_clks:
-	ahci_platform_disable_clks(hpriv);
-out_reset:
-	reset_control_assert(priv->rcdev_ahci);
-	reset_control_rearm(priv->rcdev_rescal);
-	return ret;
 }
 
 static int brcm_ahci_remove(struct platform_device *pdev)
@@ -549,24 +456,15 @@ static int brcm_ahci_remove(struct platform_device *pdev)
 	struct ata_host *host = dev_get_drvdata(&pdev->dev);
 	struct ahci_host_priv *hpriv = host->private_data;
 	struct brcm_ahci_priv *priv = hpriv->plat_data;
+	int ret;
+
+	ret = ata_platform_remove_one(pdev);
+	if (ret)
+		return ret;
 
 	brcm_sata_phys_disable(priv);
 
-	return ata_platform_remove_one(pdev);
-}
-
-static void brcm_ahci_shutdown(struct platform_device *pdev)
-{
-	int ret;
-
-	/* All resources releasing happens via devres, but our device, unlike a
-	 * proper remove is not disappearing, therefore using
-	 * brcm_ahci_suspend() here which does explicit power management is
-	 * appropriate.
-	 */
-	ret = brcm_ahci_suspend(&pdev->dev);
-	if (ret)
-		dev_err(&pdev->dev, "failed to shutdown\n");
+	return 0;
 }
 
 static SIMPLE_DEV_PM_OPS(ahci_brcm_pm_ops, brcm_ahci_suspend, brcm_ahci_resume);
@@ -574,7 +472,6 @@ static SIMPLE_DEV_PM_OPS(ahci_brcm_pm_ops, brcm_ahci_suspend, brcm_ahci_resume);
 static struct platform_driver brcm_ahci_driver = {
 	.probe = brcm_ahci_probe,
 	.remove = brcm_ahci_remove,
-	.shutdown = brcm_ahci_shutdown,
 	.driver = {
 		.name = DRV_NAME,
 		.of_match_table = ahci_of_match,

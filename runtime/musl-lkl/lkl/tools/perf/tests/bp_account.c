@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * Powerpc needs __SANE_USERSPACE_TYPES__ before <linux/types.h> to select
  * 'int-ll64.h' and avoid compile warnings when printing __u64 with %llu.
@@ -10,29 +9,20 @@
 #include <unistd.h>
 #include <string.h>
 #include <sys/ioctl.h>
+#include <time.h>
 #include <fcntl.h>
+#include <signal.h>
+#include <sys/mman.h>
+#include <linux/compiler.h>
 #include <linux/hw_breakpoint.h>
+#include <sys/ioctl.h>
 
 #include "tests.h"
 #include "debug.h"
-#include "event.h"
-#include "../perf-sys.h"
+#include "perf.h"
 #include "cloexec.h"
 
-/*
- * PowerPC and S390 do not support creation of instruction breakpoints using the
- * perf_event interface.
- *
- * Just disable the test for these architectures until these issues are
- * resolved.
- */
-#if defined(__powerpc__) || defined(__s390x__)
-#define BP_ACCOUNT_IS_SUPPORTED 0
-#else
-#define BP_ACCOUNT_IS_SUPPORTED 1
-#endif
-
-static volatile long the_var;
+volatile long the_var;
 
 static noinline int test_function(void)
 {
@@ -151,21 +141,11 @@ static int detect_ioctl(void)
 static int detect_share(int wp_cnt, int bp_cnt)
 {
 	struct perf_event_attr attr;
-	int i, *fd = NULL, ret = -1;
-
-	if (wp_cnt + bp_cnt == 0)
-		return 0;
-
-	fd = malloc(sizeof(int) * (wp_cnt + bp_cnt));
-	if (!fd)
-		return -1;
+	int i, fd[wp_cnt + bp_cnt], ret;
 
 	for (i = 0; i < wp_cnt; i++) {
 		fd[i] = wp_event((void *)&the_var, &attr);
-		if (fd[i] == -1) {
-			pr_err("failed to create wp\n");
-			goto out;
-		}
+		TEST_ASSERT_VAL("failed to create wp\n", fd[i] != -1);
 	}
 
 	for (; i < (bp_cnt + wp_cnt); i++) {
@@ -176,11 +156,9 @@ static int detect_share(int wp_cnt, int bp_cnt)
 
 	ret = i != (bp_cnt + wp_cnt);
 
-out:
 	while (i--)
 		close(fd[i]);
 
-	free(fd);
 	return ret;
 }
 
@@ -198,17 +176,12 @@ out:
  *     we create another watchpoint to ensure
  *     the slot accounting is correct
  */
-static int test__bp_accounting(struct test_suite *test __maybe_unused, int subtest __maybe_unused)
+int test__bp_accounting(struct test *test __maybe_unused, int subtest __maybe_unused)
 {
 	int has_ioctl = detect_ioctl();
 	int wp_cnt = detect_cnt(false);
 	int bp_cnt = detect_cnt(true);
 	int share  = detect_share(wp_cnt, bp_cnt);
-
-	if (!BP_ACCOUNT_IS_SUPPORTED) {
-		pr_debug("Test not supported on this architecture");
-		return TEST_SKIP;
-	}
 
 	pr_debug("watchpoints count %d, breakpoints count %d, has_ioctl %d, share %d\n",
 		 wp_cnt, bp_cnt, has_ioctl, share);
@@ -218,5 +191,3 @@ static int test__bp_accounting(struct test_suite *test __maybe_unused, int subte
 
 	return bp_accounting(wp_cnt, share);
 }
-
-DEFINE_SUITE("Breakpoint accounting", bp_accounting);

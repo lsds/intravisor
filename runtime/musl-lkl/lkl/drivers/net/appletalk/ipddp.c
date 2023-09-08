@@ -23,7 +23,6 @@
  *      of the GNU General Public License, incorporated herein by reference.
  */
 
-#include <linux/compat.h>
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/init.h>
@@ -55,12 +54,11 @@ static netdev_tx_t ipddp_xmit(struct sk_buff *skb,
 static int ipddp_create(struct ipddp_route *new_rt);
 static int ipddp_delete(struct ipddp_route *rt);
 static struct ipddp_route* __ipddp_find_route(struct ipddp_route *rt);
-static int ipddp_siocdevprivate(struct net_device *dev, struct ifreq *ifr,
-				void __user *data, int cmd);
+static int ipddp_ioctl(struct net_device *dev, struct ifreq *ifr, int cmd);
 
 static const struct net_device_ops ipddp_netdev_ops = {
 	.ndo_start_xmit		= ipddp_xmit,
-	.ndo_siocdevprivate	= ipddp_siocdevprivate,
+	.ndo_do_ioctl   	= ipddp_ioctl,
 	.ndo_set_mac_address 	= eth_mac_addr,
 	.ndo_validate_addr	= eth_validate_addr,
 };
@@ -118,14 +116,10 @@ static struct net_device * __init ipddp_init(void)
  */
 static netdev_tx_t ipddp_xmit(struct sk_buff *skb, struct net_device *dev)
 {
-        struct rtable *rtable = skb_rtable(skb);
-        __be32 paddr = 0;
+	__be32 paddr = skb_rtable(skb)->rt_gateway;
         struct ddpehdr *ddp;
         struct ipddp_route *rt;
         struct atalk_addr *our_addr;
-
-	if (rtable->rt_gw_family == AF_INET)
-		paddr = rtable->rt_gw4;
 
 	spin_lock(&ipddp_route_lock);
 
@@ -270,18 +264,15 @@ static struct ipddp_route* __ipddp_find_route(struct ipddp_route *rt)
         return NULL;
 }
 
-static int ipddp_siocdevprivate(struct net_device *dev, struct ifreq *ifr,
-				void __user *data, int cmd)
+static int ipddp_ioctl(struct net_device *dev, struct ifreq *ifr, int cmd)
 {
+        struct ipddp_route __user *rt = ifr->ifr_data;
         struct ipddp_route rcp, rcp2, *rp;
-
-	if (in_compat_syscall())
-		return -EOPNOTSUPP;
 
         if(!capable(CAP_NET_ADMIN))
                 return -EPERM;
 
-	if (copy_from_user(&rcp, data, sizeof(rcp)))
+	if(copy_from_user(&rcp, rt, sizeof(rcp)))
 		return -EFAULT;
 
         switch(cmd)
@@ -292,16 +283,12 @@ static int ipddp_siocdevprivate(struct net_device *dev, struct ifreq *ifr,
                 case SIOCFINDIPDDPRT:
 			spin_lock_bh(&ipddp_route_lock);
 			rp = __ipddp_find_route(&rcp);
-			if (rp) {
-				memset(&rcp2, 0, sizeof(rcp2));
-				rcp2.ip    = rp->ip;
-				rcp2.at    = rp->at;
-				rcp2.flags = rp->flags;
-			}
+			if (rp)
+				memcpy(&rcp2, rp, sizeof(rcp2));
 			spin_unlock_bh(&ipddp_route_lock);
 
 			if (rp) {
-				if (copy_to_user(data, &rcp2,
+				if (copy_to_user(rt, &rcp2,
 						 sizeof(struct ipddp_route)))
 					return -EFAULT;
 				return 0;

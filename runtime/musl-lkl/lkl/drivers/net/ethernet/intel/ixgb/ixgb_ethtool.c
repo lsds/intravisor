@@ -1,5 +1,30 @@
-// SPDX-License-Identifier: GPL-2.0
-/* Copyright(c) 1999 - 2008 Intel Corporation. */
+/*******************************************************************************
+
+  Intel PRO/10GbE Linux driver
+  Copyright(c) 1999 - 2008 Intel Corporation.
+
+  This program is free software; you can redistribute it and/or modify it
+  under the terms and conditions of the GNU General Public License,
+  version 2, as published by the Free Software Foundation.
+
+  This program is distributed in the hope it will be useful, but WITHOUT
+  ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+  FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+  more details.
+
+  You should have received a copy of the GNU General Public License along with
+  this program; if not, write to the Free Software Foundation, Inc.,
+  51 Franklin St - Fifth Floor, Boston, MA 02110-1301 USA.
+
+  The full GNU General Public License is included in this distribution in
+  the file called "COPYING".
+
+  Contact Information:
+  Linux NICS <linux.nics@intel.com>
+  e1000-devel Mailing List <e1000-devel@lists.sourceforge.net>
+  Intel Corporation, 5200 N.E. Elam Young Parkway, Hillsboro, OR 97124-6497
+
+*******************************************************************************/
 
 /* ethtool support for ixgb */
 
@@ -19,10 +44,10 @@ struct ixgb_stats {
 };
 
 #define IXGB_STAT(m)		IXGB_STATS, \
-				sizeof_field(struct ixgb_adapter, m), \
+				FIELD_SIZEOF(struct ixgb_adapter, m), \
 				offsetof(struct ixgb_adapter, m)
 #define IXGB_NETDEV_STAT(m)	NETDEV_STATS, \
-				sizeof_field(struct net_device, m), \
+				FIELD_SIZEOF(struct net_device, m), \
 				offsetof(struct net_device, m)
 
 static struct ixgb_stats ixgb_gstrings_stats[] = {
@@ -375,9 +400,8 @@ ixgb_get_eeprom(struct net_device *netdev,
 	first_word = eeprom->offset >> 1;
 	last_word = (eeprom->offset + eeprom->len - 1) >> 1;
 
-	eeprom_buff = kmalloc_array(last_word - first_word + 1,
-				    sizeof(__le16),
-				    GFP_KERNEL);
+	eeprom_buff = kmalloc(sizeof(__le16) *
+			(last_word - first_word + 1), GFP_KERNEL);
 	if (!eeprom_buff)
 		return -ENOMEM;
 
@@ -456,17 +480,17 @@ ixgb_get_drvinfo(struct net_device *netdev,
 {
 	struct ixgb_adapter *adapter = netdev_priv(netdev);
 
-	strscpy(drvinfo->driver,  ixgb_driver_name,
+	strlcpy(drvinfo->driver,  ixgb_driver_name,
 		sizeof(drvinfo->driver));
-	strscpy(drvinfo->bus_info, pci_name(adapter->pdev),
+	strlcpy(drvinfo->version, ixgb_driver_version,
+		sizeof(drvinfo->version));
+	strlcpy(drvinfo->bus_info, pci_name(adapter->pdev),
 		sizeof(drvinfo->bus_info));
 }
 
 static void
 ixgb_get_ringparam(struct net_device *netdev,
-		   struct ethtool_ringparam *ring,
-		   struct kernel_ethtool_ringparam *kernel_ring,
-		   struct netlink_ext_ack *extack)
+		struct ethtool_ringparam *ring)
 {
 	struct ixgb_adapter *adapter = netdev_priv(netdev);
 	struct ixgb_desc_ring *txdr = &adapter->tx_ring;
@@ -480,9 +504,7 @@ ixgb_get_ringparam(struct net_device *netdev,
 
 static int
 ixgb_set_ringparam(struct net_device *netdev,
-		   struct ethtool_ringparam *ring,
-		   struct kernel_ethtool_ringparam *kernel_ring,
-		   struct netlink_ext_ack *extack)
+		struct ethtool_ringparam *ring)
 {
 	struct ixgb_adapter *adapter = netdev_priv(netdev);
 	struct ixgb_desc_ring *txdr = &adapter->tx_ring;

@@ -1,8 +1,17 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * acpi_pad.c ACPI Processor Aggregator Driver
  *
  * Copyright (c) 2009, Intel Corporation.
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms and conditions of the GNU General Public License,
+ * version 2, as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+ * more details.
+ *
  */
 
 #include <linux/kernel.h>
@@ -17,7 +26,6 @@
 #include <linux/tick.h>
 #include <linux/slab.h>
 #include <linux/acpi.h>
-#include <linux/perf_event.h>
 #include <asm/mwait.h>
 #include <xen/xen.h>
 
@@ -62,10 +70,8 @@ static void power_saving_mwait_init(void)
 
 #if defined(CONFIG_X86)
 	switch (boot_cpu_data.x86_vendor) {
-	case X86_VENDOR_HYGON:
 	case X86_VENDOR_AMD:
 	case X86_VENDOR_INTEL:
-	case X86_VENDOR_ZHAOXIN:
 		/*
 		 * AMD Fam10h TSC will tick in all
 		 * C/P/S0/S1 states when this bit is set.
@@ -89,7 +95,7 @@ static void round_robin_cpu(unsigned int tsk_index)
 	cpumask_var_t tmp;
 	int cpu;
 	unsigned long min_weight = -1;
-	unsigned long preferred_cpu;
+	unsigned long uninitialized_var(preferred_cpu);
 
 	if (!alloc_cpumask_var(&tmp, GFP_KERNEL))
 		return;
@@ -129,7 +135,6 @@ static void round_robin_cpu(unsigned int tsk_index)
 static void exit_round_robin(unsigned int tsk_index)
 {
 	struct cpumask *pad_busy_cpus = to_cpumask(pad_busy_cpus_bits);
-
 	cpumask_clear_cpu(tsk_in_cpu[tsk_index], pad_busy_cpus);
 	tsk_in_cpu[tsk_index] = -1;
 }
@@ -138,11 +143,12 @@ static unsigned int idle_pct = 5; /* percentage */
 static unsigned int round_robin_time = 1; /* second */
 static int power_saving_thread(void *data)
 {
+	struct sched_param param = {.sched_priority = 1};
 	int do_sleep;
 	unsigned int tsk_index = (unsigned long)data;
 	u64 last_jiffies = 0;
 
-	sched_set_fifo_low(current);
+	sched_setscheduler(current, SCHED_RR, &param);
 
 	while (!kthread_should_stop()) {
 		unsigned long expire_time;
@@ -165,9 +171,6 @@ static int power_saving_thread(void *data)
 				tsc_marked_unstable = 1;
 			}
 			local_irq_disable();
-
-			perf_lopwr_cb(true);
-
 			tick_broadcast_enable();
 			tick_broadcast_enter();
 			stop_critical_timings();
@@ -176,9 +179,6 @@ static int power_saving_thread(void *data)
 
 			start_critical_timings();
 			tick_broadcast_exit();
-
-			perf_lopwr_cb(false);
-
 			local_irq_enable();
 
 			if (time_before(expire_time, jiffies)) {
@@ -256,12 +256,12 @@ static void set_power_saving_task_num(unsigned int num)
 
 static void acpi_pad_idle_cpus(unsigned int num_cpus)
 {
-	cpus_read_lock();
+	get_online_cpus();
 
 	num_cpus = min_t(unsigned int, num_cpus, num_online_cpus());
 	set_power_saving_task_num(num_cpus);
 
-	cpus_read_unlock();
+	put_online_cpus();
 }
 
 static uint32_t acpi_pad_idle_cpus_num(void)
@@ -269,11 +269,10 @@ static uint32_t acpi_pad_idle_cpus_num(void)
 	return ps_tsk_num;
 }
 
-static ssize_t rrtime_store(struct device *dev,
+static ssize_t acpi_pad_rrtime_store(struct device *dev,
 	struct device_attribute *attr, const char *buf, size_t count)
 {
 	unsigned long num;
-
 	if (kstrtoul(buf, 0, &num))
 		return -EINVAL;
 	if (num < 1 || num >= 100)
@@ -284,18 +283,19 @@ static ssize_t rrtime_store(struct device *dev,
 	return count;
 }
 
-static ssize_t rrtime_show(struct device *dev,
+static ssize_t acpi_pad_rrtime_show(struct device *dev,
 	struct device_attribute *attr, char *buf)
 {
 	return scnprintf(buf, PAGE_SIZE, "%d\n", round_robin_time);
 }
-static DEVICE_ATTR_RW(rrtime);
+static DEVICE_ATTR(rrtime, S_IRUGO|S_IWUSR,
+	acpi_pad_rrtime_show,
+	acpi_pad_rrtime_store);
 
-static ssize_t idlepct_store(struct device *dev,
+static ssize_t acpi_pad_idlepct_store(struct device *dev,
 	struct device_attribute *attr, const char *buf, size_t count)
 {
 	unsigned long num;
-
 	if (kstrtoul(buf, 0, &num))
 		return -EINVAL;
 	if (num < 1 || num >= 100)
@@ -306,18 +306,19 @@ static ssize_t idlepct_store(struct device *dev,
 	return count;
 }
 
-static ssize_t idlepct_show(struct device *dev,
+static ssize_t acpi_pad_idlepct_show(struct device *dev,
 	struct device_attribute *attr, char *buf)
 {
 	return scnprintf(buf, PAGE_SIZE, "%d\n", idle_pct);
 }
-static DEVICE_ATTR_RW(idlepct);
+static DEVICE_ATTR(idlepct, S_IRUGO|S_IWUSR,
+	acpi_pad_idlepct_show,
+	acpi_pad_idlepct_store);
 
-static ssize_t idlecpus_store(struct device *dev,
+static ssize_t acpi_pad_idlecpus_store(struct device *dev,
 	struct device_attribute *attr, const char *buf, size_t count)
 {
 	unsigned long num;
-
 	if (kstrtoul(buf, 0, &num))
 		return -EINVAL;
 	mutex_lock(&isolated_cpus_lock);
@@ -326,14 +327,16 @@ static ssize_t idlecpus_store(struct device *dev,
 	return count;
 }
 
-static ssize_t idlecpus_show(struct device *dev,
+static ssize_t acpi_pad_idlecpus_show(struct device *dev,
 	struct device_attribute *attr, char *buf)
 {
 	return cpumap_print_to_pagebuf(false, buf,
 				       to_cpumask(pad_busy_cpus_bits));
 }
 
-static DEVICE_ATTR_RW(idlecpus);
+static DEVICE_ATTR(idlecpus, S_IRUGO|S_IWUSR,
+	acpi_pad_idlecpus_show,
+	acpi_pad_idlecpus_store);
 
 static int acpi_pad_add_sysfs(struct acpi_device *device)
 {

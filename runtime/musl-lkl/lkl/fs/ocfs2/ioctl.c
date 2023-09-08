@@ -10,7 +10,6 @@
 #include <linux/mount.h>
 #include <linux/blkdev.h>
 #include <linux/compat.h>
-#include <linux/fileattr.h>
 
 #include <cluster/masklog.h>
 
@@ -62,10 +61,8 @@ static inline int o2info_coherent(struct ocfs2_info_request *req)
 	return (!(req->ir_flags & OCFS2_INFO_FL_NON_COHERENT));
 }
 
-int ocfs2_fileattr_get(struct dentry *dentry, struct fileattr *fa)
+static int ocfs2_get_inode_attr(struct inode *inode, unsigned *flags)
 {
-	struct inode *inode = d_inode(dentry);
-	unsigned int flags;
 	int status;
 
 	status = ocfs2_inode_lock(inode, NULL, 0);
@@ -74,19 +71,15 @@ int ocfs2_fileattr_get(struct dentry *dentry, struct fileattr *fa)
 		return status;
 	}
 	ocfs2_get_inode_flags(OCFS2_I(inode));
-	flags = OCFS2_I(inode)->ip_attr;
+	*flags = OCFS2_I(inode)->ip_attr;
 	ocfs2_inode_unlock(inode, 0);
-
-	fileattr_fill_flags(fa, flags & OCFS2_FL_VISIBLE);
 
 	return status;
 }
 
-int ocfs2_fileattr_set(struct user_namespace *mnt_userns,
-		       struct dentry *dentry, struct fileattr *fa)
+static int ocfs2_set_inode_attr(struct inode *inode, unsigned flags,
+				unsigned mask)
 {
-	struct inode *inode = d_inode(dentry);
-	unsigned int flags = fa->flags;
 	struct ocfs2_inode_info *ocfs2_inode = OCFS2_I(inode);
 	struct ocfs2_super *osb = OCFS2_SB(inode->i_sb);
 	handle_t *handle = NULL;
@@ -94,8 +87,7 @@ int ocfs2_fileattr_set(struct user_namespace *mnt_userns,
 	unsigned oldflags;
 	int status;
 
-	if (fileattr_has_fsx(fa))
-		return -EOPNOTSUPP;
+	inode_lock(inode);
 
 	status = ocfs2_inode_lock(inode, &bh, 1);
 	if (status < 0) {
@@ -103,18 +95,27 @@ int ocfs2_fileattr_set(struct user_namespace *mnt_userns,
 		goto bail;
 	}
 
+	status = -EACCES;
+	if (!inode_owner_or_capable(inode))
+		goto bail_unlock;
+
 	if (!S_ISDIR(inode->i_mode))
 		flags &= ~OCFS2_DIRSYNC_FL;
 
 	oldflags = ocfs2_inode->ip_attr;
-	flags = flags & OCFS2_FL_MODIFIABLE;
-	flags |= oldflags & ~OCFS2_FL_MODIFIABLE;
+	flags = flags & mask;
+	flags |= oldflags & ~mask;
 
-	/* Check already done by VFS, but repeat with ocfs lock */
+	/*
+	 * The IMMUTABLE and APPEND_ONLY flags can only be changed by
+	 * the relevant capability.
+	 */
 	status = -EPERM;
-	if ((flags ^ oldflags) & (FS_APPEND_FL | FS_IMMUTABLE_FL) &&
-	    !capable(CAP_LINUX_IMMUTABLE))
-		goto bail_unlock;
+	if ((oldflags & OCFS2_IMMUTABLE_FL) || ((flags ^ oldflags) &
+		(OCFS2_APPEND_FL | OCFS2_IMMUTABLE_FL))) {
+		if (!capable(CAP_LINUX_IMMUTABLE))
+			goto bail_unlock;
+	}
 
 	handle = ocfs2_start_trans(osb, OCFS2_INODE_UPDATE_CREDITS);
 	if (IS_ERR(handle)) {
@@ -135,6 +136,8 @@ int ocfs2_fileattr_set(struct user_namespace *mnt_userns,
 bail_unlock:
 	ocfs2_inode_unlock(inode, 1);
 bail:
+	inode_unlock(inode);
+
 	brelse(bh);
 
 	return status;
@@ -287,7 +290,7 @@ static int ocfs2_info_scan_inode_alloc(struct ocfs2_super *osb,
 	if (inode_alloc)
 		inode_lock(inode_alloc);
 
-	if (inode_alloc && o2info_coherent(&fi->ifi_req)) {
+	if (o2info_coherent(&fi->ifi_req)) {
 		status = ocfs2_inode_lock(inode_alloc, &bh, 0);
 		if (status < 0) {
 			mlog_errno(status);
@@ -399,7 +402,7 @@ out_err:
 static void o2ffg_update_histogram(struct ocfs2_info_free_chunk_list *hist,
 				   unsigned int chunksize)
 {
-	u32 index;
+	int index;
 
 	index = __ilog2_u32(chunksize);
 	if (index >= OCFS2_INFO_MAX_HIST)
@@ -840,6 +843,7 @@ bail:
 long ocfs2_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 {
 	struct inode *inode = file_inode(filp);
+	unsigned int flags;
 	int new_clusters;
 	int status;
 	struct ocfs2_space_resv sr;
@@ -852,6 +856,24 @@ long ocfs2_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 	void __user *argp = (void __user *)arg;
 
 	switch (cmd) {
+	case OCFS2_IOC_GETFLAGS:
+		status = ocfs2_get_inode_attr(inode, &flags);
+		if (status < 0)
+			return status;
+
+		flags &= OCFS2_FL_VISIBLE;
+		return put_user(flags, (int __user *) arg);
+	case OCFS2_IOC_SETFLAGS:
+		if (get_user(flags, (int __user *) arg))
+			return -EFAULT;
+
+		status = mnt_want_write_file(filp);
+		if (status)
+			return status;
+		status = ocfs2_set_inode_attr(inode, flags,
+			OCFS2_FL_MODIFIABLE);
+		mnt_drop_write_file(filp);
+		return status;
 	case OCFS2_IOC_RESVSP:
 	case OCFS2_IOC_RESVSP64:
 	case OCFS2_IOC_UNRESVSP:
@@ -903,19 +925,20 @@ long ocfs2_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 	case FITRIM:
 	{
 		struct super_block *sb = inode->i_sb;
+		struct request_queue *q = bdev_get_queue(sb->s_bdev);
 		struct fstrim_range range;
 		int ret = 0;
 
 		if (!capable(CAP_SYS_ADMIN))
 			return -EPERM;
 
-		if (!bdev_max_discard_sectors(sb->s_bdev))
+		if (!blk_queue_discard(q))
 			return -EOPNOTSUPP;
 
 		if (copy_from_user(&range, argp, sizeof(range)))
 			return -EFAULT;
 
-		range.minlen = max_t(u64, bdev_discard_granularity(sb->s_bdev),
+		range.minlen = max_t(u64, q->limits.discard_granularity,
 				     range.minlen);
 		ret = ocfs2_trim_fs(sb, &range);
 		if (ret < 0)
@@ -943,6 +966,12 @@ long ocfs2_compat_ioctl(struct file *file, unsigned cmd, unsigned long arg)
 	void __user *argp = (void __user *)arg;
 
 	switch (cmd) {
+	case OCFS2_IOC32_GETFLAGS:
+		cmd = OCFS2_IOC_GETFLAGS;
+		break;
+	case OCFS2_IOC32_SETFLAGS:
+		cmd = OCFS2_IOC_SETFLAGS;
+		break;
 	case OCFS2_IOC_RESVSP:
 	case OCFS2_IOC_RESVSP64:
 	case OCFS2_IOC_UNRESVSP:
@@ -963,7 +992,6 @@ long ocfs2_compat_ioctl(struct file *file, unsigned cmd, unsigned long arg)
 			return -EFAULT;
 
 		return ocfs2_info_handle(inode, &info, 1);
-	case FITRIM:
 	case OCFS2_IOC_MOVE_EXT:
 		break;
 	default:

@@ -230,7 +230,8 @@ static struct pci_driver orinoco_pci_driver = {
 	.id_table	= orinoco_pci_id_table,
 	.probe		= orinoco_pci_init_one,
 	.remove		= orinoco_pci_remove_one,
-	.driver.pm	= &orinoco_pci_pm_ops,
+	.suspend	= orinoco_pci_suspend,
+	.resume		= orinoco_pci_resume,
 };
 
 static char version[] __initdata = DRIVER_NAME " " DRIVER_VERSION
@@ -255,3 +256,11 @@ static void __exit orinoco_pci_exit(void)
 
 module_init(orinoco_pci_init);
 module_exit(orinoco_pci_exit);
+
+/*
+ * Local variables:
+ *  c-indent-level: 8
+ *  c-basic-offset: 8
+ *  tab-width: 8
+ * End:
+ */

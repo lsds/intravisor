@@ -1,14 +1,9 @@
-# SPDX-License-Identifier: GPL-2.0-only
 config REISERFS_FS
-	tristate "Reiserfs support (deprecated)"
+	tristate "Reiserfs support"
 	select CRC32
 	help
-	  Reiserfs is deprecated and scheduled to be removed from the kernel
-	  in 2025. If you are still using it, please migrate to another
-	  filesystem or tell us your usecase for reiserfs.
-
-	  Reiserfs stores not just filenames but the files themselves in a
-	  balanced tree.  Uses journalling.
+	  Stores not just filenames but the files themselves in a balanced
+	  tree.  Uses journalling.
 
 	  Balanced trees are more efficient than traditional file system
 	  architectural foundations.

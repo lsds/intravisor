@@ -2,11 +2,11 @@
 #ifndef __ASM_IRQ_WORK_H
 #define __ASM_IRQ_WORK_H
 
-extern void arch_irq_work_raise(void);
+#include <asm/smp.h>
 
 static inline bool arch_irq_work_has_interrupt(void)
 {
-	return true;
+	return !!__smp_cross_call;
 }
 
 #endif /* __ASM_IRQ_WORK_H */

@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * arch/xtensa/platforms/xt2000/setup.c
  *
@@ -8,6 +7,12 @@
  *		Joe Taylor <joe@tensilica.com>
  *
  * Copyright 2001 - 2004 Tensilica Inc.
+ *
+ * This program is free software; you can redistribute  it and/or modify it
+ * under  the terms of  the GNU General  Public License as published by the
+ * Free Software Foundation;  either version 2 of the  License, or (at your
+ * option) any later version.
+ *
  */
 #include <linux/stddef.h>
 #include <linux/kernel.h>
@@ -78,7 +83,7 @@ void __init platform_init(bp_tag_t *first)
 
 void platform_heartbeat(void)
 {
-	static int i, t;
+	static int i=0, t = 0;
 
 	if (--t < 0)
 	{

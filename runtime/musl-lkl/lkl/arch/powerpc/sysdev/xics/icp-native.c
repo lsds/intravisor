@@ -1,21 +1,25 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Copyright 2011 IBM Corporation.
+ *
+ *  This program is free software; you can redistribute it and/or
+ *  modify it under the terms of the GNU General Public License
+ *  as published by the Free Software Foundation; either version
+ *  2 of the License, or (at your option) any later version.
+ *
  */
 
 #include <linux/types.h>
 #include <linux/kernel.h>
 #include <linux/irq.h>
-#include <linux/irqdomain.h>
 #include <linux/smp.h>
 #include <linux/interrupt.h>
 #include <linux/init.h>
 #include <linux/cpu.h>
 #include <linux/of.h>
-#include <linux/of_address.h>
 #include <linux/spinlock.h>
 #include <linux/module.h>
 
+#include <asm/prom.h>
 #include <asm/io.h>
 #include <asm/smp.h>
 #include <asm/irq.h>
@@ -141,7 +145,7 @@ static unsigned int icp_native_get_irq(void)
 
 static void icp_native_cause_ipi(int cpu)
 {
-	kvmppc_set_host_ipi(cpu);
+	kvmppc_set_host_ipi(cpu, 1);
 	icp_native_set_qirr(cpu, IPI_PRIORITY);
 }
 
@@ -180,7 +184,7 @@ void icp_native_flush_interrupt(void)
 	if (vec == XICS_IPI) {
 		/* Clear pending IPI */
 		int cpu = smp_processor_id();
-		kvmppc_clear_host_ipi(cpu);
+		kvmppc_set_host_ipi(cpu, 0);
 		icp_native_set_qirr(cpu, 0xff);
 	} else {
 		pr_err("XICS: hw interrupt 0x%x to offline cpu, disabling\n",
@@ -201,7 +205,7 @@ static irqreturn_t icp_native_ipi_action(int irq, void *dev_id)
 {
 	int cpu = smp_processor_id();
 
-	kvmppc_clear_host_ipi(cpu);
+	kvmppc_set_host_ipi(cpu, 0);
 	icp_native_set_qirr(cpu, 0xff);
 
 	return smp_ipi_demux();

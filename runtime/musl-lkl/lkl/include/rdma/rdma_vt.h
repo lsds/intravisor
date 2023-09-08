@@ -1,10 +1,52 @@
-/* SPDX-License-Identifier: GPL-2.0 OR BSD-3-Clause */
-/*
- * Copyright(c) 2016 - 2019 Intel Corporation.
- */
-
 #ifndef DEF_RDMA_VT_H
 #define DEF_RDMA_VT_H
+
+/*
+ * Copyright(c) 2016 Intel Corporation.
+ *
+ * This file is provided under a dual BSD/GPLv2 license.  When using or
+ * redistributing this file, you may do so under either license.
+ *
+ * GPL LICENSE SUMMARY
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of version 2 of the GNU General Public License as
+ * published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * General Public License for more details.
+ *
+ * BSD LICENSE
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ *
+ *  - Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ *  - Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in
+ *    the documentation and/or other materials provided with the
+ *    distribution.
+ *  - Neither the name of Intel Corporation nor the names of its
+ *    contributors may be used to endorse or promote products derived
+ *    from this software without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+ * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+ * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+ * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ *
+ */
 
 /*
  * Structure that low level drivers will populate in order to register with the
@@ -17,6 +59,7 @@
 #include <rdma/ib_verbs.h>
 #include <rdma/ib_mad.h>
 #include <rdma/rdmavt_mr.h>
+#include <rdma/rdmavt_qp.h>
 
 #define RVT_MAX_PKEY_VALUES 16
 
@@ -29,8 +72,6 @@ struct trap_list {
 	struct list_head list;
 };
 
-struct rvt_qp;
-struct rvt_qpn_table;
 struct rvt_ibport {
 	struct rvt_qp __rcu *qp[2];
 	struct ib_mad_agent *send_agent;	/* agent for SMI (traps) */
@@ -74,7 +115,6 @@ struct rvt_ibport {
 	u64 n_unaligned;
 	u64 n_rc_dupreq;
 	u64 n_rc_seqnak;
-	u64 n_rc_crwaits;
 	u16 pkey_violations;
 	u16 qkey_violations;
 	u16 mkey_violations;
@@ -92,7 +132,7 @@ struct rvt_ibport {
 	/*
 	 * The pkey table is allocated and maintained by the driver. Drivers
 	 * need to have access to this before registering with rdmav. However
-	 * rdmavt will need access to it so drivers need to provide this during
+	 * rdmavt will need access to it so drivers need to proviee this during
 	 * the attach port API call.
 	 */
 	u16 *pkey_table;
@@ -109,10 +149,6 @@ struct rvt_ibport {
 
 #define RVT_CQN_MAX 16 /* maximum length of cq name */
 
-#define RVT_SGE_COPY_MEMCPY	0
-#define RVT_SGE_COPY_CACHELESS	1
-#define RVT_SGE_COPY_ADAPTIVE	2
-
 /*
  * Things that are driver specific, module parameters in hfi1 and qib
  */
@@ -125,15 +161,13 @@ struct rvt_driver_params {
 	 */
 	unsigned int lkey_table_size;
 	unsigned int qp_table_size;
-	unsigned int sge_copy_mode;
-	unsigned int wss_threshold;
-	unsigned int wss_clean_period;
 	int qpn_start;
 	int qpn_inc;
 	int qpn_res_start;
 	int qpn_res_end;
 	int nports;
 	int npkeys;
+	char cq_name[RVT_CQN_MAX];
 	int node;
 	int psn_mask;
 	int psn_shift;
@@ -142,13 +176,7 @@ struct rvt_driver_params {
 	u32 max_mad_size;
 	u8 qos_shift;
 	u8 max_rdma_atomic;
-	u8 extra_rdma_atomic;
 	u8 reserved_operations;
-};
-
-/* User context */
-struct rvt_ucontext {
-	struct ib_ucontext ibucontext;
 };
 
 /* Protection domain */
@@ -161,35 +189,9 @@ struct rvt_pd {
 struct rvt_ah {
 	struct ib_ah ibah;
 	struct rdma_ah_attr attr;
+	atomic_t refcount;
 	u8 vl;
 	u8 log_pmtu;
-};
-
-/*
- * This structure is used by rvt_mmap() to validate an offset
- * when an mmap() request is made.  The vm_area_struct then uses
- * this as its vm_private_data.
- */
-struct rvt_mmap_info {
-	struct list_head pending_mmaps;
-	struct ib_ucontext *context;
-	void *obj;
-	__u64 offset;
-	struct kref ref;
-	u32 size;
-};
-
-/* memory working set size */
-struct rvt_wss {
-	unsigned long *entries;
-	atomic_t total_count;
-	atomic_t clean_counter;
-	atomic_t clean_entry;
-
-	int threshold;
-	int num_entries;
-	long pages_mask;
-	unsigned int clean_period;
 };
 
 struct rvt_dev_info;
@@ -210,18 +212,11 @@ struct rvt_driver_provided {
 	 * version requires the s_lock not to be held. The other assumes the
 	 * s_lock is held.
 	 */
-	bool (*schedule_send)(struct rvt_qp *qp);
-	bool (*schedule_send_no_lock)(struct rvt_qp *qp);
+	void (*schedule_send)(struct rvt_qp *qp);
+	void (*schedule_send_no_lock)(struct rvt_qp *qp);
 
-	/*
-	 * Driver specific work request setup and checking.
-	 * This function is allowed to perform any setup, checks, or
-	 * adjustments required to the SWQE in order to be usable by
-	 * underlying protocols. This includes private data structure
-	 * allocations.
-	 */
-	int (*setup_wqe)(struct rvt_qp *qp, struct rvt_swqe *wqe,
-			 bool *call_send);
+	/* Driver specific work request checking */
+	int (*check_send_wqe)(struct rvt_qp *qp, struct rvt_swqe *wqe);
 
 	/*
 	 * Sometimes rdmavt needs to kick the driver's send progress. That is
@@ -229,8 +224,11 @@ struct rvt_driver_provided {
 	 */
 	void (*do_send)(struct rvt_qp *qp);
 
+	/* Passed to ib core registration. Callback to create syfs files */
+	int (*port_callback)(struct ib_device *, u8, struct kobject *);
+
 	/*
-	 * Returns a pointer to the underlying hardware's PCI device. This is
+	 * Returns a pointer to the undelying hardware's PCI device. This is
 	 * used to display information as to what hardware is being referenced
 	 * in an output message
 	 */
@@ -245,19 +243,12 @@ struct rvt_driver_provided {
 	void * (*qp_priv_alloc)(struct rvt_dev_info *rdi, struct rvt_qp *qp);
 
 	/*
-	 * Init a structure allocated with qp_priv_alloc(). This should be
-	 * called after all qp fields have been initialized in rdmavt.
-	 */
-	int (*qp_priv_init)(struct rvt_dev_info *rdi, struct rvt_qp *qp,
-			    struct ib_qp_init_attr *init_attr);
-
-	/*
 	 * Free the driver's private qp structure.
 	 */
 	void (*qp_priv_free)(struct rvt_dev_info *rdi, struct rvt_qp *qp);
 
 	/*
-	 * Inform the driver the particular qp in question has been reset so
+	 * Inform the driver the particular qp in quesiton has been reset so
 	 * that it can clean up anything it needs to.
 	 */
 	void (*notify_qp_reset)(struct rvt_qp *qp);
@@ -281,7 +272,7 @@ struct rvt_driver_provided {
 	void (*stop_send_queue)(struct rvt_qp *qp);
 
 	/*
-	 * Have the driver drain any in progress operations
+	 * Have the drivr drain any in progress operations
 	 */
 	void (*quiesce_qp)(struct rvt_qp *qp);
 
@@ -309,16 +300,16 @@ struct rvt_driver_provided {
 	/*
 	 * Query driver for the state of the port.
 	 */
-	int (*query_port_state)(struct rvt_dev_info *rdi, u32 port_num,
+	int (*query_port_state)(struct rvt_dev_info *rdi, u8 port_num,
 				struct ib_port_attr *props);
 
 	/*
 	 * Tell driver to shutdown a port
 	 */
-	int (*shut_down_port)(struct rvt_dev_info *rdi, u32 port_num);
+	int (*shut_down_port)(struct rvt_dev_info *rdi, u8 port_num);
 
 	/* Tell driver to send a trap for changed  port capabilities */
-	void (*cap_mask_chg)(struct rvt_dev_info *rdi, u32 port_num);
+	void (*cap_mask_chg)(struct rvt_dev_info *rdi, u8 port_num);
 
 	/*
 	 * The following functions can be safely ignored completely. Any use of
@@ -338,7 +329,7 @@ struct rvt_driver_provided {
 
 	/* Let the driver pick the next queue pair number*/
 	int (*alloc_qpn)(struct rvt_dev_info *rdi, struct rvt_qpn_table *qpt,
-			 enum ib_qp_type type, u32 port_num);
+			 enum ib_qp_type type, u8 port_num);
 
 	/* Determine if its safe or allowed to modify the qp */
 	int (*check_modify_qp)(struct rvt_qp *qp, struct ib_qp_attr *attr,
@@ -356,9 +347,6 @@ struct rvt_driver_provided {
 
 	/* Notify driver to restart rc */
 	void (*notify_restart_rc)(struct rvt_qp *qp, u32 psn, int wait);
-
-	/* Get and return CPU to pin CQ processing thread */
-	int (*comp_vect_cpu_lookup)(struct rvt_dev_info *rdi, int comp_vect);
 };
 
 struct rvt_dev_info {
@@ -380,9 +368,6 @@ struct rvt_dev_info {
 
 	/* post send table */
 	const struct rvt_operation_params *post_parms;
-
-	/* opcode translation table */
-	const enum ib_wc_opcode *wc_opcode;
 
 	/* Driver specific helper functions */
 	struct rvt_driver_provided driver_f;
@@ -417,6 +402,7 @@ struct rvt_dev_info {
 	spinlock_t pending_lock; /* protect pending mmap list */
 
 	/* CQ */
+	struct kthread_worker *worker; /* per device cq worker */
 	u32 n_cqs_allocated;    /* number of CQs allocated for device */
 	spinlock_t n_cqs_lock; /* protect count of in use cqs */
 
@@ -424,8 +410,6 @@ struct rvt_dev_info {
 	u32 n_mcast_grps_allocated; /* number of mcast groups allocated */
 	spinlock_t n_mcast_grps_lock;
 
-	/* Memory Working Set Size */
-	struct rvt_wss *wss;
 };
 
 /**
@@ -438,14 +422,7 @@ static inline void rvt_set_ibdev_name(struct rvt_dev_info *rdi,
 				      const char *fmt, const char *name,
 				      const int unit)
 {
-	/*
-	 * FIXME: rvt and its users want to touch the ibdev before
-	 * registration and have things like the name work. We don't have the
-	 * infrastructure in the core to support this directly today, hack it
-	 * to work by setting the name manually here.
-	 */
-	dev_set_name(&rdi->ibdev.dev, fmt, name, unit);
-	strscpy(rdi->ibdev.name, dev_name(&rdi->ibdev.dev), IB_DEVICE_NAME_MAX);
+	snprintf(rdi->ibdev.name, sizeof(rdi->ibdev.name), fmt, name, unit);
 }
 
 /**
@@ -456,7 +433,7 @@ static inline void rvt_set_ibdev_name(struct rvt_dev_info *rdi,
  */
 static inline const char *rvt_get_ibdev_name(const struct rvt_dev_info *rdi)
 {
-	return dev_name(&rdi->ibdev.dev);
+	return rdi->ibdev.name;
 }
 
 static inline struct rvt_pd *ibpd_to_rvtpd(struct ib_pd *ibpd)
@@ -474,6 +451,16 @@ static inline struct rvt_dev_info *ib_to_rvt(struct ib_device *ibdev)
 	return  container_of(ibdev, struct rvt_dev_info, ibdev);
 }
 
+static inline struct rvt_srq *ibsrq_to_rvtsrq(struct ib_srq *ibsrq)
+{
+	return container_of(ibsrq, struct rvt_srq, ibsrq);
+}
+
+static inline struct rvt_qp *ibqp_to_rvtqp(struct ib_qp *ibqp)
+{
+	return container_of(ibqp, struct rvt_qp, ibqp);
+}
+
 static inline unsigned rvt_get_npkeys(struct rvt_dev_info *rdi)
 {
 	/*
@@ -488,14 +475,7 @@ static inline unsigned rvt_get_npkeys(struct rvt_dev_info *rdi)
  */
 static inline unsigned int rvt_max_atomic(struct rvt_dev_info *rdi)
 {
-	return rdi->dparms.max_rdma_atomic +
-		rdi->dparms.extra_rdma_atomic + 1;
-}
-
-static inline unsigned int rvt_size_atomic(struct rvt_dev_info *rdi)
-{
-	return rdi->dparms.max_rdma_atomic +
-		rdi->dparms.extra_rdma_atomic;
+	return rdi->dparms.max_rdma_atomic + 1;
 }
 
 /*
@@ -511,9 +491,54 @@ static inline u16 rvt_get_pkey(struct rvt_dev_info *rdi,
 		return rdi->ports[port_index]->pkey_table[index];
 }
 
+/**
+ * rvt_lookup_qpn - return the QP with the given QPN
+ * @ibp: the ibport
+ * @qpn: the QP number to look up
+ *
+ * The caller must hold the rcu_read_lock(), and keep the lock until
+ * the returned qp is no longer in use.
+ */
+/* TODO: Remove this and put in rdmavt/qp.h when no longer needed by drivers */
+static inline struct rvt_qp *rvt_lookup_qpn(struct rvt_dev_info *rdi,
+					    struct rvt_ibport *rvp,
+					    u32 qpn) __must_hold(RCU)
+{
+	struct rvt_qp *qp = NULL;
+
+	if (unlikely(qpn <= 1)) {
+		qp = rcu_dereference(rvp->qp[qpn]);
+	} else {
+		u32 n = hash_32(qpn, rdi->qp_dev->qp_table_bits);
+
+		for (qp = rcu_dereference(rdi->qp_dev->qp_table[n]); qp;
+			qp = rcu_dereference(qp->next))
+			if (qp->ibqp.qp_num == qpn)
+				break;
+	}
+	return qp;
+}
+
+/**
+ * rvt_mod_retry_timer - mod a retry timer
+ * @qp - the QP
+ * Modify a potentially already running retry timer
+ */
+static inline void rvt_mod_retry_timer(struct rvt_qp *qp)
+{
+	struct ib_qp *ibqp = &qp->ibqp;
+	struct rvt_dev_info *rdi = ib_to_rvt(ibqp->device);
+
+	lockdep_assert_held(&qp->s_lock);
+	qp->s_flags |= RVT_S_TIMER;
+	/* 4.096 usec. * (1 << qp->timeout) */
+	mod_timer(&qp->s_timer, jiffies + qp->timeout_jiffies +
+		  rdi->busy_jiffies);
+}
+
 struct rvt_dev_info *rvt_alloc_device(size_t size, int nports);
 void rvt_dealloc_device(struct rvt_dev_info *rdi);
-int rvt_register_device(struct rvt_dev_info *rvd);
+int rvt_register_device(struct rvt_dev_info *rvd, u32 driver_id);
 void rvt_unregister_device(struct rvt_dev_info *rvd);
 int rvt_check_ah(struct ib_device *ibdev, struct rdma_ah_attr *ah_attr);
 int rvt_init_port(struct rvt_dev_info *rdi, struct rvt_ibport *port,

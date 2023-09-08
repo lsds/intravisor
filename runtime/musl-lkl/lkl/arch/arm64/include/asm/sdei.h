@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: GPL-2.0 */
+// SPDX-License-Identifier: GPL-2.0
 // Copyright (C) 2017 Arm Ltd.
 #ifndef __ASM_SDEI_H
 #define __ASM_SDEI_H
@@ -37,11 +37,21 @@ struct sdei_registered_event;
 asmlinkage unsigned long __sdei_handler(struct pt_regs *regs,
 					struct sdei_registered_event *arg);
 
-unsigned long do_sdei_event(struct pt_regs *regs,
-			    struct sdei_registered_event *arg);
-
 unsigned long sdei_arch_get_entry_point(int conduit);
 #define sdei_arch_get_entry_point(x)	sdei_arch_get_entry_point(x)
+
+bool _on_sdei_stack(unsigned long sp);
+static inline bool on_sdei_stack(unsigned long sp)
+{
+	if (!IS_ENABLED(CONFIG_VMAP_STACK))
+		return false;
+	if (!IS_ENABLED(CONFIG_ARM_SDE_INTERFACE))
+		return false;
+	if (in_nmi())
+		return _on_sdei_stack(sp);
+
+	return false;
+}
 
 #endif /* __ASSEMBLY__ */
 #endif	/* __ASM_SDEI_H */

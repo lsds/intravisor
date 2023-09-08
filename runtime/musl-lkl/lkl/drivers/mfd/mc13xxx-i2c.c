@@ -1,7 +1,10 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright 2009-2010 Creative Product Design
  * Marc Reilly marc@cpdesign.com.au
+ *
+ * This program is free software; you can redistribute it and/or modify it under
+ * the terms of the GNU General Public License version 2 as published by the
+ * Free Software Foundation.
  */
 
 #include <linux/slab.h>
@@ -85,9 +88,9 @@ static int mc13xxx_i2c_probe(struct i2c_client *client,
 	return mc13xxx_common_init(&client->dev);
 }
 
-static void mc13xxx_i2c_remove(struct i2c_client *client)
+static int mc13xxx_i2c_remove(struct i2c_client *client)
 {
-	mc13xxx_common_exit(&client->dev);
+	return mc13xxx_common_exit(&client->dev);
 }
 
 static struct i2c_driver mc13xxx_i2c_driver = {

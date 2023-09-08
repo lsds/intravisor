@@ -1,8 +1,12 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * BCM47XX NAND flash driver
  *
  * Copyright (C) 2012 Rafał Miłecki <zajec5@gmail.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ *
  */
 
 #include "bcm47xxnflash.h"
@@ -60,12 +64,8 @@ static int bcm47xxnflash_probe(struct platform_device *pdev)
 static int bcm47xxnflash_remove(struct platform_device *pdev)
 {
 	struct bcm47xxnflash *nflash = platform_get_drvdata(pdev);
-	struct nand_chip *chip = &nflash->nand_chip;
-	int ret;
 
-	ret = mtd_device_unregister(nand_to_mtd(chip));
-	WARN_ON(ret);
-	nand_cleanup(chip);
+	nand_release(nand_to_mtd(&nflash->nand_chip));
 
 	return 0;
 }

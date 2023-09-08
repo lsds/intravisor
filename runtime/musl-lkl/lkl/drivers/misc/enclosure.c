@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Enclosure Services
  *
@@ -6,6 +5,18 @@
  *
 **-----------------------------------------------------------------------------
 **
+**  This program is free software; you can redistribute it and/or
+**  modify it under the terms of the GNU General Public License
+**  version 2 as published by the Free Software Foundation.
+**
+**  This program is distributed in the hope that it will be useful,
+**  but WITHOUT ANY WARRANTY; without even the implied warranty of
+**  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+**  GNU General Public License for more details.
+**
+**  You should have received a copy of the GNU General Public License
+**  along with this program; if not, write to the Free Software
+**  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 **
 **-----------------------------------------------------------------------------
 */
@@ -103,9 +114,7 @@ EXPORT_SYMBOL_GPL(enclosure_for_each_device);
  * enclosure_register - register device as an enclosure
  *
  * @dev:	device containing the enclosure
- * @name:	chosen device name
  * @components:	number of components in the enclosure
- * @cb:         platform call-backs
  *
  * This sets up the device for being an enclosure.  Note that @dev does
  * not have to be a dedicated enclosure device.  It may be some other type
@@ -116,7 +125,9 @@ enclosure_register(struct device *dev, const char *name, int components,
 		   struct enclosure_component_callbacks *cb)
 {
 	struct enclosure_device *edev =
-		kzalloc(struct_size(edev, component, components), GFP_KERNEL);
+		kzalloc(sizeof(struct enclosure_device) +
+			sizeof(struct enclosure_component)*components,
+			GFP_KERNEL);
 	int err, i;
 
 	BUG_ON(!cb);
@@ -268,7 +279,7 @@ static const struct attribute_group *enclosure_component_groups[];
 /**
  * enclosure_component_alloc - prepare a new enclosure component
  * @edev:	the enclosure to add the component
- * @number:	the device number
+ * @num:	the device number
  * @type:	the type of component being added
  * @name:	an optional name to appear in sysfs (leave NULL if none)
  *
@@ -349,7 +360,7 @@ EXPORT_SYMBOL_GPL(enclosure_component_register);
 /**
  * enclosure_add_device - add a device as being part of an enclosure
  * @edev:	the enclosure device being added to.
- * @component:	the number of the component
+ * @num:	the number of the component
  * @dev:	the device being added
  *
  * Declares a real device to reside in slot (or identifier) @num of an
@@ -391,7 +402,7 @@ EXPORT_SYMBOL_GPL(enclosure_add_device);
 /**
  * enclosure_remove_device - remove a device from an enclosure
  * @edev:	the enclosure device
- * @dev:	device to remove/put
+ * @num:	the number of the component to remove
  *
  * Returns zero on success or an error.
  *
@@ -408,9 +419,10 @@ int enclosure_remove_device(struct enclosure_device *edev, struct device *dev)
 		cdev = &edev->component[i];
 		if (cdev->dev == dev) {
 			enclosure_remove_links(cdev);
+			device_del(&cdev->cdev);
 			put_device(dev);
 			cdev->dev = NULL;
-			return 0;
+			return device_add(&cdev->cdev);
 		}
 	}
 	return -ENODEV;
@@ -426,7 +438,7 @@ static ssize_t components_show(struct device *cdev,
 {
 	struct enclosure_device *edev = to_enclosure_device(cdev);
 
-	return sysfs_emit(buf, "%d\n", edev->components);
+	return snprintf(buf, 40, "%d\n", edev->components);
 }
 static DEVICE_ATTR_RO(components);
 
@@ -481,7 +493,7 @@ static ssize_t get_component_fault(struct device *cdev,
 
 	if (edev->cb->get_fault)
 		edev->cb->get_fault(edev, ecomp);
-	return sysfs_emit(buf, "%d\n", ecomp->fault);
+	return snprintf(buf, 40, "%d\n", ecomp->fault);
 }
 
 static ssize_t set_component_fault(struct device *cdev,
@@ -505,7 +517,7 @@ static ssize_t get_component_status(struct device *cdev,
 
 	if (edev->cb->get_status)
 		edev->cb->get_status(edev, ecomp);
-	return sysfs_emit(buf, "%s\n", enclosure_status[ecomp->status]);
+	return snprintf(buf, 40, "%s\n", enclosure_status[ecomp->status]);
 }
 
 static ssize_t set_component_status(struct device *cdev,
@@ -539,7 +551,7 @@ static ssize_t get_component_active(struct device *cdev,
 
 	if (edev->cb->get_active)
 		edev->cb->get_active(edev, ecomp);
-	return sysfs_emit(buf, "%d\n", ecomp->active);
+	return snprintf(buf, 40, "%d\n", ecomp->active);
 }
 
 static ssize_t set_component_active(struct device *cdev,
@@ -563,7 +575,7 @@ static ssize_t get_component_locate(struct device *cdev,
 
 	if (edev->cb->get_locate)
 		edev->cb->get_locate(edev, ecomp);
-	return sysfs_emit(buf, "%d\n", ecomp->locate);
+	return snprintf(buf, 40, "%d\n", ecomp->locate);
 }
 
 static ssize_t set_component_locate(struct device *cdev,
@@ -593,7 +605,7 @@ static ssize_t get_component_power_status(struct device *cdev,
 	if (ecomp->power_status == -1)
 		return (edev->cb->get_power_status) ? -EIO : -ENOTTY;
 
-	return sysfs_emit(buf, "%s\n", ecomp->power_status ? "on" : "off");
+	return snprintf(buf, 40, "%s\n", ecomp->power_status ? "on" : "off");
 }
 
 static ssize_t set_component_power_status(struct device *cdev,
@@ -623,7 +635,7 @@ static ssize_t get_component_type(struct device *cdev,
 {
 	struct enclosure_component *ecomp = to_enclosure_component(cdev);
 
-	return sysfs_emit(buf, "%s\n", enclosure_type[ecomp->type]);
+	return snprintf(buf, 40, "%s\n", enclosure_type[ecomp->type]);
 }
 
 static ssize_t get_component_slot(struct device *cdev,
@@ -638,7 +650,7 @@ static ssize_t get_component_slot(struct device *cdev,
 	else
 		slot = ecomp->number;
 
-	return sysfs_emit(buf, "%d\n", slot);
+	return snprintf(buf, 40, "%d\n", slot);
 }
 
 static DEVICE_ATTR(fault, S_IRUGO | S_IWUSR, get_component_fault,

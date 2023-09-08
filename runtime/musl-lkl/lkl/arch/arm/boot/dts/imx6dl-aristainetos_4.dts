@@ -1,8 +1,12 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * support fot the imx6 based aristainetos board
  *
  * Copyright (C) 2014 Heiko Schocher <hs@denx.de>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ *
  */
 /dts-v1/;
 #include "imx6dl.dtsi"
@@ -10,7 +14,7 @@
 
 / {
 	model = "aristainetos i.MX6 Dual Lite Board 4";
-	compatible = "abb,aristainetos-imx6dl-4", "fsl,imx6dl";
+	compatible = "fsl,imx6dl";
 
 	backlight {
 		compatible = "pwm-backlight";
@@ -24,7 +28,6 @@
 	};
 
 	memory@10000000 {
-		device_type = "memory";
 		reg = <0x10000000 0x40000000>;
 	};
 
@@ -61,7 +64,7 @@
 };
 
 &ecspi2 {
-	cs-gpios = <&gpio3 24 GPIO_ACTIVE_LOW>;
+	cs-gpios = <&gpio3 24 GPIO_ACTIVE_HIGH>;
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_ecspi2>;
 	status = "okay";
@@ -79,6 +82,5 @@
 };
 
 &pwm1 {
-	#pwm-cells = <2>;
 	status = "okay";
 };

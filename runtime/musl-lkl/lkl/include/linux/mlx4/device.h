@@ -46,7 +46,8 @@
 
 #define DEFAULT_UAR_PAGE_SHIFT  12
 
-#define MAX_MSIX		128
+#define MAX_MSIX_P_PORT		17
+#define MAX_MSIX		64
 #define MIN_MSIX_P_PORT		5
 #define MLX4_IS_LEGACY_EQ_MODE(dev_cap) ((dev_cap).num_comp_vectors < \
 					 (dev_cap).num_ports * MIN_MSIX_P_PORT)
@@ -224,8 +225,6 @@ enum {
 	MLX4_DEV_CAP_FLAG2_SVLAN_BY_QP          = 1ULL <<  36,
 	MLX4_DEV_CAP_FLAG2_SL_TO_VL_CHANGE_EVENT = 1ULL << 37,
 	MLX4_DEV_CAP_FLAG2_USER_MAC_EN		= 1ULL << 38,
-	MLX4_DEV_CAP_FLAG2_DRIVER_VERSION_TO_FW = 1ULL << 39,
-	MLX4_DEV_CAP_FLAG2_SW_CQ_INIT           = 1ULL << 40,
 };
 
 enum {
@@ -572,6 +571,7 @@ struct mlx4_caps {
 	int			reserved_eqs;
 	int			num_comp_vectors;
 	int			num_mpts;
+	int			max_fmr_maps;
 	int			num_mtts;
 	int			fmr_reserved_mtts;
 	int			reserved_mtts;
@@ -629,8 +629,6 @@ struct mlx4_caps {
 	u32			vf_caps;
 	bool			wol_port[MLX4_MAX_PORTS + 1];
 	struct mlx4_rate_limit_caps rl_caps;
-	u32			health_buffer_addrs;
-	bool			map_clock_to_user;
 };
 
 struct mlx4_buf_list {
@@ -704,6 +702,17 @@ struct mlx4_mw {
 	u32			pd;
 	enum mlx4_mw_type	type;
 	int			enabled;
+};
+
+struct mlx4_fmr {
+	struct mlx4_mr		mr;
+	struct mlx4_mpt_entry  *mpt;
+	__be64		       *mtts;
+	dma_addr_t		dma_handle;
+	int			max_pages;
+	int			max_maps;
+	int			maps;
+	u8			page_shift;
 };
 
 struct mlx4_uar {
@@ -841,12 +850,6 @@ struct mlx4_vf_dev {
 	u8			n_ports;
 };
 
-struct mlx4_fw_crdump {
-	bool snapshot_enable;
-	struct devlink_region *region_crspace;
-	struct devlink_region *region_fw_health;
-};
-
 enum mlx4_pci_status {
 	MLX4_PCI_STATUS_DISABLED,
 	MLX4_PCI_STATUS_ENABLED,
@@ -867,7 +870,6 @@ struct mlx4_dev_persistent {
 	u8	interface_state;
 	struct mutex		pci_status_mutex; /* sync pci state */
 	enum mlx4_pci_status	pci_status;
-	struct mlx4_fw_crdump	crdump;
 };
 
 struct mlx4_dev {
@@ -1125,8 +1127,7 @@ void mlx4_free_hwq_res(struct mlx4_dev *mdev, struct mlx4_hwq_resources *wqres,
 
 int mlx4_cq_alloc(struct mlx4_dev *dev, int nent, struct mlx4_mtt *mtt,
 		  struct mlx4_uar *uar, u64 db_rec, struct mlx4_cq *cq,
-		  unsigned int vector, int collapsed, int timestamp_en,
-		  void *buf_addr, bool user_cq);
+		  unsigned vector, int collapsed, int timestamp_en);
 void mlx4_cq_free(struct mlx4_dev *dev, struct mlx4_cq *cq);
 int mlx4_qp_reserve_range(struct mlx4_dev *dev, int cnt, int align,
 			  int *base, u8 flags, u8 usage);
@@ -1400,6 +1401,14 @@ int mlx4_find_cached_vlan(struct mlx4_dev *dev, u8 port, u16 vid, int *idx);
 int mlx4_register_vlan(struct mlx4_dev *dev, u8 port, u16 vlan, int *index);
 void mlx4_unregister_vlan(struct mlx4_dev *dev, u8 port, u16 vlan);
 
+int mlx4_map_phys_fmr(struct mlx4_dev *dev, struct mlx4_fmr *fmr, u64 *page_list,
+		      int npages, u64 iova, u32 *lkey, u32 *rkey);
+int mlx4_fmr_alloc(struct mlx4_dev *dev, u32 pd, u32 access, int max_pages,
+		   int max_maps, u8 page_shift, struct mlx4_fmr *fmr);
+int mlx4_fmr_enable(struct mlx4_dev *dev, struct mlx4_fmr *fmr);
+void mlx4_fmr_unmap(struct mlx4_dev *dev, struct mlx4_fmr *fmr,
+		    u32 *lkey, u32 *rkey);
+int mlx4_fmr_free(struct mlx4_dev *dev, struct mlx4_fmr *fmr);
 int mlx4_SYNC_TPT(struct mlx4_dev *dev);
 int mlx4_test_interrupt(struct mlx4_dev *dev, int vector);
 int mlx4_test_async(struct mlx4_dev *dev);
@@ -1436,7 +1445,7 @@ int mlx4_map_sw_to_hw_steering_id(struct mlx4_dev *dev,
 				  enum mlx4_net_trans_rule_id id);
 int mlx4_hw_rule_sz(struct mlx4_dev *dev, enum mlx4_net_trans_rule_id id);
 
-int mlx4_tunnel_steer_add(struct mlx4_dev *dev, const unsigned char *addr,
+int mlx4_tunnel_steer_add(struct mlx4_dev *dev, unsigned char *addr,
 			  int port, int qpn, u16 prio, u64 *reg_id);
 
 void mlx4_sync_pkey_table(struct mlx4_dev *dev, int slave, int port,
@@ -1502,8 +1511,6 @@ int mlx4_vf_smi_enabled(struct mlx4_dev *dev, int slave, int port);
 int mlx4_vf_get_enable_smi_admin(struct mlx4_dev *dev, int slave, int port);
 int mlx4_vf_set_enable_smi_admin(struct mlx4_dev *dev, int slave, int port,
 				 int enable);
-
-struct mlx4_mpt_entry;
 int mlx4_mr_hw_get_mpt(struct mlx4_dev *dev, struct mlx4_mr *mmr,
 		       struct mlx4_mpt_entry ***mpt_entry);
 int mlx4_mr_hw_write_mpt(struct mlx4_dev *dev, struct mlx4_mr *mmr,

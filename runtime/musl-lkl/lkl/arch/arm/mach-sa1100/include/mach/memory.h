@@ -8,7 +8,7 @@
 #ifndef __ASM_ARCH_MEMORY_H
 #define __ASM_ARCH_MEMORY_H
 
-#include <linux/sizes.h>
+#include <asm/sizes.h>
 
 /*
  * Because of the wide memory address space between physical RAM banks on the

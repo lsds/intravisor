@@ -1,5 +1,19 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright 2014 Cisco Systems, Inc.  All rights reserved. */
+/*
+ * Copyright 2014 Cisco Systems, Inc.  All rights reserved.
+ *
+ * This program is free software; you may redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; version 2 of the License.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+ * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+ * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS
+ * BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
+ * ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+ * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ */
 
 #ifndef _SNIC_H_
 #define _SNIC_H_
@@ -360,7 +374,7 @@ int snic_glob_init(void);
 void snic_glob_cleanup(void);
 
 extern struct workqueue_struct *snic_event_queue;
-extern const struct attribute_group *snic_host_groups[];
+extern struct device_attribute *snic_attrs[];
 
 int snic_queuecommand(struct Scsi_Host *, struct scsi_cmnd *);
 int snic_abort_cmd(struct scsi_cmnd *);
@@ -385,7 +399,7 @@ void snic_handle_link_event(struct snic *);
 void snic_handle_link(struct work_struct *);
 
 int snic_queue_exch_ver_req(struct snic *);
-void snic_io_exch_ver_cmpl_handler(struct snic *, struct snic_fw_req *);
+int snic_io_exch_ver_cmpl_handler(struct snic *, struct snic_fw_req *);
 
 int snic_queue_wq_desc(struct snic *, void *os_buf, u16 len);
 

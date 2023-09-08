@@ -49,8 +49,7 @@ static int init_hw(struct echoaudio *chip, u16 device_id, u16 subdevice_id)
 	if (snd_BUG_ON((subdevice_id & 0xfff0) != ECHO3G))
 		return -ENODEV;
 
-	err = init_dsp_comm_page(chip);
-	if (err) {
+	if ((err = init_dsp_comm_page(chip))) {
 		dev_err(chip->card->dev,
 			"init_hw - could not initialize DSP comm page\n");
 		return err;

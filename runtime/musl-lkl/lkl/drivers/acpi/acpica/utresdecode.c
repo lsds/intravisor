@@ -82,13 +82,6 @@ const char *acpi_gbl_mtp_decode[] = {
 	"AddressRangeNVS"
 };
 
-const char *acpi_gbl_phy_decode[] = {
-	"Type C",
-	"Type D",
-	"Unknown Type",
-	"Unknown Type"
-};
-
 const char *acpi_gbl_rng_decode[] = {
 	"InvalidRanges",
 	"NonISAOnlyRanges",
@@ -168,8 +161,7 @@ const char *acpi_gbl_sbt_decode[] = {
 	"/* UNKNOWN serial bus type */",
 	"I2C",
 	"SPI",
-	"UART",
-	"CSI2"
+	"UART"
 };
 
 /* I2C serial bus access mode */

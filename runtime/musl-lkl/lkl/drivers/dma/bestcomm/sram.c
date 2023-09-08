@@ -1,10 +1,14 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Simple memory allocator for on-board SRAM
+ *
  *
  * Maintainer : Sylvain Munaut <tnt@246tNt.com>
  *
  * Copyright (C) 2005 Sylvain Munaut <tnt@246tNt.com>
+ *
+ * This file is licensed under the terms of the GNU General Public License
+ * version 2. This program is licensed "as is" without any warranty of any
+ * kind, whether express or implied.
  */
 
 #include <linux/err.h>
@@ -172,3 +176,4 @@ void bcom_sram_free(void *ptr)
 	spin_unlock(&bcom_sram->lock);
 }
 EXPORT_SYMBOL_GPL(bcom_sram_free);
+

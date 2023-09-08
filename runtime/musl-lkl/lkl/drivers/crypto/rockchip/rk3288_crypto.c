@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Crypto acceleration support for Rockchip RK3288
  *
@@ -6,11 +5,14 @@
  *
  * Author: Zain Wang <zain.wang@rock-chips.com>
  *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms and conditions of the GNU General Public License,
+ * version 2, as published by the Free Software Foundation.
+ *
  * Some ideas are from marvell-cesa.c and s5p-sss.c driver.
  */
 
 #include "rk3288_crypto.h"
-#include <linux/dma-mapping.h>
 #include <linux/module.h>
 #include <linux/platform_device.h>
 #include <linux/of.h>
@@ -117,7 +119,7 @@ static int rk_load_data(struct rk_crypto_info *dev,
 		count = (dev->left_bytes > PAGE_SIZE) ?
 			PAGE_SIZE : dev->left_bytes;
 
-		if (!sg_pcopy_to_buffer(dev->first, dev->src_nents,
+		if (!sg_pcopy_to_buffer(dev->first, dev->nents,
 					dev->addr_vir, count,
 					dev->total - dev->left_bytes)) {
 			dev_err(dev->dev, "[%s:%d] pcopy err\n",
@@ -265,8 +267,8 @@ static int rk_crypto_register(struct rk_crypto_info *crypto_info)
 	for (i = 0; i < ARRAY_SIZE(rk_cipher_algs); i++) {
 		rk_cipher_algs[i]->dev = crypto_info;
 		if (rk_cipher_algs[i]->type == ALG_TYPE_CIPHER)
-			err = crypto_register_skcipher(
-					&rk_cipher_algs[i]->alg.skcipher);
+			err = crypto_register_alg(
+					&rk_cipher_algs[i]->alg.crypto);
 		else
 			err = crypto_register_ahash(
 					&rk_cipher_algs[i]->alg.hash);
@@ -278,7 +280,7 @@ static int rk_crypto_register(struct rk_crypto_info *crypto_info)
 err_cipher_algs:
 	for (k = 0; k < i; k++) {
 		if (rk_cipher_algs[i]->type == ALG_TYPE_CIPHER)
-			crypto_unregister_skcipher(&rk_cipher_algs[k]->alg.skcipher);
+			crypto_unregister_alg(&rk_cipher_algs[k]->alg.crypto);
 		else
 			crypto_unregister_ahash(&rk_cipher_algs[i]->alg.hash);
 	}
@@ -291,7 +293,7 @@ static void rk_crypto_unregister(void)
 
 	for (i = 0; i < ARRAY_SIZE(rk_cipher_algs); i++) {
 		if (rk_cipher_algs[i]->type == ALG_TYPE_CIPHER)
-			crypto_unregister_skcipher(&rk_cipher_algs[i]->alg.skcipher);
+			crypto_unregister_alg(&rk_cipher_algs[i]->alg.crypto);
 		else
 			crypto_unregister_ahash(&rk_cipher_algs[i]->alg.hash);
 	}
@@ -312,6 +314,7 @@ MODULE_DEVICE_TABLE(of, crypto_of_id_table);
 
 static int rk_crypto_probe(struct platform_device *pdev)
 {
+	struct resource *res;
 	struct device *dev = &pdev->dev;
 	struct rk_crypto_info *crypto_info;
 	int err = 0;
@@ -339,7 +342,8 @@ static int rk_crypto_probe(struct platform_device *pdev)
 
 	spin_lock_init(&crypto_info->lock);
 
-	crypto_info->reg = devm_platform_ioremap_resource(pdev, 0);
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	crypto_info->reg = devm_ioremap_resource(&pdev->dev, res);
 	if (IS_ERR(crypto_info->reg)) {
 		err = PTR_ERR(crypto_info->reg);
 		goto err_crypto;

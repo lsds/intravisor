@@ -7,7 +7,6 @@ Required Properties:
 
 - compatible: Should be one of:
 	- "mediatek,mt2712-mcucfg", "syscon"
-	- "mediatek,mt8183-mcucfg", "syscon"
 - #clock-cells: Must be 1
 
 The mcucfg controller uses the common clk binding from

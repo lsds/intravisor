@@ -34,7 +34,6 @@ struct target_fabric_configfs {
 	struct config_item_type tf_discovery_cit;
 	struct config_item_type	tf_wwn_cit;
 	struct config_item_type tf_wwn_fabric_stats_cit;
-	struct config_item_type tf_wwn_param_cit;
 	struct config_item_type tf_tpg_cit;
 	struct config_item_type tf_tpg_base_cit;
 	struct config_item_type tf_tpg_lun_cit;
@@ -89,7 +88,6 @@ int	target_configure_device(struct se_device *dev);
 void	target_free_device(struct se_device *);
 int	target_for_each_device(int (*fn)(struct se_device *dev, void *data),
 			       void *data);
-void	target_dev_ua_allocate(struct se_device *dev, u8 asc, u8 ascq);
 
 /* target_core_configfs.c */
 extern struct configfs_item_operations target_core_dev_item_ops;
@@ -134,11 +132,13 @@ struct se_node_acl *core_tpg_add_initiator_node_acl(struct se_portal_group *tpg,
 void core_tpg_del_initiator_node_acl(struct se_node_acl *acl);
 
 /* target_core_transport.c */
+extern struct kmem_cache *se_tmr_req_cache;
+
 int	init_se_kmem_caches(void);
 void	release_se_kmem_caches(void);
 u32	scsi_get_new_index(scsi_index_t);
 void	transport_subsystem_check_init(void);
-void	transport_uninit_session(struct se_session *);
+int	transport_cmd_finish_abort(struct se_cmd *, int);
 unsigned char *transport_dump_cmd_direction(struct se_cmd *);
 void	transport_dump_dev_state(struct se_device *, char *, int *);
 void	transport_dump_dev_info(struct se_device *, struct se_lun *,
@@ -148,13 +148,12 @@ int	transport_dump_vpd_assoc(struct t10_vpd *, unsigned char *, int);
 int	transport_dump_vpd_ident_type(struct t10_vpd *, unsigned char *, int);
 int	transport_dump_vpd_ident(struct t10_vpd *, unsigned char *, int);
 void	transport_clear_lun_ref(struct se_lun *);
+void	transport_send_task_abort(struct se_cmd *);
 sense_reason_t	target_cmd_size_check(struct se_cmd *cmd, unsigned int size);
 void	target_qf_do_work(struct work_struct *work);
-void	target_do_delayed_work(struct work_struct *work);
 bool	target_check_wce(struct se_device *dev);
 bool	target_check_fua(struct se_device *dev);
 void	__target_execute_cmd(struct se_cmd *, bool);
-void	target_queued_submit_work(struct work_struct *work);
 
 /* target_core_stat.c */
 void	target_stat_setup_dev_default_groups(struct se_device *);
@@ -167,7 +166,6 @@ extern struct se_portal_group xcopy_pt_tpg;
 /* target_core_configfs.c */
 #define DB_ROOT_LEN		4096
 #define	DB_ROOT_DEFAULT		"/var/target"
-#define	DB_ROOT_PREFERRED	"/etc/target"
 
 extern char db_root[];
 

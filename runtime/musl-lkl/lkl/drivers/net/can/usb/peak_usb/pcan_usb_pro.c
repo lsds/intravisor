@@ -1,15 +1,22 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * CAN driver for PEAK System PCAN-USB Pro adapter
  * Derived from the PCAN project file driver/src/pcan_usbpro.c
  *
  * Copyright (C) 2003-2011 PEAK System-Technik GmbH
  * Copyright (C) 2011-2012 Stephane Grosjean <s.grosjean@peak-system.com>
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License as published
+ * by the Free Software Foundation; version 2 of the License.
+ *
+ * This program is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * General Public License for more details.
  */
 #include <linux/netdevice.h>
 #include <linux/usb.h>
 #include <linux/module.h>
-#include <linux/ethtool.h>
 
 #include <linux/can.h>
 #include <linux/can/dev.h>
@@ -17,6 +24,8 @@
 
 #include "pcan_usb_core.h"
 #include "pcan_usb_pro.h"
+
+MODULE_SUPPORTED_DEVICE("PEAK-System PCAN-USB Pro adapter");
 
 #define PCAN_USBPRO_CHANNEL_COUNT	2
 
@@ -37,7 +46,6 @@
 
 #define PCAN_USBPRO_RTR			0x01
 #define PCAN_USBPRO_EXT			0x02
-#define PCAN_USBPRO_SS			0x08
 
 #define PCAN_USBPRO_CMD_BUFFER_SIZE	512
 
@@ -119,7 +127,7 @@ static u8 *pcan_msg_init_empty(struct pcan_usb_pro_msg *pm,
 /*
  * add one record to a message being built
  */
-static int pcan_msg_add_rec(struct pcan_usb_pro_msg *pm, int id, ...)
+static int pcan_msg_add_rec(struct pcan_usb_pro_msg *pm, u8 id, ...)
 {
 	int len, i;
 	u8 *pc;
@@ -133,10 +141,8 @@ static int pcan_msg_add_rec(struct pcan_usb_pro_msg *pm, int id, ...)
 	switch (id) {
 	case PCAN_USBPRO_TXMSG8:
 		i += 4;
-		fallthrough;
 	case PCAN_USBPRO_TXMSG4:
 		i += 4;
-		fallthrough;
 	case PCAN_USBPRO_TXMSG0:
 		*pc++ = va_arg(ap, int);
 		*pc++ = va_arg(ap, int);
@@ -186,7 +192,7 @@ static int pcan_msg_add_rec(struct pcan_usb_pro_msg *pm, int id, ...)
 
 	len = pc - pm->rec_ptr;
 	if (len > 0) {
-		le32_add_cpu(pm->u.rec_cnt, 1);
+		*pm->u.rec_cnt = cpu_to_le32(le32_to_cpu(*pm->u.rec_cnt) + 1);
 		*pm->rec_ptr = id;
 
 		pm->rec_ptr = pc;
@@ -290,7 +296,7 @@ static int pcan_usb_pro_wait_rsp(struct peak_usb_device *dev,
 					   pr->data_type);
 
 			/* check if channel in response corresponds too */
-			else if ((req_channel != 0xff) &&
+			else if ((req_channel != 0xff) && \
 				(pr->bus_act.channel != req_channel))
 				netdev_err(dev->netdev,
 					"got rsp %xh but on chan%u: ignored\n",
@@ -439,7 +445,8 @@ static int pcan_usb_pro_get_device_id(struct peak_usb_device *dev,
 		return err;
 
 	pdn = (struct pcan_usb_pro_devid *)pc;
-	*device_id = le32_to_cpu(pdn->dev_num);
+	if (device_id)
+		*device_id = le32_to_cpu(pdn->serial_num);
 
 	return err;
 }
@@ -493,7 +500,7 @@ static int pcan_usb_pro_drv_loaded(struct peak_usb_device *dev, int loaded)
 	u8 *buffer;
 	int err;
 
-	buffer = kzalloc(PCAN_USBPRO_FCT_DRVLD_REQ_LEN, GFP_KERNEL);
+	buffer = kmalloc(PCAN_USBPRO_FCT_DRVLD_REQ_LEN, GFP_KERNEL);
 	if (!buffer)
 		return -ENOMEM;
 
@@ -531,24 +538,22 @@ static int pcan_usb_pro_handle_canmsg(struct pcan_usb_pro_interface *usb_if,
 		return -ENOMEM;
 
 	can_frame->can_id = le32_to_cpu(rx->id);
-	can_frame->len = rx->len & 0x0f;
+	can_frame->can_dlc = rx->len & 0x0f;
 
 	if (rx->flags & PCAN_USBPRO_EXT)
 		can_frame->can_id |= CAN_EFF_FLAG;
 
-	if (rx->flags & PCAN_USBPRO_RTR) {
+	if (rx->flags & PCAN_USBPRO_RTR)
 		can_frame->can_id |= CAN_RTR_FLAG;
-	} else {
-		memcpy(can_frame->data, rx->data, can_frame->len);
-
-		netdev->stats.rx_bytes += can_frame->len;
-	}
-	netdev->stats.rx_packets++;
+	else
+		memcpy(can_frame->data, rx->data, can_frame->can_dlc);
 
 	hwts = skb_hwtstamps(skb);
 	peak_usb_get_ts_time(&usb_if->time_ref, le32_to_cpu(rx->ts32),
 			     &hwts->hwtstamp);
 
+	netdev->stats.rx_packets++;
+	netdev->stats.rx_bytes += can_frame->can_dlc;
 	netif_rx(skb);
 
 	return 0;
@@ -662,6 +667,8 @@ static int pcan_usb_pro_handle_error(struct pcan_usb_pro_interface *usb_if,
 
 	hwts = skb_hwtstamps(skb);
 	peak_usb_get_ts_time(&usb_if->time_ref, le32_to_cpu(er->ts32), &hwts->hwtstamp);
+	netdev->stats.rx_packets++;
+	netdev->stats.rx_bytes += can_frame->can_dlc;
 	netif_rx(skb);
 
 	return 0;
@@ -766,24 +773,20 @@ static int pcan_usb_pro_encode_msg(struct peak_usb_device *dev,
 
 	pcan_msg_init_empty(&usb_msg, obuf, *size);
 
-	if ((cf->can_id & CAN_RTR_FLAG) || (cf->len == 0))
+	if ((cf->can_id & CAN_RTR_FLAG) || (cf->can_dlc == 0))
 		data_type = PCAN_USBPRO_TXMSG0;
-	else if (cf->len <= 4)
+	else if (cf->can_dlc <= 4)
 		data_type = PCAN_USBPRO_TXMSG4;
 	else
 		data_type = PCAN_USBPRO_TXMSG8;
 
-	len = (dev->ctrl_idx << 4) | (cf->len & 0x0f);
+	len = (dev->ctrl_idx << 4) | (cf->can_dlc & 0x0f);
 
 	flags = 0;
 	if (cf->can_id & CAN_EFF_FLAG)
-		flags |= PCAN_USBPRO_EXT;
+		flags |= 0x02;
 	if (cf->can_id & CAN_RTR_FLAG)
-		flags |= PCAN_USBPRO_RTR;
-
-	/* Single-Shot frame */
-	if (dev->can.ctrlmode & CAN_CTRLMODE_ONE_SHOT)
-		flags |= PCAN_USBPRO_SS;
+		flags |= 0x01;
 
 	pcan_msg_add_rec(&usb_msg, data_type, 0, flags, len, cf->can_id,
 			 cf->data);
@@ -911,7 +914,7 @@ static int pcan_usb_pro_init(struct peak_usb_device *dev)
 	usb_if->dev[dev->ctrl_idx] = dev;
 
 	/* set LED in default state (end of init phase) */
-	pcan_usb_pro_set_led(dev, PCAN_USBPRO_LED_DEVICE, 1);
+	pcan_usb_pro_set_led(dev, 0, 1);
 
 	kfree(bi);
 	kfree(fi);
@@ -976,7 +979,7 @@ int pcan_usb_pro_probe(struct usb_interface *intf)
 		struct usb_endpoint_descriptor *ep = &if_desc->endpoint[i].desc;
 
 		/*
-		 * below is the list of valid ep addresses. Any other ep address
+		 * below is the list of valid ep addreses. Any other ep address
 		 * is considered as not-CAN interface address => no dev created
 		 */
 		switch (ep->bEndpointAddress) {
@@ -994,36 +997,6 @@ int pcan_usb_pro_probe(struct usb_interface *intf)
 
 	return 0;
 }
-
-static int pcan_usb_pro_set_phys_id(struct net_device *netdev,
-				    enum ethtool_phys_id_state state)
-{
-	struct peak_usb_device *dev = netdev_priv(netdev);
-	int err = 0;
-
-	switch (state) {
-	case ETHTOOL_ID_ACTIVE:
-		/* fast blinking forever */
-		err = pcan_usb_pro_set_led(dev, PCAN_USBPRO_LED_BLINK_FAST,
-					   0xffffffff);
-		break;
-
-	case ETHTOOL_ID_INACTIVE:
-		/* restore LED default */
-		err = pcan_usb_pro_set_led(dev, PCAN_USBPRO_LED_DEVICE, 1);
-		break;
-
-	default:
-		break;
-	}
-
-	return err;
-}
-
-static const struct ethtool_ops pcan_usb_pro_ethtool_ops = {
-	.set_phys_id = pcan_usb_pro_set_phys_id,
-	.get_ts_info = pcan_get_ts_info,
-};
 
 /*
  * describe the PCAN-USB Pro adapter
@@ -1044,8 +1017,7 @@ const struct peak_usb_adapter pcan_usb_pro = {
 	.name = "PCAN-USB Pro",
 	.device_id = PCAN_USBPRO_PRODUCT_ID,
 	.ctrl_count = PCAN_USBPRO_CHANNEL_COUNT,
-	.ctrlmode_supported = CAN_CTRLMODE_3_SAMPLES | CAN_CTRLMODE_LISTENONLY |
-			      CAN_CTRLMODE_ONE_SHOT,
+	.ctrlmode_supported = CAN_CTRLMODE_3_SAMPLES | CAN_CTRLMODE_LISTENONLY,
 	.clock = {
 		.freq = PCAN_USBPRO_CRYSTAL_HZ,
 	},
@@ -1054,10 +1026,9 @@ const struct peak_usb_adapter pcan_usb_pro = {
 	/* size of device private data */
 	.sizeof_dev_private = sizeof(struct pcan_usb_pro_device),
 
-	.ethtool_ops = &pcan_usb_pro_ethtool_ops,
-
 	/* timestamps usage */
 	.ts_used_bits = 32,
+	.ts_period = 1000000, /* calibration period in ts. */
 	.us_per_ts_scale = 1, /* us = (ts * scale) >> shift */
 	.us_per_ts_shift = 0,
 

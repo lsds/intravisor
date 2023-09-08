@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * This file contains the handling of command.
  * It prepares command and sends it to firmware when it is ready.
@@ -150,9 +149,10 @@ int lbs_update_hw_spec(struct lbs_private *priv)
 		memmove(priv->current_addr, cmd.permanentaddr, ETH_ALEN);
 
 	if (!priv->copied_hwaddr) {
-		eth_hw_addr_set(priv->dev, priv->current_addr);
+		memcpy(priv->dev->dev_addr, priv->current_addr, ETH_ALEN);
 		if (priv->mesh_dev)
-			eth_hw_addr_set(priv->mesh_dev, priv->current_addr);
+			memcpy(priv->mesh_dev->dev_addr,
+				priv->current_addr, ETH_ALEN);
 		priv->copied_hwaddr = 1;
 	}
 

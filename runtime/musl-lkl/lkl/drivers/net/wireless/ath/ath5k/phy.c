@@ -483,6 +483,7 @@ static u32
 ath5k_hw_rf_gainf_corr(struct ath5k_hw *ah)
 {
 	u32 mix, step;
+	u32 *rf;
 	const struct ath5k_gain_opt *go;
 	const struct ath5k_gain_opt_step *g_step;
 	const struct ath5k_rf_reg *rf_regs;
@@ -501,6 +502,7 @@ ath5k_hw_rf_gainf_corr(struct ath5k_hw *ah)
 	if (ah->ah_rf_banks == NULL)
 		return 0;
 
+	rf = ah->ah_rf_banks;
 	ah->ah_gain.g_f_corr = 0;
 
 	/* No VGA (Variable Gain Amplifier) override, skip */
@@ -547,9 +549,12 @@ ath5k_hw_rf_check_gainf_readback(struct ath5k_hw *ah)
 {
 	const struct ath5k_rf_reg *rf_regs;
 	u32 step, mix_ovr, level[4];
+	u32 *rf;
 
 	if (ah->ah_rf_banks == NULL)
 		return false;
+
+	rf = ah->ah_rf_banks;
 
 	if (ah->ah_radio == AR5K_RF5111) {
 
@@ -885,8 +890,7 @@ ath5k_hw_rfregs_init(struct ath5k_hw *ah,
 	 * ah->ah_rf_banks based on ah->ah_rf_banks_size
 	 * we set above */
 	if (ah->ah_rf_banks == NULL) {
-		ah->ah_rf_banks = kmalloc_array(ah->ah_rf_banks_size,
-								sizeof(u32),
+		ah->ah_rf_banks = kmalloc(sizeof(u32) * ah->ah_rf_banks_size,
 								GFP_KERNEL);
 		if (ah->ah_rf_banks == NULL) {
 			ATH5K_ERR(ah, "out of memory\n");
@@ -3136,7 +3140,7 @@ ath5k_combine_pwr_to_pdadc_curves(struct ath5k_hw *ah,
 		pdadc_n = gain_boundaries[pdg] + pd_gain_overlap - pwr_min[pdg];
 		/* Limit it to be inside pwr range */
 		table_size = pwr_max[pdg] - pwr_min[pdg];
-		max_idx = min(pdadc_n, table_size);
+		max_idx = (pdadc_n < table_size) ? pdadc_n : table_size;
 
 		/* Fill pdadc_out table */
 		while (pdadc_0 < max_idx && pdadc_i < 128)
@@ -3229,10 +3233,10 @@ ath5k_write_pwr_to_pdadc_table(struct ath5k_hw *ah, u8 ee_mode)
 	switch (pdcurves) {
 	case 3:
 		reg |= AR5K_REG_SM(pdg_to_idx[2], AR5K_PHY_TPC_RG1_PDGAIN_3);
-		fallthrough;
+		/* Fall through */
 	case 2:
 		reg |= AR5K_REG_SM(pdg_to_idx[1], AR5K_PHY_TPC_RG1_PDGAIN_2);
-		fallthrough;
+		/* Fall through */
 	case 1:
 		reg |= AR5K_REG_SM(pdg_to_idx[0], AR5K_PHY_TPC_RG1_PDGAIN_1);
 		break;
@@ -3353,7 +3357,7 @@ ath5k_setup_channel_powertable(struct ath5k_hw *ah,
 					table_min[pdg] = table_max[pdg] - 126;
 			}
 
-			fallthrough;
+			/* Fall through */
 		case AR5K_PWRTABLE_PWR_TO_PCDAC:
 		case AR5K_PWRTABLE_PWR_TO_PDADC:
 

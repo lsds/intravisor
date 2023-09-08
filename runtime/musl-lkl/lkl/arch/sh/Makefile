@@ -9,13 +9,17 @@
 # License.  See the file "COPYING" in the main directory of this archive
 # for more details.
 #
-ifdef cross_compiling
+ifneq ($(SUBARCH),$(ARCH))
   ifeq ($(CROSS_COMPILE),)
-    CROSS_COMPILE := $(call cc-cross-prefix, sh-linux- sh-linux-gnu- sh-unknown-linux-gnu-)
+    CROSS_COMPILE := $(call cc-cross-prefix, $(UTS_MACHINE)-linux-  $(UTS_MACHINE)-linux-gnu-  $(UTS_MACHINE)-unknown-linux-gnu-)
   endif
 endif
 
+ifeq ($(ARCH),sh)
 KBUILD_DEFCONFIG	:= shx3_defconfig
+else
+KBUILD_DEFCONFIG	:= cayman_defconfig
+endif
 
 isa-y					:= any
 isa-$(CONFIG_SH_DSP)			:= sh
@@ -25,9 +29,12 @@ isa-$(CONFIG_CPU_SH3)			:= sh3
 isa-$(CONFIG_CPU_SH4)			:= sh4
 isa-$(CONFIG_CPU_SH4A)			:= sh4a
 isa-$(CONFIG_CPU_SH4AL_DSP)		:= sh4al
+isa-$(CONFIG_CPU_SH5)			:= shmedia
 
+ifeq ($(CONFIG_SUPERH32),y)
 isa-$(CONFIG_SH_DSP)			:= $(isa-y)-dsp
 isa-y					:= $(isa-y)-up
+endif
 
 cflags-$(CONFIG_CPU_SH2)		:= $(call cc-option,-m2,)
 cflags-$(CONFIG_CPU_J2)			+= $(call cc-option,-mj2,)
@@ -40,6 +47,7 @@ cflags-$(CONFIG_CPU_SH4)		:= $(call cc-option,-m4,) \
 cflags-$(CONFIG_CPU_SH4A)		+= $(call cc-option,-m4a,) \
 					   $(call cc-option,-m4a-nofpu,)
 cflags-$(CONFIG_CPU_SH4AL_DSP)		+= $(call cc-option,-m4al,)
+cflags-$(CONFIG_CPU_SH5)		:= $(call cc-option,-m5-32media-nofpu,)
 
 ifeq ($(cflags-y),)
 #
@@ -80,7 +88,7 @@ OBJCOPYFLAGS	:= -O binary -R .note -R .note.gnu.build-id -R .comment \
 		   -R .stab -R .stabstr -S
 
 # Give the various platforms the opportunity to set default image types
-defaultimage-y					:= zImage
+defaultimage-$(CONFIG_SUPERH32)			:= zImage
 defaultimage-$(CONFIG_SH_SH7785LCR)		:= uImage
 defaultimage-$(CONFIG_SH_RSK)			:= uImage
 defaultimage-$(CONFIG_SH_URQUELL)		:= uImage
@@ -99,20 +107,36 @@ KBUILD_IMAGE		:= $(boot)/$(defaultimage-y)
 # Choosing incompatible machines durings configuration will result in
 # error messages during linking.
 #
+ifdef CONFIG_SUPERH32
 UTS_MACHINE		:= sh
+BITS			:= 32
 LDFLAGS_vmlinux		+= -e _stext
-
-ifdef CONFIG_CPU_LITTLE_ENDIAN
-ld-bfd			:= elf32-sh-linux
-LDFLAGS_vmlinux		+= --defsym jiffies=jiffies_64 --oformat $(ld-bfd)
-KBUILD_LDFLAGS		+= -EL
 else
-ld-bfd			:= elf32-shbig-linux
-LDFLAGS_vmlinux		+= --defsym jiffies=jiffies_64+4 --oformat $(ld-bfd)
-KBUILD_LDFLAGS		+= -EB
+UTS_MACHINE		:= sh64
+BITS			:= 64
+LDFLAGS_vmlinux		+= --defsym phys_stext=_stext-$(CONFIG_PAGE_OFFSET) \
+			   --defsym phys_stext_shmedia=phys_stext+1 \
+			   -e phys_stext_shmedia
 endif
 
-export ld-bfd
+ifdef CONFIG_CPU_LITTLE_ENDIAN
+ld-bfd			:= elf32-$(UTS_MACHINE)-linux
+LDFLAGS_vmlinux		+= --defsym jiffies=jiffies_64 --oformat $(ld-bfd)
+LDFLAGS			+= -EL
+else
+ld-bfd			:= elf32-$(UTS_MACHINE)big-linux
+LDFLAGS_vmlinux		+= --defsym jiffies=jiffies_64+4 --oformat $(ld-bfd)
+LDFLAGS			+= -EB
+endif
+
+export ld-bfd BITS
+
+head-y	:= arch/sh/kernel/head_$(BITS).o
+
+core-y				+= arch/sh/kernel/ arch/sh/mm/ arch/sh/boards/
+core-$(CONFIG_SH_FPU_EMU)	+= arch/sh/math-emu/
+
+core-$(CONFIG_USE_BUILTIN_DTB)	+= arch/sh/boot/dts/
 
 # Mach groups
 machdir-$(CONFIG_SOLUTION_ENGINE)		+= mach-se
@@ -132,6 +156,7 @@ machdir-$(CONFIG_SH_SH7763RDP)			+= mach-sh7763rdp
 machdir-$(CONFIG_SH_SH4202_MICRODEV)		+= mach-microdev
 machdir-$(CONFIG_SH_LANDISK)			+= mach-landisk
 machdir-$(CONFIG_SH_LBOX_RE2)			+= mach-lboxre2
+machdir-$(CONFIG_SH_CAYMAN)			+= mach-cayman
 machdir-$(CONFIG_SH_RSK)			+= mach-rsk
 
 ifneq ($(machdir-y),)
@@ -160,12 +185,14 @@ cpuincdir-$(CONFIG_CPU_SH2)	+= cpu-sh2
 cpuincdir-$(CONFIG_CPU_SH3)	+= cpu-sh3
 cpuincdir-$(CONFIG_CPU_SH4A)	+= cpu-sh4a
 cpuincdir-$(CONFIG_CPU_SH4)	+= cpu-sh4
+cpuincdir-$(CONFIG_CPU_SH5)	+= cpu-sh5
 cpuincdir-y			+= cpu-common	# Must be last
 
 drivers-y			+= arch/sh/drivers/
+drivers-$(CONFIG_OPROFILE)	+= arch/sh/oprofile/
 
-cflags-y	+= $(foreach d, $(cpuincdir-y), -I $(srctree)/arch/sh/include/$(d)) \
-		   $(foreach d, $(machdir-y), -I $(srctree)/arch/sh/include/$(d))
+cflags-y	+= $(foreach d, $(cpuincdir-y), -Iarch/sh/include/$(d)) \
+		   $(foreach d, $(machdir-y), -Iarch/sh/include/$(d))
 
 KBUILD_CFLAGS		+= -pipe $(cflags-y)
 KBUILD_CPPFLAGS		+= $(cflags-y)
@@ -179,7 +206,8 @@ ifeq ($(CONFIG_DWARF_UNWINDER),y)
   KBUILD_CFLAGS += -fasynchronous-unwind-tables
 endif
 
-libs-y			:= arch/sh/lib/	$(libs-y)
+libs-$(CONFIG_SUPERH32)		:= arch/sh/lib/	$(libs-y)
+libs-$(CONFIG_SUPERH64)		:= arch/sh/lib64/ $(libs-y)
 
 BOOT_TARGETS = uImage uImage.bz2 uImage.gz uImage.lzma uImage.xz uImage.lzo \
 	       uImage.srec uImage.bin zImage vmlinux.bin vmlinux.srec \
@@ -196,8 +224,9 @@ compressed: zImage
 archprepare:
 	$(Q)$(MAKE) $(build)=arch/sh/tools include/generated/machtypes.h
 
-archheaders:
-	$(Q)$(MAKE) $(build)=arch/sh/kernel/syscalls all
+archclean:
+	$(Q)$(MAKE) $(clean)=$(boot)
+	$(Q)$(MAKE) $(clean)=arch/sh/kernel/vsyscall
 
 define archhelp
 	@echo '  zImage 	           - Compressed kernel image'

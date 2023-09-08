@@ -1,7 +1,7 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (C) STMicroelectronics SA 2017
  * Author: Fabien Dessenne <fabien.dessenne@st.com>
+ * License terms:  GNU General Public License (GPL), version 2
  */
 
 #include <linux/clk.h>
@@ -11,15 +11,13 @@
 #include <linux/module.h>
 #include <linux/of_device.h>
 #include <linux/platform_device.h>
-#include <linux/pm_runtime.h>
 #include <linux/reset.h>
 
 #include <crypto/aes.h>
-#include <crypto/internal/des.h>
+#include <crypto/des.h>
 #include <crypto/engine.h>
 #include <crypto/scatterwalk.h>
 #include <crypto/internal/aead.h>
-#include <crypto/internal/skcipher.h>
 
 #define DRIVER_NAME             "stm32-cryp"
 
@@ -37,6 +35,7 @@
 /* Mode mask = bits [15..0] */
 #define FLG_MODE_MASK           GENMASK(15, 0)
 /* Bit [31..16] status  */
+#define FLG_CCM_PADDED_WA       BIT(16)
 
 /* Registers */
 #define CRYP_CR                 0x00000000
@@ -104,7 +103,8 @@
 /* Misc */
 #define AES_BLOCK_32            (AES_BLOCK_SIZE / sizeof(u32))
 #define GCM_CTR_INIT            2
-#define CRYP_AUTOSUSPEND_DELAY	50
+#define _walked_in              (cryp->in_walk.offset - cryp->in_sg->offset)
+#define _walked_out             (cryp->out_walk.offset - cryp->out_sg->offset)
 
 struct stm32_cryp_caps {
 	bool                    swap_final;
@@ -115,7 +115,7 @@ struct stm32_cryp_ctx {
 	struct crypto_engine_ctx enginectx;
 	struct stm32_cryp       *cryp;
 	int                     keylen;
-	__be32                  key[AES_KEYSIZE_256 / sizeof(u32)];
+	u32                     key[AES_KEYSIZE_256 / sizeof(u32)];
 	unsigned long           flags;
 };
 
@@ -135,22 +135,33 @@ struct stm32_cryp {
 
 	struct crypto_engine    *engine;
 
-	struct skcipher_request *req;
+	struct mutex            lock; /* protects req / areq */
+	struct ablkcipher_request *req;
 	struct aead_request     *areq;
 
 	size_t                  authsize;
 	size_t                  hw_blocksize;
 
-	size_t                  payload_in;
-	size_t                  header_in;
-	size_t                  payload_out;
+	size_t                  total_in;
+	size_t                  total_in_save;
+	size_t                  total_out;
+	size_t                  total_out_save;
 
+	struct scatterlist      *in_sg;
 	struct scatterlist      *out_sg;
+	struct scatterlist      *out_sg_save;
+
+	struct scatterlist      in_sgl;
+	struct scatterlist      out_sgl;
+	bool                    sgs_copied;
+
+	int                     in_sg_len;
+	int                     out_sg_len;
 
 	struct scatter_walk     in_walk;
 	struct scatter_walk     out_walk;
 
-	__be32                  last_ctr[4];
+	u32                     last_ctr[4];
 	u32                     gcm_ctr;
 };
 
@@ -232,11 +243,6 @@ static inline int stm32_cryp_wait_busy(struct stm32_cryp *cryp)
 			!(status & SR_BUSY), 10, 100000);
 }
 
-static inline void stm32_cryp_enable(struct stm32_cryp *cryp)
-{
-	writel_relaxed(readl_relaxed(cryp->regs + CRYP_CR) | CR_CRYPEN, cryp->regs + CRYP_CR);
-}
-
 static inline int stm32_cryp_wait_enable(struct stm32_cryp *cryp)
 {
 	u32 status;
@@ -254,7 +260,6 @@ static inline int stm32_cryp_wait_output(struct stm32_cryp *cryp)
 }
 
 static int stm32_cryp_read_auth_tag(struct stm32_cryp *cryp);
-static void stm32_cryp_finish_req(struct stm32_cryp *cryp, int err);
 
 static struct stm32_cryp *stm32_cryp_find_dev(struct stm32_cryp_ctx *ctx)
 {
@@ -276,34 +281,114 @@ static struct stm32_cryp *stm32_cryp_find_dev(struct stm32_cryp_ctx *ctx)
 	return cryp;
 }
 
-static void stm32_cryp_hw_write_iv(struct stm32_cryp *cryp, __be32 *iv)
+static int stm32_cryp_check_aligned(struct scatterlist *sg, size_t total,
+				    size_t align)
+{
+	int len = 0;
+
+	if (!total)
+		return 0;
+
+	if (!IS_ALIGNED(total, align))
+		return -EINVAL;
+
+	while (sg) {
+		if (!IS_ALIGNED(sg->offset, sizeof(u32)))
+			return -EINVAL;
+
+		if (!IS_ALIGNED(sg->length, align))
+			return -EINVAL;
+
+		len += sg->length;
+		sg = sg_next(sg);
+	}
+
+	if (len != total)
+		return -EINVAL;
+
+	return 0;
+}
+
+static int stm32_cryp_check_io_aligned(struct stm32_cryp *cryp)
+{
+	int ret;
+
+	ret = stm32_cryp_check_aligned(cryp->in_sg, cryp->total_in,
+				       cryp->hw_blocksize);
+	if (ret)
+		return ret;
+
+	ret = stm32_cryp_check_aligned(cryp->out_sg, cryp->total_out,
+				       cryp->hw_blocksize);
+
+	return ret;
+}
+
+static void sg_copy_buf(void *buf, struct scatterlist *sg,
+			unsigned int start, unsigned int nbytes, int out)
+{
+	struct scatter_walk walk;
+
+	if (!nbytes)
+		return;
+
+	scatterwalk_start(&walk, sg);
+	scatterwalk_advance(&walk, start);
+	scatterwalk_copychunks(buf, &walk, nbytes, out);
+	scatterwalk_done(&walk, out, 0);
+}
+
+static int stm32_cryp_copy_sgs(struct stm32_cryp *cryp)
+{
+	void *buf_in, *buf_out;
+	int pages, total_in, total_out;
+
+	if (!stm32_cryp_check_io_aligned(cryp)) {
+		cryp->sgs_copied = 0;
+		return 0;
+	}
+
+	total_in = ALIGN(cryp->total_in, cryp->hw_blocksize);
+	pages = total_in ? get_order(total_in) : 1;
+	buf_in = (void *)__get_free_pages(GFP_ATOMIC, pages);
+
+	total_out = ALIGN(cryp->total_out, cryp->hw_blocksize);
+	pages = total_out ? get_order(total_out) : 1;
+	buf_out = (void *)__get_free_pages(GFP_ATOMIC, pages);
+
+	if (!buf_in || !buf_out) {
+		dev_err(cryp->dev, "Can't allocate pages when unaligned\n");
+		cryp->sgs_copied = 0;
+		return -EFAULT;
+	}
+
+	sg_copy_buf(buf_in, cryp->in_sg, 0, cryp->total_in, 0);
+
+	sg_init_one(&cryp->in_sgl, buf_in, total_in);
+	cryp->in_sg = &cryp->in_sgl;
+	cryp->in_sg_len = 1;
+
+	sg_init_one(&cryp->out_sgl, buf_out, total_out);
+	cryp->out_sg_save = cryp->out_sg;
+	cryp->out_sg = &cryp->out_sgl;
+	cryp->out_sg_len = 1;
+
+	cryp->sgs_copied = 1;
+
+	return 0;
+}
+
+static void stm32_cryp_hw_write_iv(struct stm32_cryp *cryp, u32 *iv)
 {
 	if (!iv)
 		return;
 
-	stm32_cryp_write(cryp, CRYP_IV0LR, be32_to_cpu(*iv++));
-	stm32_cryp_write(cryp, CRYP_IV0RR, be32_to_cpu(*iv++));
+	stm32_cryp_write(cryp, CRYP_IV0LR, cpu_to_be32(*iv++));
+	stm32_cryp_write(cryp, CRYP_IV0RR, cpu_to_be32(*iv++));
 
 	if (is_aes(cryp)) {
-		stm32_cryp_write(cryp, CRYP_IV1LR, be32_to_cpu(*iv++));
-		stm32_cryp_write(cryp, CRYP_IV1RR, be32_to_cpu(*iv++));
-	}
-}
-
-static void stm32_cryp_get_iv(struct stm32_cryp *cryp)
-{
-	struct skcipher_request *req = cryp->req;
-	__be32 *tmp = (void *)req->iv;
-
-	if (!tmp)
-		return;
-
-	*tmp++ = cpu_to_be32(stm32_cryp_read(cryp, CRYP_IV0LR));
-	*tmp++ = cpu_to_be32(stm32_cryp_read(cryp, CRYP_IV0RR));
-
-	if (is_aes(cryp)) {
-		*tmp++ = cpu_to_be32(stm32_cryp_read(cryp, CRYP_IV1LR));
-		*tmp++ = cpu_to_be32(stm32_cryp_read(cryp, CRYP_IV1RR));
+		stm32_cryp_write(cryp, CRYP_IV1LR, cpu_to_be32(*iv++));
+		stm32_cryp_write(cryp, CRYP_IV1RR, cpu_to_be32(*iv++));
 	}
 }
 
@@ -313,13 +398,13 @@ static void stm32_cryp_hw_write_key(struct stm32_cryp *c)
 	int r_id;
 
 	if (is_des(c)) {
-		stm32_cryp_write(c, CRYP_K1LR, be32_to_cpu(c->ctx->key[0]));
-		stm32_cryp_write(c, CRYP_K1RR, be32_to_cpu(c->ctx->key[1]));
+		stm32_cryp_write(c, CRYP_K1LR, cpu_to_be32(c->ctx->key[0]));
+		stm32_cryp_write(c, CRYP_K1RR, cpu_to_be32(c->ctx->key[1]));
 	} else {
 		r_id = CRYP_K3RR;
 		for (i = c->ctx->keylen / sizeof(u32); i > 0; i--, r_id -= 4)
 			stm32_cryp_write(c, r_id,
-					 be32_to_cpu(c->ctx->key[i - 1]));
+					 cpu_to_be32(c->ctx->key[i - 1]));
 	}
 }
 
@@ -365,7 +450,7 @@ static unsigned int stm32_cryp_get_input_text_len(struct stm32_cryp *cryp)
 static int stm32_cryp_gcm_init(struct stm32_cryp *cryp, u32 cfg)
 {
 	int ret;
-	__be32 iv[4];
+	u32 iv[4];
 
 	/* Phase 1 : init */
 	memcpy(iv, cryp->areq->iv, 12);
@@ -377,100 +462,16 @@ static int stm32_cryp_gcm_init(struct stm32_cryp *cryp, u32 cfg)
 
 	/* Wait for end of processing */
 	ret = stm32_cryp_wait_enable(cryp);
-	if (ret) {
+	if (ret)
 		dev_err(cryp->dev, "Timeout (gcm init)\n");
-		return ret;
-	}
 
-	/* Prepare next phase */
-	if (cryp->areq->assoclen) {
-		cfg |= CR_PH_HEADER;
-		stm32_cryp_write(cryp, CRYP_CR, cfg);
-	} else if (stm32_cryp_get_input_text_len(cryp)) {
-		cfg |= CR_PH_PAYLOAD;
-		stm32_cryp_write(cryp, CRYP_CR, cfg);
-	}
-
-	return 0;
-}
-
-static void stm32_crypt_gcmccm_end_header(struct stm32_cryp *cryp)
-{
-	u32 cfg;
-	int err;
-
-	/* Check if whole header written */
-	if (!cryp->header_in) {
-		/* Wait for completion */
-		err = stm32_cryp_wait_busy(cryp);
-		if (err) {
-			dev_err(cryp->dev, "Timeout (gcm/ccm header)\n");
-			stm32_cryp_write(cryp, CRYP_IMSCR, 0);
-			stm32_cryp_finish_req(cryp, err);
-			return;
-		}
-
-		if (stm32_cryp_get_input_text_len(cryp)) {
-			/* Phase 3 : payload */
-			cfg = stm32_cryp_read(cryp, CRYP_CR);
-			cfg &= ~CR_CRYPEN;
-			stm32_cryp_write(cryp, CRYP_CR, cfg);
-
-			cfg &= ~CR_PH_MASK;
-			cfg |= CR_PH_PAYLOAD | CR_CRYPEN;
-			stm32_cryp_write(cryp, CRYP_CR, cfg);
-		} else {
-			/*
-			 * Phase 4 : tag.
-			 * Nothing to read, nothing to write, caller have to
-			 * end request
-			 */
-		}
-	}
-}
-
-static void stm32_cryp_write_ccm_first_header(struct stm32_cryp *cryp)
-{
-	unsigned int i;
-	size_t written;
-	size_t len;
-	u32 alen = cryp->areq->assoclen;
-	u32 block[AES_BLOCK_32] = {0};
-	u8 *b8 = (u8 *)block;
-
-	if (alen <= 65280) {
-		/* Write first u32 of B1 */
-		b8[0] = (alen >> 8) & 0xFF;
-		b8[1] = alen & 0xFF;
-		len = 2;
-	} else {
-		/* Build the two first u32 of B1 */
-		b8[0] = 0xFF;
-		b8[1] = 0xFE;
-		b8[2] = (alen & 0xFF000000) >> 24;
-		b8[3] = (alen & 0x00FF0000) >> 16;
-		b8[4] = (alen & 0x0000FF00) >> 8;
-		b8[5] = alen & 0x000000FF;
-		len = 6;
-	}
-
-	written = min_t(size_t, AES_BLOCK_SIZE - len, alen);
-
-	scatterwalk_copychunks((char *)block + len, &cryp->in_walk, written, 0);
-	for (i = 0; i < AES_BLOCK_32; i++)
-		stm32_cryp_write(cryp, CRYP_DIN, block[i]);
-
-	cryp->header_in -= written;
-
-	stm32_crypt_gcmccm_end_header(cryp);
+	return ret;
 }
 
 static int stm32_cryp_ccm_init(struct stm32_cryp *cryp, u32 cfg)
 {
 	int ret;
-	u32 iv_32[AES_BLOCK_32], b0_32[AES_BLOCK_32];
-	u8 *iv = (u8 *)iv_32, *b0 = (u8 *)b0_32;
-	__be32 *bd;
+	u8 iv[AES_BLOCK_SIZE], b0[AES_BLOCK_SIZE];
 	u32 *d;
 	unsigned int i, textlen;
 
@@ -478,7 +479,7 @@ static int stm32_cryp_ccm_init(struct stm32_cryp *cryp, u32 cfg)
 	memcpy(iv, cryp->areq->iv, AES_BLOCK_SIZE);
 	memset(iv + AES_BLOCK_SIZE - 1 - iv[0], 0, iv[0] + 1);
 	iv[AES_BLOCK_SIZE - 1] = 1;
-	stm32_cryp_hw_write_iv(cryp, (__be32 *)iv);
+	stm32_cryp_hw_write_iv(cryp, (u32 *)iv);
 
 	/* Build B0 */
 	memcpy(b0, iv, AES_BLOCK_SIZE);
@@ -498,36 +499,19 @@ static int stm32_cryp_ccm_init(struct stm32_cryp *cryp, u32 cfg)
 
 	/* Write B0 */
 	d = (u32 *)b0;
-	bd = (__be32 *)b0;
 
 	for (i = 0; i < AES_BLOCK_32; i++) {
-		u32 xd = d[i];
-
 		if (!cryp->caps->padding_wa)
-			xd = be32_to_cpu(bd[i]);
-		stm32_cryp_write(cryp, CRYP_DIN, xd);
+			*d = cpu_to_be32(*d);
+		stm32_cryp_write(cryp, CRYP_DIN, *d++);
 	}
 
 	/* Wait for end of processing */
 	ret = stm32_cryp_wait_enable(cryp);
-	if (ret) {
+	if (ret)
 		dev_err(cryp->dev, "Timeout (ccm init)\n");
-		return ret;
-	}
 
-	/* Prepare next phase */
-	if (cryp->areq->assoclen) {
-		cfg |= CR_PH_HEADER | CR_CRYPEN;
-		stm32_cryp_write(cryp, CRYP_CR, cfg);
-
-		/* Write first (special) block (may move to next phase [payload]) */
-		stm32_cryp_write_ccm_first_header(cryp);
-	} else if (stm32_cryp_get_input_text_len(cryp)) {
-		cfg |= CR_PH_PAYLOAD;
-		stm32_cryp_write(cryp, CRYP_CR, cfg);
-	}
-
-	return 0;
+	return ret;
 }
 
 static int stm32_cryp_hw_init(struct stm32_cryp *cryp)
@@ -535,10 +519,11 @@ static int stm32_cryp_hw_init(struct stm32_cryp *cryp)
 	int ret;
 	u32 cfg, hw_mode;
 
-	pm_runtime_get_sync(cryp->dev);
-
 	/* Disable interrupt */
 	stm32_cryp_write(cryp, CRYP_IMSCR, 0);
+
+	/* Set key */
+	stm32_cryp_hw_write_key(cryp);
 
 	/* Set configuration */
 	cfg = CR_DATA8 | CR_FFLUSH;
@@ -565,36 +550,23 @@ static int stm32_cryp_hw_init(struct stm32_cryp *cryp)
 	/* AES ECB/CBC decrypt: run key preparation first */
 	if (is_decrypt(cryp) &&
 	    ((hw_mode == CR_AES_ECB) || (hw_mode == CR_AES_CBC))) {
-		/* Configure in key preparation mode */
-		stm32_cryp_write(cryp, CRYP_CR, cfg | CR_AES_KP);
+		stm32_cryp_write(cryp, CRYP_CR, cfg | CR_AES_KP | CR_CRYPEN);
 
-		/* Set key only after full configuration done */
-		stm32_cryp_hw_write_key(cryp);
-
-		/* Start prepare key */
-		stm32_cryp_enable(cryp);
 		/* Wait for end of processing */
 		ret = stm32_cryp_wait_busy(cryp);
 		if (ret) {
 			dev_err(cryp->dev, "Timeout (key preparation)\n");
 			return ret;
 		}
-
-		cfg |= hw_mode | CR_DEC_NOT_ENC;
-
-		/* Apply updated config (Decrypt + algo) and flush */
-		stm32_cryp_write(cryp, CRYP_CR, cfg);
-	} else {
-		cfg |= hw_mode;
-		if (is_decrypt(cryp))
-			cfg |= CR_DEC_NOT_ENC;
-
-		/* Apply config and flush */
-		stm32_cryp_write(cryp, CRYP_CR, cfg);
-
-		/* Set key only after configuration done */
-		stm32_cryp_hw_write_key(cryp);
 	}
+
+	cfg |= hw_mode;
+
+	if (is_decrypt(cryp))
+		cfg |= CR_DEC_NOT_ENC;
+
+	/* Apply config and flush (valid when CRYPEN = 0) */
+	stm32_cryp_write(cryp, CRYP_CR, cfg);
 
 	switch (hw_mode) {
 	case CR_AES_GCM:
@@ -608,13 +580,23 @@ static int stm32_cryp_hw_init(struct stm32_cryp *cryp)
 		if (ret)
 			return ret;
 
+		/* Phase 2 : header (authenticated data) */
+		if (cryp->areq->assoclen) {
+			cfg |= CR_PH_HEADER;
+		} else if (stm32_cryp_get_input_text_len(cryp)) {
+			cfg |= CR_PH_PAYLOAD;
+			stm32_cryp_write(cryp, CRYP_CR, cfg);
+		} else {
+			cfg |= CR_PH_INIT;
+		}
+
 		break;
 
 	case CR_DES_CBC:
 	case CR_TDES_CBC:
 	case CR_AES_CBC:
 	case CR_AES_CTR:
-		stm32_cryp_hw_write_iv(cryp, (__be32 *)cryp->req->iv);
+		stm32_cryp_hw_write_iv(cryp, (u32 *)cryp->req->info);
 		break;
 
 	default:
@@ -622,7 +604,11 @@ static int stm32_cryp_hw_init(struct stm32_cryp *cryp)
 	}
 
 	/* Enable now */
-	stm32_cryp_enable(cryp);
+	cfg |= CR_CRYPEN;
+
+	stm32_cryp_write(cryp, CRYP_CR, cfg);
+
+	cryp->flags &= ~FLG_CCM_PADDED_WA;
 
 	return 0;
 }
@@ -633,17 +619,37 @@ static void stm32_cryp_finish_req(struct stm32_cryp *cryp, int err)
 		/* Phase 4 : output tag */
 		err = stm32_cryp_read_auth_tag(cryp);
 
-	if (!err && (!(is_gcm(cryp) || is_ccm(cryp) || is_ecb(cryp))))
-		stm32_cryp_get_iv(cryp);
+	if (cryp->sgs_copied) {
+		void *buf_in, *buf_out;
+		int pages, len;
 
-	pm_runtime_mark_last_busy(cryp->dev);
-	pm_runtime_put_autosuspend(cryp->dev);
+		buf_in = sg_virt(&cryp->in_sgl);
+		buf_out = sg_virt(&cryp->out_sgl);
 
-	if (is_gcm(cryp) || is_ccm(cryp))
+		sg_copy_buf(buf_out, cryp->out_sg_save, 0,
+			    cryp->total_out_save, 1);
+
+		len = ALIGN(cryp->total_in_save, cryp->hw_blocksize);
+		pages = len ? get_order(len) : 1;
+		free_pages((unsigned long)buf_in, pages);
+
+		len = ALIGN(cryp->total_out_save, cryp->hw_blocksize);
+		pages = len ? get_order(len) : 1;
+		free_pages((unsigned long)buf_out, pages);
+	}
+
+	if (is_gcm(cryp) || is_ccm(cryp)) {
 		crypto_finalize_aead_request(cryp->engine, cryp->areq, err);
-	else
-		crypto_finalize_skcipher_request(cryp->engine, cryp->req,
+		cryp->areq = NULL;
+	} else {
+		crypto_finalize_ablkcipher_request(cryp->engine, cryp->req,
 						   err);
+		cryp->req = NULL;
+	}
+
+	memset(cryp->ctx->key, 0, cryp->ctx->keylen);
+
+	mutex_unlock(&cryp->lock);
 }
 
 static int stm32_cryp_cpu_start(struct stm32_cryp *cryp)
@@ -658,11 +664,11 @@ static int stm32_cryp_cipher_one_req(struct crypto_engine *engine, void *areq);
 static int stm32_cryp_prepare_cipher_req(struct crypto_engine *engine,
 					 void *areq);
 
-static int stm32_cryp_init_tfm(struct crypto_skcipher *tfm)
+static int stm32_cryp_cra_init(struct crypto_tfm *tfm)
 {
-	struct stm32_cryp_ctx *ctx = crypto_skcipher_ctx(tfm);
+	struct stm32_cryp_ctx *ctx = crypto_tfm_ctx(tfm);
 
-	crypto_skcipher_set_reqsize(tfm, sizeof(struct stm32_cryp_reqctx));
+	tfm->crt_ablkcipher.reqsize = sizeof(struct stm32_cryp_reqctx);
 
 	ctx->enginectx.op.do_one_request = stm32_cryp_cipher_one_req;
 	ctx->enginectx.op.prepare_request = stm32_cryp_prepare_cipher_req;
@@ -687,11 +693,11 @@ static int stm32_cryp_aes_aead_init(struct crypto_aead *tfm)
 	return 0;
 }
 
-static int stm32_cryp_crypt(struct skcipher_request *req, unsigned long mode)
+static int stm32_cryp_crypt(struct ablkcipher_request *req, unsigned long mode)
 {
-	struct stm32_cryp_ctx *ctx = crypto_skcipher_ctx(
-			crypto_skcipher_reqtfm(req));
-	struct stm32_cryp_reqctx *rctx = skcipher_request_ctx(req);
+	struct stm32_cryp_ctx *ctx = crypto_ablkcipher_ctx(
+			crypto_ablkcipher_reqtfm(req));
+	struct stm32_cryp_reqctx *rctx = ablkcipher_request_ctx(req);
 	struct stm32_cryp *cryp = stm32_cryp_find_dev(ctx);
 
 	if (!cryp)
@@ -699,7 +705,7 @@ static int stm32_cryp_crypt(struct skcipher_request *req, unsigned long mode)
 
 	rctx->mode = mode;
 
-	return crypto_transfer_skcipher_request_to_engine(cryp->engine, req);
+	return crypto_transfer_ablkcipher_request_to_engine(cryp->engine, req);
 }
 
 static int stm32_cryp_aead_crypt(struct aead_request *req, unsigned long mode)
@@ -716,10 +722,10 @@ static int stm32_cryp_aead_crypt(struct aead_request *req, unsigned long mode)
 	return crypto_transfer_aead_request_to_engine(cryp->engine, req);
 }
 
-static int stm32_cryp_setkey(struct crypto_skcipher *tfm, const u8 *key,
+static int stm32_cryp_setkey(struct crypto_ablkcipher *tfm, const u8 *key,
 			     unsigned int keylen)
 {
-	struct stm32_cryp_ctx *ctx = crypto_skcipher_ctx(tfm);
+	struct stm32_cryp_ctx *ctx = crypto_ablkcipher_ctx(tfm);
 
 	memcpy(ctx->key, key, keylen);
 	ctx->keylen = keylen;
@@ -727,7 +733,7 @@ static int stm32_cryp_setkey(struct crypto_skcipher *tfm, const u8 *key,
 	return 0;
 }
 
-static int stm32_cryp_aes_setkey(struct crypto_skcipher *tfm, const u8 *key,
+static int stm32_cryp_aes_setkey(struct crypto_ablkcipher *tfm, const u8 *key,
 				 unsigned int keylen)
 {
 	if (keylen != AES_KEYSIZE_128 && keylen != AES_KEYSIZE_192 &&
@@ -737,18 +743,22 @@ static int stm32_cryp_aes_setkey(struct crypto_skcipher *tfm, const u8 *key,
 		return stm32_cryp_setkey(tfm, key, keylen);
 }
 
-static int stm32_cryp_des_setkey(struct crypto_skcipher *tfm, const u8 *key,
+static int stm32_cryp_des_setkey(struct crypto_ablkcipher *tfm, const u8 *key,
 				 unsigned int keylen)
 {
-	return verify_skcipher_des_key(tfm, key) ?:
-	       stm32_cryp_setkey(tfm, key, keylen);
+	if (keylen != DES_KEY_SIZE)
+		return -EINVAL;
+	else
+		return stm32_cryp_setkey(tfm, key, keylen);
 }
 
-static int stm32_cryp_tdes_setkey(struct crypto_skcipher *tfm, const u8 *key,
+static int stm32_cryp_tdes_setkey(struct crypto_ablkcipher *tfm, const u8 *key,
 				  unsigned int keylen)
 {
-	return verify_skcipher_des3_key(tfm, key) ?:
-	       stm32_cryp_setkey(tfm, key, keylen);
+	if (keylen != (3 * DES_KEY_SIZE))
+		return -EINVAL;
+	else
+		return stm32_cryp_setkey(tfm, key, keylen);
 }
 
 static int stm32_cryp_aes_aead_setkey(struct crypto_aead *tfm, const u8 *key,
@@ -769,20 +779,7 @@ static int stm32_cryp_aes_aead_setkey(struct crypto_aead *tfm, const u8 *key,
 static int stm32_cryp_aes_gcm_setauthsize(struct crypto_aead *tfm,
 					  unsigned int authsize)
 {
-	switch (authsize) {
-	case 4:
-	case 8:
-	case 12:
-	case 13:
-	case 14:
-	case 15:
-	case 16:
-		break;
-	default:
-		return -EINVAL;
-	}
-
-	return 0;
+	return authsize == AES_BLOCK_SIZE ? 0 : -EINVAL;
 }
 
 static int stm32_cryp_aes_ccm_setauthsize(struct crypto_aead *tfm,
@@ -804,63 +801,33 @@ static int stm32_cryp_aes_ccm_setauthsize(struct crypto_aead *tfm,
 	return 0;
 }
 
-static int stm32_cryp_aes_ecb_encrypt(struct skcipher_request *req)
+static int stm32_cryp_aes_ecb_encrypt(struct ablkcipher_request *req)
 {
-	if (req->cryptlen % AES_BLOCK_SIZE)
-		return -EINVAL;
-
-	if (req->cryptlen == 0)
-		return 0;
-
 	return stm32_cryp_crypt(req, FLG_AES | FLG_ECB | FLG_ENCRYPT);
 }
 
-static int stm32_cryp_aes_ecb_decrypt(struct skcipher_request *req)
+static int stm32_cryp_aes_ecb_decrypt(struct ablkcipher_request *req)
 {
-	if (req->cryptlen % AES_BLOCK_SIZE)
-		return -EINVAL;
-
-	if (req->cryptlen == 0)
-		return 0;
-
 	return stm32_cryp_crypt(req, FLG_AES | FLG_ECB);
 }
 
-static int stm32_cryp_aes_cbc_encrypt(struct skcipher_request *req)
+static int stm32_cryp_aes_cbc_encrypt(struct ablkcipher_request *req)
 {
-	if (req->cryptlen % AES_BLOCK_SIZE)
-		return -EINVAL;
-
-	if (req->cryptlen == 0)
-		return 0;
-
 	return stm32_cryp_crypt(req, FLG_AES | FLG_CBC | FLG_ENCRYPT);
 }
 
-static int stm32_cryp_aes_cbc_decrypt(struct skcipher_request *req)
+static int stm32_cryp_aes_cbc_decrypt(struct ablkcipher_request *req)
 {
-	if (req->cryptlen % AES_BLOCK_SIZE)
-		return -EINVAL;
-
-	if (req->cryptlen == 0)
-		return 0;
-
 	return stm32_cryp_crypt(req, FLG_AES | FLG_CBC);
 }
 
-static int stm32_cryp_aes_ctr_encrypt(struct skcipher_request *req)
+static int stm32_cryp_aes_ctr_encrypt(struct ablkcipher_request *req)
 {
-	if (req->cryptlen == 0)
-		return 0;
-
 	return stm32_cryp_crypt(req, FLG_AES | FLG_CTR | FLG_ENCRYPT);
 }
 
-static int stm32_cryp_aes_ctr_decrypt(struct skcipher_request *req)
+static int stm32_cryp_aes_ctr_decrypt(struct ablkcipher_request *req)
 {
-	if (req->cryptlen == 0)
-		return 0;
-
 	return stm32_cryp_crypt(req, FLG_AES | FLG_CTR);
 }
 
@@ -874,138 +841,68 @@ static int stm32_cryp_aes_gcm_decrypt(struct aead_request *req)
 	return stm32_cryp_aead_crypt(req, FLG_AES | FLG_GCM);
 }
 
-static inline int crypto_ccm_check_iv(const u8 *iv)
-{
-	/* 2 <= L <= 8, so 1 <= L' <= 7. */
-	if (iv[0] < 1 || iv[0] > 7)
-		return -EINVAL;
-
-	return 0;
-}
-
 static int stm32_cryp_aes_ccm_encrypt(struct aead_request *req)
 {
-	int err;
-
-	err = crypto_ccm_check_iv(req->iv);
-	if (err)
-		return err;
-
 	return stm32_cryp_aead_crypt(req, FLG_AES | FLG_CCM | FLG_ENCRYPT);
 }
 
 static int stm32_cryp_aes_ccm_decrypt(struct aead_request *req)
 {
-	int err;
-
-	err = crypto_ccm_check_iv(req->iv);
-	if (err)
-		return err;
-
 	return stm32_cryp_aead_crypt(req, FLG_AES | FLG_CCM);
 }
 
-static int stm32_cryp_des_ecb_encrypt(struct skcipher_request *req)
+static int stm32_cryp_des_ecb_encrypt(struct ablkcipher_request *req)
 {
-	if (req->cryptlen % DES_BLOCK_SIZE)
-		return -EINVAL;
-
-	if (req->cryptlen == 0)
-		return 0;
-
 	return stm32_cryp_crypt(req, FLG_DES | FLG_ECB | FLG_ENCRYPT);
 }
 
-static int stm32_cryp_des_ecb_decrypt(struct skcipher_request *req)
+static int stm32_cryp_des_ecb_decrypt(struct ablkcipher_request *req)
 {
-	if (req->cryptlen % DES_BLOCK_SIZE)
-		return -EINVAL;
-
-	if (req->cryptlen == 0)
-		return 0;
-
 	return stm32_cryp_crypt(req, FLG_DES | FLG_ECB);
 }
 
-static int stm32_cryp_des_cbc_encrypt(struct skcipher_request *req)
+static int stm32_cryp_des_cbc_encrypt(struct ablkcipher_request *req)
 {
-	if (req->cryptlen % DES_BLOCK_SIZE)
-		return -EINVAL;
-
-	if (req->cryptlen == 0)
-		return 0;
-
 	return stm32_cryp_crypt(req, FLG_DES | FLG_CBC | FLG_ENCRYPT);
 }
 
-static int stm32_cryp_des_cbc_decrypt(struct skcipher_request *req)
+static int stm32_cryp_des_cbc_decrypt(struct ablkcipher_request *req)
 {
-	if (req->cryptlen % DES_BLOCK_SIZE)
-		return -EINVAL;
-
-	if (req->cryptlen == 0)
-		return 0;
-
 	return stm32_cryp_crypt(req, FLG_DES | FLG_CBC);
 }
 
-static int stm32_cryp_tdes_ecb_encrypt(struct skcipher_request *req)
+static int stm32_cryp_tdes_ecb_encrypt(struct ablkcipher_request *req)
 {
-	if (req->cryptlen % DES_BLOCK_SIZE)
-		return -EINVAL;
-
-	if (req->cryptlen == 0)
-		return 0;
-
 	return stm32_cryp_crypt(req, FLG_TDES | FLG_ECB | FLG_ENCRYPT);
 }
 
-static int stm32_cryp_tdes_ecb_decrypt(struct skcipher_request *req)
+static int stm32_cryp_tdes_ecb_decrypt(struct ablkcipher_request *req)
 {
-	if (req->cryptlen % DES_BLOCK_SIZE)
-		return -EINVAL;
-
-	if (req->cryptlen == 0)
-		return 0;
-
 	return stm32_cryp_crypt(req, FLG_TDES | FLG_ECB);
 }
 
-static int stm32_cryp_tdes_cbc_encrypt(struct skcipher_request *req)
+static int stm32_cryp_tdes_cbc_encrypt(struct ablkcipher_request *req)
 {
-	if (req->cryptlen % DES_BLOCK_SIZE)
-		return -EINVAL;
-
-	if (req->cryptlen == 0)
-		return 0;
-
 	return stm32_cryp_crypt(req, FLG_TDES | FLG_CBC | FLG_ENCRYPT);
 }
 
-static int stm32_cryp_tdes_cbc_decrypt(struct skcipher_request *req)
+static int stm32_cryp_tdes_cbc_decrypt(struct ablkcipher_request *req)
 {
-	if (req->cryptlen % DES_BLOCK_SIZE)
-		return -EINVAL;
-
-	if (req->cryptlen == 0)
-		return 0;
-
 	return stm32_cryp_crypt(req, FLG_TDES | FLG_CBC);
 }
 
-static int stm32_cryp_prepare_req(struct skcipher_request *req,
+static int stm32_cryp_prepare_req(struct ablkcipher_request *req,
 				  struct aead_request *areq)
 {
 	struct stm32_cryp_ctx *ctx;
 	struct stm32_cryp *cryp;
 	struct stm32_cryp_reqctx *rctx;
-	struct scatterlist *in_sg;
 	int ret;
 
 	if (!req && !areq)
 		return -EINVAL;
 
-	ctx = req ? crypto_skcipher_ctx(crypto_skcipher_reqtfm(req)) :
+	ctx = req ? crypto_ablkcipher_ctx(crypto_ablkcipher_reqtfm(req)) :
 		    crypto_aead_ctx(crypto_aead_reqtfm(areq));
 
 	cryp = ctx->cryp;
@@ -1013,7 +910,9 @@ static int stm32_cryp_prepare_req(struct skcipher_request *req,
 	if (!cryp)
 		return -ENODEV;
 
-	rctx = req ? skcipher_request_ctx(req) : aead_request_ctx(areq);
+	mutex_lock(&cryp->lock);
+
+	rctx = req ? ablkcipher_request_ctx(req) : aead_request_ctx(areq);
 	rctx->mode &= FLG_MODE_MASK;
 
 	ctx->cryp = cryp;
@@ -1024,65 +923,88 @@ static int stm32_cryp_prepare_req(struct skcipher_request *req,
 
 	if (req) {
 		cryp->req = req;
-		cryp->areq = NULL;
-		cryp->header_in = 0;
-		cryp->payload_in = req->cryptlen;
-		cryp->payload_out = req->cryptlen;
-		cryp->authsize = 0;
+		cryp->total_in = req->nbytes;
+		cryp->total_out = cryp->total_in;
 	} else {
 		/*
 		 * Length of input and output data:
 		 * Encryption case:
-		 *  INPUT  = AssocData   ||     PlainText
+		 *  INPUT  =   AssocData  ||   PlainText
 		 *          <- assoclen ->  <- cryptlen ->
+		 *          <------- total_in ----------->
 		 *
-		 *  OUTPUT = AssocData    ||   CipherText   ||      AuthTag
-		 *          <- assoclen ->  <-- cryptlen -->  <- authsize ->
+		 *  OUTPUT =   AssocData  ||  CipherText  ||   AuthTag
+		 *          <- assoclen ->  <- cryptlen ->  <- authsize ->
+		 *          <---------------- total_out ----------------->
 		 *
 		 * Decryption case:
-		 *  INPUT  =  AssocData     ||    CipherTex   ||       AuthTag
-		 *          <- assoclen --->  <---------- cryptlen ---------->
+		 *  INPUT  =   AssocData  ||  CipherText  ||  AuthTag
+		 *          <- assoclen ->  <--------- cryptlen --------->
+		 *                                          <- authsize ->
+		 *          <---------------- total_in ------------------>
 		 *
-		 *  OUTPUT = AssocData    ||               PlainText
-		 *          <- assoclen ->  <- cryptlen - authsize ->
+		 *  OUTPUT =   AssocData  ||   PlainText
+		 *          <- assoclen ->  <- crypten - authsize ->
+		 *          <---------- total_out ----------------->
 		 */
 		cryp->areq = areq;
-		cryp->req = NULL;
 		cryp->authsize = crypto_aead_authsize(crypto_aead_reqtfm(areq));
-		if (is_encrypt(cryp)) {
-			cryp->payload_in = areq->cryptlen;
-			cryp->header_in = areq->assoclen;
-			cryp->payload_out = areq->cryptlen;
-		} else {
-			cryp->payload_in = areq->cryptlen - cryp->authsize;
-			cryp->header_in = areq->assoclen;
-			cryp->payload_out = cryp->payload_in;
-		}
+		cryp->total_in = areq->assoclen + areq->cryptlen;
+		if (is_encrypt(cryp))
+			/* Append auth tag to output */
+			cryp->total_out = cryp->total_in + cryp->authsize;
+		else
+			/* No auth tag in output */
+			cryp->total_out = cryp->total_in - cryp->authsize;
 	}
 
-	in_sg = req ? req->src : areq->src;
-	scatterwalk_start(&cryp->in_walk, in_sg);
+	cryp->total_in_save = cryp->total_in;
+	cryp->total_out_save = cryp->total_out;
 
+	cryp->in_sg = req ? req->src : areq->src;
 	cryp->out_sg = req ? req->dst : areq->dst;
+	cryp->out_sg_save = cryp->out_sg;
+
+	cryp->in_sg_len = sg_nents_for_len(cryp->in_sg, cryp->total_in);
+	if (cryp->in_sg_len < 0) {
+		dev_err(cryp->dev, "Cannot get in_sg_len\n");
+		ret = cryp->in_sg_len;
+		goto out;
+	}
+
+	cryp->out_sg_len = sg_nents_for_len(cryp->out_sg, cryp->total_out);
+	if (cryp->out_sg_len < 0) {
+		dev_err(cryp->dev, "Cannot get out_sg_len\n");
+		ret = cryp->out_sg_len;
+		goto out;
+	}
+
+	ret = stm32_cryp_copy_sgs(cryp);
+	if (ret)
+		goto out;
+
+	scatterwalk_start(&cryp->in_walk, cryp->in_sg);
 	scatterwalk_start(&cryp->out_walk, cryp->out_sg);
 
 	if (is_gcm(cryp) || is_ccm(cryp)) {
 		/* In output, jump after assoc data */
-		scatterwalk_copychunks(NULL, &cryp->out_walk, cryp->areq->assoclen, 2);
+		scatterwalk_advance(&cryp->out_walk, cryp->areq->assoclen);
+		cryp->total_out -= cryp->areq->assoclen;
 	}
 
-	if (is_ctr(cryp))
-		memset(cryp->last_ctr, 0, sizeof(cryp->last_ctr));
-
 	ret = stm32_cryp_hw_init(cryp);
+out:
+	if (ret)
+		mutex_unlock(&cryp->lock);
+
 	return ret;
 }
 
 static int stm32_cryp_prepare_cipher_req(struct crypto_engine *engine,
 					 void *areq)
 {
-	struct skcipher_request *req = container_of(areq,
-						      struct skcipher_request,
+	struct ablkcipher_request *req = container_of(areq,
+						      struct ablkcipher_request,
 						      base);
 
 	return stm32_cryp_prepare_req(req, NULL);
@@ -1090,11 +1012,11 @@ static int stm32_cryp_prepare_cipher_req(struct crypto_engine *engine,
 
 static int stm32_cryp_cipher_one_req(struct crypto_engine *engine, void *areq)
 {
-	struct skcipher_request *req = container_of(areq,
-						      struct skcipher_request,
+	struct ablkcipher_request *req = container_of(areq,
+						      struct ablkcipher_request,
 						      base);
-	struct stm32_cryp_ctx *ctx = crypto_skcipher_ctx(
-			crypto_skcipher_reqtfm(req));
+	struct stm32_cryp_ctx *ctx = crypto_ablkcipher_ctx(
+			crypto_ablkcipher_reqtfm(req));
 	struct stm32_cryp *cryp = ctx->cryp;
 
 	if (!cryp)
@@ -1121,7 +1043,8 @@ static int stm32_cryp_aead_one_req(struct crypto_engine *engine, void *areq)
 	if (!cryp)
 		return -ENODEV;
 
-	if (unlikely(!cryp->payload_in && !cryp->header_in)) {
+	if (unlikely(!cryp->areq->assoclen &&
+		     !stm32_cryp_get_input_text_len(cryp))) {
 		/* No input data to process: get tag and finish */
 		stm32_cryp_finish_req(cryp, 0);
 		return 0;
@@ -1130,10 +1053,43 @@ static int stm32_cryp_aead_one_req(struct crypto_engine *engine, void *areq)
 	return stm32_cryp_cpu_start(cryp);
 }
 
+static u32 *stm32_cryp_next_out(struct stm32_cryp *cryp, u32 *dst,
+				unsigned int n)
+{
+	scatterwalk_advance(&cryp->out_walk, n);
+
+	if (unlikely(cryp->out_sg->length == _walked_out)) {
+		cryp->out_sg = sg_next(cryp->out_sg);
+		if (cryp->out_sg) {
+			scatterwalk_start(&cryp->out_walk, cryp->out_sg);
+			return (sg_virt(cryp->out_sg) + _walked_out);
+		}
+	}
+
+	return (u32 *)((u8 *)dst + n);
+}
+
+static u32 *stm32_cryp_next_in(struct stm32_cryp *cryp, u32 *src,
+			       unsigned int n)
+{
+	scatterwalk_advance(&cryp->in_walk, n);
+
+	if (unlikely(cryp->in_sg->length == _walked_in)) {
+		cryp->in_sg = sg_next(cryp->in_sg);
+		if (cryp->in_sg) {
+			scatterwalk_start(&cryp->in_walk, cryp->in_sg);
+			return (sg_virt(cryp->in_sg) + _walked_in);
+		}
+	}
+
+	return (u32 *)((u8 *)src + n);
+}
+
 static int stm32_cryp_read_auth_tag(struct stm32_cryp *cryp)
 {
-	u32 cfg, size_bit;
-	unsigned int i;
+	u32 cfg, size_bit, *dst, d32;
+	u8 *d8;
+	unsigned int i, j;
 	int ret = 0;
 
 	/* Update Config */
@@ -1150,34 +1106,31 @@ static int stm32_cryp_read_auth_tag(struct stm32_cryp *cryp)
 		/* GCM: write aad and payload size (in bits) */
 		size_bit = cryp->areq->assoclen * 8;
 		if (cryp->caps->swap_final)
-			size_bit = (__force u32)cpu_to_be32(size_bit);
+			size_bit = cpu_to_be32(size_bit);
 
 		stm32_cryp_write(cryp, CRYP_DIN, 0);
 		stm32_cryp_write(cryp, CRYP_DIN, size_bit);
 
 		size_bit = is_encrypt(cryp) ? cryp->areq->cryptlen :
-				cryp->areq->cryptlen - cryp->authsize;
+				cryp->areq->cryptlen - AES_BLOCK_SIZE;
 		size_bit *= 8;
 		if (cryp->caps->swap_final)
-			size_bit = (__force u32)cpu_to_be32(size_bit);
+			size_bit = cpu_to_be32(size_bit);
 
 		stm32_cryp_write(cryp, CRYP_DIN, 0);
 		stm32_cryp_write(cryp, CRYP_DIN, size_bit);
 	} else {
 		/* CCM: write CTR0 */
-		u32 iv32[AES_BLOCK_32];
-		u8 *iv = (u8 *)iv32;
-		__be32 *biv = (__be32 *)iv32;
+		u8 iv[AES_BLOCK_SIZE];
+		u32 *iv32 = (u32 *)iv;
 
 		memcpy(iv, cryp->areq->iv, AES_BLOCK_SIZE);
 		memset(iv + AES_BLOCK_SIZE - 1 - iv[0], 0, iv[0] + 1);
 
 		for (i = 0; i < AES_BLOCK_32; i++) {
-			u32 xiv = iv32[i];
-
 			if (!cryp->caps->padding_wa)
-				xiv = be32_to_cpu(biv[i]);
-			stm32_cryp_write(cryp, CRYP_DIN, xiv);
+				*iv32 = cpu_to_be32(*iv32);
+			stm32_cryp_write(cryp, CRYP_DIN, *iv32++);
 		}
 	}
 
@@ -1189,18 +1142,39 @@ static int stm32_cryp_read_auth_tag(struct stm32_cryp *cryp)
 	}
 
 	if (is_encrypt(cryp)) {
-		u32 out_tag[AES_BLOCK_32];
-
 		/* Get and write tag */
-		for (i = 0; i < AES_BLOCK_32; i++)
-			out_tag[i] = stm32_cryp_read(cryp, CRYP_DOUT);
+		dst = sg_virt(cryp->out_sg) + _walked_out;
 
-		scatterwalk_copychunks(out_tag, &cryp->out_walk, cryp->authsize, 1);
+		for (i = 0; i < AES_BLOCK_32; i++) {
+			if (cryp->total_out >= sizeof(u32)) {
+				/* Read a full u32 */
+				*dst = stm32_cryp_read(cryp, CRYP_DOUT);
+
+				dst = stm32_cryp_next_out(cryp, dst,
+							  sizeof(u32));
+				cryp->total_out -= sizeof(u32);
+			} else if (!cryp->total_out) {
+				/* Empty fifo out (data from input padding) */
+				stm32_cryp_read(cryp, CRYP_DOUT);
+			} else {
+				/* Read less than an u32 */
+				d32 = stm32_cryp_read(cryp, CRYP_DOUT);
+				d8 = (u8 *)&d32;
+
+				for (j = 0; j < cryp->total_out; j++) {
+					*((u8 *)dst) = *(d8++);
+					dst = stm32_cryp_next_out(cryp, dst, 1);
+				}
+				cryp->total_out = 0;
+			}
+		}
 	} else {
 		/* Get and check tag */
 		u32 in_tag[AES_BLOCK_32], out_tag[AES_BLOCK_32];
 
-		scatterwalk_copychunks(in_tag, &cryp->in_walk, cryp->authsize, 0);
+		scatterwalk_map_and_copy(in_tag, cryp->in_sg,
+					 cryp->total_in_save - cryp->authsize,
+					 cryp->authsize, 0);
 
 		for (i = 0; i < AES_BLOCK_32; i++)
 			out_tag[i] = stm32_cryp_read(cryp, CRYP_DOUT);
@@ -1220,59 +1194,115 @@ static void stm32_cryp_check_ctr_counter(struct stm32_cryp *cryp)
 {
 	u32 cr;
 
-	if (unlikely(cryp->last_ctr[3] == cpu_to_be32(0xFFFFFFFF))) {
-		/*
-		 * In this case, we need to increment manually the ctr counter,
-		 * as HW doesn't handle the U32 carry.
-		 */
-		crypto_inc((u8 *)cryp->last_ctr, sizeof(cryp->last_ctr));
+	if (unlikely(cryp->last_ctr[3] == 0xFFFFFFFF)) {
+		cryp->last_ctr[3] = 0;
+		cryp->last_ctr[2]++;
+		if (!cryp->last_ctr[2]) {
+			cryp->last_ctr[1]++;
+			if (!cryp->last_ctr[1])
+				cryp->last_ctr[0]++;
+		}
 
 		cr = stm32_cryp_read(cryp, CRYP_CR);
 		stm32_cryp_write(cryp, CRYP_CR, cr & ~CR_CRYPEN);
 
-		stm32_cryp_hw_write_iv(cryp, cryp->last_ctr);
+		stm32_cryp_hw_write_iv(cryp, (u32 *)cryp->last_ctr);
 
 		stm32_cryp_write(cryp, CRYP_CR, cr);
 	}
 
-	/* The IV registers are BE  */
-	cryp->last_ctr[0] = cpu_to_be32(stm32_cryp_read(cryp, CRYP_IV0LR));
-	cryp->last_ctr[1] = cpu_to_be32(stm32_cryp_read(cryp, CRYP_IV0RR));
-	cryp->last_ctr[2] = cpu_to_be32(stm32_cryp_read(cryp, CRYP_IV1LR));
-	cryp->last_ctr[3] = cpu_to_be32(stm32_cryp_read(cryp, CRYP_IV1RR));
+	cryp->last_ctr[0] = stm32_cryp_read(cryp, CRYP_IV0LR);
+	cryp->last_ctr[1] = stm32_cryp_read(cryp, CRYP_IV0RR);
+	cryp->last_ctr[2] = stm32_cryp_read(cryp, CRYP_IV1LR);
+	cryp->last_ctr[3] = stm32_cryp_read(cryp, CRYP_IV1RR);
 }
 
-static void stm32_cryp_irq_read_data(struct stm32_cryp *cryp)
+static bool stm32_cryp_irq_read_data(struct stm32_cryp *cryp)
 {
-	unsigned int i;
-	u32 block[AES_BLOCK_32];
+	unsigned int i, j;
+	u32 d32, *dst;
+	u8 *d8;
+	size_t tag_size;
 
-	for (i = 0; i < cryp->hw_blocksize / sizeof(u32); i++)
-		block[i] = stm32_cryp_read(cryp, CRYP_DOUT);
+	/* Do no read tag now (if any) */
+	if (is_encrypt(cryp) && (is_gcm(cryp) || is_ccm(cryp)))
+		tag_size = cryp->authsize;
+	else
+		tag_size = 0;
 
-	scatterwalk_copychunks(block, &cryp->out_walk, min_t(size_t, cryp->hw_blocksize,
-							     cryp->payload_out), 1);
-	cryp->payload_out -= min_t(size_t, cryp->hw_blocksize,
-				   cryp->payload_out);
+	dst = sg_virt(cryp->out_sg) + _walked_out;
+
+	for (i = 0; i < cryp->hw_blocksize / sizeof(u32); i++) {
+		if (likely(cryp->total_out - tag_size >= sizeof(u32))) {
+			/* Read a full u32 */
+			*dst = stm32_cryp_read(cryp, CRYP_DOUT);
+
+			dst = stm32_cryp_next_out(cryp, dst, sizeof(u32));
+			cryp->total_out -= sizeof(u32);
+		} else if (cryp->total_out == tag_size) {
+			/* Empty fifo out (data from input padding) */
+			d32 = stm32_cryp_read(cryp, CRYP_DOUT);
+		} else {
+			/* Read less than an u32 */
+			d32 = stm32_cryp_read(cryp, CRYP_DOUT);
+			d8 = (u8 *)&d32;
+
+			for (j = 0; j < cryp->total_out - tag_size; j++) {
+				*((u8 *)dst) = *(d8++);
+				dst = stm32_cryp_next_out(cryp, dst, 1);
+			}
+			cryp->total_out = tag_size;
+		}
+	}
+
+	return !(cryp->total_out - tag_size) || !cryp->total_in;
 }
 
 static void stm32_cryp_irq_write_block(struct stm32_cryp *cryp)
 {
-	unsigned int i;
-	u32 block[AES_BLOCK_32] = {0};
+	unsigned int i, j;
+	u32 *src;
+	u8 d8[4];
+	size_t tag_size;
 
-	scatterwalk_copychunks(block, &cryp->in_walk, min_t(size_t, cryp->hw_blocksize,
-							    cryp->payload_in), 0);
-	for (i = 0; i < cryp->hw_blocksize / sizeof(u32); i++)
-		stm32_cryp_write(cryp, CRYP_DIN, block[i]);
+	/* Do no write tag (if any) */
+	if (is_decrypt(cryp) && (is_gcm(cryp) || is_ccm(cryp)))
+		tag_size = cryp->authsize;
+	else
+		tag_size = 0;
 
-	cryp->payload_in -= min_t(size_t, cryp->hw_blocksize, cryp->payload_in);
+	src = sg_virt(cryp->in_sg) + _walked_in;
+
+	for (i = 0; i < cryp->hw_blocksize / sizeof(u32); i++) {
+		if (likely(cryp->total_in - tag_size >= sizeof(u32))) {
+			/* Write a full u32 */
+			stm32_cryp_write(cryp, CRYP_DIN, *src);
+
+			src = stm32_cryp_next_in(cryp, src, sizeof(u32));
+			cryp->total_in -= sizeof(u32);
+		} else if (cryp->total_in == tag_size) {
+			/* Write padding data */
+			stm32_cryp_write(cryp, CRYP_DIN, 0);
+		} else {
+			/* Write less than an u32 */
+			memset(d8, 0, sizeof(u32));
+			for (j = 0; j < cryp->total_in - tag_size; j++) {
+				d8[j] = *((u8 *)src);
+				src = stm32_cryp_next_in(cryp, src, 1);
+			}
+
+			stm32_cryp_write(cryp, CRYP_DIN, *(u32 *)d8);
+			cryp->total_in = tag_size;
+		}
+	}
 }
 
 static void stm32_cryp_irq_write_gcm_padded_data(struct stm32_cryp *cryp)
 {
 	int err;
-	u32 cfg, block[AES_BLOCK_32] = {0};
+	u32 cfg, tmp[AES_BLOCK_32];
+	size_t total_in_ori = cryp->total_in;
+	struct scatterlist *out_sg_ori = cryp->out_sg;
 	unsigned int i;
 
 	/* 'Special workaround' procedure described in the datasheet */
@@ -1297,25 +1327,18 @@ static void stm32_cryp_irq_write_gcm_padded_data(struct stm32_cryp *cryp)
 
 	/* b) pad and write the last block */
 	stm32_cryp_irq_write_block(cryp);
-	/* wait end of process */
+	cryp->total_in = total_in_ori;
 	err = stm32_cryp_wait_output(cryp);
 	if (err) {
-		dev_err(cryp->dev, "Timeout (write gcm last data)\n");
+		dev_err(cryp->dev, "Timeout (write gcm header)\n");
 		return stm32_cryp_finish_req(cryp, err);
 	}
 
 	/* c) get and store encrypted data */
-	/*
-	 * Same code as stm32_cryp_irq_read_data(), but we want to store
-	 * block value
-	 */
-	for (i = 0; i < cryp->hw_blocksize / sizeof(u32); i++)
-		block[i] = stm32_cryp_read(cryp, CRYP_DOUT);
-
-	scatterwalk_copychunks(block, &cryp->out_walk, min_t(size_t, cryp->hw_blocksize,
-							     cryp->payload_out), 1);
-	cryp->payload_out -= min_t(size_t, cryp->hw_blocksize,
-				   cryp->payload_out);
+	stm32_cryp_irq_read_data(cryp);
+	scatterwalk_map_and_copy(tmp, out_sg_ori,
+				 cryp->total_in_save - total_in_ori,
+				 total_in_ori, 0);
 
 	/* d) change mode back to AES GCM */
 	cfg &= ~CR_ALGO_MASK;
@@ -1328,13 +1351,19 @@ static void stm32_cryp_irq_write_gcm_padded_data(struct stm32_cryp *cryp)
 	stm32_cryp_write(cryp, CRYP_CR, cfg);
 
 	/* f) write padded data */
-	for (i = 0; i < AES_BLOCK_32; i++)
-		stm32_cryp_write(cryp, CRYP_DIN, block[i]);
+	for (i = 0; i < AES_BLOCK_32; i++) {
+		if (cryp->total_in)
+			stm32_cryp_write(cryp, CRYP_DIN, tmp[i]);
+		else
+			stm32_cryp_write(cryp, CRYP_DIN, 0);
+
+		cryp->total_in -= min_t(size_t, sizeof(u32), cryp->total_in);
+	}
 
 	/* g) Empty fifo out */
 	err = stm32_cryp_wait_output(cryp);
 	if (err) {
-		dev_err(cryp->dev, "Timeout (write gcm padded data)\n");
+		dev_err(cryp->dev, "Timeout (write gcm header)\n");
 		return stm32_cryp_finish_req(cryp, err);
 	}
 
@@ -1347,14 +1376,16 @@ static void stm32_cryp_irq_write_gcm_padded_data(struct stm32_cryp *cryp)
 
 static void stm32_cryp_irq_set_npblb(struct stm32_cryp *cryp)
 {
-	u32 cfg;
+	u32 cfg, payload_bytes;
 
 	/* disable ip, set NPBLB and reneable ip */
 	cfg = stm32_cryp_read(cryp, CRYP_CR);
 	cfg &= ~CR_CRYPEN;
 	stm32_cryp_write(cryp, CRYP_CR, cfg);
 
-	cfg |= (cryp->hw_blocksize - cryp->payload_in) << CR_NBPBL_SHIFT;
+	payload_bytes = is_decrypt(cryp) ? cryp->total_in - cryp->authsize :
+					   cryp->total_in;
+	cfg |= (cryp->hw_blocksize - payload_bytes) << CR_NBPBL_SHIFT;
 	cfg |= CR_CRYPEN;
 	stm32_cryp_write(cryp, CRYP_CR, cfg);
 }
@@ -1363,11 +1394,13 @@ static void stm32_cryp_irq_write_ccm_padded_data(struct stm32_cryp *cryp)
 {
 	int err = 0;
 	u32 cfg, iv1tmp;
-	u32 cstmp1[AES_BLOCK_32], cstmp2[AES_BLOCK_32];
-	u32 block[AES_BLOCK_32] = {0};
+	u32 cstmp1[AES_BLOCK_32], cstmp2[AES_BLOCK_32], tmp[AES_BLOCK_32];
+	size_t last_total_out, total_in_ori = cryp->total_in;
+	struct scatterlist *out_sg_ori = cryp->out_sg;
 	unsigned int i;
 
 	/* 'Special workaround' procedure described in the datasheet */
+	cryp->flags |= FLG_CCM_PADDED_WA;
 
 	/* a) disable ip */
 	stm32_cryp_write(cryp, CRYP_IMSCR, 0);
@@ -1397,7 +1430,7 @@ static void stm32_cryp_irq_write_ccm_padded_data(struct stm32_cryp *cryp)
 
 	/* b) pad and write the last block */
 	stm32_cryp_irq_write_block(cryp);
-	/* wait end of process */
+	cryp->total_in = total_in_ori;
 	err = stm32_cryp_wait_output(cryp);
 	if (err) {
 		dev_err(cryp->dev, "Timeout (wite ccm padded data)\n");
@@ -1405,16 +1438,13 @@ static void stm32_cryp_irq_write_ccm_padded_data(struct stm32_cryp *cryp)
 	}
 
 	/* c) get and store decrypted data */
-	/*
-	 * Same code as stm32_cryp_irq_read_data(), but we want to store
-	 * block value
-	 */
-	for (i = 0; i < cryp->hw_blocksize / sizeof(u32); i++)
-		block[i] = stm32_cryp_read(cryp, CRYP_DOUT);
+	last_total_out = cryp->total_out;
+	stm32_cryp_irq_read_data(cryp);
 
-	scatterwalk_copychunks(block, &cryp->out_walk, min_t(size_t, cryp->hw_blocksize,
-							     cryp->payload_out), 1);
-	cryp->payload_out -= min_t(size_t, cryp->hw_blocksize, cryp->payload_out);
+	memset(tmp, 0, sizeof(tmp));
+	scatterwalk_map_and_copy(tmp, out_sg_ori,
+				 cryp->total_out_save - last_total_out,
+				 last_total_out, 0);
 
 	/* d) Load again CRYP_CSGCMCCMxR */
 	for (i = 0; i < ARRAY_SIZE(cstmp2); i++)
@@ -1431,10 +1461,10 @@ static void stm32_cryp_irq_write_ccm_padded_data(struct stm32_cryp *cryp)
 	stm32_cryp_write(cryp, CRYP_CR, cfg);
 
 	/* g) XOR and write padded data */
-	for (i = 0; i < ARRAY_SIZE(block); i++) {
-		block[i] ^= cstmp1[i];
-		block[i] ^= cstmp2[i];
-		stm32_cryp_write(cryp, CRYP_DIN, block[i]);
+	for (i = 0; i < ARRAY_SIZE(tmp); i++) {
+		tmp[i] ^= cstmp1[i];
+		tmp[i] ^= cstmp2[i];
+		stm32_cryp_write(cryp, CRYP_DIN, tmp[i]);
 	}
 
 	/* h) wait for completion */
@@ -1448,34 +1478,30 @@ static void stm32_cryp_irq_write_ccm_padded_data(struct stm32_cryp *cryp)
 
 static void stm32_cryp_irq_write_data(struct stm32_cryp *cryp)
 {
-	if (unlikely(!cryp->payload_in)) {
+	if (unlikely(!cryp->total_in)) {
 		dev_warn(cryp->dev, "No more data to process\n");
 		return;
 	}
 
-	if (unlikely(cryp->payload_in < AES_BLOCK_SIZE &&
+	if (unlikely(cryp->total_in < AES_BLOCK_SIZE &&
 		     (stm32_cryp_get_hw_mode(cryp) == CR_AES_GCM) &&
 		     is_encrypt(cryp))) {
 		/* Padding for AES GCM encryption */
-		if (cryp->caps->padding_wa) {
+		if (cryp->caps->padding_wa)
 			/* Special case 1 */
-			stm32_cryp_irq_write_gcm_padded_data(cryp);
-			return;
-		}
+			return stm32_cryp_irq_write_gcm_padded_data(cryp);
 
 		/* Setting padding bytes (NBBLB) */
 		stm32_cryp_irq_set_npblb(cryp);
 	}
 
-	if (unlikely((cryp->payload_in < AES_BLOCK_SIZE) &&
+	if (unlikely((cryp->total_in - cryp->authsize < AES_BLOCK_SIZE) &&
 		     (stm32_cryp_get_hw_mode(cryp) == CR_AES_CCM) &&
 		     is_decrypt(cryp))) {
 		/* Padding for AES CCM decryption */
-		if (cryp->caps->padding_wa) {
+		if (cryp->caps->padding_wa)
 			/* Special case 2 */
-			stm32_cryp_irq_write_ccm_padded_data(cryp);
-			return;
-		}
+			return stm32_cryp_irq_write_ccm_padded_data(cryp);
 
 		/* Setting padding bytes (NBBLB) */
 		stm32_cryp_irq_set_npblb(cryp);
@@ -1487,59 +1513,191 @@ static void stm32_cryp_irq_write_data(struct stm32_cryp *cryp)
 	stm32_cryp_irq_write_block(cryp);
 }
 
-static void stm32_cryp_irq_write_gcmccm_header(struct stm32_cryp *cryp)
+static void stm32_cryp_irq_write_gcm_header(struct stm32_cryp *cryp)
 {
-	unsigned int i;
-	u32 block[AES_BLOCK_32] = {0};
-	size_t written;
+	int err;
+	unsigned int i, j;
+	u32 cfg, *src;
 
-	written = min_t(size_t, AES_BLOCK_SIZE, cryp->header_in);
+	src = sg_virt(cryp->in_sg) + _walked_in;
 
-	scatterwalk_copychunks(block, &cryp->in_walk, written, 0);
-	for (i = 0; i < AES_BLOCK_32; i++)
-		stm32_cryp_write(cryp, CRYP_DIN, block[i]);
+	for (i = 0; i < AES_BLOCK_32; i++) {
+		stm32_cryp_write(cryp, CRYP_DIN, *src);
 
-	cryp->header_in -= written;
+		src = stm32_cryp_next_in(cryp, src, sizeof(u32));
+		cryp->total_in -= min_t(size_t, sizeof(u32), cryp->total_in);
 
-	stm32_crypt_gcmccm_end_header(cryp);
+		/* Check if whole header written */
+		if ((cryp->total_in_save - cryp->total_in) ==
+				cryp->areq->assoclen) {
+			/* Write padding if needed */
+			for (j = i + 1; j < AES_BLOCK_32; j++)
+				stm32_cryp_write(cryp, CRYP_DIN, 0);
+
+			/* Wait for completion */
+			err = stm32_cryp_wait_busy(cryp);
+			if (err) {
+				dev_err(cryp->dev, "Timeout (gcm header)\n");
+				return stm32_cryp_finish_req(cryp, err);
+			}
+
+			if (stm32_cryp_get_input_text_len(cryp)) {
+				/* Phase 3 : payload */
+				cfg = stm32_cryp_read(cryp, CRYP_CR);
+				cfg &= ~CR_CRYPEN;
+				stm32_cryp_write(cryp, CRYP_CR, cfg);
+
+				cfg &= ~CR_PH_MASK;
+				cfg |= CR_PH_PAYLOAD;
+				cfg |= CR_CRYPEN;
+				stm32_cryp_write(cryp, CRYP_CR, cfg);
+			} else {
+				/* Phase 4 : tag */
+				stm32_cryp_write(cryp, CRYP_IMSCR, 0);
+				stm32_cryp_finish_req(cryp, 0);
+			}
+
+			break;
+		}
+
+		if (!cryp->total_in)
+			break;
+	}
+}
+
+static void stm32_cryp_irq_write_ccm_header(struct stm32_cryp *cryp)
+{
+	int err;
+	unsigned int i = 0, j, k;
+	u32 alen, cfg, *src;
+	u8 d8[4];
+
+	src = sg_virt(cryp->in_sg) + _walked_in;
+	alen = cryp->areq->assoclen;
+
+	if (!_walked_in) {
+		if (cryp->areq->assoclen <= 65280) {
+			/* Write first u32 of B1 */
+			d8[0] = (alen >> 8) & 0xFF;
+			d8[1] = alen & 0xFF;
+			d8[2] = *((u8 *)src);
+			src = stm32_cryp_next_in(cryp, src, 1);
+			d8[3] = *((u8 *)src);
+			src = stm32_cryp_next_in(cryp, src, 1);
+
+			stm32_cryp_write(cryp, CRYP_DIN, *(u32 *)d8);
+			i++;
+
+			cryp->total_in -= min_t(size_t, 2, cryp->total_in);
+		} else {
+			/* Build the two first u32 of B1 */
+			d8[0] = 0xFF;
+			d8[1] = 0xFE;
+			d8[2] = alen & 0xFF000000;
+			d8[3] = alen & 0x00FF0000;
+
+			stm32_cryp_write(cryp, CRYP_DIN, *(u32 *)d8);
+			i++;
+
+			d8[0] = alen & 0x0000FF00;
+			d8[1] = alen & 0x000000FF;
+			d8[2] = *((u8 *)src);
+			src = stm32_cryp_next_in(cryp, src, 1);
+			d8[3] = *((u8 *)src);
+			src = stm32_cryp_next_in(cryp, src, 1);
+
+			stm32_cryp_write(cryp, CRYP_DIN, *(u32 *)d8);
+			i++;
+
+			cryp->total_in -= min_t(size_t, 2, cryp->total_in);
+		}
+	}
+
+	/* Write next u32 */
+	for (; i < AES_BLOCK_32; i++) {
+		/* Build an u32 */
+		memset(d8, 0, sizeof(u32));
+		for (k = 0; k < sizeof(u32); k++) {
+			d8[k] = *((u8 *)src);
+			src = stm32_cryp_next_in(cryp, src, 1);
+
+			cryp->total_in -= min_t(size_t, 1, cryp->total_in);
+			if ((cryp->total_in_save - cryp->total_in) == alen)
+				break;
+		}
+
+		stm32_cryp_write(cryp, CRYP_DIN, *(u32 *)d8);
+
+		if ((cryp->total_in_save - cryp->total_in) == alen) {
+			/* Write padding if needed */
+			for (j = i + 1; j < AES_BLOCK_32; j++)
+				stm32_cryp_write(cryp, CRYP_DIN, 0);
+
+			/* Wait for completion */
+			err = stm32_cryp_wait_busy(cryp);
+			if (err) {
+				dev_err(cryp->dev, "Timeout (ccm header)\n");
+				return stm32_cryp_finish_req(cryp, err);
+			}
+
+			if (stm32_cryp_get_input_text_len(cryp)) {
+				/* Phase 3 : payload */
+				cfg = stm32_cryp_read(cryp, CRYP_CR);
+				cfg &= ~CR_CRYPEN;
+				stm32_cryp_write(cryp, CRYP_CR, cfg);
+
+				cfg &= ~CR_PH_MASK;
+				cfg |= CR_PH_PAYLOAD;
+				cfg |= CR_CRYPEN;
+				stm32_cryp_write(cryp, CRYP_CR, cfg);
+			} else {
+				/* Phase 4 : tag */
+				stm32_cryp_write(cryp, CRYP_IMSCR, 0);
+				stm32_cryp_finish_req(cryp, 0);
+			}
+
+			break;
+		}
+	}
 }
 
 static irqreturn_t stm32_cryp_irq_thread(int irq, void *arg)
 {
 	struct stm32_cryp *cryp = arg;
 	u32 ph;
-	u32 it_mask = stm32_cryp_read(cryp, CRYP_IMSCR);
 
 	if (cryp->irq_status & MISR_OUT)
 		/* Output FIFO IRQ: read data */
-		stm32_cryp_irq_read_data(cryp);
+		if (unlikely(stm32_cryp_irq_read_data(cryp))) {
+			/* All bytes processed, finish */
+			stm32_cryp_write(cryp, CRYP_IMSCR, 0);
+			stm32_cryp_finish_req(cryp, 0);
+			return IRQ_HANDLED;
+		}
 
 	if (cryp->irq_status & MISR_IN) {
-		if (is_gcm(cryp) || is_ccm(cryp)) {
+		if (is_gcm(cryp)) {
 			ph = stm32_cryp_read(cryp, CRYP_CR) & CR_PH_MASK;
 			if (unlikely(ph == CR_PH_HEADER))
 				/* Write Header */
-				stm32_cryp_irq_write_gcmccm_header(cryp);
+				stm32_cryp_irq_write_gcm_header(cryp);
 			else
 				/* Input FIFO IRQ: write data */
 				stm32_cryp_irq_write_data(cryp);
-			if (is_gcm(cryp))
-				cryp->gcm_ctr++;
+			cryp->gcm_ctr++;
+		} else if (is_ccm(cryp)) {
+			ph = stm32_cryp_read(cryp, CRYP_CR) & CR_PH_MASK;
+			if (unlikely(ph == CR_PH_HEADER))
+				/* Write Header */
+				stm32_cryp_irq_write_ccm_header(cryp);
+			else
+				/* Input FIFO IRQ: write data */
+				stm32_cryp_irq_write_data(cryp);
 		} else {
 			/* Input FIFO IRQ: write data */
 			stm32_cryp_irq_write_data(cryp);
 		}
 	}
-
-	/* Mask useless interrupts */
-	if (!cryp->payload_in && !cryp->header_in)
-		it_mask &= ~IMSCR_IN;
-	if (!cryp->payload_out)
-		it_mask &= ~IMSCR_OUT;
-	stm32_cryp_write(cryp, CRYP_IMSCR, it_mask);
-
-	if (!cryp->payload_in && !cryp->header_in && !cryp->payload_out)
-		stm32_cryp_finish_req(cryp, 0);
 
 	return IRQ_HANDLED;
 }
@@ -1553,129 +1711,150 @@ static irqreturn_t stm32_cryp_irq(int irq, void *arg)
 	return IRQ_WAKE_THREAD;
 }
 
-static struct skcipher_alg crypto_algs[] = {
+static struct crypto_alg crypto_algs[] = {
 {
-	.base.cra_name		= "ecb(aes)",
-	.base.cra_driver_name	= "stm32-ecb-aes",
-	.base.cra_priority	= 200,
-	.base.cra_flags		= CRYPTO_ALG_ASYNC,
-	.base.cra_blocksize	= AES_BLOCK_SIZE,
-	.base.cra_ctxsize	= sizeof(struct stm32_cryp_ctx),
-	.base.cra_alignmask	= 0,
-	.base.cra_module	= THIS_MODULE,
-
-	.init			= stm32_cryp_init_tfm,
-	.min_keysize		= AES_MIN_KEY_SIZE,
-	.max_keysize		= AES_MAX_KEY_SIZE,
-	.setkey			= stm32_cryp_aes_setkey,
-	.encrypt		= stm32_cryp_aes_ecb_encrypt,
-	.decrypt		= stm32_cryp_aes_ecb_decrypt,
+	.cra_name		= "ecb(aes)",
+	.cra_driver_name	= "stm32-ecb-aes",
+	.cra_priority		= 200,
+	.cra_flags		= CRYPTO_ALG_TYPE_ABLKCIPHER |
+				  CRYPTO_ALG_ASYNC,
+	.cra_blocksize		= AES_BLOCK_SIZE,
+	.cra_ctxsize		= sizeof(struct stm32_cryp_ctx),
+	.cra_alignmask		= 0xf,
+	.cra_type		= &crypto_ablkcipher_type,
+	.cra_module		= THIS_MODULE,
+	.cra_init		= stm32_cryp_cra_init,
+	.cra_ablkcipher = {
+		.min_keysize	= AES_MIN_KEY_SIZE,
+		.max_keysize	= AES_MAX_KEY_SIZE,
+		.setkey		= stm32_cryp_aes_setkey,
+		.encrypt	= stm32_cryp_aes_ecb_encrypt,
+		.decrypt	= stm32_cryp_aes_ecb_decrypt,
+	}
 },
 {
-	.base.cra_name		= "cbc(aes)",
-	.base.cra_driver_name	= "stm32-cbc-aes",
-	.base.cra_priority	= 200,
-	.base.cra_flags		= CRYPTO_ALG_ASYNC,
-	.base.cra_blocksize	= AES_BLOCK_SIZE,
-	.base.cra_ctxsize	= sizeof(struct stm32_cryp_ctx),
-	.base.cra_alignmask	= 0,
-	.base.cra_module	= THIS_MODULE,
-
-	.init			= stm32_cryp_init_tfm,
-	.min_keysize		= AES_MIN_KEY_SIZE,
-	.max_keysize		= AES_MAX_KEY_SIZE,
-	.ivsize			= AES_BLOCK_SIZE,
-	.setkey			= stm32_cryp_aes_setkey,
-	.encrypt		= stm32_cryp_aes_cbc_encrypt,
-	.decrypt		= stm32_cryp_aes_cbc_decrypt,
+	.cra_name		= "cbc(aes)",
+	.cra_driver_name	= "stm32-cbc-aes",
+	.cra_priority		= 200,
+	.cra_flags		= CRYPTO_ALG_TYPE_ABLKCIPHER |
+				  CRYPTO_ALG_ASYNC,
+	.cra_blocksize		= AES_BLOCK_SIZE,
+	.cra_ctxsize		= sizeof(struct stm32_cryp_ctx),
+	.cra_alignmask		= 0xf,
+	.cra_type		= &crypto_ablkcipher_type,
+	.cra_module		= THIS_MODULE,
+	.cra_init		= stm32_cryp_cra_init,
+	.cra_ablkcipher = {
+		.min_keysize	= AES_MIN_KEY_SIZE,
+		.max_keysize	= AES_MAX_KEY_SIZE,
+		.ivsize		= AES_BLOCK_SIZE,
+		.setkey		= stm32_cryp_aes_setkey,
+		.encrypt	= stm32_cryp_aes_cbc_encrypt,
+		.decrypt	= stm32_cryp_aes_cbc_decrypt,
+	}
 },
 {
-	.base.cra_name		= "ctr(aes)",
-	.base.cra_driver_name	= "stm32-ctr-aes",
-	.base.cra_priority	= 200,
-	.base.cra_flags		= CRYPTO_ALG_ASYNC,
-	.base.cra_blocksize	= 1,
-	.base.cra_ctxsize	= sizeof(struct stm32_cryp_ctx),
-	.base.cra_alignmask	= 0,
-	.base.cra_module	= THIS_MODULE,
-
-	.init			= stm32_cryp_init_tfm,
-	.min_keysize		= AES_MIN_KEY_SIZE,
-	.max_keysize		= AES_MAX_KEY_SIZE,
-	.ivsize			= AES_BLOCK_SIZE,
-	.setkey			= stm32_cryp_aes_setkey,
-	.encrypt		= stm32_cryp_aes_ctr_encrypt,
-	.decrypt		= stm32_cryp_aes_ctr_decrypt,
+	.cra_name		= "ctr(aes)",
+	.cra_driver_name	= "stm32-ctr-aes",
+	.cra_priority		= 200,
+	.cra_flags		= CRYPTO_ALG_TYPE_ABLKCIPHER |
+				  CRYPTO_ALG_ASYNC,
+	.cra_blocksize		= 1,
+	.cra_ctxsize		= sizeof(struct stm32_cryp_ctx),
+	.cra_alignmask		= 0xf,
+	.cra_type		= &crypto_ablkcipher_type,
+	.cra_module		= THIS_MODULE,
+	.cra_init		= stm32_cryp_cra_init,
+	.cra_ablkcipher = {
+		.min_keysize	= AES_MIN_KEY_SIZE,
+		.max_keysize	= AES_MAX_KEY_SIZE,
+		.ivsize		= AES_BLOCK_SIZE,
+		.setkey		= stm32_cryp_aes_setkey,
+		.encrypt	= stm32_cryp_aes_ctr_encrypt,
+		.decrypt	= stm32_cryp_aes_ctr_decrypt,
+	}
 },
 {
-	.base.cra_name		= "ecb(des)",
-	.base.cra_driver_name	= "stm32-ecb-des",
-	.base.cra_priority	= 200,
-	.base.cra_flags		= CRYPTO_ALG_ASYNC,
-	.base.cra_blocksize	= DES_BLOCK_SIZE,
-	.base.cra_ctxsize	= sizeof(struct stm32_cryp_ctx),
-	.base.cra_alignmask	= 0,
-	.base.cra_module	= THIS_MODULE,
-
-	.init			= stm32_cryp_init_tfm,
-	.min_keysize		= DES_BLOCK_SIZE,
-	.max_keysize		= DES_BLOCK_SIZE,
-	.setkey			= stm32_cryp_des_setkey,
-	.encrypt		= stm32_cryp_des_ecb_encrypt,
-	.decrypt		= stm32_cryp_des_ecb_decrypt,
+	.cra_name		= "ecb(des)",
+	.cra_driver_name	= "stm32-ecb-des",
+	.cra_priority		= 200,
+	.cra_flags		= CRYPTO_ALG_TYPE_ABLKCIPHER |
+				  CRYPTO_ALG_ASYNC,
+	.cra_blocksize		= DES_BLOCK_SIZE,
+	.cra_ctxsize		= sizeof(struct stm32_cryp_ctx),
+	.cra_alignmask		= 0xf,
+	.cra_type		= &crypto_ablkcipher_type,
+	.cra_module		= THIS_MODULE,
+	.cra_init		= stm32_cryp_cra_init,
+	.cra_ablkcipher = {
+		.min_keysize	= DES_BLOCK_SIZE,
+		.max_keysize	= DES_BLOCK_SIZE,
+		.setkey		= stm32_cryp_des_setkey,
+		.encrypt	= stm32_cryp_des_ecb_encrypt,
+		.decrypt	= stm32_cryp_des_ecb_decrypt,
+	}
 },
 {
-	.base.cra_name		= "cbc(des)",
-	.base.cra_driver_name	= "stm32-cbc-des",
-	.base.cra_priority	= 200,
-	.base.cra_flags		= CRYPTO_ALG_ASYNC,
-	.base.cra_blocksize	= DES_BLOCK_SIZE,
-	.base.cra_ctxsize	= sizeof(struct stm32_cryp_ctx),
-	.base.cra_alignmask	= 0,
-	.base.cra_module	= THIS_MODULE,
-
-	.init			= stm32_cryp_init_tfm,
-	.min_keysize		= DES_BLOCK_SIZE,
-	.max_keysize		= DES_BLOCK_SIZE,
-	.ivsize			= DES_BLOCK_SIZE,
-	.setkey			= stm32_cryp_des_setkey,
-	.encrypt		= stm32_cryp_des_cbc_encrypt,
-	.decrypt		= stm32_cryp_des_cbc_decrypt,
+	.cra_name		= "cbc(des)",
+	.cra_driver_name	= "stm32-cbc-des",
+	.cra_priority		= 200,
+	.cra_flags		= CRYPTO_ALG_TYPE_ABLKCIPHER |
+				  CRYPTO_ALG_ASYNC,
+	.cra_blocksize		= DES_BLOCK_SIZE,
+	.cra_ctxsize		= sizeof(struct stm32_cryp_ctx),
+	.cra_alignmask		= 0xf,
+	.cra_type		= &crypto_ablkcipher_type,
+	.cra_module		= THIS_MODULE,
+	.cra_init		= stm32_cryp_cra_init,
+	.cra_ablkcipher = {
+		.min_keysize	= DES_BLOCK_SIZE,
+		.max_keysize	= DES_BLOCK_SIZE,
+		.ivsize		= DES_BLOCK_SIZE,
+		.setkey		= stm32_cryp_des_setkey,
+		.encrypt	= stm32_cryp_des_cbc_encrypt,
+		.decrypt	= stm32_cryp_des_cbc_decrypt,
+	}
 },
 {
-	.base.cra_name		= "ecb(des3_ede)",
-	.base.cra_driver_name	= "stm32-ecb-des3",
-	.base.cra_priority	= 200,
-	.base.cra_flags		= CRYPTO_ALG_ASYNC,
-	.base.cra_blocksize	= DES_BLOCK_SIZE,
-	.base.cra_ctxsize	= sizeof(struct stm32_cryp_ctx),
-	.base.cra_alignmask	= 0,
-	.base.cra_module	= THIS_MODULE,
-
-	.init			= stm32_cryp_init_tfm,
-	.min_keysize		= 3 * DES_BLOCK_SIZE,
-	.max_keysize		= 3 * DES_BLOCK_SIZE,
-	.setkey			= stm32_cryp_tdes_setkey,
-	.encrypt		= stm32_cryp_tdes_ecb_encrypt,
-	.decrypt		= stm32_cryp_tdes_ecb_decrypt,
+	.cra_name		= "ecb(des3_ede)",
+	.cra_driver_name	= "stm32-ecb-des3",
+	.cra_priority		= 200,
+	.cra_flags		= CRYPTO_ALG_TYPE_ABLKCIPHER |
+				  CRYPTO_ALG_ASYNC,
+	.cra_blocksize		= DES_BLOCK_SIZE,
+	.cra_ctxsize		= sizeof(struct stm32_cryp_ctx),
+	.cra_alignmask		= 0xf,
+	.cra_type		= &crypto_ablkcipher_type,
+	.cra_module		= THIS_MODULE,
+	.cra_init		= stm32_cryp_cra_init,
+	.cra_ablkcipher = {
+		.min_keysize	= 3 * DES_BLOCK_SIZE,
+		.max_keysize	= 3 * DES_BLOCK_SIZE,
+		.setkey		= stm32_cryp_tdes_setkey,
+		.encrypt	= stm32_cryp_tdes_ecb_encrypt,
+		.decrypt	= stm32_cryp_tdes_ecb_decrypt,
+	}
 },
 {
-	.base.cra_name		= "cbc(des3_ede)",
-	.base.cra_driver_name	= "stm32-cbc-des3",
-	.base.cra_priority	= 200,
-	.base.cra_flags		= CRYPTO_ALG_ASYNC,
-	.base.cra_blocksize	= DES_BLOCK_SIZE,
-	.base.cra_ctxsize	= sizeof(struct stm32_cryp_ctx),
-	.base.cra_alignmask	= 0,
-	.base.cra_module	= THIS_MODULE,
-
-	.init			= stm32_cryp_init_tfm,
-	.min_keysize		= 3 * DES_BLOCK_SIZE,
-	.max_keysize		= 3 * DES_BLOCK_SIZE,
-	.ivsize			= DES_BLOCK_SIZE,
-	.setkey			= stm32_cryp_tdes_setkey,
-	.encrypt		= stm32_cryp_tdes_cbc_encrypt,
-	.decrypt		= stm32_cryp_tdes_cbc_decrypt,
+	.cra_name		= "cbc(des3_ede)",
+	.cra_driver_name	= "stm32-cbc-des3",
+	.cra_priority		= 200,
+	.cra_flags		= CRYPTO_ALG_TYPE_ABLKCIPHER |
+				  CRYPTO_ALG_ASYNC,
+	.cra_blocksize		= DES_BLOCK_SIZE,
+	.cra_ctxsize		= sizeof(struct stm32_cryp_ctx),
+	.cra_alignmask		= 0xf,
+	.cra_type		= &crypto_ablkcipher_type,
+	.cra_module		= THIS_MODULE,
+	.cra_init		= stm32_cryp_cra_init,
+	.cra_ablkcipher = {
+		.min_keysize	= 3 * DES_BLOCK_SIZE,
+		.max_keysize	= 3 * DES_BLOCK_SIZE,
+		.ivsize		= DES_BLOCK_SIZE,
+		.setkey		= stm32_cryp_tdes_setkey,
+		.encrypt	= stm32_cryp_tdes_cbc_encrypt,
+		.decrypt	= stm32_cryp_tdes_cbc_decrypt,
+	}
 },
 };
 
@@ -1696,7 +1875,7 @@ static struct aead_alg aead_algs[] = {
 		.cra_flags		= CRYPTO_ALG_ASYNC,
 		.cra_blocksize		= 1,
 		.cra_ctxsize		= sizeof(struct stm32_cryp_ctx),
-		.cra_alignmask		= 0,
+		.cra_alignmask		= 0xf,
 		.cra_module		= THIS_MODULE,
 	},
 },
@@ -1716,7 +1895,7 @@ static struct aead_alg aead_algs[] = {
 		.cra_flags		= CRYPTO_ALG_ASYNC,
 		.cra_blocksize		= 1,
 		.cra_ctxsize		= sizeof(struct stm32_cryp_ctx),
-		.cra_alignmask		= 0,
+		.cra_alignmask		= 0xf,
 		.cra_module		= THIS_MODULE,
 	},
 },
@@ -1743,6 +1922,7 @@ static int stm32_cryp_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
 	struct stm32_cryp *cryp;
+	struct resource *res;
 	struct reset_control *rst;
 	int irq, ret;
 
@@ -1756,13 +1936,18 @@ static int stm32_cryp_probe(struct platform_device *pdev)
 
 	cryp->dev = dev;
 
-	cryp->regs = devm_platform_ioremap_resource(pdev, 0);
+	mutex_init(&cryp->lock);
+
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	cryp->regs = devm_ioremap_resource(dev, res);
 	if (IS_ERR(cryp->regs))
 		return PTR_ERR(cryp->regs);
 
 	irq = platform_get_irq(pdev, 0);
-	if (irq < 0)
+	if (irq < 0) {
+		dev_err(dev, "Cannot get IRQ resource\n");
 		return irq;
+	}
 
 	ret = devm_request_threaded_irq(dev, irq, stm32_cryp_irq,
 					stm32_cryp_irq_thread, IRQF_ONESHOT,
@@ -1774,8 +1959,7 @@ static int stm32_cryp_probe(struct platform_device *pdev)
 
 	cryp->clk = devm_clk_get(dev, NULL);
 	if (IS_ERR(cryp->clk)) {
-		dev_err_probe(dev, PTR_ERR(cryp->clk), "Could not get clock\n");
-
+		dev_err(dev, "Could not get clock\n");
 		return PTR_ERR(cryp->clk);
 	}
 
@@ -1785,19 +1969,8 @@ static int stm32_cryp_probe(struct platform_device *pdev)
 		return ret;
 	}
 
-	pm_runtime_set_autosuspend_delay(dev, CRYP_AUTOSUSPEND_DELAY);
-	pm_runtime_use_autosuspend(dev);
-
-	pm_runtime_get_noresume(dev);
-	pm_runtime_set_active(dev);
-	pm_runtime_enable(dev);
-
 	rst = devm_reset_control_get(dev, NULL);
-	if (IS_ERR(rst)) {
-		ret = PTR_ERR(rst);
-		if (ret == -EPROBE_DEFER)
-			goto err_rst;
-	} else {
+	if (!IS_ERR(rst)) {
 		reset_control_assert(rst);
 		udelay(2);
 		reset_control_deassert(rst);
@@ -1823,7 +1996,7 @@ static int stm32_cryp_probe(struct platform_device *pdev)
 		goto err_engine2;
 	}
 
-	ret = crypto_register_skciphers(crypto_algs, ARRAY_SIZE(crypto_algs));
+	ret = crypto_register_algs(crypto_algs, ARRAY_SIZE(crypto_algs));
 	if (ret) {
 		dev_err(dev, "Could not register algs\n");
 		goto err_algs;
@@ -1835,12 +2008,10 @@ static int stm32_cryp_probe(struct platform_device *pdev)
 
 	dev_info(dev, "Initialized\n");
 
-	pm_runtime_put_sync(dev);
-
 	return 0;
 
 err_aead_algs:
-	crypto_unregister_skciphers(crypto_algs, ARRAY_SIZE(crypto_algs));
+	crypto_unregister_algs(crypto_algs, ARRAY_SIZE(crypto_algs));
 err_algs:
 err_engine2:
 	crypto_engine_exit(cryp->engine);
@@ -1848,9 +2019,6 @@ err_engine1:
 	spin_lock(&cryp_list.lock);
 	list_del(&cryp->list);
 	spin_unlock(&cryp_list.lock);
-err_rst:
-	pm_runtime_disable(dev);
-	pm_runtime_put_noidle(dev);
 
 	clk_disable_unprepare(cryp->clk);
 
@@ -1860,17 +2028,12 @@ err_rst:
 static int stm32_cryp_remove(struct platform_device *pdev)
 {
 	struct stm32_cryp *cryp = platform_get_drvdata(pdev);
-	int ret;
 
 	if (!cryp)
 		return -ENODEV;
 
-	ret = pm_runtime_resume_and_get(cryp->dev);
-	if (ret < 0)
-		return ret;
-
 	crypto_unregister_aeads(aead_algs, ARRAY_SIZE(aead_algs));
-	crypto_unregister_skciphers(crypto_algs, ARRAY_SIZE(crypto_algs));
+	crypto_unregister_algs(crypto_algs, ARRAY_SIZE(crypto_algs));
 
 	crypto_engine_exit(cryp->engine);
 
@@ -1878,52 +2041,16 @@ static int stm32_cryp_remove(struct platform_device *pdev)
 	list_del(&cryp->list);
 	spin_unlock(&cryp_list.lock);
 
-	pm_runtime_disable(cryp->dev);
-	pm_runtime_put_noidle(cryp->dev);
-
 	clk_disable_unprepare(cryp->clk);
 
 	return 0;
 }
-
-#ifdef CONFIG_PM
-static int stm32_cryp_runtime_suspend(struct device *dev)
-{
-	struct stm32_cryp *cryp = dev_get_drvdata(dev);
-
-	clk_disable_unprepare(cryp->clk);
-
-	return 0;
-}
-
-static int stm32_cryp_runtime_resume(struct device *dev)
-{
-	struct stm32_cryp *cryp = dev_get_drvdata(dev);
-	int ret;
-
-	ret = clk_prepare_enable(cryp->clk);
-	if (ret) {
-		dev_err(cryp->dev, "Failed to prepare_enable clock\n");
-		return ret;
-	}
-
-	return 0;
-}
-#endif
-
-static const struct dev_pm_ops stm32_cryp_pm_ops = {
-	SET_SYSTEM_SLEEP_PM_OPS(pm_runtime_force_suspend,
-				pm_runtime_force_resume)
-	SET_RUNTIME_PM_OPS(stm32_cryp_runtime_suspend,
-			   stm32_cryp_runtime_resume, NULL)
-};
 
 static struct platform_driver stm32_cryp_driver = {
 	.probe  = stm32_cryp_probe,
 	.remove = stm32_cryp_remove,
 	.driver = {
 		.name           = DRIVER_NAME,
-		.pm		= &stm32_cryp_pm_ops,
 		.of_match_table = stm32_dt_ids,
 	},
 };

@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0+
 /*
  * gpiolib support for Wolfson WM831x PMICs
  *
@@ -6,12 +5,17 @@
  *
  * Author: Mark Brown <broonie@opensource.wolfsonmicro.com>
  *
+ *  This program is free software; you can redistribute  it and/or modify it
+ *  under  the terms of  the GNU General  Public License as published by the
+ *  Free Software Foundation;  either version 2 of the  License, or (at your
+ *  option) any later version.
+ *
  */
 
 #include <linux/kernel.h>
 #include <linux/slab.h>
 #include <linux/module.h>
-#include <linux/gpio/driver.h>
+#include <linux/gpio.h>
 #include <linux/mfd/core.h>
 #include <linux/platform_device.h>
 #include <linux/seq_file.h>
@@ -261,8 +265,7 @@ static int wm831x_gpio_probe(struct platform_device *pdev)
 	struct wm831x *wm831x = dev_get_drvdata(pdev->dev.parent);
 	struct wm831x_pdata *pdata = &wm831x->pdata;
 	struct wm831x_gpio *wm831x_gpio;
-
-	device_set_node(&pdev->dev, dev_fwnode(pdev->dev.parent));
+	int ret;
 
 	wm831x_gpio = devm_kzalloc(&pdev->dev, sizeof(*wm831x_gpio),
 				   GFP_KERNEL);
@@ -277,8 +280,20 @@ static int wm831x_gpio_probe(struct platform_device *pdev)
 		wm831x_gpio->gpio_chip.base = pdata->gpio_base;
 	else
 		wm831x_gpio->gpio_chip.base = -1;
+#ifdef CONFIG_OF_GPIO
+	wm831x_gpio->gpio_chip.of_node = wm831x->dev->of_node;
+#endif
 
-	return devm_gpiochip_add_data(&pdev->dev, &wm831x_gpio->gpio_chip, wm831x_gpio);
+	ret = devm_gpiochip_add_data(&pdev->dev, &wm831x_gpio->gpio_chip,
+				     wm831x_gpio);
+	if (ret < 0) {
+		dev_err(&pdev->dev, "Could not register gpiochip, %d\n", ret);
+		return ret;
+	}
+
+	platform_set_drvdata(pdev, wm831x_gpio);
+
+	return ret;
 }
 
 static struct platform_driver wm831x_gpio_driver = {

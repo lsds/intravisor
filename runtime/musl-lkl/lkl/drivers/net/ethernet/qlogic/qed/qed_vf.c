@@ -1,7 +1,33 @@
-// SPDX-License-Identifier: (GPL-2.0-only OR BSD-3-Clause)
 /* QLogic qed NIC Driver
  * Copyright (c) 2015-2017  QLogic Corporation
- * Copyright (c) 2019-2020 Marvell International Ltd.
+ *
+ * This software is available to you under a choice of one of two
+ * licenses.  You may choose to be licensed under the terms of the GNU
+ * General Public License (GPL) Version 2, available from the file
+ * COPYING in the main directory of this source tree, or the
+ * OpenIB.org BSD license below:
+ *
+ *     Redistribution and use in source and binary forms, with or
+ *     without modification, are permitted provided that the following
+ *     conditions are met:
+ *
+ *      - Redistributions of source code must retain the above
+ *        copyright notice, this list of conditions and the following
+ *        disclaimer.
+ *
+ *      - Redistributions in binary form must reproduce the above
+ *        copyright notice, this list of conditions and the following
+ *        disclaimer in the documentation and /or other materials
+ *        provided with the distribution.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+ * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+ * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS
+ * BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
+ * ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+ * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
  */
 
 #include <linux/crc32.h>
@@ -27,7 +53,7 @@ static void *qed_vf_pf_prep(struct qed_hwfn *p_hwfn, u16 type, u16 length)
 		   "preparing to send 0x%04x tlv over vf pf channel\n",
 		   type);
 
-	/* Reset Request offset */
+	/* Reset Requst offset */
 	p_iov->offset = (u8 *)p_iov->vf2pf_request;
 
 	/* Clear mailbox - both request and reply */
@@ -55,17 +81,12 @@ static void qed_vf_pf_req_end(struct qed_hwfn *p_hwfn, int req_status)
 	mutex_unlock(&(p_hwfn->vf_iov_info->mutex));
 }
 
-#define QED_VF_CHANNEL_USLEEP_ITERATIONS	90
-#define QED_VF_CHANNEL_USLEEP_DELAY		100
-#define QED_VF_CHANNEL_MSLEEP_ITERATIONS	10
-#define QED_VF_CHANNEL_MSLEEP_DELAY		25
-
 static int qed_send_msg2pf(struct qed_hwfn *p_hwfn, u8 *done, u32 resp_size)
 {
 	union vfpf_tlvs *p_req = p_hwfn->vf_iov_info->vf2pf_request;
 	struct ustorm_trigger_vf_zone trigger;
 	struct ustorm_vf_zone *zone_data;
-	int iter, rc = 0;
+	int rc = 0, time = 100;
 
 	zone_data = (struct ustorm_vf_zone *)PXP_VF_BAR0_START_USDM_ZONE_B;
 
@@ -105,19 +126,11 @@ static int qed_send_msg2pf(struct qed_hwfn *p_hwfn, u8 *done, u32 resp_size)
 	REG_WR(p_hwfn, (uintptr_t)&zone_data->trigger, *((u32 *)&trigger));
 
 	/* When PF would be done with the response, it would write back to the
-	 * `done' address from a coherent DMA zone. Poll until then.
+	 * `done' address. Poll until then.
 	 */
-
-	iter = QED_VF_CHANNEL_USLEEP_ITERATIONS;
-	while (!*done && iter--) {
-		udelay(QED_VF_CHANNEL_USLEEP_DELAY);
-		dma_rmb();
-	}
-
-	iter = QED_VF_CHANNEL_MSLEEP_ITERATIONS;
-	while (!*done && iter--) {
-		msleep(QED_VF_CHANNEL_MSLEEP_DELAY);
-		dma_rmb();
+	while ((!*done) && time) {
+		msleep(25);
+		time--;
 	}
 
 	if (!*done) {
@@ -156,7 +169,7 @@ static void qed_vf_pf_add_qid(struct qed_hwfn *p_hwfn,
 	p_qid_tlv->qid = p_cid->qid_usage_idx;
 }
 
-static int _qed_vf_pf_release(struct qed_hwfn *p_hwfn, bool b_final)
+int _qed_vf_pf_release(struct qed_hwfn *p_hwfn, bool b_final)
 {
 	struct qed_vf_iov *p_iov = p_hwfn->vf_iov_info;
 	struct pfvf_def_resp_tlv *resp;
@@ -218,7 +231,7 @@ static void qed_vf_pf_acquire_reduce_resc(struct qed_hwfn *p_hwfn,
 {
 	DP_VERBOSE(p_hwfn,
 		   QED_MSG_IOV,
-		   "PF unwilling to fulfill resource request: rxq [%02x/%02x] txq [%02x/%02x] sbs [%02x/%02x] mac [%02x/%02x] vlan [%02x/%02x] mc [%02x/%02x] cids [%02x/%02x]. Try PF recommended amount\n",
+		   "PF unwilling to fullill resource request: rxq [%02x/%02x] txq [%02x/%02x] sbs [%02x/%02x] mac [%02x/%02x] vlan [%02x/%02x] mc [%02x/%02x] cids [%02x/%02x]. Try PF recommended amount\n",
 		   p_req->num_rxqs,
 		   p_resp->num_rxqs,
 		   p_req->num_rxqs,
@@ -248,7 +261,6 @@ static int qed_vf_pf_acquire(struct qed_hwfn *p_hwfn)
 	struct pfvf_acquire_resp_tlv *resp = &p_iov->pf2vf_reply->acquire_resp;
 	struct pf_vf_pfdev_info *pfdev_info = &resp->pfdev_info;
 	struct vf_pf_resc_request *p_resc;
-	u8 retry_cnt = VF_ACQUIRE_THRESH;
 	bool resources_acquired = false;
 	struct vfpf_acquire_tlv *req;
 	int rc = 0, attempts = 0;
@@ -302,15 +314,6 @@ static int qed_vf_pf_acquire(struct qed_hwfn *p_hwfn)
 
 		/* send acquire request */
 		rc = qed_send_msg2pf(p_hwfn, &resp->hdr.status, sizeof(*resp));
-
-		/* Re-try acquire in case of vf-pf hw channel timeout */
-		if (retry_cnt && rc == -EBUSY) {
-			DP_VERBOSE(p_hwfn, QED_MSG_IOV,
-				   "VF retrying to acquire due to VPC timeout\n");
-			retry_cnt--;
-			continue;
-		}
-
 		if (rc)
 			goto exit;
 
@@ -410,6 +413,7 @@ static int qed_vf_pf_acquire(struct qed_hwfn *p_hwfn)
 	}
 
 	if (!p_iov->b_pre_fp_hsi &&
+	    ETH_HSI_VER_MINOR &&
 	    (resp->pfdev_info.minor_fp_hsi < ETH_HSI_VER_MINOR)) {
 		DP_INFO(p_hwfn,
 			"PF is using older fastpath HSI; %02x.%02x is configured\n",
@@ -444,7 +448,7 @@ int qed_vf_hw_prepare(struct qed_hwfn *p_hwfn)
 	u32 reg;
 	int rc;
 
-	/* Set number of hwfns - might be overridden once leading hwfn learns
+	/* Set number of hwfns - might be overriden once leading hwfn learns
 	 * actual configuration from PF.
 	 */
 	if (IS_LEAD_HWFN(p_hwfn))
@@ -504,7 +508,7 @@ int qed_vf_hw_prepare(struct qed_hwfn *p_hwfn)
 		   QED_MSG_IOV,
 		   "VF's Request mailbox [%p virt 0x%llx phys], Response mailbox [%p virt 0x%llx phys]\n",
 		   p_iov->vf2pf_request,
-		   (u64)p_iov->vf2pf_request_phys,
+		   (u64) p_iov->vf2pf_request_phys,
 		   p_iov->pf2vf_reply, (u64)p_iov->pf2vf_reply_phys);
 
 	/* Allocate Bulletin board */
@@ -513,9 +517,6 @@ int qed_vf_hw_prepare(struct qed_hwfn *p_hwfn)
 						    p_iov->bulletin.size,
 						    &p_iov->bulletin.phys,
 						    GFP_KERNEL);
-	if (!p_iov->bulletin.p_virt)
-		goto free_pf2vf_reply;
-
 	DP_VERBOSE(p_hwfn, QED_MSG_IOV,
 		   "VF's bulletin Board [%p virt 0x%llx phys 0x%08x bytes]\n",
 		   p_iov->bulletin.p_virt,
@@ -555,10 +556,6 @@ int qed_vf_hw_prepare(struct qed_hwfn *p_hwfn)
 
 	return rc;
 
-free_pf2vf_reply:
-	dma_free_coherent(&p_hwfn->cdev->pdev->dev,
-			  sizeof(union pfvf_tlvs),
-			  p_iov->pf2vf_reply, p_iov->pf2vf_reply_phys);
 free_vf2pf_request:
 	dma_free_coherent(&p_hwfn->cdev->pdev->dev,
 			  sizeof(union vfpf_tlvs),
@@ -568,7 +565,6 @@ free_p_iov:
 
 	return -ENOMEM;
 }
-
 #define TSTORM_QZONE_START   PXP_VF_BAR0_START_SDM_ZONE_A
 #define MSTORM_QZONE_START(dev)   (TSTORM_QZONE_START +	\
 				   (TSTORM_QZONE_SIZE * NUM_OF_L2_QUEUES(dev)))
@@ -576,7 +572,7 @@ free_p_iov:
 static void
 __qed_vf_prep_tunn_req_tlv(struct vfpf_update_tunn_param_tlv *p_req,
 			   struct qed_tunn_update_type *p_src,
-			   enum qed_tunn_mode mask, u8 *p_cls)
+			   enum qed_tunn_clss mask, u8 *p_cls)
 {
 	if (p_src->b_update_mode) {
 		p_req->tun_mode_update_mask |= BIT(mask);
@@ -591,7 +587,7 @@ __qed_vf_prep_tunn_req_tlv(struct vfpf_update_tunn_param_tlv *p_req,
 static void
 qed_vf_prep_tunn_req_tlv(struct vfpf_update_tunn_param_tlv *p_req,
 			 struct qed_tunn_update_type *p_src,
-			 enum qed_tunn_mode mask,
+			 enum qed_tunn_clss mask,
 			 u8 *p_cls, struct qed_tunn_update_udp_port *p_port,
 			 u8 *p_update_port, u16 *p_udp_port)
 {
@@ -1130,7 +1126,7 @@ int qed_vf_pf_vport_update(struct qed_hwfn *p_hwfn,
 		resp_size += sizeof(struct pfvf_def_resp_tlv);
 
 		memcpy(p_mcast_tlv->bins, p_params->bins,
-		       sizeof(u32) * ETH_MULTICAST_MAC_BINS_IN_REGS);
+		       sizeof(unsigned long) * ETH_MULTICAST_MAC_BINS_IN_REGS);
 	}
 
 	update_rx = p_params->accept_flags.update_rx_mode_config;
@@ -1276,7 +1272,7 @@ void qed_vf_pf_filter_mcast(struct qed_hwfn *p_hwfn,
 			u32 bit;
 
 			bit = qed_mcast_bin_from_mac(p_filter_cmd->mac[i]);
-			sp_params.bins[bit / 32] |= 1 << (bit % 32);
+			__set_bit(bit, sp_params.bins);
 		}
 	}
 
@@ -1293,8 +1289,8 @@ int qed_vf_pf_filter_ucast(struct qed_hwfn *p_hwfn,
 
 	/* clear mailbox and prep first tlv */
 	req = qed_vf_pf_prep(p_hwfn, CHANNEL_TLV_UCAST_FILTER, sizeof(*req));
-	req->opcode = (u8)p_ucast->opcode;
-	req->type = (u8)p_ucast->type;
+	req->opcode = (u8) p_ucast->opcode;
+	req->type = (u8) p_ucast->type;
 	memcpy(req->mac, p_ucast->mac, ETH_ALEN);
 	req->vlan = p_ucast->vlan;
 
@@ -1375,35 +1371,6 @@ int qed_vf_pf_get_coalesce(struct qed_hwfn *p_hwfn,
 exit:
 	qed_vf_pf_req_end(p_hwfn, rc);
 
-	return rc;
-}
-
-int
-qed_vf_pf_bulletin_update_mac(struct qed_hwfn *p_hwfn,
-			      const u8 *p_mac)
-{
-	struct qed_vf_iov *p_iov = p_hwfn->vf_iov_info;
-	struct vfpf_bulletin_update_mac_tlv *p_req;
-	struct pfvf_def_resp_tlv *p_resp;
-	int rc;
-
-	if (!p_mac)
-		return -EINVAL;
-
-	/* clear mailbox and prep header tlv */
-	p_req = qed_vf_pf_prep(p_hwfn, CHANNEL_TLV_BULLETIN_UPDATE_MAC,
-			       sizeof(*p_req));
-	ether_addr_copy(p_req->mac, p_mac);
-	DP_VERBOSE(p_hwfn, QED_MSG_IOV,
-		   "Requesting bulletin update for MAC[%pM]\n", p_mac);
-
-	/* add list termination tlv */
-	qed_add_tlv(p_hwfn, &p_iov->offset, CHANNEL_TLV_LIST_END,
-		    sizeof(struct channel_list_end_tlv));
-
-	p_resp = &p_iov->pf2vf_reply->default_resp;
-	rc = qed_send_msg2pf(p_hwfn, &p_resp->hdr.status, sizeof(*p_resp));
-	qed_vf_pf_req_end(p_hwfn, rc);
 	return rc;
 }
 
@@ -1693,7 +1660,7 @@ static void qed_handle_bulletin_change(struct qed_hwfn *hwfn)
 	ops->ports_update(cookie, vxlan_port, geneve_port);
 
 	/* Always update link configuration according to bulletin */
-	qed_link_update(hwfn, NULL);
+	qed_link_update(hwfn);
 }
 
 void qed_iov_vf_task(struct work_struct *work)

@@ -59,10 +59,10 @@ out:
 }
 
 /**
- *	llc_sap_find - searches a SAP in station
+ *	llc_sap_find - searchs a SAP in station
  *	@sap_value: sap to be found
  *
- *	Searches for a sap in the sap list of the LLC's station upon the sap ID.
+ *	Searchs for a sap in the sap list of the LLC's station upon the sap ID.
  *	If the sap is found it will be refcounted and the user will have to do
  *	a llc_sap_put after use.
  *	Returns the sap or %NULL if not found.
@@ -73,8 +73,8 @@ struct llc_sap *llc_sap_find(unsigned char sap_value)
 
 	rcu_read_lock_bh();
 	sap = __llc_sap_find(sap_value);
-	if (!sap || !llc_sap_hold_safe(sap))
-		sap = NULL;
+	if (sap)
+		llc_sap_hold(sap);
 	rcu_read_unlock_bh();
 	return sap;
 }
@@ -127,7 +127,9 @@ void llc_sap_close(struct llc_sap *sap)
 	list_del_rcu(&sap->node);
 	spin_unlock_bh(&llc_sap_list_lock);
 
-	kfree_rcu(sap, rcu);
+	synchronize_rcu();
+
+	kfree(sap);
 }
 
 static struct packet_type llc_packet_type __read_mostly = {

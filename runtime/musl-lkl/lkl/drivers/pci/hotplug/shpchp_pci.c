@@ -61,8 +61,9 @@ int shpchp_configure_device(struct slot *p_slot)
 	return ret;
 }
 
-void shpchp_unconfigure_device(struct slot *p_slot)
+int shpchp_unconfigure_device(struct slot *p_slot)
 {
+	int rc = 0;
 	struct pci_bus *parent = p_slot->ctrl->pci_dev->subordinate;
 	struct pci_dev *dev, *temp;
 	struct controller *ctrl = p_slot->ctrl;
@@ -82,4 +83,6 @@ void shpchp_unconfigure_device(struct slot *p_slot)
 	}
 
 	pci_unlock_rescan_remove();
+	return rc;
 }
+

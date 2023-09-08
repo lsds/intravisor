@@ -1,10 +1,23 @@
-// SPDX-License-Identifier: GPL-2.0-only
-/*
+/**
  * eCryptfs: Linux filesystem encryption layer
  *
  * Copyright (C) 2004-2008 International Business Machines Corp.
  *   Author(s): Michael A. Halcrow <mhalcrow@us.ibm.com>
- *		Tyler Hicks <code@tyhicks.com>
+ *		Tyler Hicks <tyhicks@ou.edu>
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License version
+ * 2 as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
+ * 02111-1307, USA.
  */
 #include <linux/sched.h>
 #include <linux/slab.h>
@@ -14,10 +27,10 @@
 
 static LIST_HEAD(ecryptfs_msg_ctx_free_list);
 static LIST_HEAD(ecryptfs_msg_ctx_alloc_list);
-static DEFINE_MUTEX(ecryptfs_msg_ctx_lists_mux);
+static struct mutex ecryptfs_msg_ctx_lists_mux;
 
 static struct hlist_head *ecryptfs_daemon_hash;
-DEFINE_MUTEX(ecryptfs_daemon_hash_mux);
+struct mutex ecryptfs_daemon_hash_mux;
 static int ecryptfs_hash_bits;
 #define ecryptfs_current_euid_hash(uid) \
 	hash_long((unsigned long)from_kuid(&init_user_ns, current_euid()), ecryptfs_hash_bits)
@@ -147,7 +160,7 @@ out:
 	return rc;
 }
 
-/*
+/**
  * ecryptfs_exorcise_daemon - Destroy the daemon struct
  *
  * Must be called ceremoniously while in possession of
@@ -175,14 +188,13 @@ int ecryptfs_exorcise_daemon(struct ecryptfs_daemon *daemon)
 	}
 	hlist_del(&daemon->euid_chain);
 	mutex_unlock(&daemon->mux);
-	kfree_sensitive(daemon);
+	kzfree(daemon);
 out:
 	return rc;
 }
 
 /**
- * ecryptfs_process_response
- * @daemon: eCryptfs daemon object
+ * ecryptfs_process_reponse
  * @msg: The ecryptfs message received; the caller should sanity check
  *       msg->data_len and free the memory
  * @seq: The sequence number of the message; must match the sequence
@@ -251,7 +263,6 @@ out:
  * ecryptfs_send_message_locked
  * @data: The data to send
  * @data_len: The length of data
- * @msg_type: Type of message
  * @msg_ctx: The message context allocated for the send
  *
  * Must be called with ecryptfs_daemon_hash_mux held.
@@ -361,6 +372,7 @@ int __init ecryptfs_init_messaging(void)
 		       "too large, defaulting to [%d] users\n", __func__,
 		       ecryptfs_number_of_users);
 	}
+	mutex_init(&ecryptfs_daemon_hash_mux);
 	mutex_lock(&ecryptfs_daemon_hash_mux);
 	ecryptfs_hash_bits = 1;
 	while (ecryptfs_number_of_users >> ecryptfs_hash_bits)
@@ -380,10 +392,10 @@ int __init ecryptfs_init_messaging(void)
 					* ecryptfs_message_buf_len),
 				       GFP_KERNEL);
 	if (!ecryptfs_msg_ctx_arr) {
-		kfree(ecryptfs_daemon_hash);
 		rc = -ENOMEM;
 		goto out;
 	}
+	mutex_init(&ecryptfs_msg_ctx_lists_mux);
 	mutex_lock(&ecryptfs_msg_ctx_lists_mux);
 	ecryptfs_msg_counter = 0;
 	for (i = 0; i < ecryptfs_message_buf_len; i++) {

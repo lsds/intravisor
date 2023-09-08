@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
  * Core of the accelerated CRC algorithm.
  * In your file, define the constants and CRC_FUNCTION_NAME
@@ -19,9 +18,14 @@
  * We then use fixed point Barrett reduction to compute a mod n over GF(2)
  * for n = CRC using POWER8 instructions. We use x = 32.
  *
- * https://en.wikipedia.org/wiki/Barrett_reduction
+ * http://en.wikipedia.org/wiki/Barrett_reduction
  *
  * Copyright (C) 2015 Anton Blanchard <anton@au.ibm.com>, IBM
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version
+ * 2 of the License, or (at your option) any later version.
 */
 
 #include <asm/ppc_asm.h>

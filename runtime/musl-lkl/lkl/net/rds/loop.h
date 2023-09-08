@@ -5,8 +5,6 @@
 /* loop.c */
 extern struct rds_transport rds_loop_transport;
 
-int rds_loop_net_init(void);
-void rds_loop_net_exit(void);
 void rds_loop_exit(void);
 
 #endif

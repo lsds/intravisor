@@ -23,10 +23,9 @@
 /dts-v1/;
 #include <dt-bindings/interrupt-controller/irq.h>
 #include <dt-bindings/gpio/gpio.h>
+#include "skeleton.dtsi"
 
 / {
-	#address-cells = <1>;
-	#size-cells = <1>;
 	model = "ARM RealView PB11MPcore";
 	compatible = "arm,realview-pb11mp";
 
@@ -40,7 +39,6 @@
 	};
 
 	memory {
-		device_type = "memory";
 		/*
 		 * The PB11MPCore has 512 MiB memory @ 0x70000000
 		 * and the first 256 are also remapped @ 0x00000000
@@ -92,7 +90,7 @@
 		      <0x1f000100 0x100>;
 	};
 
-	L2: cache-controller {
+	L2: l2-cache {
 		compatible = "arm,l220-cache";
 		reg = <0x1f002000 0x1000>;
 		interrupt-parent = <&intc_tc11mp>;
@@ -147,7 +145,7 @@
 	};
 
 	/* The voltage to the MMC card is hardwired at 3.3V */
-	vmmc: regulator-vmmc {
+	vmmc: fixedregulator@0 {
 		compatible = "regulator-fixed";
 		regulator-name = "vmmc";
 		regulator-min-microvolt = <3300000>;
@@ -155,7 +153,7 @@
 		regulator-boot-on;
         };
 
-	veth: regulator-veth {
+	veth: fixedregulator@0 {
 		compatible = "regulator-fixed";
 		regulator-name = "veth";
 		regulator-min-microvolt = <3300000>;
@@ -235,9 +233,6 @@
 		compatible = "arm,versatile-flash", "cfi-flash";
 		reg = <0x40000000 0x04000000>;
 		bank-width = <4>;
-		partitions {
-			compatible = "arm,arm-firmware-suite";
-		};
 	};
 
 	flash1@44000000 {
@@ -245,9 +240,6 @@
 		compatible = "arm,versatile-flash", "cfi-flash";
 		reg = <0x44000000 0x04000000>;
 		bank-width = <4>;
-		partitions {
-			compatible = "arm,arm-firmware-suite";
-		};
 	};
 
 	bridge {
@@ -303,132 +295,114 @@
 		pb11mp_syscon: syscon@10000000 {
 			compatible = "arm,realview-pb11mp-syscon", "syscon", "simple-mfd";
 			reg = <0x10000000 0x1000>;
-			ranges = <0x0 0x10000000 0x1000>;
-			#address-cells = <1>;
-			#size-cells = <1>;
 
-			led@8,0 {
+			led@08.0 {
 				compatible = "register-bit-led";
-				reg = <0x08 0x04>;
 				offset = <0x08>;
 				mask = <0x01>;
 				label = "versatile:0";
 				linux,default-trigger = "heartbeat";
 				default-state = "on";
 			};
-			led@8,1 {
+			led@08.1 {
 				compatible = "register-bit-led";
-				reg = <0x08 0x04>;
 				offset = <0x08>;
 				mask = <0x02>;
 				label = "versatile:1";
 				linux,default-trigger = "mmc0";
 				default-state = "off";
 			};
-			led@8,2 {
+			led@08.2 {
 				compatible = "register-bit-led";
-				reg = <0x08 0x04>;
 				offset = <0x08>;
 				mask = <0x04>;
 				label = "versatile:2";
 				linux,default-trigger = "cpu0";
 				default-state = "off";
 			};
-			led@8,3 {
+			led@08.3 {
 				compatible = "register-bit-led";
-				reg = <0x08 0x04>;
 				offset = <0x08>;
 				mask = <0x08>;
 				label = "versatile:3";
 				linux,default-trigger = "cpu1";
 				default-state = "off";
 			};
-			led@8,4 {
+			led@08.4 {
 				compatible = "register-bit-led";
-				reg = <0x08 0x04>;
 				offset = <0x08>;
 				mask = <0x10>;
 				label = "versatile:4";
 				linux,default-trigger = "cpu2";
 				default-state = "off";
 			};
-			led@8,5 {
+			led@08.5 {
 				compatible = "register-bit-led";
-				reg = <0x08 0x04>;
 				offset = <0x08>;
 				mask = <0x20>;
 				label = "versatile:5";
 				linux,default-trigger = "cpu3";
 				default-state = "off";
 			};
-			led@8,6 {
+			led@08.6 {
 				compatible = "register-bit-led";
-				reg = <0x08 0x04>;
 				offset = <0x08>;
 				mask = <0x40>;
 				label = "versatile:6";
 				default-state = "off";
 			};
-			led@8,7 {
+			led@08.7 {
 				compatible = "register-bit-led";
-				reg = <0x08 0x04>;
 				offset = <0x08>;
 				mask = <0x80>;
 				label = "versatile:7";
 				default-state = "off";
 			};
 
-			oscclk0: clock-controller@c {
+			oscclk0: osc0@0c {
 				compatible = "arm,syscon-icst307";
-				reg = <0x0c 0x04>;
 				#clock-cells = <0>;
 				lock-offset = <0x20>;
 				vco-offset = <0x0C>;
 				clocks = <&xtal24mhz>;
 			};
-			oscclk1: clock-controller@10 {
+			oscclk1: osc1@10 {
 				compatible = "arm,syscon-icst307";
-				reg = <0x10 0x04>;
 				#clock-cells = <0>;
 				lock-offset = <0x20>;
 				vco-offset = <0x10>;
 				clocks = <&xtal24mhz>;
 			};
-			oscclk2: clock-controller@14 {
+			oscclk2: osc2@14 {
 				compatible = "arm,syscon-icst307";
-				reg = <0x14 0x04>;
 				#clock-cells = <0>;
 				lock-offset = <0x20>;
 				vco-offset = <0x14>;
 				clocks = <&xtal24mhz>;
 			};
-			oscclk3: clock-controller@18 {
+			oscclk3: osc3@18 {
 				compatible = "arm,syscon-icst307";
-				reg = <0x18 0x04>;
 				#clock-cells = <0>;
 				lock-offset = <0x20>;
 				vco-offset = <0x18>;
 				clocks = <&xtal24mhz>;
 			};
-			oscclk4: clock-controller@1c {
+			oscclk4: osc4@1c {
 				compatible = "arm,syscon-icst307";
-				reg = <0x1c 0x04>;
 				#clock-cells = <0>;
 				lock-offset = <0x20>;
 				vco-offset = <0x1c>;
 				clocks = <&xtal24mhz>;
 			};
-			oscclk5: clock-controller@d4 {
+			oscclk5: osc5@d4 {
 				compatible = "arm,syscon-icst307";
-				reg = <0xd4 0x04>;
 				#clock-cells = <0>;
 				lock-offset = <0x20>;
 				vco-offset = <0xd4>;
 				clocks = <&xtal24mhz>;
 			};
-			oscclk6: clock-controller@d8 {
+			oscclk6: osc6@d8 {
 				compatible = "arm,syscon-icst307";
-				reg = <0xd8 0x04>;
 				#clock-cells = <0>;
 				lock-offset = <0x20>;
 				vco-offset = <0xd8>;
@@ -549,13 +523,13 @@
 			clock-names = "uartclk", "apb_pclk";
 		};
 
-		spi@1000d000 {
+		ssp@1000d000 {
 			compatible = "arm,pl022", "arm,primecell";
 			reg = <0x1000d000 0x1000>;
 			interrupt-parent = <&intc_pb11mp>;
 			interrupts = <0 11 IRQ_TYPE_LEVEL_HIGH>;
 			clocks = <&sspclk>, <&pclk>;
-			clock-names = "sspclk", "apb_pclk";
+			clock-names = "SSPCLK", "apb_pclk";
 		};
 
 		watchdog@1000f000 {
@@ -564,7 +538,7 @@
 			interrupt-parent = <&intc_pb11mp>;
 			interrupts = <0 0 IRQ_TYPE_LEVEL_HIGH>;
 			clocks = <&wdogclk>, <&pclk>;
-			clock-names = "wdog_clk", "apb_pclk";
+			clock-names = "wdogclk", "apb_pclk";
 			status = "disabled";
 		};
 
@@ -574,7 +548,7 @@
 			interrupt-parent = <&intc_pb11mp>;
 			interrupts = <0 0 IRQ_TYPE_LEVEL_HIGH>;
 			clocks = <&wdogclk>, <&pclk>;
-			clock-names = "wdog_clk", "apb_pclk";
+			clock-names = "wdogclk", "apb_pclk";
 		};
 
 		timer01: timer@10011000 {
@@ -586,8 +560,8 @@
 			clocks = <&sp810_syscon 0>,
 			         <&sp810_syscon 1>,
 				 <&pclk>;
-			clock-names = "timer0clk",
-				    "timer1clk",
+			clock-names = "timerclk0",
+				    "timerclk1",
 				    "apb_pclk";
 		};
 
@@ -600,8 +574,8 @@
 			clocks = <&sp810_syscon 2>,
 			         <&sp810_syscon 3>,
 				 <&pclk>;
-			clock-names = "timer0clk",
-				    "timer1clk",
+			clock-names = "timerclk2",
+				    "timerclk3",
 				    "apb_pclk";
 		};
 
@@ -663,16 +637,16 @@
 		timer45: timer@10018000 {
 			compatible = "arm,sp804", "arm,primecell";
 			reg = <0x10018000 0x1000>;
-			clocks = <&timclk>, <&timclk>, <&pclk>;
-			clock-names = "timer0clk", "timer1clk", "apb_pclk";
+			clocks = <&timclk>, <&pclk>;
+			clock-names = "timer", "apb_pclk";
 			status = "disabled";
 		};
 
 		timer67: timer@10019000 {
 			compatible = "arm,sp804", "arm,primecell";
 			reg = <0x10019000 0x1000>;
-			clocks = <&timclk>, <&timclk>, <&pclk>;
-			clock-names = "timer0clk", "timer1clk", "apb_pclk";
+			clocks = <&timclk>, <&pclk>;
+			clock-names = "timer", "apb_pclk";
 			status = "disabled";
 		};
 
@@ -730,7 +704,7 @@
 			reg = <0x4f000000 0x20000>;
 			interrupt-parent = <&intc_tc11mp>;
 			interrupts = <0 3 IRQ_TYPE_LEVEL_HIGH>;
-			dr_mode = "peripheral";
+			port1-otg;
 		};
 	};
 };

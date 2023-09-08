@@ -25,10 +25,8 @@ struct ceph_mdsmap {
 	u32 m_session_timeout;          /* seconds */
 	u32 m_session_autoclose;        /* seconds */
 	u64 m_max_file_size;
-	u64 m_max_xattr_size;		/* maximum size for xattrs blob */
-	u32 m_max_mds;			/* expected up:active mds number */
-	u32 m_num_active_mds;		/* actual up:active mds number */
-	u32 possible_max_rank;		/* possible max rank index */
+	u32 m_max_mds;                  /* size of m_addr, m_state arrays */
+	int m_num_mds;
 	struct ceph_mds_info *m_info;
 
 	/* which object pools file data can be stored in */
@@ -44,7 +42,7 @@ struct ceph_mdsmap {
 static inline struct ceph_entity_addr *
 ceph_mdsmap_get_addr(struct ceph_mdsmap *m, int w)
 {
-	if (w >= m->possible_max_rank)
+	if (w >= m->m_num_mds)
 		return NULL;
 	return &m->m_info[w].addr;
 }
@@ -52,20 +50,20 @@ ceph_mdsmap_get_addr(struct ceph_mdsmap *m, int w)
 static inline int ceph_mdsmap_get_state(struct ceph_mdsmap *m, int w)
 {
 	BUG_ON(w < 0);
-	if (w >= m->possible_max_rank)
+	if (w >= m->m_num_mds)
 		return CEPH_MDS_STATE_DNE;
 	return m->m_info[w].state;
 }
 
 static inline bool ceph_mdsmap_is_laggy(struct ceph_mdsmap *m, int w)
 {
-	if (w >= 0 && w < m->possible_max_rank)
+	if (w >= 0 && w < m->m_num_mds)
 		return m->m_info[w].laggy;
 	return false;
 }
 
 extern int ceph_mdsmap_get_random_mds(struct ceph_mdsmap *m);
-struct ceph_mdsmap *ceph_mdsmap_decode(void **p, void *end, bool msgr2);
+extern struct ceph_mdsmap *ceph_mdsmap_decode(void **p, void *end);
 extern void ceph_mdsmap_destroy(struct ceph_mdsmap *m);
 extern bool ceph_mdsmap_is_cluster_available(struct ceph_mdsmap *m);
 

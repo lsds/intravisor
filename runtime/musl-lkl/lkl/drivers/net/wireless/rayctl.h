@@ -570,7 +570,7 @@ struct phy_header {
 };
 struct ray_rx_msg {
     struct mac_header mac;
-	UCHAR	var[];
+    UCHAR  var[0];
 };
 
 struct tx_msg {

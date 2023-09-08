@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/init.h>
@@ -50,7 +49,6 @@ static void led_blink(struct timer_list *unused)
 	add_timer(&led_blink_timer);
 }
 
-#ifdef CONFIG_PROC_FS
 static int led_proc_show(struct seq_file *m, void *v)
 {
 	if (get_auxio() & AUXIO_LED)
@@ -105,14 +103,16 @@ static ssize_t led_proc_write(struct file *file, const char __user *buffer,
 	return count;
 }
 
-static const struct proc_ops led_proc_ops = {
-	.proc_open	= led_proc_open,
-	.proc_read	= seq_read,
-	.proc_lseek	= seq_lseek,
-	.proc_release	= single_release,
-	.proc_write	= led_proc_write,
+static const struct file_operations led_proc_fops = {
+	.owner		= THIS_MODULE,
+	.open		= led_proc_open,
+	.read		= seq_read,
+	.llseek		= seq_lseek,
+	.release	= single_release,
+	.write		= led_proc_write,
 };
-#endif
+
+static struct proc_dir_entry *led;
 
 #define LED_VERSION	"0.1"
 
@@ -120,10 +120,10 @@ static int __init led_init(void)
 {
 	timer_setup(&led_blink_timer, led_blink, 0);
 
-#ifdef CONFIG_PROC_FS
-	if (!proc_create("led", 0, NULL, &led_proc_ops))
+	led = proc_create("led", 0, NULL, &led_proc_fops);
+	if (!led)
 		return -ENOMEM;
-#endif
+
 	printk(KERN_INFO
 	       "led: version %s, Lars Kotthoff <metalhead@metalhead.ws>\n",
 	       LED_VERSION);

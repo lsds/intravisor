@@ -4,7 +4,7 @@ Boards with a SoC of the Microsemi MIPS family shall have the following
 properties:
 
 Required properties:
-- compatible: "mscc,ocelot", "mscc,luton", "mscc,serval" or "mscc,jr2"
+- compatible: "mscc,ocelot"
 
 
 * Other peripherals:
@@ -40,20 +40,4 @@ Example:
 	syscon@70000000 {
 		compatible = "mscc,ocelot-cpu-syscon", "syscon";
 		reg = <0x70000000 0x2c>;
-	};
-
-o HSIO regs:
-
-The SoC has a few registers (HSIO) handling miscellaneous functionalities:
-configuration and status of PLL5, RCOMP, SyncE, SerDes configurations and
-status, SerDes muxing and a thermal sensor.
-
-Required properties:
-- compatible: Should be "mscc,ocelot-hsio", "syscon", "simple-mfd"
-- reg : Should contain registers location and length
-
-Example:
-	syscon@10d0000 {
-		compatible = "mscc,ocelot-hsio", "syscon", "simple-mfd";
-		reg = <0x10d0000 0x10000>;
 	};

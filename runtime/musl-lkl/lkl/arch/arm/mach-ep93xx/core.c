@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * arch/arm/mach-ep93xx/core.c
  * Core routines for Cirrus EP93xx chips.
@@ -8,6 +7,11 @@
  *
  * Thanks go to Michael Burian and Ray Lehtiniemi for their key
  * role in the ep93xx linux community.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or (at
+ * your option) any later version.
  */
 
 #define pr_fmt(fmt) "ep93xx " KBUILD_MODNAME ": " fmt
@@ -22,7 +26,6 @@
 #include <linux/io.h>
 #include <linux/gpio.h>
 #include <linux/leds.h>
-#include <linux/uaccess.h>
 #include <linux/termios.h>
 #include <linux/amba/bus.h>
 #include <linux/amba/serial.h>
@@ -36,19 +39,16 @@
 #include <linux/usb/ohci_pdriver.h>
 #include <linux/random.h>
 
-#include "hardware.h"
+#include <mach/hardware.h>
 #include <linux/platform_data/video-ep93xx.h>
 #include <linux/platform_data/keypad-ep93xx.h>
 #include <linux/platform_data/spi-ep93xx.h>
-#include <linux/soc/cirrus/ep93xx.h>
-
-#include "gpio-ep93xx.h"
+#include <mach/gpio-ep93xx.h>
 
 #include <asm/mach/arch.h>
 #include <asm/mach/map.h>
 
 #include "soc.h"
-#include "irqs.h"
 
 /*************************************************************************
  * Static I/O mappings that are needed for all EP93xx platforms
@@ -77,8 +77,8 @@ void __init ep93xx_map_io(void)
  *************************************************************************/
 void __init ep93xx_init_irq(void)
 {
-	vic_init(EP93XX_VIC1_BASE, IRQ_EP93XX_VIC0, EP93XX_VIC1_VALID_IRQ_MASK, 0);
-	vic_init(EP93XX_VIC2_BASE, IRQ_EP93XX_VIC1, EP93XX_VIC2_VALID_IRQ_MASK, 0);
+	vic_init(EP93XX_VIC1_BASE, 0, EP93XX_VIC1_VALID_IRQ_MASK, 0);
+	vic_init(EP93XX_VIC2_BASE, 32, EP93XX_VIC2_VALID_IRQ_MASK, 0);
 }
 
 
@@ -123,7 +123,7 @@ void ep93xx_devcfg_set_clear(unsigned int set_bits, unsigned int clear_bits)
 /**
  * ep93xx_chip_revision() - returns the EP93xx chip revision
  *
- * See "platform.h" for more information.
+ * See <mach/platform.h> for more information.
  */
 unsigned int ep93xx_chip_revision(void)
 {
@@ -141,15 +141,6 @@ EXPORT_SYMBOL_GPL(ep93xx_chip_revision);
  *************************************************************************/
 static struct resource ep93xx_gpio_resource[] = {
 	DEFINE_RES_MEM(EP93XX_GPIO_PHYS_BASE, 0xcc),
-	DEFINE_RES_IRQ(IRQ_EP93XX_GPIO_AB),
-	DEFINE_RES_IRQ(IRQ_EP93XX_GPIO0MUX),
-	DEFINE_RES_IRQ(IRQ_EP93XX_GPIO1MUX),
-	DEFINE_RES_IRQ(IRQ_EP93XX_GPIO2MUX),
-	DEFINE_RES_IRQ(IRQ_EP93XX_GPIO3MUX),
-	DEFINE_RES_IRQ(IRQ_EP93XX_GPIO4MUX),
-	DEFINE_RES_IRQ(IRQ_EP93XX_GPIO5MUX),
-	DEFINE_RES_IRQ(IRQ_EP93XX_GPIO6MUX),
-	DEFINE_RES_IRQ(IRQ_EP93XX_GPIO7MUX),
 };
 
 static struct platform_device ep93xx_gpio_device = {
@@ -216,7 +207,7 @@ static int ep93xx_ohci_power_on(struct platform_device *pdev)
 			return PTR_ERR(ep93xx_ohci_host_clock);
 	}
 
-	return clk_prepare_enable(ep93xx_ohci_host_clock);
+	return clk_enable(ep93xx_ohci_host_clock);
 }
 
 static void ep93xx_ohci_power_off(struct platform_device *pdev)
@@ -644,7 +635,6 @@ EXPORT_SYMBOL(ep93xx_keypad_release_gpio);
  *************************************************************************/
 static struct resource ep93xx_i2s_resource[] = {
 	DEFINE_RES_MEM(EP93XX_I2S_PHYS_BASE, 0x100),
-	DEFINE_RES_IRQ(IRQ_EP93XX_SAI),
 };
 
 static struct platform_device ep93xx_i2s_device = {
@@ -1005,4 +995,9 @@ void ep93xx_restart(enum reboot_mode mode, const char *cmd)
 
 	while (1)
 		;
+}
+
+void __init ep93xx_init_late(void)
+{
+	crunch_init();
 }

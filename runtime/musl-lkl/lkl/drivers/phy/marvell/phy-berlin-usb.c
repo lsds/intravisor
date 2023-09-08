@@ -1,9 +1,12 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (C) 2014 Marvell Technology Group Ltd.
  *
  * Antoine Tenart <antoine.tenart@free-electrons.com>
  * Jisheng Zhang <jszhang@marvell.com>
+ *
+ * This file is licensed under the terms of the GNU General Public
+ * License version 2. This program is licensed "as is" without any
+ * warranty of any kind, whether express or implied.
  */
 
 #include <linux/io.h>
@@ -165,6 +168,7 @@ static int phy_berlin_usb_probe(struct platform_device *pdev)
 	const struct of_device_id *match =
 		of_match_device(phy_berlin_usb_of_match, &pdev->dev);
 	struct phy_berlin_usb_priv *priv;
+	struct resource *res;
 	struct phy *phy;
 	struct phy_provider *phy_provider;
 
@@ -172,7 +176,8 @@ static int phy_berlin_usb_probe(struct platform_device *pdev)
 	if (!priv)
 		return -ENOMEM;
 
-	priv->base = devm_platform_ioremap_resource(pdev, 0);
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	priv->base = devm_ioremap_resource(&pdev->dev, res);
 	if (IS_ERR(priv->base))
 		return PTR_ERR(priv->base);
 

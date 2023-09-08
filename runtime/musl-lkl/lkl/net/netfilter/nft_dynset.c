@@ -1,6 +1,10 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2015 Patrick McHardy <kaber@trash.net>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ *
  */
 
 #include <linux/kernel.h>
@@ -16,33 +20,13 @@ struct nft_dynset {
 	struct nft_set			*set;
 	struct nft_set_ext_tmpl		tmpl;
 	enum nft_dynset_ops		op:8;
-	u8				sreg_key;
-	u8				sreg_data;
+	enum nft_registers		sreg_key:8;
+	enum nft_registers		sreg_data:8;
 	bool				invert;
-	bool				expr;
-	u8				num_exprs;
 	u64				timeout;
-	struct nft_expr			*expr_array[NFT_SET_EXPR_MAX];
+	struct nft_expr			*expr;
 	struct nft_set_binding		binding;
 };
-
-static int nft_dynset_expr_setup(const struct nft_dynset *priv,
-				 const struct nft_set_ext *ext)
-{
-	struct nft_set_elem_expr *elem_expr = nft_set_ext_expr(ext);
-	struct nft_expr *expr;
-	int i;
-
-	for (i = 0; i < priv->num_exprs; i++) {
-		expr = nft_setelem_expr_at(elem_expr, elem_expr->size);
-		if (nft_expr_clone(expr, priv->expr_array[i]) < 0)
-			return -1;
-
-		elem_expr->size += priv->expr_array[i]->ops->size;
-	}
-
-	return 0;
-}
 
 static void *nft_dynset_new(struct nft_set *set, const struct nft_expr *expr,
 			    struct nft_regs *regs)
@@ -52,19 +36,20 @@ static void *nft_dynset_new(struct nft_set *set, const struct nft_expr *expr,
 	u64 timeout;
 	void *elem;
 
-	if (!atomic_add_unless(&set->nelems, 1, set->size))
+	if (set->size && !atomic_add_unless(&set->nelems, 1, set->size))
 		return NULL;
 
 	timeout = priv->timeout ? : set->timeout;
 	elem = nft_set_elem_init(set, &priv->tmpl,
-				 &regs->data[priv->sreg_key], NULL,
+				 &regs->data[priv->sreg_key],
 				 &regs->data[priv->sreg_data],
-				 timeout, 0, GFP_ATOMIC);
-	if (IS_ERR(elem))
+				 timeout, GFP_ATOMIC);
+	if (elem == NULL)
 		goto err1;
 
 	ext = nft_set_elem_ext(set, elem);
-	if (priv->num_exprs && nft_dynset_expr_setup(priv, ext) < 0)
+	if (priv->expr != NULL &&
+	    nft_expr_clone(nft_set_ext_expr(ext), priv->expr) < 0)
 		goto err2;
 
 	return elem;
@@ -77,28 +62,30 @@ err1:
 	return NULL;
 }
 
-void nft_dynset_eval(const struct nft_expr *expr,
-		     struct nft_regs *regs, const struct nft_pktinfo *pkt)
+static void nft_dynset_eval(const struct nft_expr *expr,
+			    struct nft_regs *regs,
+			    const struct nft_pktinfo *pkt)
 {
 	const struct nft_dynset *priv = nft_expr_priv(expr);
 	struct nft_set *set = priv->set;
 	const struct nft_set_ext *ext;
+	const struct nft_expr *sexpr;
 	u64 timeout;
-
-	if (priv->op == NFT_DYNSET_OP_DELETE) {
-		set->ops->delete(set, &regs->data[priv->sreg_key]);
-		return;
-	}
 
 	if (set->ops->update(set, &regs->data[priv->sreg_key], nft_dynset_new,
 			     expr, regs, &ext)) {
+		sexpr = NULL;
+		if (nft_set_ext_exists(ext, NFT_SET_EXT_EXPR))
+			sexpr = nft_set_ext_expr(ext);
+
 		if (priv->op == NFT_DYNSET_OP_UPDATE &&
 		    nft_set_ext_exists(ext, NFT_SET_EXT_EXPIRATION)) {
 			timeout = priv->timeout ? : set->timeout;
-			*nft_set_ext_expiration(ext) = get_jiffies_64() + timeout;
+			*nft_set_ext_expiration(ext) = jiffies + timeout;
 		}
 
-		nft_set_elem_update_expr(ext, regs, pkt);
+		if (sexpr != NULL)
+			sexpr->ops->eval(sexpr, regs, pkt);
 
 		if (priv->invert)
 			regs->verdict.code = NFT_BREAK;
@@ -107,41 +94,6 @@ void nft_dynset_eval(const struct nft_expr *expr,
 
 	if (!priv->invert)
 		regs->verdict.code = NFT_BREAK;
-}
-
-static void nft_dynset_ext_add_expr(struct nft_dynset *priv)
-{
-	u8 size = 0;
-	int i;
-
-	for (i = 0; i < priv->num_exprs; i++)
-		size += priv->expr_array[i]->ops->size;
-
-	nft_set_ext_add_length(&priv->tmpl, NFT_SET_EXT_EXPRESSIONS,
-			       sizeof(struct nft_set_elem_expr) + size);
-}
-
-static struct nft_expr *
-nft_dynset_expr_alloc(const struct nft_ctx *ctx, const struct nft_set *set,
-		      const struct nlattr *attr, int pos)
-{
-	struct nft_expr *expr;
-	int err;
-
-	expr = nft_set_elem_expr_alloc(ctx, set, attr);
-	if (IS_ERR(expr))
-		return expr;
-
-	if (set->exprs[pos] && set->exprs[pos]->ops != expr->ops) {
-		err = -EOPNOTSUPP;
-		goto err_dynset_expr;
-	}
-
-	return expr;
-
-err_dynset_expr:
-	nft_expr_destroy(ctx, expr);
-	return ERR_PTR(err);
 }
 
 static const struct nla_policy nft_dynset_policy[NFTA_DYNSET_MAX + 1] = {
@@ -154,21 +106,17 @@ static const struct nla_policy nft_dynset_policy[NFTA_DYNSET_MAX + 1] = {
 	[NFTA_DYNSET_TIMEOUT]	= { .type = NLA_U64 },
 	[NFTA_DYNSET_EXPR]	= { .type = NLA_NESTED },
 	[NFTA_DYNSET_FLAGS]	= { .type = NLA_U32 },
-	[NFTA_DYNSET_EXPRESSIONS] = { .type = NLA_NESTED },
 };
 
 static int nft_dynset_init(const struct nft_ctx *ctx,
 			   const struct nft_expr *expr,
 			   const struct nlattr * const tb[])
 {
-	struct nftables_pernet *nft_net = nft_pernet(ctx->net);
 	struct nft_dynset *priv = nft_expr_priv(expr);
 	u8 genmask = nft_genmask_next(ctx->net);
 	struct nft_set *set;
 	u64 timeout;
-	int err, i;
-
-	lockdep_assert_held(&nft_net->commit_mutex);
+	int err;
 
 	if (tb[NFTA_DYNSET_SET_NAME] == NULL ||
 	    tb[NFTA_DYNSET_OP] == NULL ||
@@ -177,12 +125,11 @@ static int nft_dynset_init(const struct nft_ctx *ctx,
 
 	if (tb[NFTA_DYNSET_FLAGS]) {
 		u32 flags = ntohl(nla_get_be32(tb[NFTA_DYNSET_FLAGS]));
-		if (flags & ~(NFT_DYNSET_F_INV | NFT_DYNSET_F_EXPR))
-			return -EOPNOTSUPP;
+
+		if (flags & ~NFT_DYNSET_F_INV)
+			return -EINVAL;
 		if (flags & NFT_DYNSET_F_INV)
 			priv->invert = true;
-		if (flags & NFT_DYNSET_F_EXPR)
-			priv->expr = true;
 	}
 
 	set = nft_set_lookup_global(ctx->net, ctx->table,
@@ -198,170 +145,100 @@ static int nft_dynset_init(const struct nft_ctx *ctx,
 		return -EBUSY;
 
 	priv->op = ntohl(nla_get_be32(tb[NFTA_DYNSET_OP]));
-	if (priv->op > NFT_DYNSET_OP_DELETE)
+	switch (priv->op) {
+	case NFT_DYNSET_OP_ADD:
+		break;
+	case NFT_DYNSET_OP_UPDATE:
+		if (!(set->flags & NFT_SET_TIMEOUT))
+			return -EOPNOTSUPP;
+		break;
+	default:
 		return -EOPNOTSUPP;
+	}
 
 	timeout = 0;
 	if (tb[NFTA_DYNSET_TIMEOUT] != NULL) {
 		if (!(set->flags & NFT_SET_TIMEOUT))
-			return -EOPNOTSUPP;
-
-		err = nf_msecs_to_jiffies64(tb[NFTA_DYNSET_TIMEOUT], &timeout);
-		if (err)
-			return err;
+			return -EINVAL;
+		timeout = msecs_to_jiffies(be64_to_cpu(nla_get_be64(
+						tb[NFTA_DYNSET_TIMEOUT])));
 	}
 
-	err = nft_parse_register_load(tb[NFTA_DYNSET_SREG_KEY], &priv->sreg_key,
-				      set->klen);
+	priv->sreg_key = nft_parse_register(tb[NFTA_DYNSET_SREG_KEY]);
+	err = nft_validate_register_load(priv->sreg_key, set->klen);
 	if (err < 0)
 		return err;
 
 	if (tb[NFTA_DYNSET_SREG_DATA] != NULL) {
 		if (!(set->flags & NFT_SET_MAP))
-			return -EOPNOTSUPP;
+			return -EINVAL;
 		if (set->dtype == NFT_DATA_VERDICT)
 			return -EOPNOTSUPP;
 
-		err = nft_parse_register_load(tb[NFTA_DYNSET_SREG_DATA],
-					      &priv->sreg_data, set->dlen);
+		priv->sreg_data = nft_parse_register(tb[NFTA_DYNSET_SREG_DATA]);
+		err = nft_validate_register_load(priv->sreg_data, set->dlen);
 		if (err < 0)
 			return err;
 	} else if (set->flags & NFT_SET_MAP)
 		return -EINVAL;
 
-	if ((tb[NFTA_DYNSET_EXPR] || tb[NFTA_DYNSET_EXPRESSIONS]) &&
-	    !(set->flags & NFT_SET_EVAL))
-		return -EINVAL;
-
-	if (tb[NFTA_DYNSET_EXPR]) {
-		struct nft_expr *dynset_expr;
-
-		dynset_expr = nft_dynset_expr_alloc(ctx, set,
-						    tb[NFTA_DYNSET_EXPR], 0);
-		if (IS_ERR(dynset_expr))
-			return PTR_ERR(dynset_expr);
-
-		priv->num_exprs++;
-		priv->expr_array[0] = dynset_expr;
-
-		if (set->num_exprs > 1 ||
-		    (set->num_exprs == 1 &&
-		     dynset_expr->ops != set->exprs[0]->ops)) {
-			err = -EOPNOTSUPP;
-			goto err_expr_free;
-		}
-	} else if (tb[NFTA_DYNSET_EXPRESSIONS]) {
-		struct nft_expr *dynset_expr;
-		struct nlattr *tmp;
-		int left;
-
-		if (!priv->expr)
+	if (tb[NFTA_DYNSET_EXPR] != NULL) {
+		if (!(set->flags & NFT_SET_EVAL))
 			return -EINVAL;
+		if (!nft_set_is_anonymous(set))
+			return -EOPNOTSUPP;
 
-		i = 0;
-		nla_for_each_nested(tmp, tb[NFTA_DYNSET_EXPRESSIONS], left) {
-			if (i == NFT_SET_EXPR_MAX) {
-				err = -E2BIG;
-				goto err_expr_free;
-			}
-			if (nla_type(tmp) != NFTA_LIST_ELEM) {
-				err = -EINVAL;
-				goto err_expr_free;
-			}
-			dynset_expr = nft_dynset_expr_alloc(ctx, set, tmp, i);
-			if (IS_ERR(dynset_expr)) {
-				err = PTR_ERR(dynset_expr);
-				goto err_expr_free;
-			}
-			priv->expr_array[i] = dynset_expr;
-			priv->num_exprs++;
+		priv->expr = nft_expr_init(ctx, tb[NFTA_DYNSET_EXPR]);
+		if (IS_ERR(priv->expr))
+			return PTR_ERR(priv->expr);
 
-			if (set->num_exprs &&
-			    dynset_expr->ops != set->exprs[i]->ops) {
-				err = -EOPNOTSUPP;
-				goto err_expr_free;
-			}
-			i++;
-		}
-		if (set->num_exprs && set->num_exprs != i) {
-			err = -EOPNOTSUPP;
-			goto err_expr_free;
-		}
-	} else if (set->num_exprs > 0) {
-		err = nft_set_elem_expr_clone(ctx, set, priv->expr_array);
-		if (err < 0)
-			return err;
-
-		priv->num_exprs = set->num_exprs;
-	}
+		err = -EOPNOTSUPP;
+		if (!(priv->expr->ops->type->flags & NFT_EXPR_STATEFUL))
+			goto err1;
+	} else if (set->flags & NFT_SET_EVAL)
+		return -EINVAL;
 
 	nft_set_ext_prepare(&priv->tmpl);
 	nft_set_ext_add_length(&priv->tmpl, NFT_SET_EXT_KEY, set->klen);
 	if (set->flags & NFT_SET_MAP)
 		nft_set_ext_add_length(&priv->tmpl, NFT_SET_EXT_DATA, set->dlen);
-
-	if (priv->num_exprs)
-		nft_dynset_ext_add_expr(priv);
-
+	if (priv->expr != NULL)
+		nft_set_ext_add_length(&priv->tmpl, NFT_SET_EXT_EXPR,
+				       priv->expr->ops->size);
 	if (set->flags & NFT_SET_TIMEOUT) {
-		if (timeout || set->timeout) {
-			nft_set_ext_add(&priv->tmpl, NFT_SET_EXT_TIMEOUT);
+		if (timeout || set->timeout)
 			nft_set_ext_add(&priv->tmpl, NFT_SET_EXT_EXPIRATION);
-		}
 	}
 
 	priv->timeout = timeout;
 
 	err = nf_tables_bind_set(ctx, set, &priv->binding);
 	if (err < 0)
-		goto err_expr_free;
-
-	if (set->size == 0)
-		set->size = 0xffff;
+		goto err1;
 
 	priv->set = set;
 	return 0;
 
-err_expr_free:
-	for (i = 0; i < priv->num_exprs; i++)
-		nft_expr_destroy(ctx, priv->expr_array[i]);
+err1:
+	if (priv->expr != NULL)
+		nft_expr_destroy(ctx, priv->expr);
 	return err;
-}
-
-static void nft_dynset_deactivate(const struct nft_ctx *ctx,
-				  const struct nft_expr *expr,
-				  enum nft_trans_phase phase)
-{
-	struct nft_dynset *priv = nft_expr_priv(expr);
-
-	nf_tables_deactivate_set(ctx, priv->set, &priv->binding, phase);
-}
-
-static void nft_dynset_activate(const struct nft_ctx *ctx,
-				const struct nft_expr *expr)
-{
-	struct nft_dynset *priv = nft_expr_priv(expr);
-
-	priv->set->use++;
 }
 
 static void nft_dynset_destroy(const struct nft_ctx *ctx,
 			       const struct nft_expr *expr)
 {
 	struct nft_dynset *priv = nft_expr_priv(expr);
-	int i;
 
-	for (i = 0; i < priv->num_exprs; i++)
-		nft_expr_destroy(ctx, priv->expr_array[i]);
-
-	nf_tables_destroy_set(ctx, priv->set);
+	nf_tables_unbind_set(ctx, priv->set, &priv->binding);
+	if (priv->expr != NULL)
+		nft_expr_destroy(ctx, priv->expr);
 }
 
 static int nft_dynset_dump(struct sk_buff *skb, const struct nft_expr *expr)
 {
 	const struct nft_dynset *priv = nft_expr_priv(expr);
 	u32 flags = priv->invert ? NFT_DYNSET_F_INV : 0;
-	int i;
 
 	if (nft_dump_register(skb, NFTA_DYNSET_SREG_KEY, priv->sreg_key))
 		goto nla_put_failure;
@@ -373,29 +250,11 @@ static int nft_dynset_dump(struct sk_buff *skb, const struct nft_expr *expr)
 	if (nla_put_string(skb, NFTA_DYNSET_SET_NAME, priv->set->name))
 		goto nla_put_failure;
 	if (nla_put_be64(skb, NFTA_DYNSET_TIMEOUT,
-			 nf_jiffies64_to_msecs(priv->timeout),
+			 cpu_to_be64(jiffies_to_msecs(priv->timeout)),
 			 NFTA_DYNSET_PAD))
 		goto nla_put_failure;
-	if (priv->set->num_exprs == 0) {
-		if (priv->num_exprs == 1) {
-			if (nft_expr_dump(skb, NFTA_DYNSET_EXPR,
-					  priv->expr_array[0]))
-				goto nla_put_failure;
-		} else if (priv->num_exprs > 1) {
-			struct nlattr *nest;
-
-			nest = nla_nest_start_noflag(skb, NFTA_DYNSET_EXPRESSIONS);
-			if (!nest)
-				goto nla_put_failure;
-
-			for (i = 0; i < priv->num_exprs; i++) {
-				if (nft_expr_dump(skb, NFTA_LIST_ELEM,
-						  priv->expr_array[i]))
-					goto nla_put_failure;
-			}
-			nla_nest_end(skb, nest);
-		}
-	}
+	if (priv->expr && nft_expr_dump(skb, NFTA_DYNSET_EXPR, priv->expr))
+		goto nla_put_failure;
 	if (nla_put_be32(skb, NFTA_DYNSET_FLAGS, htonl(flags)))
 		goto nla_put_failure;
 	return 0;
@@ -410,10 +269,7 @@ static const struct nft_expr_ops nft_dynset_ops = {
 	.eval		= nft_dynset_eval,
 	.init		= nft_dynset_init,
 	.destroy	= nft_dynset_destroy,
-	.activate	= nft_dynset_activate,
-	.deactivate	= nft_dynset_deactivate,
 	.dump		= nft_dynset_dump,
-	.reduce		= NFT_REDUCE_READONLY,
 };
 
 struct nft_expr_type nft_dynset_type __read_mostly = {

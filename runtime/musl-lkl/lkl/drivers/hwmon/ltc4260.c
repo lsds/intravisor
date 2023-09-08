@@ -1,8 +1,17 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Driver for Linear Technology LTC4260 I2C Positive Voltage Hot Swap Controller
  *
  * Copyright (c) 2014 Guenter Roeck
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
  */
 
 #include <linux/kernel.h>
@@ -70,7 +79,7 @@ static int ltc4260_get_value(struct device *dev, u8 reg)
 	return val;
 }
 
-static ssize_t ltc4260_value_show(struct device *dev,
+static ssize_t ltc4260_show_value(struct device *dev,
 				  struct device_attribute *da, char *buf)
 {
 	struct sensor_device_attribute *attr = to_sensor_dev_attr(da);
@@ -79,10 +88,10 @@ static ssize_t ltc4260_value_show(struct device *dev,
 	value = ltc4260_get_value(dev, attr->index);
 	if (value < 0)
 		return value;
-	return sysfs_emit(buf, "%d\n", value);
+	return snprintf(buf, PAGE_SIZE, "%d\n", value);
 }
 
-static ssize_t ltc4260_bool_show(struct device *dev,
+static ssize_t ltc4260_show_bool(struct device *dev,
 				 struct device_attribute *da, char *buf)
 {
 	struct sensor_device_attribute *attr = to_sensor_dev_attr(da);
@@ -98,28 +107,34 @@ static ssize_t ltc4260_bool_show(struct device *dev,
 	if (fault)		/* Clear reported faults in chip register */
 		regmap_update_bits(regmap, LTC4260_FAULT, attr->index, 0);
 
-	return sysfs_emit(buf, "%d\n", !!fault);
+	return snprintf(buf, PAGE_SIZE, "%d\n", !!fault);
 }
 
 /* Voltages */
-static SENSOR_DEVICE_ATTR_RO(in1_input, ltc4260_value, LTC4260_SOURCE);
-static SENSOR_DEVICE_ATTR_RO(in2_input, ltc4260_value, LTC4260_ADIN);
+static SENSOR_DEVICE_ATTR(in1_input, S_IRUGO, ltc4260_show_value, NULL,
+			  LTC4260_SOURCE);
+static SENSOR_DEVICE_ATTR(in2_input, S_IRUGO, ltc4260_show_value, NULL,
+			  LTC4260_ADIN);
 
 /*
  * Voltage alarms
  * UV/OV faults are associated with the input voltage, and the POWER BAD and
  * FET SHORT faults are associated with the output voltage.
  */
-static SENSOR_DEVICE_ATTR_RO(in1_min_alarm, ltc4260_bool, FAULT_UV);
-static SENSOR_DEVICE_ATTR_RO(in1_max_alarm, ltc4260_bool, FAULT_OV);
-static SENSOR_DEVICE_ATTR_RO(in2_alarm, ltc4260_bool,
-			     FAULT_POWER_BAD | FAULT_FET_SHORT);
+static SENSOR_DEVICE_ATTR(in1_min_alarm, S_IRUGO, ltc4260_show_bool, NULL,
+			  FAULT_UV);
+static SENSOR_DEVICE_ATTR(in1_max_alarm, S_IRUGO, ltc4260_show_bool, NULL,
+			  FAULT_OV);
+static SENSOR_DEVICE_ATTR(in2_alarm, S_IRUGO, ltc4260_show_bool, NULL,
+			  FAULT_POWER_BAD | FAULT_FET_SHORT);
 
 /* Current (via sense resistor) */
-static SENSOR_DEVICE_ATTR_RO(curr1_input, ltc4260_value, LTC4260_SENSE);
+static SENSOR_DEVICE_ATTR(curr1_input, S_IRUGO, ltc4260_show_value, NULL,
+			  LTC4260_SENSE);
 
 /* Overcurrent alarm */
-static SENSOR_DEVICE_ATTR_RO(curr1_max_alarm, ltc4260_bool, FAULT_OC);
+static SENSOR_DEVICE_ATTR(curr1_max_alarm, S_IRUGO, ltc4260_show_bool, NULL,
+			  FAULT_OC);
 
 static struct attribute *ltc4260_attrs[] = {
 	&sensor_dev_attr_in1_input.dev_attr.attr,
@@ -141,7 +156,8 @@ static const struct regmap_config ltc4260_regmap_config = {
 	.max_register = LTC4260_ADIN,
 };
 
-static int ltc4260_probe(struct i2c_client *client)
+static int ltc4260_probe(struct i2c_client *client,
+			 const struct i2c_device_id *id)
 {
 	struct device *dev = &client->dev;
 	struct device *hwmon_dev;
@@ -173,7 +189,7 @@ static struct i2c_driver ltc4260_driver = {
 	.driver = {
 		   .name = "ltc4260",
 		   },
-	.probe_new = ltc4260_probe,
+	.probe = ltc4260_probe,
 	.id_table = ltc4260_id,
 };
 

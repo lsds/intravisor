@@ -1,13 +1,13 @@
 [config]
 command = record
-args    = --no-bpf-event -e '{cycles,instructions}' kill >/dev/null 2>&1
+args    = -e '{cycles,instructions}' kill >/dev/null 2>&1
 ret     = 1
 
 [event-1:base-record]
 fd=1
 group_fd=-1
 sample_type=327
-read_format=4|20
+read_format=4
 
 [event-2:base-record]
 fd=2
@@ -15,7 +15,7 @@ group_fd=1
 type=0
 config=1
 sample_type=327
-read_format=4|20
+read_format=4
 mmap=0
 comm=0
 task=0

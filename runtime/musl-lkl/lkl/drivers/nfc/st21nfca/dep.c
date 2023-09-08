@@ -1,6 +1,17 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (C) 2014  STMicroelectronics SAS. All rights reserved.
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms and conditions of the GNU General Public License,
+ * version 2, as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, see <http://www.gnu.org/licenses/>.
  */
 
 #include <net/nfc/hci.h>
@@ -66,7 +77,7 @@ struct st21nfca_atr_req {
 	u8 bsi;
 	u8 bri;
 	u8 ppi;
-	u8 gbi[];
+	u8 gbi[0];
 } __packed;
 
 struct st21nfca_atr_res {
@@ -79,7 +90,7 @@ struct st21nfca_atr_res {
 	u8 bri;
 	u8 to;
 	u8 ppi;
-	u8 gbi[];
+	u8 gbi[0];
 } __packed;
 
 struct st21nfca_psl_req {
@@ -173,10 +184,8 @@ static int st21nfca_tm_send_atr_res(struct nfc_hci_dev *hdev,
 		memcpy(atr_res->gbi, atr_req->gbi, gb_len);
 		r = nfc_set_remote_general_bytes(hdev->ndev, atr_res->gbi,
 						  gb_len);
-		if (r < 0) {
-			kfree_skb(skb);
+		if (r < 0)
 			return r;
-		}
 	}
 
 	info->dep_info.curr_nfc_dep_pni = 0;
@@ -196,29 +205,38 @@ static int st21nfca_tm_recv_atr_req(struct nfc_hci_dev *hdev,
 
 	skb_trim(skb, skb->len - 1);
 
-	if (!skb->len)
-		return -EIO;
+	if (!skb->len) {
+		r = -EIO;
+		goto exit;
+	}
 
-	if (skb->len < ST21NFCA_ATR_REQ_MIN_SIZE)
-		return -EPROTO;
+	if (skb->len < ST21NFCA_ATR_REQ_MIN_SIZE) {
+		r = -EPROTO;
+		goto exit;
+	}
 
 	atr_req = (struct st21nfca_atr_req *)skb->data;
 
-	if (atr_req->length < sizeof(struct st21nfca_atr_req))
-		return -EPROTO;
+	if (atr_req->length < sizeof(struct st21nfca_atr_req)) {
+		r = -EPROTO;
+		goto exit;
+	}
 
 	r = st21nfca_tm_send_atr_res(hdev, atr_req);
 	if (r)
-		return r;
+		goto exit;
 
 	gb_len = skb->len - sizeof(struct st21nfca_atr_req);
 
 	r = nfc_tm_activated(hdev->ndev, NFC_PROTO_NFC_DEP_MASK,
 			      NFC_COMM_PASSIVE, atr_req->gbi, gb_len);
 	if (r)
-		return r;
+		goto exit;
 
-	return 0;
+	r = 0;
+
+exit:
+	return r;
 }
 
 static int st21nfca_tm_send_psl_res(struct nfc_hci_dev *hdev,
@@ -271,18 +289,25 @@ static int st21nfca_tm_recv_psl_req(struct nfc_hci_dev *hdev,
 				    struct sk_buff *skb)
 {
 	struct st21nfca_psl_req *psl_req;
+	int r;
 
 	skb_trim(skb, skb->len - 1);
 
-	if (!skb->len)
-		return -EIO;
+	if (!skb->len) {
+		r = -EIO;
+		goto exit;
+	}
 
 	psl_req = (struct st21nfca_psl_req *)skb->data;
 
-	if (skb->len < sizeof(struct st21nfca_psl_req))
-		return -EIO;
+	if (skb->len < sizeof(struct st21nfca_psl_req)) {
+		r = -EIO;
+		goto exit;
+	}
 
-	return st21nfca_tm_send_psl_res(hdev, psl_req);
+	r = st21nfca_tm_send_psl_res(hdev, psl_req);
+exit:
+	return r;
 }
 
 int st21nfca_tm_send_dep_res(struct nfc_hci_dev *hdev, struct sk_buff *skb)
@@ -308,6 +333,7 @@ static int st21nfca_tm_recv_dep_req(struct nfc_hci_dev *hdev,
 {
 	struct st21nfca_dep_req_res *dep_req;
 	u8 size;
+	int r;
 	struct st21nfca_hci_info *info = nfc_hci_get_clientdata(hdev);
 
 	skb_trim(skb, skb->len - 1);
@@ -315,16 +341,20 @@ static int st21nfca_tm_recv_dep_req(struct nfc_hci_dev *hdev,
 	size = 4;
 
 	dep_req = (struct st21nfca_dep_req_res *)skb->data;
-	if (skb->len < size)
-		return -EIO;
+	if (skb->len < size) {
+		r = -EIO;
+		goto exit;
+	}
 
 	if (ST21NFCA_NFC_DEP_DID_BIT_SET(dep_req->pfb))
 		size++;
 	if (ST21NFCA_NFC_DEP_NAD_BIT_SET(dep_req->pfb))
 		size++;
 
-	if (skb->len < size)
-		return -EIO;
+	if (skb->len < size) {
+		r = -EIO;
+		goto exit;
+	}
 
 	/* Receiving DEP_REQ - Decoding */
 	switch (ST21NFCA_NFC_DEP_PFB_TYPE(dep_req->pfb)) {
@@ -343,6 +373,8 @@ static int st21nfca_tm_recv_dep_req(struct nfc_hci_dev *hdev,
 	skb_pull(skb, size);
 
 	return nfc_tm_data_received(hdev->ndev, skb);
+exit:
+	return r;
 }
 
 static int st21nfca_tm_event_send_data(struct nfc_hci_dev *hdev,
@@ -368,7 +400,6 @@ static int st21nfca_tm_event_send_data(struct nfc_hci_dev *hdev,
 		default:
 			return 1;
 		}
-		break;
 	default:
 		return 1;
 	}
@@ -588,7 +619,6 @@ static void st21nfca_im_recv_dep_res_cb(void *context, struct sk_buff *skb,
 		switch (ST21NFCA_NFC_DEP_PFB_TYPE(dep_res->pfb)) {
 		case ST21NFCA_NFC_DEP_PFB_ACK_NACK_PDU:
 			pr_err("Received a ACK/NACK PDU\n");
-			fallthrough;
 		case ST21NFCA_NFC_DEP_PFB_I_PDU:
 			info->dep_info.curr_nfc_dep_pni =
 			    ST21NFCA_NFC_DEP_PFB_PNI(dep_res->pfb + 1);

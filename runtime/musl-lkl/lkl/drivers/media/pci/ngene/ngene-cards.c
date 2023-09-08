@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * ngene-cards.c: nGene PCIe bridge driver - card specific info
  *
@@ -8,6 +7,20 @@
  *                         Modifications for new nGene firmware,
  *                         support for EEPROM-copying,
  *                         support for new dual DVB-S2 card prototype
+ *
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * version 2 only, as published by the Free Software Foundation.
+ *
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * To obtain the license, point your browser to
+ * http://www.gnu.org/copyleft/gpl.html
  */
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
@@ -123,6 +136,11 @@ static int tuner_attach_stv6110(struct ngene_channel *chan)
 	struct stv6110x_config *tunerconf = (struct stv6110x_config *)
 		chan->dev->card_info->tuner_config[chan->number];
 	const struct stv6110x_devctl *ctl;
+
+	if (chan->number < 2)
+		i2c = &chan->dev->channel[0].i2c_adapter;
+	else
+		i2c = &chan->dev->channel[1].i2c_adapter;
 
 	ctl = dvb_attach(stv6110x_attach, chan->fe, tunerconf, i2c);
 	if (ctl == NULL) {
@@ -286,6 +304,14 @@ static int demod_attach_stv0900(struct ngene_channel *chan)
 	struct stv090x_config *feconf = (struct stv090x_config *)
 		chan->dev->card_info->fe_config[chan->number];
 
+	/* tuner 1+2: i2c adapter #0, tuner 3+4: i2c adapter #1 */
+	/* Note: Both adapters share the same i2c bus, but the demod     */
+	/*       driver requires that each demod has its own i2c adapter */
+	if (chan->number < 2)
+		i2c = &chan->dev->channel[0].i2c_adapter;
+	else
+		i2c = &chan->dev->channel[1].i2c_adapter;
+
 	chan->fe = dvb_attach(stv090x_attach, feconf, i2c,
 			(chan->number & 1) == 0 ? STV090x_DEMODULATOR_0
 						: STV090x_DEMODULATOR_1);
@@ -314,7 +340,6 @@ static struct stv0910_cfg stv0910_p = {
 	.parallel = 1,
 	.rptlvl   = 4,
 	.clk      = 30000000,
-	.tsspeed  = 0x28,
 };
 
 static struct lnbh25_config lnbh25_cfg = {
@@ -696,6 +721,7 @@ static int cineS2_probe(struct ngene_channel *chan)
 
 
 static struct lgdt330x_config aver_m780 = {
+	.demod_address = 0xb2 >> 1,
 	.demod_chip    = LGDT3303,
 	.serial_mpeg   = 0x00, /* PARALLEL */
 	.clock_polarity_flip = 1,
@@ -712,8 +738,7 @@ static int demod_attach_lg330x(struct ngene_channel *chan)
 {
 	struct device *pdev = &chan->dev->pci_dev->dev;
 
-	chan->fe = dvb_attach(lgdt330x_attach, &aver_m780,
-			      0xb2 >> 1, &chan->i2c_adapter);
+	chan->fe = dvb_attach(lgdt330x_attach, &aver_m780, &chan->i2c_adapter);
 	if (chan->fe == NULL) {
 		dev_err(pdev, "No LGDT330x found!\n");
 		return -ENODEV;
@@ -934,11 +959,15 @@ static int eeprom_read_ushort(struct i2c_adapter *adapter, u16 tag, u16 *data)
 
 static int eeprom_write_ushort(struct i2c_adapter *adapter, u16 tag, u16 data)
 {
+	int stat;
 	u8 buf[2];
 
 	buf[0] = data >> 8;
 	buf[1] = data & 0xff;
-	return WriteEEProm(adapter, tag, 2, buf);
+	stat = WriteEEProm(adapter, tag, 2, buf);
+	if (stat)
+		return stat;
+	return 0;
 }
 
 static s16 osc_deviation(void *priv, s16 deviation, int flag)
@@ -1182,7 +1211,7 @@ MODULE_DEVICE_TABLE(pci, ngene_id_tbl);
 /****************************************************************************/
 
 static pci_ers_result_t ngene_error_detected(struct pci_dev *dev,
-					     pci_channel_state_t state)
+					     enum pci_channel_state state)
 {
 	dev_err(&dev->dev, "PCI error\n");
 	if (state == pci_channel_io_perm_failure)

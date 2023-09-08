@@ -5,9 +5,7 @@
 #include <stdarg.h>
 #include <stddef.h>
 #include <assert.h>
-#include <linux/build_bug.h>
 #include <linux/compiler.h>
-#include <linux/math.h>
 #include <endian.h>
 #include <byteswap.h>
 
@@ -15,7 +13,7 @@
 #define UINT_MAX	(~0U)
 #endif
 
-#define _RET_IP_		((unsigned long)__builtin_return_address(0))
+#define DIV_ROUND_UP(n,d) (((n) + (d) - 1) / (d))
 
 #define PERF_ALIGN(x, a)	__PERF_ALIGN_MASK(x, (typeof(x))(a)-1)
 #define __PERF_ALIGN_MASK(x, mask)	(((x)+(mask))&~(mask))
@@ -37,6 +35,9 @@
 	(type *)((char *)__mptr - offsetof(type, member)); })
 #endif
 
+#define BUILD_BUG_ON(condition) ((void)sizeof(char[1 - 2*!!(condition)]))
+#define BUILD_BUG_ON_ZERO(e) (sizeof(struct { int:-!!(e); }))
+
 #ifndef max
 #define max(x, y) ({				\
 	typeof(x) _max1 = (x);			\
@@ -53,9 +54,14 @@
 	_min1 < _min2 ? _min1 : _min2; })
 #endif
 
-#define max_t(type, x, y)	max((type)x, (type)y)
-#define min_t(type, x, y)	min((type)x, (type)y)
-#define clamp(val, lo, hi)	min((typeof(val))max(val, lo), hi)
+#ifndef roundup
+#define roundup(x, y) (                                \
+{                                                      \
+	const typeof(y) __y = y;		       \
+	(((x) + (__y - 1)) / __y) * __y;	       \
+}                                                      \
+)
+#endif
 
 #ifndef BUG_ON
 #ifdef NDEBUG
@@ -64,7 +70,6 @@
 #define BUG_ON(cond) assert(!(cond))
 #endif
 #endif
-#define BUG()	BUG_ON(1)
 
 #if __BYTE_ORDER == __BIG_ENDIAN
 #define cpu_to_le16 bswap_16
@@ -96,13 +101,20 @@
 
 int vscnprintf(char *buf, size_t size, const char *fmt, va_list args);
 int scnprintf(char * buf, size_t size, const char * fmt, ...);
-int scnprintf_pad(char * buf, size_t size, const char * fmt, ...);
 
-#ifndef ARRAY_SIZE
 #define ARRAY_SIZE(arr) (sizeof(arr) / sizeof((arr)[0]) + __must_be_array(arr))
-#endif
+
+/*
+ * This looks more complex than it should be. But we need to
+ * get the type for the ~ right in round_down (it needs to be
+ * as wide as the result!), and we want to evaluate the macro
+ * arguments just once each.
+ */
+#define __round_mask(x, y) ((__typeof__(x))((y)-1))
+#define round_up(x, y) ((((x)-1) | __round_mask(x, y))+1)
+#define round_down(x, y) ((x) & ~__round_mask(x, y))
 
 #define current_gfp_context(k) 0
-#define synchronize_rcu()
+#define synchronize_sched()
 
 #endif

@@ -1,9 +1,13 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * AXP20x pinctrl and GPIO driver
  *
  * Copyright (C) 2016 Maxime Ripard <maxime.ripard@free-electrons.com>
  * Copyright (C) 2017 Quentin Schulz <quentin.schulz@free-electrons.com>
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under  the terms of the GNU General  Public License as published by the
+ * Free Software Foundation;  either version 2 of the License, or (at your
+ * option) any later version.
  */
 
 #include <linux/bitops.h>
@@ -73,7 +77,7 @@ static const struct pinctrl_pin_desc axp209_pins[] = {
 	PINCTRL_PIN(2, "GPIO2"),
 };
 
-static const struct pinctrl_pin_desc axp22x_pins[] = {
+static const struct pinctrl_pin_desc axp813_pins[] = {
 	PINCTRL_PIN(0, "GPIO0"),
 	PINCTRL_PIN(1, "GPIO1"),
 };
@@ -87,16 +91,9 @@ static const struct axp20x_pctrl_desc axp20x_data = {
 	.adc_mux = AXP20X_MUX_ADC,
 };
 
-static const struct axp20x_pctrl_desc axp22x_data = {
-	.pins	= axp22x_pins,
-	.npins	= ARRAY_SIZE(axp22x_pins),
-	.ldo_mask = BIT(0) | BIT(1),
-	.gpio_status_offset = 0,
-};
-
 static const struct axp20x_pctrl_desc axp813_data = {
-	.pins	= axp22x_pins,
-	.npins	= ARRAY_SIZE(axp22x_pins),
+	.pins	= axp813_pins,
+	.npins	= ARRAY_SIZE(axp813_pins),
 	.ldo_mask = BIT(0) | BIT(1),
 	.adc_mask = BIT(0),
 	.gpio_status_offset = 0,
@@ -156,16 +153,13 @@ static int axp20x_gpio_get_direction(struct gpio_chip *chip,
 	 * going to change the value soon anyway. Default to output.
 	 */
 	if ((val & AXP20X_GPIO_FUNCTIONS) > 2)
-		return GPIO_LINE_DIRECTION_OUT;
+		return 0;
 
 	/*
 	 * The GPIO directions are the three lowest values.
 	 * 2 is input, 0 and 1 are output
 	 */
-	if (val & 2)
-		return GPIO_LINE_DIRECTION_IN;
-
-	return GPIO_LINE_DIRECTION_OUT;
+	return val & 2;
 }
 
 static int axp20x_gpio_output(struct gpio_chip *chip, unsigned int offset,
@@ -322,7 +316,7 @@ static const struct pinctrl_ops axp20x_pctrl_ops = {
 	.get_group_pins		= axp20x_group_pins,
 };
 
-static int axp20x_funcs_groups_from_mask(struct device *dev, unsigned int mask,
+static void axp20x_funcs_groups_from_mask(struct device *dev, unsigned int mask,
 					  unsigned int mask_len,
 					  struct axp20x_pinctrl_function *func,
 					  const struct pinctrl_pin_desc *pins)
@@ -334,25 +328,20 @@ static int axp20x_funcs_groups_from_mask(struct device *dev, unsigned int mask,
 
 	func->ngroups = ngroups;
 	if (func->ngroups > 0) {
-		func->groups = devm_kcalloc(dev,
-					    ngroups, sizeof(const char *),
+		func->groups = devm_kzalloc(dev, ngroups * sizeof(const char *),
 					    GFP_KERNEL);
-		if (!func->groups)
-			return -ENOMEM;
 		group = func->groups;
 		for_each_set_bit(bit, &mask_cpy, mask_len) {
 			*group = pins[bit].name;
 			group++;
 		}
 	}
-
-	return 0;
 }
 
-static int axp20x_build_funcs_groups(struct platform_device *pdev)
+static void axp20x_build_funcs_groups(struct platform_device *pdev)
 {
 	struct axp20x_pctl *pctl = platform_get_drvdata(pdev);
-	int i, ret, pin, npins = pctl->desc->npins;
+	int i, pin, npins = pctl->desc->npins;
 
 	pctl->funcs[AXP20X_FUNC_GPIO_OUT].name = "gpio_out";
 	pctl->funcs[AXP20X_FUNC_GPIO_OUT].muxval = AXP20X_MUX_GPIO_OUT;
@@ -369,33 +358,24 @@ static int axp20x_build_funcs_groups(struct platform_device *pdev)
 	/* Every pin supports GPIO_OUT and GPIO_IN functions */
 	for (i = 0; i <= AXP20X_FUNC_GPIO_IN; i++) {
 		pctl->funcs[i].ngroups = npins;
-		pctl->funcs[i].groups = devm_kcalloc(&pdev->dev,
-						     npins, sizeof(char *),
+		pctl->funcs[i].groups = devm_kzalloc(&pdev->dev,
+						     npins * sizeof(char *),
 						     GFP_KERNEL);
-		if (!pctl->funcs[i].groups)
-			return -ENOMEM;
 		for (pin = 0; pin < npins; pin++)
 			pctl->funcs[i].groups[pin] = pctl->desc->pins[pin].name;
 	}
 
-	ret = axp20x_funcs_groups_from_mask(&pdev->dev, pctl->desc->ldo_mask,
+	axp20x_funcs_groups_from_mask(&pdev->dev, pctl->desc->ldo_mask,
 				      npins, &pctl->funcs[AXP20X_FUNC_LDO],
 				      pctl->desc->pins);
-	if (ret)
-		return ret;
 
-	ret = axp20x_funcs_groups_from_mask(&pdev->dev, pctl->desc->adc_mask,
+	axp20x_funcs_groups_from_mask(&pdev->dev, pctl->desc->adc_mask,
 				      npins, &pctl->funcs[AXP20X_FUNC_ADC],
 				      pctl->desc->pins);
-	if (ret)
-		return ret;
-
-	return 0;
 }
 
 static const struct of_device_id axp20x_pctl_match[] = {
 	{ .compatible = "x-powers,axp209-gpio", .data = &axp20x_data, },
-	{ .compatible = "x-powers,axp221-gpio", .data = &axp22x_data, },
 	{ .compatible = "x-powers,axp813-gpio", .data = &axp813_data, },
 	{ }
 };
@@ -443,11 +423,7 @@ static int axp20x_pctl_probe(struct platform_device *pdev)
 
 	platform_set_drvdata(pdev, pctl);
 
-	ret = axp20x_build_funcs_groups(pdev);
-	if (ret) {
-		dev_err(&pdev->dev, "failed to build groups\n");
-		return ret;
-	}
+	axp20x_build_funcs_groups(pdev);
 
 	pctrl_desc = devm_kzalloc(&pdev->dev, sizeof(*pctrl_desc), GFP_KERNEL);
 	if (!pctrl_desc)

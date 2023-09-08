@@ -1,8 +1,16 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * TI Keystone DSP remoteproc driver
  *
  * Copyright (C) 2015-2017 Texas Instruments Incorporated - http://www.ti.com/
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * version 2 as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * General Public License for more details.
  */
 
 #include <linux/module.h>
@@ -14,7 +22,7 @@
 #include <linux/workqueue.h>
 #include <linux/of_address.h>
 #include <linux/of_reserved_mem.h>
-#include <linux/gpio/consumer.h>
+#include <linux/of_gpio.h>
 #include <linux/regmap.h>
 #include <linux/mfd/syscon.h>
 #include <linux/remoteproc.h>
@@ -59,10 +67,10 @@ struct keystone_rproc {
 	int num_mems;
 	struct regmap *dev_ctrl;
 	struct reset_control *reset;
-	struct gpio_desc *kick_gpio;
 	u32 boot_offset;
 	int irq_ring;
 	int irq_fault;
+	int kick_gpio;
 	struct work_struct workqueue;
 };
 
@@ -232,10 +240,10 @@ static void keystone_rproc_kick(struct rproc *rproc, int vqid)
 {
 	struct keystone_rproc *ksproc = rproc->priv;
 
-	if (!ksproc->kick_gpio)
+	if (WARN_ON(ksproc->kick_gpio < 0))
 		return;
 
-	gpiod_set_value(ksproc->kick_gpio, 1);
+	gpio_set_value(ksproc->kick_gpio, 1);
 }
 
 /*
@@ -246,7 +254,7 @@ static void keystone_rproc_kick(struct rproc *rproc, int vqid)
  * can be used either by the remoteproc core for loading (when using kernel
  * remoteproc loader), or by any rpmsg bus drivers.
  */
-static void *keystone_rproc_da_to_va(struct rproc *rproc, u64 da, size_t len, bool *is_iomem)
+static void *keystone_rproc_da_to_va(struct rproc *rproc, u64 da, int len)
 {
 	struct keystone_rproc *ksproc = rproc->priv;
 	void __iomem *va = NULL;
@@ -255,7 +263,7 @@ static void *keystone_rproc_da_to_va(struct rproc *rproc, u64 da, size_t len, bo
 	size_t size;
 	int i;
 
-	if (len == 0)
+	if (len <= 0)
 		return NULL;
 
 	for (i = 0; i < ksproc->num_mems; i++) {
@@ -410,9 +418,10 @@ static int keystone_rproc_probe(struct platform_device *pdev)
 
 	/* enable clock for accessing DSP internal memories */
 	pm_runtime_enable(dev);
-	ret = pm_runtime_resume_and_get(dev);
+	ret = pm_runtime_get_sync(dev);
 	if (ret < 0) {
 		dev_err(dev, "failed to enable clock, status = %d\n", ret);
+		pm_runtime_put_noidle(dev);
 		goto disable_rpm;
 	}
 
@@ -423,18 +432,22 @@ static int keystone_rproc_probe(struct platform_device *pdev)
 	ksproc->irq_ring = platform_get_irq_byname(pdev, "vring");
 	if (ksproc->irq_ring < 0) {
 		ret = ksproc->irq_ring;
+		dev_err(dev, "failed to get vring interrupt, status = %d\n",
+			ret);
 		goto disable_clk;
 	}
 
 	ksproc->irq_fault = platform_get_irq_byname(pdev, "exception");
 	if (ksproc->irq_fault < 0) {
 		ret = ksproc->irq_fault;
+		dev_err(dev, "failed to get exception interrupt, status = %d\n",
+			ret);
 		goto disable_clk;
 	}
 
-	ksproc->kick_gpio = gpiod_get(dev, "kick", GPIOD_ASIS);
-	ret = PTR_ERR_OR_ZERO(ksproc->kick_gpio);
-	if (ret) {
+	ksproc->kick_gpio = of_get_named_gpio_flags(np, "kick-gpios", 0, NULL);
+	if (ksproc->kick_gpio < 0) {
+		ret = ksproc->kick_gpio;
 		dev_err(dev, "failed to get gpio for virtio kicks, status = %d\n",
 			ret);
 		goto disable_clk;
@@ -466,7 +479,6 @@ static int keystone_rproc_probe(struct platform_device *pdev)
 
 release_mem:
 	of_reserved_mem_device_release(dev);
-	gpiod_put(ksproc->kick_gpio);
 disable_clk:
 	pm_runtime_put_sync(dev);
 disable_rpm:
@@ -481,7 +493,6 @@ static int keystone_rproc_remove(struct platform_device *pdev)
 	struct keystone_rproc *ksproc = platform_get_drvdata(pdev);
 
 	rproc_del(ksproc->rproc);
-	gpiod_put(ksproc->kick_gpio);
 	pm_runtime_put_sync(&pdev->dev);
 	pm_runtime_disable(&pdev->dev);
 	rproc_free(ksproc->rproc);

@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * This file is part of the APDS990x sensor driver.
  * Chip is combined proximity and ambient light sensor.
@@ -6,6 +5,21 @@
  * Copyright (C) 2010 Nokia Corporation and/or its subsidiary(-ies).
  *
  * Contact: Samu Onkalo <samu.p.onkalo@nokia.com>
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * version 2 as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+ * General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
+ * 02110-1301 USA
+ *
  */
 
 #include <linux/kernel.h>
@@ -174,6 +188,7 @@ struct apds990x_chip {
 #define APDS_LUX_DEFAULT_RATE		200
 
 static const u8 again[]	= {1, 8, 16, 120}; /* ALS gain steps */
+static const u8 ir_currents[]	= {100, 50, 25, 12}; /* IRled currents in mA */
 
 /* Following two tables must match i.e 10Hz rate means 1 as persistence value */
 static const u16 arates_hz[] = {10, 5, 2, 1};
@@ -1185,7 +1200,7 @@ fail1:
 	return err;
 }
 
-static void apds990x_remove(struct i2c_client *client)
+static int apds990x_remove(struct i2c_client *client)
 {
 	struct apds990x_chip *chip = i2c_get_clientdata(client);
 
@@ -1205,6 +1220,7 @@ static void apds990x_remove(struct i2c_client *client)
 	regulator_bulk_free(ARRAY_SIZE(chip->regs), chip->regs);
 
 	kfree(chip);
+	return 0;
 }
 
 #ifdef CONFIG_PM_SLEEP

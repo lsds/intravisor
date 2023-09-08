@@ -14,7 +14,6 @@
 #define pr_fmt(fmt) "AGP: " fmt
 
 #include <linux/kernel.h>
-#include <linux/kcore.h>
 #include <linux/types.h>
 #include <linux/init.h>
 #include <linux/memblock.h>
@@ -36,7 +35,7 @@
 /*
  * Using 512M as goal, in case kexec will load kernel_big
  * that will do the on-position decompress, and could overlap with
- * the gart aperture that is used.
+ * with the gart aperture that is used.
  * Sequence:
  * kernel_small
  * ==> kexec (with kdump trigger path or gart still enabled)
@@ -58,7 +57,7 @@ int fallback_aper_force __initdata;
 
 int fix_aperture __initdata = 1;
 
-#if defined(CONFIG_PROC_VMCORE) || defined(CONFIG_PROC_KCORE)
+#ifdef CONFIG_PROC_VMCORE
 /*
  * If the first kernel maps the aperture over e820 RAM, the kdump kernel will
  * use the same range because it will remain configured in the northbridge.
@@ -67,36 +66,20 @@ int fix_aperture __initdata = 1;
  */
 static unsigned long aperture_pfn_start, aperture_page_count;
 
-static int gart_mem_pfn_is_ram(unsigned long pfn)
+static int gart_oldmem_pfn_is_ram(unsigned long pfn)
 {
 	return likely((pfn < aperture_pfn_start) ||
 		      (pfn >= aperture_pfn_start + aperture_page_count));
 }
 
-#ifdef CONFIG_PROC_VMCORE
-static bool gart_oldmem_pfn_is_ram(struct vmcore_cb *cb, unsigned long pfn)
-{
-	return !!gart_mem_pfn_is_ram(pfn);
-}
-
-static struct vmcore_cb gart_vmcore_cb = {
-	.pfn_is_ram = gart_oldmem_pfn_is_ram,
-};
-#endif
-
-static void __init exclude_from_core(u64 aper_base, u32 aper_order)
+static void exclude_from_vmcore(u64 aper_base, u32 aper_order)
 {
 	aperture_pfn_start = aper_base >> PAGE_SHIFT;
 	aperture_page_count = (32 * 1024 * 1024) << aper_order >> PAGE_SHIFT;
-#ifdef CONFIG_PROC_VMCORE
-	register_vmcore_cb(&gart_vmcore_cb);
-#endif
-#ifdef CONFIG_PROC_KCORE
-	WARN_ON(register_mem_pfn_is_ram(&gart_mem_pfn_is_ram));
-#endif
+	WARN_ON(register_oldmem_pfn_is_ram(&gart_oldmem_pfn_is_ram));
 }
 #else
-static void exclude_from_core(u64 aper_base, u32 aper_order)
+static void exclude_from_vmcore(u64 aper_base, u32 aper_order)
 {
 }
 #endif
@@ -120,13 +103,14 @@ static u32 __init allocate_aperture(void)
 	 * memory. Unfortunately we cannot move it up because that would
 	 * make the IOMMU useless.
 	 */
-	addr = memblock_phys_alloc_range(aper_size, aper_size,
-					 GART_MIN_ADDR, GART_MAX_ADDR);
+	addr = memblock_find_in_range(GART_MIN_ADDR, GART_MAX_ADDR,
+				      aper_size, aper_size);
 	if (!addr) {
 		pr_err("Cannot allocate aperture memory hole [mem %#010lx-%#010lx] (%uKB)\n",
 		       addr, addr + aper_size - 1, aper_size >> 10);
 		return 0;
 	}
+	memblock_reserve(addr, aper_size);
 	pr_info("Mapping aperture over RAM [mem %#010lx-%#010lx] (%uKB)\n",
 		addr, addr + aper_size - 1, aper_size >> 10);
 	register_nosave_region(addr >> PAGE_SHIFT,
@@ -280,23 +264,18 @@ static int __init parse_gart_mem(char *p)
 }
 early_param("gart_fix_e820", parse_gart_mem);
 
-/*
- * With kexec/kdump, if the first kernel doesn't shut down the GART and the
- * second kernel allocates a different GART region, there might be two
- * overlapping GART regions present:
- *
- * - the first still used by the GART initialized in the first kernel.
- * - (sub-)set of it used as normal RAM by the second kernel.
- *
- * which leads to memory corruptions and a kernel panic eventually.
- *
- * This can also happen if the BIOS has forgotten to mark the GART region
- * as reserved.
- *
- * Try to update the e820 map to mark that new region as reserved.
- */
 void __init early_gart_iommu_check(void)
 {
+	/*
+	 * in case it is enabled before, esp for kexec/kdump,
+	 * previous kernel already enable that. memset called
+	 * by allocate_aperture/__alloc_bootmem_nopanic cause restart.
+	 * or second kernel have different position for GART hole. and new
+	 * kernel could use hole as RAM that is still used by GART set by
+	 * first kernel
+	 * or BIOS forget to put that in reserved.
+	 * try to update e820 to make that region as reserved.
+	 */
 	u32 agp_aper_order = 0;
 	int i, fix, slot, valid_agp = 0;
 	u32 ctl;
@@ -392,7 +371,7 @@ void __init early_gart_iommu_check(void)
 
 static int __initdata printed_gart_size_msg;
 
-void __init gart_iommu_hole_init(void)
+int __init gart_iommu_hole_init(void)
 {
 	u32 agp_aper_base = 0, agp_aper_order = 0;
 	u32 aper_size, aper_alloc = 0, aper_order = 0, last_aper_order = 0;
@@ -401,11 +380,11 @@ void __init gart_iommu_hole_init(void)
 	int i, node;
 
 	if (!amd_gart_present())
-		return;
+		return -ENODEV;
 
 	if (gart_iommu_aperture_disabled || !fix_aperture ||
 	    !early_pci_allowed())
-		return;
+		return -ENODEV;
 
 	pr_info("Checking aperture...\n");
 
@@ -490,9 +469,11 @@ out:
 			 * may have allocated the range over its e820 RAM
 			 * and fixed up the northbridge
 			 */
-			exclude_from_core(last_aper_base, last_aper_order);
+			exclude_from_vmcore(last_aper_base, last_aper_order);
+
+			return 1;
 		}
-		return;
+		return 0;
 	}
 
 	if (!fallback_aper_force) {
@@ -525,7 +506,7 @@ out:
 			panic("Not enough memory for aperture");
 		}
 	} else {
-		return;
+		return 0;
 	}
 
 	/*
@@ -534,7 +515,7 @@ out:
 	 * overlap with the first kernel's memory. We can't access the
 	 * range through vmcore even though it should be part of the dump.
 	 */
-	exclude_from_core(aper_alloc, aper_order);
+	exclude_from_vmcore(aper_alloc, aper_order);
 
 	/* Fix up the north bridges */
 	for (i = 0; i < amd_nb_bus_dev_ranges[i].dev_limit; i++) {
@@ -559,4 +540,6 @@ out:
 	}
 
 	set_up_gart_resume(aper_order, aper_alloc);
+
+	return 1;
 }

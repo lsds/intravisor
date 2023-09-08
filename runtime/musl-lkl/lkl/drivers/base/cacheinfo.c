@@ -14,7 +14,7 @@
 #include <linux/cpu.h>
 #include <linux/device.h>
 #include <linux/init.h>
-#include <linux/of_device.h>
+#include <linux/of.h>
 #include <linux/sched.h>
 #include <linux/slab.h>
 #include <linux/smp.h>
@@ -25,60 +25,59 @@ static DEFINE_PER_CPU(struct cpu_cacheinfo, ci_cpu_cacheinfo);
 #define ci_cacheinfo(cpu)	(&per_cpu(ci_cpu_cacheinfo, cpu))
 #define cache_leaves(cpu)	(ci_cacheinfo(cpu)->num_leaves)
 #define per_cpu_cacheinfo(cpu)	(ci_cacheinfo(cpu)->info_list)
-#define per_cpu_cacheinfo_idx(cpu, idx)		\
-				(per_cpu_cacheinfo(cpu) + (idx))
 
 struct cpu_cacheinfo *get_cpu_cacheinfo(unsigned int cpu)
 {
 	return ci_cacheinfo(cpu);
 }
 
+#ifdef CONFIG_OF
+static int cache_setup_of_node(unsigned int cpu)
+{
+	struct device_node *np;
+	struct cacheinfo *this_leaf;
+	struct device *cpu_dev = get_cpu_device(cpu);
+	struct cpu_cacheinfo *this_cpu_ci = get_cpu_cacheinfo(cpu);
+	unsigned int index = 0;
+
+	/* skip if of_node is already populated */
+	if (this_cpu_ci->info_list->of_node)
+		return 0;
+
+	if (!cpu_dev) {
+		pr_err("No cpu device for CPU %d\n", cpu);
+		return -ENODEV;
+	}
+	np = cpu_dev->of_node;
+	if (!np) {
+		pr_err("Failed to find cpu%d device node\n", cpu);
+		return -ENOENT;
+	}
+
+	while (index < cache_leaves(cpu)) {
+		this_leaf = this_cpu_ci->info_list + index;
+		if (this_leaf->level != 1)
+			np = of_find_next_cache_node(np);
+		else
+			np = of_node_get(np);/* cpu node itself */
+		if (!np)
+			break;
+		this_leaf->of_node = np;
+		index++;
+	}
+
+	if (index != cache_leaves(cpu)) /* not all OF nodes populated */
+		return -ENOENT;
+
+	return 0;
+}
+
 static inline bool cache_leaves_are_shared(struct cacheinfo *this_leaf,
 					   struct cacheinfo *sib_leaf)
 {
-	/*
-	 * For non DT/ACPI systems, assume unique level 1 caches,
-	 * system-wide shared caches for all other levels. This will be used
-	 * only if arch specific code has not populated shared_cpu_map
-	 */
-	if (!(IS_ENABLED(CONFIG_OF) || IS_ENABLED(CONFIG_ACPI)))
-		return !(this_leaf->level == 1);
-
-	if ((sib_leaf->attributes & CACHE_ID) &&
-	    (this_leaf->attributes & CACHE_ID))
-		return sib_leaf->id == this_leaf->id;
-
-	return sib_leaf->fw_token == this_leaf->fw_token;
+	return sib_leaf->of_node == this_leaf->of_node;
 }
 
-bool last_level_cache_is_valid(unsigned int cpu)
-{
-	struct cacheinfo *llc;
-
-	if (!cache_leaves(cpu))
-		return false;
-
-	llc = per_cpu_cacheinfo_idx(cpu, cache_leaves(cpu) - 1);
-
-	return (llc->attributes & CACHE_ID) || !!llc->fw_token;
-
-}
-
-bool last_level_cache_is_shared(unsigned int cpu_x, unsigned int cpu_y)
-{
-	struct cacheinfo *llc_x, *llc_y;
-
-	if (!last_level_cache_is_valid(cpu_x) ||
-	    !last_level_cache_is_valid(cpu_y))
-		return false;
-
-	llc_x = per_cpu_cacheinfo_idx(cpu_x, cache_leaves(cpu_x) - 1);
-	llc_y = per_cpu_cacheinfo_idx(cpu_y, cache_leaves(cpu_y) - 1);
-
-	return cache_leaves_are_shared(llc_x, llc_y);
-}
-
-#ifdef CONFIG_OF
 /* OF properties to query for a given cache type */
 struct cache_type_info {
 	const char *size_prop;
@@ -112,49 +111,54 @@ static inline int get_cacheinfo_idx(enum cache_type type)
 	return type;
 }
 
-static void cache_size(struct cacheinfo *this_leaf, struct device_node *np)
+static void cache_size(struct cacheinfo *this_leaf)
 {
 	const char *propname;
+	const __be32 *cache_size;
 	int ct_idx;
 
 	ct_idx = get_cacheinfo_idx(this_leaf->type);
 	propname = cache_type_info[ct_idx].size_prop;
 
-	of_property_read_u32(np, propname, &this_leaf->size);
+	cache_size = of_get_property(this_leaf->of_node, propname, NULL);
+	if (cache_size)
+		this_leaf->size = of_read_number(cache_size, 1);
 }
 
 /* not cache_line_size() because that's a macro in include/linux/cache.h */
-static void cache_get_line_size(struct cacheinfo *this_leaf,
-				struct device_node *np)
+static void cache_get_line_size(struct cacheinfo *this_leaf)
 {
+	const __be32 *line_size;
 	int i, lim, ct_idx;
 
 	ct_idx = get_cacheinfo_idx(this_leaf->type);
 	lim = ARRAY_SIZE(cache_type_info[ct_idx].line_size_props);
 
 	for (i = 0; i < lim; i++) {
-		int ret;
-		u32 line_size;
 		const char *propname;
 
 		propname = cache_type_info[ct_idx].line_size_props[i];
-		ret = of_property_read_u32(np, propname, &line_size);
-		if (!ret) {
-			this_leaf->coherency_line_size = line_size;
+		line_size = of_get_property(this_leaf->of_node, propname, NULL);
+		if (line_size)
 			break;
-		}
 	}
+
+	if (line_size)
+		this_leaf->coherency_line_size = of_read_number(line_size, 1);
 }
 
-static void cache_nr_sets(struct cacheinfo *this_leaf, struct device_node *np)
+static void cache_nr_sets(struct cacheinfo *this_leaf)
 {
 	const char *propname;
+	const __be32 *nr_sets;
 	int ct_idx;
 
 	ct_idx = get_cacheinfo_idx(this_leaf->type);
 	propname = cache_type_info[ct_idx].nr_sets_prop;
 
-	of_property_read_u32(np, propname, &this_leaf->number_of_sets);
+	nr_sets = of_get_property(this_leaf->of_node, propname, NULL);
+	if (nr_sets)
+		this_leaf->number_of_sets = of_read_number(nr_sets, 1);
 }
 
 static void cache_associativity(struct cacheinfo *this_leaf)
@@ -171,81 +175,47 @@ static void cache_associativity(struct cacheinfo *this_leaf)
 		this_leaf->ways_of_associativity = (size / nr_sets) / line_size;
 }
 
-static bool cache_node_is_unified(struct cacheinfo *this_leaf,
-				  struct device_node *np)
+static bool cache_node_is_unified(struct cacheinfo *this_leaf)
 {
-	return of_property_read_bool(np, "cache-unified");
+	return of_property_read_bool(this_leaf->of_node, "cache-unified");
 }
 
-static void cache_of_set_props(struct cacheinfo *this_leaf,
-			       struct device_node *np)
+static void cache_of_override_properties(unsigned int cpu)
 {
-	/*
-	 * init_cache_level must setup the cache level correctly
-	 * overriding the architecturally specified levels, so
-	 * if type is NONE at this stage, it should be unified
-	 */
-	if (this_leaf->type == CACHE_TYPE_NOCACHE &&
-	    cache_node_is_unified(this_leaf, np))
-		this_leaf->type = CACHE_TYPE_UNIFIED;
-	cache_size(this_leaf, np);
-	cache_get_line_size(this_leaf, np);
-	cache_nr_sets(this_leaf, np);
-	cache_associativity(this_leaf);
-}
-
-static int cache_setup_of_node(unsigned int cpu)
-{
-	struct device_node *np;
+	int index;
 	struct cacheinfo *this_leaf;
-	unsigned int index = 0;
+	struct cpu_cacheinfo *this_cpu_ci = get_cpu_cacheinfo(cpu);
 
-	np = of_cpu_device_node_get(cpu);
-	if (!np) {
-		pr_err("Failed to find cpu%d device node\n", cpu);
-		return -ENOENT;
+	for (index = 0; index < cache_leaves(cpu); index++) {
+		this_leaf = this_cpu_ci->info_list + index;
+		/*
+		 * init_cache_level must setup the cache level correctly
+		 * overriding the architecturally specified levels, so
+		 * if type is NONE at this stage, it should be unified
+		 */
+		if (this_leaf->type == CACHE_TYPE_NOCACHE &&
+		    cache_node_is_unified(this_leaf))
+			this_leaf->type = CACHE_TYPE_UNIFIED;
+		cache_size(this_leaf);
+		cache_get_line_size(this_leaf);
+		cache_nr_sets(this_leaf);
+		cache_associativity(this_leaf);
 	}
-
-	while (index < cache_leaves(cpu)) {
-		this_leaf = per_cpu_cacheinfo_idx(cpu, index);
-		if (this_leaf->level != 1)
-			np = of_find_next_cache_node(np);
-		else
-			np = of_node_get(np);/* cpu node itself */
-		if (!np)
-			break;
-		cache_of_set_props(this_leaf, np);
-		this_leaf->fw_token = np;
-		index++;
-	}
-
-	if (index != cache_leaves(cpu)) /* not all OF nodes populated */
-		return -ENOENT;
-
-	return 0;
 }
 #else
+static void cache_of_override_properties(unsigned int cpu) { }
 static inline int cache_setup_of_node(unsigned int cpu) { return 0; }
+static inline bool cache_leaves_are_shared(struct cacheinfo *this_leaf,
+					   struct cacheinfo *sib_leaf)
+{
+	/*
+	 * For non-DT systems, assume unique level 1 cache, system-wide
+	 * shared caches for all other levels. This will be used only if
+	 * arch specific code has not populated shared_cpu_map
+	 */
+	return !(this_leaf->level == 1);
+}
 #endif
-
-int __weak cache_setup_acpi(unsigned int cpu)
-{
-	return -ENOTSUPP;
-}
-
-unsigned int coherency_max_size;
-
-static int cache_setup_properties(unsigned int cpu)
-{
-	int ret = 0;
-
-	if (of_have_populated_dt())
-		ret = cache_setup_of_node(cpu);
-	else if (!acpi_disabled)
-		ret = cache_setup_acpi(cpu);
-
-	return ret;
-}
 
 static int cache_shared_cpu_map_setup(unsigned int cpu)
 {
@@ -257,21 +227,21 @@ static int cache_shared_cpu_map_setup(unsigned int cpu)
 	if (this_cpu_ci->cpu_map_populated)
 		return 0;
 
-	/*
-	 * skip setting up cache properties if LLC is valid, just need
-	 * to update the shared cpu_map if the cache attributes were
-	 * populated early before all the cpus are brought online
-	 */
-	if (!last_level_cache_is_valid(cpu)) {
-		ret = cache_setup_properties(cpu);
-		if (ret)
-			return ret;
-	}
+	if (of_have_populated_dt())
+		ret = cache_setup_of_node(cpu);
+	else if (!acpi_disabled)
+		/* No cache property/hierarchy support yet in ACPI */
+		ret = -ENOTSUPP;
+	if (ret)
+		return ret;
 
 	for (index = 0; index < cache_leaves(cpu); index++) {
 		unsigned int i;
 
-		this_leaf = per_cpu_cacheinfo_idx(cpu, index);
+		this_leaf = this_cpu_ci->info_list + index;
+		/* skip if shared_cpu_map is already populated */
+		if (!cpumask_empty(&this_leaf->shared_cpu_map))
+			continue;
 
 		cpumask_set_cpu(cpu, &this_leaf->shared_cpu_map);
 		for_each_online_cpu(i) {
@@ -279,16 +249,12 @@ static int cache_shared_cpu_map_setup(unsigned int cpu)
 
 			if (i == cpu || !sib_cpu_ci->info_list)
 				continue;/* skip if itself or no cacheinfo */
-
-			sib_leaf = per_cpu_cacheinfo_idx(i, index);
+			sib_leaf = sib_cpu_ci->info_list + index;
 			if (cache_leaves_are_shared(this_leaf, sib_leaf)) {
 				cpumask_set_cpu(cpu, &sib_leaf->shared_cpu_map);
 				cpumask_set_cpu(i, &this_leaf->shared_cpu_map);
 			}
 		}
-		/* record the maximum cache line size */
-		if (this_leaf->coherency_line_size > coherency_max_size)
-			coherency_max_size = this_leaf->coherency_line_size;
 	}
 
 	return 0;
@@ -296,25 +262,34 @@ static int cache_shared_cpu_map_setup(unsigned int cpu)
 
 static void cache_shared_cpu_map_remove(unsigned int cpu)
 {
+	struct cpu_cacheinfo *this_cpu_ci = get_cpu_cacheinfo(cpu);
 	struct cacheinfo *this_leaf, *sib_leaf;
 	unsigned int sibling, index;
 
 	for (index = 0; index < cache_leaves(cpu); index++) {
-		this_leaf = per_cpu_cacheinfo_idx(cpu, index);
+		this_leaf = this_cpu_ci->info_list + index;
 		for_each_cpu(sibling, &this_leaf->shared_cpu_map) {
-			struct cpu_cacheinfo *sib_cpu_ci =
-						get_cpu_cacheinfo(sibling);
+			struct cpu_cacheinfo *sib_cpu_ci;
 
-			if (sibling == cpu || !sib_cpu_ci->info_list)
-				continue;/* skip if itself or no cacheinfo */
+			if (sibling == cpu) /* skip itself */
+				continue;
 
-			sib_leaf = per_cpu_cacheinfo_idx(sibling, index);
+			sib_cpu_ci = get_cpu_cacheinfo(sibling);
+			if (!sib_cpu_ci->info_list)
+				continue;
+
+			sib_leaf = sib_cpu_ci->info_list + index;
 			cpumask_clear_cpu(cpu, &sib_leaf->shared_cpu_map);
 			cpumask_clear_cpu(sibling, &this_leaf->shared_cpu_map);
 		}
-		if (of_have_populated_dt())
-			of_node_put(this_leaf->fw_token);
+		of_node_put(this_leaf->of_node);
 	}
+}
+
+static void cache_override_properties(unsigned int cpu)
+{
+	if (of_have_populated_dt())
+		return cache_of_override_properties(cpu);
 }
 
 static void free_cache_attributes(unsigned int cpu)
@@ -326,7 +301,6 @@ static void free_cache_attributes(unsigned int cpu)
 
 	kfree(per_cpu_cacheinfo(cpu));
 	per_cpu_cacheinfo(cpu) = NULL;
-	cache_leaves(cpu) = 0;
 }
 
 int __weak init_cache_level(unsigned int cpu)
@@ -339,42 +313,24 @@ int __weak populate_cache_leaves(unsigned int cpu)
 	return -ENOENT;
 }
 
-int detect_cache_attributes(unsigned int cpu)
+static int detect_cache_attributes(unsigned int cpu)
 {
 	int ret;
-
-	/* Since early detection of the cacheinfo is allowed via this
-	 * function and this also gets called as CPU hotplug callbacks via
-	 * cacheinfo_cpu_online, the initialisation can be skipped and only
-	 * CPU maps can be updated as the CPU online status would be update
-	 * if called via cacheinfo_cpu_online path.
-	 */
-	if (per_cpu_cacheinfo(cpu))
-		goto update_cpu_map;
 
 	if (init_cache_level(cpu) || !cache_leaves(cpu))
 		return -ENOENT;
 
 	per_cpu_cacheinfo(cpu) = kcalloc(cache_leaves(cpu),
-					 sizeof(struct cacheinfo), GFP_ATOMIC);
-	if (per_cpu_cacheinfo(cpu) == NULL) {
-		cache_leaves(cpu) = 0;
+					 sizeof(struct cacheinfo), GFP_KERNEL);
+	if (per_cpu_cacheinfo(cpu) == NULL)
 		return -ENOMEM;
-	}
 
-	/*
-	 * populate_cache_leaves() may completely setup the cache leaves and
-	 * shared_cpu_map or it may leave it partially setup.
-	 */
 	ret = populate_cache_leaves(cpu);
 	if (ret)
 		goto free_ci;
-
-update_cpu_map:
 	/*
-	 * For systems using DT for cache hierarchy, fw_token
-	 * and shared_cpu_map will be set up here only if they are
-	 * not populated already
+	 * For systems using DT for cache hierarchy, of_node and shared_cpu_map
+	 * will be set up here only if they are not populated already
 	 */
 	ret = cache_shared_cpu_map_setup(cpu);
 	if (ret) {
@@ -382,6 +338,7 @@ update_cpu_map:
 		goto free_ci;
 	}
 
+	cache_override_properties(cpu);
 	return 0;
 
 free_ci:
@@ -405,7 +362,7 @@ static ssize_t file_name##_show(struct device *dev,		\
 		struct device_attribute *attr, char *buf)	\
 {								\
 	struct cacheinfo *this_leaf = dev_get_drvdata(dev);	\
-	return sysfs_emit(buf, "%u\n", this_leaf->object);	\
+	return sprintf(buf, "%u\n", this_leaf->object);		\
 }
 
 show_one(id, id);
@@ -420,48 +377,44 @@ static ssize_t size_show(struct device *dev,
 {
 	struct cacheinfo *this_leaf = dev_get_drvdata(dev);
 
-	return sysfs_emit(buf, "%uK\n", this_leaf->size >> 10);
+	return sprintf(buf, "%uK\n", this_leaf->size >> 10);
+}
+
+static ssize_t shared_cpumap_show_func(struct device *dev, bool list, char *buf)
+{
+	struct cacheinfo *this_leaf = dev_get_drvdata(dev);
+	const struct cpumask *mask = &this_leaf->shared_cpu_map;
+
+	return cpumap_print_to_pagebuf(list, buf, mask);
 }
 
 static ssize_t shared_cpu_map_show(struct device *dev,
 				   struct device_attribute *attr, char *buf)
 {
-	struct cacheinfo *this_leaf = dev_get_drvdata(dev);
-	const struct cpumask *mask = &this_leaf->shared_cpu_map;
-
-	return sysfs_emit(buf, "%*pb\n", nr_cpu_ids, mask);
+	return shared_cpumap_show_func(dev, false, buf);
 }
 
 static ssize_t shared_cpu_list_show(struct device *dev,
 				    struct device_attribute *attr, char *buf)
 {
-	struct cacheinfo *this_leaf = dev_get_drvdata(dev);
-	const struct cpumask *mask = &this_leaf->shared_cpu_map;
-
-	return sysfs_emit(buf, "%*pbl\n", nr_cpu_ids, mask);
+	return shared_cpumap_show_func(dev, true, buf);
 }
 
 static ssize_t type_show(struct device *dev,
 			 struct device_attribute *attr, char *buf)
 {
 	struct cacheinfo *this_leaf = dev_get_drvdata(dev);
-	const char *output;
 
 	switch (this_leaf->type) {
 	case CACHE_TYPE_DATA:
-		output = "Data";
-		break;
+		return sprintf(buf, "Data\n");
 	case CACHE_TYPE_INST:
-		output = "Instruction";
-		break;
+		return sprintf(buf, "Instruction\n");
 	case CACHE_TYPE_UNIFIED:
-		output = "Unified";
-		break;
+		return sprintf(buf, "Unified\n");
 	default:
 		return -EINVAL;
 	}
-
-	return sysfs_emit(buf, "%s\n", output);
 }
 
 static ssize_t allocation_policy_show(struct device *dev,
@@ -469,18 +422,15 @@ static ssize_t allocation_policy_show(struct device *dev,
 {
 	struct cacheinfo *this_leaf = dev_get_drvdata(dev);
 	unsigned int ci_attr = this_leaf->attributes;
-	const char *output;
+	int n = 0;
 
 	if ((ci_attr & CACHE_READ_ALLOCATE) && (ci_attr & CACHE_WRITE_ALLOCATE))
-		output = "ReadWriteAllocate";
+		n = sprintf(buf, "ReadWriteAllocate\n");
 	else if (ci_attr & CACHE_READ_ALLOCATE)
-		output = "ReadAllocate";
+		n = sprintf(buf, "ReadAllocate\n");
 	else if (ci_attr & CACHE_WRITE_ALLOCATE)
-		output = "WriteAllocate";
-	else
-		return 0;
-
-	return sysfs_emit(buf, "%s\n", output);
+		n = sprintf(buf, "WriteAllocate\n");
+	return n;
 }
 
 static ssize_t write_policy_show(struct device *dev,
@@ -491,9 +441,9 @@ static ssize_t write_policy_show(struct device *dev,
 	int n = 0;
 
 	if (ci_attr & CACHE_WRITE_THROUGH)
-		n = sysfs_emit(buf, "WriteThrough\n");
+		n = sprintf(buf, "WriteThrough\n");
 	else if (ci_attr & CACHE_WRITE_BACK)
-		n = sysfs_emit(buf, "WriteBack\n");
+		n = sprintf(buf, "WriteBack\n");
 	return n;
 }
 
@@ -656,6 +606,7 @@ static int cache_add_dev(unsigned int cpu)
 	int rc;
 	struct device *ci_dev, *parent;
 	struct cacheinfo *this_leaf;
+	struct cpu_cacheinfo *this_cpu_ci = get_cpu_cacheinfo(cpu);
 	const struct attribute_group **cache_groups;
 
 	rc = cpu_cache_sysfs_init(cpu);
@@ -664,11 +615,9 @@ static int cache_add_dev(unsigned int cpu)
 
 	parent = per_cpu_cache_dev(cpu);
 	for (i = 0; i < cache_leaves(cpu); i++) {
-		this_leaf = per_cpu_cacheinfo_idx(cpu, i);
+		this_leaf = this_cpu_ci->info_list + i;
 		if (this_leaf->disable_sysfs)
 			continue;
-		if (this_leaf->type == CACHE_TYPE_NOCACHE)
-			break;
 		cache_groups = cache_get_attribute_groups(this_leaf);
 		ci_dev = cpu_device_create(parent, this_leaf, cache_groups,
 					   "index%1u", i);
@@ -709,8 +658,7 @@ static int cacheinfo_cpu_pre_down(unsigned int cpu)
 
 static int __init cacheinfo_sysfs_init(void)
 {
-	return cpuhp_setup_state(CPUHP_AP_BASE_CACHEINFO_ONLINE,
-				 "base/cacheinfo:online",
+	return cpuhp_setup_state(CPUHP_AP_ONLINE_DYN, "base/cacheinfo:online",
 				 cacheinfo_cpu_online, cacheinfo_cpu_pre_down);
 }
 device_initcall(cacheinfo_sysfs_init);

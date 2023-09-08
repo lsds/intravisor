@@ -1,5 +1,6 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
+ * linux/fs/9p/error.c
+ *
  * Error string handling
  *
  * Plan 9 uses error strings, Unix uses error numbers.  These functions
@@ -8,6 +9,22 @@
  *
  *  Copyright (C) 2004 by Eric Van Hensbergen <ericvh@gmail.com>
  *  Copyright (C) 2002 by Ron Minnich <rminnich@lanl.gov>
+ *
+ *  This program is free software; you can redistribute it and/or modify
+ *  it under the terms of the GNU General Public License version 2
+ *  as published by the Free Software Foundation.
+ *
+ *  This program is distributed in the hope that it will be useful,
+ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *  GNU General Public License for more details.
+ *
+ *  You should have received a copy of the GNU General Public License
+ *  along with this program; if not, write to:
+ *  Free Software Foundation
+ *  51 Franklin Street, Fifth Floor
+ *  Boston, MA  02111-1301  USA
+ *
  */
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
@@ -183,7 +200,7 @@ int p9_error_init(void)
 		INIT_HLIST_HEAD(&hash_errmap[bucket]);
 
 	/* load initial error map into hash table */
-	for (c = errmap; c->name; c++) {
+	for (c = errmap; c->name != NULL; c++) {
 		c->namelen = strlen(c->name);
 		bucket = jhash(c->name, c->namelen, 0) % ERRHASHSZ;
 		INIT_HLIST_NODE(&c->list);
@@ -195,7 +212,7 @@ int p9_error_init(void)
 EXPORT_SYMBOL(p9_error_init);
 
 /**
- * p9_errstr2errno - convert error string to error number
+ * errstr2errno - convert error string to error number
  * @errstr: error string
  * @len: length of error string
  *

@@ -23,6 +23,7 @@
  * Driver for the Conexant CX23415/CX23416 chip.
  * Author: Kevin Thayer (nufan_wfk at yahoo.com)
  * License: GPL
+ * http://www.ivtvdriver.org
  *
  * -----
  * MPG600/MPG160 support by  T.Adachi <tadachi@tadachi-net.com>
@@ -57,7 +58,7 @@
 #include <linux/dma-mapping.h>
 #include <media/tveeprom.h>
 #include <media/i2c/saa7115.h>
-#include "xc2028.h"
+#include "tuner-xc2028.h"
 #include <uapi/linux/sched/types.h>
 
 /* If you have already X v4l cards, then set this to X. This way
@@ -275,6 +276,9 @@ MODULE_PARM_DESC(ivtv_first_minor, "Set device node number assigned to first car
 
 MODULE_AUTHOR("Kevin Thayer, Chris Kennedy, Hans Verkuil");
 MODULE_DESCRIPTION("CX23415/CX23416 driver");
+MODULE_SUPPORTED_DEVICE
+    ("CX23415/CX23416 MPEG2 encoder (WinTV PVR-150/250/350/500,\n"
+		"\t\t\tYuan MPG series and similar)");
 MODULE_LICENSE("GPL");
 
 MODULE_VERSION(IVTV_VERSION);
@@ -719,7 +723,7 @@ done:
 		IVTV_ERR("              %s based\n", chipname);
 		IVTV_ERR("Defaulting to %s card\n", itv->card->name);
 		IVTV_ERR("Please mail the vendor/device and subsystem vendor/device IDs and what kind of\n");
-		IVTV_ERR("card you have to the linux-media mailinglist (www.linuxtv.org)\n");
+		IVTV_ERR("card you have to the ivtv-devel mailinglist (www.ivtvdriver.org)\n");
 		IVTV_ERR("Prefix your subject line with [UNKNOWN IVTV CARD].\n");
 	}
 	itv->v4l2_cap = itv->card->v4l2_capabilities;
@@ -734,6 +738,8 @@ done:
  */
 static int ivtv_init_struct1(struct ivtv *itv)
 {
+	struct sched_param param = { .sched_priority = 99 };
+
 	itv->base_addr = pci_resource_start(itv->pdev, 0);
 	itv->enc_mbox.max_mbox = 2; /* the encoder has 3 mailboxes (0-2) */
 	itv->dec_mbox.max_mbox = 1; /* the decoder has 2 mailboxes (0-1) */
@@ -753,7 +759,7 @@ static int ivtv_init_struct1(struct ivtv *itv)
 		return -1;
 	}
 	/* must use the FIFO scheduler as it is realtime sensitive */
-	sched_set_fifo(itv->irq_worker_task);
+	sched_setscheduler(itv->irq_worker_task, SCHED_FIFO, &param);
 
 	kthread_init_work(&itv->irq_work, ivtv_irq_work_handler);
 
@@ -837,7 +843,7 @@ static int ivtv_setup_pci(struct ivtv *itv, struct pci_dev *pdev,
 		IVTV_ERR("Can't enable device!\n");
 		return -EIO;
 	}
-	if (dma_set_mask(&pdev->dev, DMA_BIT_MASK(32))) {
+	if (pci_set_dma_mask(pdev, DMA_BIT_MASK(32))) {
 		IVTV_ERR("No suitable DMA available.\n");
 		return -EIO;
 	}
@@ -870,11 +876,6 @@ static int ivtv_setup_pci(struct ivtv *itv, struct pci_dev *pdev,
 		pci_read_config_word(pdev, PCI_COMMAND, &cmd);
 		if (!(cmd & PCI_COMMAND_MASTER)) {
 			IVTV_ERR("Bus Mastering is not enabled\n");
-			if (itv->has_cx23415)
-				release_mem_region(itv->base_addr + IVTV_DECODER_OFFSET,
-						   IVTV_DECODER_SIZE);
-			release_mem_region(itv->base_addr, IVTV_ENCODER_SIZE);
-			release_mem_region(itv->base_addr + IVTV_REG_OFFSET, IVTV_REG_SIZE);
 			return -ENXIO;
 		}
 	}
@@ -909,7 +910,7 @@ static void ivtv_load_and_init_modules(struct ivtv *itv)
 
 	/* check which i2c devices are actually found */
 	for (i = 0; i < 32; i++) {
-		u32 device = BIT(i);
+		u32 device = 1 << i;
 
 		if (!(device & hw))
 			continue;
@@ -998,7 +999,7 @@ static int ivtv_probe(struct pci_dev *pdev, const struct pci_device_id *pci_id)
 	int vbi_buf_size;
 	struct ivtv *itv;
 
-	itv = kzalloc(sizeof(struct ivtv), GFP_KERNEL);
+	itv = kzalloc(sizeof(struct ivtv), GFP_ATOMIC);
 	if (itv == NULL)
 		return -ENOMEM;
 	itv->pdev = pdev;
@@ -1041,7 +1042,7 @@ static int ivtv_probe(struct pci_dev *pdev, const struct pci_device_id *pci_id)
 	/* map io memory */
 	IVTV_DEBUG_INFO("attempting ioremap at 0x%llx len 0x%08x\n",
 		   (u64)itv->base_addr + IVTV_ENCODER_OFFSET, IVTV_ENCODER_SIZE);
-	itv->enc_mem = ioremap(itv->base_addr + IVTV_ENCODER_OFFSET,
+	itv->enc_mem = ioremap_nocache(itv->base_addr + IVTV_ENCODER_OFFSET,
 				       IVTV_ENCODER_SIZE);
 	if (!itv->enc_mem) {
 		IVTV_ERR("ioremap failed. Can't get a window into CX23415/6 encoder memory\n");
@@ -1055,7 +1056,7 @@ static int ivtv_probe(struct pci_dev *pdev, const struct pci_device_id *pci_id)
 	if (itv->has_cx23415) {
 		IVTV_DEBUG_INFO("attempting ioremap at 0x%llx len 0x%08x\n",
 				(u64)itv->base_addr + IVTV_DECODER_OFFSET, IVTV_DECODER_SIZE);
-		itv->dec_mem = ioremap(itv->base_addr + IVTV_DECODER_OFFSET,
+		itv->dec_mem = ioremap_nocache(itv->base_addr + IVTV_DECODER_OFFSET,
 				IVTV_DECODER_SIZE);
 		if (!itv->dec_mem) {
 			IVTV_ERR("ioremap failed. Can't get a window into CX23415 decoder memory\n");
@@ -1074,7 +1075,7 @@ static int ivtv_probe(struct pci_dev *pdev, const struct pci_device_id *pci_id)
 	IVTV_DEBUG_INFO("attempting ioremap at 0x%llx len 0x%08x\n",
 		   (u64)itv->base_addr + IVTV_REG_OFFSET, IVTV_REG_SIZE);
 	itv->reg_mem =
-	    ioremap(itv->base_addr + IVTV_REG_OFFSET, IVTV_REG_SIZE);
+	    ioremap_nocache(itv->base_addr + IVTV_REG_OFFSET, IVTV_REG_SIZE);
 	if (!itv->reg_mem) {
 		IVTV_ERR("ioremap failed. Can't get a window into CX23415/6 register space\n");
 		IVTV_ERR("Each capture card with a CX23415/6 needs 64 kB of vmalloc address space for this window\n");
@@ -1390,7 +1391,7 @@ int ivtv_init_on_first_open(struct ivtv *itv)
 
 static void ivtv_remove(struct pci_dev *pdev)
 {
-	struct v4l2_device *v4l2_dev = pci_get_drvdata(pdev);
+	struct v4l2_device *v4l2_dev = dev_get_drvdata(&pdev->dev);
 	struct ivtv *itv = to_ivtv(v4l2_dev);
 	int i;
 

@@ -160,7 +160,7 @@ enum ath6kl_fw_capability {
 struct ath6kl_fw_ie {
 	__le32 id;
 	__le32 len;
-	u8 data[];
+	u8 data[0];
 };
 
 enum ath6kl_hw_flags {
@@ -406,7 +406,7 @@ struct ath6kl_mgmt_buff {
 	u32 id;
 	bool no_cck;
 	size_t len;
-	u8 buf[];
+	u8 buf[0];
 };
 
 struct ath6kl_sta {
@@ -914,7 +914,7 @@ void ath6kl_tx_data_cleanup(struct ath6kl *ar);
 
 struct ath6kl_cookie *ath6kl_alloc_cookie(struct ath6kl *ar);
 void ath6kl_free_cookie(struct ath6kl *ar, struct ath6kl_cookie *cookie);
-netdev_tx_t ath6kl_data_tx(struct sk_buff *skb, struct net_device *dev);
+int ath6kl_data_tx(struct sk_buff *skb, struct net_device *dev);
 
 struct aggr_info *aggr_init(struct ath6kl_vif *vif);
 void aggr_conn_init(struct ath6kl_vif *vif, struct aggr_info *aggr_info,

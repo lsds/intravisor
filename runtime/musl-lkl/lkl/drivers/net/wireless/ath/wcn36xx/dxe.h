@@ -422,6 +422,7 @@ struct wcn36xx_dxe_ctl {
 	unsigned int		desc_phy_addr;
 	int			ctl_blk_order;
 	struct sk_buff		*skb;
+	spinlock_t              skb_lock;
 	void			*bd_cpu_addr;
 	dma_addr_t		bd_phy_addr;
 };
@@ -466,6 +467,5 @@ int wcn36xx_dxe_tx_frame(struct wcn36xx *wcn,
 			 struct wcn36xx_tx_bd *bd,
 			 struct sk_buff *skb,
 			 bool is_low);
-int wcn36xx_dxe_tx_flush(struct wcn36xx *wcn);
 void wcn36xx_dxe_tx_ack_ind(struct wcn36xx *wcn, u32 status);
 #endif	/* _DXE_H_ */

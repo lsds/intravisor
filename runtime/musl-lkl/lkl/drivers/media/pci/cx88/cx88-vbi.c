@@ -144,10 +144,11 @@ static int buffer_prepare(struct vb2_buffer *vb)
 		return -EINVAL;
 	vb2_set_plane_payload(vb, 0, size);
 
-	return cx88_risc_buffer(dev->pci, &buf->risc, sgt->sgl,
-				0, VBI_LINE_LENGTH * lines,
-				VBI_LINE_LENGTH, 0,
-				lines);
+	cx88_risc_buffer(dev->pci, &buf->risc, sgt->sgl,
+			 0, VBI_LINE_LENGTH * lines,
+			 VBI_LINE_LENGTH, 0,
+			 lines);
+	return 0;
 }
 
 static void buffer_finish(struct vb2_buffer *vb)
@@ -158,8 +159,7 @@ static void buffer_finish(struct vb2_buffer *vb)
 	struct cx88_riscmem *risc = &buf->risc;
 
 	if (risc->cpu)
-		dma_free_coherent(&dev->pci->dev, risc->size, risc->cpu,
-				  risc->dma);
+		pci_free_consistent(dev->pci, risc->size, risc->cpu, risc->dma);
 	memset(risc, 0, sizeof(*risc));
 }
 
@@ -178,6 +178,7 @@ static void buffer_queue(struct vb2_buffer *vb)
 
 	if (list_empty(&q->active)) {
 		list_add_tail(&buf->list, &q->active);
+		cx8800_start_vbi_dma(dev, q, buf);
 		dprintk(2, "[%p/%d] vbi_queue - first active\n",
 			buf, buf->vb.vb2_buf.index);
 

@@ -3,7 +3,7 @@
  * arch/parisc/mm/ioremap.c
  *
  * (C) Copyright 1995 1996 Linus Torvalds
- * (C) Copyright 2001-2019 Helge Deller <deller@gmx.de>
+ * (C) Copyright 2001-2006 Helge Deller <deller@gmx.de>
  * (C) Copyright 2005 Kyle McMartin <kyle@parisc-linux.org>
  */
 
@@ -11,7 +11,7 @@
 #include <linux/errno.h>
 #include <linux/module.h>
 #include <linux/io.h>
-#include <linux/mm.h>
+#include <asm/pgalloc.h>
 
 /*
  * Generic mapping function (not visible outside):
@@ -25,7 +25,7 @@
  * have to convert them into an offset in a page-aligned mapping, but the
  * caller shouldn't need to know that small detail.
  */
-void __iomem *ioremap(unsigned long phys_addr, unsigned long size)
+void __iomem * __ioremap(unsigned long phys_addr, unsigned long size, unsigned long flags)
 {
 	void __iomem *addr;
 	struct vm_struct *area;
@@ -36,8 +36,10 @@ void __iomem *ioremap(unsigned long phys_addr, unsigned long size)
 	unsigned long end = phys_addr + size - 1;
 	/* Support EISA addresses */
 	if ((phys_addr >= 0x00080000 && end < 0x000fffff) ||
-	    (phys_addr >= 0x00500000 && end < 0x03bfffff))
+	    (phys_addr >= 0x00500000 && end < 0x03bfffff)) {
 		phys_addr |= F_EXTEND(0xfc000000);
+		flags |= _PAGE_NO_CACHE;
+	}
 #endif
 
 	/* Don't allow wraparound or zero size */
@@ -63,7 +65,7 @@ void __iomem *ioremap(unsigned long phys_addr, unsigned long size)
 	}
 
 	pgprot = __pgprot(_PAGE_PRESENT | _PAGE_RW | _PAGE_DIRTY |
-			  _PAGE_ACCESSED | _PAGE_NO_CACHE);
+			  _PAGE_ACCESSED | flags);
 
 	/*
 	 * Mappings have to be page-aligned
@@ -82,19 +84,17 @@ void __iomem *ioremap(unsigned long phys_addr, unsigned long size)
 	addr = (void __iomem *) area->addr;
 	if (ioremap_page_range((unsigned long)addr, (unsigned long)addr + size,
 			       phys_addr, pgprot)) {
-		vunmap(addr);
+		vfree(addr);
 		return NULL;
 	}
 
 	return (void __iomem *) (offset + (char __iomem *)addr);
 }
-EXPORT_SYMBOL(ioremap);
+EXPORT_SYMBOL(__ioremap);
 
-void iounmap(const volatile void __iomem *io_addr)
+void iounmap(const volatile void __iomem *addr)
 {
-	unsigned long addr = (unsigned long)io_addr & PAGE_MASK;
-
-	if (is_vmalloc_addr((void *)addr))
-		vunmap((void *)addr);
+	if (addr > high_memory)
+		return vfree((void *) (PAGE_MASK & (unsigned long __force) addr));
 }
 EXPORT_SYMBOL(iounmap);

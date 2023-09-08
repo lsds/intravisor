@@ -1,7 +1,10 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright 2012 Michael Ellerman, IBM Corporation.
  * Copyright 2012 Benjamin Herrenschmidt, IBM Corporation.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License, version 2, as
+ * published by the Free Software Foundation.
  */
 
 #include <linux/kernel.h>
@@ -10,13 +13,13 @@
 #include <linux/gfp.h>
 #include <linux/anon_inodes.h>
 #include <linux/spinlock.h>
-#include <linux/debugfs.h>
-#include <linux/uaccess.h>
 
+#include <linux/uaccess.h>
 #include <asm/kvm_book3s.h>
 #include <asm/kvm_ppc.h>
 #include <asm/hvcall.h>
 #include <asm/xics.h>
+#include <asm/debugfs.h>
 #include <asm/time.h>
 
 #include <linux/seq_file.h>
@@ -307,7 +310,7 @@ static inline bool icp_try_update(struct kvmppc_icp *icp,
 	 */
 	if (new.out_ee) {
 		kvmppc_book3s_queue_irqprio(icp->vcpu,
-					    BOOK3S_INTERRUPT_EXTERNAL);
+					    BOOK3S_INTERRUPT_EXTERNAL_LEVEL);
 		if (!change_self)
 			kvmppc_fast_vcpu_kick(icp->vcpu);
 	}
@@ -462,7 +465,7 @@ static void icp_deliver_irq(struct kvmppc_xics *xics, struct kvmppc_icp *icp,
 	 * new guy. We cannot assume that the rejected interrupt is less
 	 * favored than the new one, and thus doesn't need to be delivered,
 	 * because by the time we exit icp_try_to_deliver() the target
-	 * processor may well have already consumed & completed it, and thus
+	 * processor may well have alrady consumed & completed it, and thus
 	 * the rejected interrupt might actually be already acceptable.
 	 */
 	if (icp_try_to_deliver(icp, new_irq, state->priority, &reject)) {
@@ -473,7 +476,7 @@ static void icp_deliver_irq(struct kvmppc_xics *xics, struct kvmppc_icp *icp,
 			arch_spin_unlock(&ics->lock);
 			local_irq_restore(flags);
 			new_irq = reject;
-			check_resend = false;
+			check_resend = 0;
 			goto again;
 		}
 	} else {
@@ -501,7 +504,7 @@ static void icp_deliver_irq(struct kvmppc_xics *xics, struct kvmppc_icp *icp,
 			state->resend = 0;
 			arch_spin_unlock(&ics->lock);
 			local_irq_restore(flags);
-			check_resend = false;
+			check_resend = 0;
 			goto again;
 		}
 	}
@@ -590,7 +593,8 @@ static noinline unsigned long kvmppc_h_xirr(struct kvm_vcpu *vcpu)
 	u32 xirr;
 
 	/* First, remove EE from the processor */
-	kvmppc_book3s_dequeue_irqprio(icp->vcpu, BOOK3S_INTERRUPT_EXTERNAL);
+	kvmppc_book3s_dequeue_irqprio(icp->vcpu,
+				      BOOK3S_INTERRUPT_EXTERNAL_LEVEL);
 
 	/*
 	 * ICP State: Accept_Interrupt
@@ -750,7 +754,8 @@ static noinline void kvmppc_h_cppr(struct kvm_vcpu *vcpu, unsigned long cppr)
 	 * We can remove EE from the current processor, the update
 	 * transaction will set it again if needed
 	 */
-	kvmppc_book3s_dequeue_irqprio(icp->vcpu, BOOK3S_INTERRUPT_EXTERNAL);
+	kvmppc_book3s_dequeue_irqprio(icp->vcpu,
+				      BOOK3S_INTERRUPT_EXTERNAL_LEVEL);
 
 	do {
 		old_state = new_state = READ_ONCE(icp->state);
@@ -827,7 +832,7 @@ static noinline int kvmppc_h_eoi(struct kvm_vcpu *vcpu, unsigned long xirr)
 	 *
 	 * Note: If EOI is incorrectly used by SW to lower the CPPR
 	 * value (ie more favored), we do not check for rejection of
-	 * a pending interrupt, this is a SW error and PAPR specifies
+	 * a pending interrupt, this is a SW error and PAPR sepcifies
 	 * that we don't have to deal with it.
 	 *
 	 * The sending of an EOI to the ICS is handled after the
@@ -942,8 +947,8 @@ static int xics_debug_show(struct seq_file *m, void *private)
 	struct kvmppc_xics *xics = m->private;
 	struct kvm *kvm = xics->kvm;
 	struct kvm_vcpu *vcpu;
-	int icsid;
-	unsigned long flags, i;
+	int icsid, i;
+	unsigned long flags;
 	unsigned long t_rm_kick_vcpu, t_rm_check_resend;
 	unsigned long t_rm_notify_eoi;
 	unsigned long t_reject, t_check_resend;
@@ -1012,14 +1017,33 @@ static int xics_debug_show(struct seq_file *m, void *private)
 	return 0;
 }
 
-DEFINE_SHOW_ATTRIBUTE(xics_debug);
+static int xics_debug_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, xics_debug_show, inode->i_private);
+}
+
+static const struct file_operations xics_debug_fops = {
+	.open = xics_debug_open,
+	.read = seq_read,
+	.llseek = seq_lseek,
+	.release = single_release,
+};
 
 static void xics_debugfs_init(struct kvmppc_xics *xics)
 {
-	xics->dentry = debugfs_create_file("xics", 0444, xics->kvm->debugfs_dentry,
+	char *name;
+
+	name = kasprintf(GFP_KERNEL, "kvm-xics-%p", xics);
+	if (!name) {
+		pr_err("%s: no memory for name\n", __func__);
+		return;
+	}
+
+	xics->dentry = debugfs_create_file(name, 0444, powerpc_debugfs_root,
 					   xics, &xics_debug_fops);
 
-	pr_debug("%s: created\n", __func__);
+	pr_debug("%s: created %s\n", __func__, name);
+	kfree(name);
 }
 
 static struct kvmppc_ics *kvmppc_xics_create_ics(struct kvm *kvm,
@@ -1143,7 +1167,8 @@ int kvmppc_xics_set_icp(struct kvm_vcpu *vcpu, u64 icpval)
 	 * Deassert the CPU interrupt request.
 	 * icp_try_update will reassert it if necessary.
 	 */
-	kvmppc_book3s_dequeue_irqprio(icp->vcpu, BOOK3S_INTERRUPT_EXTERNAL);
+	kvmppc_book3s_dequeue_irqprio(icp->vcpu,
+				      BOOK3S_INTERRUPT_EXTERNAL_LEVEL);
 
 	/*
 	 * Note that if we displace an interrupt from old_state.xisr,
@@ -1325,101 +1350,50 @@ static int xics_has_attr(struct kvm_device *dev, struct kvm_device_attr *attr)
 	return -ENXIO;
 }
 
-/*
- * Called when device fd is closed. kvm->lock is held.
- */
-static void kvmppc_xics_release(struct kvm_device *dev)
+static void kvmppc_xics_free(struct kvm_device *dev)
 {
 	struct kvmppc_xics *xics = dev->private;
-	unsigned long i;
+	int i;
 	struct kvm *kvm = xics->kvm;
-	struct kvm_vcpu *vcpu;
-
-	pr_devel("Releasing xics device\n");
-
-	/*
-	 * Since this is the device release function, we know that
-	 * userspace does not have any open fd referring to the
-	 * device.  Therefore there can not be any of the device
-	 * attribute set/get functions being executed concurrently,
-	 * and similarly, the connect_vcpu and set/clr_mapped
-	 * functions also cannot be being executed.
-	 */
 
 	debugfs_remove(xics->dentry);
-
-	/*
-	 * We should clean up the vCPU interrupt presenters first.
-	 */
-	kvm_for_each_vcpu(i, vcpu, kvm) {
-		/*
-		 * Take vcpu->mutex to ensure that no one_reg get/set ioctl
-		 * (i.e. kvmppc_xics_[gs]et_icp) can be done concurrently.
-		 * Holding the vcpu->mutex also means that execution is
-		 * excluded for the vcpu until the ICP was freed. When the vcpu
-		 * can execute again, vcpu->arch.icp and vcpu->arch.irq_type
-		 * have been cleared and the vcpu will not be going into the
-		 * XICS code anymore.
-		 */
-		mutex_lock(&vcpu->mutex);
-		kvmppc_xics_free_icp(vcpu);
-		mutex_unlock(&vcpu->mutex);
-	}
 
 	if (kvm)
 		kvm->arch.xics = NULL;
 
-	for (i = 0; i <= xics->max_icsid; i++) {
+	for (i = 0; i <= xics->max_icsid; i++)
 		kfree(xics->ics[i]);
-		xics->ics[i] = NULL;
-	}
-	/*
-	 * A reference of the kvmppc_xics pointer is now kept under
-	 * the xics_device pointer of the machine for reuse. It is
-	 * freed when the VM is destroyed for now until we fix all the
-	 * execution paths.
-	 */
+	kfree(xics);
 	kfree(dev);
-}
-
-static struct kvmppc_xics *kvmppc_xics_get_device(struct kvm *kvm)
-{
-	struct kvmppc_xics **kvm_xics_device = &kvm->arch.xics_device;
-	struct kvmppc_xics *xics = *kvm_xics_device;
-
-	if (!xics) {
-		xics = kzalloc(sizeof(*xics), GFP_KERNEL);
-		*kvm_xics_device = xics;
-	} else {
-		memset(xics, 0, sizeof(*xics));
-	}
-
-	return xics;
 }
 
 static int kvmppc_xics_create(struct kvm_device *dev, u32 type)
 {
 	struct kvmppc_xics *xics;
 	struct kvm *kvm = dev->kvm;
+	int ret = 0;
 
-	pr_devel("Creating xics for partition\n");
-
-	/* Already there ? */
-	if (kvm->arch.xics)
-		return -EEXIST;
-
-	xics = kvmppc_xics_get_device(kvm);
+	xics = kzalloc(sizeof(*xics), GFP_KERNEL);
 	if (!xics)
 		return -ENOMEM;
 
 	dev->private = xics;
 	xics->dev = dev;
 	xics->kvm = kvm;
-	kvm->arch.xics = xics;
+
+	/* Already there ? */
+	if (kvm->arch.xics)
+		ret = -EEXIST;
+	else
+		kvm->arch.xics = xics;
+
+	if (ret) {
+		kfree(xics);
+		return ret;
+	}
 
 #ifdef CONFIG_KVM_BOOK3S_HV_POSSIBLE
-	if (cpu_has_feature(CPU_FTR_ARCH_206) &&
-	    cpu_has_feature(CPU_FTR_HVMODE)) {
+	if (cpu_has_feature(CPU_FTR_ARCH_206)) {
 		/* Enable real mode support */
 		xics->real_mode = ENABLE_REALMODE;
 		xics->real_mode_dbg = DEBUG_REALMODE;
@@ -1431,7 +1405,7 @@ static int kvmppc_xics_create(struct kvm_device *dev, u32 type)
 
 static void kvmppc_xics_init(struct kvm_device *dev)
 {
-	struct kvmppc_xics *xics = dev->private;
+	struct kvmppc_xics *xics = (struct kvmppc_xics *)dev->private;
 
 	xics_debugfs_init(xics);
 }
@@ -1440,7 +1414,7 @@ struct kvm_device_ops kvm_xics_ops = {
 	.name = "kvm-xics",
 	.create = kvmppc_xics_create,
 	.init = kvmppc_xics_init,
-	.release = kvmppc_xics_release,
+	.destroy = kvmppc_xics_free,
 	.set_attr = xics_set_attr,
 	.get_attr = xics_get_attr,
 	.has_attr = xics_has_attr,
@@ -1456,7 +1430,7 @@ int kvmppc_xics_connect_vcpu(struct kvm_device *dev, struct kvm_vcpu *vcpu,
 		return -EPERM;
 	if (xics->kvm != vcpu->kvm)
 		return -EPERM;
-	if (vcpu->arch.irq_type != KVMPPC_IRQ_DEFAULT)
+	if (vcpu->arch.irq_type)
 		return -EBUSY;
 
 	r = kvmppc_xics_create_icp(vcpu, xcpu);

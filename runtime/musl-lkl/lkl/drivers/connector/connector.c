@@ -1,12 +1,24 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  *	connector.c
  *
  * 2004+ Copyright (c) Evgeniy Polyakov <zbr@ioremap.net>
  * All rights reserved.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  */
 
-#include <linux/compiler.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/list.h>
@@ -193,16 +205,21 @@ static void cn_rx_skb(struct sk_buff *skb)
  *
  * May sleep.
  */
-int cn_add_callback(const struct cb_id *id, const char *name,
+int cn_add_callback(struct cb_id *id, const char *name,
 		    void (*callback)(struct cn_msg *,
 				     struct netlink_skb_parms *))
 {
+	int err;
 	struct cn_dev *dev = &cdev;
 
 	if (!cn_already_initialized)
 		return -EAGAIN;
 
-	return cn_queue_add_callback(dev->cbdev, name, id, callback);
+	err = cn_queue_add_callback(dev->cbdev, name, id, callback);
+	if (err)
+		return err;
+
+	return 0;
 }
 EXPORT_SYMBOL_GPL(cn_add_callback);
 
@@ -214,7 +231,7 @@ EXPORT_SYMBOL_GPL(cn_add_callback);
  *
  * May sleep while waiting for reference counter to become zero.
  */
-void cn_del_callback(const struct cb_id *id)
+void cn_del_callback(struct cb_id *id)
 {
 	struct cn_dev *dev = &cdev;
 
@@ -222,7 +239,7 @@ void cn_del_callback(const struct cb_id *id)
 }
 EXPORT_SYMBOL_GPL(cn_del_callback);
 
-static int __maybe_unused cn_proc_show(struct seq_file *m, void *v)
+static int cn_proc_show(struct seq_file *m, void *v)
 {
 	struct cn_queue_dev *dev = cdev.cbdev;
 	struct cn_callback_entry *cbq;
@@ -243,12 +260,29 @@ static int __maybe_unused cn_proc_show(struct seq_file *m, void *v)
 	return 0;
 }
 
+static int cn_proc_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, cn_proc_show, NULL);
+}
+
+static const struct file_operations cn_file_ops = {
+	.owner   = THIS_MODULE,
+	.open    = cn_proc_open,
+	.read    = seq_read,
+	.llseek  = seq_lseek,
+	.release = single_release
+};
+
+static struct cn_dev cdev = {
+	.input   = cn_rx_skb,
+};
+
 static int cn_init(void)
 {
 	struct cn_dev *dev = &cdev;
 	struct netlink_kernel_cfg cfg = {
 		.groups	= CN_NETLINK_USERS + 0xf,
-		.input	= cn_rx_skb,
+		.input	= dev->input,
 	};
 
 	dev->nls = netlink_kernel_create(&init_net, NETLINK_CONNECTOR, &cfg);
@@ -263,7 +297,7 @@ static int cn_init(void)
 
 	cn_already_initialized = 1;
 
-	proc_create_single("connector", S_IRUGO, init_net.proc_net, cn_proc_show);
+	proc_create("connector", S_IRUGO, init_net.proc_net, &cn_file_ops);
 
 	return 0;
 }

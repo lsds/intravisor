@@ -1,9 +1,13 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * leds-max8997.c - LED class driver for MAX8997 LEDs.
  *
  * Copyright (C) 2011 Samsung Electronics
  * Donggeun Kim <dg77.kim@samsung.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ *
  */
 
 #include <linux/module.h>
@@ -160,8 +164,8 @@ static void max8997_led_brightness_set(struct led_classdev *led_cdev,
 	}
 }
 
-static ssize_t mode_show(struct device *dev,
-			 struct device_attribute *attr, char *buf)
+static ssize_t max8997_led_show_mode(struct device *dev,
+				struct device_attribute *attr, char *buf)
 {
 	struct led_classdev *led_cdev = dev_get_drvdata(dev);
 	struct max8997_led *led =
@@ -193,9 +197,9 @@ static ssize_t mode_show(struct device *dev,
 	return ret;
 }
 
-static ssize_t mode_store(struct device *dev,
-			  struct device_attribute *attr,
-			  const char *buf, size_t size)
+static ssize_t max8997_led_store_mode(struct device *dev,
+				struct device_attribute *attr,
+				const char *buf, size_t size)
 {
 	struct led_classdev *led_cdev = dev_get_drvdata(dev);
 	struct max8997_led *led =
@@ -222,7 +226,7 @@ static ssize_t mode_store(struct device *dev,
 	return size;
 }
 
-static DEVICE_ATTR_RW(mode);
+static DEVICE_ATTR(mode, 0644, max8997_led_show_mode, max8997_led_store_mode);
 
 static struct attribute *max8997_attrs[] = {
 	&dev_attr_mode.attr,
@@ -264,7 +268,7 @@ static int max8997_led_probe(struct platform_device *pdev)
 		mode = pdata->led_pdata->mode[led->id];
 		brightness = pdata->led_pdata->brightness[led->id];
 
-		max8997_led_set_mode(led, mode);
+		max8997_led_set_mode(led, pdata->led_pdata->mode[led->id]);
 
 		if (brightness > led->cdev.max_brightness)
 			brightness = led->cdev.max_brightness;

@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
  * OpenRISC vmlinux.lds.S
  *
@@ -9,6 +8,11 @@
  * Modifications for the OpenRISC architecture:
  * Copyright (C) 2003 Matjaz Breskvar <phoenix@bsemi.com>
  * Copyright (C) 2010-2011 Jonas Bonn <jonas@southpole.se>
+ *
+ *      This program is free software; you can redistribute it and/or
+ *      modify it under the terms of the GNU General Public License
+ *      as published by the Free Software Foundation; either version
+ *      2 of the License, or (at your option) any later version.
  *
  * ld script for OpenRISC architecture
  */
@@ -67,18 +71,19 @@ SECTIONS
 
 	_sdata = .;
 
-	/* Page alignment required for RO_DATA */
-	RO_DATA(PAGE_SIZE)
+	/* Page alignment required for RO_DATA_SECTION */
+	RO_DATA_SECTION(PAGE_SIZE)
 	_e_kernel_ro = .;
 
 	/* Whatever comes after _e_kernel_ro had better be page-aligend, too */
 
 	/* 32 here is cacheline size... recheck this */
-	RW_DATA(32, PAGE_SIZE, PAGE_SIZE)
+	RW_DATA_SECTION(32, PAGE_SIZE, PAGE_SIZE)
 
         _edata  =  .;
 
 	EXCEPTION_TABLE(4)
+	NOTES
 
 	/* Init code and data */
 	. = ALIGN(PAGE_SIZE);
@@ -96,6 +101,18 @@ SECTIONS
 
         __init_end = .;
 
+	. = ALIGN(PAGE_SIZE);
+	.initrd			: AT(ADDR(.initrd) - LOAD_OFFSET)
+	{
+		__initrd_start = .;
+		*(.initrd)
+		__initrd_end = .;
+		FILL (0);
+                . = ALIGN (PAGE_SIZE);
+	}
+
+        __vmlinux_end = .;            /* last address of the physical file */
+
 	BSS_SECTION(0, 0, 0x20)
 
         _end = .;
@@ -103,7 +120,6 @@ SECTIONS
 	/* Throw in the debugging sections */
 	STABS_DEBUG
 	DWARF_DEBUG
-	ELF_DETAILS
 
         /* Sections to be discarded -- must be last */
 	DISCARDS

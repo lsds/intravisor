@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
  * STK1160 driver
  *
@@ -8,12 +7,23 @@
  * Based on Easycap driver by R.M. Thomas
  *	Copyright (C) 2010 R.M. Thomas
  *	<rmthomas--a.t--sciolus.org>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
  */
 
 /* GPIO Control */
 #define STK1160_GCTRL			0x000
 
-/* Remote Wakeup Control */
+/* Remote Wakup Control */
 #define STK1160_RMCTL			0x00c
 
 /* Power-on Strapping Data */
@@ -94,7 +104,7 @@
 #define STK1160_SBUSR_RA		0x208
 #define STK1160_SBUSR_RD		0x209
 
-/* Alternate Serial Interface Control */
+/* Alternate Serial Inteface Control */
 #define STK1160_ASIC			0x2fc
 
 /* PLL Select Options */

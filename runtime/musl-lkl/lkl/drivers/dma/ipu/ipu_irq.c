@@ -1,7 +1,10 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (C) 2008
  * Guennadi Liakhovetski, DENX Software Engineering, <lg@denx.de>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 
 #include <linux/init.h>
@@ -230,7 +233,7 @@ out:
 }
 
 /**
- * ipu_irq_unmap() - unmap an IPU interrupt source
+ * ipu_irq_map() - map an IPU interrupt source to an IRQ number
  * @source:	interrupt source bit position (see ipu_irq_map())
  * @return:	0 or negative error code
  */

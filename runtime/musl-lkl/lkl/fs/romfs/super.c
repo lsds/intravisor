@@ -18,7 +18,7 @@
  *					Changed for 2.1.19 modules
  *	Jan 1997			Initial release
  *	Jun 1997			2.1.43+ changes
- *					Proper page locking in read_folio
+ *					Proper page locking in readpage
  *					Changed to work with 2.1.45+ fs
  *	Jul 1997			Fixed follow_link
  *			2.1.47
@@ -41,7 +41,7 @@
  *					  dentries in lookup
  *					clean up page flags setting
  *					  (error, uptodate, locking) in
- *					  in read_folio
+ *					  in readpage
  *					use init_special_inode for
  *					  fifos/sockets (and streamline) in
  *					  read_inode, fix _ops table order
@@ -65,7 +65,7 @@
 #include <linux/slab.h>
 #include <linux/init.h>
 #include <linux/blkdev.h>
-#include <linux/fs_context.h>
+#include <linux/parser.h>
 #include <linux/mount.h>
 #include <linux/namei.h>
 #include <linux/statfs.h>
@@ -99,9 +99,8 @@ static struct inode *romfs_iget(struct super_block *sb, unsigned long pos);
 /*
  * read a page worth of data from the image
  */
-static int romfs_read_folio(struct file *file, struct folio *folio)
+static int romfs_readpage(struct file *file, struct page *page)
 {
-	struct page *page = &folio->page;
 	struct inode *inode = page->mapping->host;
 	loff_t offset, size;
 	unsigned long fillsize, pos;
@@ -143,7 +142,7 @@ static int romfs_read_folio(struct file *file, struct folio *folio)
 }
 
 static const struct address_space_operations romfs_aops = {
-	.read_folio	= romfs_read_folio
+	.readpage	= romfs_readpage
 };
 
 /*
@@ -214,7 +213,7 @@ static struct dentry *romfs_lookup(struct inode *dir, struct dentry *dentry,
 				   unsigned int flags)
 {
 	unsigned long offset, maxoff;
-	struct inode *inode = NULL;
+	struct inode *inode;
 	struct romfs_inode ri;
 	const char *name;		/* got from dentry */
 	int len, ret;
@@ -234,7 +233,7 @@ static struct dentry *romfs_lookup(struct inode *dir, struct dentry *dentry,
 
 	for (;;) {
 		if (!offset || offset >= maxoff)
-			break;
+			goto out0;
 
 		ret = romfs_dev_read(dir->i_sb, offset, &ri, sizeof(ri));
 		if (ret < 0)
@@ -245,19 +244,37 @@ static struct dentry *romfs_lookup(struct inode *dir, struct dentry *dentry,
 				       len);
 		if (ret < 0)
 			goto error;
-		if (ret == 1) {
-			/* Hard link handling */
-			if ((be32_to_cpu(ri.next) & ROMFH_TYPE) == ROMFH_HRD)
-				offset = be32_to_cpu(ri.spec) & ROMFH_MASK;
-			inode = romfs_iget(dir->i_sb, offset);
+		if (ret == 1)
 			break;
-		}
 
 		/* next entry */
 		offset = be32_to_cpu(ri.next) & ROMFH_MASK;
 	}
 
-	return d_splice_alias(inode, dentry);
+	/* Hard link handling */
+	if ((be32_to_cpu(ri.next) & ROMFH_TYPE) == ROMFH_HRD)
+		offset = be32_to_cpu(ri.spec) & ROMFH_MASK;
+
+	inode = romfs_iget(dir->i_sb, offset);
+	if (IS_ERR(inode)) {
+		ret = PTR_ERR(inode);
+		goto error;
+	}
+	goto outi;
+
+	/*
+	 * it's a bit funky, _lookup needs to return an error code
+	 * (negative) or a NULL, both as a dentry.  ENOENT should not
+	 * be returned, instead we need to create a negative dentry by
+	 * d_add(dentry, NULL); and return 0 as no error.
+	 * (Although as I see, it only matters on writable file
+	 * systems).
+	 */
+out0:
+	inode = NULL;
+outi:
+	d_add(dentry, inode);
+	ret = 0;
 error:
 	return ERR_PTR(ret);
 }
@@ -357,7 +374,6 @@ static struct inode *romfs_iget(struct super_block *sb, unsigned long pos)
 	}
 
 	i->i_mode = mode;
-	i->i_blocks = (i->i_size + 511) >> 9;
 
 	unlock_new_inode(i);
 	return i;
@@ -376,16 +392,23 @@ static struct inode *romfs_alloc_inode(struct super_block *sb)
 {
 	struct romfs_inode_info *inode;
 
-	inode = alloc_inode_sb(sb, romfs_inode_cachep, GFP_KERNEL);
+	inode = kmem_cache_alloc(romfs_inode_cachep, GFP_KERNEL);
 	return inode ? &inode->vfs_inode : NULL;
 }
 
 /*
  * return a spent inode to the slab cache
  */
-static void romfs_free_inode(struct inode *inode)
+static void romfs_i_callback(struct rcu_head *head)
 {
+	struct inode *inode = container_of(head, struct inode, i_rcu);
+
 	kmem_cache_free(romfs_inode_cachep, ROMFS_I(inode));
+}
+
+static void romfs_destroy_inode(struct inode *inode)
+{
+	call_rcu(&inode->i_rcu, romfs_i_callback);
 }
 
 /*
@@ -417,24 +440,26 @@ static int romfs_statfs(struct dentry *dentry, struct kstatfs *buf)
 	buf->f_bfree = buf->f_bavail = buf->f_ffree;
 	buf->f_blocks =
 		(romfs_maxsize(dentry->d_sb) + ROMBSIZE - 1) >> ROMBSBITS;
-	buf->f_fsid = u64_to_fsid(id);
+	buf->f_fsid.val[0] = (u32)id;
+	buf->f_fsid.val[1] = (u32)(id >> 32);
 	return 0;
 }
 
 /*
  * remounting must involve read-only
  */
-static int romfs_reconfigure(struct fs_context *fc)
+static int romfs_remount(struct super_block *sb, int *flags, char *data)
 {
-	sync_filesystem(fc->root->d_sb);
-	fc->sb_flags |= SB_RDONLY;
+	sync_filesystem(sb);
+	*flags |= SB_RDONLY;
 	return 0;
 }
 
 static const struct super_operations romfs_super_ops = {
 	.alloc_inode	= romfs_alloc_inode,
-	.free_inode	= romfs_free_inode,
+	.destroy_inode	= romfs_destroy_inode,
 	.statfs		= romfs_statfs,
+	.remount_fs	= romfs_remount,
 };
 
 /*
@@ -457,7 +482,7 @@ static __u32 romfs_checksum(const void *data, int size)
 /*
  * fill in the superblock
  */
-static int romfs_fill_super(struct super_block *sb, struct fs_context *fc)
+static int romfs_fill_super(struct super_block *sb, void *data, int silent)
 {
 	struct romfs_super_block *rsb;
 	struct inode *root;
@@ -478,8 +503,6 @@ static int romfs_fill_super(struct super_block *sb, struct fs_context *fc)
 	sb->s_maxbytes = 0xFFFFFFFF;
 	sb->s_magic = ROMFS_MAGIC;
 	sb->s_flags |= SB_RDONLY | SB_NOATIME;
-	sb->s_time_min = 0;
-	sb->s_time_max = 0;
 	sb->s_op = &romfs_super_ops;
 
 #ifdef CONFIG_ROMFS_ON_MTD
@@ -506,8 +529,8 @@ static int romfs_fill_super(struct super_block *sb, struct fs_context *fc)
 
 	if (rsb->word0 != ROMSB_WORD0 || rsb->word1 != ROMSB_WORD1 ||
 	    img_size < ROMFH_SIZE) {
-		if (!(fc->sb_flags & SB_SILENT))
-			errorf(fc, "VFS: Can't find a romfs filesystem on dev %s.\n",
+		if (!silent)
+			pr_warn("VFS: Can't find a romfs filesystem on dev %s.\n",
 			       sb->s_id);
 		goto error_rsb_inval;
 	}
@@ -520,7 +543,7 @@ static int romfs_fill_super(struct super_block *sb, struct fs_context *fc)
 	storage = sb->s_mtd ? "MTD" : "the block layer";
 
 	len = strnlen(rsb->name, ROMFS_MAXFN);
-	if (!(fc->sb_flags & SB_SILENT))
+	if (!silent)
 		pr_notice("Mounting image '%*.*s' through %s\n",
 			  (unsigned) len, (unsigned) len, rsb->name, storage);
 
@@ -550,32 +573,21 @@ error_rsb:
 /*
  * get a superblock for mounting
  */
-static int romfs_get_tree(struct fs_context *fc)
+static struct dentry *romfs_mount(struct file_system_type *fs_type,
+			int flags, const char *dev_name,
+			void *data)
 {
-	int ret = -EINVAL;
+	struct dentry *ret = ERR_PTR(-EINVAL);
 
 #ifdef CONFIG_ROMFS_ON_MTD
-	ret = get_tree_mtd(fc, romfs_fill_super);
+	ret = mount_mtd(fs_type, flags, dev_name, data, romfs_fill_super);
 #endif
 #ifdef CONFIG_ROMFS_ON_BLOCK
-	if (ret == -EINVAL)
-		ret = get_tree_bdev(fc, romfs_fill_super);
+	if (ret == ERR_PTR(-EINVAL))
+		ret = mount_bdev(fs_type, flags, dev_name, data,
+				  romfs_fill_super);
 #endif
 	return ret;
-}
-
-static const struct fs_context_operations romfs_context_ops = {
-	.get_tree	= romfs_get_tree,
-	.reconfigure	= romfs_reconfigure,
-};
-
-/*
- * Set up the filesystem mount context.
- */
-static int romfs_init_fs_context(struct fs_context *fc)
-{
-	fc->ops = &romfs_context_ops;
-	return 0;
 }
 
 /*
@@ -600,7 +612,7 @@ static void romfs_kill_sb(struct super_block *sb)
 static struct file_system_type romfs_fs_type = {
 	.owner		= THIS_MODULE,
 	.name		= "romfs",
-	.init_fs_context = romfs_init_fs_context,
+	.mount		= romfs_mount,
 	.kill_sb	= romfs_kill_sb,
 	.fs_flags	= FS_REQUIRES_DEV,
 };

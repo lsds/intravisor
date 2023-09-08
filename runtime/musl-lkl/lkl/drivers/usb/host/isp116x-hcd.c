@@ -726,7 +726,7 @@ static int isp116x_urb_enqueue(struct usb_hcd *hcd,
 		INIT_LIST_HEAD(&ep->schedule);
 		ep->udev = udev;
 		ep->epnum = epnum;
-		ep->maxpacket = usb_maxpacket(udev, urb->pipe);
+		ep->maxpacket = usb_maxpacket(udev, urb->pipe, is_out);
 		usb_settoggle(udev, epnum, is_out, 0);
 
 		if (type == PIPE_CONTROL) {
@@ -757,7 +757,8 @@ static int isp116x_urb_enqueue(struct usb_hcd *hcd,
 			ep->load = usb_calc_bus_time(udev->speed,
 						     !is_out,
 						     (type == PIPE_ISOCHRONOUS),
-						     usb_maxpacket(udev, pipe)) /
+						     usb_maxpacket(udev, pipe,
+								   is_out)) /
 			    1000;
 		}
 		hep->hcpriv = ep;
@@ -1018,7 +1019,7 @@ static int isp116x_hub_control(struct usb_hcd *hcd,
 			spin_lock_irqsave(&isp116x->lock, flags);
 			isp116x_write_reg32(isp116x, HCRHSTATUS, RH_HS_OCIC);
 			spin_unlock_irqrestore(&isp116x->lock, flags);
-			fallthrough;
+			/* fall through */
 		case C_HUB_LOCAL_POWER:
 			DBG("C_HUB_LOCAL_POWER\n");
 			break;
@@ -1197,21 +1198,25 @@ static int isp116x_debug_show(struct seq_file *s, void *unused)
 }
 DEFINE_SHOW_ATTRIBUTE(isp116x_debug);
 
-static void create_debug_file(struct isp116x *isp116x)
+static int create_debug_file(struct isp116x *isp116x)
 {
-	debugfs_create_file(hcd_name, S_IRUGO, usb_debug_root, isp116x,
-			    &isp116x_debug_fops);
+	isp116x->dentry = debugfs_create_file(hcd_name,
+					      S_IRUGO, NULL, isp116x,
+					      &isp116x_debug_fops);
+	if (!isp116x->dentry)
+		return -ENOMEM;
+	return 0;
 }
 
 static void remove_debug_file(struct isp116x *isp116x)
 {
-	debugfs_remove(debugfs_lookup(hcd_name, usb_debug_root));
+	debugfs_remove(isp116x->dentry);
 }
 
 #else
 
-static inline void create_debug_file(struct isp116x *isp116x) { }
-static inline void remove_debug_file(struct isp116x *isp116x) { }
+#define	create_debug_file(d)	0
+#define	remove_debug_file(d)	do{}while(0)
 
 #endif				/* CONFIG_DEBUG_FS */
 
@@ -1419,10 +1424,10 @@ static int isp116x_bus_suspend(struct usb_hcd *hcd)
 		isp116x_write_reg32(isp116x, HCCONTROL,
 				    (val & ~HCCONTROL_HCFS) |
 				    HCCONTROL_USB_RESET);
-		fallthrough;
+		/* fall through */
 	case HCCONTROL_USB_RESET:
 		ret = -EBUSY;
-		fallthrough;
+		/* fall through */
 	default:		/* HCCONTROL_USB_SUSPEND */
 		spin_unlock_irqrestore(&isp116x->lock, flags);
 		break;
@@ -1445,7 +1450,6 @@ static int isp116x_bus_resume(struct usb_hcd *hcd)
 		val &= ~HCCONTROL_HCFS;
 		val |= HCCONTROL_USB_RESUME;
 		isp116x_write_reg32(isp116x, HCCONTROL, val);
-		break;
 	case HCCONTROL_USB_RESUME:
 		break;
 	case HCCONTROL_USB_OPER:
@@ -1540,12 +1544,10 @@ static int isp116x_remove(struct platform_device *pdev)
 
 	iounmap(isp116x->data_reg);
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 1);
-	if (res)
-		release_mem_region(res->start, 2);
+	release_mem_region(res->start, 2);
 	iounmap(isp116x->addr_reg);
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
-	if (res)
-		release_mem_region(res->start, 2);
+	release_mem_region(res->start, 2);
 
 	usb_put_hcd(hcd);
 	return 0;
@@ -1581,6 +1583,12 @@ static int isp116x_probe(struct platform_device *pdev)
 
 	irq = ires->start;
 	irqflags = ires->flags & IRQF_TRIGGER_MASK;
+
+	if (pdev->dev.dma_mask) {
+		DBG("DMA not supported\n");
+		ret = -EINVAL;
+		goto err1;
+	}
 
 	if (!request_mem_region(addr->start, 2, hcd_name)) {
 		ret = -EBUSY;
@@ -1635,10 +1643,16 @@ static int isp116x_probe(struct platform_device *pdev)
 
 	device_wakeup_enable(hcd->self.controller);
 
-	create_debug_file(isp116x);
+	ret = create_debug_file(isp116x);
+	if (ret) {
+		ERR("Couldn't create debugfs entry\n");
+		goto err7;
+	}
 
 	return 0;
 
+      err7:
+	usb_remove_hcd(hcd);
       err6:
 	usb_put_hcd(hcd);
       err5:

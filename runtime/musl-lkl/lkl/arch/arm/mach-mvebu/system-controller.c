@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * System controller support for Armada 370, 375 and XP platforms.
  *
@@ -7,6 +6,10 @@
  * Lior Amsalem <alior@marvell.com>
  * Gregory CLEMENT <gregory.clement@free-electrons.com>
  * Thomas Petazzoni <thomas.petazzoni@free-electrons.com>
+ *
+ * This file is licensed under the terms of the GNU General Public
+ * License version 2.  This program is licensed "as is" without any
+ * warranty of any kind, whether express or implied.
  *
  * The Armada 370, 375 and Armada XP SoCs have a range of
  * miscellaneous registers, that do not belong to a particular device,

@@ -20,7 +20,7 @@
 
 	aliases {
 		serial0 = &serial0;
-		serial1 = &serialsc;
+		serial1 = &serial1;
 		serial2 = &serial2;
 		serial3 = &serial3;
 		i2c0 = &i2c0;
@@ -36,11 +36,7 @@
 };
 
 &ethsc {
-	interrupts = <1 IRQ_TYPE_LEVEL_LOW>;
-};
-
-&serialsc {
-	interrupts = <1 IRQ_TYPE_LEVEL_LOW>;
+	interrupts = <1 8>;
 };
 
 &serial0 {
@@ -56,7 +52,7 @@
 };
 
 &gpio {
-	xirq1-hog {
+	xirq1 {
 		gpio-hog;
 		gpios = <UNIPHIER_GPIO_IRQ(1) 0>;
 		input;
@@ -64,10 +60,6 @@
 };
 
 &i2c0 {
-	status = "okay";
-};
-
-&sd {
 	status = "okay";
 };
 
@@ -81,8 +73,4 @@
 
 &nand {
 	status = "okay";
-
-	nand@0 {
-		reg = <0>;
-	};
 };

@@ -27,37 +27,41 @@
 
 unsigned int udf_get_last_session(struct super_block *sb)
 {
-	struct cdrom_device_info *cdi = disk_to_cdi(sb->s_bdev->bd_disk);
 	struct cdrom_multisession ms_info;
+	unsigned int vol_desc_start;
+	struct block_device *bdev = sb->s_bdev;
+	int i;
 
-	if (!cdi) {
-		udf_debug("CDROMMULTISESSION not supported.\n");
-		return 0;
-	}
-
+	vol_desc_start = 0;
 	ms_info.addr_format = CDROM_LBA;
-	if (cdrom_multisession(cdi, &ms_info) == 0) {
+	i = ioctl_by_bdev(bdev, CDROMMULTISESSION, (unsigned long)&ms_info);
+
+	if (i == 0) {
 		udf_debug("XA disk: %s, vol_desc_start=%d\n",
 			  ms_info.xa_flag ? "yes" : "no", ms_info.addr.lba);
 		if (ms_info.xa_flag) /* necessary for a valid ms_info.addr */
-			return ms_info.addr.lba;
+			vol_desc_start = ms_info.addr.lba;
+	} else {
+		udf_debug("CDROMMULTISESSION not supported: rc=%d\n", i);
 	}
-	return 0;
+	return vol_desc_start;
 }
 
 unsigned long udf_get_last_block(struct super_block *sb)
 {
-	struct cdrom_device_info *cdi = disk_to_cdi(sb->s_bdev->bd_disk);
+	struct block_device *bdev = sb->s_bdev;
 	unsigned long lblock = 0;
 
 	/*
-	 * The cdrom layer call failed or returned obviously bogus value?
+	 * ioctl failed or returned obviously bogus value?
 	 * Try using the device size...
 	 */
-	if (!cdi || cdrom_get_last_written(cdi, &lblock) || lblock == 0)
-		lblock = sb_bdev_nr_blocks(sb);
+	if (ioctl_by_bdev(bdev, CDROM_LAST_WRITTEN, (unsigned long) &lblock) ||
+	    lblock == 0)
+		lblock = i_size_read(bdev->bd_inode) >> sb->s_blocksize_bits;
 
 	if (lblock)
 		return lblock - 1;
-	return 0;
+	else
+		return 0;
 }

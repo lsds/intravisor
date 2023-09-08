@@ -1,5 +1,5 @@
-/* SPDX-License-Identifier: (GPL-2.0 OR MPL-1.1) */
-/*
+// SPDX-License-Identifier: (GPL-2.0 OR MPL-1.1)
+/* p80211hdr.h
  *
  * Macros, types, and functions for handling 802.11 MAC headers
  *
@@ -148,37 +148,41 @@
 
 /* Generic 802.11 Header types */
 
-struct p80211_hdr {
-	__le16	frame_control;
-	u16	duration_id;
-	u8	address1[ETH_ALEN];
-	u8	address2[ETH_ALEN];
-	u8	address3[ETH_ALEN];
-	u16	sequence_control;
-	u8	address4[ETH_ALEN];
+struct p80211_hdr_a3 {
+	__le16 fc;
+	u16 dur;
+	u8 a1[ETH_ALEN];
+	u8 a2[ETH_ALEN];
+	u8 a3[ETH_ALEN];
+	u16 seq;
+} __packed;
+
+struct p80211_hdr_a4 {
+	u16 fc;
+	u16 dur;
+	u8 a1[ETH_ALEN];
+	u8 a2[ETH_ALEN];
+	u8 a3[ETH_ALEN];
+	u16 seq;
+	u8 a4[ETH_ALEN];
+} __packed;
+
+union p80211_hdr {
+	struct p80211_hdr_a3 a3;
+	struct p80211_hdr_a4 a4;
 } __packed;
 
 /* Frame and header length macros */
 
-static inline u16 wlan_ctl_framelen(u16 fstype)
-{
-	switch (fstype)	{
-	case WLAN_FSTYPE_BLOCKACKREQ:
-		return 24;
-	case WLAN_FSTYPE_BLOCKACK:
-		return 152;
-	case WLAN_FSTYPE_PSPOLL:
-	case WLAN_FSTYPE_RTS:
-	case WLAN_FSTYPE_CFEND:
-	case WLAN_FSTYPE_CFENDCFACK:
-		return 20;
-	case WLAN_FSTYPE_CTS:
-	case WLAN_FSTYPE_ACK:
-		return 14;
-	default:
-		return 4;
-	}
-}
+#define WLAN_CTL_FRAMELEN(fstype) (\
+	(fstype) == WLAN_FSTYPE_BLOCKACKREQ	? 24 : \
+	(fstype) == WLAN_FSTYPE_BLOCKACK	? 152 : \
+	(fstype) == WLAN_FSTYPE_PSPOLL		? 20 : \
+	(fstype) == WLAN_FSTYPE_RTS		? 20 : \
+	(fstype) == WLAN_FSTYPE_CTS		? 14 : \
+	(fstype) == WLAN_FSTYPE_ACK		? 14 : \
+	(fstype) == WLAN_FSTYPE_CFEND		? 20 : \
+	(fstype) == WLAN_FSTYPE_CFENDCFACK	? 20 : 4)
 
 #define WLAN_FCS_LEN			4
 
@@ -197,7 +201,7 @@ static inline u16 p80211_headerlen(u16 fctl)
 			hdrlen += ETH_ALEN;
 		break;
 	case WLAN_FTYPE_CTL:
-		hdrlen = wlan_ctl_framelen(WLAN_GET_FC_FSTYPE(fctl)) -
+		hdrlen = WLAN_CTL_FRAMELEN(WLAN_GET_FC_FSTYPE(fctl)) -
 		    WLAN_FCS_LEN;
 		break;
 	default:

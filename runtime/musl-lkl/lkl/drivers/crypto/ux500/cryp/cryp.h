@@ -1,11 +1,11 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
-/*
+/**
  * Copyright (C) ST-Ericsson SA 2010
  * Author: Shujuan Chen <shujuan.chen@stericsson.com> for ST-Ericsson.
  * Author: Jonas Linde <jonas.linde@stericsson.com> for ST-Ericsson.
  * Author: Joakim Bech <joakim.xx.bech@stericsson.com> for ST-Ericsson.
  * Author: Berne Hebark <berne.herbark@stericsson.com> for ST-Ericsson.
  * Author: Niklas Hernaeus <niklas.hernaeus@stericsson.com> for ST-Ericsson.
+ * License terms: GNU General Public License (GPL) version 2
  */
 
 #ifndef _CRYP_H_
@@ -224,7 +224,6 @@ struct cryp_dma {
  * @phybase: Pointer to physical memory location of the cryp device.
  * @dev: Pointer to the devices dev structure.
  * @clk: Pointer to the device's clock control.
- * @irq: IRQ number
  * @pwr_regulator: Pointer to the device's power control.
  * @power_status: Current status of the power.
  * @ctx_lock: Lock for current_ctx.
@@ -240,15 +239,14 @@ struct cryp_device_data {
 	phys_addr_t phybase;
 	struct device *dev;
 	struct clk *clk;
-	int irq;
 	struct regulator *pwr_regulator;
 	int power_status;
-	spinlock_t ctx_lock;
+	struct spinlock ctx_lock;
 	struct cryp_ctx *current_ctx;
 	struct klist_node list_node;
 	struct cryp_dma dma;
 	bool power_state;
-	spinlock_t power_state_spinlock;
+	struct spinlock power_state_spinlock;
 	bool restore_dev_ctx;
 };
 

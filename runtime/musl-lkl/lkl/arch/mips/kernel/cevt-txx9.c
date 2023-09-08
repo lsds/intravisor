@@ -174,6 +174,13 @@ static irqreturn_t txx9tmr_interrupt(int irq, void *dev_id)
 	return IRQ_HANDLED;
 }
 
+static struct irqaction txx9tmr_irq = {
+	.handler	= txx9tmr_interrupt,
+	.flags		= IRQF_PERCPU | IRQF_TIMER,
+	.name		= "txx9tmr",
+	.dev_id		= &txx9_clock_event_device,
+};
+
 void __init txx9_clockevent_init(unsigned long baseaddr, int irq,
 				 unsigned int imbusclk)
 {
@@ -193,11 +200,9 @@ void __init txx9_clockevent_init(unsigned long baseaddr, int irq,
 	cd->min_delta_ns = clockevent_delta2ns(0xf, cd);
 	cd->min_delta_ticks = 0xf;
 	cd->irq = irq;
-	cd->cpumask = cpumask_of(0);
+	cd->cpumask = cpumask_of(0),
 	clockevents_register_device(cd);
-	if (request_irq(irq, txx9tmr_interrupt, IRQF_PERCPU | IRQF_TIMER,
-			"txx9tmr", &txx9_clock_event_device))
-		pr_err("Failed to request irq %d (txx9tmr)\n", irq);
+	setup_irq(irq, &txx9tmr_irq);
 	printk(KERN_INFO "TXx9: clockevent device at 0x%lx, irq %d\n",
 	       baseaddr, irq);
 }

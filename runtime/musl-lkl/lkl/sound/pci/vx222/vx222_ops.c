@@ -1,10 +1,23 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Driver for Digigram VX222 V2/Mic soundcards
  *
  * VX222-specific low-level routines
  *
  * Copyright (c) 2002 by Takashi Iwai <tiwai@suse.de>
+ *
+ *   This program is free software; you can redistribute it and/or modify
+ *   it under the terms of the GNU General Public License as published by
+ *   the Free Software Foundation; either version 2 of the License, or
+ *   (at your option) any later version.
+ *
+ *   This program is distributed in the hope that it will be useful,
+ *   but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *   GNU General Public License for more details.
+ *
+ *   You should have received a copy of the GNU General Public License
+ *   along with this program; if not, write to the Free Software
+ *   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307 USA
  */
 
 #include <linux/delay.h>
@@ -19,7 +32,7 @@
 #include "vx222.h"
 
 
-static const int vx2_reg_offset[VX_REG_MAX] = {
+static int vx2_reg_offset[VX_REG_MAX] = {
 	[VX_ICR]    = 0x00,
 	[VX_CVR]    = 0x04,
 	[VX_ISR]    = 0x08,
@@ -45,7 +58,7 @@ static const int vx2_reg_offset[VX_REG_MAX] = {
 	[VX_GPIOC]  = 0x54,		// VX_GPIOC (new with PLX9030)
 };
 
-static const int vx2_reg_index[VX_REG_MAX] = {
+static int vx2_reg_index[VX_REG_MAX] = {
 	[VX_ICR]	= 1,
 	[VX_CVR]	= 1,
 	[VX_ISR]	= 1,
@@ -78,7 +91,7 @@ static inline unsigned long vx2_reg_addr(struct vx_core *_chip, int reg)
 }
 
 /**
- * vx2_inb - read a byte from the register
+ * snd_vx_inb - read a byte from the register
  * @chip: VX core instance
  * @offset: register enum
  */
@@ -88,7 +101,7 @@ static unsigned char vx2_inb(struct vx_core *chip, int offset)
 }
 
 /**
- * vx2_outb - write a byte on the register
+ * snd_vx_outb - write a byte on the register
  * @chip: VX core instance
  * @offset: the register offset
  * @val: the value to write
@@ -102,7 +115,7 @@ static void vx2_outb(struct vx_core *chip, int offset, unsigned char val)
 }
 
 /**
- * vx2_inl - read a 32bit word from the register
+ * snd_vx_inl - read a 32bit word from the register
  * @chip: VX core instance
  * @offset: register enum
  */
@@ -112,7 +125,7 @@ static unsigned int vx2_inl(struct vx_core *chip, int offset)
 }
 
 /**
- * vx2_outl - write a 32bit word on the register
+ * snd_vx_outl - write a 32bit word on the register
  * @chip: VX core instance
  * @offset: the register enum
  * @val: the value to write
@@ -213,7 +226,7 @@ static int vx2_test_xilinx(struct vx_core *_chip)
 
 
 /**
- * vx2_setup_pseudo_dma - set up the pseudo dma read/write mode.
+ * vx_setup_pseudo_dma - set up the pseudo dma read/write mode.
  * @chip: VX core instance
  * @do_write: 0 = read, 1 = set up for DMA write
  */
@@ -262,7 +275,7 @@ static void vx2_dma_write(struct vx_core *chip, struct snd_pcm_runtime *runtime,
 		length >>= 2; /* in 32bit words */
 		/* Transfer using pseudo-dma. */
 		for (; length > 0; length--) {
-			outl(*addr, port);
+			outl(cpu_to_le32(*addr), port);
 			addr++;
 		}
 		addr = (u32 *)runtime->dma_area;
@@ -272,7 +285,7 @@ static void vx2_dma_write(struct vx_core *chip, struct snd_pcm_runtime *runtime,
 	count >>= 2; /* in 32bit words */
 	/* Transfer using pseudo-dma. */
 	for (; count > 0; count--) {
-		outl(*addr, port);
+		outl(cpu_to_le32(*addr), port);
 		addr++;
 	}
 
@@ -300,7 +313,7 @@ static void vx2_dma_read(struct vx_core *chip, struct snd_pcm_runtime *runtime,
 		length >>= 2; /* in 32bit words */
 		/* Transfer using pseudo-dma. */
 		for (; length > 0; length--)
-			*addr++ = inl(port);
+			*addr++ = le32_to_cpu(inl(port));
 		addr = (u32 *)runtime->dma_area;
 		pipe->hw_ptr = 0;
 	}
@@ -308,7 +321,7 @@ static void vx2_dma_read(struct vx_core *chip, struct snd_pcm_runtime *runtime,
 	count >>= 2; /* in 32bit words */
 	/* Transfer using pseudo-dma. */
 	for (; count > 0; count--)
-		*addr++ = inl(port);
+		*addr++ = le32_to_cpu(inl(port));
 
 	vx2_release_pseudo_dma(chip);
 }
@@ -408,11 +421,9 @@ static int vx2_load_dsp(struct vx_core *vx, int index, const struct firmware *ds
 	switch (index) {
 	case 1:
 		/* xilinx image */
-		err = vx2_load_xilinx_binary(vx, dsp);
-		if (err < 0)
+		if ((err = vx2_load_xilinx_binary(vx, dsp)) < 0)
 			return err;
-		err = vx2_test_xilinx(vx);
-		if (err < 0)
+		if ((err = vx2_test_xilinx(vx)) < 0)
 			return err;
 		return 0;
 	case 2:
@@ -974,11 +985,9 @@ static int vx2_add_mic_controls(struct vx_core *_chip)
 	vx2_set_input_level(chip);
 
 	/* controls */
-	err = snd_ctl_add(_chip->card, snd_ctl_new1(&vx_control_input_level, chip));
-	if (err < 0)
+	if ((err = snd_ctl_add(_chip->card, snd_ctl_new1(&vx_control_input_level, chip))) < 0)
 		return err;
-	err = snd_ctl_add(_chip->card, snd_ctl_new1(&vx_control_mic_level, chip));
-	if (err < 0)
+	if ((err = snd_ctl_add(_chip->card, snd_ctl_new1(&vx_control_mic_level, chip))) < 0)
 		return err;
 
 	return 0;
@@ -988,7 +997,7 @@ static int vx2_add_mic_controls(struct vx_core *_chip)
 /*
  * callbacks
  */
-const struct snd_vx_ops vx222_ops = {
+struct snd_vx_ops vx222_ops = {
 	.in8 = vx2_inb,
 	.in32 = vx2_inl,
 	.out8 = vx2_outb,
@@ -1008,7 +1017,7 @@ const struct snd_vx_ops vx222_ops = {
 };
 
 /* for old VX222 board */
-const struct snd_vx_ops vx222_old_ops = {
+struct snd_vx_ops vx222_old_ops = {
 	.in8 = vx2_inb,
 	.in32 = vx2_inl,
 	.out8 = vx2_outb,

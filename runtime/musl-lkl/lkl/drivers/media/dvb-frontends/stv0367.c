@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * stv0367.c
  *
@@ -7,6 +6,17 @@
  * Copyright (C) ST Microelectronics.
  * Copyright (C) 2010,2011 NetUP Inc.
  * Copyright (C) 2010,2011 Igor M. Liplianin <liplianin@netup.ru>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *
+ * GNU General Public License for more details.
  */
 
 #include <linux/kernel.h>
@@ -1683,9 +1693,10 @@ static const struct dvb_frontend_ops stv0367ter_ops = {
 	.delsys = { SYS_DVBT },
 	.info = {
 		.name			= "ST STV0367 DVB-T",
-		.frequency_min_hz	=  47 * MHz,
-		.frequency_max_hz	= 862 * MHz,
-		.frequency_stepsize_hz	= 15625,
+		.frequency_min		= 47000000,
+		.frequency_max		= 862000000,
+		.frequency_stepsize	= 15625,
+		.frequency_tolerance	= 0,
 		.caps = FE_CAN_FEC_1_2 | FE_CAN_FEC_2_3 |
 			FE_CAN_FEC_3_4 | FE_CAN_FEC_5_6 | FE_CAN_FEC_7_8 |
 			FE_CAN_FEC_AUTO |
@@ -1797,7 +1808,11 @@ static u32 stv0367cab_get_mclk(struct dvb_frontend *fe, u32 ExtClk_Hz)
 
 static u32 stv0367cab_get_adc_freq(struct dvb_frontend *fe, u32 ExtClk_Hz)
 {
-	return stv0367cab_get_mclk(fe, ExtClk_Hz);
+	u32 ADCClk_Hz = ExtClk_Hz;
+
+	ADCClk_Hz = stv0367cab_get_mclk(fe, ExtClk_Hz);
+
+	return ADCClk_Hz;
 }
 
 static enum stv0367cab_mod stv0367cab_SetQamSize(struct stv0367_state *state,
@@ -2852,9 +2867,9 @@ static const struct dvb_frontend_ops stv0367cab_ops = {
 	.delsys = { SYS_DVBC_ANNEX_A },
 	.info = {
 		.name = "ST STV0367 DVB-C",
-		.frequency_min_hz =  47 * MHz,
-		.frequency_max_hz = 862 * MHz,
-		.frequency_stepsize_hz = 62500,
+		.frequency_min = 47000000,
+		.frequency_max = 862000000,
+		.frequency_stepsize = 62500,
 		.symbol_rate_min = 870000,
 		.symbol_rate_max = 11700000,
 		.caps = 0x400 |/* FE_CAN_QAM_4 */
@@ -3258,9 +3273,10 @@ static const struct dvb_frontend_ops stv0367ddb_ops = {
 	.delsys = { SYS_DVBC_ANNEX_A, SYS_DVBT },
 	.info = {
 		.name			= "ST STV0367 DDB DVB-C/T",
-		.frequency_min_hz	=  47 * MHz,
-		.frequency_max_hz	= 865 * MHz,
-		.frequency_stepsize_hz	= 166667,
+		.frequency_min		= 47000000,
+		.frequency_max		= 865000000,
+		.frequency_stepsize	= 166667,
+		.frequency_tolerance	= 0,
 		.symbol_rate_min	= 870000,
 		.symbol_rate_max	= 11700000,
 		.caps = /* DVB-C */

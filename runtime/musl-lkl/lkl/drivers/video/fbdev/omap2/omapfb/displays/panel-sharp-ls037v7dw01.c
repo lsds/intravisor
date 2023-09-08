@@ -1,9 +1,12 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * LCD panel driver for Sharp LS037V7DW01
  *
  * Copyright (C) 2013 Texas Instruments
  * Author: Tomi Valkeinen <tomi.valkeinen@ti.com>
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License version 2 as published by
+ * the Free Software Foundation.
  */
 
 #include <linux/delay.h>
@@ -59,11 +62,16 @@ static int sharp_ls_connect(struct omap_dss_device *dssdev)
 {
 	struct panel_drv_data *ddata = to_panel_data(dssdev);
 	struct omap_dss_device *in = ddata->in;
+	int r;
 
 	if (omapdss_device_is_connected(dssdev))
 		return 0;
 
-	return in->ops.dpi->connect(in, dssdev);
+	r = in->ops.dpi->connect(in, dssdev);
+	if (r)
+		return r;
+
+	return 0;
 }
 
 static void sharp_ls_disconnect(struct omap_dss_device *dssdev)
@@ -211,9 +219,10 @@ static int sharp_ls_probe_of(struct platform_device *pdev)
 	int r;
 
 	ddata->vcc = devm_regulator_get(&pdev->dev, "envdd");
-	if (IS_ERR(ddata->vcc))
-		return dev_err_probe(&pdev->dev, PTR_ERR(ddata->vcc),
-				     "failed to get regulator\n");
+	if (IS_ERR(ddata->vcc)) {
+		dev_err(&pdev->dev, "failed to get regulator\n");
+		return PTR_ERR(ddata->vcc);
+	}
 
 	/* lcd INI */
 	r = sharp_ls_get_gpio_of(&pdev->dev, 0, 0, "enable", &ddata->ini_gpio);

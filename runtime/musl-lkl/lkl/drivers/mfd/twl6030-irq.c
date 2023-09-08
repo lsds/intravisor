@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * twl6030-irq.c - TWL6030 irq support
  *
@@ -16,6 +15,20 @@
  * TWL6030 specific code and IRQ handling changes by
  * Jagadeesh Bhaskar Pakaravoor <j-pakaravoor@ti.com>
  * Balaji T K <balajitk@ti.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307 USA
  */
 
 #include <linux/export.h>
@@ -356,7 +369,7 @@ static const struct irq_domain_ops twl6030_irq_domain_ops = {
 	.xlate	= irq_domain_xlate_onetwocell,
 };
 
-static const struct of_device_id twl6030_of_match[] __maybe_unused = {
+static const struct of_device_id twl6030_of_match[] = {
 	{.compatible = "ti,twl6030", &twl6030_interrupt_mapping},
 	{.compatible = "ti,twl6032", &twl6032_interrupt_mapping},
 	{ },
@@ -379,8 +392,10 @@ int twl6030_init_irq(struct device *dev, int irq_num)
 	nr_irqs = TWL6030_NR_IRQS;
 
 	twl6030_irq = devm_kzalloc(dev, sizeof(*twl6030_irq), GFP_KERNEL);
-	if (!twl6030_irq)
+	if (!twl6030_irq) {
+		dev_err(dev, "twl6030_irq: Memory allocation failed\n");
 		return -ENOMEM;
+	}
 
 	mask[0] = 0xFF;
 	mask[1] = 0xFF;
@@ -438,7 +453,7 @@ fail_irq:
 	return status;
 }
 
-void twl6030_exit_irq(void)
+int twl6030_exit_irq(void)
 {
 	if (twl6030_irq && twl6030_irq->twl_irq) {
 		unregister_pm_notifier(&twl6030_irq->pm_nb);
@@ -453,5 +468,6 @@ void twl6030_exit_irq(void)
 		 * in this module.
 		 */
 	}
+	return 0;
 }
 

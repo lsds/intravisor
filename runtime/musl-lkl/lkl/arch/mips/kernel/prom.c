@@ -1,15 +1,18 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * MIPS support for CONFIG_OF device tree support
  *
  * Copyright (C) 2010 Cisco Systems Inc. <dediao@cisco.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 
 #include <linux/init.h>
 #include <linux/export.h>
 #include <linux/errno.h>
 #include <linux/types.h>
-#include <linux/memblock.h>
+#include <linux/bootmem.h>
 #include <linux/debugfs.h>
 #include <linux/of.h>
 #include <linux/of_fdt.h>
@@ -26,7 +29,7 @@ __init void mips_set_machine_name(const char *name)
 	if (name == NULL)
 		return;
 
-	strscpy(mips_machine_name, name, sizeof(mips_machine_name));
+	strlcpy(mips_machine_name, name, sizeof(mips_machine_name));
 	pr_info("MIPS: machine is %s\n", mips_get_machine_name());
 }
 
@@ -36,6 +39,17 @@ char *mips_get_machine_name(void)
 }
 
 #ifdef CONFIG_USE_OF
+void __init early_init_dt_add_memory_arch(u64 base, u64 size)
+{
+	return add_memory_region(base, size, BOOT_MEM_RAM);
+}
+
+int __init early_init_dt_reserve_memory_arch(phys_addr_t base,
+					phys_addr_t size, bool nomap)
+{
+	add_memory_region(base, size, BOOT_MEM_RESERVED);
+	return 0;
+}
 
 void __init __dt_setup_arch(void *bph)
 {
@@ -52,9 +66,9 @@ int __init __dt_register_buses(const char *bus0, const char *bus1)
 	if (!of_have_populated_dt())
 		panic("device tree not present");
 
-	strscpy(of_ids[0].compatible, bus0, sizeof(of_ids[0].compatible));
+	strlcpy(of_ids[0].compatible, bus0, sizeof(of_ids[0].compatible));
 	if (bus1) {
-		strscpy(of_ids[1].compatible, bus1,
+		strlcpy(of_ids[1].compatible, bus1,
 			sizeof(of_ids[1].compatible));
 	}
 
@@ -62,11 +76,6 @@ int __init __dt_register_buses(const char *bus0, const char *bus1)
 		panic("failed to populate DT");
 
 	return 0;
-}
-
-void __weak __init device_tree_init(void)
-{
-	unflatten_and_copy_device_tree();
 }
 
 #endif

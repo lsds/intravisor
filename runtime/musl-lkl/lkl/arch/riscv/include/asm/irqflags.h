@@ -1,6 +1,14 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (C) 2012 Regents of the University of California
+ *
+ *   This program is free software; you can redistribute it and/or
+ *   modify it under the terms of the GNU General Public License
+ *   as published by the Free Software Foundation, version 2.
+ *
+ *   This program is distributed in the hope that it will be useful,
+ *   but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *   GNU General Public License for more details.
  */
 
 
@@ -13,31 +21,31 @@
 /* read interrupt enabled status */
 static inline unsigned long arch_local_save_flags(void)
 {
-	return csr_read(CSR_STATUS);
+	return csr_read(sstatus);
 }
 
 /* unconditionally enable interrupts */
 static inline void arch_local_irq_enable(void)
 {
-	csr_set(CSR_STATUS, SR_IE);
+	csr_set(sstatus, SR_SIE);
 }
 
 /* unconditionally disable interrupts */
 static inline void arch_local_irq_disable(void)
 {
-	csr_clear(CSR_STATUS, SR_IE);
+	csr_clear(sstatus, SR_SIE);
 }
 
 /* get status and disable interrupts */
 static inline unsigned long arch_local_irq_save(void)
 {
-	return csr_read_clear(CSR_STATUS, SR_IE);
+	return csr_read_clear(sstatus, SR_SIE);
 }
 
 /* test flags */
 static inline int arch_irqs_disabled_flags(unsigned long flags)
 {
-	return !(flags & SR_IE);
+	return !(flags & SR_SIE);
 }
 
 /* test hardware interrupt enable bit */
@@ -49,7 +57,7 @@ static inline int arch_irqs_disabled(void)
 /* set interrupt enabled status */
 static inline void arch_local_irq_restore(unsigned long flags)
 {
-	csr_set(CSR_STATUS, flags & SR_IE);
+	csr_set(sstatus, flags & SR_SIE);
 }
 
 #endif /* _ASM_RISCV_IRQFLAGS_H */

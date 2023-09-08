@@ -1,7 +1,10 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * POWER platform energy management driver
  * Copyright (C) 2010 IBM Corporation
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * version 2 as published by the Free Software Foundation.
  *
  * This pseries platform device driver provides access to
  * platform energy management capabilities.
@@ -36,7 +39,6 @@ static int sysfs_entries;
 static u32 cpu_to_drc_index(int cpu)
 {
 	struct device_node *dn = NULL;
-	struct property *info;
 	int thread_index;
 	int rc = 1;
 	u32 ret = 0;
@@ -48,18 +50,20 @@ static u32 cpu_to_drc_index(int cpu)
 	/* Convert logical cpu number to core number */
 	thread_index = cpu_core_index_of_thread(cpu);
 
-	info = of_find_property(dn, "ibm,drc-info", NULL);
-	if (info) {
+	if (firmware_has_feature(FW_FEATURE_DRC_INFO)) {
+		struct property *info = NULL;
 		struct of_drc_info drc;
 		int j;
 		u32 num_set_entries;
 		const __be32 *value;
 
+		info = of_find_property(dn, "ibm,drc-info", NULL);
+		if (info == NULL)
+			goto err_of_node_put;
+
 		value = of_prop_next_u32(info, NULL, &num_set_entries);
 		if (!value)
 			goto err_of_node_put;
-		else
-			value++;
 
 		for (j = 0; j < num_set_entries; j++) {
 
@@ -73,27 +77,18 @@ static u32 cpu_to_drc_index(int cpu)
 
 		ret = drc.drc_index_start + (thread_index * drc.sequential_inc);
 	} else {
-		u32 nr_drc_indexes, thread_drc_index;
+		const __be32 *indexes;
+
+		indexes = of_get_property(dn, "ibm,drc-indexes", NULL);
+		if (indexes == NULL)
+			goto err_of_node_put;
 
 		/*
-		 * The first element of ibm,drc-indexes array is the
-		 * number of drc_indexes returned in the list.  Hence
-		 * thread_index+1 will get the drc_index corresponding
-		 * to core number thread_index.
+		 * The first element indexes[0] is the number of drc_indexes
+		 * returned in the list.  Hence thread_index+1 will get the
+		 * drc_index corresponding to core number thread_index.
 		 */
-		rc = of_property_read_u32_index(dn, "ibm,drc-indexes",
-						0, &nr_drc_indexes);
-		if (rc)
-			goto err_of_node_put;
-
-		WARN_ON_ONCE(thread_index > nr_drc_indexes);
-		rc = of_property_read_u32_index(dn, "ibm,drc-indexes",
-						thread_index + 1,
-						&thread_drc_index);
-		if (rc)
-			goto err_of_node_put;
-
-		ret = thread_drc_index;
+		ret = indexes[thread_index + 1];
 	}
 
 	rc = 0;
@@ -109,7 +104,6 @@ err:
 static int drc_index_to_cpu(u32 drc_index)
 {
 	struct device_node *dn = NULL;
-	struct property *info;
 	const int *indexes;
 	int thread_index = 0, cpu = 0;
 	int rc = 1;
@@ -117,18 +111,21 @@ static int drc_index_to_cpu(u32 drc_index)
 	dn = of_find_node_by_path("/cpus");
 	if (dn == NULL)
 		goto err;
-	info = of_find_property(dn, "ibm,drc-info", NULL);
-	if (info) {
+
+	if (firmware_has_feature(FW_FEATURE_DRC_INFO)) {
+		struct property *info = NULL;
 		struct of_drc_info drc;
 		int j;
 		u32 num_set_entries;
 		const __be32 *value;
 
+		info = of_find_property(dn, "ibm,drc-info", NULL);
+		if (info == NULL)
+			goto err_of_node_put;
+
 		value = of_prop_next_u32(info, NULL, &num_set_entries);
 		if (!value)
 			goto err_of_node_put;
-		else
-			value++;
 
 		for (j = 0; j < num_set_entries; j++) {
 

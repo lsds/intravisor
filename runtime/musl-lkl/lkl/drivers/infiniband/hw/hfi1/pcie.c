@@ -1,6 +1,48 @@
-// SPDX-License-Identifier: GPL-2.0 or BSD-3-Clause
 /*
- * Copyright(c) 2015 - 2019 Intel Corporation.
+ * Copyright(c) 2015 - 2017 Intel Corporation.
+ *
+ * This file is provided under a dual BSD/GPLv2 license.  When using or
+ * redistributing this file, you may do so under either license.
+ *
+ * GPL LICENSE SUMMARY
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of version 2 of the GNU General Public License as
+ * published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * General Public License for more details.
+ *
+ * BSD LICENSE
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ *
+ *  - Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ *  - Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in
+ *    the documentation and/or other materials provided with the
+ *    distribution.
+ *  - Neither the name of Intel Corporation nor the names of its
+ *    contributors may be used to endorse or promote products derived
+ *    from this software without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+ * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+ * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+ * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ *
  */
 
 #include <linux/pci.h>
@@ -14,17 +56,29 @@
 #include "chip_registers.h"
 #include "aspm.h"
 
+/* link speed vector for Gen3 speed - not in Linux headers */
+#define GEN1_SPEED_VECTOR 0x1
+#define GEN2_SPEED_VECTOR 0x2
+#define GEN3_SPEED_VECTOR 0x3
+
 /*
  * This file contains PCIe utility routines.
  */
 
 /*
- * Do all the common PCIe setup and initialization.
+ * Code to adjust PCIe capabilities.
  */
-int hfi1_pcie_init(struct hfi1_devdata *dd)
+static void tune_pcie_caps(struct hfi1_devdata *);
+
+/*
+ * Do all the common PCIe setup and initialization.
+ * devdata is not yet allocated, and is not allocated until after this
+ * routine returns success.  Therefore dd_dev_err() can't be used for error
+ * printing.
+ */
+int hfi1_pcie_init(struct pci_dev *pdev, const struct pci_device_id *ent)
 {
 	int ret;
-	struct pci_dev *pdev = dd->pcidev;
 
 	ret = pci_enable_device(pdev);
 	if (ret) {
@@ -40,36 +94,48 @@ int hfi1_pcie_init(struct hfi1_devdata *dd)
 		 * about that, it appears.  If the original BAR was retained
 		 * in the kernel data structures, this may be OK.
 		 */
-		dd_dev_err(dd, "pci enable failed: error %d\n", -ret);
-		return ret;
+		hfi1_early_err(&pdev->dev, "pci enable failed: error %d\n",
+			       -ret);
+		goto done;
 	}
 
 	ret = pci_request_regions(pdev, DRIVER_NAME);
 	if (ret) {
-		dd_dev_err(dd, "pci_request_regions fails: err %d\n", -ret);
+		hfi1_early_err(&pdev->dev,
+			       "pci_request_regions fails: err %d\n", -ret);
 		goto bail;
 	}
 
-	ret = dma_set_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(64));
+	ret = pci_set_dma_mask(pdev, DMA_BIT_MASK(64));
 	if (ret) {
 		/*
 		 * If the 64 bit setup fails, try 32 bit.  Some systems
 		 * do not setup 64 bit maps on systems with 2GB or less
 		 * memory installed.
 		 */
-		ret = dma_set_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(32));
+		ret = pci_set_dma_mask(pdev, DMA_BIT_MASK(32));
 		if (ret) {
-			dd_dev_err(dd, "Unable to set DMA mask: %d\n", ret);
+			hfi1_early_err(&pdev->dev,
+				       "Unable to set DMA mask: %d\n", ret);
 			goto bail;
 		}
+		ret = pci_set_consistent_dma_mask(pdev, DMA_BIT_MASK(32));
+	} else {
+		ret = pci_set_consistent_dma_mask(pdev, DMA_BIT_MASK(64));
+	}
+	if (ret) {
+		hfi1_early_err(&pdev->dev,
+			       "Unable to set DMA consistent mask: %d\n", ret);
+		goto bail;
 	}
 
 	pci_set_master(pdev);
 	(void)pci_enable_pcie_error_reporting(pdev);
-	return 0;
+	goto done;
 
 bail:
 	hfi1_pcie_cleanup(pdev);
+done:
 	return ret;
 }
 
@@ -96,7 +162,6 @@ int hfi1_pcie_ddinit(struct hfi1_devdata *dd, struct pci_dev *pdev)
 	unsigned long len;
 	resource_size_t addr;
 	int ret = 0;
-	u32 rcv_array_count;
 
 	addr = pci_resource_start(pdev, 0);
 	len = pci_resource_len(pdev, 0);
@@ -112,25 +177,17 @@ int hfi1_pcie_ddinit(struct hfi1_devdata *dd, struct pci_dev *pdev)
 		return -EINVAL;
 	}
 
-	dd->kregbase1 = ioremap(addr, RCV_ARRAY);
+	dd->kregbase1 = ioremap_nocache(addr, RCV_ARRAY);
 	if (!dd->kregbase1) {
 		dd_dev_err(dd, "UC mapping of kregbase1 failed\n");
 		return -ENOMEM;
 	}
 	dd_dev_info(dd, "UC base1: %p for %x\n", dd->kregbase1, RCV_ARRAY);
+	dd->chip_rcv_array_count = readq(dd->kregbase1 + RCV_ARRAY_CNT);
+	dd_dev_info(dd, "RcvArray count: %u\n", dd->chip_rcv_array_count);
+	dd->base2_start  = RCV_ARRAY + dd->chip_rcv_array_count * 8;
 
-	/* verify that reads actually work, save revision for reset check */
-	dd->revision = readq(dd->kregbase1 + CCE_REVISION);
-	if (dd->revision == ~(u64)0) {
-		dd_dev_err(dd, "Cannot read chip CSRs\n");
-		goto nomem;
-	}
-
-	rcv_array_count = readq(dd->kregbase1 + RCV_ARRAY_CNT);
-	dd_dev_info(dd, "RcvArray count: %u\n", rcv_array_count);
-	dd->base2_start  = RCV_ARRAY + rcv_array_count * 8;
-
-	dd->kregbase2 = ioremap(
+	dd->kregbase2 = ioremap_nocache(
 		addr + dd->base2_start,
 		TXE_PIO_SEND - dd->base2_start);
 	if (!dd->kregbase2) {
@@ -145,7 +202,7 @@ int hfi1_pcie_ddinit(struct hfi1_devdata *dd, struct pci_dev *pdev)
 		dd_dev_err(dd, "WC mapping of send buffers failed\n");
 		goto nomem;
 	}
-	dd_dev_info(dd, "WC piobase: %p for %x\n", dd->piobase, TXE_PIO_SIZE);
+	dd_dev_info(dd, "WC piobase: %p\n for %x", dd->piobase, TXE_PIO_SIZE);
 
 	dd->physaddr = addr;        /* used for io_remap, etc. */
 
@@ -154,13 +211,13 @@ int hfi1_pcie_ddinit(struct hfi1_devdata *dd, struct pci_dev *pdev)
 	 * to write an entire cacheline worth of entries in one shot.
 	 */
 	dd->rcvarray_wc = ioremap_wc(addr + RCV_ARRAY,
-				     rcv_array_count * 8);
+				     dd->chip_rcv_array_count * 8);
 	if (!dd->rcvarray_wc) {
 		dd_dev_err(dd, "WC mapping of receive array failed\n");
 		goto nomem;
 	}
 	dd_dev_info(dd, "WC RcvArray: %p for %x\n",
-		    dd->rcvarray_wc, rcv_array_count * 8);
+		    dd->rcvarray_wc, dd->chip_rcv_array_count * 8);
 
 	dd->flags |= HFI1_PRESENT;	/* chip.c CSR routines now work */
 	return 0;
@@ -205,7 +262,7 @@ static u32 extract_speed(u16 linkstat)
 	case PCI_EXP_LNKSTA_CLS_5_0GB:
 		speed = 5000; /* Gen 2, 5GHz */
 		break;
-	case PCI_EXP_LNKSTA_CLS_8_0GB:
+	case GEN3_SPEED_VECTOR:
 		speed = 8000; /* Gen 3, 8GHz */
 		break;
 	}
@@ -257,10 +314,10 @@ int pcie_speeds(struct hfi1_devdata *dd)
 	ret = pcie_capability_read_dword(dd->pcidev, PCI_EXP_LNKCAP, &linkcap);
 	if (ret) {
 		dd_dev_err(dd, "Unable to read from PCI config\n");
-		return pcibios_err_to_errno(ret);
+		return ret;
 	}
 
-	if ((linkcap & PCI_EXP_LNKCAP_SLS) != PCI_EXP_LNKCAP_SLS_8_0GB) {
+	if ((linkcap & PCI_EXP_LNKCAP_SLS) != GEN3_SPEED_VECTOR) {
 		dd_dev_info(dd,
 			    "This HFI is not Gen3 capable, max speed 0x%x, need 0x3\n",
 			    linkcap & PCI_EXP_LNKCAP_SLS);
@@ -270,9 +327,7 @@ int pcie_speeds(struct hfi1_devdata *dd)
 	/*
 	 * bus->max_bus_speed is set from the bridge's linkcap Max Link Speed
 	 */
-	if (parent &&
-	    (dd->pcidev->bus->max_bus_speed == PCIE_SPEED_2_5GT ||
-	     dd->pcidev->bus->max_bus_speed == PCIE_SPEED_5_0GT)) {
+	if (parent && dd->pcidev->bus->max_bus_speed != PCIE_SPEED_8_0GT) {
 		dd_dev_info(dd, "Parent PCIe bridge does not support Gen3\n");
 		dd->link_gen3_capable = 0;
 	}
@@ -286,13 +341,35 @@ int pcie_speeds(struct hfi1_devdata *dd)
 }
 
 /*
- * Restore command and BARs after a reset has wiped them out
- *
- * Returns 0 on success, otherwise a negative error value
+ * Returns:
+ *	- actual number of interrupts allocated or
+ *	- 0 if fell back to INTx.
+ *      - error
  */
+int request_msix(struct hfi1_devdata *dd, u32 msireq)
+{
+	int nvec;
+
+	nvec = pci_alloc_irq_vectors(dd->pcidev, 1, msireq,
+				     PCI_IRQ_MSIX | PCI_IRQ_LEGACY);
+	if (nvec < 0) {
+		dd_dev_err(dd, "pci_alloc_irq_vectors() failed: %d\n", nvec);
+		return nvec;
+	}
+
+	tune_pcie_caps(dd);
+
+	/* check for legacy IRQ */
+	if (nvec == 1 && !dd->pcidev->msix_enabled)
+		return 0;
+
+	return nvec;
+}
+
+/* restore command and BARs after a reset has wiped them out */
 int restore_pci_variables(struct hfi1_devdata *dd)
 {
-	int ret;
+	int ret = 0;
 
 	ret = pci_write_config_word(dd->pcidev, PCI_COMMAND, dd->pci_command);
 	if (ret)
@@ -341,17 +418,13 @@ int restore_pci_variables(struct hfi1_devdata *dd)
 
 error:
 	dd_dev_err(dd, "Unable to write to PCI config\n");
-	return pcibios_err_to_errno(ret);
+	return ret;
 }
 
-/*
- * Save BARs and command to rewrite after device reset
- *
- * Returns 0 on success, otherwise a negative error value
- */
+/* Save BARs and command to rewrite after device reset */
 int save_pci_variables(struct hfi1_devdata *dd)
 {
-	int ret;
+	int ret = 0;
 
 	ret = pci_read_config_dword(dd->pcidev, PCI_BASE_ADDRESS_0,
 				    &dd->pcibar0);
@@ -400,7 +473,7 @@ int save_pci_variables(struct hfi1_devdata *dd)
 
 error:
 	dd_dev_err(dd, "Unable to read from PCI config\n");
-	return pcibios_err_to_errno(ret);
+	return ret;
 }
 
 /*
@@ -408,15 +481,14 @@ error:
  * Check and optionally adjust them to maximize our throughput.
  */
 static int hfi1_pcie_caps;
-module_param_named(pcie_caps, hfi1_pcie_caps, int, 0444);
+module_param_named(pcie_caps, hfi1_pcie_caps, int, S_IRUGO);
 MODULE_PARM_DESC(pcie_caps, "Max PCIe tuning: Payload (0..3), ReadReq (4..7)");
 
-/**
- * tune_pcie_caps() - Code to adjust PCIe capabilities.
- * @dd: Valid device data structure
- *
- */
-void tune_pcie_caps(struct hfi1_devdata *dd)
+uint aspm_mode = ASPM_MODE_DISABLED;
+module_param_named(aspm, aspm_mode, uint, S_IRUGO);
+MODULE_PARM_DESC(aspm, "PCIe ASPM: 0: disable, 1: enable, 2: dynamic");
+
+static void tune_pcie_caps(struct hfi1_devdata *dd)
 {
 	struct pci_dev *parent;
 	u16 rc_mpss, rc_mps, ep_mpss, ep_mps;
@@ -580,6 +652,7 @@ pci_resume(struct pci_dev *pdev)
 	struct hfi1_devdata *dd = pci_get_drvdata(pdev);
 
 	dd_dev_info(dd, "HFI1 resume function called\n");
+	pci_cleanup_aer_uncorrect_error_status(pdev);
 	/*
 	 * Running jobs will fail, since it's asynchronous
 	 * unlike sysfs-requested reset.   Better than
@@ -620,6 +693,9 @@ const struct pci_error_handlers hfi1_pci_err_handler = {
 
 /* gasket block secondary bus reset delay */
 #define SBR_DELAY_US 200000	/* 200ms */
+
+/* mask for PCIe capability register lnkctl2 target link speed */
+#define LNKCTL2_TARGET_LINK_SPEED_MASK 0xf
 
 static uint pcie_target = 3;
 module_param(pcie_target, uint, S_IRUGO);
@@ -822,11 +898,16 @@ static int trigger_sbr(struct hfi1_devdata *dd)
 		}
 
 	/*
-	 * This is an end around to do an SBR during probe time. A new API needs
-	 * to be implemented to have cleaner interface but this fixes the
-	 * current brokenness
+	 * A secondary bus reset (SBR) issues a hot reset to our device.
+	 * The following routine does a 1s wait after the reset is dropped
+	 * per PCI Trhfa (recovery time).  PCIe 3.0 section 6.6.1 -
+	 * Conventional Reset, paragraph 3, line 35 also says that a 1s
+	 * delay after a reset is required.  Per spec requirements,
+	 * the link is either working or not after that point.
 	 */
-	return pci_bridge_secondary_bus_reset(dev->bus->self);
+	pci_reset_bridge_secondary_bus(dev->bus->self);
+
+	return 0;
 }
 
 /*
@@ -958,20 +1039,19 @@ int do_pcie_gen3_transition(struct hfi1_devdata *dd)
 	const u8 (*ctle_tunings)[4];
 	uint static_ctle_mode;
 	int return_error = 0;
-	u32 target_width;
 
 	/* PCIe Gen3 is for the ASIC only */
 	if (dd->icode != ICODE_RTL_SILICON)
 		return 0;
 
 	if (pcie_target == 1) {			/* target Gen1 */
-		target_vector = PCI_EXP_LNKCTL2_TLS_2_5GT;
+		target_vector = GEN1_SPEED_VECTOR;
 		target_speed = 2500;
 	} else if (pcie_target == 2) {		/* target Gen2 */
-		target_vector = PCI_EXP_LNKCTL2_TLS_5_0GT;
+		target_vector = GEN2_SPEED_VECTOR;
 		target_speed = 5000;
 	} else if (pcie_target == 3) {		/* target Gen3 */
-		target_vector = PCI_EXP_LNKCTL2_TLS_8_0GT;
+		target_vector = GEN3_SPEED_VECTOR;
 		target_speed = 8000;
 	} else {
 		/* off or invalid target - skip */
@@ -997,9 +1077,6 @@ int do_pcie_gen3_transition(struct hfi1_devdata *dd)
 			    __func__);
 		return 0;
 	}
-
-	/* Previous Gen1/Gen2 bus width */
-	target_width = dd->lbus_width;
 
 	/*
 	 * Do the Gen3 transition.  Steps are those of the PCIe Gen3
@@ -1213,8 +1290,8 @@ retry:
 	dd_dev_info(dd, "%s: ..old link control2: 0x%x\n", __func__,
 		    (u32)lnkctl2);
 	/* only write to parent if target is not as high as ours */
-	if ((lnkctl2 & PCI_EXP_LNKCTL2_TLS) < target_vector) {
-		lnkctl2 &= ~PCI_EXP_LNKCTL2_TLS;
+	if ((lnkctl2 & LNKCTL2_TARGET_LINK_SPEED_MASK) < target_vector) {
+		lnkctl2 &= ~LNKCTL2_TARGET_LINK_SPEED_MASK;
 		lnkctl2 |= target_vector;
 		dd_dev_info(dd, "%s: ..new link control2: 0x%x\n", __func__,
 			    (u32)lnkctl2);
@@ -1239,7 +1316,7 @@ retry:
 
 	dd_dev_info(dd, "%s: ..old link control2: 0x%x\n", __func__,
 		    (u32)lnkctl2);
-	lnkctl2 &= ~PCI_EXP_LNKCTL2_TLS;
+	lnkctl2 &= ~LNKCTL2_TARGET_LINK_SPEED_MASK;
 	lnkctl2 |= target_vector;
 	dd_dev_info(dd, "%s: ..new link control2: 0x%x\n", __func__,
 		    (u32)lnkctl2);
@@ -1369,12 +1446,11 @@ retry:
 	dd_dev_info(dd, "%s: new speed and width: %s\n", __func__,
 		    dd->lbus_info);
 
-	if (dd->lbus_speed != target_speed ||
-	    dd->lbus_width < target_width) { /* not target */
+	if (dd->lbus_speed != target_speed) { /* not target */
 		/* maybe retry */
 		do_retry = retry_count < pcie_retry;
-		dd_dev_err(dd, "PCIe link speed or width did not match target%s\n",
-			   do_retry ? ", retrying" : "");
+		dd_dev_err(dd, "PCIe link speed did not switch to Gen%d%s\n",
+			   pcie_target, do_retry ? ", retrying" : "");
 		retry_count++;
 		if (do_retry) {
 			msleep(100); /* allow time to settle */

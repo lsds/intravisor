@@ -56,8 +56,7 @@ static int sr_write_reg(struct usbnet *dev, u8 reg, u8 value)
 				value, reg, NULL, 0);
 }
 
-static void sr_write_async(struct usbnet *dev, u8 reg, u16 length,
-			   const void *data)
+static void sr_write_async(struct usbnet *dev, u8 reg, u16 length, void *data)
 {
 	usbnet_write_cmd_async(dev, SR_WR_REGS, SR_REQ_WR_REG,
 			       0, reg, data, length);
@@ -251,8 +250,8 @@ static const struct ethtool_ops sr9700_ethtool_ops = {
 	.get_eeprom_len	= sr9700_get_eeprom_len,
 	.get_eeprom	= sr9700_get_eeprom,
 	.nway_reset	= usbnet_nway_reset,
-	.get_link_ksettings	= usbnet_get_link_ksettings_mii,
-	.set_link_ksettings	= usbnet_set_link_ksettings_mii,
+	.get_link_ksettings	= usbnet_get_link_ksettings,
+	.set_link_ksettings	= usbnet_set_link_ksettings,
 };
 
 static void sr9700_set_multicast(struct net_device *netdev)
@@ -297,7 +296,7 @@ static int sr9700_set_mac_address(struct net_device *netdev, void *p)
 		return -EINVAL;
 	}
 
-	eth_hw_addr_set(netdev, addr->sa_data);
+	memcpy(netdev->dev_addr, addr->sa_data, netdev->addr_len);
 	sr_write_async(dev, SR_PAR, 6, netdev->dev_addr);
 
 	return 0;
@@ -309,9 +308,9 @@ static const struct net_device_ops sr9700_netdev_ops = {
 	.ndo_start_xmit		= usbnet_start_xmit,
 	.ndo_tx_timeout		= usbnet_tx_timeout,
 	.ndo_change_mtu		= usbnet_change_mtu,
-	.ndo_get_stats64	= dev_get_tstats64,
+	.ndo_get_stats64	= usbnet_get_stats64,
 	.ndo_validate_addr	= eth_validate_addr,
-	.ndo_eth_ioctl		= sr9700_ioctl,
+	.ndo_do_ioctl		= sr9700_ioctl,
 	.ndo_set_rx_mode	= sr9700_set_multicast,
 	.ndo_set_mac_address	= sr9700_set_mac_address,
 };
@@ -320,7 +319,6 @@ static int sr9700_bind(struct usbnet *dev, struct usb_interface *intf)
 {
 	struct net_device *netdev;
 	struct mii_if_info *mii;
-	u8 addr[ETH_ALEN];
 	int ret;
 
 	ret = usbnet_get_endpoints(dev, intf);
@@ -351,17 +349,16 @@ static int sr9700_bind(struct usbnet *dev, struct usb_interface *intf)
 	 * EEPROM automatically to PAR. In case there is no EEPROM externally,
 	 * a default MAC address is stored in PAR for making chip work properly.
 	 */
-	if (sr_read(dev, SR_PAR, ETH_ALEN, addr) < 0) {
+	if (sr_read(dev, SR_PAR, ETH_ALEN, netdev->dev_addr) < 0) {
 		netdev_err(netdev, "Error reading MAC address\n");
 		ret = -ENODEV;
 		goto out;
 	}
-	eth_hw_addr_set(netdev, addr);
 
 	/* power up and reset phy */
 	sr_write_reg(dev, SR_PRR, PRR_PHY_RST);
 	/* at least 10ms, here 20ms for safe */
-	msleep(20);
+	mdelay(20);
 	sr_write_reg(dev, SR_PRR, 0);
 	/* at least 1ms, here 2ms for reading right register */
 	udelay(2 * 1000);
@@ -413,7 +410,7 @@ static int sr9700_rx_fixup(struct usbnet *dev, struct sk_buff *skb)
 		/* ignore the CRC length */
 		len = (skb->data[1] | (skb->data[2] << 8)) - 4;
 
-		if (len > ETH_FRAME_LEN || len > skb->len)
+		if (len > ETH_FRAME_LEN)
 			return 0;
 
 		/* the last packet of current skb */
@@ -437,7 +434,7 @@ static int sr9700_rx_fixup(struct usbnet *dev, struct sk_buff *skb)
 		usbnet_skb_return(dev, sr_skb);
 
 		skb_pull(skb, len + SR_RX_OVERHEAD);
-	}
+	};
 
 	return 0;
 }

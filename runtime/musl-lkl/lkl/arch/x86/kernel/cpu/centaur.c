@@ -3,7 +3,6 @@
 #include <linux/sched.h>
 #include <linux/sched/clock.h>
 
-#include <asm/cpu.h>
 #include <asm/cpufeature.h>
 #include <asm/e820/api.h>
 #include <asm/mtrr.h>
@@ -66,8 +65,7 @@ static void init_c3(struct cpuinfo_x86 *c)
 		set_cpu_cap(c, X86_FEATURE_REP_GOOD);
 	}
 
-	if (c->x86 >= 7)
-		set_cpu_cap(c, X86_FEATURE_REP_GOOD);
+	cpu_detect_cache_sizes(c);
 }
 
 enum {
@@ -93,15 +91,18 @@ enum {
 
 static void early_init_centaur(struct cpuinfo_x86 *c)
 {
+	switch (c->x86) {
 #ifdef CONFIG_X86_32
-	/* Emulate MTRRs using Centaur's MCR. */
-	if (c->x86 == 5)
+	case 5:
+		/* Emulate MTRRs using Centaur's MCR. */
 		set_cpu_cap(c, X86_FEATURE_CENTAUR_MCR);
+		break;
 #endif
-	if ((c->x86 == 6 && c->x86_model >= 0xf) ||
-	    (c->x86 >= 7))
-		set_cpu_cap(c, X86_FEATURE_CONSTANT_TSC);
-
+	case 6:
+		if (c->x86_model >= 0xf)
+			set_cpu_cap(c, X86_FEATURE_CONSTANT_TSC);
+		break;
+	}
 #ifdef CONFIG_X86_64
 	set_cpu_cap(c, X86_FEATURE_SYSENTER32);
 #endif
@@ -127,26 +128,9 @@ static void init_centaur(struct cpuinfo_x86 *c)
 	clear_cpu_cap(c, 0*32+31);
 #endif
 	early_init_centaur(c);
-	init_intel_cacheinfo(c);
-	detect_num_cpu_cores(c);
+	switch (c->x86) {
 #ifdef CONFIG_X86_32
-	detect_ht(c);
-#endif
-
-	if (c->cpuid_level > 9) {
-		unsigned int eax = cpuid_eax(10);
-
-		/*
-		 * Check for version and the number of counters
-		 * Version(eax[7:0]) can't be 0;
-		 * Counters(eax[15:8]) should be greater than 1;
-		 */
-		if ((eax & 0xff) && (((eax >> 8) & 0xff) > 1))
-			set_cpu_cap(c, X86_FEATURE_ARCH_PERFMON);
-	}
-
-#ifdef CONFIG_X86_32
-	if (c->x86 == 5) {
+	case 5:
 		switch (c->x86_model) {
 		case 4:
 			name = "C6";
@@ -206,15 +190,15 @@ static void init_centaur(struct cpuinfo_x86 *c)
 			c->x86_cache_size = (cc>>24)+(dd>>24);
 		}
 		sprintf(c->x86_model_id, "WinChip %s", name);
-	}
+		break;
 #endif
-	if (c->x86 == 6 || c->x86 >= 7)
+	case 6:
 		init_c3(c);
+		break;
+	}
 #ifdef CONFIG_X86_64
 	set_cpu_cap(c, X86_FEATURE_LFENCE_RDTSC);
 #endif
-
-	init_ia32_feat_ctl(c);
 }
 
 #ifdef CONFIG_X86_32

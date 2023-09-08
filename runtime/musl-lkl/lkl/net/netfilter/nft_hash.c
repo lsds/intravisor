@@ -1,6 +1,10 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2016 Laura Garcia <nevola@gmail.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ *
  */
 
 #include <linux/kernel.h>
@@ -14,8 +18,8 @@
 #include <linux/jhash.h>
 
 struct nft_jhash {
-	u8			sreg;
-	u8			dreg;
+	enum nft_registers      sreg:8;
+	enum nft_registers      dreg:8;
 	u8			len;
 	bool			autogen_seed:1;
 	u32			modulus;
@@ -31,14 +35,12 @@ static void nft_jhash_eval(const struct nft_expr *expr,
 	const void *data = &regs->data[priv->sreg];
 	u32 h;
 
-	h = reciprocal_scale(jhash(data, priv->len, priv->seed),
-			     priv->modulus);
-
+	h = reciprocal_scale(jhash(data, priv->len, priv->seed), priv->modulus);
 	regs->data[priv->dreg] = h + priv->offset;
 }
 
 struct nft_symhash {
-	u8			dreg;
+	enum nft_registers      dreg:8;
 	u32			modulus;
 	u32			offset;
 };
@@ -83,6 +85,9 @@ static int nft_jhash_init(const struct nft_ctx *ctx,
 	if (tb[NFTA_HASH_OFFSET])
 		priv->offset = ntohl(nla_get_be32(tb[NFTA_HASH_OFFSET]));
 
+	priv->sreg = nft_parse_register(tb[NFTA_HASH_SREG]);
+	priv->dreg = nft_parse_register(tb[NFTA_HASH_DREG]);
+
 	err = nft_parse_u32_check(tb[NFTA_HASH_LEN], U8_MAX, &len);
 	if (err < 0)
 		return err;
@@ -91,12 +96,8 @@ static int nft_jhash_init(const struct nft_ctx *ctx,
 
 	priv->len = len;
 
-	err = nft_parse_register_load(tb[NFTA_HASH_SREG], &priv->sreg, len);
-	if (err < 0)
-		return err;
-
 	priv->modulus = ntohl(nla_get_be32(tb[NFTA_HASH_MODULUS]));
-	if (priv->modulus < 1)
+	if (priv->modulus <= 1)
 		return -ERANGE;
 
 	if (priv->offset + priv->modulus - 1 < priv->offset)
@@ -109,8 +110,9 @@ static int nft_jhash_init(const struct nft_ctx *ctx,
 		get_random_bytes(&priv->seed, sizeof(priv->seed));
 	}
 
-	return nft_parse_register_store(ctx, tb[NFTA_HASH_DREG], &priv->dreg,
-					NULL, NFT_DATA_VALUE, sizeof(u32));
+	return nft_validate_register_load(priv->sreg, len) &&
+	       nft_validate_register_store(ctx, priv->dreg, NULL,
+					   NFT_DATA_VALUE, sizeof(u32));
 }
 
 static int nft_symhash_init(const struct nft_ctx *ctx,
@@ -126,16 +128,17 @@ static int nft_symhash_init(const struct nft_ctx *ctx,
 	if (tb[NFTA_HASH_OFFSET])
 		priv->offset = ntohl(nla_get_be32(tb[NFTA_HASH_OFFSET]));
 
+	priv->dreg = nft_parse_register(tb[NFTA_HASH_DREG]);
+
 	priv->modulus = ntohl(nla_get_be32(tb[NFTA_HASH_MODULUS]));
-	if (priv->modulus < 1)
+	if (priv->modulus <= 1)
 		return -ERANGE;
 
 	if (priv->offset + priv->modulus - 1 < priv->offset)
 		return -EOVERFLOW;
 
-	return nft_parse_register_store(ctx, tb[NFTA_HASH_DREG],
-					&priv->dreg, NULL, NFT_DATA_VALUE,
-					sizeof(u32));
+	return nft_validate_register_store(ctx, priv->dreg, NULL,
+					   NFT_DATA_VALUE, sizeof(u32));
 }
 
 static int nft_jhash_dump(struct sk_buff *skb,
@@ -165,16 +168,6 @@ nla_put_failure:
 	return -1;
 }
 
-static bool nft_jhash_reduce(struct nft_regs_track *track,
-			     const struct nft_expr *expr)
-{
-	const struct nft_jhash *priv = nft_expr_priv(expr);
-
-	nft_reg_track_cancel(track, priv->dreg, sizeof(u32));
-
-	return false;
-}
-
 static int nft_symhash_dump(struct sk_buff *skb,
 			    const struct nft_expr *expr)
 {
@@ -195,30 +188,6 @@ nla_put_failure:
 	return -1;
 }
 
-static bool nft_symhash_reduce(struct nft_regs_track *track,
-			       const struct nft_expr *expr)
-{
-	struct nft_symhash *priv = nft_expr_priv(expr);
-	struct nft_symhash *symhash;
-
-	if (!nft_reg_track_cmp(track, expr, priv->dreg)) {
-		nft_reg_track_update(track, expr, priv->dreg, sizeof(u32));
-		return false;
-	}
-
-	symhash = nft_expr_priv(track->regs[priv->dreg].selector);
-	if (priv->offset != symhash->offset ||
-	    priv->modulus != symhash->modulus) {
-		nft_reg_track_update(track, expr, priv->dreg, sizeof(u32));
-		return false;
-	}
-
-	if (!track->regs[priv->dreg].bitwise)
-		return true;
-
-	return false;
-}
-
 static struct nft_expr_type nft_hash_type;
 static const struct nft_expr_ops nft_jhash_ops = {
 	.type		= &nft_hash_type,
@@ -226,7 +195,6 @@ static const struct nft_expr_ops nft_jhash_ops = {
 	.eval		= nft_jhash_eval,
 	.init		= nft_jhash_init,
 	.dump		= nft_jhash_dump,
-	.reduce		= nft_jhash_reduce,
 };
 
 static const struct nft_expr_ops nft_symhash_ops = {
@@ -235,7 +203,6 @@ static const struct nft_expr_ops nft_symhash_ops = {
 	.eval		= nft_symhash_eval,
 	.init		= nft_symhash_init,
 	.dump		= nft_symhash_dump,
-	.reduce		= nft_symhash_reduce,
 };
 
 static const struct nft_expr_ops *
@@ -283,4 +250,3 @@ module_exit(nft_hash_module_exit);
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Laura Garcia <nevola@gmail.com>");
 MODULE_ALIAS_NFT_EXPR("hash");
-MODULE_DESCRIPTION("Netfilter nftables hash module");

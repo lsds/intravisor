@@ -1,8 +1,16 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * VMware vSockets Driver
  *
  * Copyright (C) 2007-2012 VMware, Inc. All rights reserved.
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License as published by the Free
+ * Software Foundation version 2 and no later version.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+ * more details.
  */
 
 #include <linux/types.h>
@@ -22,15 +30,13 @@ EXPORT_SYMBOL_GPL(vsock_addr_init);
 
 int vsock_addr_validate(const struct sockaddr_vm *addr)
 {
-	__u8 svm_valid_flags = VMADDR_FLAG_TO_HOST;
-
 	if (!addr)
 		return -EFAULT;
 
 	if (addr->svm_family != AF_VSOCK)
 		return -EAFNOSUPPORT;
 
-	if (addr->svm_flags & ~svm_valid_flags)
+	if (addr->svm_zero[0] != 0)
 		return -EINVAL;
 
 	return 0;

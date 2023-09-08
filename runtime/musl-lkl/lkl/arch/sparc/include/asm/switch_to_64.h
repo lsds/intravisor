@@ -20,8 +20,10 @@ do {						\
 	 */
 #define switch_to(prev, next, last)					\
 do {	save_and_clear_fpu();						\
+	/* If you are tempted to conditionalize the following */	\
+	/* so that ASI is only written if it changes, think again. */	\
 	__asm__ __volatile__("wr %%g0, %0, %%asi"			\
-	: : "r" (ASI_AIUS));						\
+	: : "r" (task_thread_info(next)->current_ds));\
 	trap_block[current_thread_info()->cpu].thread =			\
 		task_thread_info(next);					\
 	__asm__ __volatile__(						\
@@ -65,7 +67,6 @@ do {	save_and_clear_fpu();						\
 } while(0)
 
 void synchronize_user_stack(void);
-struct pt_regs;
-void fault_in_user_windows(struct pt_regs *);
+void fault_in_user_windows(void);
 
 #endif /* __SPARC64_SWITCH_TO_64_H */

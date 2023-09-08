@@ -136,7 +136,6 @@ again:
 		if (e->state == L2T_STATE_STALE)
 			e->state = L2T_STATE_VALID;
 		spin_unlock_bh(&e->lock);
-		fallthrough;
 	case L2T_STATE_VALID:	/* fast-path, send the packet on */
 		return cxgb3_ofld_send(dev, skb);
 	case L2T_STATE_RESOLVING:
@@ -443,9 +442,9 @@ found:
 struct l2t_data *t3_init_l2t(unsigned int l2t_capacity)
 {
 	struct l2t_data *d;
-	int i;
+	int i, size = sizeof(*d) + l2t_capacity * sizeof(struct l2t_entry);
 
-	d = kvzalloc(struct_size(d, l2tab, l2t_capacity), GFP_KERNEL);
+	d = kvzalloc(size, GFP_KERNEL);
 	if (!d)
 		return NULL;
 

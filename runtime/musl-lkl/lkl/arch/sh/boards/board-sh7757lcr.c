@@ -1,8 +1,11 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * Renesas R0P7757LC0012RL Support.
  *
  * Copyright (C) 2009 - 2010  Renesas Solutions Corp.
+ *
+ * This file is subject to the terms and conditions of the GNU General Public
+ * License.  See the file "COPYING" in the main directory of this archive
+ * for more details.
  */
 
 #include <linux/init.h>
@@ -16,7 +19,7 @@
 #include <linux/io.h>
 #include <linux/mfd/tmio.h>
 #include <linux/mmc/host.h>
-#include <linux/platform_data/sh_mmcif.h>
+#include <linux/mmc/sh_mmcif.h>
 #include <linux/sh_eth.h>
 #include <linux/sh_intc.h>
 #include <linux/usb/renesas_usbhs.h>

@@ -18,6 +18,7 @@
 #include <linux/sysctl.h>
 #include <linux/log2.h>
 #include <asm/mman.h>
+#include <asm/pgalloc.h>
 #include <asm/tlb.h>
 #include <asm/tlbflush.h>
 
@@ -25,19 +26,16 @@ unsigned int hpage_shift = HPAGE_SHIFT_DEFAULT;
 EXPORT_SYMBOL(hpage_shift);
 
 pte_t *
-huge_pte_alloc(struct mm_struct *mm, struct vm_area_struct *vma,
-	       unsigned long addr, unsigned long sz)
+huge_pte_alloc(struct mm_struct *mm, unsigned long addr, unsigned long sz)
 {
 	unsigned long taddr = htlbpage_to_page(addr);
 	pgd_t *pgd;
-	p4d_t *p4d;
 	pud_t *pud;
 	pmd_t *pmd;
 	pte_t *pte = NULL;
 
 	pgd = pgd_offset(mm, taddr);
-	p4d = p4d_offset(pgd, taddr);
-	pud = pud_alloc(mm, p4d, taddr);
+	pud = pud_alloc(mm, pgd, taddr);
 	if (pud) {
 		pmd = pmd_alloc(mm, pud, taddr);
 		if (pmd)
@@ -51,21 +49,17 @@ huge_pte_offset (struct mm_struct *mm, unsigned long addr, unsigned long sz)
 {
 	unsigned long taddr = htlbpage_to_page(addr);
 	pgd_t *pgd;
-	p4d_t *p4d;
 	pud_t *pud;
 	pmd_t *pmd;
 	pte_t *pte = NULL;
 
 	pgd = pgd_offset(mm, taddr);
 	if (pgd_present(*pgd)) {
-		p4d = p4d_offset(pgd, addr);
-		if (p4d_present(*p4d)) {
-			pud = pud_offset(p4d, taddr);
-			if (pud_present(*pud)) {
-				pmd = pmd_offset(pud, taddr);
-				if (pmd_present(*pmd))
-					pte = pte_offset_map(pmd, taddr);
-			}
+		pud = pud_offset(pgd, taddr);
+		if (pud_present(*pud)) {
+			pmd = pmd_offset(pud, taddr);
+			if (pmd_present(*pmd))
+				pte = pte_offset_map(pmd, taddr);
 		}
 	}
 

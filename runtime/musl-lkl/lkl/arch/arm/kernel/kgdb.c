@@ -154,37 +154,33 @@ static int kgdb_compiled_brk_fn(struct pt_regs *regs, unsigned int instr)
 	return 0;
 }
 
-static struct undef_hook kgdb_brkpt_arm_hook = {
+static struct undef_hook kgdb_brkpt_hook = {
 	.instr_mask		= 0xffffffff,
 	.instr_val		= KGDB_BREAKINST,
-	.cpsr_mask		= PSR_T_BIT | MODE_MASK,
+	.cpsr_mask		= MODE_MASK,
 	.cpsr_val		= SVC_MODE,
 	.fn			= kgdb_brk_fn
 };
 
-static struct undef_hook kgdb_brkpt_thumb_hook = {
-	.instr_mask		= 0xffff,
-	.instr_val		= KGDB_BREAKINST & 0xffff,
-	.cpsr_mask		= PSR_T_BIT | MODE_MASK,
-	.cpsr_val		= PSR_T_BIT | SVC_MODE,
-	.fn			= kgdb_brk_fn
-};
-
-static struct undef_hook kgdb_compiled_brkpt_arm_hook = {
+static struct undef_hook kgdb_compiled_brkpt_hook = {
 	.instr_mask		= 0xffffffff,
 	.instr_val		= KGDB_COMPILED_BREAK,
-	.cpsr_mask		= PSR_T_BIT | MODE_MASK,
+	.cpsr_mask		= MODE_MASK,
 	.cpsr_val		= SVC_MODE,
 	.fn			= kgdb_compiled_brk_fn
 };
 
-static struct undef_hook kgdb_compiled_brkpt_thumb_hook = {
-	.instr_mask		= 0xffff,
-	.instr_val		= KGDB_COMPILED_BREAK & 0xffff,
-	.cpsr_mask		= PSR_T_BIT | MODE_MASK,
-	.cpsr_val		= PSR_T_BIT | SVC_MODE,
-	.fn			= kgdb_compiled_brk_fn
-};
+static void kgdb_call_nmi_hook(void *ignored)
+{
+       kgdb_nmicallback(raw_smp_processor_id(), get_irq_regs());
+}
+
+void kgdb_roundup_cpus(unsigned long flags)
+{
+       local_irq_enable();
+       smp_call_function(kgdb_call_nmi_hook, NULL, 0);
+       local_irq_disable();
+}
 
 static int __kgdb_notify(struct die_args *args, unsigned long cmd)
 {
@@ -226,10 +222,8 @@ int kgdb_arch_init(void)
 	if (ret != 0)
 		return ret;
 
-	register_undef_hook(&kgdb_brkpt_arm_hook);
-	register_undef_hook(&kgdb_brkpt_thumb_hook);
-	register_undef_hook(&kgdb_compiled_brkpt_arm_hook);
-	register_undef_hook(&kgdb_compiled_brkpt_thumb_hook);
+	register_undef_hook(&kgdb_brkpt_hook);
+	register_undef_hook(&kgdb_compiled_brkpt_hook);
 
 	return 0;
 }
@@ -242,10 +236,8 @@ int kgdb_arch_init(void)
  */
 void kgdb_arch_exit(void)
 {
-	unregister_undef_hook(&kgdb_brkpt_arm_hook);
-	unregister_undef_hook(&kgdb_brkpt_thumb_hook);
-	unregister_undef_hook(&kgdb_compiled_brkpt_arm_hook);
-	unregister_undef_hook(&kgdb_compiled_brkpt_thumb_hook);
+	unregister_undef_hook(&kgdb_brkpt_hook);
+	unregister_undef_hook(&kgdb_compiled_brkpt_hook);
 	unregister_die_notifier(&kgdb_notifier);
 }
 
@@ -256,7 +248,7 @@ int kgdb_arch_set_breakpoint(struct kgdb_bkpt *bpt)
 	/* patch_text() only supports int-sized breakpoints */
 	BUILD_BUG_ON(sizeof(int) != BREAK_INSTR_SIZE);
 
-	err = copy_from_kernel_nofault(bpt->saved_instr, (char *)bpt->bpt_addr,
+	err = probe_kernel_read(bpt->saved_instr, (char *)bpt->bpt_addr,
 				BREAK_INSTR_SIZE);
 	if (err)
 		return err;
@@ -282,7 +274,7 @@ int kgdb_arch_remove_breakpoint(struct kgdb_bkpt *bpt)
  * and we handle the normal undef case within the do_undefinstr
  * handler.
  */
-const struct kgdb_arch arch_kgdb_ops = {
+struct kgdb_arch arch_kgdb_ops = {
 #ifndef __ARMEB__
 	.gdb_bpt_instr		= {0xfe, 0xde, 0xff, 0xe7}
 #else /* ! __ARMEB__ */

@@ -3,12 +3,8 @@
 
 	.data
 	.balign 8
-success_message:
+message:
 	.ascii "success: switch_endian_test\n\0"
-
-	.balign 8
-failure_message:
-	.ascii "failure: switch_endian_test\n\0"
 
 	.section ".toc"
 	.balign 8
@@ -68,9 +64,6 @@ FUNC_START(_start)
 	li r0, __NR_switch_endian
 	sc
 
-	tdi   0, 0, 0x48	// b +8 if the endian was switched
-	b     .Lfail	  	// exit if endian didn't switch
-
 #include "check-reversed.S"
 
 	/* Flip back, r0 already has the switch syscall number */
@@ -78,20 +71,12 @@ FUNC_START(_start)
 
 #include "check.S"
 
-	ld	r4, success_message@got(%r2)
-	li	r5, 28	// strlen(success_message)
-	li	r14, 0	// exit status
-.Lout:
 	li	r0, __NR_write
 	li	r3, 1	/* stdout */
+	ld	r4, message@got(%r2)
+	li	r5, 28	/* strlen(message3) */
 	sc
 	li      r0, __NR_exit
-	mr	r3, r14
+	li	r3, 0
 	sc
 	b       .
-
-.Lfail:
-	ld	r4, failure_message@got(%r2)
-	li	r5, 28	// strlen(failure_message)
-	li	r14, 1
-	b	.Lout

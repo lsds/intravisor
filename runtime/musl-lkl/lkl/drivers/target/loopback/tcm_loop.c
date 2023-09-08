@@ -39,20 +39,12 @@
 
 #define to_tcm_loop_hba(hba)	container_of(hba, struct tcm_loop_hba, dev)
 
+static struct workqueue_struct *tcm_loop_workqueue;
 static struct kmem_cache *tcm_loop_cmd_cache;
 
 static int tcm_loop_hba_no_cnt;
 
 static int tcm_loop_queue_status(struct se_cmd *se_cmd);
-
-static unsigned int tcm_loop_nr_hw_queues = 1;
-module_param_named(nr_hw_queues, tcm_loop_nr_hw_queues, uint, 0644);
-
-static unsigned int tcm_loop_can_queue = 1024;
-module_param_named(can_queue, tcm_loop_can_queue, uint, 0644);
-
-static unsigned int tcm_loop_cmd_per_lun = 1024;
-module_param_named(cmd_per_lun, tcm_loop_cmd_per_lun, uint, 0644);
 
 /*
  * Called from struct target_core_fabric_ops->check_stop_free()
@@ -66,12 +58,8 @@ static void tcm_loop_release_cmd(struct se_cmd *se_cmd)
 {
 	struct tcm_loop_cmd *tl_cmd = container_of(se_cmd,
 				struct tcm_loop_cmd, tl_se_cmd);
-	struct scsi_cmnd *sc = tl_cmd->sc;
 
-	if (se_cmd->se_cmd_flags & SCF_SCSI_TMR_CDB)
-		kmem_cache_free(tcm_loop_cmd_cache, tl_cmd);
-	else
-		scsi_done(sc);
+	kmem_cache_free(tcm_loop_cmd_cache, tl_cmd);
 }
 
 static int tcm_loop_show_info(struct seq_file *m, struct Scsi_Host *host)
@@ -81,7 +69,7 @@ static int tcm_loop_show_info(struct seq_file *m, struct Scsi_Host *host)
 }
 
 static int tcm_loop_driver_probe(struct device *);
-static void tcm_loop_driver_remove(struct device *);
+static int tcm_loop_driver_remove(struct device *);
 
 static int pseudo_lld_bus_match(struct device *dev,
 				struct device_driver *dev_driver)
@@ -105,8 +93,10 @@ static struct device_driver tcm_loop_driverfs = {
  */
 static struct device *tcm_loop_primary;
 
-static void tcm_loop_target_queue_cmd(struct tcm_loop_cmd *tl_cmd)
+static void tcm_loop_submission_work(struct work_struct *work)
 {
+	struct tcm_loop_cmd *tl_cmd =
+		container_of(work, struct tcm_loop_cmd, work);
 	struct se_cmd *se_cmd = &tl_cmd->tl_se_cmd;
 	struct scsi_cmnd *sc = tl_cmd->sc;
 	struct tcm_loop_nexus *tl_nexus;
@@ -114,6 +104,7 @@ static void tcm_loop_target_queue_cmd(struct tcm_loop_cmd *tl_cmd)
 	struct tcm_loop_tpg *tl_tpg;
 	struct scatterlist *sgl_bidi = NULL;
 	u32 sgl_bidi_count = 0, transfer_length;
+	int rc;
 
 	tl_hba = *(struct tcm_loop_hba **)shost_priv(sc->device->host);
 	tl_tpg = &tl_hba->tl_hba_tpgs[sc->device->id];
@@ -137,6 +128,14 @@ static void tcm_loop_target_queue_cmd(struct tcm_loop_cmd *tl_cmd)
 		set_host_byte(sc, DID_ERROR);
 		goto out_done;
 	}
+	if (scsi_bidi_cmnd(sc)) {
+		struct scsi_data_buffer *sdb = scsi_in(sc);
+
+		sgl_bidi = sdb->table.sgl;
+		sgl_bidi_count = sdb->table.nents;
+		se_cmd->se_cmd_flags |= SCF_BIDI;
+
+	}
 
 	transfer_length = scsi_transfer_length(sc);
 	if (!scsi_prot_sg_count(sc) &&
@@ -151,21 +150,22 @@ static void tcm_loop_target_queue_cmd(struct tcm_loop_cmd *tl_cmd)
 	}
 
 	se_cmd->tag = tl_cmd->sc_cmd_tag;
-	target_init_cmd(se_cmd, tl_nexus->se_sess, &tl_cmd->tl_sense_buf[0],
-			tl_cmd->sc->device->lun, transfer_length,
-			TCM_SIMPLE_TAG, sc->sc_data_direction, 0);
-
-	if (target_submit_prep(se_cmd, sc->cmnd, scsi_sglist(sc),
-			       scsi_sg_count(sc), sgl_bidi, sgl_bidi_count,
-			       scsi_prot_sglist(sc), scsi_prot_sg_count(sc),
-			       GFP_ATOMIC))
-		return;
-
-	target_queue_submission(se_cmd);
+	rc = target_submit_cmd_map_sgls(se_cmd, tl_nexus->se_sess, sc->cmnd,
+			&tl_cmd->tl_sense_buf[0], tl_cmd->sc->device->lun,
+			transfer_length, TCM_SIMPLE_TAG,
+			sc->sc_data_direction, 0,
+			scsi_sglist(sc), scsi_sg_count(sc),
+			sgl_bidi, sgl_bidi_count,
+			scsi_prot_sglist(sc), scsi_prot_sg_count(sc));
+	if (rc < 0) {
+		set_host_byte(sc, DID_NO_CONNECT);
+		goto out_done;
+	}
 	return;
 
 out_done:
-	scsi_done(sc);
+	kmem_cache_free(tcm_loop_cmd_cache, tl_cmd);
+	sc->scsi_done(sc);
 }
 
 /*
@@ -174,18 +174,24 @@ out_done:
  */
 static int tcm_loop_queuecommand(struct Scsi_Host *sh, struct scsi_cmnd *sc)
 {
-	struct tcm_loop_cmd *tl_cmd = scsi_cmd_priv(sc);
+	struct tcm_loop_cmd *tl_cmd;
 
 	pr_debug("%s() %d:%d:%d:%llu got CDB: 0x%02x scsi_buf_len: %u\n",
 		 __func__, sc->device->host->host_no, sc->device->id,
 		 sc->device->channel, sc->device->lun, sc->cmnd[0],
 		 scsi_bufflen(sc));
 
-	memset(tl_cmd, 0, sizeof(*tl_cmd));
-	tl_cmd->sc = sc;
-	tl_cmd->sc_cmd_tag = scsi_cmd_to_rq(sc)->tag;
+	tl_cmd = kmem_cache_zalloc(tcm_loop_cmd_cache, GFP_ATOMIC);
+	if (!tl_cmd) {
+		set_host_byte(sc, DID_ERROR);
+		sc->scsi_done(sc);
+		return 0;
+	}
 
-	tcm_loop_target_queue_cmd(tl_cmd);
+	tl_cmd->sc = sc;
+	tl_cmd->sc_cmd_tag = sc->request->tag;
+	INIT_WORK(&tl_cmd->work, tcm_loop_submission_work);
+	queue_work(tcm_loop_workqueue, &tl_cmd->work);
 	return 0;
 }
 
@@ -233,7 +239,10 @@ out:
 	return ret;
 
 release:
-	kmem_cache_free(tcm_loop_cmd_cache, tl_cmd);
+	if (se_cmd)
+		transport_generic_free_cmd(se_cmd, 0);
+	else
+		kmem_cache_free(tcm_loop_cmd_cache, tl_cmd);
 	goto out;
 }
 
@@ -241,7 +250,7 @@ static int tcm_loop_abort_task(struct scsi_cmnd *sc)
 {
 	struct tcm_loop_hba *tl_hba;
 	struct tcm_loop_tpg *tl_tpg;
-	int ret;
+	int ret = FAILED;
 
 	/*
 	 * Locate the tcm_loop_hba_t pointer
@@ -249,7 +258,7 @@ static int tcm_loop_abort_task(struct scsi_cmnd *sc)
 	tl_hba = *(struct tcm_loop_hba **)shost_priv(sc->device->host);
 	tl_tpg = &tl_hba->tl_hba_tpgs[sc->device->id];
 	ret = tcm_loop_issue_tmr(tl_tpg, sc->device->lun,
-				 scsi_cmd_to_rq(sc)->tag, TMR_ABORT_TASK);
+				 sc->request->tag, TMR_ABORT_TASK);
 	return (ret == TMR_FUNCTION_COMPLETE) ? SUCCESS : FAILED;
 }
 
@@ -261,7 +270,7 @@ static int tcm_loop_device_reset(struct scsi_cmnd *sc)
 {
 	struct tcm_loop_hba *tl_hba;
 	struct tcm_loop_tpg *tl_tpg;
-	int ret;
+	int ret = FAILED;
 
 	/*
 	 * Locate the tcm_loop_hba_t pointer
@@ -298,6 +307,12 @@ static int tcm_loop_target_reset(struct scsi_cmnd *sc)
 	return FAILED;
 }
 
+static int tcm_loop_slave_alloc(struct scsi_device *sd)
+{
+	blk_queue_flag_set(QUEUE_FLAG_BIDI, sd->request_queue);
+	return 0;
+}
+
 static struct scsi_host_template tcm_loop_driver_template = {
 	.show_info		= tcm_loop_show_info,
 	.proc_name		= "tcm_loopback",
@@ -307,13 +322,15 @@ static struct scsi_host_template tcm_loop_driver_template = {
 	.eh_abort_handler = tcm_loop_abort_task,
 	.eh_device_reset_handler = tcm_loop_device_reset,
 	.eh_target_reset_handler = tcm_loop_target_reset,
+	.can_queue		= 1024,
 	.this_id		= -1,
 	.sg_tablesize		= 256,
+	.cmd_per_lun		= 1024,
 	.max_sectors		= 0xFFFF,
-	.dma_boundary		= PAGE_SIZE - 1,
+	.use_clustering		= DISABLE_CLUSTERING,
+	.slave_alloc		= tcm_loop_slave_alloc,
 	.module			= THIS_MODULE,
 	.track_queue_depth	= 1,
-	.cmd_size		= sizeof(struct tcm_loop_cmd),
 };
 
 static int tcm_loop_driver_probe(struct device *dev)
@@ -343,9 +360,6 @@ static int tcm_loop_driver_probe(struct device *dev)
 	sh->max_lun = 0;
 	sh->max_channel = 0;
 	sh->max_cmd_len = SCSI_MAX_VARLEN_CDB_SIZE;
-	sh->nr_hw_queues = tcm_loop_nr_hw_queues;
-	sh->can_queue = tcm_loop_can_queue;
-	sh->cmd_per_lun = tcm_loop_cmd_per_lun;
 
 	host_prot = SHOST_DIF_TYPE1_PROTECTION | SHOST_DIF_TYPE2_PROTECTION |
 		    SHOST_DIF_TYPE3_PROTECTION | SHOST_DIX_TYPE1_PROTECTION |
@@ -363,7 +377,7 @@ static int tcm_loop_driver_probe(struct device *dev)
 	return 0;
 }
 
-static void tcm_loop_driver_remove(struct device *dev)
+static int tcm_loop_driver_remove(struct device *dev)
 {
 	struct tcm_loop_hba *tl_hba;
 	struct Scsi_Host *sh;
@@ -373,6 +387,7 @@ static void tcm_loop_driver_remove(struct device *dev)
 
 	scsi_remove_host(sh);
 	scsi_host_put(sh);
+	return 0;
 }
 
 static void tcm_loop_release_adapter(struct device *dev)
@@ -397,7 +412,6 @@ static int tcm_loop_setup_hba_bus(struct tcm_loop_hba *tl_hba, int tcm_loop_host
 	ret = device_register(&tl_hba->dev);
 	if (ret) {
 		pr_err("device_register() failed for tl_hba->dev: %d\n", ret);
-		put_device(&tl_hba->dev);
 		return -ENODEV;
 	}
 
@@ -447,6 +461,11 @@ static void tcm_loop_release_core_bus(void)
 	root_device_unregister(tcm_loop_primary);
 
 	pr_debug("Releasing TCM Loop Core BUS\n");
+}
+
+static char *tcm_loop_get_fabric_name(void)
+{
+	return "loopback";
 }
 
 static inline struct tcm_loop_tpg *tl_tpg(struct se_portal_group *se_tpg)
@@ -549,15 +568,37 @@ static int tcm_loop_write_pending(struct se_cmd *se_cmd)
 	return 0;
 }
 
-static int tcm_loop_queue_data_or_status(const char *func,
-		struct se_cmd *se_cmd, u8 scsi_status)
+static int tcm_loop_write_pending_status(struct se_cmd *se_cmd)
+{
+	return 0;
+}
+
+static int tcm_loop_queue_data_in(struct se_cmd *se_cmd)
 {
 	struct tcm_loop_cmd *tl_cmd = container_of(se_cmd,
 				struct tcm_loop_cmd, tl_se_cmd);
 	struct scsi_cmnd *sc = tl_cmd->sc;
 
 	pr_debug("%s() called for scsi_cmnd: %p cdb: 0x%02x\n",
-		 func, sc, sc->cmnd[0]);
+		 __func__, sc, sc->cmnd[0]);
+
+	sc->result = SAM_STAT_GOOD;
+	set_host_byte(sc, DID_OK);
+	if ((se_cmd->se_cmd_flags & SCF_OVERFLOW_BIT) ||
+	    (se_cmd->se_cmd_flags & SCF_UNDERFLOW_BIT))
+		scsi_set_resid(sc, se_cmd->residual_count);
+	sc->scsi_done(sc);
+	return 0;
+}
+
+static int tcm_loop_queue_status(struct se_cmd *se_cmd)
+{
+	struct tcm_loop_cmd *tl_cmd = container_of(se_cmd,
+				struct tcm_loop_cmd, tl_se_cmd);
+	struct scsi_cmnd *sc = tl_cmd->sc;
+
+	pr_debug("%s() called for scsi_cmnd: %p cdb: 0x%02x\n",
+		 __func__, sc, sc->cmnd[0]);
 
 	if (se_cmd->sense_buffer &&
 	   ((se_cmd->se_cmd_flags & SCF_TRANSPORT_TASK_SENSE) ||
@@ -566,25 +607,16 @@ static int tcm_loop_queue_data_or_status(const char *func,
 		memcpy(sc->sense_buffer, se_cmd->sense_buffer,
 				SCSI_SENSE_BUFFERSIZE);
 		sc->result = SAM_STAT_CHECK_CONDITION;
+		set_driver_byte(sc, DRIVER_SENSE);
 	} else
-		sc->result = scsi_status;
+		sc->result = se_cmd->scsi_status;
 
 	set_host_byte(sc, DID_OK);
 	if ((se_cmd->se_cmd_flags & SCF_OVERFLOW_BIT) ||
 	    (se_cmd->se_cmd_flags & SCF_UNDERFLOW_BIT))
 		scsi_set_resid(sc, se_cmd->residual_count);
+	sc->scsi_done(sc);
 	return 0;
-}
-
-static int tcm_loop_queue_data_in(struct se_cmd *se_cmd)
-{
-	return tcm_loop_queue_data_or_status(__func__, se_cmd, SAM_STAT_GOOD);
-}
-
-static int tcm_loop_queue_status(struct se_cmd *se_cmd)
-{
-	return tcm_loop_queue_data_or_status(__func__,
-					     se_cmd, se_cmd->scsi_status);
 }
 
 static void tcm_loop_queue_tm_rsp(struct se_cmd *se_cmd)
@@ -736,7 +768,7 @@ static int tcm_loop_make_nexus(
 	if (!tl_nexus)
 		return -ENOMEM;
 
-	tl_nexus->se_sess = target_setup_session(&tl_tpg->tl_se_tpg, 0, 0,
+	tl_nexus->se_sess = target_alloc_session(&tl_tpg->tl_se_tpg, 0, 0,
 					TARGET_PROT_DIN_PASS | TARGET_PROT_DOUT_PASS,
 					name, tl_nexus, tcm_loop_alloc_sess_cb);
 	if (IS_ERR(tl_nexus->se_sess)) {
@@ -776,7 +808,7 @@ static int tcm_loop_drop_nexus(
 	/*
 	 * Release the SCSI I_T Nexus to the emulated Target Port
 	 */
-	target_remove_session(se_sess);
+	transport_deregister_session(tl_nexus->se_sess);
 	tpg->tl_nexus = NULL;
 	kfree(tl_nexus);
 	return 0;
@@ -951,8 +983,10 @@ static struct configfs_attribute *tcm_loop_tpg_attrs[] = {
 
 /* Start items for tcm_loop_naa_cit */
 
-static struct se_portal_group *tcm_loop_make_naa_tpg(struct se_wwn *wwn,
-						     const char *name)
+static struct se_portal_group *tcm_loop_make_naa_tpg(
+	struct se_wwn *wwn,
+	struct config_group *group,
+	const char *name)
 {
 	struct tcm_loop_hba *tl_hba = container_of(wwn,
 			struct tcm_loop_hba, tl_hba_wwn);
@@ -1074,7 +1108,7 @@ check_len:
 	 */
 	ret = tcm_loop_setup_hba_bus(tl_hba, tcm_loop_hba_no_cnt);
 	if (ret)
-		return ERR_PTR(ret);
+		goto out;
 
 	sh = tl_hba->sh;
 	tcm_loop_hba_no_cnt++;
@@ -1120,7 +1154,8 @@ static struct configfs_attribute *tcm_loop_wwn_attrs[] = {
 
 static const struct target_core_fabric_ops loop_ops = {
 	.module				= THIS_MODULE,
-	.fabric_name			= "loopback",
+	.name				= "loopback",
+	.get_fabric_name		= tcm_loop_get_fabric_name,
 	.tpg_get_wwn			= tcm_loop_get_endpoint_wwn,
 	.tpg_get_tag			= tcm_loop_get_tag,
 	.tpg_check_demo_mode		= tcm_loop_check_demo_mode,
@@ -1135,6 +1170,7 @@ static const struct target_core_fabric_ops loop_ops = {
 	.release_cmd			= tcm_loop_release_cmd,
 	.sess_get_index			= tcm_loop_sess_get_index,
 	.write_pending			= tcm_loop_write_pending,
+	.write_pending_status		= tcm_loop_write_pending_status,
 	.set_default_node_attributes	= tcm_loop_set_default_node_attributes,
 	.get_cmd_state			= tcm_loop_get_cmd_state,
 	.queue_data_in			= tcm_loop_queue_data_in,
@@ -1156,13 +1192,17 @@ static int __init tcm_loop_fabric_init(void)
 {
 	int ret = -ENOMEM;
 
+	tcm_loop_workqueue = alloc_workqueue("tcm_loop", 0, 0);
+	if (!tcm_loop_workqueue)
+		goto out;
+
 	tcm_loop_cmd_cache = kmem_cache_create("tcm_loop_cmd_cache",
 				sizeof(struct tcm_loop_cmd),
 				__alignof__(struct tcm_loop_cmd),
 				0, NULL);
 	if (!tcm_loop_cmd_cache) {
 		pr_debug("kmem_cache_create() for tcm_loop_cmd_cache failed\n");
-		goto out;
+		goto out_destroy_workqueue;
 	}
 
 	ret = tcm_loop_alloc_core_bus();
@@ -1179,6 +1219,8 @@ out_release_core_bus:
 	tcm_loop_release_core_bus();
 out_destroy_cache:
 	kmem_cache_destroy(tcm_loop_cmd_cache);
+out_destroy_workqueue:
+	destroy_workqueue(tcm_loop_workqueue);
 out:
 	return ret;
 }
@@ -1188,6 +1230,7 @@ static void __exit tcm_loop_fabric_exit(void)
 	target_unregister_template(&loop_ops);
 	tcm_loop_release_core_bus();
 	kmem_cache_destroy(tcm_loop_cmd_cache);
+	destroy_workqueue(tcm_loop_workqueue);
 }
 
 MODULE_DESCRIPTION("TCM loopback virtual Linux/SCSI fabric module");

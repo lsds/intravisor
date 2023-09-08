@@ -37,7 +37,6 @@ static int llc_mac_header_len(unsigned short devtype)
 
 /**
  *	llc_alloc_frame - allocates sk_buff for frame
- *	@sk:  socket to allocate frame to
  *	@dev: network device this skb will be sent over
  *	@type: pdu type to allocate
  *	@data_size: data size to allocate
@@ -198,22 +197,29 @@ out:
  *	After executing actions of the event, upper layer will be indicated
  *	if needed(on receiving an UI frame). sk can be null for the
  *	datalink_proto case.
- *
- *	This function always consumes a reference to the skb.
  */
 static void llc_sap_state_process(struct llc_sap *sap, struct sk_buff *skb)
 {
 	struct llc_sap_state_ev *ev = llc_sap_ev(skb);
 
+	/*
+	 * We have to hold the skb, because llc_sap_next_state
+	 * will kfree it in the sending path and we need to
+	 * look at the skb->cb, where we encode llc_sap_state_ev.
+	 */
+	skb_get(skb);
 	ev->ind_cfm_flag = 0;
 	llc_sap_next_state(sap, skb);
+	if (ev->ind_cfm_flag == LLC_IND) {
+		if (skb->sk->sk_state == TCP_LISTEN)
+			kfree_skb(skb);
+		else {
+			llc_save_primitive(skb->sk, skb, ev->prim);
 
-	if (ev->ind_cfm_flag == LLC_IND && skb->sk->sk_state != TCP_LISTEN) {
-		llc_save_primitive(skb->sk, skb, ev->prim);
-
-		/* queue skb to the user. */
-		if (sock_queue_rcv_skb(skb->sk, skb) == 0)
-			return;
+			/* queue skb to the user. */
+			if (sock_queue_rcv_skb(skb->sk, skb))
+				kfree_skb(skb);
+		}
 	}
 	kfree_skb(skb);
 }
@@ -274,7 +280,6 @@ void llc_build_and_send_xid_pkt(struct llc_sap *sap, struct sk_buff *skb,
  *	llc_sap_rcv - sends received pdus to the sap state machine
  *	@sap: current sap component structure.
  *	@skb: received frame.
- *	@sk:  socket to associate to frame
  *
  *	Sends received pdus to the sap state machine.
  */
@@ -381,7 +386,6 @@ static void llc_do_mcast(struct llc_sap *sap, struct sk_buff *skb,
  * 	llc_sap_mcast - Deliver multicast PDU's to all matching datagram sockets.
  *	@sap: SAP
  *	@laddr: address of local LLC (MAC + SAP)
- *	@skb: PDU to deliver
  *
  *	Search socket list of the SAP and finds connections with same sap.
  *	Deliver clone to each.

@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * Staging board support for Armadillo 800 eva.
  * Enable not-yet-DT-capable devices here.
@@ -7,6 +6,15 @@
  *
  * Copyright (C) 2012 Renesas Solutions Corp.
  * Copyright (C) 2012 Kuninori Morimoto <kuninori.morimoto.gx@renesas.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; version 2 of the License.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
  */
 
 #include <linux/dma-mapping.h>
@@ -50,8 +58,16 @@ static struct sh_mobile_lcdc_info lcdc0_info = {
 };
 
 static struct resource lcdc0_resources[] = {
-	DEFINE_RES_MEM_NAMED(0xfe940000, 0x4000, "LCD0"),
-	DEFINE_RES_IRQ(177 + 32),
+	[0] = {
+		.name	= "LCD0",
+		.start	= 0xfe940000,
+		.end	= 0xfe943fff,
+		.flags	= IORESOURCE_MEM,
+	},
+	[1] = {
+		.start	= 177 + 32,
+		.flags	= IORESOURCE_IRQ,
+	},
 };
 
 static struct platform_device lcdc0_device = {

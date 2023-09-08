@@ -1,10 +1,25 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /******************************************************************************
  *
  * Copyright(c) 2003 - 2011 Intel Corporation. All rights reserved.
  *
  * Portions of this file are derived from the ipw3945 project, as well
  * as portions of the ieee80211 subsystem header files.
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of version 2 of the GNU General Public License as
+ * published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+ * more details.
+ *
+ * You should have received a copy of the GNU General Public License along with
+ * this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110, USA
+ *
+ * The full GNU General Public License is included in this distribution in the
+ * file called LICENSE.
  *
  * Contact Information:
  *  Intel Linux Wireless <ilw@linux.intel.com>
@@ -18,6 +33,7 @@
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/pci.h>
+#include <linux/pci-aspm.h>
 #include <linux/slab.h>
 #include <linux/dma-mapping.h>
 #include <linux/delay.h>
@@ -27,7 +43,6 @@
 #include <linux/firmware.h>
 #include <linux/etherdevice.h>
 #include <linux/if_arp.h>
-#include <linux/units.h>
 
 #include <net/mac80211.h>
 
@@ -94,10 +109,9 @@ il4965_rx_queue_reset(struct il_priv *il, struct il_rx_queue *rxq)
 		/* In the reset function, these buffers may have been allocated
 		 * to an SKB, so we need to unmap and free potential storage */
 		if (rxq->pool[i].page != NULL) {
-			dma_unmap_page(&il->pci_dev->dev,
-				       rxq->pool[i].page_dma,
+			pci_unmap_page(il->pci_dev, rxq->pool[i].page_dma,
 				       PAGE_SIZE << il->hw_params.rx_page_order,
-				       DMA_FROM_DEVICE);
+				       PCI_DMA_FROMDEVICE);
 			__il_free_pages(il, rxq->pool[i].page);
 			rxq->pool[i].page = NULL;
 		}
@@ -227,7 +241,7 @@ il4965_hw_nic_init(struct il_priv *il)
 	return 0;
 }
 
-/*
+/**
  * il4965_dma_addr2rbd_ptr - convert a DMA address to a uCode read buffer ptr
  */
 static inline __le32
@@ -236,7 +250,7 @@ il4965_dma_addr2rbd_ptr(struct il_priv *il, dma_addr_t dma_addr)
 	return cpu_to_le32((u32) (dma_addr >> 8));
 }
 
-/*
+/**
  * il4965_rx_queue_restock - refill RX queue from pre-allocated pool
  *
  * If there are slots in the RX queue that need to be restocked,
@@ -289,7 +303,7 @@ il4965_rx_queue_restock(struct il_priv *il)
 	}
 }
 
-/*
+/**
  * il4965_rx_replenish - Move all used packet from rx_used to rx_free
  *
  * When moving to rx_free an SKB is allocated for the slot.
@@ -343,10 +357,11 @@ il4965_rx_allocate(struct il_priv *il, gfp_t priority)
 		}
 
 		/* Get physical address of the RB */
-		page_dma = dma_map_page(&il->pci_dev->dev, page, 0,
-					PAGE_SIZE << il->hw_params.rx_page_order,
-					DMA_FROM_DEVICE);
-		if (unlikely(dma_mapping_error(&il->pci_dev->dev, page_dma))) {
+		page_dma =
+		    pci_map_page(il->pci_dev, page, 0,
+				 PAGE_SIZE << il->hw_params.rx_page_order,
+				 PCI_DMA_FROMDEVICE);
+		if (unlikely(pci_dma_mapping_error(il->pci_dev, page_dma))) {
 			__free_pages(page, il->hw_params.rx_page_order);
 			break;
 		}
@@ -355,9 +370,9 @@ il4965_rx_allocate(struct il_priv *il, gfp_t priority)
 
 		if (list_empty(&rxq->rx_used)) {
 			spin_unlock_irqrestore(&rxq->lock, flags);
-			dma_unmap_page(&il->pci_dev->dev, page_dma,
+			pci_unmap_page(il->pci_dev, page_dma,
 				       PAGE_SIZE << il->hw_params.rx_page_order,
-				       DMA_FROM_DEVICE);
+				       PCI_DMA_FROMDEVICE);
 			__free_pages(page, il->hw_params.rx_page_order);
 			return;
 		}
@@ -409,10 +424,9 @@ il4965_rx_queue_free(struct il_priv *il, struct il_rx_queue *rxq)
 	int i;
 	for (i = 0; i < RX_QUEUE_SIZE + RX_FREE_BUFFERS; i++) {
 		if (rxq->pool[i].page != NULL) {
-			dma_unmap_page(&il->pci_dev->dev,
-				       rxq->pool[i].page_dma,
+			pci_unmap_page(il->pci_dev, rxq->pool[i].page_dma,
 				       PAGE_SIZE << il->hw_params.rx_page_order,
-				       DMA_FROM_DEVICE);
+				       PCI_DMA_FROMDEVICE);
 			__il_free_pages(il, rxq->pool[i].page);
 			rxq->pool[i].page = NULL;
 		}
@@ -545,7 +559,7 @@ il4965_translate_rx_status(struct il_priv *il, u32 decrypt_in)
 			decrypt_out |= RX_RES_STATUS_BAD_KEY_TTAK;
 			break;
 		}
-		fallthrough;	/* if TTAK OK */
+		/* fall through if TTAK OK */
 	default:
 		if (!(decrypt_in & RX_MPDU_RES_STATUS_ICV_OK))
 			decrypt_out |= RX_RES_STATUS_BAD_ICV_MIC;
@@ -1128,7 +1142,7 @@ il4965_count_chain_bitmap(u32 chain_bitmap)
 	return res;
 }
 
-/*
+/**
  * il4965_set_rxon_chain - Set up Rx chain usage in "staging" RXON image
  *
  * Selects how many and which Rx receivers/antennas/chains to use.
@@ -1324,12 +1338,15 @@ il4965_accumulative_stats(struct il_priv *il, __le32 * stats)
 	u32 *accum_stats;
 	u32 *delta, *max_delta;
 	struct stats_general_common *general, *accum_general;
+	struct stats_tx *tx, *accum_tx;
 
 	prev_stats = (__le32 *) &il->_4965.stats;
 	accum_stats = (u32 *) &il->_4965.accum_stats;
 	size = sizeof(struct il_notif_stats);
 	general = &il->_4965.stats.general.common;
 	accum_general = &il->_4965.accum_stats.general.common;
+	tx = &il->_4965.stats.tx;
+	accum_tx = &il->_4965.accum_stats.tx;
 	delta = (u32 *) &il->_4965.delta_stats;
 	max_delta = (u32 *) &il->_4965.max_delta;
 
@@ -1416,7 +1433,7 @@ il4965_hdl_c_stats(struct il_priv *il, struct il_rx_buf *rxb)
 /*
  * mac80211 queues, ACs, hardware queues, FIFOs.
  *
- * Cf. https://wireless.wiki.kernel.org/en/developers/Documentation/mac80211/queues
+ * Cf. http://wireless.kernel.org/en/developers/Documentation/mac80211/queues
  *
  * Mac80211 uses the following numbers, which we get as from it
  * by way of skb_get_queue_mapping(skb):
@@ -1618,7 +1635,7 @@ il4965_tx_cmd_build_hwcrypto(struct il_priv *il, struct ieee80211_tx_info *info,
 
 	case WLAN_CIPHER_SUITE_WEP104:
 		tx_cmd->sec_ctl |= TX_CMD_SEC_KEY128;
-		fallthrough;
+		/* fall through */
 	case WLAN_CIPHER_SUITE_WEP40:
 		tx_cmd->sec_ctl |=
 		    (TX_CMD_SEC_WEP | (keyconf->keyidx & TX_CMD_SEC_MSK) <<
@@ -1816,18 +1833,20 @@ il4965_tx_skb(struct il_priv *il,
 
 	/* Physical address of this Tx command's header (not MAC header!),
 	 * within command buffer array. */
-	txcmd_phys = dma_map_single(&il->pci_dev->dev, &out_cmd->hdr, firstlen,
-				    DMA_BIDIRECTIONAL);
-	if (unlikely(dma_mapping_error(&il->pci_dev->dev, txcmd_phys)))
+	txcmd_phys =
+	    pci_map_single(il->pci_dev, &out_cmd->hdr, firstlen,
+			   PCI_DMA_BIDIRECTIONAL);
+	if (unlikely(pci_dma_mapping_error(il->pci_dev, txcmd_phys)))
 		goto drop_unlock;
 
 	/* Set up TFD's 2nd entry to point directly to remainder of skb,
 	 * if any (802.11 null frames have no payload). */
 	secondlen = skb->len - hdr_len;
 	if (secondlen > 0) {
-		phys_addr = dma_map_single(&il->pci_dev->dev, skb->data + hdr_len,
-					   secondlen, DMA_TO_DEVICE);
-		if (unlikely(dma_mapping_error(&il->pci_dev->dev, phys_addr)))
+		phys_addr =
+		    pci_map_single(il->pci_dev, skb->data + hdr_len, secondlen,
+				   PCI_DMA_TODEVICE);
+		if (unlikely(pci_dma_mapping_error(il->pci_dev, phys_addr)))
 			goto drop_unlock;
 	}
 
@@ -1852,8 +1871,8 @@ il4965_tx_skb(struct il_priv *il,
 	    offsetof(struct il_tx_cmd, scratch);
 
 	/* take back ownership of DMA buffer to enable update */
-	dma_sync_single_for_cpu(&il->pci_dev->dev, txcmd_phys, firstlen,
-				DMA_BIDIRECTIONAL);
+	pci_dma_sync_single_for_cpu(il->pci_dev, txcmd_phys, firstlen,
+				    PCI_DMA_BIDIRECTIONAL);
 	tx_cmd->dram_lsb_ptr = cpu_to_le32(scratch_phys);
 	tx_cmd->dram_msb_ptr = il_get_dma_hi_addr(scratch_phys);
 
@@ -1868,8 +1887,8 @@ il4965_tx_skb(struct il_priv *il,
 	if (info->flags & IEEE80211_TX_CTL_AMPDU)
 		il->ops->txq_update_byte_cnt_tbl(il, txq, le16_to_cpu(tx_cmd->len));
 
-	dma_sync_single_for_device(&il->pci_dev->dev, txcmd_phys, firstlen,
-				   DMA_BIDIRECTIONAL);
+	pci_dma_sync_single_for_device(il->pci_dev, txcmd_phys, firstlen,
+				       PCI_DMA_BIDIRECTIONAL);
 
 	/* Tell device the write idx *just past* this latest filled TFD */
 	q->write_ptr = il_queue_inc_wrap(q->write_ptr, q->n_bd);
@@ -1932,7 +1951,7 @@ il4965_free_dma_ptr(struct il_priv *il, struct il_dma_ptr *ptr)
 	memset(ptr, 0, sizeof(*ptr));
 }
 
-/*
+/**
  * il4965_hw_txq_ctx_free - Free TXQ Context
  *
  * Destroy all TX DMA queues and structures
@@ -1958,9 +1977,12 @@ il4965_hw_txq_ctx_free(struct il_priv *il)
 	il_free_txq_mem(il);
 }
 
-/*
+/**
  * il4965_txq_ctx_alloc - allocate TX queue context
  * Allocate all Tx DMA structures and initialize them
+ *
+ * @param il
+ * @return error code
  */
 int
 il4965_txq_ctx_alloc(struct il_priv *il)
@@ -2056,7 +2078,7 @@ il4965_txq_ctx_unmap(struct il_priv *il)
 			il_tx_queue_unmap(il, txq_id);
 }
 
-/*
+/**
  * il4965_txq_ctx_stop - Stop all Tx DMA channels
  */
 void
@@ -2097,7 +2119,7 @@ il4965_txq_ctx_activate_free(struct il_priv *il)
 	return -1;
 }
 
-/*
+/**
  * il4965_tx_queue_stop_scheduler - Stop queue, but keep configuration
  */
 static void
@@ -2110,7 +2132,7 @@ il4965_tx_queue_stop_scheduler(struct il_priv *il, u16 txq_id)
 		   (1 << IL49_SCD_QUEUE_STTS_REG_POS_SCD_ACT_EN));
 }
 
-/*
+/**
  * il4965_tx_queue_set_q2ratid - Map unique receiver/tid combination to a queue
  */
 static int
@@ -2137,7 +2159,7 @@ il4965_tx_queue_set_q2ratid(struct il_priv *il, u16 ra_tid, u16 txq_id)
 	return 0;
 }
 
-/*
+/**
  * il4965_tx_queue_agg_enable - Set up & enable aggregation for selected queue
  *
  * NOTE:  txq_id must be greater than IL49_FIRST_AMPDU_QUEUE,
@@ -2262,7 +2284,7 @@ il4965_tx_agg_start(struct il_priv *il, struct ieee80211_vif *vif,
 	if (tid_data->tfds_in_queue == 0) {
 		D_HT("HW queue is empty\n");
 		tid_data->agg.state = IL_AGG_ON;
-		ret = IEEE80211_AMPDU_TX_START_IMMEDIATE;
+		ieee80211_start_tx_ba_cb_irqsafe(vif, sta->addr, tid);
 	} else {
 		D_HT("HW queue is NOT empty: %d packets in HW queue\n",
 		     tid_data->tfds_in_queue);
@@ -2272,7 +2294,7 @@ il4965_tx_agg_start(struct il_priv *il, struct ieee80211_vif *vif,
 	return ret;
 }
 
-/*
+/**
  * txq_id must be greater than IL49_FIRST_AMPDU_QUEUE
  * il->lock must be held by the caller
  */
@@ -2484,7 +2506,7 @@ il4965_tx_queue_reclaim(struct il_priv *il, int txq_id, int idx)
 	return nfreed;
 }
 
-/*
+/**
  * il4965_tx_status_reply_compressed_ba - Update tx status from block-ack
  *
  * Go through block-ack's bitmap of ACK'd frames, update driver's record of
@@ -2592,7 +2614,8 @@ out:
 	 */
 	if (ret != IL_INVALID_STATION &&
 	    (!(il->stations[ret].used & IL_STA_UCODE_ACTIVE) ||
-	      (il->stations[ret].used & IL_STA_UCODE_INPROGRESS))) {
+	     ((il->stations[ret].used & IL_STA_UCODE_ACTIVE) &&
+	      (il->stations[ret].used & IL_STA_UCODE_INPROGRESS)))) {
 		IL_ERR("Requested station info for sta %d before ready.\n",
 		       ret);
 		ret = IL_INVALID_STATION;
@@ -2636,7 +2659,7 @@ il4965_tx_status_to_mac80211(u32 status)
 	}
 }
 
-/*
+/**
  * il4965_tx_status_reply_tx - Handle Tx response for frames in aggregation queue
  */
 static int
@@ -2748,7 +2771,7 @@ il4965_tx_status_reply_tx(struct il_priv *il, struct il_ht_agg *agg,
 	return 0;
 }
 
-/*
+/**
  * il4965_hdl_tx - Handle standard (non-aggregation) Tx response
  */
 static void
@@ -2764,7 +2787,7 @@ il4965_hdl_tx(struct il_priv *il, struct il_rx_buf *rxb)
 	struct ieee80211_tx_info *info;
 	struct il4965_tx_resp *tx_resp = (void *)&pkt->u.raw[0];
 	u32 status = le32_to_cpu(tx_resp->u.status);
-	int tid;
+	int uninitialized_var(tid);
 	int sta_id;
 	int freed;
 	u8 *qc = NULL;
@@ -2811,10 +2834,8 @@ il4965_hdl_tx(struct il_priv *il, struct il_rx_buf *rxb)
 	spin_lock_irqsave(&il->sta_lock, flags);
 	if (txq->sched_retry) {
 		const u32 scd_ssn = il4965_get_scd_ssn(tx_resp);
-		struct il_ht_agg *agg;
-
-		if (WARN_ON(!qc))
-			goto out;
+		struct il_ht_agg *agg = NULL;
+		WARN_ON(!qc);
 
 		agg = &il->stations[sta_id].tid[tid].agg;
 
@@ -2830,7 +2851,9 @@ il4965_hdl_tx(struct il_priv *il, struct il_rx_buf *rxb)
 			D_TX_REPLY("Retry scheduler reclaim scd_ssn "
 				   "%d idx %d\n", scd_ssn, idx);
 			freed = il4965_tx_queue_reclaim(il, txq_id, idx);
-			il4965_free_tfds_in_queue(il, sta_id, tid, freed);
+			if (qc)
+				il4965_free_tfds_in_queue(il, sta_id, tid,
+							  freed);
 
 			if (il->mac80211_registered &&
 			    il_queue_space(&txq->q) > txq->q.low_mark &&
@@ -2860,7 +2883,6 @@ il4965_hdl_tx(struct il_priv *il, struct il_rx_buf *rxb)
 		    il_queue_space(&txq->q) > txq->q.low_mark)
 			il_wake_queue(il, txq);
 	}
-out:
 	if (qc && likely(sta_id != IL_INVALID_STATION))
 		il4965_txq_check_empty(il, sta_id, tid, txq_id);
 
@@ -2869,7 +2891,7 @@ out:
 	spin_unlock_irqrestore(&il->sta_lock, flags);
 }
 
-/*
+/**
  * translate ucode response to mac80211 tx status control values
  */
 void
@@ -2893,7 +2915,7 @@ il4965_hwrate_to_tx_control(struct il_priv *il, u32 rate_n_flags,
 	r->idx = il4965_hwrate_to_mac80211_idx(rate_n_flags, info->band);
 }
 
-/*
+/**
  * il4965_hdl_compressed_ba - Handler for N_COMPRESSED_BA
  *
  * Handles block-acknowledge notification from device, which reports success
@@ -3328,6 +3350,7 @@ il4965_set_tkip_dynamic_key_info(struct il_priv *il,
 				 struct ieee80211_key_conf *keyconf, u8 sta_id)
 {
 	unsigned long flags;
+	int ret = 0;
 	__le16 key_flags = 0;
 
 	key_flags |= (STA_KEY_FLG_TKIP | STA_KEY_FLG_MAP_KEY_MSK);
@@ -3364,7 +3387,7 @@ il4965_set_tkip_dynamic_key_info(struct il_priv *il,
 
 	spin_unlock_irqrestore(&il->sta_lock, flags);
 
-	return 0;
+	return ret;
 }
 
 void
@@ -3498,7 +3521,7 @@ il4965_set_dynamic_key(struct il_priv *il, struct ieee80211_key_conf *keyconf,
 	return ret;
 }
 
-/*
+/**
  * il4965_alloc_bcast_station - add broadcast station into driver's station table.
  *
  * This adds the broadcast station into the driver's station table
@@ -3539,7 +3562,7 @@ il4965_alloc_bcast_station(struct il_priv *il)
 	return 0;
 }
 
-/*
+/**
  * il4965_update_bcast_station - update broadcast station's LQ command
  *
  * Only used by iwl4965. Placed here to have all bcast station management
@@ -3575,7 +3598,7 @@ il4965_update_bcast_stations(struct il_priv *il)
 	return il4965_update_bcast_station(il);
 }
 
-/*
+/**
  * il4965_sta_tx_modify_enable_tid - Enable Tx for this TID in station table
  */
 int
@@ -3899,8 +3922,10 @@ il4965_tfd_get_num_tbs(struct il_tfd *tfd)
 	return tfd->num_tbs & 0x1f;
 }
 
-/*
+/**
  * il4965_hw_txq_free_tfd - Free all chunks referenced by TFD [txq->q.read_ptr]
+ * @il - driver ilate data
+ * @txq - tx queue
  *
  * Does NOT advance any TFD circular buffer read/write idxes
  * Does NOT free the TFD itself (which is within circular buffer)
@@ -3928,15 +3953,15 @@ il4965_hw_txq_free_tfd(struct il_priv *il, struct il_tx_queue *txq)
 
 	/* Unmap tx_cmd */
 	if (num_tbs)
-		dma_unmap_single(&dev->dev,
-				 dma_unmap_addr(&txq->meta[idx], mapping),
+		pci_unmap_single(dev, dma_unmap_addr(&txq->meta[idx], mapping),
 				 dma_unmap_len(&txq->meta[idx], len),
-				 DMA_BIDIRECTIONAL);
+				 PCI_DMA_BIDIRECTIONAL);
 
 	/* Unmap chunks, if any. */
 	for (i = 1; i < num_tbs; i++)
-		dma_unmap_single(&dev->dev, il4965_tfd_tb_get_addr(tfd, i),
-				 il4965_tfd_tb_get_len(tfd, i), DMA_TO_DEVICE);
+		pci_unmap_single(dev, il4965_tfd_tb_get_addr(tfd, i),
+				 il4965_tfd_tb_get_len(tfd, i),
+				 PCI_DMA_TODEVICE);
 
 	/* free SKB */
 	if (txq->skbs) {
@@ -4038,7 +4063,7 @@ il4965_hdl_alive(struct il_priv *il, struct il_rx_buf *rxb)
 		IL_WARN("uCode did not respond OK.\n");
 }
 
-/*
+/**
  * il4965_bg_stats_periodic - Timer callback to queue stats
  *
  * This callback is provided in order to send a stats request.
@@ -4149,7 +4174,7 @@ il4965_hdl_card_state(struct il_priv *il, struct il_rx_buf *rxb)
 		wake_up(&il->wait_command_queue);
 }
 
-/*
+/**
  * il4965_setup_handlers - Initialize Rx handler callbacks
  *
  * Setup the RX handlers for each of the reply types sent from the uCode
@@ -4193,7 +4218,7 @@ il4965_setup_handlers(struct il_priv *il)
 	il->handlers[C_TX] = il4965_hdl_tx;
 }
 
-/*
+/**
  * il4965_rx_handle - Main entry function for receiving responses from uCode
  *
  * Uses the il->handlers callback function array to invoke
@@ -4242,9 +4267,9 @@ il4965_rx_handle(struct il_priv *il)
 
 		rxq->queue[i] = NULL;
 
-		dma_unmap_page(&il->pci_dev->dev, rxb->page_dma,
+		pci_unmap_page(il->pci_dev, rxb->page_dma,
 			       PAGE_SIZE << il->hw_params.rx_page_order,
-			       DMA_FROM_DEVICE);
+			       PCI_DMA_FROMDEVICE);
 		pkt = rxb_addr(rxb);
 
 		len = le32_to_cpu(pkt->len_n_flags) & IL_RX_FRAME_SIZE_MSK;
@@ -4289,12 +4314,12 @@ il4965_rx_handle(struct il_priv *il)
 		spin_lock_irqsave(&rxq->lock, flags);
 		if (rxb->page != NULL) {
 			rxb->page_dma =
-			    dma_map_page(&il->pci_dev->dev, rxb->page, 0,
-					 PAGE_SIZE << il->hw_params.rx_page_order,
-					 DMA_FROM_DEVICE);
+			    pci_map_page(il->pci_dev, rxb->page, 0,
+					 PAGE_SIZE << il->hw_params.
+					 rx_page_order, PCI_DMA_FROMDEVICE);
 
-			if (unlikely(dma_mapping_error(&il->pci_dev->dev,
-						       rxb->page_dma))) {
+			if (unlikely(pci_dma_mapping_error(il->pci_dev,
+							   rxb->page_dma))) {
 				__il_free_pages(il, rxb->page);
 				rxb->page = NULL;
 				list_add_tail(&rxb->list, &rxq->rx_used);
@@ -4338,9 +4363,8 @@ il4965_synchronize_irq(struct il_priv *il)
 }
 
 static void
-il4965_irq_tasklet(struct tasklet_struct *t)
+il4965_irq_tasklet(struct il_priv *il)
 {
-	struct il_priv *il = from_tasklet(il, t, irq_tasklet);
 	u32 inta, handled = 0;
 	u32 inta_fh;
 	unsigned long flags;
@@ -4750,7 +4774,7 @@ il4965_load_firmware(struct il_priv *il, const struct firmware *ucode_raw,
 	return 0;
 }
 
-/*
+/**
  * il4965_ucode_callback - callback when firmware was loaded
  *
  * If loaded successfully, copies the firmware into buffers
@@ -4760,6 +4784,7 @@ static void
 il4965_ucode_callback(const struct firmware *ucode_raw, void *context)
 {
 	struct il_priv *il = context;
+	struct il_ucode_header *ucode;
 	int err;
 	struct il4965_firmware_pieces pieces;
 	const unsigned int api_max = il->cfg->ucode_api_max;
@@ -4789,6 +4814,8 @@ il4965_ucode_callback(const struct firmware *ucode_raw, void *context)
 	}
 
 	/* Data from ucode file:  header followed by uCode images */
+	ucode = (struct il_ucode_header *)ucode_raw->data;
+
 	err = il4965_load_firmware(il, ucode_raw, &pieces);
 
 	if (err)
@@ -4967,7 +4994,10 @@ il4965_ucode_callback(const struct firmware *ucode_raw, void *context)
 	if (err)
 		goto out_unbind;
 
-	il_dbgfs_register(il, DRV_NAME);
+	err = il_dbgfs_register(il, DRV_NAME);
+	if (err)
+		IL_ERR("failed to create debugfs files. Ignoring error: %d\n",
+		       err);
 
 	err = sysfs_create_group(&il->pci_dev->dev.kobj, &il_attribute_group);
 	if (err) {
@@ -5253,7 +5283,7 @@ il4965_alive_notify(struct il_priv *il)
 	return 0;
 }
 
-/*
+/**
  * il4965_alive_start - called after N_ALIVE notification received
  *                   from protocol/runtime uCode (initialization uCode's
  *                   Alive gets handled by il_init_alive_start()).
@@ -6232,7 +6262,9 @@ il4965_setup_deferred_work(struct il_priv *il)
 
 	timer_setup(&il->watchdog, il_bg_watchdog, 0);
 
-	tasklet_setup(&il->irq_tasklet, il4965_irq_tasklet);
+	tasklet_init(&il->irq_tasklet,
+		     (void (*)(unsigned long))il4965_irq_tasklet,
+		     (unsigned long)il);
 }
 
 static void
@@ -6461,7 +6493,7 @@ il4965_set_hw_params(struct il_priv *il)
 	il->hw_params.valid_rx_ant = il->cfg->valid_rx_ant;
 
 	il->hw_params.ct_kill_threshold =
-	   celsius_to_kelvin(CT_KILL_THRESHOLD_LEGACY);
+	   CELSIUS_TO_KELVIN(CT_KILL_THRESHOLD_LEGACY);
 
 	il->hw_params.sens = &il4965_sensitivity;
 	il->hw_params.beacon_time_tsf_bits = IL4965_EXT_BEACON_TIME_POS;
@@ -6513,9 +6545,14 @@ il4965_pci_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 
 	pci_set_master(pdev);
 
-	err = dma_set_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(36));
+	err = pci_set_dma_mask(pdev, DMA_BIT_MASK(36));
+	if (!err)
+		err = pci_set_consistent_dma_mask(pdev, DMA_BIT_MASK(36));
 	if (err) {
-		err = dma_set_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(32));
+		err = pci_set_dma_mask(pdev, DMA_BIT_MASK(32));
+		if (!err)
+			err =
+			    pci_set_consistent_dma_mask(pdev, DMA_BIT_MASK(32));
 		/* both attempts failed: */
 		if (err) {
 			IL_WARN("No suitable DMA available.\n");
@@ -6690,7 +6727,7 @@ il4965_pci_remove(struct pci_dev *pdev)
 	sysfs_remove_group(&pdev->dev.kobj, &il_attribute_group);
 
 	/* ieee80211_unregister_hw call wil cause il_mac_stop to
-	 * be called and il4965_down since we are removing the device
+	 * to be called and il4965_down since we are removing the device
 	 * we need to set S_EXIT_PENDING bit.
 	 */
 	set_bit(S_EXIT_PENDING, &il->status);
@@ -6731,6 +6768,7 @@ il4965_pci_remove(struct pci_dev *pdev)
 	il_eeprom_free(il);
 
 	/*netif_stop_queue(dev); */
+	flush_workqueue(il->workqueue);
 
 	/* ieee80211_unregister_hw calls il_mac_stop, which flushes
 	 * il->workqueue... so we can't take down the workqueue

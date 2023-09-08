@@ -27,29 +27,29 @@ Where is documentation?
 =======================
 
 User <-> Kernel interface documentation is available at
-https://tomoyo.osdn.jp/2.5/policy-specification/index.html .
+http://tomoyo.osdn.jp/2.5/policy-specification/index.html .
 
 Materials we prepared for seminars and symposiums are available at
-https://osdn.jp/projects/tomoyo/docs/?category_id=532&language_id=1 .
+http://osdn.jp/projects/tomoyo/docs/?category_id=532&language_id=1 .
 Below lists are chosen from three aspects.
 
 What is TOMOYO?
   TOMOYO Linux Overview
-    https://osdn.jp/projects/tomoyo/docs/lca2009-takeda.pdf
+    http://osdn.jp/projects/tomoyo/docs/lca2009-takeda.pdf
   TOMOYO Linux: pragmatic and manageable security for Linux
-    https://osdn.jp/projects/tomoyo/docs/freedomhectaipei-tomoyo.pdf
+    http://osdn.jp/projects/tomoyo/docs/freedomhectaipei-tomoyo.pdf
   TOMOYO Linux: A Practical Method to Understand and Protect Your Own Linux Box
-    https://osdn.jp/projects/tomoyo/docs/PacSec2007-en-no-demo.pdf
+    http://osdn.jp/projects/tomoyo/docs/PacSec2007-en-no-demo.pdf
 
 What can TOMOYO do?
   Deep inside TOMOYO Linux
-    https://osdn.jp/projects/tomoyo/docs/lca2009-kumaneko.pdf
+    http://osdn.jp/projects/tomoyo/docs/lca2009-kumaneko.pdf
   The role of "pathname based access control" in security.
-    https://osdn.jp/projects/tomoyo/docs/lfj2008-bof.pdf
+    http://osdn.jp/projects/tomoyo/docs/lfj2008-bof.pdf
 
 History of TOMOYO?
   Realities of Mainlining
-    https://osdn.jp/projects/tomoyo/docs/lfj2008.pdf
+    http://osdn.jp/projects/tomoyo/docs/lfj2008.pdf
 
 What is future plan?
 ====================

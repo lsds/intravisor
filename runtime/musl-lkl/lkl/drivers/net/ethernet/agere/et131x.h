@@ -46,6 +46,7 @@
  */
 
 #define DRIVER_NAME "et131x"
+#define DRIVER_VERSION "v2.0"
 
 /* EEPROM registers */
 

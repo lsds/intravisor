@@ -30,7 +30,6 @@
 #include <linux/thread_info.h>
 
 #include <asm/cacheflush.h>
-#include <asm/coprocessor.h>
 #include <asm/kdebug.h>
 #include <asm/mmu_context.h>
 #include <asm/mxregs.h>
@@ -54,12 +53,16 @@ static void system_flush_invalidate_dcache_range(unsigned long start,
 #define IPI_IRQ	0
 
 static irqreturn_t ipi_interrupt(int irq, void *dev_id);
+static struct irqaction ipi_irqaction = {
+	.handler =	ipi_interrupt,
+	.flags =	IRQF_PERCPU,
+	.name =		"ipi",
+};
 
 void ipi_init(void)
 {
 	unsigned irq = irq_create_mapping(NULL, IPI_IRQ);
-	if (request_irq(irq, ipi_interrupt, IRQF_PERCPU, "ipi", NULL))
-		pr_err("Failed to request irq %u (ipi)\n", irq);
+	setup_irq(irq, &ipi_irqaction);
 }
 
 static inline unsigned int get_core_count(void)
@@ -80,7 +83,7 @@ void __init smp_prepare_cpus(unsigned int max_cpus)
 {
 	unsigned i;
 
-	for_each_possible_cpu(i)
+	for (i = 0; i < max_cpus; ++i)
 		set_cpu_present(i, true);
 }
 
@@ -92,11 +95,6 @@ void __init smp_init_cpus(void)
 
 	pr_info("%s: Core Count = %d\n", __func__, ncpus);
 	pr_info("%s: Core Id = %d\n", __func__, core_id);
-
-	if (ncpus > NR_CPUS) {
-		ncpus = NR_CPUS;
-		pr_info("%s: limiting core count by %d\n", __func__, ncpus);
-	}
 
 	for (i = 0; i < ncpus; ++i)
 		set_cpu_possible(i, true);
@@ -123,7 +121,7 @@ void secondary_start_kernel(void)
 
 	init_mmu();
 
-#ifdef CONFIG_DEBUG_MISC
+#ifdef CONFIG_DEBUG_KERNEL
 	if (boot_secondary_processors == 0) {
 		pr_debug("%s: boot_secondary_processors:%d; Hanging cpu:%d\n",
 			__func__, boot_secondary_processors, cpu);
@@ -146,6 +144,7 @@ void secondary_start_kernel(void)
 	cpumask_set_cpu(cpu, mm_cpumask(mm));
 	enter_lazy_tlb(mm, current);
 
+	preempt_disable();
 	trace_hardirqs_off();
 
 	calibrate_delay();
@@ -196,11 +195,9 @@ static int boot_secondary(unsigned int cpu, struct task_struct *ts)
 	int i;
 
 #ifdef CONFIG_HOTPLUG_CPU
-	WRITE_ONCE(cpu_start_id, cpu);
-	/* Pairs with the third memw in the cpu_restart */
-	mb();
-	system_flush_invalidate_dcache_range((unsigned long)&cpu_start_id,
-					     sizeof(cpu_start_id));
+	cpu_start_id = cpu;
+	system_flush_invalidate_dcache_range(
+			(unsigned long)&cpu_start_id, sizeof(cpu_start_id));
 #endif
 	smp_call_function_single(0, mx_cpu_start, (void *)cpu, 1);
 
@@ -209,21 +206,18 @@ static int boot_secondary(unsigned int cpu, struct task_struct *ts)
 			ccount = get_ccount();
 		while (!ccount);
 
-		WRITE_ONCE(cpu_start_ccount, ccount);
+		cpu_start_ccount = ccount;
 
-		do {
-			/*
-			 * Pairs with the first two memws in the
-			 * .Lboot_secondary.
-			 */
+		while (time_before(jiffies, timeout)) {
 			mb();
-			ccount = READ_ONCE(cpu_start_ccount);
-		} while (ccount && time_before(jiffies, timeout));
+			if (!cpu_start_ccount)
+				break;
+		}
 
-		if (ccount) {
+		if (cpu_start_ccount) {
 			smp_call_function_single(0, mx_cpu_stop,
-						 (void *)cpu, 1);
-			WRITE_ONCE(cpu_start_ccount, 0);
+					(void *)cpu, 1);
+			cpu_start_ccount = 0;
 			return -EIO;
 		}
 	}
@@ -243,7 +237,6 @@ int __cpu_up(unsigned int cpu, struct task_struct *idle)
 	pr_debug("%s: Calling wakeup_secondary(cpu:%d, idle:%p, sp: %08lx)\n",
 			__func__, cpu, idle, start_info.stack);
 
-	init_completion(&cpu_running);
 	ret = boot_secondary(cpu, idle);
 	if (ret == 0) {
 		wait_for_completion_timeout(&cpu_running,
@@ -273,12 +266,6 @@ int __cpu_disable(void)
 	 */
 	set_cpu_online(cpu, false);
 
-#if XTENSA_HAVE_COPROCESSORS
-	/*
-	 * Flush coprocessor contexts that are active on the current CPU.
-	 */
-	local_coprocessors_flush_release_all();
-#endif
 	/*
 	 * OK - migrate IRQs away from this CPU
 	 */
@@ -311,10 +298,8 @@ void __cpu_die(unsigned int cpu)
 	unsigned long timeout = jiffies + msecs_to_jiffies(1000);
 	while (time_before(jiffies, timeout)) {
 		system_invalidate_dcache_range((unsigned long)&cpu_start_id,
-					       sizeof(cpu_start_id));
-		/* Pairs with the second memw in the cpu_restart */
-		mb();
-		if (READ_ONCE(cpu_start_id) == -cpu) {
+				sizeof(cpu_start_id));
+		if (cpu_start_id == -cpu) {
 			platform_cpu_kill(cpu);
 			return;
 		}
@@ -374,7 +359,8 @@ static void send_ipi_message(const struct cpumask *callmask,
 	unsigned long mask = 0;
 
 	for_each_cpu(index, callmask)
-		mask |= 1 << index;
+		if (index != smp_processor_id())
+			mask |= 1 << index;
 
 	set_er(mask, MIPISET(msg_id));
 }
@@ -413,31 +399,22 @@ irqreturn_t ipi_interrupt(int irq, void *dev_id)
 {
 	unsigned int cpu = smp_processor_id();
 	struct ipi_data *ipi = &per_cpu(ipi_data, cpu);
+	unsigned int msg;
+	unsigned i;
 
-	for (;;) {
-		unsigned int msg;
-
-		msg = get_er(MIPICAUSE(cpu));
-		set_er(msg, MIPICAUSE(cpu));
-
-		if (!msg)
-			break;
-
-		if (msg & (1 << IPI_CALL_FUNC)) {
-			++ipi->ipi_count[IPI_CALL_FUNC];
-			generic_smp_call_function_interrupt();
+	msg = get_er(MIPICAUSE(cpu));
+	for (i = 0; i < IPI_MAX; i++)
+		if (msg & (1 << i)) {
+			set_er(1 << i, MIPICAUSE(cpu));
+			++ipi->ipi_count[i];
 		}
 
-		if (msg & (1 << IPI_RESCHEDULE)) {
-			++ipi->ipi_count[IPI_RESCHEDULE];
-			scheduler_ipi();
-		}
-
-		if (msg & (1 << IPI_CPU_STOP)) {
-			++ipi->ipi_count[IPI_CPU_STOP];
-			ipi_cpu_stop(cpu);
-		}
-	}
+	if (msg & (1 << IPI_RESCHEDULE))
+		scheduler_ipi();
+	if (msg & (1 << IPI_CALL_FUNC))
+		generic_smp_call_function_interrupt();
+	if (msg & (1 << IPI_CPU_STOP))
+		ipi_cpu_stop(cpu);
 
 	return IRQ_HANDLED;
 }

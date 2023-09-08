@@ -35,16 +35,13 @@
 #define FTDI_SIO_SET_EVENT_CHAR		6 /* Set the event character */
 #define FTDI_SIO_SET_ERROR_CHAR		7 /* Set the error character */
 #define FTDI_SIO_SET_LATENCY_TIMER	9 /* Set the latency timer */
-#define FTDI_SIO_GET_LATENCY_TIMER	0x0a /* Get the latency timer */
-#define FTDI_SIO_SET_BITMODE		0x0b /* Set bitbang mode */
-#define FTDI_SIO_READ_PINS		0x0c /* Read immediate value of pins */
-#define FTDI_SIO_READ_EEPROM		0x90 /* Read EEPROM */
+#define FTDI_SIO_GET_LATENCY_TIMER	10 /* Get the latency timer */
 
-/* Channel indices for FT2232, FT2232H and FT4232H devices */
-#define CHANNEL_A		1
-#define CHANNEL_B		2
-#define CHANNEL_C		3
-#define CHANNEL_D		4
+/* Interface indices for FT2232, FT2232H and FT4232H devices */
+#define INTERFACE_A		1
+#define INTERFACE_B		2
+#define INTERFACE_C		3
+#define INTERFACE_D		4
 
 
 /*
@@ -152,6 +149,18 @@
  * (1.5), this needs to be replaced with 0x0001 (1) (but this divisor value is
  * not supported by the FT8U232AM).
  */
+
+enum ftdi_chip_type {
+	SIO = 1,
+	FT8U232AM = 2,
+	FT232BM = 3,
+	FT2232C = 4,
+	FT232RL = 5,
+	FT2232H = 6,
+	FT4232H = 7,
+	FT232H  = 8,
+	FTX     = 9,
+};
 
 enum ftdi_sio_baudrate {
 	ftdi_sio_b300 = 0,
@@ -290,7 +299,7 @@ enum ftdi_sio_baudrate {
 /*
  * FTDI_SIO_GET_LATENCY_TIMER
  *
- * Set the timeout interval. The FTDI collects data from the
+ * Set the timeout interval. The FTDI collects data from the slave
  * device, transmitting it to the host when either A) 62 bytes are
  * received, or B) the timeout interval has elapsed and the buffer
  * contains at least 1 byte.  Setting this value to a small number
@@ -312,7 +321,7 @@ enum ftdi_sio_baudrate {
 /*
  * FTDI_SIO_SET_LATENCY_TIMER
  *
- * Set the timeout interval. The FTDI collects data from the
+ * Set the timeout interval. The FTDI collects data from the slave
  * device, transmitting it to the host when either A) 62 bytes are
  * received, or B) the timeout interval has elapsed and the buffer
  * contains at least 1 byte.  Setting this value to a small number
@@ -424,29 +433,6 @@ enum ftdi_sio_baudrate {
  *         1 = active
  */
 
-/* FTDI_SIO_SET_BITMODE */
-#define FTDI_SIO_SET_BITMODE_REQUEST_TYPE 0x40
-#define FTDI_SIO_SET_BITMODE_REQUEST FTDI_SIO_SET_BITMODE
-
-/* Possible bitmodes for FTDI_SIO_SET_BITMODE_REQUEST */
-#define FTDI_SIO_BITMODE_RESET		0x00
-#define FTDI_SIO_BITMODE_CBUS		0x20
-
-/* FTDI_SIO_READ_PINS */
-#define FTDI_SIO_READ_PINS_REQUEST_TYPE 0xc0
-#define FTDI_SIO_READ_PINS_REQUEST FTDI_SIO_READ_PINS
-
-/*
- * FTDI_SIO_READ_EEPROM
- *
- * EEPROM format found in FTDI AN_201, "FT-X MTP memory Configuration",
- * http://www.ftdichip.com/Support/Documents/AppNotes/AN_201_FT-X%20MTP%20Memory%20Configuration.pdf
- */
-#define FTDI_SIO_READ_EEPROM_REQUEST_TYPE 0xc0
-#define FTDI_SIO_READ_EEPROM_REQUEST FTDI_SIO_READ_EEPROM
-
-#define FTDI_FTX_CBUS_MUX_GPIO		0x8
-#define FTDI_FT232R_CBUS_MUX_GPIO	0xa
 
 
 /* Descriptors returned by the device

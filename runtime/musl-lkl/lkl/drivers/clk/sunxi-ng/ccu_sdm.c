@@ -1,10 +1,13 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Copyright (C) 2017 Chen-Yu Tsai <wens@csie.org>
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License as
+ * published by the Free Software Foundation; either version 2 of
+ * the License, or (at your option) any later version.
  */
 
 #include <linux/clk-provider.h>
-#include <linux/io.h>
 #include <linux/spinlock.h>
 
 #include "ccu_sdm.h"
@@ -20,7 +23,6 @@ bool ccu_sdm_helper_is_enabled(struct ccu_common *common,
 
 	return !!(readl(common->base + sdm->tuning_reg) & sdm->tuning_enable);
 }
-EXPORT_SYMBOL_NS_GPL(ccu_sdm_helper_is_enabled, SUNXI_CCU);
 
 void ccu_sdm_helper_enable(struct ccu_common *common,
 			   struct ccu_sdm_internal *sdm,
@@ -50,7 +52,6 @@ void ccu_sdm_helper_enable(struct ccu_common *common,
 	writel(reg | sdm->enable, common->base + common->reg);
 	spin_unlock_irqrestore(common->lock, flags);
 }
-EXPORT_SYMBOL_NS_GPL(ccu_sdm_helper_enable, SUNXI_CCU);
 
 void ccu_sdm_helper_disable(struct ccu_common *common,
 			    struct ccu_sdm_internal *sdm)
@@ -71,7 +72,6 @@ void ccu_sdm_helper_disable(struct ccu_common *common,
 	writel(reg & ~sdm->tuning_enable, common->base + sdm->tuning_reg);
 	spin_unlock_irqrestore(common->lock, flags);
 }
-EXPORT_SYMBOL_NS_GPL(ccu_sdm_helper_disable, SUNXI_CCU);
 
 /*
  * Sigma delta modulation provides a way to do fractional-N frequency
@@ -105,7 +105,6 @@ bool ccu_sdm_helper_has_rate(struct ccu_common *common,
 
 	return false;
 }
-EXPORT_SYMBOL_NS_GPL(ccu_sdm_helper_has_rate, SUNXI_CCU);
 
 unsigned long ccu_sdm_helper_read_rate(struct ccu_common *common,
 				       struct ccu_sdm_internal *sdm,
@@ -136,7 +135,6 @@ unsigned long ccu_sdm_helper_read_rate(struct ccu_common *common,
 	/* We can't calculate the effective clock rate, so just fail. */
 	return 0;
 }
-EXPORT_SYMBOL_NS_GPL(ccu_sdm_helper_read_rate, SUNXI_CCU);
 
 int ccu_sdm_helper_get_factors(struct ccu_common *common,
 			       struct ccu_sdm_internal *sdm,
@@ -158,4 +156,3 @@ int ccu_sdm_helper_get_factors(struct ccu_common *common,
 	/* nothing found */
 	return -EINVAL;
 }
-EXPORT_SYMBOL_NS_GPL(ccu_sdm_helper_get_factors, SUNXI_CCU);

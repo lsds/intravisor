@@ -1,10 +1,20 @@
-// SPDX-License-Identifier: GPL-2.0-only
-/*
+/* -*- mode: c; c-basic-offset: 8; -*-
+ * vim: noexpandtab sw=8 ts=8 sts=0:
+ *
  * stack_user.c
  *
  * Code which interfaces ocfs2 with fs/dlm and a userspace stack.
  *
  * Copyright (C) 2007 Oracle.  All rights reserved.
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public
+ * License as published by the Free Software Foundation, version 2.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * General Public License for more details.
  */
 
 #include <linux/module.h>
@@ -683,22 +693,28 @@ static int user_dlm_lock(struct ocfs2_cluster_connection *conn,
 			 void *name,
 			 unsigned int namelen)
 {
+	int ret;
+
 	if (!lksb->lksb_fsdlm.sb_lvbptr)
 		lksb->lksb_fsdlm.sb_lvbptr = (char *)lksb +
 					     sizeof(struct dlm_lksb);
 
-	return dlm_lock(conn->cc_lockspace, mode, &lksb->lksb_fsdlm,
-			flags|DLM_LKF_NODLCKWT, name, namelen, 0,
-			fsdlm_lock_ast_wrapper, lksb,
-			fsdlm_blocking_ast_wrapper);
+	ret = dlm_lock(conn->cc_lockspace, mode, &lksb->lksb_fsdlm,
+		       flags|DLM_LKF_NODLCKWT, name, namelen, 0,
+		       fsdlm_lock_ast_wrapper, lksb,
+		       fsdlm_blocking_ast_wrapper);
+	return ret;
 }
 
 static int user_dlm_unlock(struct ocfs2_cluster_connection *conn,
 			   struct ocfs2_dlm_lksb *lksb,
 			   u32 flags)
 {
-	return dlm_unlock(conn->cc_lockspace, lksb->lksb_fsdlm.sb_lkid,
-			  flags, &lksb->lksb_fsdlm, lksb);
+	int ret;
+
+	ret = dlm_unlock(conn->cc_lockspace, lksb->lksb_fsdlm.sb_lkid,
+			 flags, &lksb->lksb_fsdlm, lksb);
+	return ret;
 }
 
 static int user_dlm_lock_status(struct ocfs2_dlm_lksb *lksb)
@@ -991,7 +1007,7 @@ static int user_cluster_connect(struct ocfs2_cluster_connection *conn)
 	lc->oc_type = NO_CONTROLD;
 
 	rc = dlm_new_lockspace(conn->cc_name, conn->cc_cluster_name,
-			       DLM_LSFL_NEWEXCL, DLM_LVB_LEN,
+			       DLM_LSFL_FS | DLM_LSFL_NEWEXCL, DLM_LVB_LEN,
 			       &ocfs2_ls_ops, conn, &ops_rv, &fsdlm);
 	if (rc) {
 		if (rc == -EEXIST || rc == -EPROTO)

@@ -1,8 +1,28 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /******************************************************************************
  *
  * Copyright(c) 2003 - 2014 Intel Corporation. All rights reserved.
  * Copyright(c) 2015 Intel Deutschland GmbH
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of version 2 of the GNU General Public License as
+ * published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+ * more details.
+ *
+ * You should have received a copy of the GNU General Public License along with
+ * this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110, USA
+ *
+ * The full GNU General Public License is included in this distribution in the
+ * file called LICENSE.
+ *
+ * Contact Information:
+ * Intel Linux Wireless <linuxwifi@intel.com>
+ * Intel Corporation, 5200 N.E. Elam Young Parkway, Hillsboro, OR 97124-6497
+ *
  *****************************************************************************/
 
 #include <linux/etherdevice.h>
@@ -183,7 +203,7 @@ static int iwlagn_update_beacon(struct iwl_priv *priv,
 	lockdep_assert_held(&priv->mutex);
 
 	dev_kfree_skb(priv->beacon_skb);
-	priv->beacon_skb = ieee80211_beacon_get(priv->hw, vif, 0);
+	priv->beacon_skb = ieee80211_beacon_get(priv->hw, vif);
 	if (!priv->beacon_skb)
 		return -ENOMEM;
 	return iwlagn_send_beacon_cmd(priv);
@@ -562,12 +582,12 @@ int iwlagn_set_pan_params(struct iwl_priv *priv)
 		slot1 = bcnint - slot0;
 
 		if (test_bit(STATUS_SCAN_HW, &priv->status) ||
-		    (!ctx_bss->vif->cfg.idle &&
-		     !ctx_bss->vif->cfg.assoc)) {
+		    (!ctx_bss->vif->bss_conf.idle &&
+		     !ctx_bss->vif->bss_conf.assoc)) {
 			slot0 = dtim * bcnint * 3 - IWL_MIN_SLOT_TIME;
 			slot1 = IWL_MIN_SLOT_TIME;
-		} else if (!ctx_pan->vif->cfg.idle &&
-			   !ctx_pan->vif->cfg.assoc) {
+		} else if (!ctx_pan->vif->bss_conf.idle &&
+			   !ctx_pan->vif->bss_conf.assoc) {
 			slot1 = dtim * bcnint * 3 - IWL_MIN_SLOT_TIME;
 			slot0 = IWL_MIN_SLOT_TIME;
 		}
@@ -684,7 +704,7 @@ void iwl_set_rxon_ht(struct iwl_priv *priv, struct iwl_ht_config *ht_conf)
 		_iwl_set_rxon_ht(priv, ht_conf, ctx);
 }
 
-/*
+/**
  * iwl_set_rxon_channel - Set the band and channel values in staging RXON
  * @ch: requested channel as a pointer to struct ieee80211_channel
 
@@ -821,7 +841,7 @@ static int iwl_check_rxon_cmd(struct iwl_priv *priv,
 	return errors ? -EINVAL : 0;
 }
 
-/*
+/**
  * iwl_full_rxon_required - check if full RXON (vs RXON_ASSOC) cmd is needed
  * @priv: staging_rxon is compared to active_rxon
  *
@@ -1002,7 +1022,7 @@ static void iwl_calc_basic_rates(struct iwl_priv *priv,
 	ctx->staging.ofdm_basic_rates = ofdm;
 }
 
-/*
+/**
  * iwlagn_commit_rxon - commit staging_rxon to hardware
  *
  * The RXON command in staging_rxon is committed to the hardware and
@@ -1280,7 +1300,7 @@ static void iwlagn_check_needed_chains(struct iwl_priv *priv,
 			break;
 		}
 
-		ht_cap = &sta->deflink.ht_cap;
+		ht_cap = &sta->ht_cap;
 
 		need_multiple = true;
 
@@ -1383,7 +1403,7 @@ static void iwlagn_chain_noise_reset(struct iwl_priv *priv)
 void iwlagn_bss_info_changed(struct ieee80211_hw *hw,
 			     struct ieee80211_vif *vif,
 			     struct ieee80211_bss_conf *bss_conf,
-			     u64 changes)
+			     u32 changes)
 {
 	struct iwl_priv *priv = IWL_MAC80211_GET_DVM(hw);
 	struct iwl_rxon_context *ctx = iwl_rxon_ctx_from_vif(vif);
@@ -1392,7 +1412,7 @@ void iwlagn_bss_info_changed(struct ieee80211_hw *hw,
 
 	mutex_lock(&priv->mutex);
 
-	if (changes & BSS_CHANGED_IDLE && vif->cfg.idle) {
+	if (changes & BSS_CHANGED_IDLE && bss_conf->idle) {
 		/*
 		 * If we go idle, then clearly no "passive-no-rx"
 		 * workaround is needed any more, this is a reset.
@@ -1420,14 +1440,14 @@ void iwlagn_bss_info_changed(struct ieee80211_hw *hw,
 		iwlagn_update_qos(priv, ctx);
 	}
 
-	ctx->staging.assoc_id = cpu_to_le16(vif->cfg.aid);
+	ctx->staging.assoc_id = cpu_to_le16(vif->bss_conf.aid);
 	if (vif->bss_conf.use_short_preamble)
 		ctx->staging.flags |= RXON_FLG_SHORT_PREAMBLE_MSK;
 	else
 		ctx->staging.flags &= ~RXON_FLG_SHORT_PREAMBLE_MSK;
 
 	if (changes & BSS_CHANGED_ASSOC) {
-		if (vif->cfg.assoc) {
+		if (bss_conf->assoc) {
 			priv->timestamp = bss_conf->sync_tsf;
 			ctx->staging.filter_flags |= RXON_FILTER_ASSOC_MSK;
 		} else {
@@ -1483,7 +1503,7 @@ void iwlagn_bss_info_changed(struct ieee80211_hw *hw,
 	 */
 
 	if (vif->type == NL80211_IFTYPE_STATION) {
-		if (!vif->cfg.assoc)
+		if (!bss_conf->assoc)
 			ctx->staging.filter_flags |= RXON_FILTER_BCON_AWARE_MSK;
 		else
 			ctx->staging.filter_flags &=
@@ -1493,7 +1513,7 @@ void iwlagn_bss_info_changed(struct ieee80211_hw *hw,
 	if (force || memcmp(&ctx->staging, &ctx->active, sizeof(ctx->staging)))
 		iwlagn_commit_rxon(priv, ctx);
 
-	if (changes & BSS_CHANGED_ASSOC && vif->cfg.assoc) {
+	if (changes & BSS_CHANGED_ASSOC && bss_conf->assoc) {
 		/*
 		 * The chain noise calibration will enable PM upon
 		 * completion. If calibration has already been run
@@ -1509,10 +1529,10 @@ void iwlagn_bss_info_changed(struct ieee80211_hw *hw,
 
 	if (changes & BSS_CHANGED_IBSS) {
 		ret = iwlagn_manage_ibss_station(priv, vif,
-						 vif->cfg.ibss_joined);
+						 bss_conf->ibss_joined);
 		if (ret)
 			IWL_ERR(priv, "failed to %s IBSS station %pM\n",
-				vif->cfg.ibss_joined ? "add" : "remove",
+				bss_conf->ibss_joined ? "add" : "remove",
 				bss_conf->bssid);
 	}
 

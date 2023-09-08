@@ -1,7 +1,15 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * syscall_arg_fault.c - tests faults 32-bit fast syscall stack args
  * Copyright (c) 2015 Andrew Lutomirski
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms and conditions of the GNU General Public License,
+ * version 2, as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * General Public License for more details.
  */
 
 #define _GNU_SOURCE
@@ -15,7 +23,8 @@
 #include <setjmp.h>
 #include <errno.h>
 
-#include "helpers.h"
+/* Our sigaltstack scratch space. */
+static unsigned char altstack_data[SIGSTKSZ];
 
 static void sethandler(int sig, void (*handler)(int, siginfo_t *, void *),
 		       int flags)
@@ -34,23 +43,13 @@ static sigjmp_buf jmpbuf;
 
 static volatile sig_atomic_t n_errs;
 
-#ifdef __x86_64__
-#define REG_AX REG_RAX
-#define REG_IP REG_RIP
-#else
-#define REG_AX REG_EAX
-#define REG_IP REG_EIP
-#endif
-
-static void sigsegv_or_sigbus(int sig, siginfo_t *info, void *ctx_void)
+static void sigsegv(int sig, siginfo_t *info, void *ctx_void)
 {
 	ucontext_t *ctx = (ucontext_t*)ctx_void;
-	long ax = (long)ctx->uc_mcontext.gregs[REG_AX];
 
-	if (ax != -EFAULT && ax != -ENOSYS) {
-		printf("[FAIL]\tAX had the wrong value: 0x%lx\n",
-		       (unsigned long)ax);
-		printf("\tIP = 0x%lx\n", (unsigned long)ctx->uc_mcontext.gregs[REG_IP]);
+	if (ctx->uc_mcontext.gregs[REG_EAX] != -EFAULT) {
+		printf("[FAIL]\tAX had the wrong value: 0x%x\n",
+		       ctx->uc_mcontext.gregs[REG_EAX]);
 		n_errs++;
 	} else {
 		printf("[OK]\tSeems okay\n");
@@ -59,62 +58,22 @@ static void sigsegv_or_sigbus(int sig, siginfo_t *info, void *ctx_void)
 	siglongjmp(jmpbuf, 1);
 }
 
-static volatile sig_atomic_t sigtrap_consecutive_syscalls;
-
-static void sigtrap(int sig, siginfo_t *info, void *ctx_void)
-{
-	/*
-	 * KVM has some bugs that can cause us to stop making progress.
-	 * detect them and complain, but don't infinite loop or fail the
-	 * test.
-	 */
-
-	ucontext_t *ctx = (ucontext_t*)ctx_void;
-	unsigned short *ip = (unsigned short *)ctx->uc_mcontext.gregs[REG_IP];
-
-	if (*ip == 0x340f || *ip == 0x050f) {
-		/* The trap was on SYSCALL or SYSENTER */
-		sigtrap_consecutive_syscalls++;
-		if (sigtrap_consecutive_syscalls > 3) {
-			printf("[WARN]\tGot stuck single-stepping -- you probably have a KVM bug\n");
-			siglongjmp(jmpbuf, 1);
-		}
-	} else {
-		sigtrap_consecutive_syscalls = 0;
-	}
-}
-
 static void sigill(int sig, siginfo_t *info, void *ctx_void)
 {
-	ucontext_t *ctx = (ucontext_t*)ctx_void;
-	unsigned short *ip = (unsigned short *)ctx->uc_mcontext.gregs[REG_IP];
-
-	if (*ip == 0x0b0f) {
-		/* one of the ud2 instructions faulted */
-		printf("[OK]\tSYSCALL returned normally\n");
-	} else {
-		printf("[SKIP]\tIllegal instruction\n");
-	}
+	printf("[SKIP]\tIllegal instruction\n");
 	siglongjmp(jmpbuf, 1);
 }
 
 int main()
 {
 	stack_t stack = {
-		/* Our sigaltstack scratch space. */
-		.ss_sp = malloc(sizeof(char) * SIGSTKSZ),
+		.ss_sp = altstack_data,
 		.ss_size = SIGSTKSZ,
 	};
 	if (sigaltstack(&stack, NULL) != 0)
 		err(1, "sigaltstack");
 
-	sethandler(SIGSEGV, sigsegv_or_sigbus, SA_ONSTACK);
-	/*
-	 * The actual exception can vary.  On Atom CPUs, we get #SS
-	 * instead of #PF when the vDSO fails to access the stack when
-	 * ESP is too close to 2^32, and #SS causes SIGBUS.
-	 */
-	sethandler(SIGBUS, sigsegv_or_sigbus, SA_ONSTACK);
+	sethandler(SIGSEGV, sigsegv, SA_ONSTACK);
 	sethandler(SIGILL, sigill, SA_ONSTACK);
 
 	/*
@@ -163,74 +122,9 @@ int main()
 			"movl $-1, %%ebp\n\t"
 			"movl $-1, %%esp\n\t"
 			"syscall\n\t"
-			"ud2"		/* make sure we recover cleanly */
+			"pushl $0"	/* make sure we segfault cleanly */
 			: : : "memory", "flags");
 	}
 
-	printf("[RUN]\tSYSENTER with TF and invalid state\n");
-	sethandler(SIGTRAP, sigtrap, SA_ONSTACK);
-
-	if (sigsetjmp(jmpbuf, 1) == 0) {
-		sigtrap_consecutive_syscalls = 0;
-		set_eflags(get_eflags() | X86_EFLAGS_TF);
-		asm volatile (
-			"movl $-1, %%eax\n\t"
-			"movl $-1, %%ebx\n\t"
-			"movl $-1, %%ecx\n\t"
-			"movl $-1, %%edx\n\t"
-			"movl $-1, %%esi\n\t"
-			"movl $-1, %%edi\n\t"
-			"movl $-1, %%ebp\n\t"
-			"movl $-1, %%esp\n\t"
-			"sysenter"
-			: : : "memory", "flags");
-	}
-	set_eflags(get_eflags() & ~X86_EFLAGS_TF);
-
-	printf("[RUN]\tSYSCALL with TF and invalid state\n");
-	if (sigsetjmp(jmpbuf, 1) == 0) {
-		sigtrap_consecutive_syscalls = 0;
-		set_eflags(get_eflags() | X86_EFLAGS_TF);
-		asm volatile (
-			"movl $-1, %%eax\n\t"
-			"movl $-1, %%ebx\n\t"
-			"movl $-1, %%ecx\n\t"
-			"movl $-1, %%edx\n\t"
-			"movl $-1, %%esi\n\t"
-			"movl $-1, %%edi\n\t"
-			"movl $-1, %%ebp\n\t"
-			"movl $-1, %%esp\n\t"
-			"syscall\n\t"
-			"ud2"		/* make sure we recover cleanly */
-			: : : "memory", "flags");
-	}
-	set_eflags(get_eflags() & ~X86_EFLAGS_TF);
-
-#ifdef __x86_64__
-	printf("[RUN]\tSYSENTER with TF, invalid state, and GSBASE < 0\n");
-
-	if (sigsetjmp(jmpbuf, 1) == 0) {
-		sigtrap_consecutive_syscalls = 0;
-
-		asm volatile ("wrgsbase %%rax\n\t"
-			      :: "a" (0xffffffffffff0000UL));
-
-		set_eflags(get_eflags() | X86_EFLAGS_TF);
-		asm volatile (
-			"movl $-1, %%eax\n\t"
-			"movl $-1, %%ebx\n\t"
-			"movl $-1, %%ecx\n\t"
-			"movl $-1, %%edx\n\t"
-			"movl $-1, %%esi\n\t"
-			"movl $-1, %%edi\n\t"
-			"movl $-1, %%ebp\n\t"
-			"movl $-1, %%esp\n\t"
-			"sysenter"
-			: : : "memory", "flags");
-	}
-	set_eflags(get_eflags() & ~X86_EFLAGS_TF);
-#endif
-
-	free(stack.ss_sp);
 	return 0;
 }

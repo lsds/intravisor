@@ -1,6 +1,21 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * (C) Copyright David Gibson <dwg@au1.ibm.com>, IBM Corporation.  2005.
+ *
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License as
+ * published by the Free Software Foundation; either version 2 of the
+ * License, or (at your option) any later version.
+ *
+ *  This program is distributed in the hope that it will be useful,
+ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ *  General Public License for more details.
+ *
+ *  You should have received a copy of the GNU General Public License
+ *  along with this program; if not, write to the Free Software
+ *  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307
+ *                                                                   USA
  */
 
 #include "dtc.h"
@@ -124,8 +139,7 @@ static void asm_emit_cell(void *e, cell_t val)
 {
 	FILE *f = e;
 
-	fprintf(f, "\t.byte\t0x%02x\n" "\t.byte\t0x%02x\n"
-		"\t.byte\t0x%02x\n" "\t.byte\t0x%02x\n",
+	fprintf(f, "\t.byte 0x%02x; .byte 0x%02x; .byte 0x%02x; .byte 0x%02x\n",
 		(val >> 24) & 0xff, (val >> 16) & 0xff,
 		(val >> 8) & 0xff, val & 0xff);
 }
@@ -135,9 +149,9 @@ static void asm_emit_string(void *e, const char *str, int len)
 	FILE *f = e;
 
 	if (len != 0)
-		fprintf(f, "\t.asciz\t\"%.*s\"\n", len, str);
+		fprintf(f, "\t.string\t\"%.*s\"\n", len, str);
 	else
-		fprintf(f, "\t.asciz\t\"%s\"\n", str);
+		fprintf(f, "\t.string\t\"%s\"\n", str);
 }
 
 static void asm_emit_align(void *e, int a)
@@ -150,14 +164,14 @@ static void asm_emit_align(void *e, int a)
 static void asm_emit_data(void *e, struct data d)
 {
 	FILE *f = e;
-	unsigned int off = 0;
+	int off = 0;
 	struct marker *m = d.markers;
 
 	for_each_marker_of_type(m, LABEL)
 		emit_offset_label(f, m->ref, m->offset);
 
 	while ((d.len - off) >= sizeof(uint32_t)) {
-		asm_emit_cell(e, dtb_ld32(d.val + off));
+		asm_emit_cell(e, fdt32_to_cpu(*((fdt32_t *)(d.val+off))));
 		off += sizeof(uint32_t);
 	}
 
@@ -220,7 +234,7 @@ static struct emitter asm_emitter = {
 
 static int stringtable_insert(struct data *d, const char *str)
 {
-	unsigned int i;
+	int i;
 
 	/* FIXME: do this more efficiently? */
 
@@ -296,7 +310,7 @@ static struct data flatten_reserve_list(struct reserve_info *reservelist,
 {
 	struct reserve_info *re;
 	struct data d = empty_data;
-	unsigned int j;
+	int    j;
 
 	for (re = reservelist; re; re = re->next) {
 		d = data_append_re(d, re->address, re->size);
@@ -346,7 +360,7 @@ static void make_fdt_header(struct fdt_header *fdt,
 void dt_to_blob(FILE *f, struct dt_info *dti, int version)
 {
 	struct version_info *vi = NULL;
-	unsigned int i;
+	int i;
 	struct data blob       = empty_data;
 	struct data reservebuf = empty_data;
 	struct data dtbuf      = empty_data;
@@ -379,7 +393,7 @@ void dt_to_blob(FILE *f, struct dt_info *dti, int version)
 			padlen = 0;
 			if (quiet < 1)
 				fprintf(stderr,
-					"Warning: blob size %"PRIu32" >= minimum size %d\n",
+					"Warning: blob size %d >= minimum size %d\n",
 					fdt32_to_cpu(fdt.totalsize), minsize);
 		}
 	}
@@ -439,7 +453,7 @@ static void dump_stringtable_asm(FILE *f, struct data strbuf)
 
 	while (p < (strbuf.val + strbuf.len)) {
 		len = strlen(p);
-		fprintf(f, "\t.asciz \"%s\"\n", p);
+		fprintf(f, "\t.string \"%s\"\n", p);
 		p += len+1;
 	}
 }
@@ -447,7 +461,7 @@ static void dump_stringtable_asm(FILE *f, struct data strbuf)
 void dt_to_asm(FILE *f, struct dt_info *dti, int version)
 {
 	struct version_info *vi = NULL;
-	unsigned int i;
+	int i;
 	struct data strbuf = empty_data;
 	struct reserve_info *re;
 	const char *symprefix = "dt";
@@ -511,7 +525,7 @@ void dt_to_asm(FILE *f, struct dt_info *dti, int version)
 	fprintf(f, "/* Memory reserve map from source file */\n");
 
 	/*
-	 * Use .long on high and low halves of u64s to avoid .quad
+	 * Use .long on high and low halfs of u64s to avoid .quad
 	 * as it appears .quad isn't available in some assemblers.
 	 */
 	for (re = dti->reservelist; re; re = re->next) {
@@ -678,7 +692,7 @@ static struct property *flat_read_property(struct inbuf *dtbuf,
 
 	val = flat_read_data(dtbuf, proplen);
 
-	return build_property(name, val, NULL);
+	return build_property(name, val);
 }
 
 
@@ -736,7 +750,7 @@ static struct node *unflatten_tree(struct inbuf *dtbuf,
 	char *flatname;
 	uint32_t val;
 
-	node = build_node(NULL, NULL, NULL);
+	node = build_node(NULL, NULL);
 
 	flatname = flat_read_string(dtbuf);
 

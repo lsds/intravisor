@@ -1,6 +1,9 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (C) 2015 CompuLab, Ltd. - http://www.compulab.co.il/
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 
 /dts-v1/;
@@ -200,7 +203,7 @@
 	tps65218: tps65218@24 {
 		compatible = "ti,tps65218";
 		reg = <0x24>;
-		interrupts = <GIC_SPI 7 IRQ_TYPE_LEVEL_HIGH>; /* NMIn */
+		interrupts = <GIC_SPI 7 IRQ_TYPE_NONE>; /* NMIn */
 		interrupt-parent = <&gic>;
 		interrupt-controller;
 		#interrupt-cells = <2>;
@@ -291,7 +294,7 @@
 	pinctrl-0 = <&emmc_pins>;
 	vmmc-supply = <&vmmc_3v3>;
 	bus-width = <8>;
-	non-removable;
+	ti,non-removable;
 };
 
 &spi0 {
@@ -302,7 +305,7 @@
 		&edma 17 0>;
 	dma-names = "tx0", "rx0";
 
-	flash: flash@0 {
+	flash: w25q64cvzpig@0 {
 		#address-cells = <1>;
 		#size-cells = <1>;
 		compatible = "jedec,spi-nor";
@@ -325,35 +328,29 @@
 	};
 };
 
-&mac_sw {
+&mac {
 	pinctrl-names = "default";
 	pinctrl-0 = <&cpsw_default>;
+	dual_emac = <1>;
 	status = "okay";
 };
 
-&davinci_mdio_sw {
+&davinci_mdio {
 	pinctrl-names = "default";
 	pinctrl-0 = <&davinci_mdio_default>;
-
-	ethphy0: ethernet-phy@0 {
-		reg = <0>;
-	};
-
-	ethphy1: ethernet-phy@1 {
-		reg = <1>;
-	};
+	status = "okay";
 };
 
-&cpsw_port1 {
-	phy-handle = <&ethphy0>;
+&cpsw_emac0 {
+	phy_id = <&davinci_mdio>, <0>;
 	phy-mode = "rgmii-txid";
-	ti,dual-emac-pvid = <1>;
+	dual_emac_res_vlan = <1>;
 };
 
-&cpsw_port2 {
-	phy-handle = <&ethphy1>;
+&cpsw_emac1 {
+	phy_id = <&davinci_mdio>, <1>;
 	phy-mode = "rgmii-txid";
-	ti,dual-emac-pvid = <2>;
+	dual_emac_res_vlan = <2>;
 };
 
 &dwc3_1 {
@@ -399,7 +396,7 @@
 	tsc {
 		ti,wires = <4>;
 		ti,x-plate-resistance = <200>;
-		ti,coordinate-readouts = <5>;
+		ti,coordiante-readouts = <5>;
 		ti,wire-config = <0x00 0x11 0x22 0x33>;
 	};
 
@@ -415,8 +412,4 @@
 			   <720000 1200000>,
 			   <600000 1100000>,
 			   <300000 950000>;
-};
-
-&pruss1_mdio {
-	status = "disabled";
 };

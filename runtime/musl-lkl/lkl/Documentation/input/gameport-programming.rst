@@ -21,7 +21,7 @@ choose which one to program the hardware to, starting from the more exotic
 addresses is preferred, because the likelihood of clashing with the standard
 0x201 address is smaller.
 
-E.g. if your driver supports addresses 0x200, 0x208, 0x210 and 0x218, then
+Eg. if your driver supports addresses 0x200, 0x208, 0x210 and 0x218, then
 0x218 would be the address of first choice.
 
 If your hardware supports a gameport address that is not mapped to ISA io
@@ -78,7 +78,7 @@ the gameport. To register a cooked gameport::
 
 		for (i = 0; i < 4; i++)
 			axes[i] = my_mmio[i];
-		buttons[0] = my_mmio[4];
+		buttons[i] = my_mmio[4];
 	}
 
 	int my_open(struct gameport *gameport, int mode)
@@ -117,28 +117,25 @@ Simple::
 The gameport structure
 ~~~~~~~~~~~~~~~~~~~~~~
 
+.. note::
+
+    This section is outdated. There are several fields here that don't
+    match what's there at include/linux/gameport.h.
+
 ::
 
     struct gameport {
 
-	void *port_data;
+	void *private;
 
 A private pointer for free use in the gameport driver. (Not the joystick
 driver!)
 
 ::
 
-	char name[32];
+	int number;
 
-Driver's name as set by driver calling gameport_set_name(). Informational
-purpose only.
-
-::
-
-	char phys[32];
-
-gameport's physical name/description as set by driver calling gameport_set_phys().
-Informational purpose only.
+Number assigned to the gameport when registered. Informational purpose only.
 
 ::
 
@@ -213,16 +210,8 @@ gameport.
 
 ::
 
-	struct timer_list poll_timer;
-	unsigned int poll_interval;     /* in msecs */
-	spinlock_t timer_lock;
-	unsigned int poll_cnt;
-	void (*poll_handler)(struct gameport *);
-	struct gameport *parent, *child;
-	struct gameport_driver *drv;
-	struct mutex drv_mutex;		/* protects serio->drv so attributes can pin driver */
-	struct device dev;
-	struct list_head node;
+	struct gameport_dev *dev;
+	struct gameport *next;
 
 For internal use by the gameport layer.
 

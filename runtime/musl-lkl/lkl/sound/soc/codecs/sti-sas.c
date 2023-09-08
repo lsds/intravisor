@@ -1,8 +1,8 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (C) STMicroelectronics SA 2015
  * Authors: Arnaud Pouliquen <arnaud.pouliquen@st.com>
  *          for STMicroelectronics.
+ * License terms:  GNU General Public License (GPL), version 2
  */
 
 #include <linux/io.h>
@@ -51,11 +51,14 @@ static const struct reg_default stih407_sas_reg_defaults[] = {
 struct sti_dac_audio {
 	struct regmap *regmap;
 	struct regmap *virt_regmap;
+	struct regmap_field  **field;
+	struct reset_control *rst;
 	int mclk;
 };
 
 struct sti_spdif_audio {
 	struct regmap *regmap;
+	struct regmap_field  **field;
 	int mclk;
 };
 
@@ -96,8 +99,11 @@ static int sti_sas_write_reg(void *context, unsigned int reg,
 			     unsigned int value)
 {
 	struct sti_sas_data *drvdata = context;
+	int status;
 
-	return regmap_write(drvdata->dac.regmap, reg, value);
+	status = regmap_write(drvdata->dac.regmap, reg, value);
+
+	return status;
 }
 
 static int  sti_sas_init_sas_registers(struct snd_soc_component *component,
@@ -151,10 +157,10 @@ static int  sti_sas_init_sas_registers(struct snd_soc_component *component,
 static int sti_sas_dac_set_fmt(struct snd_soc_dai *dai, unsigned int fmt)
 {
 	/* Sanity check only */
-	if ((fmt & SND_SOC_DAIFMT_CLOCK_PROVIDER_MASK) != SND_SOC_DAIFMT_CBC_CFC) {
+	if ((fmt & SND_SOC_DAIFMT_MASTER_MASK) != SND_SOC_DAIFMT_CBS_CFS) {
 		dev_err(dai->component->dev,
-			"%s: ERROR: Unsupported clocking 0x%x\n",
-			__func__, fmt & SND_SOC_DAIFMT_CLOCK_PROVIDER_MASK);
+			"%s: ERROR: Unsupporter master mask 0x%x\n",
+			__func__, fmt & SND_SOC_DAIFMT_MASTER_MASK);
 		return -EINVAL;
 	}
 
@@ -196,10 +202,10 @@ static int stih407_sas_dac_mute(struct snd_soc_dai *dai, int mute, int stream)
 static int sti_sas_spdif_set_fmt(struct snd_soc_dai *dai,
 				 unsigned int fmt)
 {
-	if ((fmt & SND_SOC_DAIFMT_CLOCK_PROVIDER_MASK) != SND_SOC_DAIFMT_CBC_CFC) {
+	if ((fmt & SND_SOC_DAIFMT_MASTER_MASK) != SND_SOC_DAIFMT_CBS_CFS) {
 		dev_err(dai->component->dev,
-			"%s: ERROR: Unsupported clocking mask 0x%x\n",
-			__func__, fmt & SND_SOC_DAIFMT_CLOCK_PROVIDER_MASK);
+			"%s: ERROR: Unsupporter master mask 0x%x\n",
+			__func__, fmt & SND_SOC_DAIFMT_MASTER_MASK);
 		return -EINVAL;
 	}
 
@@ -382,8 +388,11 @@ static int sti_sas_resume(struct snd_soc_component *component)
 static int sti_sas_component_probe(struct snd_soc_component *component)
 {
 	struct sti_sas_data *drvdata = dev_get_drvdata(component->dev);
+	int ret;
 
-	return sti_sas_init_sas_registers(component, drvdata);
+	ret = sti_sas_init_sas_registers(component, drvdata);
+
+	return ret;
 }
 
 static struct snd_soc_component_driver sti_sas_driver = {
@@ -392,6 +401,7 @@ static struct snd_soc_component_driver sti_sas_driver = {
 	.idle_bias_on		= 1,
 	.use_pmdown_time	= 1,
 	.endianness		= 1,
+	.non_legacy_dai_naming	= 1,
 };
 
 static const struct of_device_id sti_sas_dev_match[] = {
@@ -401,7 +411,6 @@ static const struct of_device_id sti_sas_dev_match[] = {
 	},
 	{},
 };
-MODULE_DEVICE_TABLE(of, sti_sas_dev_match);
 
 static int sti_sas_driver_probe(struct platform_device *pdev)
 {

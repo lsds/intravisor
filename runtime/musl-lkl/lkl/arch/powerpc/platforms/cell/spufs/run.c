@@ -353,6 +353,7 @@ static int spu_process_callback(struct spu_context *ctx)
 long spufs_run_spu(struct spu_context *ctx, u32 *npc, u32 *event)
 {
 	int ret;
+	struct spu *spu;
 	u32 status;
 
 	if (mutex_lock_interruptible(&ctx->run_mutex))
@@ -385,10 +386,13 @@ long spufs_run_spu(struct spu_context *ctx, u32 *npc, u32 *event)
 			mutex_lock(&ctx->state_mutex);
 			break;
 		}
+		spu = ctx->spu;
 		if (unlikely(test_and_clear_bit(SPU_SCHED_NOTIFY_ACTIVE,
 						&ctx->sched_flags))) {
-			if (!(status & SPU_STATUS_STOPPED_BY_STOP))
+			if (!(status & SPU_STATUS_STOPPED_BY_STOP)) {
+				spu_switch_notify(spu, ctx);
 				continue;
+			}
 		}
 
 		spuctx_switch_state(ctx, SPU_UTIL_SYSTEM);
@@ -439,7 +443,7 @@ long spufs_run_spu(struct spu_context *ctx, u32 *npc, u32 *event)
 
 	else if (unlikely((status & SPU_STATUS_STOPPED_BY_STOP)
 	    && (status >> SPU_STOP_STATUS_SHIFT) == 0x3fff)) {
-		force_sig(SIGTRAP);
+		force_sig(SIGTRAP, current);
 		ret = -ERESTARTSYS;
 	}
 

@@ -308,12 +308,10 @@ struct txpd {
 	__le32 tx_packet_location;
 	/* Tx packet length */
 	__le16 tx_packet_length;
-	struct_group_attr(tx_dest_addr, __packed,
-		/* First 2 byte of destination MAC address */
-		u8 tx_dest_addr_high[2];
-		/* Last 4 byte of destination MAC address */
-		u8 tx_dest_addr_low[4];
-	);
+	/* First 2 byte of destination MAC address */
+	u8 tx_dest_addr_high[2];
+	/* Last 4 byte of destination MAC address */
+	u8 tx_dest_addr_low[4];
 	/* Pkt Priority */
 	u8 priority;
 	/* Pkt Trasnit Power control */
@@ -463,7 +461,7 @@ struct cmd_ds_802_11_scan {
 
 	uint8_t bsstype;
 	uint8_t bssid[ETH_ALEN];
-	uint8_t tlvbuffer[];
+	uint8_t tlvbuffer[0];
 } __packed;
 
 struct cmd_ds_802_11_scan_rsp {
@@ -471,7 +469,7 @@ struct cmd_ds_802_11_scan_rsp {
 
 	__le16 bssdescriptsize;
 	uint8_t nr_sets;
-	uint8_t bssdesc_and_tlvbuffer[];
+	uint8_t bssdesc_and_tlvbuffer[0];
 } __packed;
 
 struct cmd_ds_802_11_get_log {
@@ -528,8 +526,7 @@ struct cmd_ds_802_11_associate {
 	__le16 listeninterval;
 	__le16 bcnperiod;
 	u8 dtimperiod;
-	/* 512 permitted - enough for required and most optional IEs */
-	u8 iebuf[];
+	u8 iebuf[512];    /* Enough for required and most optional IEs */
 } __packed;
 
 struct cmd_ds_802_11_associate_response {
@@ -538,8 +535,7 @@ struct cmd_ds_802_11_associate_response {
 	__le16 capability;
 	__le16 statuscode;
 	__le16 aid;
-	/* max 512 */
-	u8 iebuf[];
+	u8 iebuf[512];
 } __packed;
 
 struct cmd_ds_802_11_set_wep {

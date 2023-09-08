@@ -4,21 +4,24 @@
 # for more details.
 #
 
-OBJCOPY_ARGS := -O $(if $(CONFIG_CPU_BIG_ENDIAN),elf32-xtensa-be,elf32-xtensa-le)
+ifeq ($(BIG_ENDIAN),1)
+OBJCOPY_ARGS 	:= -O elf32-xtensa-be
+else
+OBJCOPY_ARGS 	:= -O elf32-xtensa-le
+endif
 
 LD_ARGS	= -T $(srctree)/$(obj)/boot.ld
 
 boot-y	:= bootstrap.o
-targets	+= $(boot-y)
 
 OBJS	:= $(addprefix $(obj)/,$(boot-y))
 LIBS	:= arch/xtensa/boot/lib/lib.a arch/xtensa/lib/lib.a
 
 LIBGCC := $(shell $(CC) $(KBUILD_CFLAGS) -print-libgcc-file-name)
 
-$(obj)/zImage.o: $(obj)/../vmlinux.bin.gz $(OBJS)
+$(obj)/zImage.o: vmlinux.bin.gz $(OBJS)
 	$(Q)$(OBJCOPY) $(OBJCOPY_ARGS) -R .comment \
-		--add-section image=$< \
+		--add-section image=vmlinux.bin.gz \
 		--set-section-flags image=contents,alloc,load,load,data \
 		$(OBJS) $@
 

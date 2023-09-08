@@ -1,4 +1,3 @@
-# SPDX-License-Identifier: GPL-2.0-only
 #
 # Multiplexer drivers
 #
@@ -9,6 +8,7 @@ menu "Multiplexers"
 config IIO_MUX
 	tristate "IIO multiplexer driver"
 	select MULTIPLEXER
+	depends on OF || COMPILE_TEST
 	help
 	  Say yes here to build support for the IIO multiplexer.
 

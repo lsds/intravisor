@@ -14,11 +14,10 @@
 /*
  * void *memmove(void *dest, const void *src, size_t n)
  */
-WEAK(memmove)
-ENTRY(__memmove)
+ENTRY(memmove)
 	ltgr	%r4,%r4
 	lgr	%r1,%r2
-	jz	.Lmemmove_exit
+	bzr	%r14
 	aghi	%r4,-1
 	clgr	%r2,%r3
 	jnh	.Lmemmove_forward
@@ -37,7 +36,6 @@ ENTRY(__memmove)
 .Lmemmove_forward_remainder:
 	larl	%r5,.Lmemmove_mvc
 	ex	%r4,0(%r5)
-.Lmemmove_exit:
 	BR_EX	%r14
 .Lmemmove_reverse:
 	ic	%r0,0(%r4,%r3)
@@ -48,7 +46,6 @@ ENTRY(__memmove)
 	BR_EX	%r14
 .Lmemmove_mvc:
 	mvc	0(1,%r1),0(%r3)
-ENDPROC(__memmove)
 EXPORT_SYMBOL(memmove)
 
 /*
@@ -66,10 +63,9 @@ EXPORT_SYMBOL(memmove)
  *	return __builtin_memset(s, c, n);
  * }
  */
-WEAK(memset)
-ENTRY(__memset)
+ENTRY(memset)
 	ltgr	%r4,%r4
-	jz	.Lmemset_exit
+	bzr	%r14
 	ltgr	%r3,%r3
 	jnz	.Lmemset_fill
 	aghi	%r4,-1
@@ -84,7 +80,6 @@ ENTRY(__memset)
 .Lmemset_clear_remainder:
 	larl	%r3,.Lmemset_xc
 	ex	%r4,0(%r3)
-.Lmemset_exit:
 	BR_EX	%r14
 .Lmemset_fill:
 	cghi	%r4,1
@@ -111,7 +106,6 @@ ENTRY(__memset)
 	xc	0(1,%r1),0(%r1)
 .Lmemset_mvc:
 	mvc	1(1,%r1),0(%r1)
-ENDPROC(__memset)
 EXPORT_SYMBOL(memset)
 
 /*
@@ -119,10 +113,9 @@ EXPORT_SYMBOL(memset)
  *
  * void *memcpy(void *dest, const void *src, size_t n)
  */
-WEAK(memcpy)
-ENTRY(__memcpy)
+ENTRY(memcpy)
 	ltgr	%r4,%r4
-	jz	.Lmemcpy_exit
+	bzr	%r14
 	aghi	%r4,-1
 	srlg	%r5,%r4,8
 	ltgr	%r5,%r5
@@ -131,7 +124,6 @@ ENTRY(__memcpy)
 .Lmemcpy_remainder:
 	larl	%r5,.Lmemcpy_mvc
 	ex	%r4,0(%r5)
-.Lmemcpy_exit:
 	BR_EX	%r14
 .Lmemcpy_loop:
 	mvc	0(256,%r1),0(%r3)
@@ -141,7 +133,6 @@ ENTRY(__memcpy)
 	j	.Lmemcpy_remainder
 .Lmemcpy_mvc:
 	mvc	0(1,%r1),0(%r3)
-ENDPROC(__memcpy)
 EXPORT_SYMBOL(memcpy)
 
 /*
@@ -154,9 +145,9 @@ EXPORT_SYMBOL(memcpy)
 .macro __MEMSET bits,bytes,insn
 ENTRY(__memset\bits)
 	ltgr	%r4,%r4
-	jz	.L__memset_exit\bits
+	bzr	%r14
 	cghi	%r4,\bytes
-	je	.L__memset_store\bits
+	je	.L__memset_exit\bits
 	aghi	%r4,-(\bytes+1)
 	srlg	%r5,%r4,8
 	ltgr	%r5,%r5
@@ -172,13 +163,11 @@ ENTRY(__memset\bits)
 	larl	%r5,.L__memset_mvc\bits
 	ex	%r4,0(%r5)
 	BR_EX	%r14
-.L__memset_store\bits:
-	\insn	%r3,0(%r2)
 .L__memset_exit\bits:
+	\insn	%r3,0(%r2)
 	BR_EX	%r14
 .L__memset_mvc\bits:
 	mvc	\bytes(1,%r1),0(%r1)
-ENDPROC(__memset\bits)
 .endm
 
 __MEMSET 16,2,sth

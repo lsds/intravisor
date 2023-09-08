@@ -1,9 +1,13 @@
-/* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
  * This file contains assembly-language implementations
  * of IP-style 1's complement checksum routines.
  *	
  *    Copyright (C) 1995-1996 Gary Thomas (gdt@linuxppc.org)
+ *
+ *  This program is free software; you can redistribute it and/or
+ *  modify it under the terms of the GNU General Public License
+ *  as published by the Free Software Foundation; either version
+ *  2 of the License, or (at your option) any later version.
  *
  * Severely hacked about by Paul Mackerras (paulus@cs.anu.edu.au).
  */
@@ -182,33 +186,34 @@ EXPORT_SYMBOL(__csum_partial)
 
 	.macro srcnr
 100:
-	EX_TABLE(100b,.Lerror_nr)
+	EX_TABLE(100b,.Lsrc_error_nr)
 	.endm
 
 	.macro source
 150:
-	EX_TABLE(150b,.Lerror)
+	EX_TABLE(150b,.Lsrc_error)
 	.endm
 
 	.macro dstnr
 200:
-	EX_TABLE(200b,.Lerror_nr)
+	EX_TABLE(200b,.Ldest_error_nr)
 	.endm
 
 	.macro dest
 250:
-	EX_TABLE(250b,.Lerror)
+	EX_TABLE(250b,.Ldest_error)
 	.endm
 
 /*
  * Computes the checksum of a memory block at src, length len,
- * and adds in 0xffffffff (32-bit), while copying the block to dst.
- * If an access exception occurs, it returns 0.
+ * and adds in "sum" (32-bit), while copying the block to dst.
+ * If an access exception occurs on src or dst, it stores -EFAULT
+ * to *src_err or *dst_err respectively. The caller must take any action
+ * required in this case (zeroing memory, recalculating partial checksum etc).
  *
- * csum_partial_copy_generic(r3=src, r4=dst, r5=len)
+ * csum_partial_copy_generic(r3=src, r4=dst, r5=len, r6=sum, r7=src_err, r8=dst_err)
  */
 _GLOBAL(csum_partial_copy_generic)
-	li	r6,-1
 	addic	r0,r6,0			/* clear carry */
 
 	srdi.	r6,r5,3			/* less than 8 bytes? */
@@ -400,44 +405,27 @@ dstnr;	stb	r6,0(r4)
 	srdi	r3,r3,32
 	blr
 
-.Lerror:
+.Lsrc_error:
 	ld	r14,STK_REG(R14)(r1)
 	ld	r15,STK_REG(R15)(r1)
 	ld	r16,STK_REG(R16)(r1)
 	addi	r1,r1,STACKFRAMESIZE
-.Lerror_nr:
-	li	r3,0
+.Lsrc_error_nr:
+	cmpdi	0,r7,0
+	beqlr
+	li	r6,-EFAULT
+	stw	r6,0(r7)
 	blr
 
+.Ldest_error:
+	ld	r14,STK_REG(R14)(r1)
+	ld	r15,STK_REG(R15)(r1)
+	ld	r16,STK_REG(R16)(r1)
+	addi	r1,r1,STACKFRAMESIZE
+.Ldest_error_nr:
+	cmpdi	0,r8,0
+	beqlr
+	li	r6,-EFAULT
+	stw	r6,0(r8)
+	blr
 EXPORT_SYMBOL(csum_partial_copy_generic)
-
-/*
- * __sum16 csum_ipv6_magic(const struct in6_addr *saddr,
- *			   const struct in6_addr *daddr,
- *			   __u32 len, __u8 proto, __wsum sum)
- */
-
-_GLOBAL(csum_ipv6_magic)
-	ld	r8, 0(r3)
-	ld	r9, 8(r3)
-	add	r5, r5, r6
-	addc	r0, r8, r9
-	ld	r10, 0(r4)
-	ld	r11, 8(r4)
-#ifdef CONFIG_CPU_LITTLE_ENDIAN
-	rotldi	r5, r5, 8
-#endif
-	adde	r0, r0, r10
-	add	r5, r5, r7
-	adde	r0, r0, r11
-	adde	r0, r0, r5
-	addze	r0, r0
-	rotldi  r3, r0, 32		/* fold two 32 bit halves together */
-	add	r3, r0, r3
-	srdi	r0, r3, 32
-	rotlwi	r3, r0, 16		/* fold two 16 bit halves together */
-	add	r3, r0, r3
-	not	r3, r3
-	rlwinm	r3, r3, 16, 16, 31
-	blr
-EXPORT_SYMBOL(csum_ipv6_magic)

@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (C) 2008-2013 Freescale Semiconductor, Inc. All rights reserved.
  *
@@ -11,6 +10,10 @@
  * Description:
  * This file is based on arch/powerpc/kvm/44x_tlb.c,
  * by Hollis Blanchard <hollisb@us.ibm.com>.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License, version 2, as
+ * published by the Free Software Foundation.
  */
 
 #include <linux/kernel.h>
@@ -339,7 +342,7 @@ static inline int kvmppc_e500_shadow_map(struct kvmppc_vcpu_e500 *vcpu_e500,
 	unsigned long flags;
 
 	/* used to check for invalidations in progress */
-	mmu_seq = kvm->mmu_invalidate_seq;
+	mmu_seq = kvm->mmu_notifier_seq;
 	smp_rmb();
 
 	/*
@@ -355,9 +358,9 @@ static inline int kvmppc_e500_shadow_map(struct kvmppc_vcpu_e500 *vcpu_e500,
 
 	if (tlbsel == 1) {
 		struct vm_area_struct *vma;
-		mmap_read_lock(kvm->mm);
+		down_read(&current->mm->mmap_sem);
 
-		vma = find_vma(kvm->mm, hva);
+		vma = find_vma(current->mm, hva);
 		if (vma && hva >= vma->vm_start &&
 		    (vma->vm_flags & VM_PFNMAP)) {
 			/*
@@ -422,7 +425,7 @@ static inline int kvmppc_e500_shadow_map(struct kvmppc_vcpu_e500 *vcpu_e500,
 				break;
 			}
 		} else if (vma && hva >= vma->vm_start &&
-			   is_vm_hugetlb_page(vma)) {
+			   (vma->vm_flags & VM_HUGETLB)) {
 			unsigned long psize = vma_kernel_pagesize(vma);
 
 			tsize = (gtlbe->mas1 & MAS1_TSIZE_MASK) >>
@@ -441,7 +444,7 @@ static inline int kvmppc_e500_shadow_map(struct kvmppc_vcpu_e500 *vcpu_e500,
 			tsize = max(BOOK3E_PAGESZ_4K, tsize & ~1);
 		}
 
-		mmap_read_unlock(kvm->mm);
+		up_read(&current->mm->mmap_sem);
 	}
 
 	if (likely(!pfnmap)) {
@@ -460,7 +463,7 @@ static inline int kvmppc_e500_shadow_map(struct kvmppc_vcpu_e500 *vcpu_e500,
 	}
 
 	spin_lock(&kvm->mmu_lock);
-	if (mmu_invalidate_retry(kvm, mmu_seq)) {
+	if (mmu_notifier_retry(kvm, mmu_seq)) {
 		ret = -EAGAIN;
 		goto out;
 	}
@@ -622,8 +625,8 @@ void kvmppc_mmu_map(struct kvm_vcpu *vcpu, u64 eaddr, gpa_t gpaddr,
 }
 
 #ifdef CONFIG_KVM_BOOKE_HV
-int kvmppc_load_last_inst(struct kvm_vcpu *vcpu,
-		enum instruction_fetch_type type, u32 *instr)
+int kvmppc_load_last_inst(struct kvm_vcpu *vcpu, enum instruction_type type,
+			  u32 *instr)
 {
 	gva_t geaddr;
 	hpa_t addr;
@@ -712,8 +715,8 @@ int kvmppc_load_last_inst(struct kvm_vcpu *vcpu,
 	return EMULATE_DONE;
 }
 #else
-int kvmppc_load_last_inst(struct kvm_vcpu *vcpu,
-		enum instruction_fetch_type type, u32 *instr)
+int kvmppc_load_last_inst(struct kvm_vcpu *vcpu, enum instruction_type type,
+			  u32 *instr)
 {
 	return EMULATE_AGAIN;
 }
@@ -721,36 +724,43 @@ int kvmppc_load_last_inst(struct kvm_vcpu *vcpu,
 
 /************* MMU Notifiers *************/
 
-static bool kvm_e500_mmu_unmap_gfn(struct kvm *kvm, struct kvm_gfn_range *range)
+static int kvm_unmap_hva(struct kvm *kvm, unsigned long hva)
 {
+	trace_kvm_unmap_hva(hva);
+
 	/*
 	 * Flush all shadow tlb entries everywhere. This is slow, but
 	 * we are 100% sure that we catch the to be unmapped page
 	 */
-	return true;
+	kvm_flush_remote_tlbs(kvm);
+
+	return 0;
 }
 
-bool kvm_unmap_gfn_range(struct kvm *kvm, struct kvm_gfn_range *range)
+int kvm_unmap_hva_range(struct kvm *kvm, unsigned long start, unsigned long end)
 {
-	return kvm_e500_mmu_unmap_gfn(kvm, range);
+	/* kvm_unmap_hva flushes everything anyways */
+	kvm_unmap_hva(kvm, start);
+
+	return 0;
 }
 
-bool kvm_age_gfn(struct kvm *kvm, struct kvm_gfn_range *range)
+int kvm_age_hva(struct kvm *kvm, unsigned long start, unsigned long end)
 {
 	/* XXX could be more clever ;) */
-	return false;
+	return 0;
 }
 
-bool kvm_test_age_gfn(struct kvm *kvm, struct kvm_gfn_range *range)
+int kvm_test_age_hva(struct kvm *kvm, unsigned long hva)
 {
 	/* XXX could be more clever ;) */
-	return false;
+	return 0;
 }
 
-bool kvm_set_spte_gfn(struct kvm *kvm, struct kvm_gfn_range *range)
+void kvm_set_spte_hva(struct kvm *kvm, unsigned long hva, pte_t pte)
 {
 	/* The page will get remapped properly on its next fault */
-	return kvm_e500_mmu_unmap_gfn(kvm, range);
+	kvm_unmap_hva(kvm, hva);
 }
 
 /*****************************************/

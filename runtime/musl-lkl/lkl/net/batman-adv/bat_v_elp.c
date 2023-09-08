@@ -1,7 +1,19 @@
 // SPDX-License-Identifier: GPL-2.0
-/* Copyright (C) B.A.T.M.A.N. contributors:
+/* Copyright (C) 2011-2018  B.A.T.M.A.N. contributors:
  *
  * Linus Lüssing, Marek Lindner
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of version 2 of the GNU General Public
+ * License as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+ * General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, see <http://www.gnu.org/licenses/>.
  */
 
 #include "bat_v_elp.h"
@@ -10,18 +22,16 @@
 #include <linux/atomic.h>
 #include <linux/bitops.h>
 #include <linux/byteorder/generic.h>
-#include <linux/container_of.h>
 #include <linux/errno.h>
 #include <linux/etherdevice.h>
 #include <linux/ethtool.h>
 #include <linux/gfp.h>
 #include <linux/if_ether.h>
 #include <linux/jiffies.h>
+#include <linux/kernel.h>
 #include <linux/kref.h>
-#include <linux/minmax.h>
 #include <linux/netdevice.h>
 #include <linux/nl80211.h>
-#include <linux/prandom.h>
 #include <linux/random.h>
 #include <linux/rculist.h>
 #include <linux/rcupdate.h>
@@ -51,7 +61,7 @@ static void batadv_v_elp_start_timer(struct batadv_hard_iface *hard_iface)
 	unsigned int msecs;
 
 	msecs = atomic_read(&hard_iface->bat_v.elp_interval) - BATADV_JITTER;
-	msecs += prandom_u32_max(2 * BATADV_JITTER);
+	msecs += prandom_u32() % (2 * BATADV_JITTER);
 
 	queue_delayed_work(batadv_event_workqueue, &hard_iface->bat_v.elp_wq,
 			   msecs_to_jiffies(msecs));
@@ -62,7 +72,7 @@ static void batadv_v_elp_start_timer(struct batadv_hard_iface *hard_iface)
  * @neigh: the neighbour for which the throughput has to be obtained
  *
  * Return: The throughput towards the given neighbour in multiples of 100kpbs
- *         (a value of '1' equals 0.1Mbps, '10' equals 1Mbps, etc).
+ *         (a value of '1' equals to 0.1Mbps, '10' equals 1Mbps, etc).
  */
 static u32 batadv_v_elp_get_throughput(struct batadv_hardif_neigh_node *neigh)
 {
@@ -94,11 +104,6 @@ static u32 batadv_v_elp_get_throughput(struct batadv_hardif_neigh_node *neigh)
 
 		ret = cfg80211_get_station(real_netdev, neigh->addr, &sinfo);
 
-		if (!ret) {
-			/* free the TID stats immediately */
-			cfg80211_sinfo_release_content(&sinfo);
-		}
-
 		dev_put(real_netdev);
 		if (ret == -ENOENT) {
 			/* Node is not associated anymore! It would be
@@ -109,22 +114,16 @@ static u32 batadv_v_elp_get_throughput(struct batadv_hardif_neigh_node *neigh)
 		}
 		if (ret)
 			goto default_throughput;
+		if (!(sinfo.filled & BIT(NL80211_STA_INFO_EXPECTED_THROUGHPUT)))
+			goto default_throughput;
 
-		if (sinfo.filled & BIT(NL80211_STA_INFO_EXPECTED_THROUGHPUT))
-			return sinfo.expected_throughput / 100;
-
-		/* try to estimate the expected throughput based on reported tx
-		 * rates
-		 */
-		if (sinfo.filled & BIT(NL80211_STA_INFO_TX_BITRATE))
-			return cfg80211_calculate_bitrate(&sinfo.txrate) / 3;
-
-		goto default_throughput;
+		return sinfo.expected_throughput / 100;
 	}
 
 	/* if not a wifi interface, check if this device provides data via
 	 * ethtool (e.g. an Ethernet adapter)
 	 */
+	memset(&link_settings, 0, sizeof(link_settings));
 	rtnl_lock();
 	ret = __ethtool_get_link_ksettings(hard_iface->net_dev, &link_settings);
 	rtnl_unlock();
@@ -184,8 +183,8 @@ void batadv_v_elp_throughput_metric_update(struct work_struct *work)
  *
  * Sends a predefined number of unicast wifi packets to a given neighbour in
  * order to trigger the throughput estimation on this link by the RC algorithm.
- * Packets are sent only if there is not enough payload unicast traffic towards
- * this neighbour..
+ * Packets are sent only if there there is not enough payload unicast traffic
+ * towards this neighbour..
  *
  * Return: True on success and false in case of error during skb preparation.
  */
@@ -229,7 +228,7 @@ batadv_v_elp_wifi_neigh_probe(struct batadv_hardif_neigh_node *neigh)
 		 * the packet to be exactly of that size to make the link
 		 * throughput estimation effective.
 		 */
-		skb_put_zero(skb, probe_len - hard_iface->bat_v.elp_skb->len);
+		skb_put(skb, probe_len - hard_iface->bat_v.elp_skb->len);
 
 		batadv_dbg(BATADV_DBG_BATMAN, bat_priv,
 			   "Sending unicast (probe) ELP packet on interface %s to %pM\n",
@@ -245,7 +244,7 @@ batadv_v_elp_wifi_neigh_probe(struct batadv_hardif_neigh_node *neigh)
  * batadv_v_elp_periodic_work() - ELP periodic task per interface
  * @work: work queue item
  *
- * Emits broadcast ELP messages in regular intervals.
+ * Emits broadcast ELP message in regular intervals.
  */
 static void batadv_v_elp_periodic_work(struct work_struct *work)
 {
@@ -256,7 +255,6 @@ static void batadv_v_elp_periodic_work(struct work_struct *work)
 	struct batadv_priv *bat_priv;
 	struct sk_buff *skb;
 	u32 elp_interval;
-	bool ret;
 
 	bat_v = container_of(work, struct batadv_hard_iface_bat_v, elp_wq.work);
 	hard_iface = container_of(bat_v, struct batadv_hard_iface, bat_v);
@@ -318,11 +316,8 @@ static void batadv_v_elp_periodic_work(struct work_struct *work)
 		 * may sleep and that is not allowed in an rcu protected
 		 * context. Therefore schedule a task for that.
 		 */
-		ret = queue_work(batadv_event_workqueue,
-				 &hardif_neigh->bat_v.metric_work);
-
-		if (!ret)
-			batadv_hardif_neigh_put(hardif_neigh);
+		queue_work(batadv_event_workqueue,
+			   &hardif_neigh->bat_v.metric_work);
 	}
 	rcu_read_unlock();
 
@@ -340,21 +335,19 @@ out:
  */
 int batadv_v_elp_iface_enable(struct batadv_hard_iface *hard_iface)
 {
-	static const size_t tvlv_padding = sizeof(__be32);
 	struct batadv_elp_packet *elp_packet;
 	unsigned char *elp_buff;
 	u32 random_seqno;
 	size_t size;
 	int res = -ENOMEM;
 
-	size = ETH_HLEN + NET_IP_ALIGN + BATADV_ELP_HLEN + tvlv_padding;
+	size = ETH_HLEN + NET_IP_ALIGN + BATADV_ELP_HLEN;
 	hard_iface->bat_v.elp_skb = dev_alloc_skb(size);
 	if (!hard_iface->bat_v.elp_skb)
 		goto out;
 
 	skb_reserve(hard_iface->bat_v.elp_skb, ETH_HLEN + NET_IP_ALIGN);
-	elp_buff = skb_put_zero(hard_iface->bat_v.elp_skb,
-				BATADV_ELP_HLEN + tvlv_padding);
+	elp_buff = skb_put_zero(hard_iface->bat_v.elp_skb, BATADV_ELP_HLEN);
 	elp_packet = (struct batadv_elp_packet *)elp_buff;
 
 	elp_packet->packet_type = BATADV_ELP;
@@ -485,11 +478,14 @@ static void batadv_v_elp_neigh_update(struct batadv_priv *bat_priv,
 	hardif_neigh->bat_v.elp_interval = ntohl(elp_packet->elp_interval);
 
 hardif_free:
-	batadv_hardif_neigh_put(hardif_neigh);
+	if (hardif_neigh)
+		batadv_hardif_neigh_put(hardif_neigh);
 neigh_free:
-	batadv_neigh_node_put(neigh);
+	if (neigh)
+		batadv_neigh_node_put(neigh);
 orig_free:
-	batadv_orig_node_put(orig_neigh);
+	if (orig_neigh)
+		batadv_orig_node_put(orig_neigh);
 }
 
 /**
@@ -497,7 +493,7 @@ orig_free:
  * @skb: the received packet
  * @if_incoming: the interface this packet was received through
  *
- * Return: NET_RX_SUCCESS and consumes the skb if the packet was properly
+ * Return: NET_RX_SUCCESS and consumes the skb if the packet was peoperly
  * processed or NET_RX_DROP in case of failure.
  */
 int batadv_v_elp_packet_recv(struct sk_buff *skb,

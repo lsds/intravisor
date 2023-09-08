@@ -1,5 +1,35 @@
-// SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
-/* Copyright (C) 2015-2018 Netronome Systems, Inc. */
+/*
+ * Copyright (C) 2015-2017 Netronome Systems, Inc.
+ *
+ * This software is dual licensed under the GNU General License Version 2,
+ * June 1991 as shown in the file COPYING in the top-level directory of this
+ * source tree or the BSD 2-Clause License provided below.  You have the
+ * option to license this software under the complete terms of either license.
+ *
+ * The BSD 2-Clause License:
+ *
+ *     Redistribution and use in source and binary forms, with or
+ *     without modification, are permitted provided that the following
+ *     conditions are met:
+ *
+ *      1. Redistributions of source code must retain the above
+ *         copyright notice, this list of conditions and the following
+ *         disclaimer.
+ *
+ *      2. Redistributions in binary form must reproduce the above
+ *         copyright notice, this list of conditions and the following
+ *         disclaimer in the documentation and/or other materials
+ *         provided with the distribution.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+ * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+ * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS
+ * BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
+ * ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+ * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ */
 
 /*
  * nfp_cppcore.c
@@ -45,7 +75,6 @@ struct nfp_cpp_resource {
  * @interface:		chip interface id we are using to reach it
  * @serial:		chip serial number
  * @imb_cat_table:	CPP Mapping Table
- * @mu_locality_lsb:	MU access type bit offset
  *
  * Following fields use explicit locking:
  * @resource_list:	NFP CPP resource list
@@ -71,7 +100,6 @@ struct nfp_cpp {
 	wait_queue_head_t waitq;
 
 	u32 imb_cat_table[16];
-	unsigned int mu_locality_lsb;
 
 	struct mutex area_cache_mutex;
 	struct list_head area_cache_list;
@@ -236,34 +264,6 @@ int nfp_cpp_serial(struct nfp_cpp *cpp, const u8 **serial)
 {
 	*serial = &cpp->serial[0];
 	return sizeof(cpp->serial);
-}
-
-#define NFP_IMB_TGTADDRESSMODECFG_MODE_of(_x)		(((_x) >> 13) & 0x7)
-#define NFP_IMB_TGTADDRESSMODECFG_ADDRMODE		BIT(12)
-#define   NFP_IMB_TGTADDRESSMODECFG_ADDRMODE_32_BIT	0
-#define   NFP_IMB_TGTADDRESSMODECFG_ADDRMODE_40_BIT	BIT(12)
-
-static int nfp_cpp_set_mu_locality_lsb(struct nfp_cpp *cpp)
-{
-	unsigned int mode, addr40;
-	u32 imbcppat;
-	int res;
-
-	imbcppat = cpp->imb_cat_table[NFP_CPP_TARGET_MU];
-	mode = NFP_IMB_TGTADDRESSMODECFG_MODE_of(imbcppat);
-	addr40 = !!(imbcppat & NFP_IMB_TGTADDRESSMODECFG_ADDRMODE);
-
-	res = nfp_cppat_mu_locality_lsb(mode, addr40);
-	if (res < 0)
-		return res;
-	cpp->mu_locality_lsb = res;
-
-	return 0;
-}
-
-unsigned int nfp_cpp_mu_locality_lsb(struct nfp_cpp *cpp)
-{
-	return cpp->mu_locality_lsb;
 }
 
 /**
@@ -803,10 +803,8 @@ int nfp_cpp_area_cache_add(struct nfp_cpp *cpp, size_t size)
 		return -ENOMEM;
 
 	cache = kzalloc(sizeof(*cache), GFP_KERNEL);
-	if (!cache) {
-		nfp_cpp_area_free(area);
+	if (!cache)
 		return -ENOMEM;
-	}
 
 	cache->id = 0;
 	cache->addr = 0;
@@ -874,6 +872,7 @@ area_cache_get(struct nfp_cpp *cpp, u32 id,
 	}
 
 	/* Adjust the start address to be cache size aligned */
+	cache->id = id;
 	cache->addr = addr & ~(u64)(cache->size - 1);
 
 	/* Re-init to the new ID and address */
@@ -893,8 +892,6 @@ area_cache_get(struct nfp_cpp *cpp, u32 id,
 		return NULL;
 	}
 
-	cache->id = id;
-
 exit:
 	/* Adjust offset */
 	*offset = addr - cache->addr;
@@ -908,7 +905,8 @@ area_cache_put(struct nfp_cpp *cpp, struct nfp_cpp_area_cache *cache)
 		return;
 
 	/* Move to front of LRU */
-	list_move(&cache->entry, &cpp->area_cache_list);
+	list_del(&cache->entry);
+	list_add(&cache->entry, &cpp->area_cache_list);
 
 	mutex_unlock(&cpp->area_cache_mutex);
 }
@@ -1165,10 +1163,10 @@ nfp_cpp_from_operations(const struct nfp_cpp_operations *ops,
 {
 	const u32 arm = NFP_CPP_ID(NFP_CPP_TARGET_ARM, NFP_CPP_ACTION_RW, 0);
 	struct nfp_cpp *cpp;
-	int ifc, err;
 	u32 mask[2];
 	u32 xpbaddr;
 	size_t tgt;
+	int err;
 
 	cpp = kzalloc(sizeof(*cpp), GFP_KERNEL);
 	if (!cpp) {
@@ -1178,19 +1176,9 @@ nfp_cpp_from_operations(const struct nfp_cpp_operations *ops,
 
 	cpp->op = ops;
 	cpp->priv = priv;
-
-	ifc = ops->get_interface(parent);
-	if (ifc < 0) {
-		err = ifc;
-		goto err_free_cpp;
-	}
-	cpp->interface = ifc;
-	if (ops->read_serial) {
-		err = ops->read_serial(parent, cpp->serial);
-		if (err)
-			goto err_free_cpp;
-	}
-
+	cpp->interface = ops->get_interface(parent);
+	if (ops->read_serial)
+		ops->read_serial(parent, cpp->serial);
 	rwlock_init(&cpp->resource_lock);
 	init_waitqueue_head(&cpp->waitq);
 	lockdep_set_class(&cpp->resource_lock, &nfp_cpp_resource_lock_key);
@@ -1203,7 +1191,7 @@ nfp_cpp_from_operations(const struct nfp_cpp_operations *ops,
 	err = device_register(&cpp->dev);
 	if (err < 0) {
 		put_device(&cpp->dev);
-		goto err_free_cpp;
+		goto err_dev;
 	}
 
 	dev_set_drvdata(&cpp->dev, cpp);
@@ -1243,12 +1231,6 @@ nfp_cpp_from_operations(const struct nfp_cpp_operations *ops,
 	nfp_cpp_readl(cpp, arm, NFP_ARM_GCSR + NFP_ARM_GCSR_SOFTMODEL3,
 		      &mask[1]);
 
-	err = nfp_cpp_set_mu_locality_lsb(cpp);
-	if (err < 0) {
-		dev_err(parent,	"Can't calculate MU locality bit offset\n");
-		goto err_out;
-	}
-
 	dev_info(cpp->dev.parent, "Model: 0x%08x, SN: %pM, Ifc: 0x%04x\n",
 		 nfp_cpp_model(cpp), cpp->serial, nfp_cpp_interface(cpp));
 
@@ -1256,7 +1238,7 @@ nfp_cpp_from_operations(const struct nfp_cpp_operations *ops,
 
 err_out:
 	device_unregister(&cpp->dev);
-err_free_cpp:
+err_dev:
 	kfree(cpp);
 err_malloc:
 	return ERR_PTR(err);

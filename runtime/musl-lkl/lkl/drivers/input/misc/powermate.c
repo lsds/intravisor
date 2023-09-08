@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * A driver for the Griffin Technology, Inc. "PowerMate" USB controller dial.
  *
@@ -278,7 +277,7 @@ static int powermate_input_event(struct input_dev *dev, unsigned int type, unsig
 static int powermate_alloc_buffers(struct usb_device *udev, struct powermate_device *pm)
 {
 	pm->data = usb_alloc_coherent(udev, POWERMATE_PAYLOAD_SIZE_MAX,
-				      GFP_KERNEL, &pm->data_dma);
+				      GFP_ATOMIC, &pm->data_dma);
 	if (!pm->data)
 		return -1;
 
@@ -374,7 +373,7 @@ static int powermate_probe(struct usb_interface *intf, const struct usb_device_i
 
 	/* get a handle to the interrupt data pipe */
 	pipe = usb_rcvintpipe(udev, endpoint->bEndpointAddress);
-	maxp = usb_maxpacket(udev, pipe);
+	maxp = usb_maxpacket(udev, pipe, usb_pipeout(pipe));
 
 	if (maxp < POWERMATE_PAYLOAD_SIZE_MIN || maxp > POWERMATE_PAYLOAD_SIZE_MAX) {
 		printk(KERN_WARNING "powermate: Expected payload of %d--%d bytes, found %d bytes!\n",

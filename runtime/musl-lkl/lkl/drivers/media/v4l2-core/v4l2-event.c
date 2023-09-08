@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * v4l2-event.c
  *
@@ -7,6 +6,15 @@
  * Copyright (C) 2009--2010 Nokia Corporation.
  *
  * Contact: Sakari Ailus <sakari.ailus@iki.fi>
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * version 2 as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * General Public License for more details.
  */
 
 #include <media/v4l2-dev.h>
@@ -18,7 +26,7 @@
 #include <linux/slab.h>
 #include <linux/export.h>
 
-static unsigned int sev_pos(const struct v4l2_subscribed_event *sev, unsigned int idx)
+static unsigned sev_pos(const struct v4l2_subscribed_event *sev, unsigned idx)
 {
 	idx += sev->first;
 	return idx >= sev->elems ? idx - sev->elems : idx;
@@ -27,7 +35,6 @@ static unsigned int sev_pos(const struct v4l2_subscribed_event *sev, unsigned in
 static int __v4l2_event_dequeue(struct v4l2_fh *fh, struct v4l2_event *event)
 {
 	struct v4l2_kevent *kev;
-	struct timespec64 ts;
 	unsigned long flags;
 
 	spin_lock_irqsave(&fh->vdev->fh_lock, flags);
@@ -45,9 +52,6 @@ static int __v4l2_event_dequeue(struct v4l2_fh *fh, struct v4l2_event *event)
 
 	kev->event.pending = fh->navailable;
 	*event = kev->event;
-	ts = ns_to_timespec64(kev->ts);
-	event->timestamp.tv_sec = ts.tv_sec;
-	event->timestamp.tv_nsec = ts.tv_nsec;
 	kev->sev->first = sev_pos(kev->sev, 1);
 	kev->sev->in_use--;
 
@@ -99,8 +103,8 @@ static struct v4l2_subscribed_event *v4l2_event_subscribed(
 	return NULL;
 }
 
-static void __v4l2_event_queue_fh(struct v4l2_fh *fh,
-				  const struct v4l2_event *ev, u64 ts)
+static void __v4l2_event_queue_fh(struct v4l2_fh *fh, const struct v4l2_event *ev,
+		const struct timespec *ts)
 {
 	struct v4l2_subscribed_event *sev;
 	struct v4l2_kevent *kev;
@@ -109,6 +113,14 @@ static void __v4l2_event_queue_fh(struct v4l2_fh *fh,
 	/* Are we subscribed? */
 	sev = v4l2_event_subscribed(fh, ev->type, ev->id);
 	if (sev == NULL)
+		return;
+
+	/*
+	 * If the event has been added to the fh->subscribed list, but its
+	 * add op has not completed yet elems will be 0, treat this as
+	 * not being subscribed.
+	 */
+	if (!sev->elems)
 		return;
 
 	/* Increase event sequence number on fh. */
@@ -140,7 +152,7 @@ static void __v4l2_event_queue_fh(struct v4l2_fh *fh,
 	if (copy_payload)
 		kev->event.u = ev->u;
 	kev->event.id = ev->id;
-	kev->ts = ts;
+	kev->event.timestamp = *ts;
 	kev->event.sequence = fh->sequence;
 	sev->in_use++;
 	list_add_tail(&kev->list, &fh->available);
@@ -154,17 +166,17 @@ void v4l2_event_queue(struct video_device *vdev, const struct v4l2_event *ev)
 {
 	struct v4l2_fh *fh;
 	unsigned long flags;
-	u64 ts;
+	struct timespec timestamp;
 
 	if (vdev == NULL)
 		return;
 
-	ts = ktime_get_ns();
+	ktime_get_ts(&timestamp);
 
 	spin_lock_irqsave(&vdev->fh_lock, flags);
 
 	list_for_each_entry(fh, &vdev->fh_list, list)
-		__v4l2_event_queue_fh(fh, ev, ts);
+		__v4l2_event_queue_fh(fh, ev, &timestamp);
 
 	spin_unlock_irqrestore(&vdev->fh_lock, flags);
 }
@@ -173,10 +185,12 @@ EXPORT_SYMBOL_GPL(v4l2_event_queue);
 void v4l2_event_queue_fh(struct v4l2_fh *fh, const struct v4l2_event *ev)
 {
 	unsigned long flags;
-	u64 ts = ktime_get_ns();
+	struct timespec timestamp;
+
+	ktime_get_ts(&timestamp);
 
 	spin_lock_irqsave(&fh->vdev->fh_lock, flags);
-	__v4l2_event_queue_fh(fh, ev, ts);
+	__v4l2_event_queue_fh(fh, ev, &timestamp);
 	spin_unlock_irqrestore(&fh->vdev->fh_lock, flags);
 }
 EXPORT_SYMBOL_GPL(v4l2_event_queue_fh);
@@ -187,47 +201,13 @@ int v4l2_event_pending(struct v4l2_fh *fh)
 }
 EXPORT_SYMBOL_GPL(v4l2_event_pending);
 
-void v4l2_event_wake_all(struct video_device *vdev)
-{
-	struct v4l2_fh *fh;
-	unsigned long flags;
-
-	if (!vdev)
-		return;
-
-	spin_lock_irqsave(&vdev->fh_lock, flags);
-
-	list_for_each_entry(fh, &vdev->fh_list, list)
-		wake_up_all(&fh->wait);
-
-	spin_unlock_irqrestore(&vdev->fh_lock, flags);
-}
-EXPORT_SYMBOL_GPL(v4l2_event_wake_all);
-
-static void __v4l2_event_unsubscribe(struct v4l2_subscribed_event *sev)
-{
-	struct v4l2_fh *fh = sev->fh;
-	unsigned int i;
-
-	lockdep_assert_held(&fh->subscribe_lock);
-	assert_spin_locked(&fh->vdev->fh_lock);
-
-	/* Remove any pending events for this subscription */
-	for (i = 0; i < sev->in_use; i++) {
-		list_del(&sev->events[sev_pos(sev, i)].list);
-		fh->navailable--;
-	}
-	list_del(&sev->list);
-}
-
 int v4l2_event_subscribe(struct v4l2_fh *fh,
-			 const struct v4l2_event_subscription *sub, unsigned int elems,
+			 const struct v4l2_event_subscription *sub, unsigned elems,
 			 const struct v4l2_subscribed_event_ops *ops)
 {
 	struct v4l2_subscribed_event *sev, *found_ev;
 	unsigned long flags;
-	unsigned int i;
-	int ret = 0;
+	unsigned i;
 
 	if (sub->type == V4L2_EVENT_ALL)
 		return -EINVAL;
@@ -235,7 +215,8 @@ int v4l2_event_subscribe(struct v4l2_fh *fh,
 	if (elems < 1)
 		elems = 1;
 
-	sev = kvzalloc(struct_size(sev, events, elems), GFP_KERNEL);
+	sev = kvzalloc(sizeof(*sev) + sizeof(struct v4l2_kevent) * elems,
+		       GFP_KERNEL);
 	if (!sev)
 		return -ENOMEM;
 	for (i = 0; i < elems; i++)
@@ -245,9 +226,6 @@ int v4l2_event_subscribe(struct v4l2_fh *fh,
 	sev->flags = sub->flags;
 	sev->fh = fh;
 	sev->ops = ops;
-	sev->elems = elems;
-
-	mutex_lock(&fh->subscribe_lock);
 
 	spin_lock_irqsave(&fh->vdev->fh_lock, flags);
 	found_ev = v4l2_event_subscribed(fh, sub->type, sub->id);
@@ -256,21 +234,23 @@ int v4l2_event_subscribe(struct v4l2_fh *fh,
 	spin_unlock_irqrestore(&fh->vdev->fh_lock, flags);
 
 	if (found_ev) {
-		/* Already listening */
 		kvfree(sev);
-	} else if (sev->ops && sev->ops->add) {
-		ret = sev->ops->add(sev, elems);
+		return 0; /* Already listening */
+	}
+
+	if (sev->ops && sev->ops->add) {
+		int ret = sev->ops->add(sev, elems);
 		if (ret) {
-			spin_lock_irqsave(&fh->vdev->fh_lock, flags);
-			__v4l2_event_unsubscribe(sev);
-			spin_unlock_irqrestore(&fh->vdev->fh_lock, flags);
-			kvfree(sev);
+			sev->ops = NULL;
+			v4l2_event_unsubscribe(fh, sub);
+			return ret;
 		}
 	}
 
-	mutex_unlock(&fh->subscribe_lock);
+	/* Mark as ready for use */
+	sev->elems = elems;
 
-	return ret;
+	return 0;
 }
 EXPORT_SYMBOL_GPL(v4l2_event_subscribe);
 
@@ -302,26 +282,29 @@ int v4l2_event_unsubscribe(struct v4l2_fh *fh,
 {
 	struct v4l2_subscribed_event *sev;
 	unsigned long flags;
+	int i;
 
 	if (sub->type == V4L2_EVENT_ALL) {
 		v4l2_event_unsubscribe_all(fh);
 		return 0;
 	}
 
-	mutex_lock(&fh->subscribe_lock);
-
 	spin_lock_irqsave(&fh->vdev->fh_lock, flags);
 
 	sev = v4l2_event_subscribed(fh, sub->type, sub->id);
-	if (sev != NULL)
-		__v4l2_event_unsubscribe(sev);
+	if (sev != NULL) {
+		/* Remove any pending events for this subscription */
+		for (i = 0; i < sev->in_use; i++) {
+			list_del(&sev->events[sev_pos(sev, i)].list);
+			fh->navailable--;
+		}
+		list_del(&sev->list);
+	}
 
 	spin_unlock_irqrestore(&fh->vdev->fh_lock, flags);
 
 	if (sev && sev->ops && sev->ops->del)
 		sev->ops->del(sev);
-
-	mutex_unlock(&fh->subscribe_lock);
 
 	kvfree(sev);
 

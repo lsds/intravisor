@@ -1,9 +1,18 @@
-/* SPDX-License-Identifier: GPL-2.0-or-later */
-/*
+/**
  * AMCC SoC PPC4xx Crypto Driver
  *
  * Copyright (c) 2008 Applied Micro Circuits Corporation.
  * All rights reserved. James Hsiao <jhsiao@amcc.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
  *
  * This is the header file for AMCC Crypto offload Linux device driver for
  * use with Linux CryptoAPI.
@@ -14,12 +23,8 @@
 #define __CRYPTO4XX_CORE_H__
 
 #include <linux/ratelimit.h>
-#include <linux/mutex.h>
-#include <linux/scatterlist.h>
 #include <crypto/internal/hash.h>
 #include <crypto/internal/aead.h>
-#include <crypto/internal/rng.h>
-#include <crypto/internal/skcipher.h>
 #include "crypto4xx_reg_def.h"
 #include "crypto4xx_sa.h"
 
@@ -56,6 +61,7 @@ union shadow_sa_buf {
 struct pd_uinfo {
 	struct crypto4xx_device *dev;
 	u32   state;
+	u32 using_sd;
 	u32 first_gd;		/* first gather discriptor
 				used by this packet */
 	u32 num_gd;             /* number of gather discriptor
@@ -112,7 +118,6 @@ struct crypto4xx_core_device {
 	u32 irq;
 	struct tasklet_struct tasklet;
 	spinlock_t lock;
-	struct mutex rng_lock;
 };
 
 struct crypto4xx_ctx {
@@ -122,22 +127,16 @@ struct crypto4xx_ctx {
 	__le32 iv_nonce;
 	u32 sa_len;
 	union {
-		struct crypto_sync_skcipher *cipher;
 		struct crypto_aead *aead;
 	} sw_cipher;
-};
-
-struct crypto4xx_aead_reqctx {
-	struct scatterlist dst[2];
 };
 
 struct crypto4xx_alg_common {
 	u32 type;
 	union {
-		struct skcipher_alg cipher;
+		struct crypto_alg cipher;
 		struct ahash_alg hash;
 		struct aead_alg aead;
-		struct rng_alg rng;
 	} u;
 };
 
@@ -158,37 +157,28 @@ int crypto4xx_build_pd(struct crypto_async_request *req,
 		       const __le32 *iv, const u32 iv_len,
 		       const struct dynamic_sa_ctl *sa,
 		       const unsigned int sa_len,
-		       const unsigned int assoclen,
-		       struct scatterlist *dst_tmp);
-int crypto4xx_setkey_aes_cbc(struct crypto_skcipher *cipher,
+		       const unsigned int assoclen);
+int crypto4xx_setkey_aes_cbc(struct crypto_ablkcipher *cipher,
 			     const u8 *key, unsigned int keylen);
-int crypto4xx_setkey_aes_cfb(struct crypto_skcipher *cipher,
+int crypto4xx_setkey_aes_cfb(struct crypto_ablkcipher *cipher,
 			     const u8 *key, unsigned int keylen);
-int crypto4xx_setkey_aes_ctr(struct crypto_skcipher *cipher,
+int crypto4xx_setkey_aes_ecb(struct crypto_ablkcipher *cipher,
 			     const u8 *key, unsigned int keylen);
-int crypto4xx_setkey_aes_ecb(struct crypto_skcipher *cipher,
+int crypto4xx_setkey_aes_ofb(struct crypto_ablkcipher *cipher,
 			     const u8 *key, unsigned int keylen);
-int crypto4xx_setkey_aes_ofb(struct crypto_skcipher *cipher,
+int crypto4xx_setkey_rfc3686(struct crypto_ablkcipher *cipher,
 			     const u8 *key, unsigned int keylen);
-int crypto4xx_setkey_rfc3686(struct crypto_skcipher *cipher,
-			     const u8 *key, unsigned int keylen);
-int crypto4xx_encrypt_ctr(struct skcipher_request *req);
-int crypto4xx_decrypt_ctr(struct skcipher_request *req);
-int crypto4xx_encrypt_iv_stream(struct skcipher_request *req);
-int crypto4xx_decrypt_iv_stream(struct skcipher_request *req);
-int crypto4xx_encrypt_iv_block(struct skcipher_request *req);
-int crypto4xx_decrypt_iv_block(struct skcipher_request *req);
-int crypto4xx_encrypt_noiv_block(struct skcipher_request *req);
-int crypto4xx_decrypt_noiv_block(struct skcipher_request *req);
-int crypto4xx_rfc3686_encrypt(struct skcipher_request *req);
-int crypto4xx_rfc3686_decrypt(struct skcipher_request *req);
+int crypto4xx_encrypt(struct ablkcipher_request *req);
+int crypto4xx_decrypt(struct ablkcipher_request *req);
+int crypto4xx_rfc3686_encrypt(struct ablkcipher_request *req);
+int crypto4xx_rfc3686_decrypt(struct ablkcipher_request *req);
 int crypto4xx_sha1_alg_init(struct crypto_tfm *tfm);
 int crypto4xx_hash_digest(struct ahash_request *req);
 int crypto4xx_hash_final(struct ahash_request *req);
 int crypto4xx_hash_update(struct ahash_request *req);
 int crypto4xx_hash_init(struct ahash_request *req);
 
-/*
+/**
  * Note: Only use this function to copy items that is word aligned.
  */
 static inline void crypto4xx_memcpy_swab32(u32 *dst, const void *buf,

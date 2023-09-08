@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * MAX77620 pin control driver.
  *
@@ -7,19 +6,21 @@
  * Author:
  *	Chaitanya Bandi <bandik@nvidia.com>
  *	Laxman Dewangan <ldewangan@nvidia.com>
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms and conditions of the GNU General Public License,
+ * version 2, as published by the Free Software Foundation.
  */
 
 #include <linux/mfd/max77620.h>
-#include <linux/mod_devicetable.h>
 #include <linux/module.h>
-#include <linux/platform_device.h>
-#include <linux/property.h>
-#include <linux/regmap.h>
-
+#include <linux/of.h>
 #include <linux/pinctrl/pinctrl.h>
 #include <linux/pinctrl/pinconf-generic.h>
 #include <linux/pinctrl/pinconf.h>
 #include <linux/pinctrl/pinmux.h>
+#include <linux/platform_device.h>
+#include <linux/regmap.h>
 
 #include "core.h"
 #include "pinconf.h"
@@ -33,12 +34,14 @@ enum max77620_pin_ppdrv {
 	MAX77620_PIN_PP_DRV,
 };
 
-#define MAX77620_ACTIVE_FPS_SOURCE		(PIN_CONFIG_END + 1)
-#define MAX77620_ACTIVE_FPS_POWER_ON_SLOTS	(PIN_CONFIG_END + 2)
-#define MAX77620_ACTIVE_FPS_POWER_DOWN_SLOTS	(PIN_CONFIG_END + 3)
-#define MAX77620_SUSPEND_FPS_SOURCE		(PIN_CONFIG_END + 4)
-#define MAX77620_SUSPEND_FPS_POWER_ON_SLOTS	(PIN_CONFIG_END + 5)
-#define MAX77620_SUSPEND_FPS_POWER_DOWN_SLOTS	(PIN_CONFIG_END + 6)
+enum max77620_pinconf_param {
+	MAX77620_ACTIVE_FPS_SOURCE = PIN_CONFIG_END + 1,
+	MAX77620_ACTIVE_FPS_POWER_ON_SLOTS,
+	MAX77620_ACTIVE_FPS_POWER_DOWN_SLOTS,
+	MAX77620_SUSPEND_FPS_SOURCE,
+	MAX77620_SUSPEND_FPS_POWER_ON_SLOTS,
+	MAX77620_SUSPEND_FPS_POWER_DOWN_SLOTS,
+};
 
 struct max77620_pin_function {
 	const char *name;
@@ -553,13 +556,12 @@ static int max77620_pinctrl_probe(struct platform_device *pdev)
 	struct max77620_pctrl_info *mpci;
 	int i;
 
-	device_set_node(&pdev->dev, dev_fwnode(pdev->dev.parent));
-
 	mpci = devm_kzalloc(&pdev->dev, sizeof(*mpci), GFP_KERNEL);
 	if (!mpci)
 		return -ENOMEM;
 
 	mpci->dev = &pdev->dev;
+	mpci->dev->of_node = pdev->dev.parent->of_node;
 	mpci->rmap = max77620->rmap;
 
 	mpci->pins = max77620_pins_desc;
@@ -668,4 +670,5 @@ module_platform_driver(max77620_pinctrl_driver);
 MODULE_DESCRIPTION("MAX77620/MAX20024 pin control driver");
 MODULE_AUTHOR("Chaitanya Bandi<bandik@nvidia.com>");
 MODULE_AUTHOR("Laxman Dewangan<ldewangan@nvidia.com>");
+MODULE_ALIAS("platform:max77620-pinctrl");
 MODULE_LICENSE("GPL v2");

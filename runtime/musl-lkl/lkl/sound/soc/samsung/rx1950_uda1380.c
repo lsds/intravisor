@@ -1,24 +1,33 @@
-// SPDX-License-Identifier: GPL-2.0+
-//
-// rx1950.c - ALSA SoC Audio Layer
-//
-// Copyright (c) 2010 Vasily Khoruzhick <anarsoul@gmail.com>
-//
-// Based on smdk2440.c and magician.c
-//
-// Authors: Graeme Gregory graeme.gregory@wolfsonmicro.com
-//          Philipp Zabel <philipp.zabel@gmail.com>
-//          Denis Grigoriev <dgreenday@gmail.com>
-//          Vasily Khoruzhick <anarsoul@gmail.com>
+/*
+ * rx1950.c  --  ALSA Soc Audio Layer
+ *
+ * Copyright (c) 2010 Vasily Khoruzhick <anarsoul@gmail.com>
+ *
+ * Based on smdk2440.c and magician.c
+ *
+ * Authors: Graeme Gregory graeme.gregory@wolfsonmicro.com
+ *          Philipp Zabel <philipp.zabel@gmail.com>
+ *          Denis Grigoriev <dgreenday@gmail.com>
+ *          Vasily Khoruzhick <anarsoul@gmail.com>
+ *
+ *  This program is free software; you can redistribute  it and/or modify it
+ *  under  the terms of  the GNU General  Public License as published by the
+ *  Free Software Foundation;  either version 2 of the  License, or (at your
+ *  option) any later version.
+ *
+ */
 
 #include <linux/types.h>
-#include <linux/gpio/consumer.h>
+#include <linux/gpio.h>
 #include <linux/module.h>
 
 #include <sound/soc.h>
 #include <sound/jack.h>
 
+#include <mach/gpio-samsung.h>
 #include "regs-iis.h"
+#include <asm/mach-types.h>
+
 #include "s3c24xx-i2s.h"
 
 static int rx1950_uda1380_init(struct snd_soc_pcm_runtime *rtd);
@@ -55,6 +64,7 @@ static struct snd_soc_jack_pin hp_jack_pins[] = {
 
 static struct snd_soc_jack_gpio hp_jack_gpios[] = {
 	[0] = {
+		.gpio			= S3C2410_GPG(12),
 		.name			= "hp-gpio",
 		.report			= SND_JACK_HEADPHONE,
 		.invert			= 1,
@@ -62,27 +72,24 @@ static struct snd_soc_jack_gpio hp_jack_gpios[] = {
 	},
 };
 
-static const struct snd_soc_ops rx1950_ops = {
+static struct snd_soc_ops rx1950_ops = {
 	.startup	= rx1950_startup,
 	.hw_params	= rx1950_hw_params,
 };
 
 /* s3c24xx digital audio interface glue - connects codec <--> CPU */
-SND_SOC_DAILINK_DEFS(uda1380,
-	DAILINK_COMP_ARRAY(COMP_CPU("s3c24xx-iis")),
-	DAILINK_COMP_ARRAY(COMP_CODEC("uda1380-codec.0-001a",
-				      "uda1380-hifi")),
-	DAILINK_COMP_ARRAY(COMP_PLATFORM("s3c24xx-iis")));
-
 static struct snd_soc_dai_link rx1950_uda1380_dai[] = {
 	{
 		.name		= "uda1380",
 		.stream_name	= "UDA1380 Duplex",
+		.cpu_dai_name	= "s3c24xx-iis",
+		.codec_dai_name	= "uda1380-hifi",
 		.init		= rx1950_uda1380_init,
+		.platform_name	= "s3c24xx-iis",
+		.codec_name	= "uda1380-codec.0-001a",
 		.dai_fmt	= SND_SOC_DAIFMT_I2S | SND_SOC_DAIFMT_NB_NF |
 				  SND_SOC_DAIFMT_CBS_CFS,
 		.ops		= &rx1950_ops,
-		SND_SOC_DAILINK_REG(uda1380),
 	},
 };
 
@@ -119,6 +126,8 @@ static struct snd_soc_card rx1950_asoc = {
 	.num_dapm_routes = ARRAY_SIZE(audio_map),
 };
 
+static struct platform_device *s3c24xx_snd_device;
+
 static int rx1950_startup(struct snd_pcm_substream *substream)
 {
 	struct snd_pcm_runtime *runtime = substream->runtime;
@@ -128,15 +137,13 @@ static int rx1950_startup(struct snd_pcm_substream *substream)
 					&hw_rates);
 }
 
-static struct gpio_desc *gpiod_speaker_power;
-
 static int rx1950_spk_power(struct snd_soc_dapm_widget *w,
 				struct snd_kcontrol *kcontrol, int event)
 {
 	if (SND_SOC_DAPM_EVENT_ON(event))
-		gpiod_set_value(gpiod_speaker_power, 1);
+		gpio_set_value(S3C2410_GPA(1), 1);
 	else
-		gpiod_set_value(gpiod_speaker_power, 0);
+		gpio_set_value(S3C2410_GPA(1), 0);
 
 	return 0;
 }
@@ -144,8 +151,8 @@ static int rx1950_spk_power(struct snd_soc_dapm_widget *w,
 static int rx1950_hw_params(struct snd_pcm_substream *substream,
 				struct snd_pcm_hw_params *params)
 {
-	struct snd_soc_pcm_runtime *rtd = asoc_substream_to_rtd(substream);
-	struct snd_soc_dai *cpu_dai = asoc_rtd_to_cpu(rtd, 0);
+	struct snd_soc_pcm_runtime *rtd = substream->private_data;
+	struct snd_soc_dai *cpu_dai = rtd->cpu_dai;
 	int div;
 	int ret;
 	unsigned int rate = params_rate(params);
@@ -201,8 +208,7 @@ static int rx1950_hw_params(struct snd_pcm_substream *substream,
 
 static int rx1950_uda1380_init(struct snd_soc_pcm_runtime *rtd)
 {
-	snd_soc_card_jack_new_pins(rtd->card, "Headphone Jack",
-		SND_JACK_HEADPHONE,
+	snd_soc_card_jack_new(rtd->card, "Headphone Jack", SND_JACK_HEADPHONE,
 		&hp_jack, hp_jack_pins, ARRAY_SIZE(hp_jack_pins));
 
 	snd_soc_jack_add_gpios(&hp_jack, ARRAY_SIZE(hp_jack_gpios),
@@ -211,35 +217,57 @@ static int rx1950_uda1380_init(struct snd_soc_pcm_runtime *rtd)
 	return 0;
 }
 
-static int rx1950_probe(struct platform_device *pdev)
+static int __init rx1950_init(void)
 {
-	struct device *dev = &pdev->dev;
+	int ret;
+
+	if (!machine_is_rx1950())
+		return -ENODEV;
 
 	/* configure some gpios */
-	gpiod_speaker_power = devm_gpiod_get(dev, "speaker-power", GPIOD_OUT_LOW);
-	if (IS_ERR(gpiod_speaker_power)) {
-		dev_err(dev, "cannot get gpio\n");
-		return PTR_ERR(gpiod_speaker_power);
+	ret = gpio_request(S3C2410_GPA(1), "speaker-power");
+	if (ret)
+		goto err_gpio;
+
+	ret = gpio_direction_output(S3C2410_GPA(1), 0);
+	if (ret)
+		goto err_gpio_conf;
+
+	s3c24xx_snd_device = platform_device_alloc("soc-audio", -1);
+	if (!s3c24xx_snd_device) {
+		ret = -ENOMEM;
+		goto err_plat_alloc;
 	}
 
-	hp_jack_gpios[0].gpiod_dev = dev;
-	rx1950_asoc.dev = dev;
+	platform_set_drvdata(s3c24xx_snd_device, &rx1950_asoc);
+	ret = platform_device_add(s3c24xx_snd_device);
 
-	return devm_snd_soc_register_card(dev, &rx1950_asoc);
+	if (ret) {
+		platform_device_put(s3c24xx_snd_device);
+		goto err_plat_add;
+	}
+
+	return 0;
+
+err_plat_add:
+err_plat_alloc:
+err_gpio_conf:
+	gpio_free(S3C2410_GPA(1));
+
+err_gpio:
+	return ret;
 }
 
-static struct platform_driver rx1950_audio = {
-	.driver = {
-		.name = "rx1950-audio",
-		.pm = &snd_soc_pm_ops,
-	},
-	.probe = rx1950_probe,
-};
+static void __exit rx1950_exit(void)
+{
+	platform_device_unregister(s3c24xx_snd_device);
+	gpio_free(S3C2410_GPA(1));
+}
 
-module_platform_driver(rx1950_audio);
+module_init(rx1950_init);
+module_exit(rx1950_exit);
 
 /* Module information */
 MODULE_AUTHOR("Vasily Khoruzhick");
 MODULE_DESCRIPTION("ALSA SoC RX1950");
 MODULE_LICENSE("GPL");
-MODULE_ALIAS("platform:rx1950-audio");

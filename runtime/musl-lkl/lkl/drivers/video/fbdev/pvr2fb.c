@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * drivers/video/pvr2fb.c
  *
@@ -45,7 +44,6 @@
 
 #undef DEBUG
 
-#include <linux/aperture.h>
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/errno.h>
@@ -141,7 +139,7 @@ static struct pvr2fb_par {
 	unsigned char is_doublescan;	/* Are scanlines output twice? (doublescan) */
 	unsigned char is_lowres;	/* Is horizontal pixel-doubling enabled? */
 
-	void __iomem *mmio_base;	/* MMIO base */
+	unsigned long mmio_base;	/* MMIO base */
 	u32 palette[16];
 } *currentpar;
 
@@ -194,6 +192,39 @@ static unsigned long pvr2fb_map;
 static unsigned int shdma = PVR2_CASCADE_CHAN;
 static unsigned int pvr2dma = ONCHIP_NR_DMA_CHANNELS;
 #endif
+
+static int pvr2fb_setcolreg(unsigned int regno, unsigned int red, unsigned int green, unsigned int blue,
+                            unsigned int transp, struct fb_info *info);
+static int pvr2fb_blank(int blank, struct fb_info *info);
+static unsigned long get_line_length(int xres_virtual, int bpp);
+static void set_color_bitfields(struct fb_var_screeninfo *var);
+static int pvr2fb_check_var(struct fb_var_screeninfo *var, struct fb_info *info);
+static int pvr2fb_set_par(struct fb_info *info);
+static void pvr2_update_display(struct fb_info *info);
+static void pvr2_init_display(struct fb_info *info);
+static void pvr2_do_blank(void);
+static irqreturn_t pvr2fb_interrupt(int irq, void *dev_id);
+static int pvr2_init_cable(void);
+static int pvr2_get_param(const struct pvr2_params *p, const char *s,
+                            int val, int size);
+#ifdef CONFIG_PVR2_DMA
+static ssize_t pvr2fb_write(struct fb_info *info, const char *buf,
+			    size_t count, loff_t *ppos);
+#endif
+
+static struct fb_ops pvr2fb_ops = {
+	.owner		= THIS_MODULE,
+	.fb_setcolreg	= pvr2fb_setcolreg,
+	.fb_blank	= pvr2fb_blank,
+	.fb_check_var	= pvr2fb_check_var,
+	.fb_set_par	= pvr2fb_set_par,
+#ifdef CONFIG_PVR2_DMA
+	.fb_write	= pvr2fb_write,
+#endif
+	.fb_fillrect	= cfb_fillrect,
+	.fb_copyarea	= cfb_copyarea,
+	.fb_imageblit	= cfb_imageblit,
+};
 
 static struct fb_videomode pvr2_modedb[] = {
     /*
@@ -322,36 +353,6 @@ static int pvr2fb_setcolreg(unsigned int regno, unsigned int red,
 	return 0;
 }
 
-/*
- * Determine the cable type and initialize the cable output format.  Don't do
- * anything if the cable type has been overidden (via "cable:XX").
- */
-
-#define PCTRA ((void __iomem *)0xff80002c)
-#define PDTRA ((void __iomem *)0xff800030)
-#define VOUTC ((void __iomem *)0xa0702c00)
-
-static int pvr2_init_cable(void)
-{
-	if (cable_type < 0) {
-		fb_writel((fb_readl(PCTRA) & 0xfff0ffff) | 0x000a0000,
-	                  PCTRA);
-		cable_type = (fb_readw(PDTRA) >> 8) & 3;
-	}
-
-	/* Now select the output format (either composite or other) */
-	/* XXX: Save the previous val first, as this reg is also AICA
-	  related */
-	if (cable_type == CT_COMPOSITE)
-		fb_writel(3 << 8, VOUTC);
-	else if (cable_type == CT_RGB)
-		fb_writel(1 << 9, VOUTC);
-	else
-		fb_writel(0, VOUTC);
-
-	return cable_type;
-}
-
 static int pvr2fb_set_par(struct fb_info *info)
 {
 	struct pvr2fb_par *par = (struct pvr2fb_par *)info->par;
@@ -459,11 +460,13 @@ static int pvr2fb_check_var(struct fb_var_screeninfo *var, struct fb_info *info)
 	set_color_bitfields(var);
 
 	if (var->vmode & FB_VMODE_YWRAP) {
-		if (var->xoffset || var->yoffset >= var->yres_virtual) {
+		if (var->xoffset || var->yoffset < 0 ||
+		    var->yoffset >= var->yres_virtual) {
 			var->xoffset = var->yoffset = 0;
 		} else {
 			if (var->xoffset > var->xres_virtual - var->xres ||
-			    var->yoffset > var->yres_virtual - var->yres)
+			    var->yoffset > var->yres_virtual - var->yres ||
+			    var->xoffset < 0 || var->yoffset < 0)
 				var->xoffset = var->yoffset = 0;
 		}
 	} else {
@@ -619,7 +622,7 @@ static void pvr2_do_blank(void)
 	is_blanked = do_blank > 0 ? do_blank : 0;
 }
 
-static irqreturn_t __maybe_unused pvr2fb_interrupt(int irq, void *dev_id)
+static irqreturn_t pvr2fb_interrupt(int irq, void *dev_id)
 {
 	struct fb_info *info = dev_id;
 
@@ -638,6 +641,36 @@ static irqreturn_t __maybe_unused pvr2fb_interrupt(int irq, void *dev_id)
 	return IRQ_HANDLED;
 }
 
+/*
+ * Determine the cable type and initialize the cable output format.  Don't do
+ * anything if the cable type has been overidden (via "cable:XX").
+ */
+
+#define PCTRA 0xff80002c
+#define PDTRA 0xff800030
+#define VOUTC 0xa0702c00
+
+static int pvr2_init_cable(void)
+{
+	if (cable_type < 0) {
+		fb_writel((fb_readl(PCTRA) & 0xfff0ffff) | 0x000a0000,
+	                  PCTRA);
+		cable_type = (fb_readw(PDTRA) >> 8) & 3;
+	}
+
+	/* Now select the output format (either composite or other) */
+	/* XXX: Save the previous val first, as this reg is also AICA
+	  related */
+	if (cable_type == CT_COMPOSITE)
+		fb_writel(3 << 8, VOUTC);
+	else if (cable_type == CT_RGB)
+		fb_writel(1 << 9, VOUTC);
+	else
+		fb_writel(0, VOUTC);
+
+	return cable_type;
+}
+
 #ifdef CONFIG_PVR2_DMA
 static ssize_t pvr2fb_write(struct fb_info *info, const char *buf,
 			    size_t count, loff_t *ppos)
@@ -649,28 +682,14 @@ static ssize_t pvr2fb_write(struct fb_info *info, const char *buf,
 
 	nr_pages = (count + PAGE_SIZE - 1) >> PAGE_SHIFT;
 
-	pages = kmalloc_array(nr_pages, sizeof(struct page *), GFP_KERNEL);
+	pages = kmalloc(nr_pages * sizeof(struct page *), GFP_KERNEL);
 	if (!pages)
 		return -ENOMEM;
 
-	ret = pin_user_pages_fast((unsigned long)buf, nr_pages, FOLL_WRITE, pages);
+	ret = get_user_pages_fast((unsigned long)buf, nr_pages, true, pages);
 	if (ret < nr_pages) {
-		if (ret < 0) {
-			/*
-			 *  Clamp the unsigned nr_pages to zero so that the
-			 *  error handling works. And leave ret at whatever
-			 *  -errno value was returned from GUP.
-			 */
-			nr_pages = 0;
-		} else {
-			nr_pages = ret;
-			/*
-			 * Use -EINVAL to represent a mildly desperate guess at
-			 * why we got fewer pages (maybe even zero pages) than
-			 * requested.
-			 */
-			ret = -EINVAL;
-		}
+		nr_pages = ret;
+		ret = -EINVAL;
 		goto out_unmap;
 	}
 
@@ -713,52 +732,14 @@ out:
 	ret = count;
 
 out_unmap:
-	unpin_user_pages(pages, nr_pages);
+	for (i = 0; i < nr_pages; i++)
+		put_page(pages[i]);
+
 	kfree(pages);
 
 	return ret;
 }
 #endif /* CONFIG_PVR2_DMA */
-
-static const struct fb_ops pvr2fb_ops = {
-	.owner		= THIS_MODULE,
-	.fb_setcolreg	= pvr2fb_setcolreg,
-	.fb_blank	= pvr2fb_blank,
-	.fb_check_var	= pvr2fb_check_var,
-	.fb_set_par	= pvr2fb_set_par,
-#ifdef CONFIG_PVR2_DMA
-	.fb_write	= pvr2fb_write,
-#endif
-	.fb_fillrect	= cfb_fillrect,
-	.fb_copyarea	= cfb_copyarea,
-	.fb_imageblit	= cfb_imageblit,
-};
-
-#ifndef MODULE
-static int pvr2_get_param_val(const struct pvr2_params *p, const char *s,
-			      int size)
-{
-	int i;
-
-	for (i = 0; i < size; i++) {
-		if (!strncasecmp(p[i].name, s, strlen(s)))
-			return p[i].val;
-	}
-	return -1;
-}
-#endif
-
-static char *pvr2_get_param_name(const struct pvr2_params *p, int val,
-			  int size)
-{
-	int i;
-
-	for (i = 0; i < size; i++) {
-		if (p[i].val == val)
-			return p[i].name;
-	}
-	return NULL;
-}
 
 /**
  * pvr2fb_common_init
@@ -778,12 +759,12 @@ static char *pvr2_get_param_name(const struct pvr2_params *p, int val,
  * in for flexibility anyways. Who knows, maybe someone has tv-out on a
  * PCI-based version of these things ;-)
  */
-static int __maybe_unused pvr2fb_common_init(void)
+static int pvr2fb_common_init(void)
 {
 	struct pvr2fb_par *par = currentpar;
 	unsigned long modememused, rev;
 
-	fb_info->screen_base = ioremap(pvr2_fix.smem_start,
+	fb_info->screen_base = ioremap_nocache(pvr2_fix.smem_start,
 					       pvr2_fix.smem_len);
 
 	if (!fb_info->screen_base) {
@@ -791,8 +772,8 @@ static int __maybe_unused pvr2fb_common_init(void)
 		goto out_err;
 	}
 
-	par->mmio_base = ioremap(pvr2_fix.mmio_start,
-					 pvr2_fix.mmio_len);
+	par->mmio_base = (unsigned long)ioremap_nocache(pvr2_fix.mmio_start,
+							pvr2_fix.mmio_len);
 	if (!par->mmio_base) {
 		printk(KERN_ERR "pvr2fb: Failed to remap mmio space\n");
 		goto out_err;
@@ -840,8 +821,8 @@ static int __maybe_unused pvr2fb_common_init(void)
 		fb_info->var.xres, fb_info->var.yres,
 		fb_info->var.bits_per_pixel,
 		get_line_length(fb_info->var.xres, fb_info->var.bits_per_pixel),
-		pvr2_get_param_name(cables, cable_type, 3),
-		pvr2_get_param_name(outputs, video_output, 3));
+		(char *)pvr2_get_param(cables, NULL, cable_type, 3),
+		(char *)pvr2_get_param(outputs, NULL, video_output, 3));
 
 #ifdef CONFIG_SH_STORE_QUEUES
 	fb_notice(fb_info, "registering with SQ API\n");
@@ -859,7 +840,7 @@ out_err:
 	if (fb_info->screen_base)
 		iounmap(fb_info->screen_base);
 	if (par->mmio_base)
-		iounmap(par->mmio_base);
+		iounmap((void *)par->mmio_base);
 
 	return -ENXIO;
 }
@@ -919,15 +900,15 @@ static int __init pvr2fb_dc_init(void)
 	return pvr2fb_common_init();
 }
 
-static void pvr2fb_dc_exit(void)
+static void __exit pvr2fb_dc_exit(void)
 {
 	if (fb_info->screen_base) {
 		iounmap(fb_info->screen_base);
 		fb_info->screen_base = NULL;
 	}
 	if (currentpar->mmio_base) {
-		iounmap(currentpar->mmio_base);
-		currentpar->mmio_base = NULL;
+		iounmap((void *)currentpar->mmio_base);
+		currentpar->mmio_base = 0;
 	}
 
 	free_irq(HW_EVENT_VSYNC, fb_info);
@@ -942,10 +923,6 @@ static int pvr2fb_pci_probe(struct pci_dev *pdev,
 			    const struct pci_device_id *ent)
 {
 	int ret;
-
-	ret = aperture_remove_conflicting_pci_devices(pdev, "pvrfb");
-	if (ret)
-		return ret;
 
 	ret = pci_enable_device(pdev);
 	if (ret) {
@@ -980,8 +957,8 @@ static void pvr2fb_pci_remove(struct pci_dev *pdev)
 		fb_info->screen_base = NULL;
 	}
 	if (currentpar->mmio_base) {
-		iounmap(currentpar->mmio_base);
-		currentpar->mmio_base = NULL;
+		iounmap((void *)currentpar->mmio_base);
+		currentpar->mmio_base = 0;
 	}
 
 	pci_release_regions(pdev);
@@ -1007,11 +984,28 @@ static int __init pvr2fb_pci_init(void)
 	return pci_register_driver(&pvr2fb_pci_driver);
 }
 
-static void pvr2fb_pci_exit(void)
+static void __exit pvr2fb_pci_exit(void)
 {
 	pci_unregister_driver(&pvr2fb_pci_driver);
 }
 #endif /* CONFIG_PCI */
+
+static int pvr2_get_param(const struct pvr2_params *p, const char *s, int val,
+			  int size)
+{
+	int i;
+
+	for (i = 0 ; i < size ; i++ ) {
+		if (s != NULL) {
+			if (!strncasecmp(p[i].name, s, strlen(s)))
+				return p[i].val;
+		} else {
+			if (p[i].val == val)
+				return (int)p[i].name;
+		}
+	}
+	return -1;
+}
 
 /*
  * Parse command arguments.  Supported arguments are:
@@ -1033,8 +1027,6 @@ static int __init pvr2fb_setup(char *options)
 	if (!options || !*options)
 		return 0;
 
-	cable_arg[0] = output_arg[0] = 0;
-
 	while ((this_opt = strsep(&options, ","))) {
 		if (!*this_opt)
 			continue;
@@ -1054,9 +1046,9 @@ static int __init pvr2fb_setup(char *options)
 	}
 
 	if (*cable_arg)
-		cable_type = pvr2_get_param_val(cables, cable_arg, 3);
+		cable_type = pvr2_get_param(cables, cable_arg, 0, 3);
 	if (*output_arg)
-		video_output = pvr2_get_param_val(outputs, output_arg, 3);
+		video_output = pvr2_get_param(outputs, output_arg, 0, 3);
 
 	return 0;
 }
@@ -1079,6 +1071,7 @@ static struct pvr2_board {
 static int __init pvr2fb_init(void)
 {
 	int i, ret = -ENODEV;
+	int size;
 
 #ifndef MODULE
 	char *option = NULL;
@@ -1087,10 +1080,15 @@ static int __init pvr2fb_init(void)
 		return -ENODEV;
 	pvr2fb_setup(option);
 #endif
+	size = sizeof(struct fb_info) + sizeof(struct pvr2fb_par) + 16 * sizeof(u32);
 
 	fb_info = framebuffer_alloc(sizeof(struct pvr2fb_par), NULL);
-	if (!fb_info)
+
+	if (!fb_info) {
+		printk(KERN_ERR "Failed to allocate memory for fb_info\n");
 		return -ENOMEM;
+	}
+
 
 	currentpar = fb_info->par;
 

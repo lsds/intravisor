@@ -1,19 +1,10 @@
 #include <stdlib.h>
 #define _HAVE_STRING_ARCH_strtok_r
 #include <string.h>
-#ifndef __MINGW32__
-#ifdef __MSYS__
-#include <cygwin/socket.h>
-#endif
-#include <arpa/inet.h>
-#else
-#define inet_pton lkl_inet_pton
-#endif
 #include <lkl_host.h>
 #include <lkl_config.h>
 
-#ifdef LKL_HOST_CONFIG_JSMN
-#include "jsmn.h"
+#include "../../perf/pmu-events/jsmn.h"
 
 static int jsoneq(const char *json, jsmntok_t *tok, const char *s)
 {
@@ -25,7 +16,22 @@ static int jsoneq(const char *json, jsmntok_t *tok, const char *s)
 	return -1;
 }
 
-static int cfgncpy(char **to, const char *from, int len)
+static int cfgcpy(char **to, char *from)
+{
+	if (!from)
+		return 0;
+	if (*to)
+		free(*to);
+	*to = (char *)malloc((strlen(from) + 1) * sizeof(char));
+	if (*to == NULL) {
+		lkl_printf("malloc failed\n");
+		return -1;
+	}
+	strcpy(*to, from);
+	return 0;
+}
+
+static int cfgncpy(char **to, char *from, int len)
 {
 	if (!from)
 		return 0;
@@ -42,7 +48,7 @@ static int cfgncpy(char **to, const char *from, int len)
 }
 
 static int parse_ifarr(struct lkl_config *cfg,
-		jsmntok_t *toks, const char *jstr, int startpos)
+		jsmntok_t *toks, char *jstr, int startpos)
 {
 	int ifidx, pos, posend, ret;
 	char **cfgptr;
@@ -67,7 +73,7 @@ static int parse_ifarr(struct lkl_config *cfg,
 			return -1;
 		}
 
-		posend = pos + toks[pos].size * 2;
+		posend = pos + toks[pos].size;
 		pos++;
 		iface = malloc(sizeof(struct lkl_config_iface));
 		memset(iface, 0, sizeof(struct lkl_config_iface));
@@ -127,10 +133,9 @@ static int parse_ifarr(struct lkl_config *cfg,
 
 #define ARRAY_SIZE(arr) (sizeof(arr) / sizeof((arr)[0]))
 
-int lkl_load_config_json(struct lkl_config *cfg, const char *jstr)
+int lkl_load_config_json(struct lkl_config *cfg, char *jstr)
 {
-	int ret;
-	unsigned int pos;
+	int pos, ret;
 	char **cfgptr;
 	jsmn_parser jp;
 	jsmntok_t toks[LKL_CONFIG_JSON_TOKEN_MAX];
@@ -139,7 +144,7 @@ int lkl_load_config_json(struct lkl_config *cfg, const char *jstr)
 		return -1;
 	jsmn_init(&jp);
 	ret = jsmn_parse(&jp, jstr, strlen(jstr), toks, ARRAY_SIZE(toks));
-	if (ret < 0) {
+	if (ret != JSMN_SUCCESS) {
 		lkl_printf("failed to parse json\n");
 		return -1;
 	}
@@ -178,8 +183,6 @@ int lkl_load_config_json(struct lkl_config *cfg, const char *jstr)
 			cfgptr = &cfg->dump;
 		} else if (jsoneq(jstr, &toks[pos], "delay_main") == 0) {
 			cfgptr = &cfg->delay_main;
-		} else if (jsoneq(jstr, &toks[pos], "nameserver") == 0) {
-			cfgptr = &cfg->nameserver;
 		} else {
 			lkl_printf("unexpected key in json %.*s\n",
 					toks[pos].end-toks[pos].start,
@@ -194,22 +197,6 @@ int lkl_load_config_json(struct lkl_config *cfg, const char *jstr)
 	}
 	return 0;
 }
-#endif
-
-static int cfgcpy(char **to, const char *from)
-{
-	if (!from)
-		return 0;
-	if (*to)
-		free(*to);
-	*to = (char *)malloc((strlen(from) + 1) * sizeof(char));
-	if (*to == NULL) {
-		lkl_printf("malloc failed\n");
-		return -1;
-	}
-	strcpy(*to, from);
-	return 0;
-}
 
 void lkl_show_config(struct lkl_config *cfg)
 {
@@ -220,7 +207,6 @@ void lkl_show_config(struct lkl_config *cfg)
 		return;
 	lkl_printf("gateway: %s\n", cfg->gateway);
 	lkl_printf("gateway6: %s\n", cfg->gateway6);
-	lkl_printf("nameserver: %s\n", cfg->nameserver);
 	lkl_printf("debug: %s\n", cfg->debug);
 	lkl_printf("mount: %s\n", cfg->mount);
 	lkl_printf("singlecpu: %s\n", cfg->single_cpu);
@@ -692,7 +678,6 @@ static int lkl_clean_config(struct lkl_config *cfg)
 	free_cfgparam(cfg->boot_cmdline);
 	free_cfgparam(cfg->dump);
 	free_cfgparam(cfg->delay_main);
-	free_cfgparam(cfg->nameserver);
 	return 0;
 }
 
@@ -781,20 +766,6 @@ int lkl_load_config_post(struct lkl_config *cfg)
 		}
 	}
 
-	if (cfg->nameserver) {
-		int fd;
-		char ns[32] = "nameserver ";
-
-		/* ignore error */
-		lkl_sys_mkdir("/etc", 0xff);
-		lkl_sys_chdir("/etc");
-		fd = lkl_sys_open("/etc/resolv.conf", LKL_O_CREAT | LKL_O_RDWR, 0);
-
-		strcat(ns, cfg->nameserver);
-		lkl_sys_write(fd, ns, sizeof(ns));
-		lkl_sys_close(fd);
-	}
-
 	return 0;
 }
 
@@ -815,6 +786,7 @@ int lkl_unload_config(struct lkl_config *cfg)
 		}
 
 		lkl_clean_config(cfg);
+		free(cfg);
 	}
 
 	return 0;

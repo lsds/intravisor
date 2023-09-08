@@ -318,9 +318,8 @@ static int vhci_hub_control(struct usb_hcd *hcd, u16 typeReq, u16 wValue,
 	struct vhci_hcd	*vhci_hcd;
 	struct vhci	*vhci;
 	int             retval = 0;
-	int		rhport = -1;
+	int		rhport;
 	unsigned long	flags;
-	bool invalid_rhport = false;
 
 	u32 prev_port_status[VHCI_HC_PORTS];
 
@@ -335,19 +334,9 @@ static int vhci_hub_control(struct usb_hcd *hcd, u16 typeReq, u16 wValue,
 	usbip_dbg_vhci_rh("typeReq %x wValue %x wIndex %x\n", typeReq, wValue,
 			  wIndex);
 
-	/*
-	 * wIndex can be 0 for some request types (typeReq). rhport is
-	 * in valid range when wIndex >= 1 and < VHCI_HC_PORTS.
-	 *
-	 * Reference port_status[] only with valid rhport when
-	 * invalid_rhport is false.
-	 */
-	if (wIndex < 1 || wIndex > VHCI_HC_PORTS) {
-		invalid_rhport = true;
-		if (wIndex > VHCI_HC_PORTS)
-			pr_err("invalid port number %d\n", wIndex);
-	} else
-		rhport = wIndex - 1;
+	if (wIndex > VHCI_HC_PORTS)
+		pr_err("invalid port number %d\n", wIndex);
+	rhport = wIndex - 1;
 
 	vhci_hcd = hcd_to_vhci_hcd(hcd);
 	vhci = vhci_hcd->vhci;
@@ -356,9 +345,8 @@ static int vhci_hub_control(struct usb_hcd *hcd, u16 typeReq, u16 wValue,
 
 	/* store old status and compare now and old later */
 	if (usbip_dbg_flag_vhci_rh) {
-		if (!invalid_rhport)
-			memcpy(prev_port_status, vhci_hcd->port_status,
-				sizeof(prev_port_status));
+		memcpy(prev_port_status, vhci_hcd->port_status,
+			sizeof(prev_port_status));
 	}
 
 	switch (typeReq) {
@@ -366,10 +354,8 @@ static int vhci_hub_control(struct usb_hcd *hcd, u16 typeReq, u16 wValue,
 		usbip_dbg_vhci_rh(" ClearHubFeature\n");
 		break;
 	case ClearPortFeature:
-		if (invalid_rhport) {
-			pr_err("invalid port number %d\n", wIndex);
+		if (rhport < 0)
 			goto error;
-		}
 		switch (wValue) {
 		case USB_PORT_FEAT_SUSPEND:
 			if (hcd->speed == HCD_USB3) {
@@ -396,8 +382,6 @@ static int vhci_hub_control(struct usb_hcd *hcd, u16 typeReq, u16 wValue,
 		default:
 			usbip_dbg_vhci_rh(" ClearPortFeature: default %x\n",
 					  wValue);
-			if (wValue >= 32)
-				goto error;
 			vhci_hcd->port_status[rhport] &= ~(1 << wValue);
 			break;
 		}
@@ -431,10 +415,9 @@ static int vhci_hub_control(struct usb_hcd *hcd, u16 typeReq, u16 wValue,
 		break;
 	case GetPortStatus:
 		usbip_dbg_vhci_rh(" GetPortStatus port %x\n", wIndex);
-		if (invalid_rhport) {
+		if (wIndex < 1) {
 			pr_err("invalid port number %d\n", wIndex);
 			retval = -EPIPE;
-			goto error;
 		}
 
 		/* we do not care about resume. */
@@ -455,14 +438,8 @@ static int vhci_hub_control(struct usb_hcd *hcd, u16 typeReq, u16 wValue,
 			vhci_hcd->port_status[rhport] &= ~(1 << USB_PORT_FEAT_RESET);
 			vhci_hcd->re_timeout = 0;
 
-			/*
-			 * A few drivers do usb reset during probe when
-			 * the device could be in VDEV_ST_USED state
-			 */
 			if (vhci_hcd->vdev[rhport].ud.status ==
-				VDEV_ST_NOTASSIGNED ||
-			    vhci_hcd->vdev[rhport].ud.status ==
-				VDEV_ST_USED) {
+			    VDEV_ST_NOTASSIGNED) {
 				usbip_dbg_vhci_rh(
 					" enable rhport %d (status %u)\n",
 					rhport,
@@ -516,7 +493,6 @@ static int vhci_hub_control(struct usb_hcd *hcd, u16 typeReq, u16 wValue,
 		case USB_PORT_FEAT_U1_TIMEOUT:
 			usbip_dbg_vhci_rh(
 				" SetPortFeature: USB_PORT_FEAT_U1_TIMEOUT\n");
-			fallthrough;
 		case USB_PORT_FEAT_U2_TIMEOUT:
 			usbip_dbg_vhci_rh(
 				" SetPortFeature: USB_PORT_FEAT_U2_TIMEOUT\n");
@@ -537,20 +513,16 @@ static int vhci_hub_control(struct usb_hcd *hcd, u16 typeReq, u16 wValue,
 				goto error;
 			}
 
-			if (invalid_rhport) {
-				pr_err("invalid port number %d\n", wIndex);
+			if (rhport < 0)
 				goto error;
-			}
 
 			vhci_hcd->port_status[rhport] |= USB_PORT_STAT_SUSPEND;
 			break;
 		case USB_PORT_FEAT_POWER:
 			usbip_dbg_vhci_rh(
 				" SetPortFeature: USB_PORT_FEAT_POWER\n");
-			if (invalid_rhport) {
-				pr_err("invalid port number %d\n", wIndex);
+			if (rhport < 0)
 				goto error;
-			}
 			if (hcd->speed == HCD_USB3)
 				vhci_hcd->port_status[rhport] |= USB_SS_PORT_STAT_POWER;
 			else
@@ -559,24 +531,20 @@ static int vhci_hub_control(struct usb_hcd *hcd, u16 typeReq, u16 wValue,
 		case USB_PORT_FEAT_BH_PORT_RESET:
 			usbip_dbg_vhci_rh(
 				" SetPortFeature: USB_PORT_FEAT_BH_PORT_RESET\n");
-			if (invalid_rhport) {
-				pr_err("invalid port number %d\n", wIndex);
+			if (rhport < 0)
 				goto error;
-			}
 			/* Applicable only for USB3.0 hub */
 			if (hcd->speed != HCD_USB3) {
 				pr_err("USB_PORT_FEAT_BH_PORT_RESET req not "
 				       "supported for USB 2.0 roothub\n");
 				goto error;
 			}
-			fallthrough;
+			/* FALLS THROUGH */
 		case USB_PORT_FEAT_RESET:
 			usbip_dbg_vhci_rh(
 				" SetPortFeature: USB_PORT_FEAT_RESET\n");
-			if (invalid_rhport) {
-				pr_err("invalid port number %d\n", wIndex);
+			if (rhport < 0)
 				goto error;
-			}
 			/* if it's already enabled, disable */
 			if (hcd->speed == HCD_USB3) {
 				vhci_hcd->port_status[rhport] = 0;
@@ -592,15 +560,12 @@ static int vhci_hub_control(struct usb_hcd *hcd, u16 typeReq, u16 wValue,
 
 			/* 50msec reset signaling */
 			vhci_hcd->re_timeout = jiffies + msecs_to_jiffies(50);
-			fallthrough;
+
+			/* FALLS THROUGH */
 		default:
 			usbip_dbg_vhci_rh(" SetPortFeature: default %d\n",
 					  wValue);
-			if (invalid_rhport) {
-				pr_err("invalid port number %d\n", wIndex);
-				goto error;
-			}
-			if (wValue >= 32)
+			if (rhport < 0)
 				goto error;
 			if (hcd->speed == HCD_USB3) {
 				if ((vhci_hcd->port_status[rhport] &
@@ -643,7 +608,7 @@ error:
 	if (usbip_dbg_flag_vhci_rh) {
 		pr_debug("port %d\n", rhport);
 		/* Only dump valid port status */
-		if (!invalid_rhport) {
+		if (rhport >= 0) {
 			dump_port_status_diff(prev_port_status[rhport],
 					      vhci_hcd->port_status[rhport],
 					      hcd->speed == HCD_USB3);
@@ -653,10 +618,8 @@ error:
 
 	spin_unlock_irqrestore(&vhci->lock, flags);
 
-	if (!invalid_rhport &&
-	    (vhci_hcd->port_status[rhport] & PORT_C_MASK) != 0) {
+	if ((vhci_hcd->port_status[rhport] & PORT_C_MASK) != 0)
 		usb_hcd_poll_rh_status(hcd);
-	}
 
 	return retval;
 }
@@ -664,8 +627,14 @@ error:
 static void vhci_tx_urb(struct urb *urb, struct vhci_device *vdev)
 {
 	struct vhci_priv *priv;
-	struct vhci_hcd *vhci_hcd = vdev_to_vhci_hcd(vdev);
+	struct vhci_hcd *vhci_hcd;
 	unsigned long flags;
+
+	if (!vdev) {
+		pr_err("could not get virtual device");
+		return;
+	}
+	vhci_hcd = vdev_to_vhci_hcd(vdev);
 
 	priv = kzalloc(sizeof(struct vhci_priv), GFP_ATOMIC);
 	if (!priv) {
@@ -706,11 +675,8 @@ static int vhci_urb_enqueue(struct usb_hcd *hcd, struct urb *urb, gfp_t mem_flag
 	}
 	vdev = &vhci_hcd->vdev[portnum-1];
 
-	if (!urb->transfer_buffer && !urb->num_sgs &&
-	     urb->transfer_buffer_length) {
-		dev_dbg(dev, "Null URB transfer buffer\n");
-		return -EINVAL;
-	}
+	/* patch to usb_sg_init() is in 2.5.60 */
+	BUG_ON(!urb->transfer_buffer && urb->transfer_buffer_length);
 
 	spin_lock_irqsave(&vhci->lock, flags);
 
@@ -807,14 +773,8 @@ no_need_xmit:
 	usb_hcd_unlink_urb_from_ep(hcd, urb);
 no_need_unlink:
 	spin_unlock_irqrestore(&vhci->lock, flags);
-	if (!ret) {
-		/* usb_hcd_giveback_urb() should be called with
-		 * irqs disabled
-		 */
-		local_irq_disable();
+	if (!ret)
 		usb_hcd_giveback_urb(hcd, urb, urb->status);
-		local_irq_enable();
-	}
 	return ret;
 }
 
@@ -951,8 +911,7 @@ static int vhci_urb_dequeue(struct usb_hcd *hcd, struct urb *urb, int status)
 	return 0;
 }
 
-static void vhci_cleanup_unlink_list(struct vhci_device *vdev,
-		struct list_head *unlink_list)
+static void vhci_device_unlink_cleanup(struct vhci_device *vdev)
 {
 	struct vhci_hcd *vhci_hcd = vdev_to_vhci_hcd(vdev);
 	struct usb_hcd *hcd = vhci_hcd_to_hcd(vhci_hcd);
@@ -963,11 +922,25 @@ static void vhci_cleanup_unlink_list(struct vhci_device *vdev,
 	spin_lock_irqsave(&vhci->lock, flags);
 	spin_lock(&vdev->priv_lock);
 
-	list_for_each_entry_safe(unlink, tmp, unlink_list, list) {
+	list_for_each_entry_safe(unlink, tmp, &vdev->unlink_tx, list) {
+		pr_info("unlink cleanup tx %lu\n", unlink->unlink_seqnum);
+		list_del(&unlink->list);
+		kfree(unlink);
+	}
+
+	while (!list_empty(&vdev->unlink_rx)) {
 		struct urb *urb;
+
+		unlink = list_first_entry(&vdev->unlink_rx, struct vhci_unlink,
+			list);
+
+		/* give back URB of unanswered unlink request */
+		pr_info("unlink cleanup rx %lu\n", unlink->unlink_seqnum);
 
 		urb = pickup_urb_and_free_priv(vdev, unlink->unlink_seqnum);
 		if (!urb) {
+			pr_info("the urb (seqnum %lu) was already given back\n",
+				unlink->unlink_seqnum);
 			list_del(&unlink->list);
 			kfree(unlink);
 			continue;
@@ -992,15 +965,6 @@ static void vhci_cleanup_unlink_list(struct vhci_device *vdev,
 
 	spin_unlock(&vdev->priv_lock);
 	spin_unlock_irqrestore(&vhci->lock, flags);
-}
-
-static void vhci_device_unlink_cleanup(struct vhci_device *vdev)
-{
-	/* give back URB of unsent unlink request */
-	vhci_cleanup_unlink_list(vdev, &vdev->unlink_tx);
-
-	/* give back URB of unanswered unlink request */
-	vhci_cleanup_unlink_list(vdev, &vdev->unlink_rx);
 }
 
 /*
@@ -1103,7 +1067,6 @@ static void vhci_device_init(struct vhci_device *vdev)
 	vdev->ud.side   = USBIP_VHCI;
 	vdev->ud.status = VDEV_ST_NULL;
 	spin_lock_init(&vdev->ud.lock);
-	mutex_init(&vdev->ud.sysfs_lock);
 
 	INIT_LIST_HEAD(&vdev->priv_rx);
 	INIT_LIST_HEAD(&vdev->priv_tx);
@@ -1156,15 +1119,6 @@ static int vhci_setup(struct usb_hcd *hcd)
 		hcd->speed = HCD_USB3;
 		hcd->self.root_hub->speed = USB_SPEED_SUPER;
 	}
-
-	/*
-	 * Support SG.
-	 * sg_tablesize is an arbitrary value to alleviate memory pressure
-	 * on the host.
-	 */
-	hcd->self.sg_tablesize = 32;
-	hcd->self.no_sg_constraint = 1;
-
 	return 0;
 }
 
@@ -1207,12 +1161,12 @@ static int vhci_start(struct usb_hcd *hcd)
 	if (id == 0 && usb_hcd_is_primary_hcd(hcd)) {
 		err = vhci_init_attr_group();
 		if (err) {
-			dev_err(hcd_dev(hcd), "init attr group failed, err = %d\n", err);
+			pr_err("init attr group\n");
 			return err;
 		}
 		err = sysfs_create_group(&hcd_dev(hcd)->kobj, &vhci_attr_group);
 		if (err) {
-			dev_err(hcd_dev(hcd), "create sysfs files failed, err = %d\n", err);
+			pr_err("create sysfs files\n");
 			vhci_finish_attr_group();
 			return err;
 		}

@@ -33,8 +33,7 @@ TRACE_EVENT(wbt_stat,
 	),
 
 	TP_fast_assign(
-		strlcpy(__entry->name, bdi_dev_name(bdi),
-			ARRAY_SIZE(__entry->name));
+		strncpy(__entry->name, dev_name(bdi->dev), 32);
 		__entry->rmean		= stat[0].mean;
 		__entry->rmin		= stat[0].min;
 		__entry->rmax		= stat[0].max;
@@ -46,7 +45,7 @@ TRACE_EVENT(wbt_stat,
 	),
 
 	TP_printk("%s: rmean=%llu, rmin=%llu, rmax=%llu, rsamples=%llu, "
-		  "wmean=%llu, wmin=%llu, wmax=%llu, wsamples=%llu",
+		  "wmean=%llu, wmin=%llu, wmax=%llu, wsamples=%llu\n",
 		  __entry->name, __entry->rmean, __entry->rmin, __entry->rmax,
 		  __entry->rnr_samples, __entry->wmean, __entry->wmin,
 		  __entry->wmax, __entry->wnr_samples)
@@ -68,12 +67,11 @@ TRACE_EVENT(wbt_lat,
 	),
 
 	TP_fast_assign(
-		strlcpy(__entry->name, bdi_dev_name(bdi),
-			ARRAY_SIZE(__entry->name));
+		strncpy(__entry->name, dev_name(bdi->dev), 32);
 		__entry->lat = div_u64(lat, 1000);
 	),
 
-	TP_printk("%s: latency %lluus", __entry->name,
+	TP_printk("%s: latency %lluus\n", __entry->name,
 			(unsigned long long) __entry->lat)
 );
 
@@ -105,8 +103,7 @@ TRACE_EVENT(wbt_step,
 	),
 
 	TP_fast_assign(
-		strlcpy(__entry->name, bdi_dev_name(bdi),
-			ARRAY_SIZE(__entry->name));
+		strncpy(__entry->name, dev_name(bdi->dev), 32);
 		__entry->msg	= msg;
 		__entry->step	= step;
 		__entry->window	= div_u64(window, 1000);
@@ -115,7 +112,7 @@ TRACE_EVENT(wbt_step,
 		__entry->max	= max;
 	),
 
-	TP_printk("%s: %s: step=%d, window=%luus, background=%u, normal=%u, max=%u",
+	TP_printk("%s: %s: step=%d, window=%luus, background=%u, normal=%u, max=%u\n",
 		  __entry->name, __entry->msg, __entry->step, __entry->window,
 		  __entry->bg, __entry->normal, __entry->max)
 );
@@ -141,14 +138,13 @@ TRACE_EVENT(wbt_timer,
 	),
 
 	TP_fast_assign(
-		strlcpy(__entry->name, bdi_dev_name(bdi),
-			ARRAY_SIZE(__entry->name));
+		strncpy(__entry->name, dev_name(bdi->dev), 32);
 		__entry->status		= status;
 		__entry->step		= step;
 		__entry->inflight	= inflight;
 	),
 
-	TP_printk("%s: status=%u, step=%d, inflight=%u", __entry->name,
+	TP_printk("%s: status=%u, step=%d, inflight=%u\n", __entry->name,
 		  __entry->status, __entry->step, __entry->inflight)
 );
 

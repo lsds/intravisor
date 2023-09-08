@@ -1,11 +1,25 @@
-/* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
  * drivers/video/mmp/hw/mmp_ctrl.h
+ *
  *
  * Copyright (C) 2012 Marvell Technology Group Ltd.
  * Authors:  Guoqing Li <ligq@marvell.com>
  *          Lisa Du <cldu@marvell.com>
  *          Zhou Zhu <zzhu3@marvell.com>
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License as published by the
+ * Free Software Foundation; either version 2 of the License, or (at your
+ * option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+ * more details.
+ *
+ * You should have received a copy of the GNU General Public License along with
+ * this program.  If not, see <http://www.gnu.org/licenses/>.
+ *
  */
 
 #ifndef _MMP_CTRL_H_
@@ -1393,7 +1407,7 @@ struct mmphw_ctrl {
 	/* platform related, get from config */
 	const char *name;
 	int irq;
-	void __iomem *reg_base;
+	void *reg_base;
 	struct clk *clk;
 
 	/* sys info */
@@ -1406,7 +1420,7 @@ struct mmphw_ctrl {
 
 	/*pathes*/
 	int path_num;
-	struct mmphw_path_plat path_plats[];
+	struct mmphw_path_plat path_plats[0];
 };
 
 static inline int overlay_is_vid(struct mmp_overlay *overlay)
@@ -1429,7 +1443,7 @@ static inline struct mmphw_ctrl *overlay_to_ctrl(struct mmp_overlay *overlay)
 	return path_to_ctrl(overlay->path);
 }
 
-static inline void __iomem *ctrl_regs(struct mmp_path *path)
+static inline void *ctrl_regs(struct mmp_path *path)
 {
 	return path_to_ctrl(path)->reg_base;
 }
@@ -1438,11 +1452,11 @@ static inline void __iomem *ctrl_regs(struct mmp_path *path)
 static inline struct lcd_regs *path_regs(struct mmp_path *path)
 {
 	if (path->id == PATH_PN)
-		return (struct lcd_regs __force *)(ctrl_regs(path) + 0xc0);
+		return (struct lcd_regs *)(ctrl_regs(path) + 0xc0);
 	else if (path->id == PATH_TV)
-		return (struct lcd_regs __force  *)ctrl_regs(path);
+		return (struct lcd_regs *)ctrl_regs(path);
 	else if (path->id == PATH_P2)
-		return (struct lcd_regs __force *)(ctrl_regs(path) + 0x200);
+		return (struct lcd_regs *)(ctrl_regs(path) + 0x200);
 	else {
 		dev_err(path->dev, "path id %d invalid\n", path->id);
 		BUG_ON(1);

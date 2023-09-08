@@ -15,7 +15,6 @@
 #include <linux/console.h>
 #include <linux/errno.h>
 #include <linux/init.h>
-#include <linux/iopoll.h>
 #include <linux/pci_regs.h>
 #include <linux/pci_ids.h>
 #include <linux/usb/ch9.h>
@@ -162,11 +161,17 @@ static inline u32 dbgp_pid_read_update(u32 x, u32 tok)
 static int dbgp_wait_until_complete(void)
 {
 	u32 ctrl;
-	int ret;
+	int loop = DBGP_TIMEOUT;
 
-	ret = readl_poll_timeout_atomic(&ehci_debug->control, ctrl,
-				(ctrl & DBGP_DONE), 1, DBGP_TIMEOUT);
-	if (ret)
+	do {
+		ctrl = readl(&ehci_debug->control);
+		/* Stop when the transaction is finished */
+		if (ctrl & DBGP_DONE)
+			break;
+		udelay(1);
+	} while (--loop > 0);
+
+	if (!loop)
 		return -DBGP_TIMEOUT;
 
 	/*
@@ -626,28 +631,28 @@ static int ehci_reset_port(int port)
 		if (!(portsc & PORT_RESET))
 			break;
 	}
-	if (portsc & PORT_RESET) {
-		/* force reset to complete */
-		loop = 100 * 1000;
-		writel(portsc & ~(PORT_RWC_BITS | PORT_RESET),
-			&ehci_regs->port_status[port - 1]);
-		do {
-			udelay(1);
-			portsc = readl(&ehci_regs->port_status[port-1]);
-		} while ((portsc & PORT_RESET) && (--loop > 0));
-	}
+		if (portsc & PORT_RESET) {
+			/* force reset to complete */
+			loop = 100 * 1000;
+			writel(portsc & ~(PORT_RWC_BITS | PORT_RESET),
+				&ehci_regs->port_status[port - 1]);
+			do {
+				udelay(1);
+				portsc = readl(&ehci_regs->port_status[port-1]);
+			} while ((portsc & PORT_RESET) && (--loop > 0));
+		}
 
-	/* Device went away? */
-	if (!(portsc & PORT_CONNECT))
-		return -ENOTCONN;
+		/* Device went away? */
+		if (!(portsc & PORT_CONNECT))
+			return -ENOTCONN;
 
-	/* bomb out completely if something weird happened */
-	if ((portsc & PORT_CSC))
-		return -EINVAL;
+		/* bomb out completely if something weird happened */
+		if ((portsc & PORT_CSC))
+			return -EINVAL;
 
-	/* If we've finished resetting, then break out of the loop */
-	if (!(portsc & PORT_RESET) && (portsc & PORT_PE))
-		return 0;
+		/* If we've finished resetting, then break out of the loop */
+		if (!(portsc & PORT_RESET) && (portsc & PORT_PE))
+			return 0;
 	return -EBUSY;
 }
 
@@ -907,7 +912,7 @@ int __init early_dbgp_init(char *s)
 
 static void early_dbgp_write(struct console *con, const char *str, u32 n)
 {
-	int chunk;
+	int chunk, ret;
 	char buf[DBGP_MAX_PACKET];
 	int use_cr = 0;
 	u32 cmd, ctrl;
@@ -946,8 +951,8 @@ static void early_dbgp_write(struct console *con, const char *str, u32 n)
 			buf[chunk] = *str;
 		}
 		if (chunk > 0) {
-			dbgp_bulk_write(USB_DEBUG_DEVNUM,
-					dbgp_endpoint_out, buf, chunk);
+			ret = dbgp_bulk_write(USB_DEBUG_DEVNUM,
+				      dbgp_endpoint_out, buf, chunk);
 		}
 	}
 	if (unlikely(reset_run)) {
@@ -1053,8 +1058,7 @@ static int __init kgdbdbgp_parse_config(char *str)
 		kgdbdbgp_wait_time = simple_strtoul(ptr, &ptr, 10);
 	}
 	kgdb_register_io_module(&kgdbdbgp_io_ops);
-	if (early_dbgp_console.index != -1)
-		kgdbdbgp_io_ops.cons = &early_dbgp_console;
+	kgdbdbgp_io_ops.is_console = early_dbgp_console.index != -1;
 
 	return 0;
 }

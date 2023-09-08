@@ -1,6 +1,9 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * uda1380.c - Philips UDA1380 ALSA SoC audio driver
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  *
  * Copyright (c) 2007-2009 Philipp Zabel <philipp.zabel@gmail.com>
  *
@@ -110,7 +113,7 @@ static int uda1380_write(struct snd_soc_component *component, unsigned int reg,
 	/* the interpolator & decimator regs must only be written when the
 	 * codec DAI is active.
 	 */
-	if (!snd_soc_component_active(component) && (reg >= UDA1380_MVOL))
+	if (!snd_soc_component_is_active(component) && (reg >= UDA1380_MVOL))
 		return 0;
 	pr_debug("uda1380: hw write %x val %x\n", reg, value);
 	if (i2c_master_send(uda1380->i2c, data, 3) == 3) {
@@ -435,8 +438,8 @@ static int uda1380_set_dai_fmt_both(struct snd_soc_dai *codec_dai,
 		iface |= R01_SFORI_MSB | R01_SFORO_MSB;
 	}
 
-	/* DATAI is consumer only */
-	if ((fmt & SND_SOC_DAIFMT_CLOCK_PROVIDER_MASK) != SND_SOC_DAIFMT_CBC_CFC)
+	/* DATAI is slave only, so in single-link mode, this has to be slave */
+	if ((fmt & SND_SOC_DAIFMT_MASTER_MASK) != SND_SOC_DAIFMT_CBS_CFS)
 		return -EINVAL;
 
 	uda1380_write_reg_cache(component, UDA1380_IFACE, iface);
@@ -465,8 +468,8 @@ static int uda1380_set_dai_fmt_playback(struct snd_soc_dai *codec_dai,
 		iface |= R01_SFORI_MSB;
 	}
 
-	/* DATAI is consumer only */
-	if ((fmt & SND_SOC_DAIFMT_CLOCK_PROVIDER_MASK) != SND_SOC_DAIFMT_CBC_CFC)
+	/* DATAI is slave only, so this has to be slave */
+	if ((fmt & SND_SOC_DAIFMT_MASTER_MASK) != SND_SOC_DAIFMT_CBS_CFS)
 		return -EINVAL;
 
 	uda1380_write(component, UDA1380_IFACE, iface);
@@ -495,7 +498,7 @@ static int uda1380_set_dai_fmt_capture(struct snd_soc_dai *codec_dai,
 		iface |= R01_SFORO_MSB;
 	}
 
-	if ((fmt & SND_SOC_DAIFMT_CLOCK_PROVIDER_MASK) == SND_SOC_DAIFMT_CBP_CFP)
+	if ((fmt & SND_SOC_DAIFMT_MASTER_MASK) == SND_SOC_DAIFMT_CBM_CFM)
 		iface |= R01_SIM;
 
 	uda1380_write(component, UDA1380_IFACE, iface);
@@ -736,9 +739,11 @@ static const struct snd_soc_component_driver soc_component_dev_uda1380 = {
 	.idle_bias_on		= 1,
 	.use_pmdown_time	= 1,
 	.endianness		= 1,
+	.non_legacy_dai_naming	= 1,
 };
 
-static int uda1380_i2c_probe(struct i2c_client *i2c)
+static int uda1380_i2c_probe(struct i2c_client *i2c,
+			     const struct i2c_device_id *id)
 {
 	struct uda1380_platform_data *pdata = i2c->dev.platform_data;
 	struct uda1380_priv *uda1380;
@@ -798,7 +803,7 @@ static struct i2c_driver uda1380_i2c_driver = {
 		.name =  "uda1380-codec",
 		.of_match_table = uda1380_of_match,
 	},
-	.probe_new = uda1380_i2c_probe,
+	.probe =    uda1380_i2c_probe,
 	.id_table = uda1380_i2c_id,
 };
 

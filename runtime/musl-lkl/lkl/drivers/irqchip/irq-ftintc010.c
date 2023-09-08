@@ -11,6 +11,7 @@
 #include <linux/irq.h>
 #include <linux/io.h>
 #include <linux/irqchip.h>
+#include <linux/irqchip/versatile-fpga.h>
 #include <linux/irqdomain.h>
 #include <linux/module.h>
 #include <linux/of.h>
@@ -133,7 +134,7 @@ asmlinkage void __exception_irq_entry ft010_irqchip_handle_irq(struct pt_regs *r
 
 	while ((status = readl(FT010_IRQ_STATUS(f->base)))) {
 		irq = ffs(status) - 1;
-		generic_handle_domain_irq(f->domain, irq);
+		handle_domain_irq(f->domain, irq, regs);
 	}
 }
 

@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * USB Synaptics device driver
  *
@@ -16,6 +15,11 @@
  * Bases on:	usb_skeleton.c v2.2 by Greg Kroah-Hartman
  *		drivers/hid/usbhid/usbmouse.c by Vojtech Pavlik
  *		drivers/input/mouse/synaptics.c by Peter Osterlund
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License as published by the Free
+ * Software Foundation; either version 2 of the License, or (at your option)
+ * any later version.
  *
  * Trademarks are the property of their respective owners.
  */
@@ -354,7 +358,7 @@ static int synusb_probe(struct usb_interface *intf,
 	synusb->urb->transfer_flags |= URB_NO_TRANSFER_DMA_MAP;
 
 	if (udev->manufacturer)
-		strscpy(synusb->name, udev->manufacturer,
+		strlcpy(synusb->name, udev->manufacturer,
 			sizeof(synusb->name));
 
 	if (udev->product) {

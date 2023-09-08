@@ -1,8 +1,9 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * bebob_hwdep.c - a part of driver for BeBoB based devices
  *
  * Copyright (c) 2013-2014 Takashi Sakamoto
+ *
+ * Licensed under the terms of the GNU General Public License, version 2.
  */
 
 /*
@@ -36,10 +37,13 @@ hwdep_read(struct snd_hwdep *hwdep, char __user *buf,  long count,
 	}
 
 	memset(&event, 0, sizeof(event));
-	count = min_t(long, count, sizeof(event.lock_status));
-	event.lock_status.type = SNDRV_FIREWIRE_EVENT_LOCK_STATUS;
-	event.lock_status.status = (bebob->dev_lock_count > 0);
-	bebob->dev_lock_changed = false;
+	if (bebob->dev_lock_changed) {
+		event.lock_status.type = SNDRV_FIREWIRE_EVENT_LOCK_STATUS;
+		event.lock_status.status = (bebob->dev_lock_count > 0);
+		bebob->dev_lock_changed = false;
+
+		count = min_t(long, count, sizeof(event.lock_status));
+	}
 
 	spin_unlock_irq(&bebob->lock);
 
@@ -78,7 +82,7 @@ hwdep_get_info(struct snd_bebob *bebob, void __user *arg)
 	info.card = dev->card->index;
 	*(__be32 *)&info.guid[0] = cpu_to_be32(dev->config_rom[3]);
 	*(__be32 *)&info.guid[4] = cpu_to_be32(dev->config_rom[4]);
-	strscpy(info.device_name, dev_name(&dev->device),
+	strlcpy(info.device_name, dev_name(&dev->device),
 		sizeof(info.device_name));
 
 	if (copy_to_user(arg, &info, sizeof(info)))

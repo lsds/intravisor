@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * RDC R6040 Fast Ethernet MAC support
  *
@@ -6,6 +5,21 @@
  * Copyright (C) 2007
  *	Daniel Gimpelevich <daniel@gimpelevich.san-francisco.ca.us>
  * Copyright (C) 2007-2012 Florian Fainelli <f.fainelli@gmail.com>
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version 2
+ * of the License, or (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the
+ * Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
+ * Boston, MA  02110-1301, USA.
 */
 
 #include <linux/kernel.h>
@@ -119,8 +133,6 @@
 #define PHY_ST		0x8A	/* PHY status register */
 #define MAC_SM		0xAC	/* MAC status machine */
 #define  MAC_SM_RST	0x0002	/* MAC status machine reset */
-#define MD_CSC		0xb6	/* MDC speed control register */
-#define  MD_CSC_DEFAULT	0x0030
 #define MAC_ID		0xBE	/* Identifier register */
 
 #define TX_DCNT		0x80	/* TX descriptor count */
@@ -202,7 +214,7 @@ static int r6040_phy_read(void __iomem *ioaddr, int phy_addr, int reg)
 	int limit = MAC_DEF_TIMEOUT;
 	u16 cmd;
 
-	iowrite16(MDIO_READ | reg | (phy_addr << 8), ioaddr + MMDIO);
+	iowrite16(MDIO_READ + reg + (phy_addr << 8), ioaddr + MMDIO);
 	/* Wait for the read bit to be cleared */
 	while (limit--) {
 		cmd = ioread16(ioaddr + MMDIO);
@@ -226,7 +238,7 @@ static int r6040_phy_write(void __iomem *ioaddr,
 
 	iowrite16(val, ioaddr + MMWD);
 	/* Write the command to the MDIO bus */
-	iowrite16(MDIO_WRITE | reg | (phy_addr << 8), ioaddr + MMDIO);
+	iowrite16(MDIO_WRITE + reg + (phy_addr << 8), ioaddr + MMDIO);
 	/* Wait for the write bit to be cleared */
 	while (limit--) {
 		cmd = ioread16(ioaddr + MMDIO);
@@ -264,9 +276,9 @@ static void r6040_free_txbufs(struct net_device *dev)
 
 	for (i = 0; i < TX_DCNT; i++) {
 		if (lp->tx_insert_ptr->skb_ptr) {
-			dma_unmap_single(&lp->pdev->dev,
-					 le32_to_cpu(lp->tx_insert_ptr->buf),
-					 MAX_BUF_SIZE, DMA_TO_DEVICE);
+			pci_unmap_single(lp->pdev,
+				le32_to_cpu(lp->tx_insert_ptr->buf),
+				MAX_BUF_SIZE, PCI_DMA_TODEVICE);
 			dev_kfree_skb(lp->tx_insert_ptr->skb_ptr);
 			lp->tx_insert_ptr->skb_ptr = NULL;
 		}
@@ -281,9 +293,9 @@ static void r6040_free_rxbufs(struct net_device *dev)
 
 	for (i = 0; i < RX_DCNT; i++) {
 		if (lp->rx_insert_ptr->skb_ptr) {
-			dma_unmap_single(&lp->pdev->dev,
-					 le32_to_cpu(lp->rx_insert_ptr->buf),
-					 MAX_BUF_SIZE, DMA_FROM_DEVICE);
+			pci_unmap_single(lp->pdev,
+				le32_to_cpu(lp->rx_insert_ptr->buf),
+				MAX_BUF_SIZE, PCI_DMA_FROMDEVICE);
 			dev_kfree_skb(lp->rx_insert_ptr->skb_ptr);
 			lp->rx_insert_ptr->skb_ptr = NULL;
 		}
@@ -337,10 +349,9 @@ static int r6040_alloc_rxbufs(struct net_device *dev)
 			goto err_exit;
 		}
 		desc->skb_ptr = skb;
-		desc->buf = cpu_to_le32(dma_map_single(&lp->pdev->dev,
-						       desc->skb_ptr->data,
-						       MAX_BUF_SIZE,
-						       DMA_FROM_DEVICE));
+		desc->buf = cpu_to_le32(pci_map_single(lp->pdev,
+					desc->skb_ptr->data,
+					MAX_BUF_SIZE, PCI_DMA_FROMDEVICE));
 		desc->status = DSC_OWNER_MAC;
 		desc = desc->vndescp;
 	} while (desc != lp->rx_ring);
@@ -357,9 +368,8 @@ static void r6040_reset_mac(struct r6040_private *lp)
 {
 	void __iomem *ioaddr = lp->base;
 	int limit = MAC_DEF_TIMEOUT;
-	u16 cmd, md_csc;
+	u16 cmd;
 
-	md_csc = ioread16(ioaddr + MD_CSC);
 	iowrite16(MAC_RST, ioaddr + MCR1);
 	while (limit--) {
 		cmd = ioread16(ioaddr + MCR1);
@@ -371,10 +381,6 @@ static void r6040_reset_mac(struct r6040_private *lp)
 	iowrite16(MAC_SM_RST, ioaddr + MAC_SM);
 	iowrite16(0, ioaddr + MAC_SM);
 	mdelay(5);
-
-	/* Restore MDIO clock frequency */
-	if (md_csc != MD_CSC_DEFAULT)
-		iowrite16(md_csc, ioaddr + MD_CSC);
 }
 
 static void r6040_init_mac_regs(struct net_device *dev)
@@ -418,7 +424,7 @@ static void r6040_init_mac_regs(struct net_device *dev)
 	iowrite16(TM2TX, ioaddr + MTPR);
 }
 
-static void r6040_tx_timeout(struct net_device *dev, unsigned int txqueue)
+static void r6040_tx_timeout(struct net_device *dev)
 {
 	struct r6040_private *priv = netdev_priv(dev);
 	void __iomem *ioaddr = priv->base;
@@ -453,7 +459,7 @@ static void r6040_down(struct net_device *dev)
 {
 	struct r6040_private *lp = netdev_priv(dev);
 	void __iomem *ioaddr = lp->base;
-	const u16 *adrp;
+	u16 *adrp;
 
 	/* Stop MAC */
 	iowrite16(MSK_INT, ioaddr + MIER);	/* Mask Off Interrupt */
@@ -462,7 +468,7 @@ static void r6040_down(struct net_device *dev)
 	r6040_reset_mac(lp);
 
 	/* Restore MAC Address to MIDx */
-	adrp = (const u16 *) dev->dev_addr;
+	adrp = (u16 *) dev->dev_addr;
 	iowrite16(adrp[0], ioaddr + MID_0L);
 	iowrite16(adrp[1], ioaddr + MID_0M);
 	iowrite16(adrp[2], ioaddr + MID_0H);
@@ -492,18 +498,26 @@ static int r6040_close(struct net_device *dev)
 
 	/* Free Descriptor memory */
 	if (lp->rx_ring) {
-		dma_free_coherent(&pdev->dev, RX_DESC_SIZE, lp->rx_ring,
-				  lp->rx_ring_dma);
+		pci_free_consistent(pdev,
+				RX_DESC_SIZE, lp->rx_ring, lp->rx_ring_dma);
 		lp->rx_ring = NULL;
 	}
 
 	if (lp->tx_ring) {
-		dma_free_coherent(&pdev->dev, TX_DESC_SIZE, lp->tx_ring,
-				  lp->tx_ring_dma);
+		pci_free_consistent(pdev,
+				TX_DESC_SIZE, lp->tx_ring, lp->tx_ring_dma);
 		lp->tx_ring = NULL;
 	}
 
 	return 0;
+}
+
+static int r6040_ioctl(struct net_device *dev, struct ifreq *rq, int cmd)
+{
+	if (!dev->phydev)
+		return -EINVAL;
+
+	return phy_mii_ioctl(dev->phydev, rq, cmd);
 }
 
 static int r6040_rx(struct net_device *dev, int limit)
@@ -551,22 +565,21 @@ static int r6040_rx(struct net_device *dev, int limit)
 		skb_ptr->dev = priv->dev;
 
 		/* Do not count the CRC */
-		skb_put(skb_ptr, descptr->len - ETH_FCS_LEN);
-		dma_unmap_single(&priv->pdev->dev, le32_to_cpu(descptr->buf),
-				 MAX_BUF_SIZE, DMA_FROM_DEVICE);
+		skb_put(skb_ptr, descptr->len - 4);
+		pci_unmap_single(priv->pdev, le32_to_cpu(descptr->buf),
+					MAX_BUF_SIZE, PCI_DMA_FROMDEVICE);
 		skb_ptr->protocol = eth_type_trans(skb_ptr, priv->dev);
 
 		/* Send to upper layer */
 		netif_receive_skb(skb_ptr);
 		dev->stats.rx_packets++;
-		dev->stats.rx_bytes += descptr->len - ETH_FCS_LEN;
+		dev->stats.rx_bytes += descptr->len - 4;
 
 		/* put new skb into descriptor */
 		descptr->skb_ptr = new_skb;
-		descptr->buf = cpu_to_le32(dma_map_single(&priv->pdev->dev,
-							  descptr->skb_ptr->data,
-							  MAX_BUF_SIZE,
-							  DMA_FROM_DEVICE));
+		descptr->buf = cpu_to_le32(pci_map_single(priv->pdev,
+						descptr->skb_ptr->data,
+					MAX_BUF_SIZE, PCI_DMA_FROMDEVICE));
 
 next_descr:
 		/* put the descriptor back to the MAC */
@@ -606,8 +619,8 @@ static void r6040_tx(struct net_device *dev)
 		dev->stats.tx_packets++;
 		dev->stats.tx_bytes += skb_ptr->len;
 
-		dma_unmap_single(&priv->pdev->dev, le32_to_cpu(descptr->buf),
-				 skb_ptr->len, DMA_TO_DEVICE);
+		pci_unmap_single(priv->pdev, le32_to_cpu(descptr->buf),
+			skb_ptr->len, PCI_DMA_TODEVICE);
 		/* Free buffer */
 		dev_kfree_skb(skb_ptr);
 		descptr->skb_ptr = NULL;
@@ -731,13 +744,13 @@ static void r6040_mac_address(struct net_device *dev)
 {
 	struct r6040_private *lp = netdev_priv(dev);
 	void __iomem *ioaddr = lp->base;
-	const u16 *adrp;
+	u16 *adrp;
 
 	/* Reset MAC */
 	r6040_reset_mac(lp);
 
 	/* Restore MAC Address */
-	adrp = (const u16 *) dev->dev_addr;
+	adrp = (u16 *) dev->dev_addr;
 	iowrite16(adrp[0], ioaddr + MID_0L);
 	iowrite16(adrp[1], ioaddr + MID_0M);
 	iowrite16(adrp[2], ioaddr + MID_0H);
@@ -759,16 +772,14 @@ static int r6040_open(struct net_device *dev)
 
 	/* Allocate Descriptor memory */
 	lp->rx_ring =
-		dma_alloc_coherent(&lp->pdev->dev, RX_DESC_SIZE,
-				   &lp->rx_ring_dma, GFP_KERNEL);
+		pci_alloc_consistent(lp->pdev, RX_DESC_SIZE, &lp->rx_ring_dma);
 	if (!lp->rx_ring) {
 		ret = -ENOMEM;
 		goto err_free_irq;
 	}
 
 	lp->tx_ring =
-		dma_alloc_coherent(&lp->pdev->dev, TX_DESC_SIZE,
-				   &lp->tx_ring_dma, GFP_KERNEL);
+		pci_alloc_consistent(lp->pdev, TX_DESC_SIZE, &lp->tx_ring_dma);
 	if (!lp->tx_ring) {
 		ret = -ENOMEM;
 		goto err_free_rx_ring;
@@ -784,11 +795,11 @@ static int r6040_open(struct net_device *dev)
 	return 0;
 
 err_free_tx_ring:
-	dma_free_coherent(&lp->pdev->dev, TX_DESC_SIZE, lp->tx_ring,
-			  lp->tx_ring_dma);
+	pci_free_consistent(lp->pdev, TX_DESC_SIZE, lp->tx_ring,
+			lp->tx_ring_dma);
 err_free_rx_ring:
-	dma_free_coherent(&lp->pdev->dev, RX_DESC_SIZE, lp->rx_ring,
-			  lp->rx_ring_dma);
+	pci_free_consistent(lp->pdev, RX_DESC_SIZE, lp->rx_ring,
+			lp->rx_ring_dma);
 err_free_irq:
 	free_irq(dev->irq, dev);
 out:
@@ -822,14 +833,14 @@ static netdev_tx_t r6040_start_xmit(struct sk_buff *skb,
 	descptr = lp->tx_insert_ptr;
 	descptr->len = skb->len;
 	descptr->skb_ptr = skb;
-	descptr->buf = cpu_to_le32(dma_map_single(&lp->pdev->dev, skb->data,
-						  skb->len, DMA_TO_DEVICE));
+	descptr->buf = cpu_to_le32(pci_map_single(lp->pdev,
+		skb->data, skb->len, PCI_DMA_TODEVICE));
 	descptr->status = DSC_OWNER_MAC;
 
 	skb_tx_timestamp(skb);
 
 	/* Trigger the MAC to check the TX descriptor */
-	if (!netdev_xmit_more() || netif_queue_stopped(dev))
+	if (!skb->xmit_more || netif_queue_stopped(dev))
 		iowrite16(TM2TX, ioaddr + MTPR);
 	lp->tx_insert_ptr = descptr->vndescp;
 
@@ -849,13 +860,13 @@ static void r6040_multicast_list(struct net_device *dev)
 	unsigned long flags;
 	struct netdev_hw_addr *ha;
 	int i;
-	const u16 *adrp;
+	u16 *adrp;
 	u16 hash_table[4] = { 0 };
 
 	spin_lock_irqsave(&lp->lock, flags);
 
 	/* Keep our MAC Address */
-	adrp = (const u16 *)dev->dev_addr;
+	adrp = (u16 *)dev->dev_addr;
 	iowrite16(adrp[0], ioaddr + MID_0L);
 	iowrite16(adrp[1], ioaddr + MID_0M);
 	iowrite16(adrp[2], ioaddr + MID_0H);
@@ -939,9 +950,9 @@ static void netdev_get_drvinfo(struct net_device *dev,
 {
 	struct r6040_private *rp = netdev_priv(dev);
 
-	strscpy(info->driver, DRV_NAME, sizeof(info->driver));
-	strscpy(info->version, DRV_VERSION, sizeof(info->version));
-	strscpy(info->bus_info, pci_name(rp->pdev), sizeof(info->bus_info));
+	strlcpy(info->driver, DRV_NAME, sizeof(info->driver));
+	strlcpy(info->version, DRV_VERSION, sizeof(info->version));
+	strlcpy(info->bus_info, pci_name(rp->pdev), sizeof(info->bus_info));
 }
 
 static const struct ethtool_ops netdev_ethtool_ops = {
@@ -950,7 +961,6 @@ static const struct ethtool_ops netdev_ethtool_ops = {
 	.get_ts_info		= ethtool_op_get_ts_info,
 	.get_link_ksettings     = phy_ethtool_get_link_ksettings,
 	.set_link_ksettings     = phy_ethtool_set_link_ksettings,
-	.nway_reset		= phy_ethtool_nway_reset,
 };
 
 static const struct net_device_ops r6040_netdev_ops = {
@@ -961,7 +971,7 @@ static const struct net_device_ops r6040_netdev_ops = {
 	.ndo_set_rx_mode	= r6040_multicast_list,
 	.ndo_validate_addr	= eth_validate_addr,
 	.ndo_set_mac_address	= eth_mac_addr,
-	.ndo_eth_ioctl		= phy_do_ioctl,
+	.ndo_do_ioctl		= r6040_ioctl,
 	.ndo_tx_timeout		= r6040_tx_timeout,
 #ifdef CONFIG_NET_POLL_CONTROLLER
 	.ndo_poll_controller	= r6040_poll_controller,
@@ -1014,8 +1024,16 @@ static int r6040_mii_probe(struct net_device *dev)
 		return PTR_ERR(phydev);
 	}
 
-	phy_set_max_speed(phydev, SPEED_100);
+	/* mask with MAC supported features */
+	phydev->supported &= (SUPPORTED_10baseT_Half
+				| SUPPORTED_10baseT_Full
+				| SUPPORTED_100baseT_Half
+				| SUPPORTED_100baseT_Full
+				| SUPPORTED_Autoneg
+				| SUPPORTED_MII
+				| SUPPORTED_TP);
 
+	phydev->advertising = phydev->supported;
 	lp->old_link = 0;
 	lp->old_duplex = -1;
 
@@ -1031,8 +1049,8 @@ static int r6040_init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 	void __iomem *ioaddr;
 	int err, io_size = R6040_IO_SIZE;
 	static int card_idx = -1;
-	u16 addr[ETH_ALEN / 2];
 	int bar = 0;
+	u16 *adrp;
 
 	pr_info("%s\n", version);
 
@@ -1041,12 +1059,12 @@ static int r6040_init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 		goto err_out;
 
 	/* this should always be supported */
-	err = dma_set_mask(&pdev->dev, DMA_BIT_MASK(32));
+	err = pci_set_dma_mask(pdev, DMA_BIT_MASK(32));
 	if (err) {
 		dev_err(&pdev->dev, "32-bit PCI DMA addresses not supported by the card\n");
 		goto err_out_disable_dev;
 	}
-	err = dma_set_coherent_mask(&pdev->dev, DMA_BIT_MASK(32));
+	err = pci_set_consistent_dma_mask(pdev, DMA_BIT_MASK(32));
 	if (err) {
 		dev_err(&pdev->dev, "32-bit PCI DMA addresses not supported by the card\n");
 		goto err_out_disable_dev;
@@ -1102,14 +1120,14 @@ static int r6040_init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 	/* Set MAC address */
 	card_idx++;
 
-	addr[0] = ioread16(ioaddr + MID_0L);
-	addr[1] = ioread16(ioaddr + MID_0M);
-	addr[2] = ioread16(ioaddr + MID_0H);
-	eth_hw_addr_set(dev, (u8 *)addr);
+	adrp = (u16 *)dev->dev_addr;
+	adrp[0] = ioread16(ioaddr + MID_0L);
+	adrp[1] = ioread16(ioaddr + MID_0M);
+	adrp[2] = ioread16(ioaddr + MID_0H);
 
 	/* Some bootloader/BIOSes do not initialize
 	 * MAC address, warn about that */
-	if (!(addr[0] || addr[1] || addr[2])) {
+	if (!(adrp[0] || adrp[1] || adrp[2])) {
 		netdev_warn(dev, "MAC address not initialized, "
 					"generating random\n");
 		eth_hw_addr_random(dev);
@@ -1127,7 +1145,7 @@ static int r6040_init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 	dev->ethtool_ops = &netdev_ethtool_ops;
 	dev->watchdog_timeo = TX_TIMEOUT;
 
-	netif_napi_add(dev, &lp->napi, r6040_poll);
+	netif_napi_add(dev, &lp->napi, r6040_poll, 64);
 
 	lp->mii_bus = mdiobus_alloc();
 	if (!lp->mii_bus) {

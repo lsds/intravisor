@@ -13,6 +13,8 @@
 int check_user_usb_string(const char *name,
 		struct usb_gadget_strings *stringtab_dev)
 {
+	unsigned primary_lang;
+	unsigned sub_lang;
 	u16 num;
 	int ret;
 
@@ -20,7 +22,17 @@ int check_user_usb_string(const char *name,
 	if (ret)
 		return ret;
 
-	if (!usb_validate_langid(num))
+	primary_lang = num & 0x3ff;
+	sub_lang = num >> 10;
+
+	/* simple sanity check for valid langid */
+	switch (primary_lang) {
+	case 0:
+	case 0x62 ... 0xfe:
+	case 0x100 ... 0x3ff:
+		return -EINVAL;
+	}
+	if (!sub_lang)
 		return -EINVAL;
 
 	stringtab_dev->language = num;
@@ -49,13 +61,11 @@ struct gadget_info {
 	bool use_os_desc;
 	char b_vendor_code;
 	char qw_sign[OS_STRING_QW_SIGN_LEN];
-	spinlock_t spinlock;
-	bool unbind;
 };
 
 static inline struct gadget_info *to_gadget_info(struct config_item *item)
 {
-	return container_of(to_config_group(item), struct gadget_info, group);
+	 return container_of(to_config_group(item), struct gadget_info, group);
 }
 
 struct config_usb_cfg {
@@ -73,11 +83,6 @@ static inline struct config_usb_cfg *to_config_usb_cfg(struct config_item *item)
 			group);
 }
 
-static inline struct gadget_info *cfg_to_gadget_info(struct config_usb_cfg *cfg)
-{
-	return container_of(cfg->c.cdev, struct gadget_info, cdev);
-}
-
 struct gadget_strings {
 	struct usb_gadget_strings stringtab_dev;
 	struct usb_string strings[USB_GADGET_FIRST_AVAIL_IDX];
@@ -89,6 +94,10 @@ struct gadget_strings {
 	struct list_head list;
 };
 
+struct os_desc {
+	struct config_group group;
+};
+
 struct gadget_config_name {
 	struct usb_gadget_strings stringtab_dev;
 	struct usb_string strings;
@@ -98,27 +107,21 @@ struct gadget_config_name {
 	struct list_head list;
 };
 
-#define USB_MAX_STRING_WITH_NULL_LEN	(USB_MAX_STRING_LEN+1)
-
 static int usb_string_copy(const char *s, char **s_copy)
 {
 	int ret;
 	char *str;
 	char *copy = *s_copy;
 	ret = strlen(s);
-	if (ret > USB_MAX_STRING_LEN)
+	if (ret > 126)
 		return -EOVERFLOW;
 
-	if (copy) {
-		str = copy;
-	} else {
-		str = kmalloc(USB_MAX_STRING_WITH_NULL_LEN, GFP_KERNEL);
-		if (!str)
-			return -ENOMEM;
-	}
-	strcpy(str, s);
+	str = kstrdup(s, GFP_KERNEL);
+	if (!str)
+		return -ENOMEM;
 	if (str[ret - 1] == '\n')
 		str[ret - 1] = '\0';
+	kfree(copy);
 	*s_copy = str;
 	return 0;
 }
@@ -228,16 +231,9 @@ static ssize_t gadget_dev_desc_bcdUSB_store(struct config_item *item,
 
 static ssize_t gadget_dev_desc_UDC_show(struct config_item *item, char *page)
 {
-	struct gadget_info *gi = to_gadget_info(item);
-	char *udc_name;
-	int ret;
+	char *udc_name = to_gadget_info(item)->composite.gadget_driver.udc_name;
 
-	mutex_lock(&gi->lock);
-	udc_name = gi->composite.gadget_driver.udc_name;
-	ret = sprintf(page, "%s\n", udc_name ?: "");
-	mutex_unlock(&gi->lock);
-
-	return ret;
+	return sprintf(page, "%s\n", udc_name ?: "");
 }
 
 static int unregister_gadget(struct gadget_info *gi)
@@ -262,9 +258,6 @@ static ssize_t gadget_dev_desc_UDC_store(struct config_item *item,
 	char *name;
 	int ret;
 
-	if (strlen(page) < len)
-		return -EOVERFLOW;
-
 	name = kstrdup(page, GFP_KERNEL);
 	if (!name)
 		return -ENOMEM;
@@ -284,7 +277,7 @@ static ssize_t gadget_dev_desc_UDC_store(struct config_item *item,
 			goto err;
 		}
 		gi->composite.gadget_driver.udc_name = name;
-		ret = usb_gadget_register_driver(&gi->composite.gadget_driver);
+		ret = usb_gadget_probe_driver(&gi->composite.gadget_driver);
 		if (ret) {
 			gi->composite.gadget_driver.udc_name = NULL;
 			goto err;
@@ -298,47 +291,6 @@ err:
 	return ret;
 }
 
-static ssize_t gadget_dev_desc_max_speed_show(struct config_item *item,
-					      char *page)
-{
-	enum usb_device_speed speed = to_gadget_info(item)->composite.max_speed;
-
-	return sprintf(page, "%s\n", usb_speed_string(speed));
-}
-
-static ssize_t gadget_dev_desc_max_speed_store(struct config_item *item,
-					       const char *page, size_t len)
-{
-	struct gadget_info *gi = to_gadget_info(item);
-
-	mutex_lock(&gi->lock);
-
-	/* Prevent changing of max_speed after the driver is binded */
-	if (gi->composite.gadget_driver.udc_name)
-		goto err;
-
-	if (strncmp(page, "super-speed-plus", 16) == 0)
-		gi->composite.max_speed = USB_SPEED_SUPER_PLUS;
-	else if (strncmp(page, "super-speed", 11) == 0)
-		gi->composite.max_speed = USB_SPEED_SUPER;
-	else if (strncmp(page, "high-speed", 10) == 0)
-		gi->composite.max_speed = USB_SPEED_HIGH;
-	else if (strncmp(page, "full-speed", 10) == 0)
-		gi->composite.max_speed = USB_SPEED_FULL;
-	else if (strncmp(page, "low-speed", 9) == 0)
-		gi->composite.max_speed = USB_SPEED_LOW;
-	else
-		goto err;
-
-	gi->composite.gadget_driver.max_speed = gi->composite.max_speed;
-
-	mutex_unlock(&gi->lock);
-	return len;
-err:
-	mutex_unlock(&gi->lock);
-	return -EINVAL;
-}
-
 CONFIGFS_ATTR(gadget_dev_desc_, bDeviceClass);
 CONFIGFS_ATTR(gadget_dev_desc_, bDeviceSubClass);
 CONFIGFS_ATTR(gadget_dev_desc_, bDeviceProtocol);
@@ -348,7 +300,6 @@ CONFIGFS_ATTR(gadget_dev_desc_, idProduct);
 CONFIGFS_ATTR(gadget_dev_desc_, bcdDevice);
 CONFIGFS_ATTR(gadget_dev_desc_, bcdUSB);
 CONFIGFS_ATTR(gadget_dev_desc_, UDC);
-CONFIGFS_ATTR(gadget_dev_desc_, max_speed);
 
 static struct configfs_attribute *gadget_root_attrs[] = {
 	&gadget_dev_desc_attr_bDeviceClass,
@@ -360,27 +311,26 @@ static struct configfs_attribute *gadget_root_attrs[] = {
 	&gadget_dev_desc_attr_bcdDevice,
 	&gadget_dev_desc_attr_bcdUSB,
 	&gadget_dev_desc_attr_UDC,
-	&gadget_dev_desc_attr_max_speed,
 	NULL,
 };
 
 static inline struct gadget_strings *to_gadget_strings(struct config_item *item)
 {
-	return container_of(to_config_group(item), struct gadget_strings,
+	 return container_of(to_config_group(item), struct gadget_strings,
 			 group);
 }
 
 static inline struct gadget_config_name *to_gadget_config_name(
 		struct config_item *item)
 {
-	return container_of(to_config_group(item), struct gadget_config_name,
+	 return container_of(to_config_group(item), struct gadget_config_name,
 			 group);
 }
 
 static inline struct usb_function_instance *to_usb_function_instance(
 		struct config_item *item)
 {
-	return container_of(to_config_group(item),
+	 return container_of(to_config_group(item),
 			 struct usb_function_instance, group);
 }
 
@@ -414,11 +364,13 @@ static int config_usb_cfg_link(
 	struct config_item *usb_func_ci)
 {
 	struct config_usb_cfg *cfg = to_config_usb_cfg(usb_cfg_ci);
-	struct gadget_info *gi = cfg_to_gadget_info(cfg);
+	struct usb_composite_dev *cdev = cfg->c.cdev;
+	struct gadget_info *gi = container_of(cdev, struct gadget_info, cdev);
 
-	struct usb_function_instance *fi =
-			to_usb_function_instance(usb_func_ci);
-	struct usb_function_instance *a_fi = NULL, *iter;
+	struct config_group *group = to_config_group(usb_func_ci);
+	struct usb_function_instance *fi = container_of(group,
+			struct usb_function_instance, group);
+	struct usb_function_instance *a_fi;
 	struct usb_function *f;
 	int ret;
 
@@ -428,13 +380,11 @@ static int config_usb_cfg_link(
 	 * from another gadget or a random directory.
 	 * Also a function instance can only be linked once.
 	 */
-	list_for_each_entry(iter, &gi->available_func, cfs_list) {
-		if (iter != fi)
-			continue;
-		a_fi = iter;
-		break;
+	list_for_each_entry(a_fi, &gi->available_func, cfs_list) {
+		if (a_fi == fi)
+			break;
 	}
-	if (!a_fi) {
+	if (a_fi != fi) {
 		ret = -EINVAL;
 		goto out;
 	}
@@ -465,10 +415,12 @@ static void config_usb_cfg_unlink(
 	struct config_item *usb_func_ci)
 {
 	struct config_usb_cfg *cfg = to_config_usb_cfg(usb_cfg_ci);
-	struct gadget_info *gi = cfg_to_gadget_info(cfg);
+	struct usb_composite_dev *cdev = cfg->c.cdev;
+	struct gadget_info *gi = container_of(cdev, struct gadget_info, cdev);
 
-	struct usb_function_instance *fi =
-			to_usb_function_instance(usb_func_ci);
+	struct config_group *group = to_config_group(usb_func_ci);
+	struct usb_function_instance *fi = container_of(group,
+			struct usb_function_instance, group);
 	struct usb_function *f;
 
 	/*
@@ -504,15 +456,12 @@ static struct configfs_item_operations gadget_config_item_ops = {
 static ssize_t gadget_config_desc_MaxPower_show(struct config_item *item,
 		char *page)
 {
-	struct config_usb_cfg *cfg = to_config_usb_cfg(item);
-
-	return sprintf(page, "%u\n", cfg->c.MaxPower);
+	return sprintf(page, "%u\n", to_config_usb_cfg(item)->c.MaxPower);
 }
 
 static ssize_t gadget_config_desc_MaxPower_store(struct config_item *item,
 		const char *page, size_t len)
 {
-	struct config_usb_cfg *cfg = to_config_usb_cfg(item);
 	u16 val;
 	int ret;
 	ret = kstrtou16(page, 0, &val);
@@ -520,22 +469,20 @@ static ssize_t gadget_config_desc_MaxPower_store(struct config_item *item,
 		return ret;
 	if (DIV_ROUND_UP(val, 8) > 0xff)
 		return -ERANGE;
-	cfg->c.MaxPower = val;
+	to_config_usb_cfg(item)->c.MaxPower = val;
 	return len;
 }
 
 static ssize_t gadget_config_desc_bmAttributes_show(struct config_item *item,
 		char *page)
 {
-	struct config_usb_cfg *cfg = to_config_usb_cfg(item);
-
-	return sprintf(page, "0x%02x\n", cfg->c.bmAttributes);
+	return sprintf(page, "0x%02x\n",
+		to_config_usb_cfg(item)->c.bmAttributes);
 }
 
 static ssize_t gadget_config_desc_bmAttributes_store(struct config_item *item,
 		const char *page, size_t len)
 {
-	struct config_usb_cfg *cfg = to_config_usb_cfg(item);
 	u8 val;
 	int ret;
 	ret = kstrtou8(page, 0, &val);
@@ -546,7 +493,7 @@ static ssize_t gadget_config_desc_bmAttributes_store(struct config_item *item,
 	if (val & ~(USB_CONFIG_ATT_ONE | USB_CONFIG_ATT_SELFPOWER |
 				USB_CONFIG_ATT_WAKEUP))
 		return -EINVAL;
-	cfg->c.bmAttributes = val;
+	to_config_usb_cfg(item)->c.bmAttributes = val;
 	return len;
 }
 
@@ -779,11 +726,15 @@ static void gadget_strings_attr_release(struct config_item *item)
 USB_CONFIG_STRING_RW_OPS(gadget_strings);
 USB_CONFIG_STRINGS_LANG(gadget_strings, gadget_info);
 
+static inline struct os_desc *to_os_desc(struct config_item *item)
+{
+	return container_of(to_config_group(item), struct os_desc, group);
+}
+
 static inline struct gadget_info *os_desc_item_to_gadget_info(
 		struct config_item *item)
 {
-	return container_of(to_config_group(item),
-			struct gadget_info, os_desc_group);
+	return to_gadget_info(to_os_desc(item)->group.cg_item.ci_parent);
 }
 
 static ssize_t os_desc_use_show(struct config_item *item, char *page)
@@ -878,23 +829,30 @@ static struct configfs_attribute *os_desc_attrs[] = {
 	NULL,
 };
 
+static void os_desc_attr_release(struct config_item *item)
+{
+	struct os_desc *os_desc = to_os_desc(item);
+	kfree(os_desc);
+}
+
 static int os_desc_link(struct config_item *os_desc_ci,
 			struct config_item *usb_cfg_ci)
 {
-	struct gadget_info *gi = os_desc_item_to_gadget_info(os_desc_ci);
+	struct gadget_info *gi = container_of(to_config_group(os_desc_ci),
+					struct gadget_info, os_desc_group);
 	struct usb_composite_dev *cdev = &gi->cdev;
-	struct config_usb_cfg *c_target = to_config_usb_cfg(usb_cfg_ci);
-	struct usb_configuration *c = NULL, *iter;
+	struct config_usb_cfg *c_target =
+		container_of(to_config_group(usb_cfg_ci),
+			     struct config_usb_cfg, group);
+	struct usb_configuration *c;
 	int ret;
 
 	mutex_lock(&gi->lock);
-	list_for_each_entry(iter, &cdev->configs, list) {
-		if (iter != &c_target->c)
-			continue;
-		c = iter;
-		break;
+	list_for_each_entry(c, &cdev->configs, list) {
+		if (c == &c_target->c)
+			break;
 	}
-	if (!c) {
+	if (c != &c_target->c) {
 		ret = -EINVAL;
 		goto out;
 	}
@@ -915,7 +873,8 @@ out:
 static void os_desc_unlink(struct config_item *os_desc_ci,
 			  struct config_item *usb_cfg_ci)
 {
-	struct gadget_info *gi = os_desc_item_to_gadget_info(os_desc_ci);
+	struct gadget_info *gi = container_of(to_config_group(os_desc_ci),
+					struct gadget_info, os_desc_group);
 	struct usb_composite_dev *cdev = &gi->cdev;
 
 	mutex_lock(&gi->lock);
@@ -927,6 +886,7 @@ static void os_desc_unlink(struct config_item *os_desc_ci,
 }
 
 static struct configfs_item_operations os_desc_ops = {
+	.release                = os_desc_attr_release,
 	.allow_link		= os_desc_link,
 	.drop_link		= os_desc_unlink,
 };
@@ -1252,13 +1212,13 @@ static void purge_configs_funcs(struct gadget_info *gi)
 
 		cfg = container_of(c, struct config_usb_cfg, c);
 
-		list_for_each_entry_safe_reverse(f, tmp, &c->functions, list) {
+		list_for_each_entry_safe(f, tmp, &c->functions, list) {
 
-			list_move(&f->list, &cfg->func_list);
+			list_move_tail(&f->list, &cfg->func_list);
 			if (f->unbind) {
 				dev_dbg(&gi->cdev.gadget->dev,
-					"unbind function '%s'/%p\n",
-					f->name, f);
+				         "unbind function '%s'/%p\n",
+				         f->name, f);
 				f->unbind(c, f);
 			}
 		}
@@ -1284,7 +1244,6 @@ static int configfs_composite_bind(struct usb_gadget *gadget,
 	int				ret;
 
 	/* the gi->lock is hold by the caller */
-	gi->unbind = 0;
 	cdev->gadget = gadget;
 	set_gadget_data(gadget, cdev);
 	ret = composite_dev_prepare(composite, cdev);
@@ -1395,10 +1354,6 @@ static int configfs_composite_bind(struct usb_gadget *gadget,
 				goto err_purge_funcs;
 			}
 		}
-		ret = usb_gadget_check_config(cdev->gadget);
-		if (ret)
-			goto err_purge_funcs;
-
 		usb_ep_autoconfig_reset(cdev->gadget);
 	}
 	if (cdev->use_os_string) {
@@ -1421,154 +1376,33 @@ static void configfs_composite_unbind(struct usb_gadget *gadget)
 {
 	struct usb_composite_dev	*cdev;
 	struct gadget_info		*gi;
-	unsigned long flags;
 
 	/* the gi->lock is hold by the caller */
 
 	cdev = get_gadget_data(gadget);
 	gi = container_of(cdev, struct gadget_info, cdev);
-	spin_lock_irqsave(&gi->spinlock, flags);
-	gi->unbind = 1;
-	spin_unlock_irqrestore(&gi->spinlock, flags);
 
 	kfree(otg_desc[0]);
 	otg_desc[0] = NULL;
 	purge_configs_funcs(gi);
 	composite_dev_cleanup(cdev);
 	usb_ep_autoconfig_reset(cdev->gadget);
-	spin_lock_irqsave(&gi->spinlock, flags);
 	cdev->gadget = NULL;
-	cdev->deactivations = 0;
-	gadget->deactivated = false;
 	set_gadget_data(gadget, NULL);
-	spin_unlock_irqrestore(&gi->spinlock, flags);
-}
-
-static int configfs_composite_setup(struct usb_gadget *gadget,
-		const struct usb_ctrlrequest *ctrl)
-{
-	struct usb_composite_dev *cdev;
-	struct gadget_info *gi;
-	unsigned long flags;
-	int ret;
-
-	cdev = get_gadget_data(gadget);
-	if (!cdev)
-		return 0;
-
-	gi = container_of(cdev, struct gadget_info, cdev);
-	spin_lock_irqsave(&gi->spinlock, flags);
-	cdev = get_gadget_data(gadget);
-	if (!cdev || gi->unbind) {
-		spin_unlock_irqrestore(&gi->spinlock, flags);
-		return 0;
-	}
-
-	ret = composite_setup(gadget, ctrl);
-	spin_unlock_irqrestore(&gi->spinlock, flags);
-	return ret;
-}
-
-static void configfs_composite_disconnect(struct usb_gadget *gadget)
-{
-	struct usb_composite_dev *cdev;
-	struct gadget_info *gi;
-	unsigned long flags;
-
-	cdev = get_gadget_data(gadget);
-	if (!cdev)
-		return;
-
-	gi = container_of(cdev, struct gadget_info, cdev);
-	spin_lock_irqsave(&gi->spinlock, flags);
-	cdev = get_gadget_data(gadget);
-	if (!cdev || gi->unbind) {
-		spin_unlock_irqrestore(&gi->spinlock, flags);
-		return;
-	}
-
-	composite_disconnect(gadget);
-	spin_unlock_irqrestore(&gi->spinlock, flags);
-}
-
-static void configfs_composite_reset(struct usb_gadget *gadget)
-{
-	struct usb_composite_dev *cdev;
-	struct gadget_info *gi;
-	unsigned long flags;
-
-	cdev = get_gadget_data(gadget);
-	if (!cdev)
-		return;
-
-	gi = container_of(cdev, struct gadget_info, cdev);
-	spin_lock_irqsave(&gi->spinlock, flags);
-	cdev = get_gadget_data(gadget);
-	if (!cdev || gi->unbind) {
-		spin_unlock_irqrestore(&gi->spinlock, flags);
-		return;
-	}
-
-	composite_reset(gadget);
-	spin_unlock_irqrestore(&gi->spinlock, flags);
-}
-
-static void configfs_composite_suspend(struct usb_gadget *gadget)
-{
-	struct usb_composite_dev *cdev;
-	struct gadget_info *gi;
-	unsigned long flags;
-
-	cdev = get_gadget_data(gadget);
-	if (!cdev)
-		return;
-
-	gi = container_of(cdev, struct gadget_info, cdev);
-	spin_lock_irqsave(&gi->spinlock, flags);
-	cdev = get_gadget_data(gadget);
-	if (!cdev || gi->unbind) {
-		spin_unlock_irqrestore(&gi->spinlock, flags);
-		return;
-	}
-
-	composite_suspend(gadget);
-	spin_unlock_irqrestore(&gi->spinlock, flags);
-}
-
-static void configfs_composite_resume(struct usb_gadget *gadget)
-{
-	struct usb_composite_dev *cdev;
-	struct gadget_info *gi;
-	unsigned long flags;
-
-	cdev = get_gadget_data(gadget);
-	if (!cdev)
-		return;
-
-	gi = container_of(cdev, struct gadget_info, cdev);
-	spin_lock_irqsave(&gi->spinlock, flags);
-	cdev = get_gadget_data(gadget);
-	if (!cdev || gi->unbind) {
-		spin_unlock_irqrestore(&gi->spinlock, flags);
-		return;
-	}
-
-	composite_resume(gadget);
-	spin_unlock_irqrestore(&gi->spinlock, flags);
 }
 
 static const struct usb_gadget_driver configfs_driver_template = {
 	.bind           = configfs_composite_bind,
 	.unbind         = configfs_composite_unbind,
 
-	.setup          = configfs_composite_setup,
-	.reset          = configfs_composite_reset,
-	.disconnect     = configfs_composite_disconnect,
+	.setup          = composite_setup,
+	.reset          = composite_disconnect,
+	.disconnect     = composite_disconnect,
 
-	.suspend	= configfs_composite_suspend,
-	.resume		= configfs_composite_resume,
+	.suspend	= composite_suspend,
+	.resume		= composite_resume,
 
-	.max_speed	= USB_SPEED_SUPER_PLUS,
+	.max_speed	= USB_SPEED_SUPER,
 	.driver = {
 		.owner          = THIS_MODULE,
 		.name		= "configfs-gadget",
@@ -1608,9 +1442,8 @@ static struct config_group *gadgets_make(
 	gi->composite.unbind = configfs_do_nothing;
 	gi->composite.suspend = NULL;
 	gi->composite.resume = NULL;
-	gi->composite.max_speed = USB_SPEED_SUPER_PLUS;
+	gi->composite.max_speed = USB_SPEED_SUPER;
 
-	spin_lock_init(&gi->spinlock);
 	mutex_init(&gi->lock);
 	INIT_LIST_HEAD(&gi->string_list);
 	INIT_LIST_HEAD(&gi->available_func);

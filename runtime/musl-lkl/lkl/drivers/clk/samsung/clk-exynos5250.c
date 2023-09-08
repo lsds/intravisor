@@ -1,17 +1,20 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2013 Samsung Electronics Co., Ltd.
  * Copyright (c) 2013 Linaro Ltd.
  * Author: Thomas Abraham <thomas.ab@samsung.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  *
  * Common Clock Framework support for Exynos5250 SoC.
 */
 
 #include <dt-bindings/clock/exynos5250.h>
 #include <linux/clk-provider.h>
-#include <linux/io.h>
 #include <linux/of.h>
 #include <linux/of_address.h>
+#include <linux/syscore_ops.h>
 
 #include "clk.h"
 #include "clk-cpu.h"
@@ -108,6 +111,9 @@ enum exynos5250_plls {
 
 static void __iomem *reg_base;
 
+#ifdef CONFIG_PM_SLEEP
+static struct samsung_clk_reg_dump *exynos5250_save;
+
 /*
  * list of controller registers to be saved and restored during a
  * suspend/resume cycle.
@@ -165,6 +171,41 @@ static const unsigned long exynos5250_clk_regs[] __initconst = {
 	GATE_IP_ISP0,
 	GATE_IP_ISP1,
 };
+
+static int exynos5250_clk_suspend(void)
+{
+	samsung_clk_save(reg_base, exynos5250_save,
+				ARRAY_SIZE(exynos5250_clk_regs));
+
+	return 0;
+}
+
+static void exynos5250_clk_resume(void)
+{
+	samsung_clk_restore(reg_base, exynos5250_save,
+				ARRAY_SIZE(exynos5250_clk_regs));
+}
+
+static struct syscore_ops exynos5250_clk_syscore_ops = {
+	.suspend = exynos5250_clk_suspend,
+	.resume = exynos5250_clk_resume,
+};
+
+static void __init exynos5250_clk_sleep_init(void)
+{
+	exynos5250_save = samsung_clk_alloc_reg_dump(exynos5250_clk_regs,
+					ARRAY_SIZE(exynos5250_clk_regs));
+	if (!exynos5250_save) {
+		pr_warn("%s: failed to allocate sleep save data, no sleep support!\n",
+			__func__);
+		return;
+	}
+
+	register_syscore_ops(&exynos5250_clk_syscore_ops);
+}
+#else
+static void __init exynos5250_clk_sleep_init(void) {}
+#endif
 
 /* list of all parent clock list */
 PNAME(mout_apll_p)	= { "fin_pll", "fout_apll", };
@@ -239,7 +280,7 @@ static const struct samsung_fixed_factor_clock exynos5250_fixed_factor_clks[] __
 };
 
 static const struct samsung_mux_clock exynos5250_pll_pmux_clks[] __initconst = {
-	MUX(CLK_MOUT_VPLLSRC, "mout_vpllsrc", mout_vpllsrc_p, SRC_TOP2, 0, 1),
+	MUX(0, "mout_vpllsrc", mout_vpllsrc_p, SRC_TOP2, 0, 1),
 };
 
 static const struct samsung_mux_clock exynos5250_mux_clks[] __initconst = {
@@ -253,14 +294,14 @@ static const struct samsung_mux_clock exynos5250_mux_clks[] __initconst = {
 	/*
 	 * CMU_CPU
 	 */
-	MUX_F(CLK_MOUT_APLL, "mout_apll", mout_apll_p, SRC_CPU, 0, 1,
+	MUX_F(0, "mout_apll", mout_apll_p, SRC_CPU, 0, 1,
 					CLK_SET_RATE_PARENT, 0),
 	MUX(0, "mout_cpu", mout_cpu_p, SRC_CPU, 16, 1),
 
 	/*
 	 * CMU_CORE
 	 */
-	MUX(CLK_MOUT_MPLL, "mout_mpll", mout_mpll_p, SRC_CORE1, 8, 1),
+	MUX(0, "mout_mpll", mout_mpll_p, SRC_CORE1, 8, 1),
 
 	/*
 	 * CMU_TOP
@@ -351,7 +392,7 @@ static const struct samsung_div_clock exynos5250_div_clks[] __initconst = {
 	 */
 	DIV(0, "div_arm", "mout_cpu", DIV_CPU0, 0, 3),
 	DIV(0, "div_apll", "mout_apll", DIV_CPU0, 24, 3),
-	DIV(CLK_DIV_ARM2, "div_arm2", "div_arm", DIV_CPU0, 28, 3),
+	DIV(0, "div_arm2", "div_arm", DIV_CPU0, 28, 3),
 
 	/*
 	 * CMU_TOP
@@ -681,10 +722,6 @@ static const struct exynos5_subcmu_info exynos5250_disp_subcmu = {
 	.pd_name	= "DISP1",
 };
 
-static const struct exynos5_subcmu_info *exynos5250_subcmus[] = {
-	&exynos5250_disp_subcmu,
-};
-
 static const struct samsung_pll_rate_table vpll_24mhz_tbl[] __initconst = {
 	/* sorted in descending order */
 	/* PLL_36XX_RATE(rate, m, p, s, k) */
@@ -772,11 +809,6 @@ static const struct exynos_cpuclk_cfg_data exynos5250_armclk_d[] __initconst = {
 	{  0 },
 };
 
-static const struct samsung_cpu_clock exynos5250_cpu_clks[] __initconst = {
-	CPU_CLK(CLK_ARM_CLK, "armclk", CLK_MOUT_APLL, CLK_MOUT_MPLL, CLK_CPU_HAS_DIV1, 0x200,
-			exynos5250_armclk_d),
-};
-
 static const struct of_device_id ext_clk_match[] __initconst = {
 	{ .compatible = "samsung,clock-xxti", .data = (void *)0, },
 	{ },
@@ -787,7 +819,6 @@ static void __init exynos5250_clk_init(struct device_node *np)
 {
 	struct samsung_clk_provider *ctx;
 	unsigned int tmp;
-	struct clk_hw **hws;
 
 	if (np) {
 		reg_base = of_iomap(np, 0);
@@ -798,7 +829,6 @@ static void __init exynos5250_clk_init(struct device_node *np)
 	}
 
 	ctx = samsung_clk_init(np, reg_base, CLK_NR_CLKS);
-	hws = ctx->clk_data.hws;
 
 	samsung_clk_of_register_fixed_ext(ctx, exynos5250_fixed_rate_ext_clks,
 			ARRAY_SIZE(exynos5250_fixed_rate_ext_clks),
@@ -806,12 +836,12 @@ static void __init exynos5250_clk_init(struct device_node *np)
 	samsung_clk_register_mux(ctx, exynos5250_pll_pmux_clks,
 				ARRAY_SIZE(exynos5250_pll_pmux_clks));
 
-	if (clk_hw_get_rate(hws[CLK_FIN_PLL]) == 24 * MHZ) {
+	if (_get_rate("fin_pll") == 24 * MHZ) {
 		exynos5250_plls[epll].rate_table = epll_24mhz_tbl;
 		exynos5250_plls[apll].rate_table = apll_24mhz_tbl;
 	}
 
-	if (clk_hw_get_rate(hws[CLK_MOUT_VPLLSRC]) == 24 * MHZ)
+	if (_get_rate("mout_vpllsrc") == 24 * MHZ)
 		exynos5250_plls[vpll].rate_table =  vpll_24mhz_tbl;
 
 	samsung_clk_register_pll(ctx, exynos5250_plls,
@@ -827,8 +857,10 @@ static void __init exynos5250_clk_init(struct device_node *np)
 			ARRAY_SIZE(exynos5250_div_clks));
 	samsung_clk_register_gate(ctx, exynos5250_gate_clks,
 			ARRAY_SIZE(exynos5250_gate_clks));
-	samsung_clk_register_cpu(ctx, exynos5250_cpu_clks,
-			ARRAY_SIZE(exynos5250_cpu_clks));
+	exynos_register_cpu_clock(ctx, CLK_ARM_CLK, "armclk",
+			mout_cpu_p[0], mout_cpu_p[1], 0x200,
+			exynos5250_armclk_d, ARRAY_SIZE(exynos5250_armclk_d),
+			CLK_CPU_HAS_DIV1);
 
 	/*
 	 * Enable arm clock down (in idle) and set arm divider
@@ -850,14 +882,12 @@ static void __init exynos5250_clk_init(struct device_node *np)
 		PWR_CTRL2_CORE2_UP_RATIO | PWR_CTRL2_CORE1_UP_RATIO);
 	__raw_writel(tmp, reg_base + PWR_CTRL2);
 
-	samsung_clk_sleep_init(reg_base, exynos5250_clk_regs,
-			       ARRAY_SIZE(exynos5250_clk_regs));
-	exynos5_subcmus_init(ctx, ARRAY_SIZE(exynos5250_subcmus),
-			     exynos5250_subcmus);
+	exynos5250_clk_sleep_init();
+	exynos5_subcmus_init(ctx, 1, &exynos5250_disp_subcmu);
 
 	samsung_clk_of_add_provider(np, ctx);
 
 	pr_info("Exynos5250: clock setup completed, armclk=%ld\n",
-		clk_hw_get_rate(hws[CLK_DIV_ARM2]));
+			_get_rate("div_arm2"));
 }
 CLK_OF_DECLARE_DRIVER(exynos5250_clk, "samsung,exynos5250-clock", exynos5250_clk_init);

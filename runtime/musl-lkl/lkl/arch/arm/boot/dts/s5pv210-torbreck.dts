@@ -30,13 +30,6 @@
 		device_type = "memory";
 		reg = <0x20000000 0x20000000>;
 	};
-
-	pmic_ap_clk: clock-0 {
-		/* Workaround for missing PMIC and its clock */
-		compatible = "fixed-clock";
-		#clock-cells = <0>;
-		clock-frequency = <32768>;
-	};
 };
 
 &xusbxti {
@@ -61,8 +54,6 @@
 
 &rtc {
 	status = "okay";
-	clocks = <&clocks CLK_RTC>, <&pmic_ap_clk>;
-	clock-names = "rtc", "rtc_src";
 };
 
 &sdhci0 {

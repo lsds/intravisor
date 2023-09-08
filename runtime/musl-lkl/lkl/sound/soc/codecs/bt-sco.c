@@ -1,7 +1,12 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Driver for generic Bluetooth SCO link
  * Copyright 2011 Lars-Peter Clausen <lars@metafoo.de>
+ *
+ *  This program is free software; you can redistribute  it and/or modify it
+ *  under  the terms of  the GNU General  Public License as published by the
+ *  Free Software Foundation;  either version 2 of the  License, or (at your
+ *  option) any later version.
+ *
  */
 
 #include <linux/init.h>
@@ -13,15 +18,11 @@
 static const struct snd_soc_dapm_widget bt_sco_widgets[] = {
 	SND_SOC_DAPM_INPUT("RX"),
 	SND_SOC_DAPM_OUTPUT("TX"),
-	SND_SOC_DAPM_AIF_IN("BT_SCO_RX", "Playback", 0,
-			    SND_SOC_NOPM, 0, 0),
-	SND_SOC_DAPM_AIF_OUT("BT_SCO_TX", "Capture", 0,
-			     SND_SOC_NOPM, 0, 0),
 };
 
 static const struct snd_soc_dapm_route bt_sco_routes[] = {
-	{ "BT_SCO_TX", NULL, "RX" },
-	{ "TX", NULL, "BT_SCO_RX" },
+	{ "Capture", NULL, "RX" },
+	{ "TX", NULL, "Playback" },
 };
 
 static struct snd_soc_dai_driver bt_sco_dai[] = {
@@ -69,6 +70,7 @@ static const struct snd_soc_component_driver soc_component_dev_bt_sco = {
 	.idle_bias_on		= 1,
 	.use_pmdown_time	= 1,
 	.endianness		= 1,
+	.non_legacy_dai_naming	= 1,
 };
 
 static int bt_sco_probe(struct platform_device *pdev)

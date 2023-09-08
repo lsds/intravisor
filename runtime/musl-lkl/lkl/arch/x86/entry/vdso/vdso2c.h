@@ -5,52 +5,18 @@
  * are built for 32-bit userspace.
  */
 
-static void BITSFUNC(copy)(FILE *outfile, const unsigned char *data, size_t len)
-{
-	size_t i;
-
-	for (i = 0; i < len; i++) {
-		if (i % 10 == 0)
-			fprintf(outfile, "\n\t");
-		fprintf(outfile, "0x%02X, ", (int)(data)[i]);
-	}
-}
-
-
-/*
- * Extract a section from the input data into a standalone blob.  Used to
- * capture kernel-only data that needs to persist indefinitely, e.g. the
- * exception fixup tables, but only in the kernel, i.e. the section can
- * be stripped from the final vDSO image.
- */
-static void BITSFUNC(extract)(const unsigned char *data, size_t data_len,
-			      FILE *outfile, ELF(Shdr) *sec, const char *name)
-{
-	unsigned long offset;
-	size_t len;
-
-	offset = (unsigned long)GET_LE(&sec->sh_offset);
-	len = (size_t)GET_LE(&sec->sh_size);
-
-	if (offset + len > data_len)
-		fail("section to extract overruns input data");
-
-	fprintf(outfile, "static const unsigned char %s[%zu] = {", name, len);
-	BITSFUNC(copy)(outfile, data + offset, len);
-	fprintf(outfile, "\n};\n\n");
-}
-
 static void BITSFUNC(go)(void *raw_addr, size_t raw_len,
 			 void *stripped_addr, size_t stripped_len,
-			 FILE *outfile, const char *image_name)
+			 FILE *outfile, const char *name)
 {
 	int found_load = 0;
 	unsigned long load_size = -1;  /* Work around bogus warning */
 	unsigned long mapping_size;
 	ELF(Ehdr) *hdr = (ELF(Ehdr) *)raw_addr;
-	unsigned long i, syms_nr;
+	int i;
+	unsigned long j;
 	ELF(Shdr) *symtab_hdr = NULL, *strtab_hdr, *secstrings_hdr,
-		*alt_sec = NULL, *extable_sec = NULL;
+		*alt_sec = NULL;
 	ELF(Dyn) *dyn = 0, *dyn_end = 0;
 	const char *secstrings;
 	INT_BITS syms[NSYMS] = {};
@@ -112,8 +78,6 @@ static void BITSFUNC(go)(void *raw_addr, size_t raw_len,
 		if (!strcmp(secstrings + GET_LE(&sh->sh_name),
 			    ".altinstructions"))
 			alt_sec = sh;
-		if (!strcmp(secstrings + GET_LE(&sh->sh_name), "__ex_table"))
-			extable_sec = sh;
 	}
 
 	if (!symtab_hdr)
@@ -122,18 +86,18 @@ static void BITSFUNC(go)(void *raw_addr, size_t raw_len,
 	strtab_hdr = raw_addr + GET_LE(&hdr->e_shoff) +
 		GET_LE(&hdr->e_shentsize) * GET_LE(&symtab_hdr->sh_link);
 
-	syms_nr = GET_LE(&symtab_hdr->sh_size) / GET_LE(&symtab_hdr->sh_entsize);
 	/* Walk the symbol table */
-	for (i = 0; i < syms_nr; i++) {
-		unsigned int k;
+	for (i = 0;
+	     i < GET_LE(&symtab_hdr->sh_size) / GET_LE(&symtab_hdr->sh_entsize);
+	     i++) {
+		int k;
 		ELF(Sym) *sym = raw_addr + GET_LE(&symtab_hdr->sh_offset) +
 			GET_LE(&symtab_hdr->sh_entsize) * i;
-		const char *sym_name = raw_addr +
-				       GET_LE(&strtab_hdr->sh_offset) +
-				       GET_LE(&sym->st_name);
+		const char *name = raw_addr + GET_LE(&strtab_hdr->sh_offset) +
+			GET_LE(&sym->st_name);
 
 		for (k = 0; k < NSYMS; k++) {
-			if (!strcmp(sym_name, required_syms[k].name)) {
+			if (!strcmp(name, required_syms[k].name)) {
 				if (syms[k]) {
 					fail("duplicate symbol %s\n",
 					     required_syms[k].name);
@@ -170,7 +134,7 @@ static void BITSFUNC(go)(void *raw_addr, size_t raw_len,
 	if (syms[sym_vvar_start] % 4096)
 		fail("vvar_begin must be a multiple of 4096\n");
 
-	if (!image_name) {
+	if (!name) {
 		fwrite(stripped_addr, stripped_len, 1, outfile);
 		return;
 	}
@@ -185,18 +149,15 @@ static void BITSFUNC(go)(void *raw_addr, size_t raw_len,
 	fprintf(outfile,
 		"static unsigned char raw_data[%lu] __ro_after_init __aligned(PAGE_SIZE) = {",
 		mapping_size);
-	for (i = 0; i < stripped_len; i++) {
-		if (i % 10 == 0)
+	for (j = 0; j < stripped_len; j++) {
+		if (j % 10 == 0)
 			fprintf(outfile, "\n\t");
 		fprintf(outfile, "0x%02X, ",
-			(int)((unsigned char *)stripped_addr)[i]);
+			(int)((unsigned char *)stripped_addr)[j]);
 	}
 	fprintf(outfile, "\n};\n\n");
-	if (extable_sec)
-		BITSFUNC(extract)(raw_addr, raw_len, outfile,
-				  extable_sec, "extable");
 
-	fprintf(outfile, "const struct vdso_image %s = {\n", image_name);
+	fprintf(outfile, "const struct vdso_image %s = {\n", name);
 	fprintf(outfile, "\t.data = raw_data,\n");
 	fprintf(outfile, "\t.size = %lu,\n", mapping_size);
 	if (alt_sec) {
@@ -205,14 +166,6 @@ static void BITSFUNC(go)(void *raw_addr, size_t raw_len,
 		fprintf(outfile, "\t.alt_len = %lu,\n",
 			(unsigned long)GET_LE(&alt_sec->sh_size));
 	}
-	if (extable_sec) {
-		fprintf(outfile, "\t.extable_base = %lu,\n",
-			(unsigned long)GET_LE(&extable_sec->sh_offset));
-		fprintf(outfile, "\t.extable_len = %lu,\n",
-			(unsigned long)GET_LE(&extable_sec->sh_size));
-		fprintf(outfile, "\t.extable = extable,\n");
-	}
-
 	for (i = 0; i < NSYMS; i++) {
 		if (required_syms[i].export && syms[i])
 			fprintf(outfile, "\t.sym_%s = %" PRIi64 ",\n",

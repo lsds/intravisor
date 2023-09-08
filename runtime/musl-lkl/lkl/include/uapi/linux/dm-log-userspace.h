@@ -426,7 +426,7 @@ struct dm_ulog_request {
 	__u32 request_type;  /* DM_ULOG_* defined above */
 	__u32 data_size;     /* How much data (not including this struct) */
 
-	char data[];
+	char data[0];
 };
 
 #endif /* __DM_LOG_USERSPACE_H__ */

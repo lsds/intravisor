@@ -1,8 +1,20 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (c) 2017 Linaro Limited. All rights reserved.
  *
  * Author: Leo Yan <leo.yan@linaro.org>
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License version 2 as published by
+ * the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+ * more details.
+ *
+ * You should have received a copy of the GNU General Public License along with
+ * this program.  If not, see <http://www.gnu.org/licenses/>.
+ *
  */
 #include <linux/amba/bus.h>
 #include <linux/coresight.h>
@@ -17,7 +29,6 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/moduleparam.h>
-#include <linux/panic_notifier.h>
 #include <linux/pm_qos.h>
 #include <linux/slab.h>
 #include <linux/smp.h>
@@ -105,7 +116,7 @@ static DEFINE_PER_CPU(struct debug_drvdata *, debug_drvdata);
 static int debug_count;
 static struct dentry *debug_debugfs_dir;
 
-static bool debug_enable = IS_ENABLED(CONFIG_CORESIGHT_CPU_DEBUG_DEFAULT_ON);
+static bool debug_enable;
 module_param_named(enable, debug_enable, bool, 0600);
 MODULE_PARM_DESC(enable, "Control to enable coresight CPU debug functionality");
 
@@ -304,7 +315,7 @@ static void debug_dump_regs(struct debug_drvdata *drvdata)
 	}
 
 	pc = debug_adjust_pc(drvdata);
-	dev_emerg(dev, " EDPCSR:  %pS\n", (void *)pc);
+	dev_emerg(dev, " EDPCSR:  [<%px>] %pS\n", (void *)pc, (void *)pc);
 
 	if (drvdata->edcidsr_present)
 		dev_emerg(dev, " EDCIDSR: %08x\n", drvdata->edcidsr);
@@ -347,10 +358,10 @@ static void debug_init_arch_data(void *info)
 	switch (mode) {
 	case EDDEVID_IMPL_FULL:
 		drvdata->edvidsr_present = true;
-		fallthrough;
+		/* Fall through */
 	case EDDEVID_IMPL_EDPCSR_EDCIDSR:
 		drvdata->edcidsr_present = true;
-		fallthrough;
+		/* Fall through */
 	case EDDEVID_IMPL_EDPCSR:
 		/*
 		 * In ARM DDI 0487A.k, the EDDEVID1.PCSROffset is used to
@@ -380,10 +391,9 @@ static int debug_notifier_call(struct notifier_block *self,
 	int cpu;
 	struct debug_drvdata *drvdata;
 
-	/* Bail out if we can't acquire the mutex or the functionality is off */
-	if (!mutex_trylock(&debug_lock))
-		return NOTIFY_DONE;
+	mutex_lock(&debug_lock);
 
+	/* Bail out if the functionality is disabled */
 	if (!debug_enable)
 		goto skip_dump;
 
@@ -402,7 +412,7 @@ static int debug_notifier_call(struct notifier_block *self,
 
 skip_dump:
 	mutex_unlock(&debug_lock);
-	return NOTIFY_DONE;
+	return 0;
 }
 
 static struct notifier_block debug_notifier = {
@@ -527,12 +537,23 @@ static const struct file_operations debug_func_knob_fops = {
 
 static int debug_func_init(void)
 {
+	struct dentry *file;
 	int ret;
 
 	/* Create debugfs node */
 	debug_debugfs_dir = debugfs_create_dir("coresight_cpu_debug", NULL);
-	debugfs_create_file("enable", 0644, debug_debugfs_dir, NULL,
-			    &debug_func_knob_fops);
+	if (!debug_debugfs_dir) {
+		pr_err("%s: unable to create debugfs directory\n", __func__);
+		return -ENOMEM;
+	}
+
+	file = debugfs_create_file("enable", 0644, debug_debugfs_dir, NULL,
+				   &debug_func_knob_fops);
+	if (!file) {
+		pr_err("%s: unable to create enable knob file\n", __func__);
+		ret = -ENOMEM;
+		goto err;
+	}
 
 	/* Register function to be called for panic */
 	ret = atomic_notifier_chain_register(&panic_notifier_list,
@@ -563,16 +584,14 @@ static int debug_probe(struct amba_device *adev, const struct amba_id *id)
 	struct device *dev = &adev->dev;
 	struct debug_drvdata *drvdata;
 	struct resource *res = &adev->res;
+	struct device_node *np = adev->dev.of_node;
 	int ret;
 
 	drvdata = devm_kzalloc(dev, sizeof(*drvdata), GFP_KERNEL);
 	if (!drvdata)
 		return -ENOMEM;
 
-	drvdata->cpu = coresight_get_cpu(dev);
-	if (drvdata->cpu < 0)
-		return drvdata->cpu;
-
+	drvdata->cpu = np ? of_coresight_get_cpu(np) : 0;
 	if (per_cpu(debug_drvdata, drvdata->cpu)) {
 		dev_err(dev, "CPU%d drvdata has already been initialized\n",
 			drvdata->cpu);
@@ -589,11 +608,11 @@ static int debug_probe(struct amba_device *adev, const struct amba_id *id)
 
 	drvdata->base = base;
 
-	cpus_read_lock();
+	get_online_cpus();
 	per_cpu(debug_drvdata, drvdata->cpu) = drvdata;
 	ret = smp_call_function_single(drvdata->cpu, debug_init_arch_data,
 				       drvdata, 1);
-	cpus_read_unlock();
+	put_online_cpus();
 
 	if (ret) {
 		dev_err(dev, "CPU%d debug arch init failed\n", drvdata->cpu);
@@ -629,7 +648,7 @@ err:
 	return ret;
 }
 
-static void debug_remove(struct amba_device *adev)
+static int debug_remove(struct amba_device *adev)
 {
 	struct device *dev = &adev->dev;
 	struct debug_drvdata *drvdata = amba_get_drvdata(adev);
@@ -644,28 +663,25 @@ static void debug_remove(struct amba_device *adev)
 
 	if (!--debug_count)
 		debug_func_exit();
+
+	return 0;
 }
 
-static const struct amba_cs_uci_id uci_id_debug[] = {
-	{
-		/*  CPU Debug UCI data */
-		.devarch	= 0x47706a15,
-		.devarch_mask	= 0xfff0ffff,
-		.devtype	= 0x00000015,
-	}
-};
-
 static const struct amba_id debug_ids[] = {
-	CS_AMBA_ID(0x000bbd03),				/* Cortex-A53 */
-	CS_AMBA_ID(0x000bbd07),				/* Cortex-A57 */
-	CS_AMBA_ID(0x000bbd08),				/* Cortex-A72 */
-	CS_AMBA_ID(0x000bbd09),				/* Cortex-A73 */
-	CS_AMBA_UCI_ID(0x000f0205, uci_id_debug),	/* Qualcomm Kryo */
-	CS_AMBA_UCI_ID(0x000f0211, uci_id_debug),	/* Qualcomm Kryo */
-	{},
+	{       /* Debug for Cortex-A53 */
+		.id	= 0x000bbd03,
+		.mask	= 0x000fffff,
+	},
+	{       /* Debug for Cortex-A57 */
+		.id	= 0x000bbd07,
+		.mask	= 0x000fffff,
+	},
+	{       /* Debug for Cortex-A72 */
+		.id	= 0x000bbd08,
+		.mask	= 0x000fffff,
+	},
+	{ 0, 0 },
 };
-
-MODULE_DEVICE_TABLE(amba, debug_ids);
 
 static struct amba_driver debug_driver = {
 	.drv = {

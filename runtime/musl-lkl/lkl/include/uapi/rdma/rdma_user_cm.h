@@ -164,8 +164,6 @@ struct rdma_ucm_query_route_resp {
 	__u32 num_paths;
 	__u8 port_num;
 	__u8 reserved[3];
-	__u32 ibdev_index;
-	__u32 reserved1;
 };
 
 struct rdma_ucm_query_addr_resp {
@@ -177,14 +175,12 @@ struct rdma_ucm_query_addr_resp {
 	__u16 dst_size;
 	struct __kernel_sockaddr_storage src_addr;
 	struct __kernel_sockaddr_storage dst_addr;
-	__u32 ibdev_index;
-	__u32 reserved1;
 };
 
 struct rdma_ucm_query_path_resp {
 	__u32 num_paths;
 	__u32 reserved;
-	struct ib_path_rec_data path_data[];
+	struct ib_path_rec_data path_data[0];
 };
 
 struct rdma_ucm_conn_param {
@@ -210,16 +206,10 @@ struct rdma_ucm_ud_param {
 	__u8  reserved[7];
 };
 
-struct rdma_ucm_ece {
-	__u32 vendor_id;
-	__u32 attr_mod;
-};
-
 struct rdma_ucm_connect {
 	struct rdma_ucm_conn_param conn_param;
 	__u32 id;
 	__u32 reserved;
-	struct rdma_ucm_ece ece;
 };
 
 struct rdma_ucm_listen {
@@ -232,14 +222,12 @@ struct rdma_ucm_accept {
 	struct rdma_ucm_conn_param conn_param;
 	__u32 id;
 	__u32 reserved;
-	struct rdma_ucm_ece ece;
 };
 
 struct rdma_ucm_reject {
 	__u32 id;
 	__u8  private_data_len;
-	__u8  reason;
-	__u8  reserved[2];
+	__u8  reserved[3];
 	__u8  private_data[RDMA_MAX_PRIVATE_DATA];
 };
 
@@ -299,7 +287,6 @@ struct rdma_ucm_event_resp {
 		struct rdma_ucm_ud_param   ud;
 	} param;
 	__u32 reserved;
-	struct rdma_ucm_ece ece;
 };
 
 /* Option levels */
@@ -313,10 +300,6 @@ enum {
 	RDMA_OPTION_ID_TOS	 = 0,
 	RDMA_OPTION_ID_REUSEADDR = 1,
 	RDMA_OPTION_ID_AFONLY	 = 2,
-	RDMA_OPTION_ID_ACK_TIMEOUT = 3
-};
-
-enum {
 	RDMA_OPTION_IB_PATH	 = 1
 };
 

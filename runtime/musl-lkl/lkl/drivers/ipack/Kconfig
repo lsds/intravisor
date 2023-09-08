@@ -1,4 +1,3 @@
-# SPDX-License-Identifier: GPL-2.0-only
 #
 # IPACK configuration.
 #
@@ -6,7 +5,7 @@
 menuconfig IPACK_BUS
 	tristate "IndustryPack bus support"
 	depends on HAS_IOMEM
-	help
+	---help---
 	  This option provides support for the IndustryPack framework.  There
 	  are IndustryPack carrier boards, which interface another bus (such as
 	  PCI) to an IndustryPack bus, and IndustryPack modules, that are

@@ -1,8 +1,11 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Driver for AK8813 / AK8814 TV-ecoders from Asahi Kasei Microsystems Co., Ltd. (AKM)
  *
  * Copyright (C) 2010, Guennadi Liakhovetski <g.liakhovetski@gmx.de>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 
 #include <linux/i2c.h>
@@ -91,7 +94,7 @@ static int ak881x_s_register(struct v4l2_subdev *sd,
 #endif
 
 static int ak881x_fill_fmt(struct v4l2_subdev *sd,
-		struct v4l2_subdev_state *sd_state,
+		struct v4l2_subdev_pad_config *cfg,
 		struct v4l2_subdev_format *format)
 {
 	struct v4l2_mbus_framefmt *mf = &format->format;
@@ -111,7 +114,7 @@ static int ak881x_fill_fmt(struct v4l2_subdev *sd,
 }
 
 static int ak881x_enum_mbus_code(struct v4l2_subdev *sd,
-		struct v4l2_subdev_state *sd_state,
+		struct v4l2_subdev_pad_config *cfg,
 		struct v4l2_subdev_mbus_code_enum *code)
 {
 	if (code->pad || code->index)
@@ -122,7 +125,7 @@ static int ak881x_enum_mbus_code(struct v4l2_subdev *sd,
 }
 
 static int ak881x_get_selection(struct v4l2_subdev *sd,
-				struct v4l2_subdev_state *sd_state,
+				struct v4l2_subdev_pad_config *cfg,
 				struct v4l2_subdev_selection *sel)
 {
 	struct i2c_client *client = v4l2_get_subdevdata(sd);
@@ -133,6 +136,7 @@ static int ak881x_get_selection(struct v4l2_subdev *sd,
 
 	switch (sel->target) {
 	case V4L2_SEL_TGT_CROP_BOUNDS:
+	case V4L2_SEL_TGT_CROP_DEFAULT:
 		sel->r.left = 0;
 		sel->r.top = 0;
 		sel->r.width = 720;
@@ -229,7 +233,7 @@ static const struct v4l2_subdev_ops ak881x_subdev_ops = {
 static int ak881x_probe(struct i2c_client *client,
 			const struct i2c_device_id *did)
 {
-	struct i2c_adapter *adapter = client->adapter;
+	struct i2c_adapter *adapter = to_i2c_adapter(client->dev.parent);
 	struct ak881x *ak881x;
 	u8 ifmode, data;
 
@@ -297,11 +301,13 @@ static int ak881x_probe(struct i2c_client *client,
 	return 0;
 }
 
-static void ak881x_remove(struct i2c_client *client)
+static int ak881x_remove(struct i2c_client *client)
 {
 	struct ak881x *ak881x = to_ak881x(client);
 
 	v4l2_device_unregister_subdev(&ak881x->subdev);
+
+	return 0;
 }
 
 static const struct i2c_device_id ak881x_id[] = {

@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Freescale SPI controller driver.
  *
@@ -14,11 +13,16 @@
  * GRLIB support:
  * Copyright (c) 2012 Aeroflex Gaisler AB.
  * Author: Andreas Larsson <andreas@gaisler.com>
+ *
+ * This program is free software; you can redistribute  it and/or modify it
+ * under  the terms of  the GNU General  Public License as published by the
+ * Free Software Foundation;  either version 2 of the  License, or (at your
+ * option) any later version.
  */
 #include <linux/delay.h>
 #include <linux/dma-mapping.h>
 #include <linux/fsl_devices.h>
-#include <linux/gpio/consumer.h>
+#include <linux/gpio.h>
 #include <linux/interrupt.h>
 #include <linux/irq.h>
 #include <linux/kernel.h>
@@ -28,19 +32,12 @@
 #include <linux/of.h>
 #include <linux/of_address.h>
 #include <linux/of_irq.h>
+#include <linux/of_gpio.h>
 #include <linux/of_platform.h>
 #include <linux/platform_device.h>
 #include <linux/spi/spi.h>
 #include <linux/spi/spi_bitbang.h>
 #include <linux/types.h>
-
-#ifdef CONFIG_FSL_SOC
-#include <sysdev/fsl_soc.h>
-#endif
-
-/* Specific to the MPC8306/MPC8309 */
-#define IMMR_SPI_CS_OFFSET 0x14c
-#define SPI_BOOT_SEL_BIT   0x80000000
 
 #include "spi-fsl-lib.h"
 #include "spi-fsl-cpm.h"
@@ -90,7 +87,7 @@ static void fsl_spi_change_mode(struct spi_device *spi)
 {
 	struct mpc8xxx_spi *mspi = spi_master_get_devdata(spi->master);
 	struct spi_mpc8xxx_cs *cs = spi->controller_state;
-	struct fsl_spi_reg __iomem *reg_base = mspi->reg_base;
+	struct fsl_spi_reg *reg_base = mspi->reg_base;
 	__be32 __iomem *mode = &reg_base->mode;
 	unsigned long flags;
 
@@ -109,6 +106,33 @@ static void fsl_spi_change_mode(struct spi_device *spi)
 	}
 	mpc8xxx_spi_write_reg(mode, cs->hw_mode);
 	local_irq_restore(flags);
+}
+
+static void fsl_spi_chipselect(struct spi_device *spi, int value)
+{
+	struct mpc8xxx_spi *mpc8xxx_spi = spi_master_get_devdata(spi->master);
+	struct fsl_spi_platform_data *pdata;
+	bool pol = spi->mode & SPI_CS_HIGH;
+	struct spi_mpc8xxx_cs	*cs = spi->controller_state;
+
+	pdata = spi->dev.parent->parent->platform_data;
+
+	if (value == BITBANG_CS_INACTIVE) {
+		if (pdata->cs_control)
+			pdata->cs_control(spi, !pol);
+	}
+
+	if (value == BITBANG_CS_ACTIVE) {
+		mpc8xxx_spi->rx_shift = cs->rx_shift;
+		mpc8xxx_spi->tx_shift = cs->tx_shift;
+		mpc8xxx_spi->get_rx = cs->get_rx;
+		mpc8xxx_spi->get_tx = cs->get_tx;
+
+		fsl_spi_change_mode(spi);
+
+		if (pdata->cs_control)
+			pdata->cs_control(spi, pol);
+	}
 }
 
 static void fsl_spi_qe_cpu_set_shifts(u32 *rx_shift, u32 *tx_shift,
@@ -264,7 +288,7 @@ static int fsl_spi_cpu_bufs(struct mpc8xxx_spi *mspi,
 				struct spi_transfer *t, unsigned int len)
 {
 	u32 word;
-	struct fsl_spi_reg __iomem *reg_base = mspi->reg_base;
+	struct fsl_spi_reg *reg_base = mspi->reg_base;
 
 	mspi->count = len;
 
@@ -282,7 +306,7 @@ static int fsl_spi_bufs(struct spi_device *spi, struct spi_transfer *t,
 			    bool is_dma_mapped)
 {
 	struct mpc8xxx_spi *mpc8xxx_spi = spi_master_get_devdata(spi->master);
-	struct fsl_spi_reg __iomem *reg_base;
+	struct fsl_spi_reg *reg_base;
 	unsigned int len = t->len;
 	u8 bits_per_word;
 	int ret;
@@ -328,57 +352,76 @@ static int fsl_spi_bufs(struct spi_device *spi, struct spi_transfer *t,
 	return mpc8xxx_spi->count;
 }
 
-static int fsl_spi_prepare_message(struct spi_controller *ctlr,
-				   struct spi_message *m)
+static int fsl_spi_do_one_msg(struct spi_master *master,
+			      struct spi_message *m)
 {
-	struct mpc8xxx_spi *mpc8xxx_spi = spi_controller_get_devdata(ctlr);
-	struct spi_transfer *t;
-
-	/*
-	 * In CPU mode, optimize large byte transfers to use larger
-	 * bits_per_word values to reduce number of interrupts taken.
-	 */
-	if (!(mpc8xxx_spi->flags & SPI_CPM_MODE)) {
-		list_for_each_entry(t, &m->transfers, transfer_list) {
-			if (t->len < 256 || t->bits_per_word != 8)
-				continue;
-			if ((t->len & 3) == 0)
-				t->bits_per_word = 32;
-			else if ((t->len & 1) == 0)
-				t->bits_per_word = 16;
-		}
-	}
-	return 0;
-}
-
-static int fsl_spi_transfer_one(struct spi_controller *controller,
-				struct spi_device *spi,
-				struct spi_transfer *t)
-{
+	struct spi_device *spi = m->spi;
+	struct spi_transfer *t, *first;
+	unsigned int cs_change;
+	const int nsecs = 50;
 	int status;
 
-	status = fsl_spi_setup_transfer(spi, t);
-	if (status < 0)
-		return status;
-	if (t->len)
-		status = fsl_spi_bufs(spi, t, !!t->tx_dma || !!t->rx_dma);
-	if (status > 0)
-		return -EMSGSIZE;
+	/* Don't allow changes if CS is active */
+	first = list_first_entry(&m->transfers, struct spi_transfer,
+			transfer_list);
+	list_for_each_entry(t, &m->transfers, transfer_list) {
+		if ((first->bits_per_word != t->bits_per_word) ||
+			(first->speed_hz != t->speed_hz)) {
+			dev_err(&spi->dev,
+				"bits_per_word/speed_hz should be same for the same SPI transfer\n");
+			return -EINVAL;
+		}
+	}
 
-	return status;
-}
+	cs_change = 1;
+	status = -EINVAL;
+	list_for_each_entry(t, &m->transfers, transfer_list) {
+		if (t->bits_per_word || t->speed_hz) {
+			if (cs_change)
+				status = fsl_spi_setup_transfer(spi, t);
+			if (status < 0)
+				break;
+		}
 
-static int fsl_spi_unprepare_message(struct spi_controller *controller,
-				     struct spi_message *msg)
-{
-	return fsl_spi_setup_transfer(msg->spi, NULL);
+		if (cs_change) {
+			fsl_spi_chipselect(spi, BITBANG_CS_ACTIVE);
+			ndelay(nsecs);
+		}
+		cs_change = t->cs_change;
+		if (t->len)
+			status = fsl_spi_bufs(spi, t, m->is_dma_mapped);
+		if (status) {
+			status = -EMSGSIZE;
+			break;
+		}
+		m->actual_length += t->len;
+
+		if (t->delay_usecs)
+			udelay(t->delay_usecs);
+
+		if (cs_change) {
+			ndelay(nsecs);
+			fsl_spi_chipselect(spi, BITBANG_CS_INACTIVE);
+			ndelay(nsecs);
+		}
+	}
+
+	m->status = status;
+	spi_finalize_current_message(master);
+
+	if (status || !cs_change) {
+		ndelay(nsecs);
+		fsl_spi_chipselect(spi, BITBANG_CS_INACTIVE);
+	}
+
+	fsl_spi_setup_transfer(spi, NULL);
+	return 0;
 }
 
 static int fsl_spi_setup(struct spi_device *spi)
 {
 	struct mpc8xxx_spi *mpc8xxx_spi;
-	struct fsl_spi_reg __iomem *reg_base;
-	bool initial_setup = false;
+	struct fsl_spi_reg *reg_base;
 	int retval;
 	u32 hw_mode;
 	struct spi_mpc8xxx_cs *cs = spi_get_ctldata(spi);
@@ -391,7 +434,6 @@ static int fsl_spi_setup(struct spi_device *spi)
 		if (!cs)
 			return -ENOMEM;
 		spi_set_ctldata(spi, cs);
-		initial_setup = true;
 	}
 	mpc8xxx_spi = spi_master_get_devdata(spi->master);
 
@@ -415,17 +457,48 @@ static int fsl_spi_setup(struct spi_device *spi)
 	retval = fsl_spi_setup_transfer(spi, NULL);
 	if (retval < 0) {
 		cs->hw_mode = hw_mode; /* Restore settings */
-		if (initial_setup)
-			kfree(cs);
 		return retval;
 	}
+
+	if (mpc8xxx_spi->type == TYPE_GRLIB) {
+		if (gpio_is_valid(spi->cs_gpio)) {
+			int desel;
+
+			retval = gpio_request(spi->cs_gpio,
+					      dev_name(&spi->dev));
+			if (retval)
+				return retval;
+
+			desel = !(spi->mode & SPI_CS_HIGH);
+			retval = gpio_direction_output(spi->cs_gpio, desel);
+			if (retval) {
+				gpio_free(spi->cs_gpio);
+				return retval;
+			}
+		} else if (spi->cs_gpio != -ENOENT) {
+			if (spi->cs_gpio < 0)
+				return spi->cs_gpio;
+			return -EINVAL;
+		}
+		/* When spi->cs_gpio == -ENOENT, a hole in the phandle list
+		 * indicates to use native chipselect if present, or allow for
+		 * an always selected chip
+		 */
+	}
+
+	/* Initialize chipselect - might be active for SPI_CS_HIGH mode */
+	fsl_spi_chipselect(spi, BITBANG_CS_INACTIVE);
 
 	return 0;
 }
 
 static void fsl_spi_cleanup(struct spi_device *spi)
 {
+	struct mpc8xxx_spi *mpc8xxx_spi = spi_master_get_devdata(spi->master);
 	struct spi_mpc8xxx_cs *cs = spi_get_ctldata(spi);
+
+	if (mpc8xxx_spi->type == TYPE_GRLIB && gpio_is_valid(spi->cs_gpio))
+		gpio_free(spi->cs_gpio);
 
 	kfree(cs);
 	spi_set_ctldata(spi, NULL);
@@ -433,7 +506,7 @@ static void fsl_spi_cleanup(struct spi_device *spi)
 
 static void fsl_spi_cpu_irq(struct mpc8xxx_spi *mspi, u32 events)
 {
-	struct fsl_spi_reg __iomem *reg_base = mspi->reg_base;
+	struct fsl_spi_reg *reg_base = mspi->reg_base;
 
 	/* We need handle RX first */
 	if (events & SPIE_NE) {
@@ -468,7 +541,7 @@ static irqreturn_t fsl_spi_irq(s32 irq, void *context_data)
 	struct mpc8xxx_spi *mspi = context_data;
 	irqreturn_t ret = IRQ_NONE;
 	u32 events;
-	struct fsl_spi_reg __iomem *reg_base = mspi->reg_base;
+	struct fsl_spi_reg *reg_base = mspi->reg_base;
 
 	/* Get interrupt events(tx/rx) */
 	events = mpc8xxx_spi_read_reg(&reg_base->event);
@@ -488,11 +561,13 @@ static irqreturn_t fsl_spi_irq(s32 irq, void *context_data)
 static void fsl_spi_grlib_cs_control(struct spi_device *spi, bool on)
 {
 	struct mpc8xxx_spi *mpc8xxx_spi = spi_master_get_devdata(spi->master);
-	struct fsl_spi_reg __iomem *reg_base = mpc8xxx_spi->reg_base;
+	struct fsl_spi_reg *reg_base = mpc8xxx_spi->reg_base;
 	u32 slvsel;
 	u16 cs = spi->chip_select;
 
-	if (cs < mpc8xxx_spi->native_chipselects) {
+	if (gpio_is_valid(spi->cs_gpio)) {
+		gpio_set_value(spi->cs_gpio, on);
+	} else if (cs < mpc8xxx_spi->native_chipselects) {
 		slvsel = mpc8xxx_spi_read_reg(&reg_base->slvsel);
 		slvsel = on ? (slvsel | (1 << cs)) : (slvsel & ~(1 << cs));
 		mpc8xxx_spi_write_reg(&reg_base->slvsel, slvsel);
@@ -501,9 +576,10 @@ static void fsl_spi_grlib_cs_control(struct spi_device *spi, bool on)
 
 static void fsl_spi_grlib_probe(struct device *dev)
 {
+	struct fsl_spi_platform_data *pdata = dev_get_platdata(dev);
 	struct spi_master *master = dev_get_drvdata(dev);
 	struct mpc8xxx_spi *mpc8xxx_spi = spi_master_get_devdata(master);
-	struct fsl_spi_reg __iomem *reg_base = mpc8xxx_spi->reg_base;
+	struct fsl_spi_reg *reg_base = mpc8xxx_spi->reg_base;
 	int mbits;
 	u32 capabilities;
 
@@ -520,27 +596,16 @@ static void fsl_spi_grlib_probe(struct device *dev)
 		mpc8xxx_spi_write_reg(&reg_base->slvsel, 0xffffffff);
 	}
 	master->num_chipselect = mpc8xxx_spi->native_chipselects;
-	master->set_cs = fsl_spi_grlib_cs_control;
+	pdata->cs_control = fsl_spi_grlib_cs_control;
 }
 
-static void fsl_spi_cs_control(struct spi_device *spi, bool on)
-{
-	struct device *dev = spi->dev.parent->parent;
-	struct fsl_spi_platform_data *pdata = dev_get_platdata(dev);
-	struct mpc8xxx_spi_probe_info *pinfo = to_of_pinfo(pdata);
-
-	if (WARN_ON_ONCE(!pinfo->immr_spi_cs))
-		return;
-	iowrite32be(on ? 0 : SPI_BOOT_SEL_BIT, pinfo->immr_spi_cs);
-}
-
-static struct spi_master *fsl_spi_probe(struct device *dev,
+static struct spi_master * fsl_spi_probe(struct device *dev,
 		struct resource *mem, unsigned int irq)
 {
 	struct fsl_spi_platform_data *pdata = dev_get_platdata(dev);
 	struct spi_master *master;
 	struct mpc8xxx_spi *mpc8xxx_spi;
-	struct fsl_spi_reg __iomem *reg_base;
+	struct fsl_spi_reg *reg_base;
 	u32 regval;
 	int ret = 0;
 
@@ -556,11 +621,7 @@ static struct spi_master *fsl_spi_probe(struct device *dev,
 
 	master->setup = fsl_spi_setup;
 	master->cleanup = fsl_spi_cleanup;
-	master->prepare_message = fsl_spi_prepare_message;
-	master->transfer_one = fsl_spi_transfer_one;
-	master->unprepare_message = fsl_spi_unprepare_message;
-	master->use_gpio_descriptors = true;
-	master->set_cs = fsl_spi_cs_control;
+	master->transfer_one_message = fsl_spi_do_one_msg;
 
 	mpc8xxx_spi = spi_master_get_devdata(master);
 	mpc8xxx_spi->max_bits_per_word = 32;
@@ -634,19 +695,127 @@ err:
 	return ERR_PTR(ret);
 }
 
+static void fsl_spi_cs_control(struct spi_device *spi, bool on)
+{
+	struct device *dev = spi->dev.parent->parent;
+	struct fsl_spi_platform_data *pdata = dev_get_platdata(dev);
+	struct mpc8xxx_spi_probe_info *pinfo = to_of_pinfo(pdata);
+	u16 cs = spi->chip_select;
+	int gpio = pinfo->gpios[cs];
+	bool alow = pinfo->alow_flags[cs];
+
+	gpio_set_value(gpio, on ^ alow);
+}
+
+static int of_fsl_spi_get_chipselects(struct device *dev)
+{
+	struct device_node *np = dev->of_node;
+	struct fsl_spi_platform_data *pdata = dev_get_platdata(dev);
+	struct mpc8xxx_spi_probe_info *pinfo = to_of_pinfo(pdata);
+	int ngpios;
+	int i = 0;
+	int ret;
+
+	ngpios = of_gpio_count(np);
+	if (ngpios <= 0) {
+		/*
+		 * SPI w/o chip-select line. One SPI device is still permitted
+		 * though.
+		 */
+		pdata->max_chipselect = 1;
+		return 0;
+	}
+
+	pinfo->gpios = kmalloc_array(ngpios, sizeof(*pinfo->gpios),
+				     GFP_KERNEL);
+	if (!pinfo->gpios)
+		return -ENOMEM;
+	memset(pinfo->gpios, -1, ngpios * sizeof(*pinfo->gpios));
+
+	pinfo->alow_flags = kcalloc(ngpios, sizeof(*pinfo->alow_flags),
+				    GFP_KERNEL);
+	if (!pinfo->alow_flags) {
+		ret = -ENOMEM;
+		goto err_alloc_flags;
+	}
+
+	for (; i < ngpios; i++) {
+		int gpio;
+		enum of_gpio_flags flags;
+
+		gpio = of_get_gpio_flags(np, i, &flags);
+		if (!gpio_is_valid(gpio)) {
+			dev_err(dev, "invalid gpio #%d: %d\n", i, gpio);
+			ret = gpio;
+			goto err_loop;
+		}
+
+		ret = gpio_request(gpio, dev_name(dev));
+		if (ret) {
+			dev_err(dev, "can't request gpio #%d: %d\n", i, ret);
+			goto err_loop;
+		}
+
+		pinfo->gpios[i] = gpio;
+		pinfo->alow_flags[i] = flags & OF_GPIO_ACTIVE_LOW;
+
+		ret = gpio_direction_output(pinfo->gpios[i],
+					    pinfo->alow_flags[i]);
+		if (ret) {
+			dev_err(dev,
+				"can't set output direction for gpio #%d: %d\n",
+				i, ret);
+			goto err_loop;
+		}
+	}
+
+	pdata->max_chipselect = ngpios;
+	pdata->cs_control = fsl_spi_cs_control;
+
+	return 0;
+
+err_loop:
+	while (i >= 0) {
+		if (gpio_is_valid(pinfo->gpios[i]))
+			gpio_free(pinfo->gpios[i]);
+		i--;
+	}
+
+	kfree(pinfo->alow_flags);
+	pinfo->alow_flags = NULL;
+err_alloc_flags:
+	kfree(pinfo->gpios);
+	pinfo->gpios = NULL;
+	return ret;
+}
+
+static int of_fsl_spi_free_chipselects(struct device *dev)
+{
+	struct fsl_spi_platform_data *pdata = dev_get_platdata(dev);
+	struct mpc8xxx_spi_probe_info *pinfo = to_of_pinfo(pdata);
+	int i;
+
+	if (!pinfo->gpios)
+		return 0;
+
+	for (i = 0; i < pdata->max_chipselect; i++) {
+		if (gpio_is_valid(pinfo->gpios[i]))
+			gpio_free(pinfo->gpios[i]);
+	}
+
+	kfree(pinfo->gpios);
+	kfree(pinfo->alow_flags);
+	return 0;
+}
+
 static int of_fsl_spi_probe(struct platform_device *ofdev)
 {
 	struct device *dev = &ofdev->dev;
 	struct device_node *np = ofdev->dev.of_node;
 	struct spi_master *master;
 	struct resource mem;
-	int irq, type;
-	int ret;
-	bool spisel_boot = false;
-#if IS_ENABLED(CONFIG_FSL_SOC)
-	struct mpc8xxx_spi_probe_info *pinfo = NULL;
-#endif
-
+	int irq = 0, type;
+	int ret = -ENOMEM;
 
 	ret = of_mpc8xxx_spi_probe(ofdev);
 	if (ret)
@@ -654,52 +823,33 @@ static int of_fsl_spi_probe(struct platform_device *ofdev)
 
 	type = fsl_spi_get_type(&ofdev->dev);
 	if (type == TYPE_FSL) {
-		struct fsl_spi_platform_data *pdata = dev_get_platdata(dev);
-#if IS_ENABLED(CONFIG_FSL_SOC)
-		pinfo = to_of_pinfo(pdata);
-
-		spisel_boot = of_property_read_bool(np, "fsl,spisel_boot");
-		if (spisel_boot) {
-			pinfo->immr_spi_cs = ioremap(get_immrbase() + IMMR_SPI_CS_OFFSET, 4);
-			if (!pinfo->immr_spi_cs)
-				return -ENOMEM;
-		}
-#endif
-		/*
-		 * Handle the case where we have one hardwired (always selected)
-		 * device on the first "chipselect". Else we let the core code
-		 * handle any GPIOs or native chip selects and assign the
-		 * appropriate callback for dealing with the CS lines. This isn't
-		 * supported on the GRLIB variant.
-		 */
-		ret = gpiod_count(dev, "cs");
-		if (ret < 0)
-			ret = 0;
-		if (ret == 0 && !spisel_boot)
-			pdata->max_chipselect = 1;
-		else
-			pdata->max_chipselect = ret + spisel_boot;
+		ret = of_fsl_spi_get_chipselects(dev);
+		if (ret)
+			goto err;
 	}
 
 	ret = of_address_to_resource(np, 0, &mem);
 	if (ret)
-		goto unmap_out;
+		goto err;
 
-	irq = platform_get_irq(ofdev, 0);
-	if (irq < 0) {
-		ret = irq;
-		goto unmap_out;
+	irq = irq_of_parse_and_map(np, 0);
+	if (!irq) {
+		ret = -EINVAL;
+		goto err;
 	}
 
 	master = fsl_spi_probe(dev, &mem, irq);
+	if (IS_ERR(master)) {
+		ret = PTR_ERR(master);
+		goto err;
+	}
 
-	return PTR_ERR_OR_ZERO(master);
+	return 0;
 
-unmap_out:
-#if IS_ENABLED(CONFIG_FSL_SOC)
-	if (spisel_boot)
-		iounmap(pinfo->immr_spi_cs);
-#endif
+err:
+	irq_dispose_mapping(irq);
+	if (type == TYPE_FSL)
+		of_fsl_spi_free_chipselects(dev);
 	return ret;
 }
 
@@ -709,6 +859,8 @@ static int of_fsl_spi_remove(struct platform_device *ofdev)
 	struct mpc8xxx_spi *mpc8xxx_spi = spi_master_get_devdata(master);
 
 	fsl_spi_cpm_free(mpc8xxx_spi);
+	if (mpc8xxx_spi->type == TYPE_FSL)
+		of_fsl_spi_free_chipselects(&ofdev->dev);
 	return 0;
 }
 

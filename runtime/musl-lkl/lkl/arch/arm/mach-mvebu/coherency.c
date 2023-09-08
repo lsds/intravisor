@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Coherency fabric (Aurora) support for Armada 370, 375, 38x and XP
  * platforms.
@@ -8,6 +7,10 @@
  * Yehuda Yitschak <yehuday@marvell.com>
  * Gregory Clement <gregory.clement@free-electrons.com>
  * Thomas Petazzoni <thomas.petazzoni@free-electrons.com>
+ *
+ * This file is licensed under the terms of the GNU General Public
+ * License version 2.  This program is licensed "as is" without any
+ * warranty of any kind, whether express or implied.
  *
  * The Armada 370, 375, 38x and XP SOCs have a coherency fabric which is
  * responsible for ensuring hardware coherency between all CPUs and between
@@ -22,7 +25,7 @@
 #include <linux/of_address.h>
 #include <linux/io.h>
 #include <linux/smp.h>
-#include <linux/dma-map-ops.h>
+#include <linux/dma-mapping.h>
 #include <linux/platform_device.h>
 #include <linux/slab.h>
 #include <linux/mbus.h>
@@ -95,7 +98,7 @@ static int mvebu_hwcc_notifier(struct notifier_block *nb,
 
 	if (event != BUS_NOTIFY_ADD_DEVICE)
 		return NOTIFY_DONE;
-	dev->dma_coherent = true;
+	set_dma_ops(dev, &arm_coherent_dma_ops);
 
 	return NOTIFY_OK;
 }

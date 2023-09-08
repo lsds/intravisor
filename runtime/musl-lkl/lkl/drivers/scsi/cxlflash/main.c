@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * CXL Flash Device Driver
  *
@@ -6,6 +5,11 @@
  *             Matthew R. Ochs <mrochs@linux.vnet.ibm.com>, IBM Corporation
  *
  * Copyright (C) 2015 IBM Corporation
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version
+ * 2 of the License, or (at your option) any later version.
  */
 
 #include <linux/delay.h>
@@ -14,6 +18,8 @@
 #include <linux/pci.h>
 
 #include <asm/unaligned.h>
+
+#include <misc/cxl.h>
 
 #include <scsi/scsi_cmnd.h>
 #include <scsi/scsi_host.h>
@@ -44,9 +50,14 @@ static void process_cmd_err(struct afu_cmd *cmd, struct scsi_cmnd *scp)
 	struct afu *afu = cmd->parent;
 	struct cxlflash_cfg *cfg = afu->parent;
 	struct device *dev = &cfg->dev->dev;
+	struct sisl_ioarcb *ioarcb;
 	struct sisl_ioasa *ioasa;
 	u32 resid;
 
+	if (unlikely(!cmd))
+		return;
+
+	ioarcb = &(cmd->rcb);
 	ioasa = &(cmd->sa);
 
 	if (ioasa->rc.flags & SISL_RC_FLAGS_UNDERRUN) {
@@ -132,7 +143,7 @@ static void process_cmd_err(struct afu_cmd *cmd, struct scsi_cmnd *scp)
 			break;
 		case SISL_AFU_RC_OUT_OF_DATA_BUFS:
 			/* Retry */
-			scp->result = (DID_ERROR << 16);
+			scp->result = (DID_ALLOC_FAILURE << 16);
 			break;
 		default:
 			scp->result = (DID_ERROR << 16);
@@ -171,7 +182,7 @@ static void cmd_complete(struct afu_cmd *cmd)
 
 		dev_dbg_ratelimited(dev, "%s:scp=%p result=%08x ioasc=%08x\n",
 				    __func__, scp, scp->result, cmd->sa.ioasc);
-		scsi_done(scp);
+		scp->scsi_done(scp);
 	} else if (cmd->cmd_tmf) {
 		spin_lock_irqsave(&cfg->tmf_slock, lock_flags);
 		cfg->tmf_active = false;
@@ -205,7 +216,7 @@ static void flush_pending_cmds(struct hwq *hwq)
 		if (cmd->scp) {
 			scp = cmd->scp;
 			scp->result = (DID_IMM_RETRY << 16);
-			scsi_done(scp);
+			scp->scsi_done(scp);
 		} else {
 			cmd->cmd_aborted = true;
 
@@ -328,8 +339,8 @@ static int send_cmd_ioarrin(struct afu *afu, struct afu_cmd *cmd)
 	writeq_be((u64)&cmd->rcb, &hwq->host_map->ioarrin);
 out:
 	spin_unlock_irqrestore(&hwq->hsq_slock, lock_flags);
-	dev_dbg_ratelimited(dev, "%s: cmd=%p len=%u ea=%016llx rc=%d\n",
-		__func__, cmd, cmd->rcb.data_len, cmd->rcb.data_ea, rc);
+	dev_dbg(dev, "%s: cmd=%p len=%u ea=%016llx rc=%d\n", __func__,
+		cmd, cmd->rcb.data_len, cmd->rcb.data_ea, rc);
 	return rc;
 }
 
@@ -433,7 +444,7 @@ static u32 cmd_to_target_hwq(struct Scsi_Host *host, struct scsi_cmnd *scp,
 		hwq = afu->hwq_rr_count++ % afu->num_hwqs;
 		break;
 	case HWQ_MODE_TAG:
-		tag = blk_mq_unique_tag(scsi_cmd_to_rq(scp));
+		tag = blk_mq_unique_tag(scp->request);
 		hwq = blk_mq_unique_tag_to_hwq(tag);
 		break;
 	case HWQ_MODE_CPU:
@@ -462,7 +473,6 @@ static int send_tmf(struct cxlflash_cfg *cfg, struct scsi_device *sdev,
 	struct afu_cmd *cmd = NULL;
 	struct device *dev = &cfg->dev->dev;
 	struct hwq *hwq = get_hwq(afu, PRIMARY_HWQ);
-	bool needs_deletion = false;
 	char *buf = NULL;
 	ulong lock_flags;
 	int rc = 0;
@@ -517,7 +527,6 @@ static int send_tmf(struct cxlflash_cfg *cfg, struct scsi_device *sdev,
 	if (!to) {
 		dev_err(dev, "%s: TMF timed out\n", __func__);
 		rc = -ETIMEDOUT;
-		needs_deletion = true;
 	} else if (cmd->cmd_aborted) {
 		dev_err(dev, "%s: TMF aborted\n", __func__);
 		rc = -EAGAIN;
@@ -528,12 +537,6 @@ static int send_tmf(struct cxlflash_cfg *cfg, struct scsi_device *sdev,
 	}
 	cfg->tmf_active = false;
 	spin_unlock_irqrestore(&cfg->tmf_slock, lock_flags);
-
-	if (needs_deletion) {
-		spin_lock_irqsave(&hwq->hsq_slock, lock_flags);
-		list_del(&cmd->list);
-		spin_unlock_irqrestore(&hwq->hsq_slock, lock_flags);
-	}
 out:
 	kfree(buf);
 	return rc;
@@ -601,11 +604,10 @@ static int cxlflash_queuecommand(struct Scsi_Host *host, struct scsi_cmnd *scp)
 	case STATE_FAILTERM:
 		dev_dbg_ratelimited(dev, "%s: device has failed\n", __func__);
 		scp->result = (DID_NO_CONNECT << 16);
-		scsi_done(scp);
+		scp->scsi_done(scp);
 		rc = 0;
 		goto out;
 	default:
-		atomic_inc(&afu->cmds_active);
 		break;
 	}
 
@@ -631,7 +633,6 @@ static int cxlflash_queuecommand(struct Scsi_Host *host, struct scsi_cmnd *scp)
 	memcpy(cmd->rcb.cdb, scp->cmnd, sizeof(cmd->rcb.cdb));
 
 	rc = afu->send_cmd(afu, cmd);
-	atomic_dec(&afu->cmds_active);
 out:
 	return rc;
 }
@@ -748,16 +749,13 @@ static void term_intr(struct cxlflash_cfg *cfg, enum undo_level level,
 		/* SISL_MSI_ASYNC_ERROR is setup only for the primary HWQ */
 		if (index == PRIMARY_HWQ)
 			cfg->ops->unmap_afu_irq(hwq->ctx_cookie, 3, hwq);
-		fallthrough;
 	case UNMAP_TWO:
 		cfg->ops->unmap_afu_irq(hwq->ctx_cookie, 2, hwq);
-		fallthrough;
 	case UNMAP_ONE:
 		cfg->ops->unmap_afu_irq(hwq->ctx_cookie, 1, hwq);
-		fallthrough;
 	case FREE_IRQ:
 		cfg->ops->free_afu_irqs(hwq->ctx_cookie);
-		fallthrough;
+		/* fall through */
 	case UNDO_NOOP:
 		/* No action required */
 		break;
@@ -794,10 +792,6 @@ static void term_mc(struct cxlflash_cfg *cfg, u32 index)
 	if (index != PRIMARY_HWQ)
 		WARN_ON(cfg->ops->release_context(hwq->ctx_cookie));
 	hwq->ctx_cookie = NULL;
-
-	spin_lock_irqsave(&hwq->hrrq_slock, lock_flags);
-	hwq->hrrq_online = false;
-	spin_unlock_irqrestore(&hwq->hrrq_slock, lock_flags);
 
 	spin_lock_irqsave(&hwq->hsq_slock, lock_flags);
 	flush_pending_cmds(hwq);
@@ -952,9 +946,9 @@ static void cxlflash_remove(struct pci_dev *pdev)
 		return;
 	}
 
-	/* Yield to running recovery threads before continuing with remove */
-	wait_event(cfg->reset_waitq, cfg->state != STATE_RESET &&
-				     cfg->state != STATE_PROBING);
+	/* If a Task Management Function is active, wait for it to complete
+	 * before continuing with remove.
+	 */
 	spin_lock_irqsave(&cfg->tmf_slock, lock_flags);
 	if (cfg->tmf_active)
 		wait_event_interruptible_lock_irq(cfg->tmf_waitq,
@@ -971,18 +965,13 @@ static void cxlflash_remove(struct pci_dev *pdev)
 	switch (cfg->init_state) {
 	case INIT_STATE_CDEV:
 		cxlflash_release_chrdev(cfg);
-		fallthrough;
 	case INIT_STATE_SCSI:
 		cxlflash_term_local_luns(cfg);
 		scsi_remove_host(cfg->host);
-		fallthrough;
 	case INIT_STATE_AFU:
 		term_afu(cfg);
-		fallthrough;
 	case INIT_STATE_PCI:
-		cfg->ops->destroy_afu(cfg->afu_cookie);
 		pci_disable_device(pdev);
-		fallthrough;
 	case INIT_STATE_NONE:
 		free_mem(cfg);
 		scsi_host_put(cfg->host);
@@ -1314,10 +1303,7 @@ static void afu_err_intr_init(struct afu *afu)
 	for (i = 0; i < afu->num_hwqs; i++) {
 		hwq = get_hwq(afu, i);
 
-		reg = readq_be(&hwq->host_map->ctx_ctrl);
-		WARN_ON((reg & SISL_CTX_CTRL_LISN_MASK) != 0);
-		reg |= SISL_MSI_SYNC_ERROR;
-		writeq_be(reg, &hwq->host_map->ctx_ctrl);
+		writeq_be(SISL_MSI_SYNC_ERROR, &hwq->host_map->ctx_ctrl);
 		writeq_be(SISL_ISTATUS_MASK, &hwq->host_map->intr_mask);
 	}
 }
@@ -1357,7 +1343,7 @@ cxlflash_sync_err_irq_exit:
 
 /**
  * process_hrrq() - process the read-response queue
- * @hwq:	HWQ associated with the host.
+ * @afu:	AFU associated with the host.
  * @doneq:	Queue of commands harvested from the RRQ.
  * @budget:	Threshold of RRQ entries to process.
  *
@@ -1476,12 +1462,6 @@ static irqreturn_t cxlflash_rrq_irq(int irq, void *data)
 	int num_entries = 0;
 
 	spin_lock_irqsave(&hwq->hrrq_slock, hrrq_flags);
-
-	/* Silently drop spurious interrupts when queue is not online */
-	if (!hwq->hrrq_online) {
-		spin_unlock_irqrestore(&hwq->hrrq_slock, hrrq_flags);
-		return IRQ_HANDLED;
-	}
 
 	if (afu_is_irqpoll_enabled(afu)) {
 		irq_poll_sched(&hwq->irqpoll);
@@ -1629,8 +1609,8 @@ static int read_vpd(struct cxlflash_cfg *cfg, u64 wwpn[])
 {
 	struct device *dev = &cfg->dev->dev;
 	struct pci_dev *pdev = cfg->dev;
-	int i, k, rc = 0;
-	unsigned int kw_size;
+	int rc = 0;
+	int ro_start, ro_size, i, j, k;
 	ssize_t vpd_size;
 	char vpd_data[CXLFLASH_VPD_LEN];
 	char tmp_buf[WWPN_BUF_LEN] = { 0 };
@@ -1648,6 +1628,25 @@ static int read_vpd(struct cxlflash_cfg *cfg, u64 wwpn[])
 		goto out;
 	}
 
+	/* Get the read only section offset */
+	ro_start = pci_vpd_find_tag(vpd_data, 0, vpd_size,
+				    PCI_VPD_LRDT_RO_DATA);
+	if (unlikely(ro_start < 0)) {
+		dev_err(dev, "%s: VPD Read-only data not found\n", __func__);
+		rc = -ENODEV;
+		goto out;
+	}
+
+	/* Get the read only section size, cap when extends beyond read VPD */
+	ro_size = pci_vpd_lrdt_size(&vpd_data[ro_start]);
+	j = ro_size;
+	i = ro_start + PCI_VPD_LRDT_TAG_SIZE;
+	if (unlikely((i + j) > vpd_size)) {
+		dev_dbg(dev, "%s: Might need to read more VPD (%d > %ld)\n",
+			__func__, (i + j), vpd_size);
+		ro_size = vpd_size - i;
+	}
+
 	/*
 	 * Find the offset of the WWPN tag within the read only
 	 * VPD data and validate the found field (partials are
@@ -1663,9 +1662,11 @@ static int read_vpd(struct cxlflash_cfg *cfg, u64 wwpn[])
 	 * ports programmed and operate in an undefined state.
 	 */
 	for (k = 0; k < cfg->num_fc_ports; k++) {
-		i = pci_vpd_find_ro_info_keyword(vpd_data, vpd_size,
-						 wwpn_vpd_tags[k], &kw_size);
-		if (i == -ENOENT) {
+		j = ro_size;
+		i = ro_start + PCI_VPD_LRDT_TAG_SIZE;
+
+		i = pci_vpd_find_info_keyword(vpd_data, i, j, wwpn_vpd_tags[k]);
+		if (i < 0) {
 			if (wwpn_vpd_required)
 				dev_err(dev, "%s: Port %d WWPN not found\n",
 					__func__, k);
@@ -1673,7 +1674,9 @@ static int read_vpd(struct cxlflash_cfg *cfg, u64 wwpn[])
 			continue;
 		}
 
-		if (i < 0 || kw_size != WWPN_LEN) {
+		j = pci_vpd_info_field_size(&vpd_data[i]);
+		i += PCI_VPD_INFO_FLD_HDR_SIZE;
+		if (unlikely((i + j > vpd_size) || (j != WWPN_LEN))) {
 			dev_err(dev, "%s: Port %d WWPN incomplete or bad VPD\n",
 				__func__, k);
 			rc = -ENODEV;
@@ -1749,8 +1752,6 @@ static int init_global(struct cxlflash_cfg *cfg)
 	u64 wwpn[MAX_FC_PORTS];	/* wwpn of AFU ports */
 	int i = 0, num_ports = 0;
 	int rc = 0;
-	int j;
-	void *ctx;
 	u64 reg;
 
 	rc = read_vpd(cfg, &wwpn[0]);
@@ -1766,7 +1767,6 @@ static int init_global(struct cxlflash_cfg *cfg)
 
 		writeq_be((u64) hwq->hrrq_start, &hmap->rrq_start);
 		writeq_be((u64) hwq->hrrq_end, &hmap->rrq_end);
-		hwq->hrrq_online = true;
 
 		if (afu_is_sq_cmd_mode(afu)) {
 			writeq_be((u64)hwq->hsq_start, &hmap->sq_start);
@@ -1810,25 +1810,6 @@ static int init_global(struct cxlflash_cfg *cfg)
 		 * offline/online transitions and a PLOGI
 		 */
 		msleep(100);
-	}
-
-	if (afu_is_ocxl_lisn(afu)) {
-		/* Set up the LISN effective address for each master */
-		for (i = 0; i < afu->num_hwqs; i++) {
-			hwq = get_hwq(afu, i);
-			ctx = hwq->ctx_cookie;
-
-			for (j = 0; j < hwq->num_irqs; j++) {
-				reg = cfg->ops->get_irq_objhndl(ctx, j);
-				writeq_be(reg, &hwq->ctrl_map->lisn_ea[j]);
-			}
-
-			reg = hwq->ctx_hndl;
-			writeq_be(SISL_LISN_PASID(reg, reg),
-				  &hwq->ctrl_map->lisn_pasid[0]);
-			writeq_be(SISL_LISN_PASID(0UL, reg),
-				  &hwq->ctrl_map->lisn_pasid[1]);
-		}
 	}
 
 	/* Set up master's own CTX_CAP to allow real mode, host translation */
@@ -1930,7 +1911,7 @@ static enum undo_level init_intr(struct cxlflash_cfg *cfg,
 	int rc = 0;
 	enum undo_level level = UNDO_NOOP;
 	bool is_primary_hwq = (hwq->index == PRIMARY_HWQ);
-	int num_irqs = hwq->num_irqs;
+	int num_irqs = is_primary_hwq ? 3 : 2;
 
 	rc = cfg->ops->allocate_afu_irqs(ctx, num_irqs);
 	if (unlikely(rc)) {
@@ -1974,7 +1955,7 @@ out:
 /**
  * init_mc() - create and register as the master context
  * @cfg:	Internal structure associated with the host.
- * @index:	HWQ Index of the master context.
+ * index:	HWQ Index of the master context.
  *
  * Return: 0 on success, -errno on failure
  */
@@ -1984,20 +1965,16 @@ static int init_mc(struct cxlflash_cfg *cfg, u32 index)
 	struct device *dev = &cfg->dev->dev;
 	struct hwq *hwq = get_hwq(cfg->afu, index);
 	int rc = 0;
-	int num_irqs;
 	enum undo_level level;
 
 	hwq->afu = cfg->afu;
 	hwq->index = index;
 	INIT_LIST_HEAD(&hwq->pending_cmds);
 
-	if (index == PRIMARY_HWQ) {
+	if (index == PRIMARY_HWQ)
 		ctx = cfg->ops->get_context(cfg->dev, cfg->afu_cookie);
-		num_irqs = 3;
-	} else {
+	else
 		ctx = cfg->ops->dev_context_init(cfg->dev, cfg->afu_cookie);
-		num_irqs = 2;
-	}
 	if (IS_ERR_OR_NULL(ctx)) {
 		rc = -ENOMEM;
 		goto err1;
@@ -2005,7 +1982,6 @@ static int init_mc(struct cxlflash_cfg *cfg, u32 index)
 
 	WARN_ON(hwq->ctx_cookie);
 	hwq->ctx_cookie = ctx;
-	hwq->num_irqs = num_irqs;
 
 	/* Set it up as a master with the CXL */
 	cfg->ops->set_master(ctx);
@@ -2099,7 +2075,6 @@ static int init_afu(struct cxlflash_cfg *cfg)
 
 	cfg->ops->perst_reloads_same_image(cfg->afu_cookie, true);
 
-	mutex_init(&afu->sync_active);
 	afu->num_hwqs = afu->desired_hwqs;
 	for (i = 0; i < afu->num_hwqs; i++) {
 		rc = init_mc(cfg, i);
@@ -2279,10 +2254,10 @@ static int send_afu_cmd(struct afu *afu, struct sisl_ioarcb *rcb)
 	struct device *dev = &cfg->dev->dev;
 	struct afu_cmd *cmd = NULL;
 	struct hwq *hwq = get_hwq(afu, PRIMARY_HWQ);
-	ulong lock_flags;
 	char *buf = NULL;
 	int rc = 0;
 	int nretry = 0;
+	static DEFINE_MUTEX(sync_active);
 
 	if (cfg->state != STATE_NORMAL) {
 		dev_dbg(dev, "%s: Sync not required state=%u\n",
@@ -2290,7 +2265,7 @@ static int send_afu_cmd(struct afu *afu, struct sisl_ioarcb *rcb)
 		return 0;
 	}
 
-	mutex_lock(&afu->sync_active);
+	mutex_lock(&sync_active);
 	atomic_inc(&afu->cmds_active);
 	buf = kmalloc(sizeof(*cmd) + __alignof__(*cmd) - 1, GFP_KERNEL);
 	if (unlikely(!buf)) {
@@ -2324,19 +2299,14 @@ retry:
 	case -ETIMEDOUT:
 		rc = afu->context_reset(hwq);
 		if (rc) {
-			/* Delete the command from pending_cmds list */
-			spin_lock_irqsave(&hwq->hsq_slock, lock_flags);
-			list_del(&cmd->list);
-			spin_unlock_irqrestore(&hwq->hsq_slock, lock_flags);
-
 			cxlflash_schedule_async_reset(cfg);
 			break;
 		}
-		fallthrough;	/* to retry */
+		/* fall through to retry */
 	case -EAGAIN:
 		if (++nretry < 2)
 			goto retry;
-		fallthrough;	/* to exit */
+		/* fall through to exit */
 	default:
 		break;
 	}
@@ -2345,7 +2315,7 @@ retry:
 		*rcb->ioasa = cmd->sa;
 out:
 	atomic_dec(&afu->cmds_active);
-	mutex_unlock(&afu->sync_active);
+	mutex_unlock(&sync_active);
 	kfree(buf);
 	dev_dbg(dev, "%s: returning rc=%d\n", __func__, rc);
 	return rc;
@@ -2510,12 +2480,12 @@ static int cxlflash_eh_host_reset_handler(struct scsi_cmnd *scp)
 			cfg->state = STATE_NORMAL;
 		wake_up_all(&cfg->reset_waitq);
 		ssleep(1);
-		fallthrough;
+		/* fall through */
 	case STATE_RESET:
 		wait_event(cfg->reset_waitq, cfg->state != STATE_RESET);
 		if (cfg->state == STATE_NORMAL)
 			break;
-		fallthrough;
+		/* fall through */
 	default:
 		rc = FAILED;
 		break;
@@ -2996,7 +2966,6 @@ retry:
 		wait_event(cfg->reset_waitq, cfg->state != STATE_RESET);
 		if (cfg->state == STATE_NORMAL)
 			goto retry;
-		fallthrough;
 	default:
 		/* Ideally should not happen */
 		dev_err(dev, "%s: Device is not ready, state=%d\n",
@@ -3064,6 +3033,12 @@ static ssize_t hwq_mode_store(struct device *dev,
 		return -EINVAL;
 	}
 
+	if ((mode == HWQ_MODE_TAG) && !shost_use_blk_mq(shost)) {
+		dev_info(cfgdev, "SCSI-MQ is not enabled, use a different "
+			 "HWQ steering mode.\n");
+		return -EINVAL;
+	}
+
 	afu->hwq_mode = mode;
 
 	return count;
@@ -3103,36 +3078,32 @@ static DEVICE_ATTR_RW(irqpoll_weight);
 static DEVICE_ATTR_RW(num_hwqs);
 static DEVICE_ATTR_RW(hwq_mode);
 
-static struct attribute *cxlflash_host_attrs[] = {
-	&dev_attr_port0.attr,
-	&dev_attr_port1.attr,
-	&dev_attr_port2.attr,
-	&dev_attr_port3.attr,
-	&dev_attr_lun_mode.attr,
-	&dev_attr_ioctl_version.attr,
-	&dev_attr_port0_lun_table.attr,
-	&dev_attr_port1_lun_table.attr,
-	&dev_attr_port2_lun_table.attr,
-	&dev_attr_port3_lun_table.attr,
-	&dev_attr_irqpoll_weight.attr,
-	&dev_attr_num_hwqs.attr,
-	&dev_attr_hwq_mode.attr,
+static struct device_attribute *cxlflash_host_attrs[] = {
+	&dev_attr_port0,
+	&dev_attr_port1,
+	&dev_attr_port2,
+	&dev_attr_port3,
+	&dev_attr_lun_mode,
+	&dev_attr_ioctl_version,
+	&dev_attr_port0_lun_table,
+	&dev_attr_port1_lun_table,
+	&dev_attr_port2_lun_table,
+	&dev_attr_port3_lun_table,
+	&dev_attr_irqpoll_weight,
+	&dev_attr_num_hwqs,
+	&dev_attr_hwq_mode,
 	NULL
 };
-
-ATTRIBUTE_GROUPS(cxlflash_host);
 
 /*
  * Device attributes
  */
 static DEVICE_ATTR_RO(mode);
 
-static struct attribute *cxlflash_dev_attrs[] = {
-	&dev_attr_mode.attr,
+static struct device_attribute *cxlflash_dev_attrs[] = {
+	&dev_attr_mode,
 	NULL
 };
-
-ATTRIBUTE_GROUPS(cxlflash_dev);
 
 /*
  * Host template
@@ -3154,8 +3125,9 @@ static struct scsi_host_template driver_template = {
 	.this_id = -1,
 	.sg_tablesize = 1,	/* No scatter gather support */
 	.max_sectors = CXLFLASH_MAX_SECTORS,
-	.shost_groups = cxlflash_host_groups,
-	.sdev_groups = cxlflash_dev_groups,
+	.use_clustering = ENABLE_CLUSTERING,
+	.shost_attrs = cxlflash_host_attrs,
+	.sdev_attrs = cxlflash_dev_attrs,
 };
 
 /*
@@ -3166,8 +3138,7 @@ static struct dev_dependent_vals dev_corsa_vals = { CXLFLASH_MAX_SECTORS,
 static struct dev_dependent_vals dev_flash_gt_vals = { CXLFLASH_MAX_SECTORS,
 					CXLFLASH_NOTIFY_SHUTDOWN };
 static struct dev_dependent_vals dev_briard_vals = { CXLFLASH_MAX_SECTORS,
-					(CXLFLASH_NOTIFY_SHUTDOWN |
-					CXLFLASH_OCXL_DEV) };
+					CXLFLASH_NOTIFY_SHUTDOWN };
 
 /*
  * PCI device binding table
@@ -3262,7 +3233,7 @@ static int cxlflash_chr_open(struct inode *inode, struct file *file)
  *
  * Return: A string identifying the decoded host ioctl.
  */
-static char *decode_hioctl(unsigned int cmd)
+static char *decode_hioctl(int cmd)
 {
 	switch (cmd) {
 	case HT_CXLFLASH_LUN_PROVISION:
@@ -3275,7 +3246,7 @@ static char *decode_hioctl(unsigned int cmd)
 /**
  * cxlflash_lun_provision() - host LUN provisioning handler
  * @cfg:	Internal structure associated with the host.
- * @lunprov:	Kernel copy of userspace ioctl data structure.
+ * @arg:	Kernel copy of userspace ioctl data structure.
  *
  * Return: 0 on success, -errno on failure
  */
@@ -3366,7 +3337,7 @@ out:
 /**
  * cxlflash_afu_debug() - host AFU debug handler
  * @cfg:	Internal structure associated with the host.
- * @afu_dbg:	Kernel copy of userspace ioctl data structure.
+ * @arg:	Kernel copy of userspace ioctl data structure.
  *
  * For debug requests requiring a data buffer, always provide an aligned
  * (cache line) buffer to the AFU to appease any alignment requirements.
@@ -3512,7 +3483,7 @@ static long cxlflash_chr_ioctl(struct file *file, unsigned int cmd,
 		if (likely(do_ioctl))
 			break;
 
-		fallthrough;
+		/* fall through */
 	default:
 		rc = -EINVAL;
 		goto out;
@@ -3569,7 +3540,7 @@ static const struct file_operations cxlflash_chr_fops = {
 	.owner          = THIS_MODULE,
 	.open           = cxlflash_chr_open,
 	.unlocked_ioctl	= cxlflash_chr_ioctl,
-	.compat_ioctl	= compat_ptr_ioctl,
+	.compat_ioctl	= cxlflash_chr_ioctl,
 };
 
 /**
@@ -3667,7 +3638,6 @@ static int cxlflash_probe(struct pci_dev *pdev,
 	host->max_cmd_len = CXLFLASH_MAX_CDB_LEN;
 
 	cfg = shost_priv(host);
-	cfg->state = STATE_PROBING;
 	cfg->host = host;
 	rc = alloc_mem(cfg);
 	if (rc) {
@@ -3679,9 +3649,8 @@ static int cxlflash_probe(struct pci_dev *pdev,
 
 	cfg->init_state = INIT_STATE_NONE;
 	cfg->dev = pdev;
+	cfg->ops = &cxlflash_cxl_ops;
 	cfg->cxl_fops = cxlflash_cxl_fops;
-	cfg->ops = cxlflash_assign_ops(ddv);
-	WARN_ON_ONCE(!cfg->ops);
 
 	/*
 	 * Promoted LUNs move to the top of the LUN table. The rest stay on
@@ -3712,19 +3681,14 @@ static int cxlflash_probe(struct pci_dev *pdev,
 
 	pci_set_drvdata(pdev, cfg);
 
+	cfg->afu_cookie = cfg->ops->create_afu(pdev);
+
 	rc = init_pci(cfg);
 	if (rc) {
 		dev_err(dev, "%s: init_pci failed rc=%d\n", __func__, rc);
 		goto out_remove;
 	}
 	cfg->init_state = INIT_STATE_PCI;
-
-	cfg->afu_cookie = cfg->ops->create_afu(pdev);
-	if (unlikely(!cfg->afu_cookie)) {
-		dev_err(dev, "%s: create_afu failed\n", __func__);
-		rc = -ENOMEM;
-		goto out_remove;
-	}
 
 	rc = init_afu(cfg);
 	if (rc && !wq_has_sleeper(&cfg->reset_waitq)) {
@@ -3757,7 +3721,6 @@ out:
 	return rc;
 
 out_remove:
-	cfg->state = STATE_PROBED;
 	cxlflash_remove(pdev);
 	goto out;
 }

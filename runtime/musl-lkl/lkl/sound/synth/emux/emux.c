@@ -1,8 +1,21 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  *  Copyright (C) 2000 Takashi Iwai <tiwai@suse.de>
  *
  *  Routines for control of EMU WaveTable chip
+ *
+ *   This program is free software; you can redistribute it and/or modify
+ *   it under the terms of the GNU General Public License as published by
+ *   the Free Software Foundation; either version 2 of the License, or
+ *   (at your option) any later version.
+ *
+ *   This program is distributed in the hope that it will be useful,
+ *   but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *   GNU General Public License for more details.
+ *
+ *   You should have received a copy of the GNU General Public License
+ *   along with this program; if not, write to the Free Software
+ *   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307 USA
  */
 
 #include <linux/wait.h>
@@ -88,7 +101,7 @@ int snd_emux_register(struct snd_emux *emu, struct snd_card *card, int index, ch
 	emu->name = kstrdup(name, GFP_KERNEL);
 	emu->voices = kcalloc(emu->max_voices, sizeof(struct snd_emux_voice),
 			      GFP_KERNEL);
-	if (emu->name == NULL || emu->voices == NULL)
+	if (emu->voices == NULL)
 		return -ENOMEM;
 
 	/* create soundfont list */
@@ -104,8 +117,7 @@ int snd_emux_register(struct snd_emux *emu, struct snd_card *card, int index, ch
 	if (emu->sflist == NULL)
 		return -ENOMEM;
 
-	err = snd_emux_init_hwdep(emu);
-	if (err < 0)
+	if ((err = snd_emux_init_hwdep(emu)) < 0)
 		return err;
 
 	snd_emux_init_voices(emu);
@@ -126,10 +138,15 @@ EXPORT_SYMBOL(snd_emux_register);
  */
 int snd_emux_free(struct snd_emux *emu)
 {
+	unsigned long flags;
+
 	if (! emu)
 		return -EINVAL;
 
-	del_timer_sync(&emu->tlist);
+	spin_lock_irqsave(&emu->voice_lock, flags);
+	if (emu->timer_active)
+		del_timer(&emu->tlist);
+	spin_unlock_irqrestore(&emu->voice_lock, flags);
 
 	snd_emux_proc_free(emu);
 	snd_emux_delete_virmidi(emu);
@@ -146,3 +163,20 @@ int snd_emux_free(struct snd_emux *emu)
 }
 
 EXPORT_SYMBOL(snd_emux_free);
+
+
+/*
+ *  INIT part
+ */
+
+static int __init alsa_emux_init(void)
+{
+	return 0;
+}
+
+static void __exit alsa_emux_exit(void)
+{
+}
+
+module_init(alsa_emux_init)
+module_exit(alsa_emux_exit)

@@ -16,20 +16,24 @@
  * @_name: const char * of common header compression name.
  * @_nexthdr: ipv6 nexthdr field for the header compression.
  * @_nexthdrlen: ipv6 nexthdr len for the reserved space.
- * @_id: one byte nhc id value.
- * @_idmask: one byte nhc id mask value.
+ * @_idsetup: callback to setup id and mask values.
+ * @_idlen: len for the next header id and mask, should be always the same.
  * @_uncompress: callback for uncompression call.
  * @_compress: callback for compression call.
  */
 #define LOWPAN_NHC(__nhc, _name, _nexthdr,	\
-		   _hdrlen, _id, _idmask,	\
+		   _hdrlen, _idsetup, _idlen,	\
 		   _uncompress, _compress)	\
-static const struct lowpan_nhc __nhc = {	\
+static u8 __nhc##_val[_idlen];			\
+static u8 __nhc##_mask[_idlen];			\
+static struct lowpan_nhc __nhc = {		\
 	.name		= _name,		\
 	.nexthdr	= _nexthdr,		\
 	.nexthdrlen	= _hdrlen,		\
-	.id		= _id,			\
-	.idmask		= _idmask,		\
+	.id		= __nhc##_val,		\
+	.idmask		= __nhc##_mask,		\
+	.idlen		= _idlen,		\
+	.idsetup	= _idsetup,		\
 	.uncompress	= _uncompress,		\
 	.compress	= _compress,		\
 }
@@ -49,21 +53,27 @@ module_exit(__nhc##_exit);
 /**
  * struct lowpan_nhc - hold 6lowpan next hdr compression ifnformation
  *
+ * @node: holder for the rbtree.
  * @name: name of the specific next header compression
  * @nexthdr: next header value of the protocol which should be compressed.
  * @nexthdrlen: ipv6 nexthdr len for the reserved space.
- * @id: one byte nhc id value.
- * @idmask: one byte nhc id mask value.
+ * @id: array for nhc id. Note this need to be in network byteorder.
+ * @mask: array for nhc id mask. Note this need to be in network byteorder.
+ * @len: the length of the next header id and mask.
+ * @setup: callback to setup fill the next header id value and mask.
  * @compress: callback to do the header compression.
  * @uncompress: callback to do the header uncompression.
  */
 struct lowpan_nhc {
+	struct rb_node	node;
 	const char	*name;
-	u8		nexthdr;
-	size_t		nexthdrlen;
-	u8		id;
-	u8		idmask;
+	const u8	nexthdr;
+	const size_t	nexthdrlen;
+	u8		*id;
+	u8		*idmask;
+	const size_t	idlen;
 
+	void		(*idsetup)(struct lowpan_nhc *nhc);
 	int		(*uncompress)(struct sk_buff *skb, size_t needed);
 	int		(*compress)(struct sk_buff *skb, u8 **hc_ptr);
 };
@@ -116,14 +126,14 @@ int lowpan_nhc_do_uncompression(struct sk_buff *skb,
  *
  * @nhc: nhc which should be add.
  */
-int lowpan_nhc_add(const struct lowpan_nhc *nhc);
+int lowpan_nhc_add(struct lowpan_nhc *nhc);
 
 /**
  * lowpan_nhc_del - delete a next header compression from framework
  *
  * @nhc: nhc which should be delete.
  */
-void lowpan_nhc_del(const struct lowpan_nhc *nhc);
+void lowpan_nhc_del(struct lowpan_nhc *nhc);
 
 /**
  * lowpan_nhc_init - adding all default nhcs

@@ -1,6 +1,14 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2008-2014, The Linux foundation. All rights reserved.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License rev 2 and
+ * only rev 2 as published by the free Software foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or fITNESS fOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
  */
 
 #include <linux/clk.h>
@@ -273,9 +281,6 @@ static void spi_qup_read(struct spi_qup *controller, u32 *opflags)
 		writel_relaxed(QUP_OP_IN_SERVICE_FLAG,
 			       controller->base + QUP_OPERATIONAL);
 
-		if (!remainder)
-			goto exit;
-
 		if (is_block_mode) {
 			num_words = (remainder > words_per_block) ?
 					words_per_block : remainder;
@@ -305,13 +310,11 @@ static void spi_qup_read(struct spi_qup *controller, u32 *opflags)
 	 * to refresh opflags value because MAX_INPUT_DONE_FLAG may now be
 	 * present and this is used to determine if transaction is complete
 	 */
-exit:
-	if (!remainder) {
-		*opflags = readl_relaxed(controller->base + QUP_OPERATIONAL);
-		if (is_block_mode && *opflags & QUP_OP_MAX_INPUT_DONE_FLAG)
-			writel_relaxed(QUP_OP_IN_SERVICE_FLAG,
-				       controller->base + QUP_OPERATIONAL);
-	}
+	*opflags = readl_relaxed(controller->base + QUP_OPERATIONAL);
+	if (is_block_mode && *opflags & QUP_OP_MAX_INPUT_DONE_FLAG)
+		writel_relaxed(QUP_OP_IN_SERVICE_FLAG,
+			       controller->base + QUP_OPERATIONAL);
+
 }
 
 static void spi_qup_write_to_fifo(struct spi_qup *controller, u32 num_words)
@@ -358,10 +361,6 @@ static void spi_qup_write(struct spi_qup *controller)
 		/* ACK by clearing service flag */
 		writel_relaxed(QUP_OP_OUT_SERVICE_FLAG,
 			       controller->base + QUP_OPERATIONAL);
-
-		/* make sure the interrupt is valid */
-		if (!remainder)
-			return;
 
 		if (is_block_mode) {
 			num_words = (remainder > words_per_block) ?
@@ -576,19 +575,6 @@ static int spi_qup_do_pio(struct spi_device *spi, struct spi_transfer *xfer,
 	return 0;
 }
 
-static bool spi_qup_data_pending(struct spi_qup *controller)
-{
-	unsigned int remainder_tx, remainder_rx;
-
-	remainder_tx = DIV_ROUND_UP(spi_qup_len(controller) -
-				    controller->tx_bytes, controller->w_size);
-
-	remainder_rx = DIV_ROUND_UP(spi_qup_len(controller) -
-				    controller->rx_bytes, controller->w_size);
-
-	return remainder_tx || remainder_rx;
-}
-
 static irqreturn_t spi_qup_qup_irq(int irq, void *dev_id)
 {
 	struct spi_qup *controller = dev_id;
@@ -624,11 +610,6 @@ static irqreturn_t spi_qup_qup_irq(int irq, void *dev_id)
 		error = -EIO;
 	}
 
-	spin_lock(&controller->lock);
-	if (!controller->error)
-		controller->error = error;
-	spin_unlock(&controller->lock);
-
 	if (spi_qup_is_dma_xfer(controller->mode)) {
 		writel_relaxed(opflags, controller->base + QUP_OPERATIONAL);
 	} else {
@@ -637,21 +618,10 @@ static irqreturn_t spi_qup_qup_irq(int irq, void *dev_id)
 
 		if (opflags & QUP_OP_OUT_SERVICE_FLAG)
 			spi_qup_write(controller);
-
-		if (!spi_qup_data_pending(controller))
-			complete(&controller->done);
 	}
 
-	if (error)
+	if ((opflags & QUP_OP_MAX_INPUT_DONE_FLAG) || error)
 		complete(&controller->done);
-
-	if (opflags & QUP_OP_MAX_INPUT_DONE_FLAG) {
-		if (!spi_qup_is_dma_xfer(controller->mode)) {
-			if (spi_qup_data_pending(controller))
-				return IRQ_HANDLED;
-		}
-		complete(&controller->done);
-	}
 
 	return IRQ_HANDLED;
 }
@@ -847,7 +817,7 @@ static int spi_qup_transfer_one(struct spi_master *master,
 {
 	struct spi_qup *controller = spi_master_get_devdata(master);
 	unsigned long timeout, flags;
-	int ret;
+	int ret = -EIO;
 
 	ret = spi_qup_io_prep(spi, xfer);
 	if (ret)
@@ -872,6 +842,10 @@ static int spi_qup_transfer_one(struct spi_master *master,
 	else
 		ret = spi_qup_do_pio(spi, xfer, timeout);
 
+	if (ret)
+		goto exit;
+
+exit:
 	spi_qup_set_state(controller, QUP_STATE_RESET);
 	spin_lock_irqsave(&controller->lock, flags);
 	if (!ret)
@@ -931,11 +905,11 @@ static int spi_qup_init_dma(struct spi_master *master, resource_size_t base)
 	int ret;
 
 	/* allocate dma resources, if available */
-	master->dma_rx = dma_request_chan(dev, "rx");
+	master->dma_rx = dma_request_slave_channel_reason(dev, "rx");
 	if (IS_ERR(master->dma_rx))
 		return PTR_ERR(master->dma_rx);
 
-	master->dma_tx = dma_request_chan(dev, "tx");
+	master->dma_tx = dma_request_slave_channel_reason(dev, "tx");
 	if (IS_ERR(master->dma_tx)) {
 		ret = PTR_ERR(master->dma_tx);
 		goto err_tx;
@@ -1057,8 +1031,6 @@ static int spi_qup_probe(struct platform_device *pdev)
 	else
 		master->num_chipselect = num_cs;
 
-	master->use_gpio_descriptors = true;
-	master->max_native_cs = SPI_NUM_CHIPSELECTS;
 	master->bus_num = pdev->id;
 	master->mode_bits = SPI_CPOL | SPI_CPHA | SPI_CS_HIGH | SPI_LOOP;
 	master->bits_per_word_mask = SPI_BPW_RANGE_MASK(4, 32);
@@ -1200,10 +1172,8 @@ static int spi_qup_pm_resume_runtime(struct device *device)
 		return ret;
 
 	ret = clk_prepare_enable(controller->cclk);
-	if (ret) {
-		clk_disable_unprepare(controller->iclk);
+	if (ret)
 		return ret;
-	}
 
 	/* Disable clocks auto gaiting */
 	config = readl_relaxed(controller->base + QUP_CONFIG);
@@ -1220,11 +1190,6 @@ static int spi_qup_suspend(struct device *device)
 	struct spi_qup *controller = spi_master_get_devdata(master);
 	int ret;
 
-	if (pm_runtime_suspended(device)) {
-		ret = spi_qup_pm_resume_runtime(device);
-		if (ret)
-			return ret;
-	}
 	ret = spi_master_suspend(master);
 	if (ret)
 		return ret;
@@ -1233,8 +1198,10 @@ static int spi_qup_suspend(struct device *device)
 	if (ret)
 		return ret;
 
-	clk_disable_unprepare(controller->cclk);
-	clk_disable_unprepare(controller->iclk);
+	if (!pm_runtime_suspended(device)) {
+		clk_disable_unprepare(controller->cclk);
+		clk_disable_unprepare(controller->iclk);
+	}
 	return 0;
 }
 
@@ -1249,25 +1216,14 @@ static int spi_qup_resume(struct device *device)
 		return ret;
 
 	ret = clk_prepare_enable(controller->cclk);
-	if (ret) {
-		clk_disable_unprepare(controller->iclk);
+	if (ret)
 		return ret;
-	}
 
 	ret = spi_qup_set_state(controller, QUP_STATE_RESET);
 	if (ret)
-		goto disable_clk;
+		return ret;
 
-	ret = spi_master_resume(master);
-	if (ret)
-		goto disable_clk;
-
-	return 0;
-
-disable_clk:
-	clk_disable_unprepare(controller->cclk);
-	clk_disable_unprepare(controller->iclk);
-	return ret;
+	return spi_master_resume(master);
 }
 #endif /* CONFIG_PM_SLEEP */
 
@@ -1277,7 +1233,7 @@ static int spi_qup_remove(struct platform_device *pdev)
 	struct spi_qup *controller = spi_master_get_devdata(master);
 	int ret;
 
-	ret = pm_runtime_resume_and_get(&pdev->dev);
+	ret = pm_runtime_get_sync(&pdev->dev);
 	if (ret < 0)
 		return ret;
 

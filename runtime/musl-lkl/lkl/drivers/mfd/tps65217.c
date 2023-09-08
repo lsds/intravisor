@@ -1,10 +1,18 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * tps65217.c
  *
  * TPS65217 chip family multi-function driver
  *
- * Copyright (C) 2011 Texas Instruments Incorporated - https://www.ti.com/
+ * Copyright (C) 2011 Texas Instruments Incorporated - http://www.ti.com/
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License as
+ * published by the Free Software Foundation version 2.
+ *
+ * This program is distributed "as is" WITHOUT ANY WARRANTY of any
+ * kind, whether express or implied; without even the implied warranty
+ * of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
  */
 
 #include <linux/device.h>
@@ -25,12 +33,12 @@
 #include <linux/mfd/core.h>
 #include <linux/mfd/tps65217.h>
 
-static const struct resource charger_resources[] = {
+static struct resource charger_resources[] = {
 	DEFINE_RES_IRQ_NAMED(TPS65217_IRQ_AC, "AC"),
 	DEFINE_RES_IRQ_NAMED(TPS65217_IRQ_USB, "USB"),
 };
 
-static const struct resource pb_resources[] = {
+static struct resource pb_resources[] = {
 	DEFINE_RES_IRQ_NAMED(TPS65217_IRQ_PB, "PB"),
 };
 
@@ -197,7 +205,7 @@ EXPORT_SYMBOL_GPL(tps65217_reg_read);
 /**
  * tps65217_reg_write: Write a single tps65217 register.
  *
- * @tps: Device to write to.
+ * @tps65217: Device to write to.
  * @reg: Register to write to.
  * @val: Value to write.
  * @level: Password protected level
@@ -242,7 +250,7 @@ EXPORT_SYMBOL_GPL(tps65217_reg_write);
 /**
  * tps65217_update_bits: Modify bits w.r.t mask, val and level.
  *
- * @tps: Device to write to.
+ * @tps65217: Device to write to.
  * @reg: Register to read-write to.
  * @mask: Mask.
  * @val: Value to write.
@@ -374,7 +382,7 @@ static int tps65217_probe(struct i2c_client *client)
 	return 0;
 }
 
-static void tps65217_remove(struct i2c_client *client)
+static int tps65217_remove(struct i2c_client *client)
 {
 	struct tps65217 *tps = i2c_get_clientdata(client);
 	unsigned int virq;
@@ -388,6 +396,8 @@ static void tps65217_remove(struct i2c_client *client)
 
 	irq_domain_remove(tps->irq_domain);
 	tps->irq_domain = NULL;
+
+	return 0;
 }
 
 static const struct i2c_device_id tps65217_id_table[] = {

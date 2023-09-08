@@ -8,10 +8,11 @@
 #include <linux/init.h>
 #include <linux/kernel.h>
 #include <linux/mm.h>
-#include <linux/memblock.h>
+#include <linux/bootmem.h>
 #include <linux/types.h>
 
 #include <asm/addrspace.h>
+#include <asm/bootinfo.h>
 #include <asm/dec/machtype.h>
 #include <asm/dec/prom.h>
 #include <asm/page.h>
@@ -27,7 +28,7 @@ volatile unsigned long mem_err;		/* So we know an error occurred */
 
 #define CHUNK_SIZE 0x400000
 
-static __init void pmax_setup_memory_region(void)
+static inline void pmax_setup_memory_region(void)
 {
 	volatile unsigned char *memory_page, dummy;
 	char old_handler[0x80];
@@ -49,14 +50,15 @@ static __init void pmax_setup_memory_region(void)
 	}
 	memcpy((void *)(CKSEG0 + 0x80), &old_handler, 0x80);
 
-	memblock_add(0, (unsigned long)memory_page - CKSEG1 - CHUNK_SIZE);
+	add_memory_region(0, (unsigned long)memory_page - CKSEG1 - CHUNK_SIZE,
+			  BOOT_MEM_RAM);
 }
 
 /*
  * Use the REX prom calls to get hold of the memory bitmap, and thence
  * determine memory size.
  */
-static __init void rex_setup_memory_region(void)
+static inline void rex_setup_memory_region(void)
 {
 	int i, bitmap_size;
 	unsigned long mem_start = 0, mem_size = 0;
@@ -74,13 +76,13 @@ static __init void rex_setup_memory_region(void)
 		else if (!mem_size)
 			mem_start += (8 * bm->pagesize);
 		else {
-			memblock_add(mem_start, mem_size);
+			add_memory_region(mem_start, mem_size, BOOT_MEM_RAM);
 			mem_start += mem_size + (8 * bm->pagesize);
 			mem_size = 0;
 		}
 	}
 	if (mem_size)
-		memblock_add(mem_start, mem_size);
+		add_memory_region(mem_start, mem_size, BOOT_MEM_RAM);
 }
 
 void __init prom_meminit(u32 magic)

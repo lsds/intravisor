@@ -1,8 +1,20 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
- * NXP Wireless LAN device driver: utility functions
+ * Marvell Wireless LAN device driver: utility functions
  *
- * Copyright 2011-2020 NXP
+ * Copyright (C) 2011-2014, Marvell International Ltd.
+ *
+ * This software file (the "File") is distributed by Marvell International
+ * Ltd. under the terms of the GNU General Public License Version 2, June 1991
+ * (the "License").  You may use, redistribute and/or modify this File in
+ * accordance with the terms and conditions of the License, a copy of which
+ * is available by writing to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA or on the
+ * worldwide web at http://www.gnu.org/licenses/old-licenses/gpl-2.0.txt.
+ *
+ * THE FILE IS DISTRIBUTED AS-IS, WITHOUT WARRANTY OF ANY KIND, AND THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE
+ * ARE EXPRESSLY DISCLAIMED.  The License provides additional details about
+ * this warranty disclaimer.
  */
 
 #include "decl.h"
@@ -185,11 +197,9 @@ int mwifiex_get_debug_info(struct mwifiex_private *priv,
 		info->is_deep_sleep = adapter->is_deep_sleep;
 		info->pm_wakeup_card_req = adapter->pm_wakeup_card_req;
 		info->pm_wakeup_fw_try = adapter->pm_wakeup_fw_try;
-		info->is_hs_configured = test_bit(MWIFIEX_IS_HS_CONFIGURED,
-						  &adapter->work_flags);
+		info->is_hs_configured = adapter->is_hs_configured;
 		info->hs_activated = adapter->hs_activated;
-		info->is_cmd_timedout = test_bit(MWIFIEX_IS_CMD_TIMEDOUT,
-						 &adapter->work_flags);
+		info->is_cmd_timedout = adapter->is_cmd_timedout;
 		info->num_cmd_host_to_card_failure
 				= adapter->dbg.num_cmd_host_to_card_failure;
 		info->num_cmd_sleep_cfm_host_to_card_failure
@@ -476,7 +486,11 @@ int mwifiex_recv_packet(struct mwifiex_private *priv, struct sk_buff *skb)
 	    (skb->truesize > MWIFIEX_RX_DATA_BUF_SIZE))
 		skb->truesize += (skb->len - MWIFIEX_RX_DATA_BUF_SIZE);
 
-	netif_rx(skb);
+	if (in_interrupt())
+		netif_rx(skb);
+	else
+		netif_rx_ni(skb);
+
 	return 0;
 }
 
@@ -591,11 +605,12 @@ struct mwifiex_sta_node *
 mwifiex_add_sta_entry(struct mwifiex_private *priv, const u8 *mac)
 {
 	struct mwifiex_sta_node *node;
+	unsigned long flags;
 
 	if (!mac)
 		return NULL;
 
-	spin_lock_bh(&priv->sta_list_spinlock);
+	spin_lock_irqsave(&priv->sta_list_spinlock, flags);
 	node = mwifiex_get_sta_entry(priv, mac);
 	if (node)
 		goto done;
@@ -608,7 +623,7 @@ mwifiex_add_sta_entry(struct mwifiex_private *priv, const u8 *mac)
 	list_add_tail(&node->list, &priv->sta_list);
 
 done:
-	spin_unlock_bh(&priv->sta_list_spinlock);
+	spin_unlock_irqrestore(&priv->sta_list_spinlock, flags);
 	return node;
 }
 
@@ -645,8 +660,9 @@ mwifiex_set_sta_ht_cap(struct mwifiex_private *priv, const u8 *ies,
 void mwifiex_del_sta_entry(struct mwifiex_private *priv, const u8 *mac)
 {
 	struct mwifiex_sta_node *node;
+	unsigned long flags;
 
-	spin_lock_bh(&priv->sta_list_spinlock);
+	spin_lock_irqsave(&priv->sta_list_spinlock, flags);
 
 	node = mwifiex_get_sta_entry(priv, mac);
 	if (node) {
@@ -654,7 +670,7 @@ void mwifiex_del_sta_entry(struct mwifiex_private *priv, const u8 *mac)
 		kfree(node);
 	}
 
-	spin_unlock_bh(&priv->sta_list_spinlock);
+	spin_unlock_irqrestore(&priv->sta_list_spinlock, flags);
 	return;
 }
 
@@ -662,8 +678,9 @@ void mwifiex_del_sta_entry(struct mwifiex_private *priv, const u8 *mac)
 void mwifiex_del_all_sta_list(struct mwifiex_private *priv)
 {
 	struct mwifiex_sta_node *node, *tmp;
+	unsigned long flags;
 
-	spin_lock_bh(&priv->sta_list_spinlock);
+	spin_lock_irqsave(&priv->sta_list_spinlock, flags);
 
 	list_for_each_entry_safe(node, tmp, &priv->sta_list, list) {
 		list_del(&node->list);
@@ -671,7 +688,7 @@ void mwifiex_del_all_sta_list(struct mwifiex_private *priv)
 	}
 
 	INIT_LIST_HEAD(&priv->sta_list);
-	spin_unlock_bh(&priv->sta_list_spinlock);
+	spin_unlock_irqrestore(&priv->sta_list_spinlock, flags);
 	return;
 }
 
@@ -691,14 +708,12 @@ void mwifiex_hist_data_set(struct mwifiex_private *priv, u8 rx_rate, s8 snr,
 			   s8 nflr)
 {
 	struct mwifiex_histogram_data *phist_data = priv->hist_data;
-	s8 nf   = -nflr;
-	s8 rssi = snr - nflr;
 
 	atomic_inc(&phist_data->num_samples);
 	atomic_inc(&phist_data->rx_rate[rx_rate]);
-	atomic_inc(&phist_data->snr[snr + 128]);
-	atomic_inc(&phist_data->noise_flr[nf + 128]);
-	atomic_inc(&phist_data->sig_str[rssi + 128]);
+	atomic_inc(&phist_data->snr[snr]);
+	atomic_inc(&phist_data->noise_flr[128 + nflr]);
+	atomic_inc(&phist_data->sig_str[nflr - snr]);
 }
 
 /* function to reset histogram data during init/reset */
@@ -740,10 +755,3 @@ void *mwifiex_alloc_dma_align_buf(int rx_len, gfp_t flags)
 	return skb;
 }
 EXPORT_SYMBOL_GPL(mwifiex_alloc_dma_align_buf);
-
-void mwifiex_fw_dump_event(struct mwifiex_private *priv)
-{
-	mwifiex_send_cmd(priv, HostCmd_CMD_FW_DUMP_EVENT, HostCmd_ACT_GEN_SET,
-			 0, NULL, true);
-}
-EXPORT_SYMBOL_GPL(mwifiex_fw_dump_event);

@@ -6,7 +6,6 @@
  */
 
 #include <linux/clkdev.h>
-#include <linux/clk/davinci.h>
 #include <linux/bitops.h>
 #include <linux/init.h>
 #include <linux/types.h>
@@ -37,11 +36,11 @@ SYSCLK(5, pll0_sysclk5, pll0_pllen, 5, 0);
 SYSCLK(6, pll0_sysclk6, pll0_pllen, 5, SYSCLK_FIXED_DIV);
 SYSCLK(7, pll0_sysclk7, pll0_pllen, 5, 0);
 
-int da830_pll_init(struct device *dev, void __iomem *base, struct regmap *cfgchip)
+int da830_pll_init(struct device *dev, void __iomem *base)
 {
 	struct clk *clk;
 
-	davinci_pll_clk_register(dev, &da830_pll_info, "ref_clk", base, cfgchip);
+	davinci_pll_clk_register(dev, &da830_pll_info, "ref_clk", base);
 
 	clk = davinci_pll_sysclk_register(dev, &pll0_sysclk2, base);
 	clk_register_clkdev(clk, "pll0_sysclk2", "da830-psc0");

@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  *  PWM vibrator driver
  *
@@ -9,6 +8,11 @@
  *
  *  Based on PWM beeper driver:
  *  Copyright (C) 2010, Lars-Peter Clausen <lars@metafoo.de>
+ *
+ *  This program is free software; you can redistribute it and/or modify it
+ *  under  the terms of the GNU General  Public License as published by the
+ *  Free Software Foundation;  either version 2 of the License, or (at your
+ *  option) any later version.
  */
 
 #include <linux/input.h>
@@ -30,7 +34,6 @@ struct pwm_vibrator {
 	struct work_struct play_work;
 	u16 level;
 	u32 direction_duty_cycle;
-	bool vcc_on;
 };
 
 static int pwm_vibrator_start(struct pwm_vibrator *vibrator)
@@ -39,13 +42,10 @@ static int pwm_vibrator_start(struct pwm_vibrator *vibrator)
 	struct pwm_state state;
 	int err;
 
-	if (!vibrator->vcc_on) {
-		err = regulator_enable(vibrator->vcc);
-		if (err) {
-			dev_err(pdev, "failed to enable regulator: %d", err);
-			return err;
-		}
-		vibrator->vcc_on = true;
+	err = regulator_enable(vibrator->vcc);
+	if (err) {
+		dev_err(pdev, "failed to enable regulator: %d", err);
+		return err;
 	}
 
 	pwm_get_state(vibrator->pwm, &state);
@@ -76,14 +76,11 @@ static int pwm_vibrator_start(struct pwm_vibrator *vibrator)
 
 static void pwm_vibrator_stop(struct pwm_vibrator *vibrator)
 {
+	regulator_disable(vibrator->vcc);
+
 	if (vibrator->pwm_dir)
 		pwm_disable(vibrator->pwm_dir);
 	pwm_disable(vibrator->pwm);
-
-	if (vibrator->vcc_on) {
-		regulator_disable(vibrator->vcc);
-		vibrator->vcc_on = false;
-	}
 }
 
 static void pwm_vibrator_play_work(struct work_struct *work)
@@ -190,7 +187,7 @@ static int pwm_vibrator_probe(struct platform_device *pdev)
 
 	default:
 		dev_err(&pdev->dev, "Failed to request direction pwm: %d", err);
-		fallthrough;
+		/* Fall through */
 
 	case -EPROBE_DEFER:
 		return err;

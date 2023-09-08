@@ -1,10 +1,24 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  *   Low-level ALSA driver for the ENSONIQ SoundScape
  *   Copyright (c) by Chris Rankin
  *
  *   This driver was written in part using information obtained from
  *   the OSS/Free SoundScape driver, written by Hannu Savolainen.
+ *
+ *
+ *   This program is free software; you can redistribute it and/or modify
+ *   it under the terms of the GNU General Public License as published by
+ *   the Free Software Foundation; either version 2 of the License, or
+ *   (at your option) any later version.
+ *
+ *   This program is distributed in the hope that it will be useful,
+ *   but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *   GNU General Public License for more details.
+ *
+ *   You should have received a copy of the GNU General Public License
+ *   along with this program; if not, write to the Free Software
+ *   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307 USA
  */
 
 #include <linux/init.h>
@@ -153,13 +167,12 @@ static inline struct soundscape *get_card_soundscape(struct snd_card *c)
  * I think this means that the memory has to map to
  * contiguous pages of physical memory.
  */
-static struct snd_dma_buffer *get_dmabuf(struct soundscape *s,
-					 struct snd_dma_buffer *buf,
+static struct snd_dma_buffer *get_dmabuf(struct snd_dma_buffer *buf,
 					 unsigned long size)
 {
 	if (buf) {
 		if (snd_dma_alloc_pages_fallback(SNDRV_DMA_TYPE_DEV,
-						 s->chip->card->dev,
+						 snd_dma_isa_data(),
 						 size, buf) < 0) {
 			snd_printk(KERN_ERR "sscape: Failed to allocate "
 					    "%lu bytes for DMA\n",
@@ -308,7 +321,7 @@ static inline int verify_mpu401(const struct snd_mpu401 *mpu)
 }
 
 /*
- * This is apparently the standard way to initialise an MPU-401
+ * This is apparently the standard way to initailise an MPU-401
  */
 static inline void initialise_mpu401(const struct snd_mpu401 *mpu)
 {
@@ -328,7 +341,18 @@ static void activate_ad1845_unsafe(unsigned io_base)
 }
 
 /*
- * Tell the SoundScape to begin a DMA transfer using the given channel.
+ * Do the necessary ALSA-level cleanup to deallocate our driver ...
+ */
+static void soundscape_free(struct snd_card *c)
+{
+	struct soundscape *sscape = get_card_soundscape(c);
+	release_and_free_resource(sscape->io_res);
+	release_and_free_resource(sscape->wss_res);
+	free_dma(sscape->chip->dma1);
+}
+
+/*
+ * Tell the SoundScape to begin a DMA tranfer using the given channel.
  * All locking issues are left to the caller.
  */
 static void sscape_start_dma_unsafe(unsigned io_base, enum GA_REG reg)
@@ -419,7 +443,7 @@ static int upload_dma_data(struct soundscape *s, const unsigned char *data,
 	int ret;
 	unsigned char val;
 
-	if (!get_dmabuf(s, &dma, PAGE_ALIGN(32 * 1024)))
+	if (!get_dmabuf(&dma, PAGE_ALIGN(32 * 1024)))
 		return -ENOMEM;
 
 	spin_lock_irqsave(&s->lock, flags);
@@ -792,7 +816,7 @@ static int mpu401_open(struct snd_mpu401 *mpu)
 }
 
 /*
- * Initialise an MPU-401 subdevice for MIDI support on the SoundScape.
+ * Initialse an MPU-401 subdevice for MIDI support on the SoundScape.
  */
 static int create_mpu401(struct snd_card *card, int devnum,
 			 unsigned long port, int irq)
@@ -930,7 +954,7 @@ static int create_sscape(int dev, struct snd_card *card)
 	 * Grab IO ports that we will need to probe so that we
 	 * can detect and control this hardware ...
 	 */
-	io_res = devm_request_region(card->dev, port[dev], 8, "SoundScape");
+	io_res = request_region(port[dev], 8, "SoundScape");
 	if (!io_res) {
 		snd_printk(KERN_ERR
 			   "sscape: can't grab port 0x%lx\n", port[dev]);
@@ -938,22 +962,22 @@ static int create_sscape(int dev, struct snd_card *card)
 	}
 	wss_res = NULL;
 	if (sscape->type == SSCAPE_VIVO) {
-		wss_res = devm_request_region(card->dev, wss_port[dev], 4,
-					      "SoundScape");
+		wss_res = request_region(wss_port[dev], 4, "SoundScape");
 		if (!wss_res) {
 			snd_printk(KERN_ERR "sscape: can't grab port 0x%lx\n",
 					    wss_port[dev]);
-			return -EBUSY;
+			err = -EBUSY;
+			goto _release_region;
 		}
 	}
 
 	/*
 	 * Grab one DMA channel ...
 	 */
-	err = snd_devm_request_dma(card->dev, dma[dev], "SoundScape");
+	err = request_dma(dma[dev], "SoundScape");
 	if (err < 0) {
 		snd_printk(KERN_ERR "sscape: can't grab DMA %d\n", dma[dev]);
-		return err;
+		goto _release_region;
 	}
 
 	spin_lock_init(&sscape->lock);
@@ -964,7 +988,8 @@ static int create_sscape(int dev, struct snd_card *card)
 	if (!detect_sscape(sscape, wss_port[dev])) {
 		printk(KERN_ERR "sscape: hardware not detected at 0x%x\n",
 			sscape->io_base);
-		return -ENODEV;
+		err = -ENODEV;
+		goto _release_dma;
 	}
 
 	switch (sscape->type) {
@@ -994,13 +1019,15 @@ static int create_sscape(int dev, struct snd_card *card)
 	irq_cfg = get_irq_config(sscape->type, irq[dev]);
 	if (irq_cfg == INVALID_IRQ) {
 		snd_printk(KERN_ERR "sscape: Invalid IRQ %d\n", irq[dev]);
-		return -ENXIO;
+		err = -ENXIO;
+		goto _release_dma;
 	}
 
 	mpu_irq_cfg = get_irq_config(sscape->type, mpu_irq[dev]);
 	if (mpu_irq_cfg == INVALID_IRQ) {
 		snd_printk(KERN_ERR "sscape: Invalid IRQ %d\n", mpu_irq[dev]);
-		return -ENXIO;
+		err = -ENXIO;
+		goto _release_dma;
 	}
 
 	/*
@@ -1046,7 +1073,7 @@ static int create_sscape(int dev, struct snd_card *card)
 		snd_printk(KERN_ERR
 				"sscape: No AD1845 device at 0x%lx, IRQ %d\n",
 				wss_port[dev], irq[dev]);
-		return err;
+		goto _release_dma;
 	}
 	strcpy(card->driver, "SoundScape");
 	strcpy(card->shortname, name);
@@ -1068,7 +1095,7 @@ static int create_sscape(int dev, struct snd_card *card)
 				snd_printk(KERN_ERR "sscape: Failed to create "
 						"MPU-401 device at 0x%lx\n",
 						port[dev]);
-				return err;
+				goto _release_dma;
 			}
 
 			/*
@@ -1095,7 +1122,24 @@ static int create_sscape(int dev, struct snd_card *card)
 		}
 	}
 
+	/*
+	 * Now that we have successfully created this sound card,
+	 * it is safe to store the pointer.
+	 * NOTE: we only register the sound card's "destructor"
+	 *       function now that our "constructor" has completed.
+	 */
+	card->private_free = soundscape_free;
+
 	return 0;
+
+_release_dma:
+	free_dma(dma[dev]);
+
+_release_region:
+	release_and_free_resource(wss_res);
+	release_and_free_resource(io_res);
+
+	return err;
 }
 
 
@@ -1125,8 +1169,8 @@ static int snd_sscape_probe(struct device *pdev, unsigned int dev)
 	struct soundscape *sscape;
 	int ret;
 
-	ret = snd_devm_card_new(pdev, index[dev], id[dev], THIS_MODULE,
-				sizeof(struct soundscape), &card);
+	ret = snd_card_new(pdev, index[dev], id[dev], THIS_MODULE,
+			   sizeof(struct soundscape), &card);
 	if (ret < 0)
 		return ret;
 
@@ -1137,14 +1181,24 @@ static int snd_sscape_probe(struct device *pdev, unsigned int dev)
 
 	ret = create_sscape(dev, card);
 	if (ret < 0)
-		return ret;
+		goto _release_card;
 
 	ret = snd_card_register(card);
 	if (ret < 0) {
 		snd_printk(KERN_ERR "sscape: Failed to register sound card\n");
-		return ret;
+		goto _release_card;
 	}
 	dev_set_drvdata(pdev, card);
+	return 0;
+
+_release_card:
+	snd_card_free(card);
+	return ret;
+}
+
+static int snd_sscape_remove(struct device *devptr, unsigned int dev)
+{
+	snd_card_free(dev_get_drvdata(devptr));
 	return 0;
 }
 
@@ -1153,6 +1207,7 @@ static int snd_sscape_probe(struct device *pdev, unsigned int dev)
 static struct isa_driver snd_sscape_driver = {
 	.match		= snd_sscape_match,
 	.probe		= snd_sscape_probe,
+	.remove		= snd_sscape_remove,
 	/* FIXME: suspend/resume */
 	.driver		= {
 		.name	= DEV_NAME
@@ -1203,9 +1258,9 @@ static int sscape_pnp_detect(struct pnp_card_link *pcard,
 	 * Create a new ALSA sound card entry, in anticipation
 	 * of detecting our hardware ...
 	 */
-	ret = snd_devm_card_new(&pcard->card->dev,
-				index[idx], id[idx], THIS_MODULE,
-				sizeof(struct soundscape), &card);
+	ret = snd_card_new(&pcard->card->dev,
+			   index[idx], id[idx], THIS_MODULE,
+			   sizeof(struct soundscape), &card);
 	if (ret < 0)
 		return ret;
 
@@ -1236,17 +1291,27 @@ static int sscape_pnp_detect(struct pnp_card_link *pcard,
 
 	ret = create_sscape(idx, card);
 	if (ret < 0)
-		return ret;
+		goto _release_card;
 
 	ret = snd_card_register(card);
 	if (ret < 0) {
 		snd_printk(KERN_ERR "sscape: Failed to register sound card\n");
-		return ret;
+		goto _release_card;
 	}
 
 	pnp_set_card_drvdata(pcard, card);
 	++idx;
 	return 0;
+
+_release_card:
+	snd_card_free(card);
+	return ret;
+}
+
+static void sscape_pnp_remove(struct pnp_card_link *pcard)
+{
+	snd_card_free(pnp_get_card_drvdata(pcard));
+	pnp_set_card_drvdata(pcard, NULL);
 }
 
 static struct pnp_card_driver sscape_pnpc_driver = {
@@ -1254,6 +1319,7 @@ static struct pnp_card_driver sscape_pnpc_driver = {
 	.name = "sscape",
 	.id_table = sscape_pnpids,
 	.probe = sscape_pnp_detect,
+	.remove = sscape_pnp_remove,
 };
 
 #endif /* CONFIG_PNP */

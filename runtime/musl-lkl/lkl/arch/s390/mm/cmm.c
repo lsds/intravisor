@@ -14,13 +14,15 @@
 #include <linux/moduleparam.h>
 #include <linux/gfp.h>
 #include <linux/sched.h>
-#include <linux/string_helpers.h>
 #include <linux/sysctl.h>
+#include <linux/ctype.h>
 #include <linux/swap.h>
 #include <linux/kthread.h>
 #include <linux/oom.h>
+#include <linux/suspend.h>
 #include <linux/uaccess.h>
 
+#include <asm/pgalloc.h>
 #include <asm/diag.h>
 
 #ifdef CONFIG_CMM_IUCV
@@ -47,6 +49,7 @@ static volatile long cmm_pages_target;
 static volatile long cmm_timed_pages_target;
 static long cmm_timeout_pages;
 static long cmm_timeout_seconds;
+static int cmm_suspended;
 
 static struct cmm_page_array *cmm_page_list;
 static struct cmm_page_array *cmm_timed_page_list;
@@ -90,7 +93,7 @@ static long cmm_alloc_pages(long nr, long *counter,
 			} else
 				free_page((unsigned long) npa);
 		}
-		diag10_range(virt_to_pfn(addr), 1);
+		diag10_range(addr >> PAGE_SHIFT, 1);
 		pa->pages[pa->index++] = addr;
 		(*counter)++;
 		spin_unlock(&cmm_lock);
@@ -148,9 +151,9 @@ static int cmm_thread(void *dummy)
 
 	while (1) {
 		rc = wait_event_interruptible(cmm_thread_wait,
-			cmm_pages != cmm_pages_target ||
-			cmm_timed_pages != cmm_timed_pages_target ||
-			kthread_should_stop());
+			(!cmm_suspended && (cmm_pages != cmm_pages_target ||
+			 cmm_timed_pages != cmm_timed_pages_target)) ||
+			 kthread_should_stop());
 		if (kthread_should_stop() || rc == -ERESTARTSYS) {
 			cmm_pages_target = cmm_pages;
 			cmm_timed_pages_target = cmm_timed_pages;
@@ -188,7 +191,12 @@ static void cmm_set_timer(void)
 			del_timer(&cmm_timer);
 		return;
 	}
-	mod_timer(&cmm_timer, jiffies + msecs_to_jiffies(cmm_timeout_seconds * MSEC_PER_SEC));
+	if (timer_pending(&cmm_timer)) {
+		if (mod_timer(&cmm_timer, jiffies + cmm_timeout_seconds*HZ))
+			return;
+	}
+	cmm_timer.expires = jiffies + cmm_timeout_seconds*HZ;
+	add_timer(&cmm_timer);
 }
 
 static void cmm_timer_fn(struct timer_list *unused)
@@ -243,47 +251,50 @@ static int cmm_skip_blanks(char *cp, char **endp)
 	return str != cp;
 }
 
+static struct ctl_table cmm_table[];
+
 static int cmm_pages_handler(struct ctl_table *ctl, int write,
-			     void *buffer, size_t *lenp, loff_t *ppos)
+			     void __user *buffer, size_t *lenp, loff_t *ppos)
 {
-	long nr = cmm_get_pages();
-	struct ctl_table ctl_entry = {
-		.procname	= ctl->procname,
-		.data		= &nr,
-		.maxlen		= sizeof(long),
-	};
-	int rc;
+	char buf[16], *p;
+	unsigned int len;
+	long nr;
 
-	rc = proc_doulongvec_minmax(&ctl_entry, write, buffer, lenp, ppos);
-	if (rc < 0 || !write)
-		return rc;
+	if (!*lenp || (*ppos && !write)) {
+		*lenp = 0;
+		return 0;
+	}
 
-	cmm_set_pages(nr);
-	return 0;
-}
-
-static int cmm_timed_pages_handler(struct ctl_table *ctl, int write,
-				   void *buffer, size_t *lenp,
-				   loff_t *ppos)
-{
-	long nr = cmm_get_timed_pages();
-	struct ctl_table ctl_entry = {
-		.procname	= ctl->procname,
-		.data		= &nr,
-		.maxlen		= sizeof(long),
-	};
-	int rc;
-
-	rc = proc_doulongvec_minmax(&ctl_entry, write, buffer, lenp, ppos);
-	if (rc < 0 || !write)
-		return rc;
-
-	cmm_add_timed_pages(nr);
+	if (write) {
+		len = *lenp;
+		if (copy_from_user(buf, buffer,
+				   len > sizeof(buf) ? sizeof(buf) : len))
+			return -EFAULT;
+		buf[sizeof(buf) - 1] = '\0';
+		cmm_skip_blanks(buf, &p);
+		nr = simple_strtoul(p, &p, 0);
+		if (ctl == &cmm_table[0])
+			cmm_set_pages(nr);
+		else
+			cmm_add_timed_pages(nr);
+	} else {
+		if (ctl == &cmm_table[0])
+			nr = cmm_get_pages();
+		else
+			nr = cmm_get_timed_pages();
+		len = sprintf(buf, "%ld\n", nr);
+		if (len > *lenp)
+			len = *lenp;
+		if (copy_to_user(buffer, buf, len))
+			return -EFAULT;
+	}
+	*lenp = len;
+	*ppos += len;
 	return 0;
 }
 
 static int cmm_timeout_handler(struct ctl_table *ctl, int write,
-			       void *buffer, size_t *lenp, loff_t *ppos)
+			       void __user *buffer, size_t *lenp, loff_t *ppos)
 {
 	char buf[64], *p;
 	long nr, seconds;
@@ -295,24 +306,26 @@ static int cmm_timeout_handler(struct ctl_table *ctl, int write,
 	}
 
 	if (write) {
-		len = min(*lenp, sizeof(buf));
-		memcpy(buf, buffer, len);
-		buf[len - 1] = '\0';
+		len = *lenp;
+		if (copy_from_user(buf, buffer,
+				   len > sizeof(buf) ? sizeof(buf) : len))
+			return -EFAULT;
+		buf[sizeof(buf) - 1] = '\0';
 		cmm_skip_blanks(buf, &p);
 		nr = simple_strtoul(p, &p, 0);
 		cmm_skip_blanks(p, &p);
 		seconds = simple_strtoul(p, &p, 0);
 		cmm_set_timeout(nr, seconds);
-		*ppos += *lenp;
 	} else {
 		len = sprintf(buf, "%ld %ld\n",
 			      cmm_timeout_pages, cmm_timeout_seconds);
 		if (len > *lenp)
 			len = *lenp;
-		memcpy(buffer, buf, len);
-		*lenp = len;
-		*ppos += len;
+		if (copy_to_user(buffer, buf, len))
+			return -EFAULT;
 	}
+	*lenp = len;
+	*ppos += len;
 	return 0;
 }
 
@@ -325,7 +338,7 @@ static struct ctl_table cmm_table[] = {
 	{
 		.procname	= "cmm_timed_pages",
 		.mode		= 0644,
-		.proc_handler	= cmm_timed_pages_handler,
+		.proc_handler	= cmm_pages_handler,
 	},
 	{
 		.procname	= "cmm_timeout",
@@ -385,6 +398,38 @@ static void cmm_smsg_target(const char *from, char *msg)
 
 static struct ctl_table_header *cmm_sysctl_header;
 
+static int cmm_suspend(void)
+{
+	cmm_suspended = 1;
+	cmm_free_pages(cmm_pages, &cmm_pages, &cmm_page_list);
+	cmm_free_pages(cmm_timed_pages, &cmm_timed_pages, &cmm_timed_page_list);
+	return 0;
+}
+
+static int cmm_resume(void)
+{
+	cmm_suspended = 0;
+	cmm_kick_thread();
+	return 0;
+}
+
+static int cmm_power_event(struct notifier_block *this,
+			   unsigned long event, void *ptr)
+{
+	switch (event) {
+	case PM_POST_HIBERNATION:
+		return cmm_resume();
+	case PM_HIBERNATION_PREPARE:
+		return cmm_suspend();
+	default:
+		return NOTIFY_DONE;
+	}
+}
+
+static struct notifier_block cmm_power_notifier = {
+	.notifier_call = cmm_power_event,
+};
+
 static int __init cmm_init(void)
 {
 	int rc = -ENOMEM;
@@ -394,10 +439,13 @@ static int __init cmm_init(void)
 		goto out_sysctl;
 #ifdef CONFIG_CMM_IUCV
 	/* convert sender to uppercase characters */
-	if (sender)
-		string_upper(sender, sender);
-	else
+	if (sender) {
+		int len = strlen(sender);
+		while (len--)
+			sender[len] = toupper(sender[len]);
+	} else {
 		sender = cmm_default_sender;
+	}
 
 	rc = smsg_register_callback(SMSG_PREFIX, cmm_smsg_target);
 	if (rc < 0)
@@ -406,11 +454,16 @@ static int __init cmm_init(void)
 	rc = register_oom_notifier(&cmm_oom_nb);
 	if (rc < 0)
 		goto out_oom_notify;
+	rc = register_pm_notifier(&cmm_power_notifier);
+	if (rc)
+		goto out_pm;
 	cmm_thread_ptr = kthread_run(cmm_thread, NULL, "cmmthread");
 	if (!IS_ERR(cmm_thread_ptr))
 		return 0;
 
 	rc = PTR_ERR(cmm_thread_ptr);
+	unregister_pm_notifier(&cmm_power_notifier);
+out_pm:
 	unregister_oom_notifier(&cmm_oom_nb);
 out_oom_notify:
 #ifdef CONFIG_CMM_IUCV
@@ -430,6 +483,7 @@ static void __exit cmm_exit(void)
 #ifdef CONFIG_CMM_IUCV
 	smsg_unregister_callback(SMSG_PREFIX, cmm_smsg_target);
 #endif
+	unregister_pm_notifier(&cmm_power_notifier);
 	unregister_oom_notifier(&cmm_oom_nb);
 	kthread_stop(cmm_thread_ptr);
 	del_timer_sync(&cmm_timer);

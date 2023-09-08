@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
  * INET		An implementation of the TCP/IP protocol suite for the LINUX
  *		operating system.  INET is implemented using the  BSD Socket
@@ -14,6 +13,11 @@
  * Fixes:
  *		Alan Cox	: Turned on udp checksums. I don't want to
  *				  chase 'memory corruption' bugs that aren't!
+ *
+ *		This program is free software; you can redistribute it and/or
+ *		modify it under the terms of the GNU General Public License
+ *		as published by the Free Software Foundation; either version
+ *		2 of the License, or (at your option) any later version.
  */
 #ifndef _UDP_H
 #define _UDP_H
@@ -27,7 +31,6 @@
 #include <linux/ipv6.h>
 #include <linux/seq_file.h>
 #include <linux/poll.h>
-#include <linux/indirect_call_wrapper.h>
 
 /**
  *	struct udp_skb_cb  -  UDP(-Lite) private variables
@@ -95,7 +98,6 @@ static inline struct udp_hslot *udp_hashslot2(struct udp_table *table,
 extern struct proto udp_prot;
 
 extern atomic_long_t udp_memory_allocated;
-DECLARE_PER_CPU(int, udp_memory_per_cpu_fw_alloc);
 
 /* sysctl variables for udp */
 extern long sysctl_udp_mem[3];
@@ -165,14 +167,26 @@ static inline void udp_csum_pull_header(struct sk_buff *skb)
 	UDP_SKB_CB(skb)->cscov -= sizeof(struct udphdr);
 }
 
-typedef struct sock *(*udp_lookup_t)(const struct sk_buff *skb, __be16 sport,
+typedef struct sock *(*udp_lookup_t)(struct sk_buff *skb, __be16 sport,
 				     __be16 dport);
 
-void udp_v6_early_demux(struct sk_buff *skb);
-INDIRECT_CALLABLE_DECLARE(int udpv6_rcv(struct sk_buff *));
+struct sk_buff **udp_gro_receive(struct sk_buff **head, struct sk_buff *skb,
+				 struct udphdr *uh, udp_lookup_t lookup);
+int udp_gro_complete(struct sk_buff *skb, int nhoff, udp_lookup_t lookup);
 
-struct sk_buff *__udp_gso_segment(struct sk_buff *gso_skb,
-				  netdev_features_t features, bool is_ipv6);
+static inline struct udphdr *udp_gro_udphdr(struct sk_buff *skb)
+{
+	struct udphdr *uh;
+	unsigned int hlen, off;
+
+	off  = skb_gro_offset(skb);
+	hlen = off + sizeof(*uh);
+	uh   = skb_gro_header_fast(skb, off);
+	if (skb_gro_header_hard(skb, hlen))
+		uh = skb_gro_header_slow(skb, hlen, off);
+
+	return uh;
+}
 
 /* hash routines shared between UDPv4/6 and UDP-Litev4/6 */
 static inline int udp_lib_hash(struct sock *sk)
@@ -230,35 +244,19 @@ static inline __be16 udp_flow_src_port(struct net *net, struct sk_buff *skb,
 	return htons((((u64) hash * (max - min)) >> 32) + min);
 }
 
-static inline int udp_rqueue_get(struct sock *sk)
-{
-	return sk_rmem_alloc_get(sk) - READ_ONCE(udp_sk(sk)->forward_deficit);
-}
-
-static inline bool udp_sk_bound_dev_eq(struct net *net, int bound_dev_if,
-				       int dif, int sdif)
-{
-#if IS_ENABLED(CONFIG_NET_L3_MASTER_DEV)
-	return inet_bound_dev_eq(!!READ_ONCE(net->ipv4.sysctl_udp_l3mdev_accept),
-				 bound_dev_if, dif, sdif);
-#else
-	return inet_bound_dev_eq(true, bound_dev_if, dif, sdif);
-#endif
-}
-
 /* net/ipv4/udp.c */
-void udp_destruct_common(struct sock *sk);
+void udp_destruct_sock(struct sock *sk);
 void skb_consume_udp(struct sock *sk, struct sk_buff *skb, int len);
 int __udp_enqueue_schedule_skb(struct sock *sk, struct sk_buff *skb);
 void udp_skb_destructor(struct sock *sk, struct sk_buff *skb);
-struct sk_buff *__skb_recv_udp(struct sock *sk, unsigned int flags, int *off,
-			       int *err);
+struct sk_buff *__skb_recv_udp(struct sock *sk, unsigned int flags,
+			       int noblock, int *peeked, int *off, int *err);
 static inline struct sk_buff *skb_recv_udp(struct sock *sk, unsigned int flags,
-					   int *err)
+					   int noblock, int *err)
 {
-	int off = 0;
+	int peeked, off = 0;
 
-	return __skb_recv_udp(sk, flags, &off, err);
+	return __skb_recv_udp(sk, flags, noblock, &peeked, &off, err);
 }
 
 int udp_v4_early_demux(struct sk_buff *skb);
@@ -266,12 +264,11 @@ bool udp_sk_rx_dst_set(struct sock *sk, struct dst_entry *dst);
 int udp_get_port(struct sock *sk, unsigned short snum,
 		 int (*saddr_cmp)(const struct sock *,
 				  const struct sock *));
-int udp_err(struct sk_buff *, u32);
+void udp_err(struct sk_buff *, u32);
 int udp_abort(struct sock *sk, int err);
 int udp_sendmsg(struct sock *sk, struct msghdr *msg, size_t len);
 int udp_push_pending_frames(struct sock *sk);
 void udp_flush_pending_frames(struct sock *sk);
-int udp_cmsg_send(struct sock *sk, struct msghdr *msg, u16 *gso_size);
 void udp4_hwcsum(struct sk_buff *skb, __be32 src, __be32 dst);
 int udp_rcv(struct sk_buff *skb);
 int udp_ioctl(struct sock *sk, int cmd, unsigned long arg);
@@ -286,14 +283,14 @@ struct sk_buff *skb_udp_tunnel_segment(struct sk_buff *skb,
 int udp_lib_getsockopt(struct sock *sk, int level, int optname,
 		       char __user *optval, int __user *optlen);
 int udp_lib_setsockopt(struct sock *sk, int level, int optname,
-		       sockptr_t optval, unsigned int optlen,
+		       char __user *optval, unsigned int optlen,
 		       int (*push_pending_frames)(struct sock *));
 struct sock *udp4_lib_lookup(struct net *net, __be32 saddr, __be16 sport,
 			     __be32 daddr, __be16 dport, int dif);
 struct sock *__udp4_lib_lookup(struct net *net, __be32 saddr, __be16 sport,
 			       __be32 daddr, __be16 dport, int dif, int sdif,
 			       struct udp_table *tbl, struct sk_buff *skb);
-struct sock *udp4_lib_lookup_skb(const struct sk_buff *skb,
+struct sock *udp4_lib_lookup_skb(struct sk_buff *skb,
 				 __be16 sport, __be16 dport);
 struct sock *udp6_lib_lookup(struct net *net,
 			     const struct in6_addr *saddr, __be16 sport,
@@ -304,9 +301,8 @@ struct sock *__udp6_lib_lookup(struct net *net,
 			       const struct in6_addr *daddr, __be16 dport,
 			       int dif, int sdif, struct udp_table *tbl,
 			       struct sk_buff *skb);
-struct sock *udp6_lib_lookup_skb(const struct sk_buff *skb,
+struct sock *udp6_lib_lookup_skb(struct sk_buff *skb,
 				 __be16 sport, __be16 dport);
-int udp_read_skb(struct sock *sk, skb_read_actor_t recv_actor);
 
 /* UDP uses skb->dev_scratch to cache as much information as possible and avoid
  * possibly multiple cache miss on dequeue()
@@ -401,126 +397,50 @@ static inline int copy_linear_skb(struct sk_buff *skb, int len, int off,
 } while(0)
 
 #if IS_ENABLED(CONFIG_IPV6)
-#define __UDPX_MIB(sk, ipv4)						\
-({									\
-	ipv4 ? (IS_UDPLITE(sk) ? sock_net(sk)->mib.udplite_statistics :	\
-				 sock_net(sk)->mib.udp_statistics) :	\
-		(IS_UDPLITE(sk) ? sock_net(sk)->mib.udplite_stats_in6 :	\
-				 sock_net(sk)->mib.udp_stats_in6);	\
-})
+#define __UDPX_INC_STATS(sk, field)					\
+do {									\
+	if ((sk)->sk_family == AF_INET)					\
+		__UDP_INC_STATS(sock_net(sk), field, 0);		\
+	else								\
+		__UDP6_INC_STATS(sock_net(sk), field, 0);		\
+} while (0)
 #else
-#define __UDPX_MIB(sk, ipv4)						\
-({									\
-	IS_UDPLITE(sk) ? sock_net(sk)->mib.udplite_statistics :		\
-			 sock_net(sk)->mib.udp_statistics;		\
-})
+#define __UDPX_INC_STATS(sk, field) __UDP_INC_STATS(sock_net(sk), field, 0)
 #endif
 
-#define __UDPX_INC_STATS(sk, field) \
-	__SNMP_INC_STATS(__UDPX_MIB(sk, (sk)->sk_family == AF_INET), field)
+/* /proc */
+int udp_seq_open(struct inode *inode, struct file *file);
 
-#ifdef CONFIG_PROC_FS
 struct udp_seq_afinfo {
+	char				*name;
 	sa_family_t			family;
 	struct udp_table		*udp_table;
+	const struct file_operations	*seq_fops;
+	struct seq_operations		seq_ops;
 };
 
 struct udp_iter_state {
 	struct seq_net_private  p;
+	sa_family_t		family;
 	int			bucket;
-	struct udp_seq_afinfo	*bpf_seq_afinfo;
+	struct udp_table	*udp_table;
 };
 
-void *udp_seq_start(struct seq_file *seq, loff_t *pos);
-void *udp_seq_next(struct seq_file *seq, void *v, loff_t *pos);
-void udp_seq_stop(struct seq_file *seq, void *v);
-
-extern const struct seq_operations udp_seq_ops;
-extern const struct seq_operations udp6_seq_ops;
+#ifdef CONFIG_PROC_FS
+int udp_proc_register(struct net *net, struct udp_seq_afinfo *afinfo);
+void udp_proc_unregister(struct net *net, struct udp_seq_afinfo *afinfo);
 
 int udp4_proc_init(void);
 void udp4_proc_exit(void);
-#endif /* CONFIG_PROC_FS */
+#endif
 
 int udpv4_offload_init(void);
 
 void udp_init(void);
 
-DECLARE_STATIC_KEY_FALSE(udp_encap_needed_key);
 void udp_encap_enable(void);
-void udp_encap_disable(void);
 #if IS_ENABLED(CONFIG_IPV6)
-DECLARE_STATIC_KEY_FALSE(udpv6_encap_needed_key);
 void udpv6_encap_enable(void);
-#endif
-
-static inline struct sk_buff *udp_rcv_segment(struct sock *sk,
-					      struct sk_buff *skb, bool ipv4)
-{
-	netdev_features_t features = NETIF_F_SG;
-	struct sk_buff *segs;
-
-	/* Avoid csum recalculation by skb_segment unless userspace explicitly
-	 * asks for the final checksum values
-	 */
-	if (!inet_get_convert_csum(sk))
-		features |= NETIF_F_IP_CSUM | NETIF_F_IPV6_CSUM;
-
-	/* UDP segmentation expects packets of type CHECKSUM_PARTIAL or
-	 * CHECKSUM_NONE in __udp_gso_segment. UDP GRO indeed builds partial
-	 * packets in udp_gro_complete_segment. As does UDP GSO, verified by
-	 * udp_send_skb. But when those packets are looped in dev_loopback_xmit
-	 * their ip_summed CHECKSUM_NONE is changed to CHECKSUM_UNNECESSARY.
-	 * Reset in this specific case, where PARTIAL is both correct and
-	 * required.
-	 */
-	if (skb->pkt_type == PACKET_LOOPBACK)
-		skb->ip_summed = CHECKSUM_PARTIAL;
-
-	/* the GSO CB lays after the UDP one, no need to save and restore any
-	 * CB fragment
-	 */
-	segs = __skb_gso_segment(skb, features, false);
-	if (IS_ERR_OR_NULL(segs)) {
-		int segs_nr = skb_shinfo(skb)->gso_segs;
-
-		atomic_add(segs_nr, &sk->sk_drops);
-		SNMP_ADD_STATS(__UDPX_MIB(sk, ipv4), UDP_MIB_INERRORS, segs_nr);
-		kfree_skb(skb);
-		return NULL;
-	}
-
-	consume_skb(skb);
-	return segs;
-}
-
-static inline void udp_post_segment_fix_csum(struct sk_buff *skb)
-{
-	/* UDP-lite can't land here - no GRO */
-	WARN_ON_ONCE(UDP_SKB_CB(skb)->partial_cov);
-
-	/* UDP packets generated with UDP_SEGMENT and traversing:
-	 *
-	 * UDP tunnel(xmit) -> veth (segmentation) -> veth (gro) -> UDP tunnel (rx)
-	 *
-	 * can reach an UDP socket with CHECKSUM_NONE, because
-	 * __iptunnel_pull_header() converts CHECKSUM_PARTIAL into NONE.
-	 * SKB_GSO_UDP_L4 or SKB_GSO_FRAGLIST packets with no UDP tunnel will
-	 * have a valid checksum, as the GRO engine validates the UDP csum
-	 * before the aggregation and nobody strips such info in between.
-	 * Instead of adding another check in the tunnel fastpath, we can force
-	 * a valid csum after the segmentation.
-	 * Additionally fixup the UDP CB.
-	 */
-	UDP_SKB_CB(skb)->cscov = skb->len;
-	if (skb->ip_summed == CHECKSUM_NONE && !skb->csum_valid)
-		skb->csum_valid = 1;
-}
-
-#ifdef CONFIG_BPF_SYSCALL
-struct sk_psock;
-struct proto *udp_bpf_get_proto(struct sock *sk, struct sk_psock *psock);
-int udp_bpf_update_proto(struct sock *sk, struct sk_psock *psock, bool restore);
 #endif
 
 #endif	/* _UDP_H */

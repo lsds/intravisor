@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /* DVB USB compliant Linux driver for the
  *  - GENPIX 8pks/qpsk/DCII USB2.0 DVB-S module
  *
@@ -9,7 +8,11 @@
  *
  * This module is based off the vp7045 and vp702x modules
  *
- * see Documentation/driver-api/media/drivers/dvb-usb.rst for more information
+ *	This program is free software; you can redistribute it and/or modify it
+ *	under the terms of the GNU General Public License as published by the Free
+ *	Software Foundation, version 2.
+ *
+ * see Documentation/dvb/README.dvb-usb for more information
  */
 #include "gp8psk.h"
 #include "gp8psk-fe.h"
@@ -132,7 +135,7 @@ static int gp8psk_load_bcm4500fw(struct dvb_usb_device *d)
 	u8 *buf;
 	if ((ret = request_firmware(&fw, bcm4500_firmware,
 					&d->udev->dev)) != 0) {
-		err("did not find the bcm4500 firmware file '%s' (status %d). You can use <kernel_dir>/scripts/get_dvb_firmware to get the firmware",
+		err("did not find the bcm4500 firmware file. (%s) Please see linux/Documentation/dvb/ for more details on firmware-problems. (%d)",
 			bcm4500_firmware,ret);
 		return ret;
 	}
@@ -145,7 +148,7 @@ static int gp8psk_load_bcm4500fw(struct dvb_usb_device *d)
 	info("downloading bcm4500 firmware from file '%s'",bcm4500_firmware);
 
 	ptr = fw->data;
-	buf = kmalloc(64, GFP_KERNEL);
+	buf = kmalloc(64, GFP_KERNEL | GFP_DMA);
 	if (!buf) {
 		ret = -ENOMEM;
 		goto out_rel_fw;
@@ -182,7 +185,7 @@ out_rel_fw:
 
 static int gp8psk_power_ctrl(struct dvb_usb_device *d, int onoff)
 {
-	u8 status = 0, buf;
+	u8 status, buf;
 	int gp_product_id = le16_to_cpu(d->udev->descriptor.idProduct);
 
 	if (onoff) {
@@ -310,25 +313,15 @@ static int gp8psk_usb_probe(struct usb_interface *intf,
 	return ret;
 }
 
-enum {
-	GENPIX_8PSK_REV_1_COLD,
-	GENPIX_8PSK_REV_1_WARM,
-	GENPIX_8PSK_REV_2,
-	GENPIX_SKYWALKER_1,
-	GENPIX_SKYWALKER_2,
-	GENPIX_SKYWALKER_CW3K,
+static struct usb_device_id gp8psk_usb_table [] = {
+	    { USB_DEVICE(USB_VID_GENPIX, USB_PID_GENPIX_8PSK_REV_1_COLD) },
+	    { USB_DEVICE(USB_VID_GENPIX, USB_PID_GENPIX_8PSK_REV_1_WARM) },
+	    { USB_DEVICE(USB_VID_GENPIX, USB_PID_GENPIX_8PSK_REV_2) },
+	    { USB_DEVICE(USB_VID_GENPIX, USB_PID_GENPIX_SKYWALKER_1) },
+	    { USB_DEVICE(USB_VID_GENPIX, USB_PID_GENPIX_SKYWALKER_2) },
+/*	    { USB_DEVICE(USB_VID_GENPIX, USB_PID_GENPIX_SKYWALKER_CW3K) }, */
+	    { 0 },
 };
-
-static struct usb_device_id gp8psk_usb_table[] = {
-	DVB_USB_DEV(GENPIX, GENPIX_8PSK_REV_1_COLD),
-	DVB_USB_DEV(GENPIX, GENPIX_8PSK_REV_1_WARM),
-	DVB_USB_DEV(GENPIX, GENPIX_8PSK_REV_2),
-	DVB_USB_DEV(GENPIX, GENPIX_SKYWALKER_1),
-	DVB_USB_DEV(GENPIX, GENPIX_SKYWALKER_2),
-	DVB_USB_DEV(GENPIX, GENPIX_SKYWALKER_CW3K),
-	{ }
-};
-
 MODULE_DEVICE_TABLE(usb, gp8psk_usb_table);
 
 static struct dvb_usb_device_properties gp8psk_properties = {
@@ -365,20 +358,20 @@ static struct dvb_usb_device_properties gp8psk_properties = {
 	.num_device_descs = 4,
 	.devices = {
 		{ .name = "Genpix 8PSK-to-USB2 Rev.1 DVB-S receiver",
-		  .cold_ids = { &gp8psk_usb_table[GENPIX_8PSK_REV_1_COLD], NULL },
-		  .warm_ids = { &gp8psk_usb_table[GENPIX_8PSK_REV_1_WARM], NULL },
+		  .cold_ids = { &gp8psk_usb_table[0], NULL },
+		  .warm_ids = { &gp8psk_usb_table[1], NULL },
 		},
 		{ .name = "Genpix 8PSK-to-USB2 Rev.2 DVB-S receiver",
 		  .cold_ids = { NULL },
-		  .warm_ids = { &gp8psk_usb_table[GENPIX_8PSK_REV_2], NULL },
+		  .warm_ids = { &gp8psk_usb_table[2], NULL },
 		},
 		{ .name = "Genpix SkyWalker-1 DVB-S receiver",
 		  .cold_ids = { NULL },
-		  .warm_ids = { &gp8psk_usb_table[GENPIX_SKYWALKER_1], NULL },
+		  .warm_ids = { &gp8psk_usb_table[3], NULL },
 		},
 		{ .name = "Genpix SkyWalker-2 DVB-S receiver",
 		  .cold_ids = { NULL },
-		  .warm_ids = { &gp8psk_usb_table[GENPIX_SKYWALKER_2], NULL },
+		  .warm_ids = { &gp8psk_usb_table[4], NULL },
 		},
 		{ NULL },
 	}

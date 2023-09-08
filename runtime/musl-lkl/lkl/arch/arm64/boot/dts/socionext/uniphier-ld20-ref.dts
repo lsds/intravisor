@@ -20,7 +20,7 @@
 
 	aliases {
 		serial0 = &serial0;
-		serial1 = &serialsc;
+		serial1 = &serial1;
 		serial2 = &serial2;
 		serial3 = &serial3;
 		i2c0 = &i2c0;
@@ -29,7 +29,6 @@
 		i2c3 = &i2c3;
 		i2c4 = &i2c4;
 		i2c5 = &i2c5;
-		ethernet0 = &eth;
 	};
 
 	memory@80000000 {
@@ -39,11 +38,7 @@
 };
 
 &ethsc {
-	interrupts = <0 IRQ_TYPE_LEVEL_LOW>;
-};
-
-&serialsc {
-	interrupts = <0 IRQ_TYPE_LEVEL_LOW>;
+	interrupts = <0 8>;
 };
 
 &serial0 {
@@ -51,7 +46,7 @@
 };
 
 &gpio {
-	xirq0-hog {
+	xirq0 {
 		gpio-hog;
 		gpios = <UNIPHIER_GPIO_IRQ(0) 0>;
 		input;
@@ -68,7 +63,7 @@
 };
 
 &mdio {
-	ethphy: ethernet-phy@0 {
+	ethphy: ethphy@0 {
 		reg = <0>;
 	};
 };
@@ -79,8 +74,4 @@
 		       "RGMII_TXD2", "RGMII_TXD3", "RGMII_TXCTL";
 		drive-strength = <9>;
 	};
-};
-
-&usb {
-	status = "okay";
 };

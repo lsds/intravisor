@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /* $Id: sunlance.c,v 1.112 2002/01/15 06:48:55 davem Exp $
  * lance.c: Linux/Sparc/Lance driver
  *
@@ -94,10 +93,10 @@ static char lancestr[] = "LANCE";
 #include <linux/of.h>
 #include <linux/of_device.h>
 #include <linux/gfp.h>
-#include <linux/pgtable.h>
 
 #include <asm/io.h>
 #include <asm/dma.h>
+#include <asm/pgtable.h>
 #include <asm/byteorder.h>	/* Used by the checksum routines */
 #include <asm/idprom.h>
 #include <asm/prom.h>
@@ -105,9 +104,14 @@ static char lancestr[] = "LANCE";
 #include <asm/irq.h>
 
 #define DRV_NAME	"sunlance"
+#define DRV_VERSION	"2.02"
 #define DRV_RELDATE	"8/24/03"
 #define DRV_AUTHOR	"Miguel de Icaza (miguel@nuclecu.unam.mx)"
 
+static char version[] =
+	DRV_NAME ".c:v" DRV_VERSION " " DRV_RELDATE " " DRV_AUTHOR "\n";
+
+MODULE_VERSION(DRV_VERSION);
 MODULE_AUTHOR(DRV_AUTHOR);
 MODULE_DESCRIPTION("Sun Lance ethernet driver");
 MODULE_LICENSE("GPL");
@@ -530,7 +534,7 @@ static void lance_rx_dvma(struct net_device *dev)
 			len = (rd->mblength & 0xfff) - 4;
 			skb = netdev_alloc_skb(dev, len + 2);
 
-			if (!skb) {
+			if (skb == NULL) {
 				dev->stats.rx_dropped++;
 				rd->mblength = 0;
 				rd->rmd1_bits = LE_R1_OWN;
@@ -700,7 +704,7 @@ static void lance_rx_pio(struct net_device *dev)
 			len = (sbus_readw(&rd->mblength) & 0xfff) - 4;
 			skb = netdev_alloc_skb(dev, len + 2);
 
-			if (!skb) {
+			if (skb == NULL) {
 				dev->stats.rx_dropped++;
 				sbus_writew(0, &rd->mblength);
 				sbus_writeb(LE_R1_OWN, &rd->rmd1_bits);
@@ -1092,7 +1096,7 @@ static void lance_piozero(void __iomem *dest, int len)
 		sbus_writeb(0, piobuf);
 }
 
-static void lance_tx_timeout(struct net_device *dev, unsigned int txqueue)
+static void lance_tx_timeout(struct net_device *dev)
 {
 	struct lance_private *lp = netdev_priv(dev);
 
@@ -1102,7 +1106,7 @@ static void lance_tx_timeout(struct net_device *dev, unsigned int txqueue)
 	netif_wake_queue(dev);
 }
 
-static netdev_tx_t lance_start_xmit(struct sk_buff *skb, struct net_device *dev)
+static int lance_start_xmit(struct sk_buff *skb, struct net_device *dev)
 {
 	struct lance_private *lp = netdev_priv(dev);
 	int entry, skblen, len;
@@ -1276,7 +1280,8 @@ static void lance_free_hwresources(struct lance_private *lp)
 /* Ethtool support... */
 static void sparc_lance_get_drvinfo(struct net_device *dev, struct ethtool_drvinfo *info)
 {
-	strscpy(info->driver, "sunlance", sizeof(info->driver));
+	strlcpy(info->driver, "sunlance", sizeof(info->driver));
+	strlcpy(info->version, "2.02", sizeof(info->version));
 }
 
 static const struct ethtool_ops sparc_lance_ethtool_ops = {
@@ -1299,8 +1304,10 @@ static int sparc_lance_probe_one(struct platform_device *op,
 				 struct platform_device *lebuffer)
 {
 	struct device_node *dp = op->dev.of_node;
+	static unsigned version_printed;
 	struct lance_private *lp;
 	struct net_device *dev;
+	int    i;
 
 	dev = alloc_etherdev(sizeof(struct lance_private) + 8);
 	if (!dev)
@@ -1308,13 +1315,17 @@ static int sparc_lance_probe_one(struct platform_device *op,
 
 	lp = netdev_priv(dev);
 
+	if (sparc_lance_debug && version_printed++ == 0)
+		printk (KERN_INFO "%s", version);
+
 	spin_lock_init(&lp->lock);
 
 	/* Copy the IDPROM ethernet address to the device structure, later we
 	 * will copy the address in the device structure to the lance
 	 * initialization block.
 	 */
-	eth_hw_addr_set(dev, idprom->id_ethaddr);
+	for (i = 0; i < 6; i++)
+		dev->dev_addr[i] = idprom->id_ethaddr[i];
 
 	/* Get the IO region */
 	lp->lregs = of_ioremap(&op->resource[0], 0,
@@ -1408,7 +1419,7 @@ static int sparc_lance_probe_one(struct platform_device *op,
 
 			prop = of_get_property(nd, "tpe-link-test?", NULL);
 			if (!prop)
-				goto node_put;
+				goto no_link_test;
 
 			if (strcmp(prop, "true")) {
 				printk(KERN_NOTICE "SunLance: warning: overriding option "
@@ -1417,8 +1428,6 @@ static int sparc_lance_probe_one(struct platform_device *op,
 				       "to ecd@skynet.be\n");
 				auxio_set_lte(AUXIO_LTE_ON);
 			}
-node_put:
-			of_node_put(nd);
 no_link_test:
 			lp->auto_select = 1;
 			lp->tpe = 0;
@@ -1477,9 +1486,9 @@ static int sunlance_sbus_probe(struct platform_device *op)
 	struct device_node *parent_dp = parent->dev.of_node;
 	int err;
 
-	if (of_node_name_eq(parent_dp, "ledma")) {
+	if (!strcmp(parent_dp->name, "ledma")) {
 		err = sparc_lance_probe_one(op, parent, NULL);
-	} else if (of_node_name_eq(parent_dp, "lebuffer")) {
+	} else if (!strcmp(parent_dp->name, "lebuffer")) {
 		err = sparc_lance_probe_one(op, NULL, parent);
 	} else
 		err = sparc_lance_probe_one(op, NULL, NULL);

@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  *  linux/kernel/profile.c
  *  Simple profiling. Manages a direct-mapped profile hit count buffer,
@@ -17,7 +16,7 @@
 
 #include <linux/export.h>
 #include <linux/profile.h>
-#include <linux/memblock.h>
+#include <linux/bootmem.h>
 #include <linux/notifier.h>
 #include <linux/mm.h>
 #include <linux/cpumask.h>
@@ -41,8 +40,7 @@ struct profile_hit {
 #define NR_PROFILE_GRP		(NR_PROFILE_HIT/PROFILE_GRPSZ)
 
 static atomic_t *prof_buffer;
-static unsigned long prof_len;
-static unsigned short int prof_shift;
+static unsigned long prof_len, prof_shift;
 
 int prof_on __read_mostly;
 EXPORT_SYMBOL_GPL(prof_on);
@@ -59,39 +57,43 @@ int profile_setup(char *str)
 	static const char schedstr[] = "schedule";
 	static const char sleepstr[] = "sleep";
 	static const char kvmstr[] = "kvm";
-	const char *select = NULL;
 	int par;
 
 	if (!strncmp(str, sleepstr, strlen(sleepstr))) {
 #ifdef CONFIG_SCHEDSTATS
 		force_schedstat_enabled();
 		prof_on = SLEEP_PROFILING;
-		select = sleepstr;
+		if (str[strlen(sleepstr)] == ',')
+			str += strlen(sleepstr) + 1;
+		if (get_option(&str, &par))
+			prof_shift = par;
+		pr_info("kernel sleep profiling enabled (shift: %ld)\n",
+			prof_shift);
 #else
 		pr_warn("kernel sleep profiling requires CONFIG_SCHEDSTATS\n");
 #endif /* CONFIG_SCHEDSTATS */
 	} else if (!strncmp(str, schedstr, strlen(schedstr))) {
 		prof_on = SCHED_PROFILING;
-		select = schedstr;
+		if (str[strlen(schedstr)] == ',')
+			str += strlen(schedstr) + 1;
+		if (get_option(&str, &par))
+			prof_shift = par;
+		pr_info("kernel schedule profiling enabled (shift: %ld)\n",
+			prof_shift);
 	} else if (!strncmp(str, kvmstr, strlen(kvmstr))) {
 		prof_on = KVM_PROFILING;
-		select = kvmstr;
+		if (str[strlen(kvmstr)] == ',')
+			str += strlen(kvmstr) + 1;
+		if (get_option(&str, &par))
+			prof_shift = par;
+		pr_info("kernel KVM profiling enabled (shift: %ld)\n",
+			prof_shift);
 	} else if (get_option(&str, &par)) {
-		prof_shift = clamp(par, 0, BITS_PER_LONG - 1);
+		prof_shift = par;
 		prof_on = CPU_PROFILING;
-		pr_info("kernel profiling enabled (shift: %u)\n",
+		pr_info("kernel profiling enabled (shift: %ld)\n",
 			prof_shift);
 	}
-
-	if (select) {
-		if (str[strlen(select)] == ',')
-			str += strlen(select) + 1;
-		if (get_option(&str, &par))
-			prof_shift = clamp(par, 0, BITS_PER_LONG - 1);
-		pr_info("kernel %s profiling enabled (shift: %u)\n",
-			select, prof_shift);
-	}
-
 	return 1;
 }
 __setup("profile=", profile_setup);
@@ -105,13 +107,6 @@ int __ref profile_init(void)
 
 	/* only text is profiled */
 	prof_len = (_etext - _stext) >> prof_shift;
-
-	if (!prof_len) {
-		pr_warn("profiling shift: %u too large\n", prof_shift);
-		prof_on = 0;
-		return -EINVAL;
-	}
-
 	buffer_bytes = prof_len*sizeof(atomic_t);
 
 	if (!alloc_cpumask_var(&prof_cpu_mask, GFP_KERNEL))
@@ -135,6 +130,79 @@ int __ref profile_init(void)
 	free_cpumask_var(prof_cpu_mask);
 	return -ENOMEM;
 }
+
+/* Profile event notifications */
+
+static BLOCKING_NOTIFIER_HEAD(task_exit_notifier);
+static ATOMIC_NOTIFIER_HEAD(task_free_notifier);
+static BLOCKING_NOTIFIER_HEAD(munmap_notifier);
+
+void profile_task_exit(struct task_struct *task)
+{
+	blocking_notifier_call_chain(&task_exit_notifier, 0, task);
+}
+
+int profile_handoff_task(struct task_struct *task)
+{
+	int ret;
+	ret = atomic_notifier_call_chain(&task_free_notifier, 0, task);
+	return (ret == NOTIFY_OK) ? 1 : 0;
+}
+
+void profile_munmap(unsigned long addr)
+{
+	blocking_notifier_call_chain(&munmap_notifier, 0, (void *)addr);
+}
+
+int task_handoff_register(struct notifier_block *n)
+{
+	return atomic_notifier_chain_register(&task_free_notifier, n);
+}
+EXPORT_SYMBOL_GPL(task_handoff_register);
+
+int task_handoff_unregister(struct notifier_block *n)
+{
+	return atomic_notifier_chain_unregister(&task_free_notifier, n);
+}
+EXPORT_SYMBOL_GPL(task_handoff_unregister);
+
+int profile_event_register(enum profile_type type, struct notifier_block *n)
+{
+	int err = -EINVAL;
+
+	switch (type) {
+	case PROFILE_TASK_EXIT:
+		err = blocking_notifier_chain_register(
+				&task_exit_notifier, n);
+		break;
+	case PROFILE_MUNMAP:
+		err = blocking_notifier_chain_register(
+				&munmap_notifier, n);
+		break;
+	}
+
+	return err;
+}
+EXPORT_SYMBOL_GPL(profile_event_register);
+
+int profile_event_unregister(enum profile_type type, struct notifier_block *n)
+{
+	int err = -EINVAL;
+
+	switch (type) {
+	case PROFILE_TASK_EXIT:
+		err = blocking_notifier_chain_unregister(
+				&task_exit_notifier, n);
+		break;
+	case PROFILE_MUNMAP:
+		err = blocking_notifier_chain_unregister(
+				&munmap_notifier, n);
+		break;
+	}
+
+	return err;
+}
+EXPORT_SYMBOL_GPL(profile_event_unregister);
 
 #if defined(CONFIG_SMP) && defined(CONFIG_PROC_FS)
 /*
@@ -267,7 +335,7 @@ static int profile_dead_cpu(unsigned int cpu)
 	struct page *page;
 	int i;
 
-	if (cpumask_available(prof_cpu_mask))
+	if (prof_cpu_mask != NULL)
 		cpumask_clear_cpu(cpu, prof_cpu_mask);
 
 	for (i = 0; i < 2; i++) {
@@ -304,7 +372,7 @@ static int profile_prepare_cpu(unsigned int cpu)
 
 static int profile_online_cpu(unsigned int cpu)
 {
-	if (cpumask_available(prof_cpu_mask))
+	if (prof_cpu_mask != NULL)
 		cpumask_set_cpu(cpu, prof_cpu_mask);
 
 	return 0;
@@ -334,7 +402,7 @@ void profile_tick(int type)
 {
 	struct pt_regs *regs = get_irq_regs();
 
-	if (!user_mode(regs) && cpumask_available(prof_cpu_mask) &&
+	if (!user_mode(regs) && prof_cpu_mask != NULL &&
 	    cpumask_test_cpu(smp_processor_id(), prof_cpu_mask))
 		profile_hit(type, (void *)profile_pc(regs));
 }
@@ -361,7 +429,7 @@ static ssize_t prof_cpu_mask_proc_write(struct file *file,
 	cpumask_var_t new_value;
 	int err;
 
-	if (!zalloc_cpumask_var(&new_value, GFP_KERNEL))
+	if (!alloc_cpumask_var(&new_value, GFP_KERNEL))
 		return -ENOMEM;
 
 	err = cpumask_parse_user(buffer, count, new_value);
@@ -373,18 +441,18 @@ static ssize_t prof_cpu_mask_proc_write(struct file *file,
 	return err;
 }
 
-static const struct proc_ops prof_cpu_mask_proc_ops = {
-	.proc_open	= prof_cpu_mask_proc_open,
-	.proc_read	= seq_read,
-	.proc_lseek	= seq_lseek,
-	.proc_release	= single_release,
-	.proc_write	= prof_cpu_mask_proc_write,
+static const struct file_operations prof_cpu_mask_proc_fops = {
+	.open		= prof_cpu_mask_proc_open,
+	.read		= seq_read,
+	.llseek		= seq_lseek,
+	.release	= single_release,
+	.write		= prof_cpu_mask_proc_write,
 };
 
 void create_prof_cpu_mask(void)
 {
 	/* create /proc/irq/prof_cpu_mask */
-	proc_create("irq/prof_cpu_mask", 0600, NULL, &prof_cpu_mask_proc_ops);
+	proc_create("irq/prof_cpu_mask", 0600, NULL, &prof_cpu_mask_proc_fops);
 }
 
 /*
@@ -399,7 +467,7 @@ read_profile(struct file *file, char __user *buf, size_t count, loff_t *ppos)
 	unsigned long p = *ppos;
 	ssize_t read;
 	char *pnt;
-	unsigned long sample_step = 1UL << prof_shift;
+	unsigned int sample_step = 1 << prof_shift;
 
 	profile_flip_buffers();
 	if (p >= (prof_len+1)*sizeof(unsigned int))
@@ -421,12 +489,6 @@ read_profile(struct file *file, char __user *buf, size_t count, loff_t *ppos)
 	return read;
 }
 
-/* default is to not implement this call */
-int __weak setup_profiling_timer(unsigned mult)
-{
-	return -EINVAL;
-}
-
 /*
  * Writing to /proc/profile resets the counters
  *
@@ -437,6 +499,8 @@ static ssize_t write_profile(struct file *file, const char __user *buf,
 			     size_t count, loff_t *ppos)
 {
 #ifdef CONFIG_SMP
+	extern int setup_profiling_timer(unsigned int multiplier);
+
 	if (count == sizeof(int)) {
 		unsigned int multiplier;
 
@@ -452,10 +516,10 @@ static ssize_t write_profile(struct file *file, const char __user *buf,
 	return count;
 }
 
-static const struct proc_ops profile_proc_ops = {
-	.proc_read	= read_profile,
-	.proc_write	= write_profile,
-	.proc_lseek	= default_llseek,
+static const struct file_operations proc_profile_operations = {
+	.read		= read_profile,
+	.write		= write_profile,
+	.llseek		= default_llseek,
 };
 
 int __ref create_proc_profile(void)
@@ -483,7 +547,7 @@ int __ref create_proc_profile(void)
 	err = 0;
 #endif
 	entry = proc_create("profile", S_IWUSR | S_IRUGO,
-			    NULL, &profile_proc_ops);
+			    NULL, &proc_profile_operations);
 	if (!entry)
 		goto err_state_onl;
 	proc_set_size(entry, (1 + prof_len) * sizeof(atomic_t));

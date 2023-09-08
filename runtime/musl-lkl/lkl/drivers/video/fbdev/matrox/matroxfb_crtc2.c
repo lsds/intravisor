@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  *
  * Hardware accelerated Matrox Millennium I, II, Mystique, G100, G200, G400 and G450.
@@ -563,7 +562,7 @@ static int matroxfb_dh_blank(int blank, struct fb_info* info) {
 #undef m2info
 }
 
-static const struct fb_ops matroxfb_dh_ops = {
+static struct fb_ops matroxfb_dh_ops = {
 	.owner =	THIS_MODULE,
 	.fb_open =	matroxfb_dh_open,
 	.fb_release =	matroxfb_dh_release,

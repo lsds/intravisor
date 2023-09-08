@@ -233,6 +233,7 @@ const char *CONCAT_(GENL_MAGIC_FAMILY, _genl_cmd_to_str)(__u8 cmd)
 {								\
 	handler							\
 	.cmd = op_name,						\
+	.policy	= CONCAT_(GENL_MAGIC_FAMILY, _tla_nl_policy),	\
 },
 
 #define ZZZ_genl_ops		CONCAT_(GENL_MAGIC_FAMILY, _genl_ops)
@@ -289,12 +290,10 @@ static struct genl_family ZZZ_genl_family __ro_after_init = {
 #ifdef GENL_MAGIC_FAMILY_HDRSZ
 	.hdrsize = NLA_ALIGN(GENL_MAGIC_FAMILY_HDRSZ),
 #endif
-	.maxattr = ARRAY_SIZE(CONCAT_(GENL_MAGIC_FAMILY, _tla_nl_policy))-1,
-	.policy	= CONCAT_(GENL_MAGIC_FAMILY, _tla_nl_policy),
+	.maxattr = ARRAY_SIZE(drbd_tla_nl_policy)-1,
 	.ops = ZZZ_genl_ops,
 	.n_ops = ARRAY_SIZE(ZZZ_genl_ops),
 	.mcgrps = ZZZ_genl_mcgrps,
-	.resv_start_op = 42, /* drbd is currently the only user */
 	.n_mcgrps = ARRAY_SIZE(ZZZ_genl_mcgrps),
 	.module = THIS_MODULE,
 };
@@ -405,3 +404,4 @@ s_fields								\
 
 /* }}}1 */
 #endif /* GENL_MAGIC_FUNC_H */
+/* vim: set foldmethod=marker foldlevel=1 nofoldenable : */

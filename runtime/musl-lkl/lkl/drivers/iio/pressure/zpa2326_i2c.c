@@ -1,16 +1,24 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Murata ZPA2326 I2C pressure and temperature sensor driver
  *
  * Copyright (c) 2016 Parrot S.A.
  *
  * Author: Gregor Boirie <gregor.boirie@parrot.com>
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License version 2 as published by
+ * the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+ * more details.
  */
 
 #include <linux/module.h>
 #include <linux/regmap.h>
 #include <linux/i2c.h>
-#include <linux/mod_devicetable.h>
+#include <linux/of_device.h>
 #include "zpa2326.h"
 
 /*
@@ -53,9 +61,11 @@ static int zpa2326_probe_i2c(struct i2c_client          *client,
 			     zpa2326_i2c_hwid(client), regmap);
 }
 
-static void zpa2326_remove_i2c(struct i2c_client *client)
+static int zpa2326_remove_i2c(struct i2c_client *client)
 {
 	zpa2326_remove(&client->dev);
+
+	return 0;
 }
 
 static const struct i2c_device_id zpa2326_i2c_ids[] = {
@@ -64,16 +74,18 @@ static const struct i2c_device_id zpa2326_i2c_ids[] = {
 };
 MODULE_DEVICE_TABLE(i2c, zpa2326_i2c_ids);
 
+#if defined(CONFIG_OF)
 static const struct of_device_id zpa2326_i2c_matches[] = {
 	{ .compatible = "murata,zpa2326" },
 	{ }
 };
 MODULE_DEVICE_TABLE(of, zpa2326_i2c_matches);
+#endif
 
 static struct i2c_driver zpa2326_i2c_driver = {
 	.driver = {
 		.name           = "zpa2326-i2c",
-		.of_match_table = zpa2326_i2c_matches,
+		.of_match_table = of_match_ptr(zpa2326_i2c_matches),
 		.pm             = ZPA2326_PM_OPS,
 	},
 	.probe    = zpa2326_probe_i2c,
@@ -85,4 +97,3 @@ module_i2c_driver(zpa2326_i2c_driver);
 MODULE_AUTHOR("Gregor Boirie <gregor.boirie@parrot.com>");
 MODULE_DESCRIPTION("I2C driver for Murata ZPA2326 pressure sensor");
 MODULE_LICENSE("GPL v2");
-MODULE_IMPORT_NS(IIO_ZPA2326);

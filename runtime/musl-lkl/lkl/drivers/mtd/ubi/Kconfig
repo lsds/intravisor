@@ -1,4 +1,3 @@
-# SPDX-License-Identifier: GPL-2.0-only
 menuconfig MTD_UBI
 	tristate "Enable UBI - Unsorted block images"
 	select CRC32

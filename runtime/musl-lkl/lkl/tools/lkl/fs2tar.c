@@ -360,31 +360,20 @@ int main(int argc, char **argv)
 
 	disk.ops = NULL;
 
-	ret = lkl_init(&lkl_host_ops);
-	if (ret < 0) {
-		fprintf(stderr, "lkl init failed: %s\n", lkl_strerror(ret));
-		goto out_close;
-	}
-
 	ret = lkl_disk_add(&disk);
 	if (ret < 0) {
 		fprintf(stderr, "can't add disk: %s\n", lkl_strerror(ret));
-		goto out_lkl_cleanup;
+		goto out_close;
 	}
 	disk_id = ret;
 
-	ret = lkl_start_kernel("mem=10M");
-	if (ret < 0) {
-		fprintf(stderr, "failed to start kernel: %s\n",
-			lkl_strerror(ret));
-		goto out_lkl_cleanup;
-	}
+	lkl_start_kernel(&lkl_host_ops, "mem=10M");
 
 	ret = lkl_mount_dev(disk_id, cla.part, cla.fsimg_type, LKL_MS_RDONLY,
 			    NULL, mpoint, sizeof(mpoint));
 	if (ret) {
 		fprintf(stderr, "can't mount disk: %s\n", lkl_strerror(ret));
-		goto out_lkl_halt;
+		goto out_close;
 	}
 
 	ret = lkl_sys_chdir(mpoint);
@@ -408,15 +397,11 @@ int main(int argc, char **argv)
 out_umount:
 	lkl_umount_dev(disk_id, cla.part, 0, 1000);
 
-out_lkl_halt:
-	lkl_sys_halt();
-
-out_lkl_cleanup:
-	lkl_cleanup();
-
 out_close:
 	close(disk.fd);
 
 out:
+	lkl_sys_halt();
+
 	return ret;
 }

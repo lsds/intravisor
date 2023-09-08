@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * legacy.c - traditional, old school PCI bus probing
  */

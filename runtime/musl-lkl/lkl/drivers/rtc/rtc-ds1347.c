@@ -1,10 +1,14 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /* rtc-ds1347.c
  *
  * Driver for Dallas Semiconductor DS1347 Low Current, SPI Compatible
  * Real Time Clock
  *
  * Author : Raghavendra Chandra Ganiga <ravi23ganiga@gmail.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ *
  */
 
 #include <linux/init.h>
@@ -26,14 +30,8 @@
 #define DS1347_DAY_REG		0x0B
 #define DS1347_YEAR_REG		0x0D
 #define DS1347_CONTROL_REG	0x0F
-#define DS1347_CENTURY_REG	0x13
 #define DS1347_STATUS_REG	0x17
 #define DS1347_CLOCK_BURST	0x3F
-
-#define DS1347_WP_BIT		BIT(7)
-
-#define DS1347_NEOSC_BIT	BIT(7)
-#define DS1347_OSF_BIT		BIT(2)
 
 static const struct regmap_range ds1347_ranges[] = {
 	{
@@ -49,54 +47,35 @@ static const struct regmap_access_table ds1347_access_table = {
 
 static int ds1347_read_time(struct device *dev, struct rtc_time *dt)
 {
-	struct regmap *map = dev_get_drvdata(dev);
-	unsigned int status, century, secs;
-	unsigned char buf[8];
+	struct spi_device *spi = to_spi_device(dev);
+	struct regmap *map;
 	int err;
+	unsigned char buf[8];
 
-	err = regmap_read(map, DS1347_STATUS_REG, &status);
+	map = spi_get_drvdata(spi);
+
+	err = regmap_bulk_read(map, DS1347_CLOCK_BURST, buf, 8);
 	if (err)
 		return err;
 
-	if (status & DS1347_OSF_BIT)
-		return -EINVAL;
-
-	do {
-		err = regmap_bulk_read(map, DS1347_CLOCK_BURST, buf, 8);
-		if (err)
-			return err;
-
-		err = regmap_read(map, DS1347_CENTURY_REG, &century);
-		if (err)
-			return err;
-
-		err = regmap_read(map, DS1347_SECONDS_REG, &secs);
-		if (err)
-			return err;
-	} while (buf[0] != secs);
-
 	dt->tm_sec = bcd2bin(buf[0]);
-	dt->tm_min = bcd2bin(buf[1] & 0x7f);
+	dt->tm_min = bcd2bin(buf[1]);
 	dt->tm_hour = bcd2bin(buf[2] & 0x3F);
 	dt->tm_mday = bcd2bin(buf[3]);
 	dt->tm_mon = bcd2bin(buf[4]) - 1;
 	dt->tm_wday = bcd2bin(buf[5]) - 1;
-	dt->tm_year = (bcd2bin(century) * 100) + bcd2bin(buf[6]) - 1900;
+	dt->tm_year = bcd2bin(buf[6]) + 100;
 
 	return 0;
 }
 
 static int ds1347_set_time(struct device *dev, struct rtc_time *dt)
 {
-	struct regmap *map = dev_get_drvdata(dev);
-	unsigned int century;
+	struct spi_device *spi = to_spi_device(dev);
+	struct regmap *map;
 	unsigned char buf[8];
-	int err;
 
-	err = regmap_update_bits(map, DS1347_STATUS_REG,
-				 DS1347_NEOSC_BIT, DS1347_NEOSC_BIT);
-	if (err)
-		return err;
+	map = spi_get_drvdata(spi);
 
 	buf[0] = bin2bcd(dt->tm_sec);
 	buf[1] = bin2bcd(dt->tm_min);
@@ -104,20 +83,16 @@ static int ds1347_set_time(struct device *dev, struct rtc_time *dt)
 	buf[3] = bin2bcd(dt->tm_mday);
 	buf[4] = bin2bcd(dt->tm_mon + 1);
 	buf[5] = bin2bcd(dt->tm_wday + 1);
-	buf[6] = bin2bcd(dt->tm_year % 100);
+
+	/* year in linux is from 1900 i.e in range of 100
+	in rtc it is from 00 to 99 */
+	dt->tm_year = dt->tm_year % 100;
+
+	buf[6] = bin2bcd(dt->tm_year);
 	buf[7] = bin2bcd(0x00);
 
-	err = regmap_bulk_write(map, DS1347_CLOCK_BURST, buf, 8);
-	if (err)
-		return err;
-
-	century = (dt->tm_year / 100) + 19;
-	err = regmap_write(map, DS1347_CENTURY_REG, century);
-	if (err)
-		return err;
-
-	return regmap_update_bits(map, DS1347_STATUS_REG,
-				  DS1347_NEOSC_BIT | DS1347_OSF_BIT, 0);
+	/* write the rtc settings */
+	return regmap_bulk_write(map, DS1347_CLOCK_BURST, buf, 8);
 }
 
 static const struct rtc_class_ops ds1347_rtc_ops = {
@@ -130,7 +105,8 @@ static int ds1347_probe(struct spi_device *spi)
 	struct rtc_device *rtc;
 	struct regmap_config config;
 	struct regmap *map;
-	int err;
+	unsigned int data;
+	int res;
 
 	memset(&config, 0, sizeof(config));
 	config.reg_bits = 8;
@@ -153,20 +129,36 @@ static int ds1347_probe(struct spi_device *spi)
 
 	spi_set_drvdata(spi, map);
 
-	/* Disable the write protect of rtc */
-	err = regmap_update_bits(map, DS1347_CONTROL_REG, DS1347_WP_BIT, 0);
-	if (err)
-		return err;
+	/* RTC Settings */
+	res = regmap_read(map, DS1347_SECONDS_REG, &data);
+	if (res)
+		return res;
 
-	rtc = devm_rtc_allocate_device(&spi->dev);
+	/* Disable the write protect of rtc */
+	regmap_read(map, DS1347_CONTROL_REG, &data);
+	data = data & ~(1<<7);
+	regmap_write(map, DS1347_CONTROL_REG, data);
+
+	/* Enable the oscillator , disable the oscillator stop flag,
+	 and glitch filter to reduce current consumption */
+	regmap_read(map, DS1347_STATUS_REG, &data);
+	data = data & 0x1B;
+	regmap_write(map, DS1347_STATUS_REG, data);
+
+	/* display the settings */
+	regmap_read(map, DS1347_CONTROL_REG, &data);
+	dev_info(&spi->dev, "DS1347 RTC CTRL Reg = 0x%02x\n", data);
+
+	regmap_read(map, DS1347_STATUS_REG, &data);
+	dev_info(&spi->dev, "DS1347 RTC Status Reg = 0x%02x\n", data);
+
+	rtc = devm_rtc_device_register(&spi->dev, "ds1347",
+				&ds1347_rtc_ops, THIS_MODULE);
+
 	if (IS_ERR(rtc))
 		return PTR_ERR(rtc);
 
-	rtc->ops = &ds1347_rtc_ops;
-	rtc->range_min = RTC_TIMESTAMP_BEGIN_0000;
-	rtc->range_max = RTC_TIMESTAMP_END_9999;
-
-	return devm_rtc_register_device(rtc);
+	return 0;
 }
 
 static struct spi_driver ds1347_driver = {

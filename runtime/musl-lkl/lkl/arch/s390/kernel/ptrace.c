@@ -7,7 +7,6 @@
  *               Martin Schwidefsky (schwidefsky@de.ibm.com)
  */
 
-#include "asm/ptrace.h"
 #include <linux/kernel.h>
 #include <linux/sched.h>
 #include <linux/sched/task_stack.h>
@@ -21,10 +20,14 @@
 #include <linux/signal.h>
 #include <linux/elf.h>
 #include <linux/regset.h>
+#include <linux/tracehook.h>
 #include <linux/seccomp.h>
 #include <linux/compat.h>
 #include <trace/syscall.h>
+#include <asm/segment.h>
 #include <asm/page.h>
+#include <asm/pgtable.h>
+#include <asm/pgalloc.h>
 #include <linux/uaccess.h>
 #include <asm/unistd.h>
 #include <asm/switch_to.h>
@@ -36,6 +39,9 @@
 #ifdef CONFIG_COMPAT
 #include "compat_ptrace.h"
 #endif
+
+#define CREATE_TRACE_POINTS
+#include <trace/events/syscalls.h>
 
 void update_cr_regs(struct task_struct *task)
 {
@@ -137,7 +143,7 @@ void ptrace_disable(struct task_struct *task)
 	memset(&task->thread.per_user, 0, sizeof(task->thread.per_user));
 	memset(&task->thread.per_event, 0, sizeof(task->thread.per_event));
 	clear_tsk_thread_flag(task, TIF_SINGLE_STEP);
-	clear_tsk_thread_flag(task, TIF_PER_TRAP);
+	clear_pt_regs_flag(task_pt_regs(task), PIF_PER_TRAP);
 	task->thread.per_flags = 0;
 }
 
@@ -146,36 +152,38 @@ void ptrace_disable(struct task_struct *task)
 static inline unsigned long __peek_user_per(struct task_struct *child,
 					    addr_t addr)
 {
-	if (addr == offsetof(struct per_struct_kernel, cr9))
+	struct per_struct_kernel *dummy = NULL;
+
+	if (addr == (addr_t) &dummy->cr9)
 		/* Control bits of the active per set. */
 		return test_thread_flag(TIF_SINGLE_STEP) ?
 			PER_EVENT_IFETCH : child->thread.per_user.control;
-	else if (addr == offsetof(struct per_struct_kernel, cr10))
+	else if (addr == (addr_t) &dummy->cr10)
 		/* Start address of the active per set. */
 		return test_thread_flag(TIF_SINGLE_STEP) ?
 			0 : child->thread.per_user.start;
-	else if (addr == offsetof(struct per_struct_kernel, cr11))
+	else if (addr == (addr_t) &dummy->cr11)
 		/* End address of the active per set. */
 		return test_thread_flag(TIF_SINGLE_STEP) ?
 			-1UL : child->thread.per_user.end;
-	else if (addr == offsetof(struct per_struct_kernel, bits))
+	else if (addr == (addr_t) &dummy->bits)
 		/* Single-step bit. */
 		return test_thread_flag(TIF_SINGLE_STEP) ?
 			(1UL << (BITS_PER_LONG - 1)) : 0;
-	else if (addr == offsetof(struct per_struct_kernel, starting_addr))
+	else if (addr == (addr_t) &dummy->starting_addr)
 		/* Start address of the user specified per set. */
 		return child->thread.per_user.start;
-	else if (addr == offsetof(struct per_struct_kernel, ending_addr))
+	else if (addr == (addr_t) &dummy->ending_addr)
 		/* End address of the user specified per set. */
 		return child->thread.per_user.end;
-	else if (addr == offsetof(struct per_struct_kernel, perc_atmid))
+	else if (addr == (addr_t) &dummy->perc_atmid)
 		/* PER code, ATMID and AI of the last PER trap */
 		return (unsigned long)
 			child->thread.per_event.cause << (BITS_PER_LONG - 16);
-	else if (addr == offsetof(struct per_struct_kernel, address))
+	else if (addr == (addr_t) &dummy->address)
 		/* Address of the last PER trap */
 		return child->thread.per_event.address;
-	else if (addr == offsetof(struct per_struct_kernel, access_id))
+	else if (addr == (addr_t) &dummy->access_id)
 		/* Access id of the last PER trap */
 		return (unsigned long)
 			child->thread.per_event.paid << (BITS_PER_LONG - 8);
@@ -193,60 +201,61 @@ static inline unsigned long __peek_user_per(struct task_struct *child,
  */
 static unsigned long __peek_user(struct task_struct *child, addr_t addr)
 {
+	struct user *dummy = NULL;
 	addr_t offset, tmp;
 
-	if (addr < offsetof(struct user, regs.acrs)) {
+	if (addr < (addr_t) &dummy->regs.acrs) {
 		/*
 		 * psw and gprs are stored on the stack
 		 */
 		tmp = *(addr_t *)((addr_t) &task_pt_regs(child)->psw + addr);
-		if (addr == offsetof(struct user, regs.psw.mask)) {
+		if (addr == (addr_t) &dummy->regs.psw.mask) {
 			/* Return a clean psw mask. */
 			tmp &= PSW_MASK_USER | PSW_MASK_RI;
 			tmp |= PSW_USER_BITS;
 		}
 
-	} else if (addr < offsetof(struct user, regs.orig_gpr2)) {
+	} else if (addr < (addr_t) &dummy->regs.orig_gpr2) {
 		/*
 		 * access registers are stored in the thread structure
 		 */
-		offset = addr - offsetof(struct user, regs.acrs);
+		offset = addr - (addr_t) &dummy->regs.acrs;
 		/*
 		 * Very special case: old & broken 64 bit gdb reading
 		 * from acrs[15]. Result is a 64 bit value. Read the
 		 * 32 bit acrs[15] value and shift it by 32. Sick...
 		 */
-		if (addr == offsetof(struct user, regs.acrs[15]))
+		if (addr == (addr_t) &dummy->regs.acrs[15])
 			tmp = ((unsigned long) child->thread.acrs[15]) << 32;
 		else
 			tmp = *(addr_t *)((addr_t) &child->thread.acrs + offset);
 
-	} else if (addr == offsetof(struct user, regs.orig_gpr2)) {
+	} else if (addr == (addr_t) &dummy->regs.orig_gpr2) {
 		/*
 		 * orig_gpr2 is stored on the kernel stack
 		 */
 		tmp = (addr_t) task_pt_regs(child)->orig_gpr2;
 
-	} else if (addr < offsetof(struct user, regs.fp_regs)) {
+	} else if (addr < (addr_t) &dummy->regs.fp_regs) {
 		/*
 		 * prevent reads of padding hole between
 		 * orig_gpr2 and fp_regs on s390.
 		 */
 		tmp = 0;
 
-	} else if (addr == offsetof(struct user, regs.fp_regs.fpc)) {
+	} else if (addr == (addr_t) &dummy->regs.fp_regs.fpc) {
 		/*
 		 * floating point control reg. is in the thread structure
 		 */
 		tmp = child->thread.fpu.fpc;
 		tmp <<= BITS_PER_LONG - 32;
 
-	} else if (addr < offsetof(struct user, regs.fp_regs) + sizeof(s390_fp_regs)) {
+	} else if (addr < (addr_t) (&dummy->regs.fp_regs + 1)) {
 		/*
 		 * floating point regs. are either in child->thread.fpu
 		 * or the child->thread.fpu.vxrs array
 		 */
-		offset = addr - offsetof(struct user, regs.fp_regs.fprs);
+		offset = addr - (addr_t) &dummy->regs.fp_regs.fprs;
 		if (MACHINE_HAS_VX)
 			tmp = *(addr_t *)
 			       ((addr_t) child->thread.fpu.vxrs + 2*offset);
@@ -254,11 +263,11 @@ static unsigned long __peek_user(struct task_struct *child, addr_t addr)
 			tmp = *(addr_t *)
 			       ((addr_t) child->thread.fpu.fprs + offset);
 
-	} else if (addr < offsetof(struct user, regs.per_info) + sizeof(per_struct)) {
+	} else if (addr < (addr_t) (&dummy->regs.per_info + 1)) {
 		/*
 		 * Handle access to the per_info structure.
 		 */
-		addr -= offsetof(struct user, regs.per_info);
+		addr -= (addr_t) &dummy->regs.per_info;
 		tmp = __peek_user_per(child, addr);
 
 	} else
@@ -277,8 +286,8 @@ peek_user(struct task_struct *child, addr_t addr, addr_t data)
 	 * an alignment of 4. Programmers from hell...
 	 */
 	mask = __ADDR_MASK;
-	if (addr >= offsetof(struct user, regs.acrs) &&
-	    addr < offsetof(struct user, regs.orig_gpr2))
+	if (addr >= (addr_t) &((struct user *) NULL)->regs.acrs &&
+	    addr < (addr_t) &((struct user *) NULL)->regs.orig_gpr2)
 		mask = 3;
 	if ((addr & mask) || addr > sizeof(struct user) - __ADDR_MASK)
 		return -EIO;
@@ -290,6 +299,8 @@ peek_user(struct task_struct *child, addr_t addr, addr_t data)
 static inline void __poke_user_per(struct task_struct *child,
 				   addr_t addr, addr_t data)
 {
+	struct per_struct_kernel *dummy = NULL;
+
 	/*
 	 * There are only three fields in the per_info struct that the
 	 * debugger user can write to.
@@ -302,14 +313,14 @@ static inline void __poke_user_per(struct task_struct *child,
 	 * addresses are used only if single stepping is not in effect.
 	 * Writes to any other field in per_info are ignored.
 	 */
-	if (addr == offsetof(struct per_struct_kernel, cr9))
+	if (addr == (addr_t) &dummy->cr9)
 		/* PER event mask of the user specified per set. */
 		child->thread.per_user.control =
 			data & (PER_EVENT_MASK | PER_CONTROL_MASK);
-	else if (addr == offsetof(struct per_struct_kernel, starting_addr))
+	else if (addr == (addr_t) &dummy->starting_addr)
 		/* Starting address of the user specified per set. */
 		child->thread.per_user.start = data;
-	else if (addr == offsetof(struct per_struct_kernel, ending_addr))
+	else if (addr == (addr_t) &dummy->ending_addr)
 		/* Ending address of the user specified per set. */
 		child->thread.per_user.end = data;
 }
@@ -322,15 +333,14 @@ static inline void __poke_user_per(struct task_struct *child,
  */
 static int __poke_user(struct task_struct *child, addr_t addr, addr_t data)
 {
+	struct user *dummy = NULL;
 	addr_t offset;
 
-
-	if (addr < offsetof(struct user, regs.acrs)) {
-		struct pt_regs *regs = task_pt_regs(child);
+	if (addr < (addr_t) &dummy->regs.acrs) {
 		/*
 		 * psw and gprs are stored on the stack
 		 */
-		if (addr == offsetof(struct user, regs.psw.mask)) {
+		if (addr == (addr_t) &dummy->regs.psw.mask) {
 			unsigned long mask = PSW_MASK_USER;
 
 			mask |= is_ri_task(child) ? PSW_MASK_RI : 0;
@@ -344,44 +354,38 @@ static int __poke_user(struct task_struct *child, addr_t addr, addr_t data)
 				/* Invalid addressing mode bits */
 				return -EINVAL;
 		}
+		*(addr_t *)((addr_t) &task_pt_regs(child)->psw + addr) = data;
 
-		if (test_pt_regs_flag(regs, PIF_SYSCALL) &&
-			addr == offsetof(struct user, regs.gprs[2])) {
-			struct pt_regs *regs = task_pt_regs(child);
-
-			regs->int_code = 0x20000 | (data & 0xffff);
-		}
-		*(addr_t *)((addr_t) &regs->psw + addr) = data;
-	} else if (addr < offsetof(struct user, regs.orig_gpr2)) {
+	} else if (addr < (addr_t) (&dummy->regs.orig_gpr2)) {
 		/*
 		 * access registers are stored in the thread structure
 		 */
-		offset = addr - offsetof(struct user, regs.acrs);
+		offset = addr - (addr_t) &dummy->regs.acrs;
 		/*
 		 * Very special case: old & broken 64 bit gdb writing
 		 * to acrs[15] with a 64 bit value. Ignore the lower
 		 * half of the value and write the upper 32 bit to
 		 * acrs[15]. Sick...
 		 */
-		if (addr == offsetof(struct user, regs.acrs[15]))
+		if (addr == (addr_t) &dummy->regs.acrs[15])
 			child->thread.acrs[15] = (unsigned int) (data >> 32);
 		else
 			*(addr_t *)((addr_t) &child->thread.acrs + offset) = data;
 
-	} else if (addr == offsetof(struct user, regs.orig_gpr2)) {
+	} else if (addr == (addr_t) &dummy->regs.orig_gpr2) {
 		/*
 		 * orig_gpr2 is stored on the kernel stack
 		 */
 		task_pt_regs(child)->orig_gpr2 = data;
 
-	} else if (addr < offsetof(struct user, regs.fp_regs)) {
+	} else if (addr < (addr_t) &dummy->regs.fp_regs) {
 		/*
 		 * prevent writes of padding hole between
 		 * orig_gpr2 and fp_regs on s390.
 		 */
 		return 0;
 
-	} else if (addr == offsetof(struct user, regs.fp_regs.fpc)) {
+	} else if (addr == (addr_t) &dummy->regs.fp_regs.fpc) {
 		/*
 		 * floating point control reg. is in the thread structure
 		 */
@@ -390,12 +394,12 @@ static int __poke_user(struct task_struct *child, addr_t addr, addr_t data)
 			return -EINVAL;
 		child->thread.fpu.fpc = data >> (BITS_PER_LONG - 32);
 
-	} else if (addr < offsetof(struct user, regs.fp_regs) + sizeof(s390_fp_regs)) {
+	} else if (addr < (addr_t) (&dummy->regs.fp_regs + 1)) {
 		/*
 		 * floating point regs. are either in child->thread.fpu
 		 * or the child->thread.fpu.vxrs array
 		 */
-		offset = addr - offsetof(struct user, regs.fp_regs.fprs);
+		offset = addr - (addr_t) &dummy->regs.fp_regs.fprs;
 		if (MACHINE_HAS_VX)
 			*(addr_t *)((addr_t)
 				child->thread.fpu.vxrs + 2*offset) = data;
@@ -403,11 +407,11 @@ static int __poke_user(struct task_struct *child, addr_t addr, addr_t data)
 			*(addr_t *)((addr_t)
 				child->thread.fpu.fprs + offset) = data;
 
-	} else if (addr < offsetof(struct user, regs.per_info) + sizeof(per_struct)) {
+	} else if (addr < (addr_t) (&dummy->regs.per_info + 1)) {
 		/*
 		 * Handle access to the per_info structure.
 		 */
-		addr -= offsetof(struct user, regs.per_info);
+		addr -= (addr_t) &dummy->regs.per_info;
 		__poke_user_per(child, addr, data);
 
 	}
@@ -424,8 +428,8 @@ static int poke_user(struct task_struct *child, addr_t addr, addr_t data)
 	 * an alignment of 4. Programmers from hell indeed...
 	 */
 	mask = __ADDR_MASK;
-	if (addr >= offsetof(struct user, regs.acrs) &&
-	    addr < offsetof(struct user, regs.orig_gpr2))
+	if (addr >= (addr_t) &((struct user *) NULL)->regs.acrs &&
+	    addr < (addr_t) &((struct user *) NULL)->regs.orig_gpr2)
 		mask = 3;
 	if ((addr & mask) || addr > sizeof(struct user) - __ADDR_MASK)
 		return -EIO;
@@ -533,35 +537,37 @@ long arch_ptrace(struct task_struct *child, long request,
 static inline __u32 __peek_user_per_compat(struct task_struct *child,
 					   addr_t addr)
 {
-	if (addr == offsetof(struct compat_per_struct_kernel, cr9))
+	struct compat_per_struct_kernel *dummy32 = NULL;
+
+	if (addr == (addr_t) &dummy32->cr9)
 		/* Control bits of the active per set. */
 		return (__u32) test_thread_flag(TIF_SINGLE_STEP) ?
 			PER_EVENT_IFETCH : child->thread.per_user.control;
-	else if (addr == offsetof(struct compat_per_struct_kernel, cr10))
+	else if (addr == (addr_t) &dummy32->cr10)
 		/* Start address of the active per set. */
 		return (__u32) test_thread_flag(TIF_SINGLE_STEP) ?
 			0 : child->thread.per_user.start;
-	else if (addr == offsetof(struct compat_per_struct_kernel, cr11))
+	else if (addr == (addr_t) &dummy32->cr11)
 		/* End address of the active per set. */
 		return test_thread_flag(TIF_SINGLE_STEP) ?
 			PSW32_ADDR_INSN : child->thread.per_user.end;
-	else if (addr == offsetof(struct compat_per_struct_kernel, bits))
+	else if (addr == (addr_t) &dummy32->bits)
 		/* Single-step bit. */
 		return (__u32) test_thread_flag(TIF_SINGLE_STEP) ?
 			0x80000000 : 0;
-	else if (addr == offsetof(struct compat_per_struct_kernel, starting_addr))
+	else if (addr == (addr_t) &dummy32->starting_addr)
 		/* Start address of the user specified per set. */
 		return (__u32) child->thread.per_user.start;
-	else if (addr == offsetof(struct compat_per_struct_kernel, ending_addr))
+	else if (addr == (addr_t) &dummy32->ending_addr)
 		/* End address of the user specified per set. */
 		return (__u32) child->thread.per_user.end;
-	else if (addr == offsetof(struct compat_per_struct_kernel, perc_atmid))
+	else if (addr == (addr_t) &dummy32->perc_atmid)
 		/* PER code, ATMID and AI of the last PER trap */
 		return (__u32) child->thread.per_event.cause << 16;
-	else if (addr == offsetof(struct compat_per_struct_kernel, address))
+	else if (addr == (addr_t) &dummy32->address)
 		/* Address of the last PER trap */
 		return (__u32) child->thread.per_event.address;
-	else if (addr == offsetof(struct compat_per_struct_kernel, access_id))
+	else if (addr == (addr_t) &dummy32->access_id)
 		/* Access id of the last PER trap */
 		return (__u32) child->thread.per_event.paid << 24;
 	return 0;
@@ -572,20 +578,21 @@ static inline __u32 __peek_user_per_compat(struct task_struct *child,
  */
 static u32 __peek_user_compat(struct task_struct *child, addr_t addr)
 {
+	struct compat_user *dummy32 = NULL;
 	addr_t offset;
 	__u32 tmp;
 
-	if (addr < offsetof(struct compat_user, regs.acrs)) {
+	if (addr < (addr_t) &dummy32->regs.acrs) {
 		struct pt_regs *regs = task_pt_regs(child);
 		/*
 		 * psw and gprs are stored on the stack
 		 */
-		if (addr == offsetof(struct compat_user, regs.psw.mask)) {
+		if (addr == (addr_t) &dummy32->regs.psw.mask) {
 			/* Fake a 31 bit psw mask. */
 			tmp = (__u32)(regs->psw.mask >> 32);
 			tmp &= PSW32_MASK_USER | PSW32_MASK_RI;
 			tmp |= PSW32_USER_BITS;
-		} else if (addr == offsetof(struct compat_user, regs.psw.addr)) {
+		} else if (addr == (addr_t) &dummy32->regs.psw.addr) {
 			/* Fake a 31 bit psw address. */
 			tmp = (__u32) regs->psw.addr |
 				(__u32)(regs->psw.mask & PSW_MASK_BA);
@@ -593,38 +600,38 @@ static u32 __peek_user_compat(struct task_struct *child, addr_t addr)
 			/* gpr 0-15 */
 			tmp = *(__u32 *)((addr_t) &regs->psw + addr*2 + 4);
 		}
-	} else if (addr < offsetof(struct compat_user, regs.orig_gpr2)) {
+	} else if (addr < (addr_t) (&dummy32->regs.orig_gpr2)) {
 		/*
 		 * access registers are stored in the thread structure
 		 */
-		offset = addr - offsetof(struct compat_user, regs.acrs);
+		offset = addr - (addr_t) &dummy32->regs.acrs;
 		tmp = *(__u32*)((addr_t) &child->thread.acrs + offset);
 
-	} else if (addr == offsetof(struct compat_user, regs.orig_gpr2)) {
+	} else if (addr == (addr_t) (&dummy32->regs.orig_gpr2)) {
 		/*
 		 * orig_gpr2 is stored on the kernel stack
 		 */
 		tmp = *(__u32*)((addr_t) &task_pt_regs(child)->orig_gpr2 + 4);
 
-	} else if (addr < offsetof(struct compat_user, regs.fp_regs)) {
+	} else if (addr < (addr_t) &dummy32->regs.fp_regs) {
 		/*
 		 * prevent reads of padding hole between
 		 * orig_gpr2 and fp_regs on s390.
 		 */
 		tmp = 0;
 
-	} else if (addr == offsetof(struct compat_user, regs.fp_regs.fpc)) {
+	} else if (addr == (addr_t) &dummy32->regs.fp_regs.fpc) {
 		/*
 		 * floating point control reg. is in the thread structure
 		 */
 		tmp = child->thread.fpu.fpc;
 
-	} else if (addr < offsetof(struct compat_user, regs.fp_regs) + sizeof(s390_fp_regs)) {
+	} else if (addr < (addr_t) (&dummy32->regs.fp_regs + 1)) {
 		/*
 		 * floating point regs. are either in child->thread.fpu
 		 * or the child->thread.fpu.vxrs array
 		 */
-		offset = addr - offsetof(struct compat_user, regs.fp_regs.fprs);
+		offset = addr - (addr_t) &dummy32->regs.fp_regs.fprs;
 		if (MACHINE_HAS_VX)
 			tmp = *(__u32 *)
 			       ((addr_t) child->thread.fpu.vxrs + 2*offset);
@@ -632,11 +639,11 @@ static u32 __peek_user_compat(struct task_struct *child, addr_t addr)
 			tmp = *(__u32 *)
 			       ((addr_t) child->thread.fpu.fprs + offset);
 
-	} else if (addr < offsetof(struct compat_user, regs.per_info) + sizeof(struct compat_per_struct_kernel)) {
+	} else if (addr < (addr_t) (&dummy32->regs.per_info + 1)) {
 		/*
 		 * Handle access to the per_info structure.
 		 */
-		addr -= offsetof(struct compat_user, regs.per_info);
+		addr -= (addr_t) &dummy32->regs.per_info;
 		tmp = __peek_user_per_compat(child, addr);
 
 	} else
@@ -663,14 +670,16 @@ static int peek_user_compat(struct task_struct *child,
 static inline void __poke_user_per_compat(struct task_struct *child,
 					  addr_t addr, __u32 data)
 {
-	if (addr == offsetof(struct compat_per_struct_kernel, cr9))
+	struct compat_per_struct_kernel *dummy32 = NULL;
+
+	if (addr == (addr_t) &dummy32->cr9)
 		/* PER event mask of the user specified per set. */
 		child->thread.per_user.control =
 			data & (PER_EVENT_MASK | PER_CONTROL_MASK);
-	else if (addr == offsetof(struct compat_per_struct_kernel, starting_addr))
+	else if (addr == (addr_t) &dummy32->starting_addr)
 		/* Starting address of the user specified per set. */
 		child->thread.per_user.start = data;
-	else if (addr == offsetof(struct compat_per_struct_kernel, ending_addr))
+	else if (addr == (addr_t) &dummy32->ending_addr)
 		/* Ending address of the user specified per set. */
 		child->thread.per_user.end = data;
 }
@@ -681,15 +690,16 @@ static inline void __poke_user_per_compat(struct task_struct *child,
 static int __poke_user_compat(struct task_struct *child,
 			      addr_t addr, addr_t data)
 {
+	struct compat_user *dummy32 = NULL;
 	__u32 tmp = (__u32) data;
 	addr_t offset;
 
-	if (addr < offsetof(struct compat_user, regs.acrs)) {
+	if (addr < (addr_t) &dummy32->regs.acrs) {
 		struct pt_regs *regs = task_pt_regs(child);
 		/*
 		 * psw, gprs, acrs and orig_gpr2 are stored on the stack
 		 */
-		if (addr == offsetof(struct compat_user, regs.psw.mask)) {
+		if (addr == (addr_t) &dummy32->regs.psw.mask) {
 			__u32 mask = PSW32_MASK_USER;
 
 			mask |= is_ri_task(child) ? PSW32_MASK_RI : 0;
@@ -703,43 +713,37 @@ static int __poke_user_compat(struct task_struct *child,
 			regs->psw.mask = (regs->psw.mask & ~PSW_MASK_USER) |
 				(regs->psw.mask & PSW_MASK_BA) |
 				(__u64)(tmp & mask) << 32;
-		} else if (addr == offsetof(struct compat_user, regs.psw.addr)) {
+		} else if (addr == (addr_t) &dummy32->regs.psw.addr) {
 			/* Build a 64 bit psw address from 31 bit address. */
 			regs->psw.addr = (__u64) tmp & PSW32_ADDR_INSN;
 			/* Transfer 31 bit amode bit to psw mask. */
 			regs->psw.mask = (regs->psw.mask & ~PSW_MASK_BA) |
 				(__u64)(tmp & PSW32_ADDR_AMODE);
 		} else {
-			if (test_pt_regs_flag(regs, PIF_SYSCALL) &&
-				addr == offsetof(struct compat_user, regs.gprs[2])) {
-				struct pt_regs *regs = task_pt_regs(child);
-
-				regs->int_code = 0x20000 | (data & 0xffff);
-			}
 			/* gpr 0-15 */
 			*(__u32*)((addr_t) &regs->psw + addr*2 + 4) = tmp;
 		}
-	} else if (addr < offsetof(struct compat_user, regs.orig_gpr2)) {
+	} else if (addr < (addr_t) (&dummy32->regs.orig_gpr2)) {
 		/*
 		 * access registers are stored in the thread structure
 		 */
-		offset = addr - offsetof(struct compat_user, regs.acrs);
+		offset = addr - (addr_t) &dummy32->regs.acrs;
 		*(__u32*)((addr_t) &child->thread.acrs + offset) = tmp;
 
-	} else if (addr == offsetof(struct compat_user, regs.orig_gpr2)) {
+	} else if (addr == (addr_t) (&dummy32->regs.orig_gpr2)) {
 		/*
 		 * orig_gpr2 is stored on the kernel stack
 		 */
 		*(__u32*)((addr_t) &task_pt_regs(child)->orig_gpr2 + 4) = tmp;
 
-	} else if (addr < offsetof(struct compat_user, regs.fp_regs)) {
+	} else if (addr < (addr_t) &dummy32->regs.fp_regs) {
 		/*
 		 * prevent writess of padding hole between
 		 * orig_gpr2 and fp_regs on s390.
 		 */
 		return 0;
 
-	} else if (addr == offsetof(struct compat_user, regs.fp_regs.fpc)) {
+	} else if (addr == (addr_t) &dummy32->regs.fp_regs.fpc) {
 		/*
 		 * floating point control reg. is in the thread structure
 		 */
@@ -747,12 +751,12 @@ static int __poke_user_compat(struct task_struct *child,
 			return -EINVAL;
 		child->thread.fpu.fpc = data;
 
-	} else if (addr < offsetof(struct compat_user, regs.fp_regs) + sizeof(s390_fp_regs)) {
+	} else if (addr < (addr_t) (&dummy32->regs.fp_regs + 1)) {
 		/*
 		 * floating point regs. are either in child->thread.fpu
 		 * or the child->thread.fpu.vxrs array
 		 */
-		offset = addr - offsetof(struct compat_user, regs.fp_regs.fprs);
+		offset = addr - (addr_t) &dummy32->regs.fp_regs.fprs;
 		if (MACHINE_HAS_VX)
 			*(__u32 *)((addr_t)
 				child->thread.fpu.vxrs + 2*offset) = tmp;
@@ -760,11 +764,11 @@ static int __poke_user_compat(struct task_struct *child,
 			*(__u32 *)((addr_t)
 				child->thread.fpu.fprs + offset) = tmp;
 
-	} else if (addr < offsetof(struct compat_user, regs.per_info) + sizeof(struct compat_per_struct_kernel)) {
+	} else if (addr < (addr_t) (&dummy32->regs.per_info + 1)) {
 		/*
 		 * Handle access to the per_info structure.
 		 */
-		addr -= offsetof(struct compat_user, regs.per_info);
+		addr -= (addr_t) &dummy32->regs.per_info;
 		__poke_user_per_compat(child, addr, data);
 	}
 
@@ -832,20 +836,84 @@ long compat_arch_ptrace(struct task_struct *child, compat_long_t request,
 }
 #endif
 
+asmlinkage long do_syscall_trace_enter(struct pt_regs *regs)
+{
+	unsigned long mask = -1UL;
+
+	/*
+	 * The sysc_tracesys code in entry.S stored the system
+	 * call number to gprs[2].
+	 */
+	if (test_thread_flag(TIF_SYSCALL_TRACE) &&
+	    (tracehook_report_syscall_entry(regs) ||
+	     regs->gprs[2] >= NR_syscalls)) {
+		/*
+		 * Tracing decided this syscall should not happen or the
+		 * debugger stored an invalid system call number. Skip
+		 * the system call and the system call restart handling.
+		 */
+		clear_pt_regs_flag(regs, PIF_SYSCALL);
+		return -1;
+	}
+
+	/* Do the secure computing check after ptrace. */
+	if (secure_computing(NULL)) {
+		/* seccomp failures shouldn't expose any additional code. */
+		return -1;
+	}
+
+	if (unlikely(test_thread_flag(TIF_SYSCALL_TRACEPOINT)))
+		trace_sys_enter(regs, regs->gprs[2]);
+
+	if (is_compat_task())
+		mask = 0xffffffff;
+
+	audit_syscall_entry(regs->gprs[2], regs->orig_gpr2 & mask,
+			    regs->gprs[3] &mask, regs->gprs[4] &mask,
+			    regs->gprs[5] &mask);
+
+	return regs->gprs[2];
+}
+
+asmlinkage void do_syscall_trace_exit(struct pt_regs *regs)
+{
+	audit_syscall_exit(regs);
+
+	if (unlikely(test_thread_flag(TIF_SYSCALL_TRACEPOINT)))
+		trace_sys_exit(regs, regs->gprs[2]);
+
+	if (test_thread_flag(TIF_SYSCALL_TRACE))
+		tracehook_report_syscall_exit(regs, 0);
+}
+
 /*
  * user_regset definitions.
  */
 
 static int s390_regs_get(struct task_struct *target,
 			 const struct user_regset *regset,
-			 struct membuf to)
+			 unsigned int pos, unsigned int count,
+			 void *kbuf, void __user *ubuf)
 {
-	unsigned pos;
 	if (target == current)
 		save_access_regs(target->thread.acrs);
 
-	for (pos = 0; pos < sizeof(s390_regs); pos += sizeof(long))
-		membuf_store(&to, __peek_user(target, pos));
+	if (kbuf) {
+		unsigned long *k = kbuf;
+		while (count > 0) {
+			*k++ = __peek_user(target, pos);
+			count -= sizeof(*k);
+			pos += sizeof(*k);
+		}
+	} else {
+		unsigned long __user *u = ubuf;
+		while (count > 0) {
+			if (__put_user(__peek_user(target, pos), u++))
+				return -EFAULT;
+			count -= sizeof(*u);
+			pos += sizeof(*u);
+		}
+	}
 	return 0;
 }
 
@@ -886,8 +954,8 @@ static int s390_regs_set(struct task_struct *target,
 }
 
 static int s390_fpregs_get(struct task_struct *target,
-			   const struct user_regset *regset,
-			   struct membuf to)
+			   const struct user_regset *regset, unsigned int pos,
+			   unsigned int count, void *kbuf, void __user *ubuf)
 {
 	_s390_fp_regs fp_regs;
 
@@ -897,7 +965,8 @@ static int s390_fpregs_get(struct task_struct *target,
 	fp_regs.fpc = target->thread.fpu.fpc;
 	fpregs_store(&fp_regs, &target->thread.fpu);
 
-	return membuf_write(&to, &fp_regs, sizeof(fp_regs));
+	return user_regset_copyout(&pos, &count, &kbuf, &ubuf,
+				   &fp_regs, 0, -1);
 }
 
 static int s390_fpregs_set(struct task_struct *target,
@@ -944,9 +1013,20 @@ static int s390_fpregs_set(struct task_struct *target,
 
 static int s390_last_break_get(struct task_struct *target,
 			       const struct user_regset *regset,
-			       struct membuf to)
+			       unsigned int pos, unsigned int count,
+			       void *kbuf, void __user *ubuf)
 {
-	return membuf_store(&to, target->thread.last_break);
+	if (count > 0) {
+		if (kbuf) {
+			unsigned long *k = kbuf;
+			*k = target->thread.last_break;
+		} else {
+			unsigned long  __user *u = ubuf;
+			if (__put_user(target->thread.last_break, u))
+				return -EFAULT;
+		}
+	}
+	return 0;
 }
 
 static int s390_last_break_set(struct task_struct *target,
@@ -959,15 +1039,16 @@ static int s390_last_break_set(struct task_struct *target,
 
 static int s390_tdb_get(struct task_struct *target,
 			const struct user_regset *regset,
-			struct membuf to)
+			unsigned int pos, unsigned int count,
+			void *kbuf, void __user *ubuf)
 {
 	struct pt_regs *regs = task_pt_regs(target);
-	size_t size;
+	unsigned char *data;
 
 	if (!(regs->int_code & 0x200))
 		return -ENODATA;
-	size = sizeof(target->thread.trap_tdb.data);
-	return membuf_write(&to, target->thread.trap_tdb.data, size);
+	data = target->thread.trap_tdb;
+	return user_regset_copyout(&pos, &count, &kbuf, &ubuf, data, 0, 256);
 }
 
 static int s390_tdb_set(struct task_struct *target,
@@ -980,7 +1061,8 @@ static int s390_tdb_set(struct task_struct *target,
 
 static int s390_vxrs_low_get(struct task_struct *target,
 			     const struct user_regset *regset,
-			     struct membuf to)
+			     unsigned int pos, unsigned int count,
+			     void *kbuf, void __user *ubuf)
 {
 	__u64 vxrs[__NUM_VXRS_LOW];
 	int i;
@@ -991,7 +1073,7 @@ static int s390_vxrs_low_get(struct task_struct *target,
 		save_fpu_regs();
 	for (i = 0; i < __NUM_VXRS_LOW; i++)
 		vxrs[i] = *((__u64 *)(target->thread.fpu.vxrs + i) + 1);
-	return membuf_write(&to, vxrs, sizeof(vxrs));
+	return user_regset_copyout(&pos, &count, &kbuf, &ubuf, vxrs, 0, -1);
 }
 
 static int s390_vxrs_low_set(struct task_struct *target,
@@ -1020,14 +1102,18 @@ static int s390_vxrs_low_set(struct task_struct *target,
 
 static int s390_vxrs_high_get(struct task_struct *target,
 			      const struct user_regset *regset,
-			      struct membuf to)
+			      unsigned int pos, unsigned int count,
+			      void *kbuf, void __user *ubuf)
 {
+	__vector128 vxrs[__NUM_VXRS_HIGH];
+
 	if (!MACHINE_HAS_VX)
 		return -ENODEV;
 	if (target == current)
 		save_fpu_regs();
-	return membuf_write(&to, target->thread.fpu.vxrs + __NUM_VXRS_LOW,
-			    __NUM_VXRS_HIGH * sizeof(__vector128));
+	memcpy(vxrs, target->thread.fpu.vxrs + __NUM_VXRS_LOW, sizeof(vxrs));
+
+	return user_regset_copyout(&pos, &count, &kbuf, &ubuf, vxrs, 0, -1);
 }
 
 static int s390_vxrs_high_set(struct task_struct *target,
@@ -1049,9 +1135,12 @@ static int s390_vxrs_high_set(struct task_struct *target,
 
 static int s390_system_call_get(struct task_struct *target,
 				const struct user_regset *regset,
-				struct membuf to)
+				unsigned int pos, unsigned int count,
+				void *kbuf, void __user *ubuf)
 {
-	return membuf_store(&to, target->thread.system_call);
+	unsigned int *data = &target->thread.system_call;
+	return user_regset_copyout(&pos, &count, &kbuf, &ubuf,
+				   data, 0, sizeof(unsigned int));
 }
 
 static int s390_system_call_set(struct task_struct *target,
@@ -1066,7 +1155,8 @@ static int s390_system_call_set(struct task_struct *target,
 
 static int s390_gs_cb_get(struct task_struct *target,
 			  const struct user_regset *regset,
-			  struct membuf to)
+			  unsigned int pos, unsigned int count,
+			  void *kbuf, void __user *ubuf)
 {
 	struct gs_cb *data = target->thread.gs_cb;
 
@@ -1076,7 +1166,8 @@ static int s390_gs_cb_get(struct task_struct *target,
 		return -ENODATA;
 	if (target == current)
 		save_gs_cb(data);
-	return membuf_write(&to, data, sizeof(struct gs_cb));
+	return user_regset_copyout(&pos, &count, &kbuf, &ubuf,
+				   data, 0, sizeof(struct gs_cb));
 }
 
 static int s390_gs_cb_set(struct task_struct *target,
@@ -1120,7 +1211,8 @@ static int s390_gs_cb_set(struct task_struct *target,
 
 static int s390_gs_bc_get(struct task_struct *target,
 			  const struct user_regset *regset,
-			  struct membuf to)
+			  unsigned int pos, unsigned int count,
+			  void *kbuf, void __user *ubuf)
 {
 	struct gs_cb *data = target->thread.gs_bc_cb;
 
@@ -1128,7 +1220,8 @@ static int s390_gs_bc_get(struct task_struct *target,
 		return -ENODEV;
 	if (!data)
 		return -ENODATA;
-	return membuf_write(&to, data, sizeof(struct gs_cb));
+	return user_regset_copyout(&pos, &count, &kbuf, &ubuf,
+				   data, 0, sizeof(struct gs_cb));
 }
 
 static int s390_gs_bc_set(struct task_struct *target,
@@ -1164,6 +1257,7 @@ static bool is_ri_cb_valid(struct runtime_instr_cb *cb)
 		cb->pc == 1 &&
 		cb->qc == 0 &&
 		cb->reserved2 == 0 &&
+		cb->key == PAGE_DEFAULT_KEY &&
 		cb->reserved3 == 0 &&
 		cb->reserved4 == 0 &&
 		cb->reserved5 == 0 &&
@@ -1178,7 +1272,8 @@ static bool is_ri_cb_valid(struct runtime_instr_cb *cb)
 
 static int s390_runtime_instr_get(struct task_struct *target,
 				const struct user_regset *regset,
-				struct membuf to)
+				unsigned int pos, unsigned int count,
+				void *kbuf, void __user *ubuf)
 {
 	struct runtime_instr_cb *data = target->thread.ri_cb;
 
@@ -1187,7 +1282,8 @@ static int s390_runtime_instr_get(struct task_struct *target,
 	if (!data)
 		return -ENODATA;
 
-	return membuf_write(&to, data, sizeof(struct runtime_instr_cb));
+	return user_regset_copyout(&pos, &count, &kbuf, &ubuf,
+				   data, 0, sizeof(struct runtime_instr_cb));
 }
 
 static int s390_runtime_instr_set(struct task_struct *target,
@@ -1225,11 +1321,7 @@ static int s390_runtime_instr_set(struct task_struct *target,
 		kfree(data);
 		return -EINVAL;
 	}
-	/*
-	 * Override access key in any case, since user space should
-	 * not be able to set it, nor should it care about it.
-	 */
-	ri_cb.key = PAGE_DEFAULT_KEY >> 4;
+
 	preempt_disable();
 	if (!target->thread.ri_cb)
 		target->thread.ri_cb = data;
@@ -1247,7 +1339,7 @@ static const struct user_regset s390_regsets[] = {
 		.n = sizeof(s390_regs) / sizeof(long),
 		.size = sizeof(long),
 		.align = sizeof(long),
-		.regset_get = s390_regs_get,
+		.get = s390_regs_get,
 		.set = s390_regs_set,
 	},
 	{
@@ -1255,7 +1347,7 @@ static const struct user_regset s390_regsets[] = {
 		.n = sizeof(s390_fp_regs) / sizeof(long),
 		.size = sizeof(long),
 		.align = sizeof(long),
-		.regset_get = s390_fpregs_get,
+		.get = s390_fpregs_get,
 		.set = s390_fpregs_set,
 	},
 	{
@@ -1263,7 +1355,7 @@ static const struct user_regset s390_regsets[] = {
 		.n = 1,
 		.size = sizeof(unsigned int),
 		.align = sizeof(unsigned int),
-		.regset_get = s390_system_call_get,
+		.get = s390_system_call_get,
 		.set = s390_system_call_set,
 	},
 	{
@@ -1271,7 +1363,7 @@ static const struct user_regset s390_regsets[] = {
 		.n = 1,
 		.size = sizeof(long),
 		.align = sizeof(long),
-		.regset_get = s390_last_break_get,
+		.get = s390_last_break_get,
 		.set = s390_last_break_set,
 	},
 	{
@@ -1279,7 +1371,7 @@ static const struct user_regset s390_regsets[] = {
 		.n = 1,
 		.size = 256,
 		.align = 1,
-		.regset_get = s390_tdb_get,
+		.get = s390_tdb_get,
 		.set = s390_tdb_set,
 	},
 	{
@@ -1287,7 +1379,7 @@ static const struct user_regset s390_regsets[] = {
 		.n = __NUM_VXRS_LOW,
 		.size = sizeof(__u64),
 		.align = sizeof(__u64),
-		.regset_get = s390_vxrs_low_get,
+		.get = s390_vxrs_low_get,
 		.set = s390_vxrs_low_set,
 	},
 	{
@@ -1295,7 +1387,7 @@ static const struct user_regset s390_regsets[] = {
 		.n = __NUM_VXRS_HIGH,
 		.size = sizeof(__vector128),
 		.align = sizeof(__vector128),
-		.regset_get = s390_vxrs_high_get,
+		.get = s390_vxrs_high_get,
 		.set = s390_vxrs_high_set,
 	},
 	{
@@ -1303,7 +1395,7 @@ static const struct user_regset s390_regsets[] = {
 		.n = sizeof(struct gs_cb) / sizeof(__u64),
 		.size = sizeof(__u64),
 		.align = sizeof(__u64),
-		.regset_get = s390_gs_cb_get,
+		.get = s390_gs_cb_get,
 		.set = s390_gs_cb_set,
 	},
 	{
@@ -1311,7 +1403,7 @@ static const struct user_regset s390_regsets[] = {
 		.n = sizeof(struct gs_cb) / sizeof(__u64),
 		.size = sizeof(__u64),
 		.align = sizeof(__u64),
-		.regset_get = s390_gs_bc_get,
+		.get = s390_gs_bc_get,
 		.set = s390_gs_bc_set,
 	},
 	{
@@ -1319,13 +1411,13 @@ static const struct user_regset s390_regsets[] = {
 		.n = sizeof(struct runtime_instr_cb) / sizeof(__u64),
 		.size = sizeof(__u64),
 		.align = sizeof(__u64),
-		.regset_get = s390_runtime_instr_get,
+		.get = s390_runtime_instr_get,
 		.set = s390_runtime_instr_set,
 	},
 };
 
 static const struct user_regset_view user_s390_view = {
-	.name = "s390x",
+	.name = UTS_MACHINE,
 	.e_machine = EM_S390,
 	.regsets = s390_regsets,
 	.n = ARRAY_SIZE(s390_regsets)
@@ -1334,15 +1426,28 @@ static const struct user_regset_view user_s390_view = {
 #ifdef CONFIG_COMPAT
 static int s390_compat_regs_get(struct task_struct *target,
 				const struct user_regset *regset,
-				struct membuf to)
+				unsigned int pos, unsigned int count,
+				void *kbuf, void __user *ubuf)
 {
-	unsigned n;
-
 	if (target == current)
 		save_access_regs(target->thread.acrs);
 
-	for (n = 0; n < sizeof(s390_compat_regs); n += sizeof(compat_ulong_t))
-		membuf_store(&to, __peek_user_compat(target, n));
+	if (kbuf) {
+		compat_ulong_t *k = kbuf;
+		while (count > 0) {
+			*k++ = __peek_user_compat(target, pos);
+			count -= sizeof(*k);
+			pos += sizeof(*k);
+		}
+	} else {
+		compat_ulong_t __user *u = ubuf;
+		while (count > 0) {
+			if (__put_user(__peek_user_compat(target, pos), u++))
+				return -EFAULT;
+			count -= sizeof(*u);
+			pos += sizeof(*u);
+		}
+	}
 	return 0;
 }
 
@@ -1384,14 +1489,29 @@ static int s390_compat_regs_set(struct task_struct *target,
 
 static int s390_compat_regs_high_get(struct task_struct *target,
 				     const struct user_regset *regset,
-				     struct membuf to)
+				     unsigned int pos, unsigned int count,
+				     void *kbuf, void __user *ubuf)
 {
 	compat_ulong_t *gprs_high;
-	int i;
 
-	gprs_high = (compat_ulong_t *)task_pt_regs(target)->gprs;
-	for (i = 0; i < NUM_GPRS; i++, gprs_high += 2)
-		membuf_store(&to, *gprs_high);
+	gprs_high = (compat_ulong_t *)
+		&task_pt_regs(target)->gprs[pos / sizeof(compat_ulong_t)];
+	if (kbuf) {
+		compat_ulong_t *k = kbuf;
+		while (count > 0) {
+			*k++ = *gprs_high;
+			gprs_high += 2;
+			count -= sizeof(*k);
+		}
+	} else {
+		compat_ulong_t __user *u = ubuf;
+		while (count > 0) {
+			if (__put_user(*gprs_high, u++))
+				return -EFAULT;
+			gprs_high += 2;
+			count -= sizeof(*u);
+		}
+	}
 	return 0;
 }
 
@@ -1430,11 +1550,23 @@ static int s390_compat_regs_high_set(struct task_struct *target,
 
 static int s390_compat_last_break_get(struct task_struct *target,
 				      const struct user_regset *regset,
-				      struct membuf to)
+				      unsigned int pos, unsigned int count,
+				      void *kbuf, void __user *ubuf)
 {
-	compat_ulong_t last_break = target->thread.last_break;
+	compat_ulong_t last_break;
 
-	return membuf_store(&to, (unsigned long)last_break);
+	if (count > 0) {
+		last_break = target->thread.last_break;
+		if (kbuf) {
+			unsigned long *k = kbuf;
+			*k = last_break;
+		} else {
+			unsigned long  __user *u = ubuf;
+			if (__put_user(last_break, u))
+				return -EFAULT;
+		}
+	}
+	return 0;
 }
 
 static int s390_compat_last_break_set(struct task_struct *target,
@@ -1451,7 +1583,7 @@ static const struct user_regset s390_compat_regsets[] = {
 		.n = sizeof(s390_compat_regs) / sizeof(compat_long_t),
 		.size = sizeof(compat_long_t),
 		.align = sizeof(compat_long_t),
-		.regset_get = s390_compat_regs_get,
+		.get = s390_compat_regs_get,
 		.set = s390_compat_regs_set,
 	},
 	{
@@ -1459,7 +1591,7 @@ static const struct user_regset s390_compat_regsets[] = {
 		.n = sizeof(s390_fp_regs) / sizeof(compat_long_t),
 		.size = sizeof(compat_long_t),
 		.align = sizeof(compat_long_t),
-		.regset_get = s390_fpregs_get,
+		.get = s390_fpregs_get,
 		.set = s390_fpregs_set,
 	},
 	{
@@ -1467,7 +1599,7 @@ static const struct user_regset s390_compat_regsets[] = {
 		.n = 1,
 		.size = sizeof(compat_uint_t),
 		.align = sizeof(compat_uint_t),
-		.regset_get = s390_system_call_get,
+		.get = s390_system_call_get,
 		.set = s390_system_call_set,
 	},
 	{
@@ -1475,7 +1607,7 @@ static const struct user_regset s390_compat_regsets[] = {
 		.n = 1,
 		.size = sizeof(long),
 		.align = sizeof(long),
-		.regset_get = s390_compat_last_break_get,
+		.get = s390_compat_last_break_get,
 		.set = s390_compat_last_break_set,
 	},
 	{
@@ -1483,7 +1615,7 @@ static const struct user_regset s390_compat_regsets[] = {
 		.n = 1,
 		.size = 256,
 		.align = 1,
-		.regset_get = s390_tdb_get,
+		.get = s390_tdb_get,
 		.set = s390_tdb_set,
 	},
 	{
@@ -1491,7 +1623,7 @@ static const struct user_regset s390_compat_regsets[] = {
 		.n = __NUM_VXRS_LOW,
 		.size = sizeof(__u64),
 		.align = sizeof(__u64),
-		.regset_get = s390_vxrs_low_get,
+		.get = s390_vxrs_low_get,
 		.set = s390_vxrs_low_set,
 	},
 	{
@@ -1499,7 +1631,7 @@ static const struct user_regset s390_compat_regsets[] = {
 		.n = __NUM_VXRS_HIGH,
 		.size = sizeof(__vector128),
 		.align = sizeof(__vector128),
-		.regset_get = s390_vxrs_high_get,
+		.get = s390_vxrs_high_get,
 		.set = s390_vxrs_high_set,
 	},
 	{
@@ -1507,7 +1639,7 @@ static const struct user_regset s390_compat_regsets[] = {
 		.n = sizeof(s390_compat_regs_high) / sizeof(compat_long_t),
 		.size = sizeof(compat_long_t),
 		.align = sizeof(compat_long_t),
-		.regset_get = s390_compat_regs_high_get,
+		.get = s390_compat_regs_high_get,
 		.set = s390_compat_regs_high_set,
 	},
 	{
@@ -1515,7 +1647,7 @@ static const struct user_regset s390_compat_regsets[] = {
 		.n = sizeof(struct gs_cb) / sizeof(__u64),
 		.size = sizeof(__u64),
 		.align = sizeof(__u64),
-		.regset_get = s390_gs_cb_get,
+		.get = s390_gs_cb_get,
 		.set = s390_gs_cb_set,
 	},
 	{
@@ -1523,7 +1655,7 @@ static const struct user_regset s390_compat_regsets[] = {
 		.n = sizeof(struct gs_cb) / sizeof(__u64),
 		.size = sizeof(__u64),
 		.align = sizeof(__u64),
-		.regset_get = s390_gs_bc_get,
+		.get = s390_gs_bc_get,
 		.set = s390_gs_bc_set,
 	},
 	{
@@ -1531,7 +1663,7 @@ static const struct user_regset s390_compat_regsets[] = {
 		.n = sizeof(struct runtime_instr_cb) / sizeof(__u64),
 		.size = sizeof(__u64),
 		.align = sizeof(__u64),
-		.regset_get = s390_runtime_instr_get,
+		.get = s390_runtime_instr_get,
 		.set = s390_runtime_instr_set,
 	},
 };

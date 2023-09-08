@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0+
 // Copyright 2017 IBM Corp.
 #include <linux/interrupt.h>
-#include <linux/irqdomain.h>
+#include <linux/eventfd.h>
 #include <asm/pnv-ocxl.h>
-#include <asm/xive.h>
 #include "ocxl_internal.h"
 #include "trace.h"
 
@@ -12,59 +11,28 @@ struct afu_irq {
 	int hw_irq;
 	unsigned int virq;
 	char *name;
-	irqreturn_t (*handler)(void *private);
-	void (*free_private)(void *private);
-	void *private;
+	u64 trigger_page;
+	struct eventfd_ctx *ev_ctx;
 };
 
-int ocxl_irq_offset_to_id(struct ocxl_context *ctx, u64 offset)
+static int irq_offset_to_id(struct ocxl_context *ctx, u64 offset)
 {
 	return (offset - ctx->afu->irq_base_offset) >> PAGE_SHIFT;
 }
 
-u64 ocxl_irq_id_to_offset(struct ocxl_context *ctx, int irq_id)
+static u64 irq_id_to_offset(struct ocxl_context *ctx, int id)
 {
-	return ctx->afu->irq_base_offset + (irq_id << PAGE_SHIFT);
+	return ctx->afu->irq_base_offset + (id << PAGE_SHIFT);
 }
-
-int ocxl_irq_set_handler(struct ocxl_context *ctx, int irq_id,
-		irqreturn_t (*handler)(void *private),
-		void (*free_private)(void *private),
-		void *private)
-{
-	struct afu_irq *irq;
-	int rc;
-
-	mutex_lock(&ctx->irq_lock);
-	irq = idr_find(&ctx->irq_idr, irq_id);
-	if (!irq) {
-		rc = -EINVAL;
-		goto unlock;
-	}
-
-	irq->handler = handler;
-	irq->private = private;
-	irq->free_private = free_private;
-
-	rc = 0;
-	// Fall through to unlock
-
-unlock:
-	mutex_unlock(&ctx->irq_lock);
-	return rc;
-}
-EXPORT_SYMBOL_GPL(ocxl_irq_set_handler);
 
 static irqreturn_t afu_irq_handler(int virq, void *data)
 {
 	struct afu_irq *irq = (struct afu_irq *) data;
 
 	trace_ocxl_afu_irq_receive(virq);
-
-	if (irq->handler)
-		return irq->handler(irq->private);
-
-	return IRQ_HANDLED; // Just drop it on the ground
+	if (irq->ev_ctx)
+		eventfd_signal(irq->ev_ctx, 1);
+	return IRQ_HANDLED;
 }
 
 static int setup_afu_irq(struct ocxl_context *ctx, struct afu_irq *irq)
@@ -102,7 +70,7 @@ static void release_afu_irq(struct afu_irq *irq)
 	kfree(irq->name);
 }
 
-int ocxl_afu_irq_alloc(struct ocxl_context *ctx, int *irq_id)
+int ocxl_afu_irq_alloc(struct ocxl_context *ctx, u64 *irq_offset)
 {
 	struct afu_irq *irq;
 	int rc;
@@ -125,7 +93,8 @@ int ocxl_afu_irq_alloc(struct ocxl_context *ctx, int *irq_id)
 		goto err_unlock;
 	}
 
-	rc = ocxl_link_irq_alloc(ctx->afu->fn->link, &irq->hw_irq);
+	rc = ocxl_link_irq_alloc(ctx->afu->fn->link, &irq->hw_irq,
+				&irq->trigger_page);
 	if (rc)
 		goto err_idr;
 
@@ -133,11 +102,11 @@ int ocxl_afu_irq_alloc(struct ocxl_context *ctx, int *irq_id)
 	if (rc)
 		goto err_alloc;
 
-	trace_ocxl_afu_irq_alloc(ctx->pasid, irq->id, irq->virq, irq->hw_irq);
+	*irq_offset = irq_id_to_offset(ctx, irq->id);
+
+	trace_ocxl_afu_irq_alloc(ctx->pasid, irq->id, irq->virq, irq->hw_irq,
+				*irq_offset);
 	mutex_unlock(&ctx->irq_lock);
-
-	*irq_id = irq->id;
-
 	return 0;
 
 err_alloc:
@@ -149,29 +118,29 @@ err_unlock:
 	kfree(irq);
 	return rc;
 }
-EXPORT_SYMBOL_GPL(ocxl_afu_irq_alloc);
 
 static void afu_irq_free(struct afu_irq *irq, struct ocxl_context *ctx)
 {
 	trace_ocxl_afu_irq_free(ctx->pasid, irq->id);
 	if (ctx->mapping)
 		unmap_mapping_range(ctx->mapping,
-				ocxl_irq_id_to_offset(ctx, irq->id),
+				irq_id_to_offset(ctx, irq->id),
 				1 << PAGE_SHIFT, 1);
 	release_afu_irq(irq);
-	if (irq->free_private)
-		irq->free_private(irq->private);
+	if (irq->ev_ctx)
+		eventfd_ctx_put(irq->ev_ctx);
 	ocxl_link_free_irq(ctx->afu->fn->link, irq->hw_irq);
 	kfree(irq);
 }
 
-int ocxl_afu_irq_free(struct ocxl_context *ctx, int irq_id)
+int ocxl_afu_irq_free(struct ocxl_context *ctx, u64 irq_offset)
 {
 	struct afu_irq *irq;
+	int id = irq_offset_to_id(ctx, irq_offset);
 
 	mutex_lock(&ctx->irq_lock);
 
-	irq = idr_find(&ctx->irq_idr, irq_id);
+	irq = idr_find(&ctx->irq_idr, id);
 	if (!irq) {
 		mutex_unlock(&ctx->irq_lock);
 		return -EINVAL;
@@ -181,7 +150,6 @@ int ocxl_afu_irq_free(struct ocxl_context *ctx, int irq_id)
 	mutex_unlock(&ctx->irq_lock);
 	return 0;
 }
-EXPORT_SYMBOL_GPL(ocxl_afu_irq_free);
 
 void ocxl_afu_irq_free_all(struct ocxl_context *ctx)
 {
@@ -194,19 +162,41 @@ void ocxl_afu_irq_free_all(struct ocxl_context *ctx)
 	mutex_unlock(&ctx->irq_lock);
 }
 
-u64 ocxl_afu_irq_get_addr(struct ocxl_context *ctx, int irq_id)
+int ocxl_afu_irq_set_fd(struct ocxl_context *ctx, u64 irq_offset, int eventfd)
 {
-	struct xive_irq_data *xd;
 	struct afu_irq *irq;
+	struct eventfd_ctx *ev_ctx;
+	int rc = 0, id = irq_offset_to_id(ctx, irq_offset);
+
+	mutex_lock(&ctx->irq_lock);
+	irq = idr_find(&ctx->irq_idr, id);
+	if (!irq) {
+		rc = -EINVAL;
+		goto unlock;
+	}
+
+	ev_ctx = eventfd_ctx_fdget(eventfd);
+	if (IS_ERR(ev_ctx)) {
+		rc = -EINVAL;
+		goto unlock;
+	}
+
+	irq->ev_ctx = ev_ctx;
+unlock:
+	mutex_unlock(&ctx->irq_lock);
+	return rc;
+}
+
+u64 ocxl_afu_irq_get_addr(struct ocxl_context *ctx, u64 irq_offset)
+{
+	struct afu_irq *irq;
+	int id = irq_offset_to_id(ctx, irq_offset);
 	u64 addr = 0;
 
 	mutex_lock(&ctx->irq_lock);
-	irq = idr_find(&ctx->irq_idr, irq_id);
-	if (irq) {
-		xd = irq_get_handler_data(irq->virq);
-		addr = xd ? xd->trig_page : 0;
-	}
+	irq = idr_find(&ctx->irq_idr, id);
+	if (irq)
+		addr = irq->trigger_page;
 	mutex_unlock(&ctx->irq_lock);
 	return addr;
 }
-EXPORT_SYMBOL_GPL(ocxl_afu_irq_get_addr);

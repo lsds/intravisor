@@ -1,6 +1,9 @@
-// SPDX-License-Identifier: GPL-2.0-only
-/*
+/**
  * Copyright (c) 2011 Jonathan Cameron
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License version 2 as published by
+ * the Free Software Foundation.
  *
  * A reference industrial I/O driver to illustrate the functionality available.
  *
@@ -553,7 +556,7 @@ static int iio_dummy_init_device(struct iio_dev *indio_dev)
 
 /**
  * iio_dummy_probe() - device instance probe
- * @name: name of this instance.
+ * @index: an id number for this instance.
  *
  * Arguments are bus type specific.
  * I2C: iio_dummy_probe(struct i2c_client *client,
@@ -566,18 +569,12 @@ static struct iio_sw_device *iio_dummy_probe(const char *name)
 	struct iio_dev *indio_dev;
 	struct iio_dummy_state *st;
 	struct iio_sw_device *swd;
-	struct device *parent = NULL;
-
-	/*
-	 * With hardware: Set the parent device.
-	 * parent = &spi->dev;
-	 * parent = &client->dev;
-	 */
 
 	swd = kzalloc(sizeof(*swd), GFP_KERNEL);
-	if (!swd)
-		return ERR_PTR(-ENOMEM);
-
+	if (!swd) {
+		ret = -ENOMEM;
+		goto error_kzalloc;
+	}
 	/*
 	 * Allocate an IIO device.
 	 *
@@ -586,16 +583,21 @@ static struct iio_sw_device *iio_dummy_probe(const char *name)
 	 * It also has a region (accessed by iio_priv()
 	 * for chip specific state information.
 	 */
-	indio_dev = iio_device_alloc(parent, sizeof(*st));
+	indio_dev = iio_device_alloc(sizeof(*st));
 	if (!indio_dev) {
 		ret = -ENOMEM;
-		goto error_free_swd;
+		goto error_ret;
 	}
 
 	st = iio_priv(indio_dev);
 	mutex_init(&st->lock);
 
 	iio_dummy_init_device(indio_dev);
+	/*
+	 * With hardware: Set the parent device.
+	 * indio_dev->dev.parent = &spi->dev;
+	 * indio_dev->dev.parent = &client->dev;
+	 */
 
 	 /*
 	 * Make the iio_dev struct available to remove function.
@@ -615,10 +617,6 @@ static struct iio_sw_device *iio_dummy_probe(const char *name)
 	 *    indio_dev->name = spi_get_device_id(spi)->name;
 	 */
 	indio_dev->name = kstrdup(name, GFP_KERNEL);
-	if (!indio_dev->name) {
-		ret = -ENOMEM;
-		goto error_free_device;
-	}
 
 	/* Provide description of available channels */
 	indio_dev->channels = iio_dummy_channels;
@@ -635,7 +633,7 @@ static struct iio_sw_device *iio_dummy_probe(const char *name)
 
 	ret = iio_simple_dummy_events_register(indio_dev);
 	if (ret < 0)
-		goto error_free_name;
+		goto error_free_device;
 
 	ret = iio_simple_dummy_configure_buffer(indio_dev);
 	if (ret < 0)
@@ -652,12 +650,11 @@ error_unconfigure_buffer:
 	iio_simple_dummy_unconfigure_buffer(indio_dev);
 error_unregister_events:
 	iio_simple_dummy_events_unregister(indio_dev);
-error_free_name:
-	kfree(indio_dev->name);
 error_free_device:
 	iio_device_free(indio_dev);
-error_free_swd:
+error_ret:
 	kfree(swd);
+error_kzalloc:
 	return ERR_PTR(ret);
 }
 
@@ -693,16 +690,15 @@ static int iio_dummy_remove(struct iio_sw_device *swd)
 
 	return 0;
 }
-
-/*
+/**
  * module_iio_sw_device_driver() -  device driver registration
  *
  * Varies depending on bus type of the device. As there is no device
  * here, call probe directly. For information on device registration
  * i2c:
- * Documentation/i2c/writing-clients.rst
+ * Documentation/i2c/writing-clients
  * spi:
- * Documentation/spi/spi-summary.rst
+ * Documentation/spi/spi-summary
  */
 static const struct iio_sw_device_ops iio_dummy_device_ops = {
 	.probe = iio_dummy_probe,

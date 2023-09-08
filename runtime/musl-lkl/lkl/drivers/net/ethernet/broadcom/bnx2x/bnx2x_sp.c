@@ -37,12 +37,10 @@
 /**
  * bnx2x_exe_queue_init - init the Exe Queue object
  *
- * @bp:		driver handle
  * @o:		pointer to the object
  * @exe_len:	length
  * @owner:	pointer to the owner
  * @validate:	validate function pointer
- * @remove:	remove function pointer
  * @optimize:	optimize function pointer
  * @exec:	execute function pointer
  * @get:	get function pointer
@@ -105,7 +103,7 @@ static inline int bnx2x_exe_queue_length(struct bnx2x_exe_queue_obj *o)
  *
  * @bp:		driver handle
  * @o:		queue
- * @elem:	new command to add
+ * @cmd:	new command to add
  * @restore:	true - do not optimize the command
  *
  * If the element is optimized or is illegal, frees it.
@@ -279,7 +277,7 @@ static void bnx2x_raw_set_pending(struct bnx2x_raw_obj *o)
  *
  * @bp:		device handle
  * @state:	state which is to be cleared
- * @pstate:	state buffer
+ * @state_p:	state buffer
  *
  */
 static inline int bnx2x_state_wait(struct bnx2x *bp, int state,
@@ -426,8 +424,8 @@ static bool bnx2x_put_credit_vlan_mac(struct bnx2x_vlan_mac_obj *o)
  * @bp:		device handle
  * @o:		vlan_mac object
  *
- * Context: Non-blocking implementation; should be called under execution
- *          queue lock.
+ * @details: Non-blocking implementation; should be called under execution
+ *           queue lock.
  */
 static int __bnx2x_vlan_mac_h_write_trylock(struct bnx2x *bp,
 					    struct bnx2x_vlan_mac_obj *o)
@@ -447,7 +445,7 @@ static int __bnx2x_vlan_mac_h_write_trylock(struct bnx2x *bp,
  * @bp:		device handle
  * @o:		vlan_mac object
  *
- * details Should be called under execution queue lock; notice it might release
+ * @details Should be called under execution queue lock; notice it might release
  *          and reclaim it during its run.
  */
 static void __bnx2x_vlan_mac_h_exec_pending(struct bnx2x *bp,
@@ -477,7 +475,7 @@ static void __bnx2x_vlan_mac_h_exec_pending(struct bnx2x *bp,
  * @o:			vlan_mac object
  * @ramrod_flags:	ramrod flags of missed execution
  *
- * Context: Should be called under execution queue lock.
+ * @details Should be called under execution queue lock.
  */
 static void __bnx2x_vlan_mac_h_pend(struct bnx2x *bp,
 				    struct bnx2x_vlan_mac_obj *o,
@@ -495,7 +493,7 @@ static void __bnx2x_vlan_mac_h_pend(struct bnx2x *bp,
  * @bp:			device handle
  * @o:			vlan_mac object
  *
- * Context: Should be called under execution queue lock. Notice if a pending
+ * @details Should be called under execution queue lock. Notice if a pending
  *          execution exists, it would perform it - possibly releasing and
  *          reclaiming the execution queue lock.
  */
@@ -518,7 +516,7 @@ static void __bnx2x_vlan_mac_h_write_unlock(struct bnx2x *bp,
  * @bp:			device handle
  * @o:			vlan_mac object
  *
- * Context: Should be called under the execution queue lock. May sleep. May
+ * @details Should be called under the execution queue lock. May sleep. May
  *          release and reclaim execution queue lock during its run.
  */
 static int __bnx2x_vlan_mac_h_read_lock(struct bnx2x *bp,
@@ -538,7 +536,7 @@ static int __bnx2x_vlan_mac_h_read_lock(struct bnx2x *bp,
  * @bp:			device handle
  * @o:			vlan_mac object
  *
- * Context: May sleep. Claims and releases execution queue lock during its run.
+ * @details May sleep. Claims and releases execution queue lock during its run.
  */
 int bnx2x_vlan_mac_h_read_lock(struct bnx2x *bp,
 			       struct bnx2x_vlan_mac_obj *o)
@@ -558,7 +556,7 @@ int bnx2x_vlan_mac_h_read_lock(struct bnx2x *bp,
  * @bp:			device handle
  * @o:			vlan_mac object
  *
- * Context: Should be called under execution queue lock. Notice if a pending
+ * @details Should be called under execution queue lock. Notice if a pending
  *          execution exists, it would be performed if this was the last
  *          reader. possibly releasing and reclaiming the execution queue lock.
  */
@@ -593,7 +591,7 @@ static void __bnx2x_vlan_mac_h_read_unlock(struct bnx2x *bp,
  * @bp:			device handle
  * @o:			vlan_mac object
  *
- * Context: Notice if a pending execution exists, it would be performed if this
+ * @details Notice if a pending execution exists, it would be performed if this
  *          was the last reader. Claims and releases the execution queue lock
  *          during its run.
  */
@@ -970,7 +968,7 @@ static void bnx2x_set_one_mac_e2(struct bnx2x *bp,
  *
  * @bp:		device handle
  * @o:		queue
- * @type:	the type of echo
+ * @type:
  * @cam_offset:	offset in cam memory
  * @hdr:	pointer to a header to setup
  *
@@ -1610,8 +1608,8 @@ static int __bnx2x_vlan_mac_execute_step(struct bnx2x *bp,
  *
  * @bp:		device handle
  * @o:		bnx2x_vlan_mac_obj
- * @cqe:	completion element
- * @ramrod_flags: if set schedule next execution chunk
+ * @cqe:
+ * @cont:	if true schedule next execution chunk
  *
  */
 static int bnx2x_complete_vlan_mac(struct bnx2x *bp,
@@ -1658,7 +1656,7 @@ static int bnx2x_complete_vlan_mac(struct bnx2x *bp,
  * bnx2x_optimize_vlan_mac - optimize ADD and DEL commands.
  *
  * @bp:		device handle
- * @qo:		bnx2x_qable_obj
+ * @o:		bnx2x_qable_obj
  * @elem:	bnx2x_exeq_elem
  */
 static int bnx2x_optimize_vlan_mac(struct bnx2x *bp,
@@ -1716,10 +1714,10 @@ static int bnx2x_optimize_vlan_mac(struct bnx2x *bp,
  * bnx2x_vlan_mac_get_registry_elem - prepare a registry element
  *
  * @bp:	  device handle
- * @o:	vlan object
- * @elem: element
- * @restore: to restore or not
- * @re: registry
+ * @o:
+ * @elem:
+ * @restore:
+ * @re:
  *
  * prepare a registry element according to the current command request.
  */
@@ -1770,9 +1768,9 @@ static inline int bnx2x_vlan_mac_get_registry_elem(
  * bnx2x_execute_vlan_mac - execute vlan mac command
  *
  * @bp:			device handle
- * @qo:			bnx2x_qable_obj pointer
- * @exe_chunk:		chunk
- * @ramrod_flags:	flags
+ * @qo:
+ * @exe_chunk:
+ * @ramrod_flags:
  *
  * go and send a ramrod!
  */
@@ -2008,8 +2006,8 @@ int bnx2x_config_vlan_mac(struct bnx2x *bp,
  * bnx2x_vlan_mac_del_all - delete elements with given vlan_mac_flags spec
  *
  * @bp:			device handle
- * @o:			vlan object info
- * @vlan_mac_flags:	vlan flags
+ * @o:
+ * @vlan_mac_flags:
  * @ramrod_flags:	execution flags to be used for this deletion
  *
  * if the last operation has completed successfully and there are no
@@ -2769,7 +2767,7 @@ static int bnx2x_mcast_enqueue_cmd(struct bnx2x *bp,
 /**
  * bnx2x_mcast_get_next_bin - get the next set bin (index)
  *
- * @o:		multicast object info
+ * @o:
  * @last:	index to start looking from (including)
  *
  * returns the next found (set) bin or a negative value if none is found.
@@ -2894,7 +2892,7 @@ static void bnx2x_mcast_set_one_rule_e2(struct bnx2x *bp,
  * bnx2x_mcast_handle_restore_cmd_e2 - restore configuration from the registry
  *
  * @bp:		device handle
- * @o:		multicast object info
+ * @o:
  * @start_bin:	index in the registry to start from (including)
  * @rdata_idx:	index in the ramrod data to start from
  *
@@ -2979,8 +2977,8 @@ static inline void bnx2x_mcast_hdl_pending_del_e2(struct bnx2x *bp,
 
 		cmd_pos->data.macs_num--;
 
-		DP(BNX2X_MSG_SP, "Deleting MAC. %d left,cnt is %d\n",
-		   cmd_pos->data.macs_num, cnt);
+		  DP(BNX2X_MSG_SP, "Deleting MAC. %d left,cnt is %d\n",
+				   cmd_pos->data.macs_num, cnt);
 
 		/* Break if we reached the maximum
 		 * number of rules.
@@ -3204,11 +3202,11 @@ static inline void bnx2x_mcast_hdl_del(struct bnx2x *bp,
 }
 
 /**
- * bnx2x_mcast_handle_current_cmd - send command if room
+ * bnx2x_mcast_handle_current_cmd -
  *
  * @bp:		device handle
- * @p:		ramrod mcast info
- * @cmd:	command
+ * @p:
+ * @cmd:
  * @start_cnt:	first line in the ramrod data that may be used
  *
  * This function is called iff there is enough place for the current command in
@@ -3260,7 +3258,7 @@ static int bnx2x_mcast_validate_e2(struct bnx2x *bp,
 	/* DEL command deletes all currently configured MACs */
 	case BNX2X_MCAST_CMD_DEL:
 		o->set_registry_size(o, 0);
-		fallthrough;
+		/* Don't break */
 
 	/* RESTORE command will restore the entire multicast configuration */
 	case BNX2X_MCAST_CMD_RESTORE:
@@ -3325,7 +3323,7 @@ static void bnx2x_mcast_revert_e2(struct bnx2x *bp,
  * bnx2x_mcast_set_rdata_hdr_e2 - sets a header values
  *
  * @bp:		device handle
- * @p:		ramrod parameters
+ * @p:
  * @len:	number of rules to handle
  */
 static inline void bnx2x_mcast_set_rdata_hdr_e2(struct bnx2x *bp,
@@ -3594,13 +3592,13 @@ static int bnx2x_mcast_validate_e1(struct bnx2x *bp,
 	/* DEL command deletes all currently configured MACs */
 	case BNX2X_MCAST_CMD_DEL:
 		o->set_registry_size(o, 0);
-		fallthrough;
+		/* Don't break */
 
 	/* RESTORE command will restore the entire multicast configuration */
 	case BNX2X_MCAST_CMD_RESTORE:
 		p->mcast_list_len = reg_sz;
-		DP(BNX2X_MSG_SP, "Command %d, p->mcast_list_len=%d\n",
-		   cmd, p->mcast_list_len);
+		  DP(BNX2X_MSG_SP, "Command %d, p->mcast_list_len=%d\n",
+				   cmd, p->mcast_list_len);
 		break;
 
 	case BNX2X_MCAST_CMD_ADD:
@@ -3686,7 +3684,7 @@ static void bnx2x_mcast_set_one_rule_e1(struct bnx2x *bp,
  * bnx2x_mcast_set_rdata_hdr_e1  - set header values in mac_configuration_cmd
  *
  * @bp:		device handle
- * @p:		ramrod parameters
+ * @p:
  * @len:	number of rules to handle
  */
 static inline void bnx2x_mcast_set_rdata_hdr_e1(struct bnx2x *bp,
@@ -3713,7 +3711,7 @@ static inline void bnx2x_mcast_set_rdata_hdr_e1(struct bnx2x *bp,
  * bnx2x_mcast_handle_restore_cmd_e1 - restore command for 57710
  *
  * @bp:		device handle
- * @o:		multicast info
+ * @o:
  * @start_idx:	index in the registry to start from
  * @rdata_idx:	index in the ramrod data to start from
  *
@@ -3737,8 +3735,8 @@ static inline int bnx2x_mcast_handle_restore_cmd_e1(
 
 		i++;
 
-		DP(BNX2X_MSG_SP, "About to configure %pM mcast MAC\n",
-		   cfg_data.mac);
+		  DP(BNX2X_MSG_SP, "About to configure %pM mcast MAC\n",
+		     cfg_data.mac);
 	}
 
 	*rdata_idx = i;
@@ -3800,10 +3798,10 @@ static inline int bnx2x_mcast_handle_pending_cmds_e1(
 /**
  * bnx2x_get_fw_mac_addr - revert the bnx2x_set_fw_mac_addr().
  *
- * @fw_hi: address
- * @fw_mid: address
- * @fw_lo: address
- * @mac: mac address
+ * @fw_hi:
+ * @fw_mid:
+ * @fw_lo:
+ * @mac:
  */
 static inline void bnx2x_get_fw_mac_addr(__le16 *fw_hi, __le16 *fw_mid,
 					 __le16 *fw_lo, u8 *mac)
@@ -3820,7 +3818,7 @@ static inline void bnx2x_get_fw_mac_addr(__le16 *fw_hi, __le16 *fw_mid,
  * bnx2x_mcast_refresh_registry_e1 -
  *
  * @bp:		device handle
- * @o:		multicast info
+ * @cnt:
  *
  * Check the ramrod data first entry flag to see if it's a DELETE or ADD command
  * and update the registry correspondingly: if ADD - allocate a memory and add
@@ -4152,7 +4150,7 @@ void bnx2x_init_mcast_obj(struct bnx2x *bp,
 /*************************** Credit handling **********************************/
 
 /**
- * __atomic_add_ifless - add if the result is less than a given value.
+ * atomic_add_ifless - add if the result is less than a given value.
  *
  * @v:	pointer of type atomic_t
  * @a:	the amount to add to v...
@@ -4180,7 +4178,7 @@ static inline bool __atomic_add_ifless(atomic_t *v, int a, int u)
 }
 
 /**
- * __atomic_dec_ifmoe - dec if the result is more or equal than a given value.
+ * atomic_dec_ifmoe - dec if the result is more or equal than a given value.
  *
  * @v:	pointer of type atomic_t
  * @a:	the amount to dec from v...
@@ -4313,7 +4311,7 @@ static bool bnx2x_credit_pool_get_entry_always_true(
 /**
  * bnx2x_init_credit_pool - initialize credit pool internals.
  *
- * @p:		credit pool
+ * @p:
  * @base:	Base entry in the CAM to use.
  * @credit:	pool size.
  *
@@ -4727,8 +4725,8 @@ static int bnx2x_queue_wait_comp(struct bnx2x *bp,
  * bnx2x_queue_comp_cmd - complete the state change command.
  *
  * @bp:		device handle
- * @o:		queue info
- * @cmd:	command to exec
+ * @o:
+ * @cmd:
  *
  * Checks that the arrived completion is expected.
  */
@@ -5041,6 +5039,7 @@ static inline int bnx2x_q_init(struct bnx2x *bp,
 	/* As no ramrod is sent, complete the command immediately  */
 	o->complete_cmd(bp, o, BNX2X_Q_CMD_INIT);
 
+	mmiowb();
 	smp_mb();
 
 	return 0;
@@ -5479,8 +5478,8 @@ static int bnx2x_queue_send_cmd_e2(struct bnx2x *bp,
  * bnx2x_queue_chk_transition - check state machine of a regular Queue
  *
  * @bp:		device handle
- * @o:		queue info
- * @params:	queue state
+ * @o:
+ * @params:
  *
  * (not Forwarding)
  * It both checks if the requested command is legal in a current
@@ -5737,8 +5736,8 @@ static int bnx2x_func_wait_comp(struct bnx2x *bp,
  * bnx2x_func_state_change_comp - complete the state machine transition
  *
  * @bp:		device handle
- * @o:		function info
- * @cmd:	more info
+ * @o:
+ * @cmd:
  *
  * Called on state change transition. Completes the state
  * machine transition only - no HW interaction.
@@ -5778,8 +5777,8 @@ static inline int bnx2x_func_state_change_comp(struct bnx2x *bp,
  * bnx2x_func_comp_cmd - complete the state change command
  *
  * @bp:		device handle
- * @o:		function info
- * @cmd:	more info
+ * @o:
+ * @cmd:
  *
  * Checks that the arrived completion is expected.
  */
@@ -5798,8 +5797,8 @@ static int bnx2x_func_comp_cmd(struct bnx2x *bp,
  * bnx2x_func_chk_transition - perform function state machine transition
  *
  * @bp:		device handle
- * @o:		function info
- * @params:	state parameters
+ * @o:
+ * @params:
  *
  * It both checks if the requested command is legal in a current
  * state and, if it's legal, sets a `next_state' in the object
@@ -6150,7 +6149,6 @@ static inline int bnx2x_func_send_start(struct bnx2x *bp,
 	rdata->sd_vlan_tag	= cpu_to_le16(start_params->sd_vlan_tag);
 	rdata->path_id		= BP_PATH(bp);
 	rdata->network_cos_mode	= start_params->network_cos_mode;
-	rdata->dmae_cmd_id	= BNX2X_FW_DMAE_C;
 
 	rdata->vxlan_dst_port	= cpu_to_le16(start_params->vxlan_dst_port);
 	rdata->geneve_dst_port	= cpu_to_le16(start_params->geneve_dst_port);

@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Copyright (c) 2006 ARM Ltd.
  * Copyright (c) 2010 ST-Ericsson SA
@@ -6,6 +5,19 @@
  *
  * Author: Peter Pearse <peter.pearse@arm.com>
  * Author: Linus Walleij <linus.walleij@linaro.org>
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License as published by the Free
+ * Software Foundation; either version 2 of the License, or (at your option)
+ * any later version.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+ * more details.
+ *
+ * The full GNU General Public License is in this distribution in the file
+ * called COPYING.
  *
  * Documentation: ARM DDI 0196G == PL080
  * Documentation: ARM DDI 0218E == PL081
@@ -231,7 +243,7 @@ enum pl08x_dma_chan_state {
 
 /**
  * struct pl08x_dma_chan - this structure wraps a DMA ENGINE channel
- * @vc: wrapped virtual channel
+ * @vc: wrappped virtual channel
  * @phychan: the physical channel utilized by this channel, if there is one
  * @name: name of channel
  * @cd: channel platform data
@@ -242,7 +254,6 @@ enum pl08x_dma_chan_state {
  * @slave: whether this channel is a device (slave) or for memcpy
  * @signal: the physical DMA request signal which this channel is using
  * @mux_use: count of descriptors using this DMA request signal setting
- * @waiting_at: time in jiffies when this channel moved to waiting state
  */
 struct pl08x_dma_chan {
 	struct virt_dma_chan vc;
@@ -256,7 +267,6 @@ struct pl08x_dma_chan {
 	bool slave;
 	int signal;
 	unsigned mux_use;
-	unsigned long waiting_at;
 };
 
 /**
@@ -865,7 +875,6 @@ static void pl08x_phy_alloc_and_start(struct pl08x_dma_chan *plchan)
 	if (!ch) {
 		dev_dbg(&pl08x->adev->dev, "no physical channel available for xfer on %s\n", plchan->name);
 		plchan->state = PL08X_CHAN_WAITING;
-		plchan->waiting_at = jiffies;
 		return;
 	}
 
@@ -904,29 +913,22 @@ static void pl08x_phy_free(struct pl08x_dma_chan *plchan)
 {
 	struct pl08x_driver_data *pl08x = plchan->host;
 	struct pl08x_dma_chan *p, *next;
-	unsigned long waiting_at;
+
  retry:
 	next = NULL;
-	waiting_at = jiffies;
 
-	/*
-	 * Find a waiting virtual channel for the next transfer.
-	 * To be fair, time when each channel reached waiting state is compared
-	 * to select channel that is waiting for the longest time.
-	 */
+	/* Find a waiting virtual channel for the next transfer. */
 	list_for_each_entry(p, &pl08x->memcpy.channels, vc.chan.device_node)
-		if (p->state == PL08X_CHAN_WAITING &&
-		    p->waiting_at <= waiting_at) {
+		if (p->state == PL08X_CHAN_WAITING) {
 			next = p;
-			waiting_at = p->waiting_at;
+			break;
 		}
 
 	if (!next && pl08x->has_slave) {
 		list_for_each_entry(p, &pl08x->slave.channels, vc.chan.device_node)
-			if (p->state == PL08X_CHAN_WAITING &&
-			    p->waiting_at <= waiting_at) {
+			if (p->state == PL08X_CHAN_WAITING) {
 				next = p;
-				waiting_at = p->waiting_at;
+				break;
 			}
 	}
 
@@ -1535,6 +1537,14 @@ static void pl08x_free_chan_resources(struct dma_chan *chan)
 	vchan_free_chan_resources(to_virt_chan(chan));
 }
 
+static struct dma_async_tx_descriptor *pl08x_prep_dma_interrupt(
+		struct dma_chan *chan, unsigned long flags)
+{
+	struct dma_async_tx_descriptor *retval = NULL;
+
+	return retval;
+}
+
 /*
  * Code accessing dma_async_is_complete() in a tight loop may give problems.
  * If slaves are relying on interrupts to signal completion this function
@@ -1759,7 +1769,7 @@ static u32 pl08x_memcpy_cctl(struct pl08x_driver_data *pl08x)
 	default:
 		dev_err(&pl08x->adev->dev,
 			"illegal burst size for memcpy, set to 1\n");
-		fallthrough;
+		/* Fall through */
 	case PL08X_BURST_SZ_1:
 		cctl |= PL080_BSIZE_1 << PL080_CONTROL_SB_SIZE_SHIFT |
 			PL080_BSIZE_1 << PL080_CONTROL_DB_SIZE_SHIFT;
@@ -1798,7 +1808,7 @@ static u32 pl08x_memcpy_cctl(struct pl08x_driver_data *pl08x)
 	default:
 		dev_err(&pl08x->adev->dev,
 			"illegal bus width for memcpy, set to 8 bits\n");
-		fallthrough;
+		/* Fall through */
 	case PL08X_BUS_WIDTH_8_BITS:
 		cctl |= PL080_WIDTH_8BIT << PL080_CONTROL_SWIDTH_SHIFT |
 			PL080_WIDTH_8BIT << PL080_CONTROL_DWIDTH_SHIFT;
@@ -1842,7 +1852,7 @@ static u32 pl08x_ftdmac020_memcpy_cctl(struct pl08x_driver_data *pl08x)
 	default:
 		dev_err(&pl08x->adev->dev,
 			"illegal bus width for memcpy, set to 8 bits\n");
-		fallthrough;
+		/* Fall through */
 	case PL08X_BUS_WIDTH_8_BITS:
 		cctl |= PL080_WIDTH_8BIT << FTDMAC020_LLI_SRC_WIDTH_SHIFT |
 			PL080_WIDTH_8BIT << FTDMAC020_LLI_DST_WIDTH_SHIFT;
@@ -2367,7 +2377,7 @@ static int pl08x_dma_init_virtual_channels(struct pl08x_driver_data *pl08x,
 	INIT_LIST_HEAD(&dmadev->channels);
 
 	/*
-	 * Register as many memcpy as we have physical channels,
+	 * Register as many many memcpy as we have physical channels,
 	 * we won't always be able to use all but the code will have
 	 * to cope with that situation.
 	 */
@@ -2495,13 +2505,24 @@ static int pl08x_debugfs_show(struct seq_file *s, void *data)
 	return 0;
 }
 
-DEFINE_SHOW_ATTRIBUTE(pl08x_debugfs);
+static int pl08x_debugfs_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, pl08x_debugfs_show, inode->i_private);
+}
+
+static const struct file_operations pl08x_debugfs_operations = {
+	.open		= pl08x_debugfs_open,
+	.read		= seq_read,
+	.llseek		= seq_lseek,
+	.release	= single_release,
+};
 
 static void init_pl08x_debugfs(struct pl08x_driver_data *pl08x)
 {
 	/* Expose a simple debugfs interface to view all clocks */
-	debugfs_create_file(dev_name(&pl08x->adev->dev), S_IFREG | S_IRUGO,
-			    NULL, pl08x, &pl08x_debugfs_fops);
+	(void) debugfs_create_file(dev_name(&pl08x->adev->dev),
+			S_IFREG | S_IRUGO, NULL, pl08x,
+			&pl08x_debugfs_operations);
 }
 
 #else
@@ -2604,7 +2625,7 @@ static int pl08x_of_probe(struct amba_device *adev,
 	switch (val) {
 	default:
 		dev_err(&adev->dev, "illegal burst size for memcpy, set to 1\n");
-		fallthrough;
+		/* Fall through */
 	case 1:
 		pd->memcpy_burst_size = PL08X_BURST_SZ_1;
 		break;
@@ -2639,7 +2660,7 @@ static int pl08x_of_probe(struct amba_device *adev,
 	switch (val) {
 	default:
 		dev_err(&adev->dev, "illegal bus width for memcpy, set to 8 bits\n");
-		fallthrough;
+		/* Fall through */
 	case 8:
 		pd->memcpy_bus_width = PL08X_BUS_WIDTH_8_BITS;
 		break;
@@ -2752,6 +2773,7 @@ static int pl08x_probe(struct amba_device *adev, const struct amba_id *id)
 	pl08x->memcpy.dev = &adev->dev;
 	pl08x->memcpy.device_free_chan_resources = pl08x_free_chan_resources;
 	pl08x->memcpy.device_prep_dma_memcpy = pl08x_prep_dma_memcpy;
+	pl08x->memcpy.device_prep_dma_interrupt = pl08x_prep_dma_interrupt;
 	pl08x->memcpy.device_tx_status = pl08x_dma_tx_status;
 	pl08x->memcpy.device_issue_pending = pl08x_issue_pending;
 	pl08x->memcpy.device_config = pl08x_config;
@@ -2778,6 +2800,8 @@ static int pl08x_probe(struct amba_device *adev, const struct amba_id *id)
 		pl08x->slave.dev = &adev->dev;
 		pl08x->slave.device_free_chan_resources =
 			pl08x_free_chan_resources;
+		pl08x->slave.device_prep_dma_interrupt =
+			pl08x_prep_dma_interrupt;
 		pl08x->slave.device_tx_status = pl08x_dma_tx_status;
 		pl08x->slave.device_issue_pending = pl08x_issue_pending;
 		pl08x->slave.device_prep_slave_sg = pl08x_prep_slave_sg;

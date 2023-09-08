@@ -1,5 +1,8 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
  *
  * Copyright (C) Jonathan Naylor G4KLX (g4klx@g4klx.demon.co.uk)
  */
@@ -178,12 +181,25 @@ static int ax25_uid_seq_show(struct seq_file *seq, void *v)
 	return 0;
 }
 
-const struct seq_operations ax25_uid_seqops = {
+static const struct seq_operations ax25_uid_seqops = {
 	.start = ax25_uid_seq_start,
 	.next = ax25_uid_seq_next,
 	.stop = ax25_uid_seq_stop,
 	.show = ax25_uid_seq_show,
 };
+
+static int ax25_uid_info_open(struct inode *inode, struct file *file)
+{
+	return seq_open(file, &ax25_uid_seqops);
+}
+
+const struct file_operations ax25_uid_fops = {
+	.open = ax25_uid_info_open,
+	.read = seq_read,
+	.llseek = seq_lseek,
+	.release = seq_release,
+};
+
 #endif
 
 /*

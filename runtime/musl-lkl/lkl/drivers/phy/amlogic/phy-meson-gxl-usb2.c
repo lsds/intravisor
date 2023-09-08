@@ -1,8 +1,14 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Meson GXL and GXM USB2 PHY driver
  *
  * Copyright (C) 2017 Martin Blumenstingl <martin.blumenstingl@googlemail.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
 #include <linux/clk.h>
@@ -114,10 +120,8 @@ static int phy_meson_gxl_usb2_init(struct phy *phy)
 		return ret;
 
 	ret = clk_prepare_enable(priv->clk);
-	if (ret) {
-		reset_control_rearm(priv->reset);
+	if (ret)
 		return ret;
-	}
 
 	return 0;
 }
@@ -127,7 +131,6 @@ static int phy_meson_gxl_usb2_exit(struct phy *phy)
 	struct phy_meson_gxl_usb2_priv *priv = phy_get_drvdata(phy);
 
 	clk_disable_unprepare(priv->clk);
-	reset_control_rearm(priv->reset);
 
 	return 0;
 }
@@ -149,8 +152,7 @@ static int phy_meson_gxl_usb2_reset(struct phy *phy)
 	return 0;
 }
 
-static int phy_meson_gxl_usb2_set_mode(struct phy *phy,
-				       enum phy_mode mode, int submode)
+static int phy_meson_gxl_usb2_set_mode(struct phy *phy, enum phy_mode mode)
 {
 	struct phy_meson_gxl_usb2_priv *priv = phy_get_drvdata(phy);
 
@@ -161,8 +163,7 @@ static int phy_meson_gxl_usb2_set_mode(struct phy *phy,
 				   U2P_R0_DM_PULLDOWN);
 		regmap_update_bits(priv->regmap, U2P_R0, U2P_R0_DP_PULLDOWN,
 				   U2P_R0_DP_PULLDOWN);
-		regmap_update_bits(priv->regmap, U2P_R0, U2P_R0_ID_PULLUP,
-				   U2P_R0_ID_PULLUP);
+		regmap_update_bits(priv->regmap, U2P_R0, U2P_R0_ID_PULLUP, 0);
 		break;
 
 	case PHY_MODE_USB_DEVICE:
@@ -208,7 +209,7 @@ static int phy_meson_gxl_usb2_power_on(struct phy *phy)
 	/* power on the PHY by taking it out of reset mode */
 	regmap_update_bits(priv->regmap, U2P_R0, U2P_R0_POWER_ON_RESET, 0);
 
-	ret = phy_meson_gxl_usb2_set_mode(phy, priv->mode, 0);
+	ret = phy_meson_gxl_usb2_set_mode(phy, priv->mode);
 	if (ret) {
 		phy_meson_gxl_usb2_power_off(phy);
 
@@ -234,6 +235,7 @@ static int phy_meson_gxl_usb2_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
 	struct phy_provider *phy_provider;
+	struct resource *res;
 	struct phy_meson_gxl_usb2_priv *priv;
 	struct phy *phy;
 	void __iomem *base;
@@ -245,7 +247,8 @@ static int phy_meson_gxl_usb2_probe(struct platform_device *pdev)
 
 	platform_set_drvdata(pdev, priv);
 
-	base = devm_platform_ioremap_resource(pdev, 0);
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	base = devm_ioremap_resource(dev, res);
 	if (IS_ERR(base))
 		return PTR_ERR(base);
 
@@ -257,9 +260,14 @@ static int phy_meson_gxl_usb2_probe(struct platform_device *pdev)
 	if (IS_ERR(priv->regmap))
 		return PTR_ERR(priv->regmap);
 
-	priv->clk = devm_clk_get_optional(dev, "phy");
-	if (IS_ERR(priv->clk))
-		return PTR_ERR(priv->clk);
+	priv->clk = devm_clk_get(dev, "phy");
+	if (IS_ERR(priv->clk)) {
+		ret = PTR_ERR(priv->clk);
+		if (ret == -ENOENT)
+			priv->clk = NULL;
+		else
+			return ret;
+	}
 
 	priv->reset = devm_reset_control_get_optional_shared(dev, "phy");
 	if (IS_ERR(priv->reset))

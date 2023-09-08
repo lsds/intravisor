@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0+
 /*
  * esrt.c
  *
@@ -146,8 +145,6 @@ static struct attribute *esre1_attrs[] = {
 	&esre_last_attempt_status.attr,
 	NULL
 };
-ATTRIBUTE_GROUPS(esre1);
-
 static void esre_release(struct kobject *kobj)
 {
 	struct esre_entry *entry = to_entry(kobj);
@@ -159,7 +156,7 @@ static void esre_release(struct kobject *kobj)
 static struct kobj_type esre1_ktype = {
 	.release = esre_release,
 	.sysfs_ops = &esre_attr_ops,
-	.default_groups = esre1_groups,
+	.default_attrs = esre1_attrs,
 };
 
 
@@ -183,7 +180,7 @@ static int esre_create_sysfs_entry(void *esre, int entry_num)
 		rc = kobject_init_and_add(&entry->kobj, &esre1_ktype, NULL,
 					  "entry%d", entry_num);
 		if (rc) {
-			kobject_put(&entry->kobj);
+			kfree(entry);
 			return rc;
 		}
 	}
@@ -242,23 +239,18 @@ void __init efi_esrt_init(void)
 {
 	void *va;
 	struct efi_system_resource_table tmpesrt;
+	struct efi_system_resource_entry_v1 *v1_entries;
 	size_t size, max, entry_size, entries_size;
 	efi_memory_desc_t md;
 	int rc;
 	phys_addr_t end;
-
-	if (!efi_enabled(EFI_MEMMAP))
-		return;
 
 	pr_debug("esrt-init: loading.\n");
 	if (!esrt_table_exists())
 		return;
 
 	rc = efi_mem_desc_lookup(efi.esrt, &md);
-	if (rc < 0 ||
-	    (!(md.attribute & EFI_MEMORY_RUNTIME) &&
-	     md.type != EFI_BOOT_SERVICES_DATA &&
-	     md.type != EFI_RUNTIME_SERVICES_DATA)) {
+	if (rc < 0) {
 		pr_warn("ESRT header is not in the memory map.\n");
 		return;
 	}
@@ -289,13 +281,14 @@ void __init efi_esrt_init(void)
 	memcpy(&tmpesrt, va, sizeof(tmpesrt));
 	early_memunmap(va, size);
 
-	if (tmpesrt.fw_resource_version != 1) {
+	if (tmpesrt.fw_resource_version == 1) {
+		entry_size = sizeof (*v1_entries);
+	} else {
 		pr_err("Unsupported ESRT version %lld.\n",
 		       tmpesrt.fw_resource_version);
 		return;
 	}
 
-	entry_size = sizeof(struct efi_system_resource_entry_v1);
 	if (tmpesrt.fw_resource_count > 0 && max - size < entry_size) {
 		pr_err("ESRT memory map entry can only hold the header. (max: %zu size: %zu)\n",
 		       max - size, entry_size);
@@ -333,8 +326,7 @@ void __init efi_esrt_init(void)
 
 	end = esrt_data + size;
 	pr_info("Reserving ESRT space from %pa to %pa.\n", &esrt_data, &end);
-	if (md.type == EFI_BOOT_SERVICES_DATA)
-		efi_mem_reserve(esrt_data, esrt_data_size);
+	efi_mem_reserve(esrt_data, esrt_data_size);
 
 	pr_debug("esrt-init: loaded.\n");
 }

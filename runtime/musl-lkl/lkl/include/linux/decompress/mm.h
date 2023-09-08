@@ -25,21 +25,13 @@
 #define STATIC_RW_DATA static
 #endif
 
-/*
- * When an architecture needs to share the malloc()/free() implementation
- * between compilation units, it needs to have non-local visibility.
- */
-#ifndef MALLOC_VISIBLE
-#define MALLOC_VISIBLE static
-#endif
-
 /* A trivial malloc implementation, adapted from
  *  malloc by Hannu Savolainen 1993 and Matthias Urlichs 1994
  */
 STATIC_RW_DATA unsigned long malloc_ptr;
 STATIC_RW_DATA int malloc_count;
 
-MALLOC_VISIBLE void *malloc(int size)
+static void *malloc(int size)
 {
 	void *p;
 
@@ -60,7 +52,7 @@ MALLOC_VISIBLE void *malloc(int size)
 	return p;
 }
 
-MALLOC_VISIBLE void free(void *where)
+static void free(void *where)
 {
 	malloc_count--;
 	if (!malloc_count)

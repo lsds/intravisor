@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (C) 2010 Marvell International Ltd.
  *		Zhangfei Gao <zhangfei.gao@marvell.com>
@@ -6,6 +5,16 @@
  *		Jun Nie <njun@marvell.com>
  *		Qiming Wu <wuqm@marvell.com>
  *		Philip Rakity <prakity@marvell.com>
+ *
+ * This software is licensed under the terms of the GNU General Public
+ * License version 2, as published by the Free Software Foundation, and
+ * may be copied, distributed, and modified under those terms.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
  */
 
 #include <linux/err.h>
@@ -14,6 +23,7 @@
 #include <linux/clk.h>
 #include <linux/module.h>
 #include <linux/io.h>
+#include <linux/gpio.h>
 #include <linux/mmc/card.h>
 #include <linux/mmc/host.h>
 #include <linux/platform_data/pxa_sdhci.h>
@@ -211,8 +221,10 @@ static int sdhci_pxav2_probe(struct platform_device *pdev)
 	host->ops = &pxav2_sdhci_ops;
 
 	ret = sdhci_add_host(host);
-	if (ret)
+	if (ret) {
+		dev_err(&pdev->dev, "failed to add host\n");
 		goto disable_clk;
+	}
 
 	return 0;
 
@@ -226,7 +238,6 @@ free:
 static struct platform_driver sdhci_pxav2_driver = {
 	.driver		= {
 		.name	= "sdhci-pxav2",
-		.probe_type = PROBE_PREFER_ASYNCHRONOUS,
 		.of_match_table = of_match_ptr(sdhci_pxav2_of_match),
 		.pm	= &sdhci_pltfm_pmops,
 	},

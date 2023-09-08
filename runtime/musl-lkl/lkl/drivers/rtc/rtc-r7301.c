@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * EPSON TOYOCOM RTC-7301SF/DG Driver
  *
@@ -12,7 +11,6 @@
 #include <linux/io.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
-#include <linux/mod_devicetable.h>
 #include <linux/delay.h>
 #include <linux/regmap.h>
 #include <linux/platform_device.h>
@@ -320,10 +318,11 @@ static irqreturn_t rtc7301_irq_handler(int irq, void *dev_id)
 {
 	struct rtc_device *rtc = dev_id;
 	struct rtc7301_priv *priv = dev_get_drvdata(rtc->dev.parent);
+	unsigned long flags;
 	irqreturn_t ret = IRQ_NONE;
 	u8 alrm_ctrl;
 
-	spin_lock(&priv->lock);
+	spin_lock_irqsave(&priv->lock, flags);
 
 	rtc7301_select_bank(priv, 1);
 
@@ -334,7 +333,7 @@ static irqreturn_t rtc7301_irq_handler(int irq, void *dev_id)
 		rtc_update_irq(rtc, 1, RTC_IRQF | RTC_AF);
 	}
 
-	spin_unlock(&priv->lock);
+	spin_unlock_irqrestore(&priv->lock, flags);
 
 	return ret;
 }
@@ -353,16 +352,21 @@ static void rtc7301_init(struct rtc7301_priv *priv)
 
 static int __init rtc7301_rtc_probe(struct platform_device *dev)
 {
+	struct resource *res;
 	void __iomem *regs;
 	struct rtc7301_priv *priv;
 	struct rtc_device *rtc;
 	int ret;
 
+	res = platform_get_resource(dev, IORESOURCE_MEM, 0);
+	if (!res)
+		return -ENODEV;
+
 	priv = devm_kzalloc(&dev->dev, sizeof(*priv), GFP_KERNEL);
 	if (!priv)
 		return -ENOMEM;
 
-	regs = devm_platform_ioremap_resource(dev, 0);
+	regs = devm_ioremap_resource(&dev->dev, res);
 	if (IS_ERR(regs))
 		return PTR_ERR(regs);
 

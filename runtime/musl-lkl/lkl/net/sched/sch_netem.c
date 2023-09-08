@@ -1,6 +1,10 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * net/sched/sch_netem.c	Network emulator
+ *
+ * 		This program is free software; you can redistribute it and/or
+ * 		modify it under the terms of the GNU General Public License
+ * 		as published by the Free Software Foundation; either version
+ * 		2 of the License.
  *
  *  		Many of the algorithms and ideas for this came from
  *		NIST Net which is not copyrighted.
@@ -64,18 +68,9 @@
 		 Fabio Ludovici <fabio.ludovici at yahoo.it>
 */
 
-struct disttable {
-	u32  size;
-	s16 table[];
-};
-
 struct netem_sched_data {
 	/* internal t(ime)fifo qdisc uses t_root and sch->limit */
 	struct rb_root t_root;
-
-	/* a linear queue; reduces rbtree rebalancing when jitter is low */
-	struct sk_buff	*t_head;
-	struct sk_buff	*t_tail;
 
 	/* optional qdisc for classful handling (NULL at netem init) */
 	struct Qdisc	*qdisc;
@@ -104,7 +99,10 @@ struct netem_sched_data {
 		u32 rho;
 	} delay_cor, loss_cor, dup_cor, reorder_cor, corrupt_cor;
 
-	struct disttable *delay_dist;
+	struct disttable {
+		u32  size;
+		s16 table[0];
+	} *delay_dist;
 
 	enum  {
 		CLG_RANDOM,
@@ -144,7 +142,6 @@ struct netem_sched_data {
 		s32 bytes_left;
 	} slot;
 
-	struct disttable *slot_dist;
 };
 
 /* Time stamp put into socket buffer control block
@@ -171,7 +168,7 @@ static inline struct netem_skb_cb *netem_skb_cb(struct sk_buff *skb)
 static void init_crandom(struct crndstate *state, unsigned long rho)
 {
 	state->rho = rho;
-	state->last = get_random_u32();
+	state->last = prandom_u32();
 }
 
 /* get_crandom - correlated random number generator
@@ -183,10 +180,10 @@ static u32 get_crandom(struct crndstate *state)
 	u64 value, rho;
 	unsigned long answer;
 
-	if (!state || state->rho == 0)	/* no correlation */
-		return get_random_u32();
+	if (state->rho == 0)	/* no correlation */
+		return prandom_u32();
 
-	value = get_random_u32();
+	value = prandom_u32();
 	rho = (u64)state->rho + 1;
 	answer = (value * ((1ull<<32) - rho) + state->last * rho) >> 32;
 	state->last = answer;
@@ -200,7 +197,7 @@ static u32 get_crandom(struct crndstate *state)
 static bool loss_4state(struct netem_sched_data *q)
 {
 	struct clgstate *clg = &q->clg;
-	u32 rnd = get_random_u32();
+	u32 rnd = prandom_u32();
 
 	/*
 	 * Makes a comparison between rnd and the transition
@@ -208,17 +205,17 @@ static bool loss_4state(struct netem_sched_data *q)
 	 * next state and if the next packet has to be transmitted or lost.
 	 * The four states correspond to:
 	 *   TX_IN_GAP_PERIOD => successfully transmitted packets within a gap period
-	 *   LOST_IN_GAP_PERIOD => isolated losses within a gap period
-	 *   LOST_IN_BURST_PERIOD => lost packets within a burst period
-	 *   TX_IN_BURST_PERIOD => successfully transmitted packets within a burst period
+	 *   LOST_IN_BURST_PERIOD => isolated losses within a gap period
+	 *   LOST_IN_GAP_PERIOD => lost packets within a burst period
+	 *   TX_IN_GAP_PERIOD => successfully transmitted packets within a burst period
 	 */
 	switch (clg->state) {
 	case TX_IN_GAP_PERIOD:
 		if (rnd < clg->a4) {
-			clg->state = LOST_IN_GAP_PERIOD;
+			clg->state = LOST_IN_BURST_PERIOD;
 			return true;
 		} else if (clg->a4 < rnd && rnd < clg->a1 + clg->a4) {
-			clg->state = LOST_IN_BURST_PERIOD;
+			clg->state = LOST_IN_GAP_PERIOD;
 			return true;
 		} else if (clg->a1 + clg->a4 < rnd) {
 			clg->state = TX_IN_GAP_PERIOD;
@@ -227,24 +224,24 @@ static bool loss_4state(struct netem_sched_data *q)
 		break;
 	case TX_IN_BURST_PERIOD:
 		if (rnd < clg->a5) {
-			clg->state = LOST_IN_BURST_PERIOD;
+			clg->state = LOST_IN_GAP_PERIOD;
 			return true;
 		} else {
 			clg->state = TX_IN_BURST_PERIOD;
 		}
 
 		break;
-	case LOST_IN_BURST_PERIOD:
+	case LOST_IN_GAP_PERIOD:
 		if (rnd < clg->a3)
 			clg->state = TX_IN_BURST_PERIOD;
 		else if (clg->a3 < rnd && rnd < clg->a2 + clg->a3) {
 			clg->state = TX_IN_GAP_PERIOD;
 		} else if (clg->a2 + clg->a3 < rnd) {
-			clg->state = LOST_IN_BURST_PERIOD;
+			clg->state = LOST_IN_GAP_PERIOD;
 			return true;
 		}
 		break;
-	case LOST_IN_GAP_PERIOD:
+	case LOST_IN_BURST_PERIOD:
 		clg->state = TX_IN_GAP_PERIOD;
 		break;
 	}
@@ -268,15 +265,15 @@ static bool loss_gilb_ell(struct netem_sched_data *q)
 
 	switch (clg->state) {
 	case GOOD_STATE:
-		if (get_random_u32() < clg->a1)
+		if (prandom_u32() < clg->a1)
 			clg->state = BAD_STATE;
-		if (get_random_u32() < clg->a4)
+		if (prandom_u32() < clg->a4)
 			return true;
 		break;
 	case BAD_STATE:
-		if (get_random_u32() < clg->a2)
+		if (prandom_u32() < clg->a2)
 			clg->state = GOOD_STATE;
-		if (get_random_u32() > clg->a3)
+		if (prandom_u32() > clg->a3)
 			return true;
 	}
 
@@ -330,7 +327,7 @@ static s64 tabledist(s64 mu, s32 sigma,
 
 	/* default uniform distribution */
 	if (dist == NULL)
-		return ((rnd % (2 * (u32)sigma)) + mu) - sigma;
+		return ((rnd % (2 * sigma)) + mu) - sigma;
 
 	t = dist->table[rnd % dist->size];
 	x = (sigma % NETEM_DIST_SCALE) * t;
@@ -369,39 +366,26 @@ static void tfifo_reset(struct Qdisc *sch)
 		rb_erase(&skb->rbnode, &q->t_root);
 		rtnl_kfree_skbs(skb, skb);
 	}
-
-	rtnl_kfree_skbs(q->t_head, q->t_tail);
-	q->t_head = NULL;
-	q->t_tail = NULL;
 }
 
 static void tfifo_enqueue(struct sk_buff *nskb, struct Qdisc *sch)
 {
 	struct netem_sched_data *q = qdisc_priv(sch);
 	u64 tnext = netem_skb_cb(nskb)->time_to_send;
+	struct rb_node **p = &q->t_root.rb_node, *parent = NULL;
 
-	if (!q->t_tail || tnext >= netem_skb_cb(q->t_tail)->time_to_send) {
-		if (q->t_tail)
-			q->t_tail->next = nskb;
+	while (*p) {
+		struct sk_buff *skb;
+
+		parent = *p;
+		skb = rb_to_skb(parent);
+		if (tnext >= netem_skb_cb(skb)->time_to_send)
+			p = &parent->rb_right;
 		else
-			q->t_head = nskb;
-		q->t_tail = nskb;
-	} else {
-		struct rb_node **p = &q->t_root.rb_node, *parent = NULL;
-
-		while (*p) {
-			struct sk_buff *skb;
-
-			parent = *p;
-			skb = rb_to_skb(parent);
-			if (tnext >= netem_skb_cb(skb)->time_to_send)
-				p = &parent->rb_right;
-			else
-				p = &parent->rb_left;
-		}
-		rb_link_node(&nskb->rbnode, parent, p);
-		rb_insert_color(&nskb->rbnode, &q->t_root);
+			p = &parent->rb_left;
 	}
+	rb_link_node(&nskb->rbnode, parent, p);
+	rb_insert_color(&nskb->rbnode, &q->t_root);
 	sch->q.qlen++;
 }
 
@@ -425,6 +409,16 @@ static struct sk_buff *netem_segment(struct sk_buff *skb, struct Qdisc *sch,
 	return segs;
 }
 
+static void netem_enqueue_skb_head(struct qdisc_skb_head *qh, struct sk_buff *skb)
+{
+	skb->next = qh->head;
+
+	if (!qh->head)
+		qh->tail = skb;
+	qh->head = skb;
+	qh->qlen++;
+}
+
 /*
  * Insert one skb into qdisc.
  * Note: parent depends on return value to account for queue length.
@@ -439,13 +433,10 @@ static int netem_enqueue(struct sk_buff *skb, struct Qdisc *sch,
 	struct netem_skb_cb *cb;
 	struct sk_buff *skb2;
 	struct sk_buff *segs = NULL;
-	unsigned int prev_len = qdisc_pkt_len(skb);
+	unsigned int len = 0, last_len, prev_len = qdisc_pkt_len(skb);
+	int nb = 0;
 	int count = 1;
 	int rc = NET_XMIT_SUCCESS;
-	int rc_drop = NET_XMIT_DROP;
-
-	/* Do not fool qdisc_drop_all() */
-	skb->prev = NULL;
 
 	/* Random duplication */
 	if (q->duplicate && q->duplicate >= get_crandom(&q->dup_cor))
@@ -476,13 +467,12 @@ static int netem_enqueue(struct sk_buff *skb, struct Qdisc *sch,
 	 * skb will be queued.
 	 */
 	if (count > 1 && (skb2 = skb_clone(skb, GFP_ATOMIC)) != NULL) {
-		struct Qdisc *rootq = qdisc_root_bh(sch);
+		struct Qdisc *rootq = qdisc_root(sch);
 		u32 dupsave = q->duplicate; /* prevent duplicating a dup... */
 
 		q->duplicate = 0;
 		rootq->enqueue(skb2, rootq, to_free);
 		q->duplicate = dupsave;
-		rc_drop = NET_XMIT_SUCCESS;
 	}
 
 	/*
@@ -493,13 +483,15 @@ static int netem_enqueue(struct sk_buff *skb, struct Qdisc *sch,
 	 */
 	if (q->corrupt && q->corrupt >= get_crandom(&q->corrupt_cor)) {
 		if (skb_is_gso(skb)) {
-			skb = netem_segment(skb, sch, to_free);
-			if (!skb)
-				return rc_drop;
-			segs = skb->next;
-			skb_mark_not_on_list(skb);
-			qdisc_skb_cb(skb)->pkt_len = skb->len;
+			segs = netem_segment(skb, sch, to_free);
+			if (!segs)
+				return NET_XMIT_DROP;
+		} else {
+			segs = skb;
 		}
+
+		skb = segs;
+		segs = segs->next;
 
 		skb = skb_unshare(skb, GFP_ATOMIC);
 		if (unlikely(!skb)) {
@@ -509,20 +501,15 @@ static int netem_enqueue(struct sk_buff *skb, struct Qdisc *sch,
 		if (skb->ip_summed == CHECKSUM_PARTIAL &&
 		    skb_checksum_help(skb)) {
 			qdisc_drop(skb, sch, to_free);
-			skb = NULL;
 			goto finish_segs;
 		}
 
-		skb->data[prandom_u32_max(skb_headlen(skb))] ^=
-			1<<prandom_u32_max(8);
+		skb->data[prandom_u32() % skb_headlen(skb)] ^=
+			1<<(prandom_u32() % 8);
 	}
 
-	if (unlikely(sch->q.qlen >= sch->limit)) {
-		/* re-link segs, so that qdisc_drop_all() frees them all */
-		skb->next = segs;
-		qdisc_drop_all(skb, sch, to_free);
-		return rc_drop;
-	}
+	if (unlikely(sch->q.qlen >= sch->limit))
+		return qdisc_drop_all(skb, sch, to_free);
 
 	qdisc_qstats_backlog_inc(sch, skb);
 
@@ -550,16 +537,9 @@ static int netem_enqueue(struct sk_buff *skb, struct Qdisc *sch,
 				t_skb = skb_rb_last(&q->t_root);
 				t_last = netem_skb_cb(t_skb);
 				if (!last ||
-				    t_last->time_to_send > last->time_to_send)
+				    t_last->time_to_send > last->time_to_send) {
 					last = t_last;
-			}
-			if (q->t_tail) {
-				struct netem_skb_cb *t_last =
-					netem_skb_cb(q->t_tail);
-
-				if (!last ||
-				    t_last->time_to_send > last->time_to_send)
-					last = t_last;
+				}
 			}
 
 			if (last) {
@@ -587,21 +567,15 @@ static int netem_enqueue(struct sk_buff *skb, struct Qdisc *sch,
 		cb->time_to_send = ktime_get_ns();
 		q->counter = 0;
 
-		__qdisc_enqueue_head(skb, &sch->q);
+		netem_enqueue_skb_head(&sch->q, skb);
 		sch->qstats.requeues++;
 	}
 
 finish_segs:
 	if (segs) {
-		unsigned int len, last_len;
-		int nb;
-
-		len = skb ? skb->len : 0;
-		nb = skb ? 1 : 0;
-
 		while (segs) {
 			skb2 = segs->next;
-			skb_mark_not_on_list(segs);
+			segs->next = NULL;
 			qdisc_skb_cb(segs)->pkt_len = segs->len;
 			last_len = segs->len;
 			rc = qdisc_enqueue(segs, sch, to_free);
@@ -614,10 +588,9 @@ finish_segs:
 			}
 			segs = skb2;
 		}
-		/* Parent qdiscs accounted for 1 skb of size @prev_len */
-		qdisc_tree_reduce_backlog(sch, -(nb - 1), -(len - prev_len));
-	} else if (!skb) {
-		return NET_XMIT_DROP;
+		sch->q.qlen += nb;
+		if (nb > 1)
+			qdisc_tree_reduce_backlog(sch, 1 - nb, prev_len - len);
 	}
 	return NET_XMIT_SUCCESS;
 }
@@ -628,55 +601,19 @@ finish_segs:
 
 static void get_slot_next(struct netem_sched_data *q, u64 now)
 {
-	s64 next_delay;
-
-	if (!q->slot_dist)
-		next_delay = q->slot_config.min_delay +
-				(get_random_u32() *
-				 (q->slot_config.max_delay -
-				  q->slot_config.min_delay) >> 32);
-	else
-		next_delay = tabledist(q->slot_config.dist_delay,
-				       (s32)(q->slot_config.dist_jitter),
-				       NULL, q->slot_dist);
-
-	q->slot.slot_next = now + next_delay;
+	q->slot.slot_next = now + q->slot_config.min_delay +
+		(prandom_u32() *
+			(q->slot_config.max_delay -
+				q->slot_config.min_delay) >> 32);
 	q->slot.packets_left = q->slot_config.max_packets;
 	q->slot.bytes_left = q->slot_config.max_bytes;
-}
-
-static struct sk_buff *netem_peek(struct netem_sched_data *q)
-{
-	struct sk_buff *skb = skb_rb_first(&q->t_root);
-	u64 t1, t2;
-
-	if (!skb)
-		return q->t_head;
-	if (!q->t_head)
-		return skb;
-
-	t1 = netem_skb_cb(skb)->time_to_send;
-	t2 = netem_skb_cb(q->t_head)->time_to_send;
-	if (t1 < t2)
-		return skb;
-	return q->t_head;
-}
-
-static void netem_erase_head(struct netem_sched_data *q, struct sk_buff *skb)
-{
-	if (skb == q->t_head) {
-		q->t_head = skb->next;
-		if (!q->t_head)
-			q->t_tail = NULL;
-	} else {
-		rb_erase(&skb->rbnode, &q->t_root);
-	}
 }
 
 static struct sk_buff *netem_dequeue(struct Qdisc *sch)
 {
 	struct netem_sched_data *q = qdisc_priv(sch);
 	struct sk_buff *skb;
+	struct rb_node *p;
 
 tfifo_dequeue:
 	skb = __qdisc_dequeue_head(&sch->q);
@@ -686,18 +623,20 @@ deliver:
 		qdisc_bstats_update(sch, skb);
 		return skb;
 	}
-	skb = netem_peek(q);
-	if (skb) {
+	p = rb_first(&q->t_root);
+	if (p) {
 		u64 time_to_send;
 		u64 now = ktime_get_ns();
+
+		skb = rb_to_skb(p);
 
 		/* if more time remaining? */
 		time_to_send = netem_skb_cb(skb)->time_to_send;
 		if (q->slot.slot_next && q->slot.slot_next < time_to_send)
 			get_slot_next(q, now);
 
-		if (time_to_send <= now && q->slot.slot_next <= now) {
-			netem_erase_head(q, skb);
+		if (time_to_send <= now &&  q->slot.slot_next <= now) {
+			rb_erase(p, &q->t_root);
 			sch->q.qlen--;
 			qdisc_qstats_backlog_dec(sch, skb);
 			skb->next = NULL;
@@ -706,6 +645,15 @@ deliver:
 			 * we need to restore its value.
 			 */
 			skb->dev = qdisc_dev(sch);
+
+#ifdef CONFIG_NET_CLS_ACT
+			/*
+			 * If it's at ingress let's pretend the delay is
+			 * from the network (tstamp will be updated).
+			 */
+			if (skb->tc_redirected && skb->tc_from_ingress)
+				skb->tstamp = 0;
+#endif
 
 			if (q->slot.slot_next) {
 				q->slot.packets_left--;
@@ -773,19 +721,19 @@ static void dist_free(struct disttable *d)
  * signed 16 bit values.
  */
 
-static int get_dist_table(struct Qdisc *sch, struct disttable **tbl,
-			  const struct nlattr *attr)
+static int get_dist_table(struct Qdisc *sch, const struct nlattr *attr)
 {
+	struct netem_sched_data *q = qdisc_priv(sch);
 	size_t n = nla_len(attr)/sizeof(__s16);
 	const __s16 *data = nla_data(attr);
 	spinlock_t *root_lock;
 	struct disttable *d;
 	int i;
 
-	if (!n || n > NETEM_DIST_MAX)
+	if (n > NETEM_DIST_MAX)
 		return -EINVAL;
 
-	d = kvmalloc(struct_size(d, table, n), GFP_KERNEL);
+	d = kvmalloc(sizeof(struct disttable) + n * sizeof(s16), GFP_KERNEL);
 	if (!d)
 		return -ENOMEM;
 
@@ -796,7 +744,7 @@ static int get_dist_table(struct Qdisc *sch, struct disttable **tbl,
 	root_lock = qdisc_root_sleeping_lock(sch);
 
 	spin_lock_bh(root_lock);
-	swap(*tbl, d);
+	swap(q->delay_dist, d);
 	spin_unlock_bh(root_lock);
 
 	dist_free(d);
@@ -812,14 +760,9 @@ static void get_slot(struct netem_sched_data *q, const struct nlattr *attr)
 		q->slot_config.max_packets = INT_MAX;
 	if (q->slot_config.max_bytes == 0)
 		q->slot_config.max_bytes = INT_MAX;
-
-	/* capping dist_jitter to the range acceptable by tabledist() */
-	q->slot_config.dist_jitter = min_t(__s64, INT_MAX, abs(q->slot_config.dist_jitter));
-
 	q->slot.packets_left = q->slot_config.max_packets;
 	q->slot.bytes_left = q->slot_config.max_bytes;
-	if (q->slot_config.min_delay | q->slot_config.max_delay |
-	    q->slot_config.dist_jitter)
+	if (q->slot_config.min_delay | q->slot_config.max_delay)
 		q->slot.slot_next = ktime_get_ns();
 	else
 		q->slot.slot_next = 0;
@@ -942,9 +885,8 @@ static int parse_attr(struct nlattr *tb[], int maxtype, struct nlattr *nla,
 	}
 
 	if (nested_len >= nla_attr_size(0))
-		return nla_parse_deprecated(tb, maxtype,
-					    nla_data(nla) + NLA_ALIGN(len),
-					    nested_len, policy, NULL);
+		return nla_parse(tb, maxtype, nla_data(nla) + NLA_ALIGN(len),
+				 nested_len, policy, NULL);
 
 	memset(tb, 0, sizeof(struct nlattr *) * (maxtype + 1));
 	return 0;
@@ -960,6 +902,9 @@ static int netem_change(struct Qdisc *sch, struct nlattr *opt,
 	struct clgstate old_clg;
 	int old_loss_model = CLG_RANDOM;
 	int ret;
+
+	if (opt == NULL)
+		return -EINVAL;
 
 	qopt = nla_data(opt);
 	ret = parse_attr(tb, TCA_NETEM_MAX, opt, netem_policy, sizeof(*qopt));
@@ -981,17 +926,16 @@ static int netem_change(struct Qdisc *sch, struct nlattr *opt,
 	}
 
 	if (tb[TCA_NETEM_DELAY_DIST]) {
-		ret = get_dist_table(sch, &q->delay_dist,
-				     tb[TCA_NETEM_DELAY_DIST]);
-		if (ret)
-			goto get_table_failure;
-	}
-
-	if (tb[TCA_NETEM_SLOT_DIST]) {
-		ret = get_dist_table(sch, &q->slot_dist,
-				     tb[TCA_NETEM_SLOT_DIST]);
-		if (ret)
-			goto get_table_failure;
+		ret = get_dist_table(sch, tb[TCA_NETEM_DELAY_DIST]);
+		if (ret) {
+			/* recover clg and loss_model, in case of
+			 * q->clg and q->loss_model were modified
+			 * in get_loss_clg()
+			 */
+			q->clg = old_clg;
+			q->loss_model = old_loss_model;
+			return ret;
+		}
 	}
 
 	sch->limit = qopt->limit;
@@ -1038,18 +982,6 @@ static int netem_change(struct Qdisc *sch, struct nlattr *opt,
 	if (tb[TCA_NETEM_SLOT])
 		get_slot(q, tb[TCA_NETEM_SLOT]);
 
-	/* capping jitter to the range acceptable by tabledist() */
-	q->jitter = min_t(s64, abs(q->jitter), INT_MAX);
-
-	return ret;
-
-get_table_failure:
-	/* recover clg and loss_model, in case of
-	 * q->clg and q->loss_model were modified
-	 * in get_loss_clg()
-	 */
-	q->clg = old_clg;
-	q->loss_model = old_loss_model;
 	return ret;
 }
 
@@ -1077,9 +1009,8 @@ static void netem_destroy(struct Qdisc *sch)
 
 	qdisc_watchdog_cancel(&q->watchdog);
 	if (q->qdisc)
-		qdisc_put(q->qdisc);
+		qdisc_destroy(q->qdisc);
 	dist_free(q->delay_dist);
-	dist_free(q->slot_dist);
 }
 
 static int dump_loss_model(const struct netem_sched_data *q,
@@ -1087,7 +1018,7 @@ static int dump_loss_model(const struct netem_sched_data *q,
 {
 	struct nlattr *nest;
 
-	nest = nla_nest_start_noflag(skb, TCA_NETEM_LOSS);
+	nest = nla_nest_start(skb, TCA_NETEM_LOSS);
 	if (nest == NULL)
 		goto nla_put_failure;
 
@@ -1143,9 +1074,9 @@ static int netem_dump(struct Qdisc *sch, struct sk_buff *skb)
 	struct tc_netem_rate rate;
 	struct tc_netem_slot slot;
 
-	qopt.latency = min_t(psched_time_t, PSCHED_NS2TICKS(q->latency),
+	qopt.latency = min_t(psched_tdiff_t, PSCHED_NS2TICKS(q->latency),
 			     UINT_MAX);
-	qopt.jitter = min_t(psched_time_t, PSCHED_NS2TICKS(q->jitter),
+	qopt.jitter = min_t(psched_tdiff_t, PSCHED_NS2TICKS(q->jitter),
 			    UINT_MAX);
 	qopt.limit = q->limit;
 	qopt.loss = q->loss;
@@ -1196,8 +1127,7 @@ static int netem_dump(struct Qdisc *sch, struct sk_buff *skb)
 	if (dump_loss_model(q, skb) != 0)
 		goto nla_put_failure;
 
-	if (q->slot_config.min_delay | q->slot_config.max_delay |
-	    q->slot_config.dist_jitter) {
+	if (q->slot_config.min_delay | q->slot_config.max_delay) {
 		slot = q->slot_config;
 		if (slot.max_packets == INT_MAX)
 			slot.max_packets = 0;
@@ -1251,8 +1181,12 @@ static unsigned long netem_find(struct Qdisc *sch, u32 classid)
 static void netem_walk(struct Qdisc *sch, struct qdisc_walker *walker)
 {
 	if (!walker->stop) {
-		if (!tc_qdisc_stats_dump(sch, 1, walker))
-			return;
+		if (walker->count >= walker->skip)
+			if (walker->fn(sch, 1, walker) < 0) {
+				walker->stop = 1;
+				return;
+			}
+		walker->count++;
 	}
 }
 

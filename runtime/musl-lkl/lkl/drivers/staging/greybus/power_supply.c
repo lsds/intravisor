@@ -10,7 +10,8 @@
 #include <linux/module.h>
 #include <linux/power_supply.h>
 #include <linux/slab.h>
-#include <linux/greybus.h>
+
+#include "greybus.h"
 
 #define PROP_MAX 32
 
@@ -449,7 +450,7 @@ static int __gb_power_supply_set_name(char *init_name, char *name, size_t len)
 
 	if (!strlen(init_name))
 		init_name = "gb_power_supply";
-	strscpy(name, init_name, len);
+	strlcpy(name, init_name, len);
 
 	while ((ret < len) && (psy = power_supply_get_by_name(name))) {
 		power_supply_put(psy);
@@ -519,8 +520,8 @@ static int gb_power_supply_prop_descriptors_get(struct gb_power_supply *gbpsy)
 
 	op = gb_operation_create(connection,
 				 GB_POWER_SUPPLY_TYPE_GET_PROP_DESCRIPTORS,
-				 sizeof(*req),
-				 struct_size(resp, props, props_count),
+				 sizeof(req), sizeof(*resp) + props_count *
+				 sizeof(struct gb_power_supply_props_desc),
 				 GFP_KERNEL);
 	if (!op)
 		return -ENOMEM;

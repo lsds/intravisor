@@ -1,11 +1,10 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Support for the S1 button on Routerboard 532
  *
  * Copyright (C) 2009  Phil Sutter <n0-1@freewrt.org>
  */
 
-#include <linux/input.h>
+#include <linux/input-polldev.h>
 #include <linux/module.h>
 #include <linux/platform_device.h>
 #include <linux/gpio.h>
@@ -46,42 +45,56 @@ static bool rb532_button_pressed(void)
 	return !val;
 }
 
-static void rb532_button_poll(struct input_dev *input)
+static void rb532_button_poll(struct input_polled_dev *poll_dev)
 {
-	input_report_key(input, RB532_BTN_KSYM, rb532_button_pressed());
-	input_sync(input);
+	input_report_key(poll_dev->input, RB532_BTN_KSYM,
+			 rb532_button_pressed());
+	input_sync(poll_dev->input);
 }
 
 static int rb532_button_probe(struct platform_device *pdev)
 {
-	struct input_dev *input;
+	struct input_polled_dev *poll_dev;
 	int error;
 
-	input = devm_input_allocate_device(&pdev->dev);
-	if (!input)
+	poll_dev = input_allocate_polled_device();
+	if (!poll_dev)
 		return -ENOMEM;
 
-	input->name = "rb532 button";
-	input->phys = "rb532/button0";
-	input->id.bustype = BUS_HOST;
+	poll_dev->poll = rb532_button_poll;
+	poll_dev->poll_interval = RB532_BTN_RATE;
 
-	input_set_capability(input, EV_KEY, RB532_BTN_KSYM);
+	poll_dev->input->name = "rb532 button";
+	poll_dev->input->phys = "rb532/button0";
+	poll_dev->input->id.bustype = BUS_HOST;
+	poll_dev->input->dev.parent = &pdev->dev;
 
-	error = input_setup_polling(input, rb532_button_poll);
-	if (error)
+	dev_set_drvdata(&pdev->dev, poll_dev);
+
+	input_set_capability(poll_dev->input, EV_KEY, RB532_BTN_KSYM);
+
+	error = input_register_polled_device(poll_dev);
+	if (error) {
+		input_free_polled_device(poll_dev);
 		return error;
+	}
 
-	input_set_poll_interval(input, RB532_BTN_RATE);
+	return 0;
+}
 
-	error = input_register_device(input);
-	if (error)
-		return error;
+static int rb532_button_remove(struct platform_device *pdev)
+{
+	struct input_polled_dev *poll_dev = dev_get_drvdata(&pdev->dev);
+
+	input_unregister_polled_device(poll_dev);
+	input_free_polled_device(poll_dev);
 
 	return 0;
 }
 
 static struct platform_driver rb532_button_driver = {
 	.probe = rb532_button_probe,
+	.remove = rb532_button_remove,
 	.driver = {
 		.name = DRV_NAME,
 	},

@@ -23,6 +23,7 @@
 
 #define DRIVER_DESC "OHCI SPEAr driver"
 
+static const char hcd_name[] = "SPEAr-ohci";
 struct spear_ohci {
 	struct clk *clk;
 };
@@ -34,6 +35,7 @@ static struct hc_driver __read_mostly ohci_spear_hc_driver;
 static int spear_ohci_hcd_drv_probe(struct platform_device *pdev)
 {
 	const struct hc_driver *driver = &ohci_spear_hc_driver;
+	struct ohci_hcd *ohci;
 	struct usb_hcd *hcd = NULL;
 	struct clk *usbh_clk;
 	struct spear_ohci *sohci_p;
@@ -75,7 +77,7 @@ static int spear_ohci_hcd_drv_probe(struct platform_device *pdev)
 		goto err_put_hcd;
 	}
 
-	hcd->rsrc_start = res->start;
+	hcd->rsrc_start = pdev->resource[0].start;
 	hcd->rsrc_len = resource_size(res);
 
 	sohci_p = to_spear_ohci(hcd);
@@ -83,7 +85,9 @@ static int spear_ohci_hcd_drv_probe(struct platform_device *pdev)
 
 	clk_prepare_enable(sohci_p->clk);
 
-	retval = usb_add_hcd(hcd, irq, 0);
+	ohci = hcd_to_ohci(hcd);
+
+	retval = usb_add_hcd(hcd, platform_get_irq(pdev, 0), 0);
 	if (retval == 0) {
 		device_wakeup_enable(hcd->self.controller);
 		return retval;
@@ -177,6 +181,8 @@ static int __init ohci_spear_init(void)
 {
 	if (usb_disabled())
 		return -ENODEV;
+
+	pr_info("%s: " DRIVER_DESC "\n", hcd_name);
 
 	ohci_init_driver(&ohci_spear_hc_driver, &spear_overrides);
 	return platform_driver_register(&spear_ohci_hcd_driver);

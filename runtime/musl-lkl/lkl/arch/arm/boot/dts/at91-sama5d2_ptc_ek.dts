@@ -11,18 +11,16 @@
 #include "sama5d2-pinfunc.h"
 #include <dt-bindings/mfd/atmel-flexcom.h>
 #include <dt-bindings/gpio/gpio.h>
-#include <dt-bindings/input/input.h>
-#include <dt-bindings/pinctrl/at91.h>
 
 / {
 	model = "Atmel SAMA5D2 PTC EK";
 	compatible = "atmel,sama5d2-ptc_ek", "atmel,sama5d2", "atmel,sama5";
 
 	aliases {
-		serial0 = &uart0;	/* DBGU */
-		i2c0 = &i2c0;	/* mikroBUS 1 */
-		i2c1 = &i2c1;	/* XPRO EXT1 */
-		i2c2 = &i2c2;
+		serial0 = &uart0;
+		i2c0	= &i2c0;
+		i2c1	= &i2c1;
+		i2c2	= &i2c2;
 	};
 
 	chosen {
@@ -41,7 +39,7 @@
 
 	ahb {
 		usb0: gadget@300000 {
-			atmel,vbus-gpio = <&pioA PIN_PB11 GPIO_ACTIVE_HIGH>;
+			atmel,vbus-gpio = <&pioA PIN_PA27 GPIO_ACTIVE_HIGH>;
 			pinctrl-names = "default";
 			pinctrl-0 = <&pinctrl_usba_vbus>;
 			status = "okay";
@@ -93,13 +91,13 @@
 							reg = <0x40000 0xc0000>;
 						};
 
-						bootloaderenvred@100000 {
-							label = "bootloader env redundant";
+						bootloaderenv@0x100000 {
+							label = "bootloader env";
 							reg = <0x100000 0x40000>;
 						};
 
-						bootloaderenv@140000 {
-							label = "bootloader env";
+						bootloaderenvred@0x140000 {
+							label = "bootloader env redundant";
 							reg = <0x140000 0x40000>;
 						};
 
@@ -126,6 +124,8 @@
 			bus-width = <8>;
 			pinctrl-names = "default";
 			pinctrl-0 = <&pinctrl_sdmmc0_default>;
+			non-removable;
+			mmc-ddr-1_8v;
 			status = "okay";
 		};
 
@@ -139,8 +139,6 @@
 			macb0: ethernet@f8008000 {
 				pinctrl-names = "default";
 				pinctrl-0 = <&pinctrl_macb0_default &pinctrl_macb0_phy_irq>;
-				#address-cells = <1>;
-				#size-cells = <0>;
 				phy-mode = "rmii";
 				status = "okay";
 
@@ -181,11 +179,8 @@
 
 			i2c0: i2c@f8028000 {
 				dmas = <0>, <0>;
-				pinctrl-names = "default", "gpio";
+				pinctrl-names = "default";
 				pinctrl-0 = <&pinctrl_i2c0_default>;
-				pinctrl-1 = <&pinctrl_i2c0_gpio>;
-				sda-gpios = <&pioA PIN_PD21 GPIO_ACTIVE_HIGH>;
-				scl-gpios = <&pioA PIN_PD22 (GPIO_ACTIVE_HIGH | GPIO_OPEN_DRAIN)>;
 				status = "okay";
 			};
 
@@ -194,21 +189,27 @@
 				status = "okay";
 
 				i2c2: i2c@600 {
+					compatible = "atmel,sama5d2-i2c";
+					reg = <0x600 0x200>;
+					interrupts = <19 IRQ_TYPE_LEVEL_HIGH 7>;
 					dmas = <0>, <0>;
-					pinctrl-names = "default", "gpio";
+					dma-names = "tx", "rx";
+					#address-cells = <1>;
+					#size-cells = <0>;
+					clocks = <&flx0_clk>;
+					pinctrl-names = "default";
 					pinctrl-0 = <&pinctrl_flx0_default>;
-					pinctrl-1 = <&pinctrl_flx0_gpio>;
-					sda-gpios = <&pioA PIN_PB28 GPIO_ACTIVE_HIGH>;
-					scl-gpios = <&pioA PIN_PB29 (GPIO_ACTIVE_HIGH | GPIO_OPEN_DRAIN)>;
+					atmel,fifo-size = <16>;
 					status = "okay";
 				};
 			};
 
 			shdwc@f8048010 {
-				debounce-delay-us = <976>;
+				atmel,shdwc-debouncer = <976>;
 
 				input@0 {
 					reg = <0>;
+					atmel,wakeup-type = "low";
 				};
 			};
 
@@ -224,11 +225,8 @@
 
 			i2c1: i2c@fc028000 {
 				dmas = <0>, <0>;
-				pinctrl-names = "default", "gpio";
+				pinctrl-names = "default";
 				pinctrl-0 = <&pinctrl_i2c1_default>;
-				pinctrl-1 = <&pinctrl_i2c1_gpio>;
-				sda-gpios = <&pioA PIN_PC6 GPIO_ACTIVE_HIGH>;
-				scl-gpios = <&pioA PIN_PC7 (GPIO_ACTIVE_HIGH | GPIO_OPEN_DRAIN)>;
 				status = "okay";
 
 				at24@50 {
@@ -245,33 +243,15 @@
 					bias-disable;
 				};
 
-				pinctrl_flx0_gpio: flx0_gpio {
-					pinmux = <PIN_PB28__GPIO>,
-						 <PIN_PB29__GPIO>;
-					bias-disable;
-				};
-
 				pinctrl_i2c0_default: i2c0_default {
 					pinmux = <PIN_PD21__TWD0>,
 						 <PIN_PD22__TWCK0>;
 					bias-disable;
 				};
 
-				pinctrl_i2c0_gpio: i2c0_gpio {
-					pinmux = <PIN_PD21__GPIO>,
-						 <PIN_PD22__GPIO>;
-					bias-disable;
-				};
-
 				pinctrl_i2c1_default: i2c1_default {
 					pinmux = <PIN_PC6__TWD1>,
 						 <PIN_PC7__TWCK1>;
-					bias-disable;
-				};
-
-				pinctrl_i2c1_gpio: i2c1_gpio {
-					pinmux = <PIN_PC6__GPIO>,
-						 <PIN_PC7__GPIO>;
 					bias-disable;
 				};
 
@@ -319,7 +299,6 @@
 							 <PIN_PA30__NWE_NANDWE>,
 							 <PIN_PB2__NRD_NANDOE>;
 						bias-pull-up;
-						atmel,drive-strength = <ATMEL_PIO_DRVSTR_ME>;
 					};
 
 					ale_cle_rdy_cs {
@@ -396,17 +375,16 @@
 		};
 	};
 
-	gpio-keys {
+	gpio_keys {
 		compatible = "gpio-keys";
 
 		pinctrl-names = "default";
 		pinctrl-0 = <&pinctrl_key_gpio_default>;
 
-		button-1 {
+		bp1 {
 			label = "PB_USER";
 			gpios = <&pioA PIN_PA10 GPIO_ACTIVE_LOW>;
-			linux,code = <KEY_PROG1>;
-			wakeup-source;
+			linux,code = <0x104>;
 		};
 	};
 

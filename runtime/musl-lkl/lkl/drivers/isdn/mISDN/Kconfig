@@ -1,4 +1,3 @@
-# SPDX-License-Identifier: GPL-2.0-only
 #
 # modularer ISDN driver
 #
@@ -13,7 +12,6 @@ if MISDN != n
 config MISDN_DSP
 	tristate "Digital Audio Processing of transparent data"
 	depends on MISDN
-	select BITREVERSE
 	help
 	  Enable support for digital audio processing capability.
 

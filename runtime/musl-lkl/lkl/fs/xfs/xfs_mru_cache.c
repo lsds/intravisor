@@ -1,7 +1,19 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (c) 2006-2007 Silicon Graphics, Inc.
  * All Rights Reserved.
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License as
+ * published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it would be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write the Free Software Foundation,
+ * Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
  */
 #include "xfs.h"
 #include "xfs_mru_cache.h"
@@ -219,7 +231,7 @@ _xfs_mru_cache_list_insert(
  * When destroying or reaping, all the elements that were migrated to the reap
  * list need to be deleted.  For each element this involves removing it from the
  * data store, removing it from the reap list, calling the client's free
- * function and deleting the element from the element cache.
+ * function and deleting the element from the element zone.
  *
  * We get called holding the mru->lock, which we drop and then reacquire.
  * Sparse need special help with this to tell it we know what we are doing.
@@ -294,7 +306,7 @@ int
 xfs_mru_cache_init(void)
 {
 	xfs_mru_reap_wq = alloc_workqueue("xfs_mru_cache",
-			XFS_WQFLAGS(WQ_MEM_RECLAIM | WQ_FREEZABLE), 1);
+				WQ_MEM_RECLAIM|WQ_FREEZABLE, 1);
 	if (!xfs_mru_reap_wq)
 		return -ENOMEM;
 	return 0;
@@ -333,12 +345,12 @@ xfs_mru_cache_create(
 	if (!(grp_time = msecs_to_jiffies(lifetime_ms) / grp_count))
 		return -EINVAL;
 
-	if (!(mru = kmem_zalloc(sizeof(*mru), 0)))
+	if (!(mru = kmem_zalloc(sizeof(*mru), KM_SLEEP)))
 		return -ENOMEM;
 
 	/* An extra list is needed to avoid reaping up to a grp_time early. */
 	mru->grp_count = grp_count + 1;
-	mru->lists = kmem_zalloc(mru->grp_count * sizeof(*mru->lists), 0);
+	mru->lists = kmem_zalloc(mru->grp_count * sizeof(*mru->lists), KM_SLEEP);
 
 	if (!mru->lists) {
 		err = -ENOMEM;

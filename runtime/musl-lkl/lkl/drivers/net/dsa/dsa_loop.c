@@ -1,8 +1,12 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Distributed Switch Architecture loopback driver
  *
  * Copyright (C) 2016, Florian Fainelli <f.fainelli@gmail.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
  */
 
 #include <linux/platform_device.h>
@@ -14,10 +18,27 @@
 #include <linux/workqueue.h>
 #include <linux/module.h>
 #include <linux/if_bridge.h>
-#include <linux/dsa/loop.h>
 #include <net/dsa.h>
 
 #include "dsa_loop.h"
+
+struct dsa_loop_vlan {
+	u16 members;
+	u16 untagged;
+};
+
+struct dsa_loop_mib_entry {
+	char name[ETH_GSTRING_LEN];
+	unsigned long val;
+};
+
+enum dsa_loop_mib_counters {
+	DSA_LOOP_PHY_READ_OK,
+	DSA_LOOP_PHY_READ_ERR,
+	DSA_LOOP_PHY_WRITE_OK,
+	DSA_LOOP_PHY_WRITE_ERR,
+	__DSA_LOOP_CNT_MAX,
+};
 
 static struct dsa_loop_mib_entry dsa_loop_mibs[] = {
 	[DSA_LOOP_PHY_READ_OK]	= { "phy_read_ok", },
@@ -26,60 +47,27 @@ static struct dsa_loop_mib_entry dsa_loop_mibs[] = {
 	[DSA_LOOP_PHY_WRITE_ERR] = { "phy_write_err", },
 };
 
-static struct phy_device *phydevs[PHY_MAX_ADDR];
-
-enum dsa_loop_devlink_resource_id {
-	DSA_LOOP_DEVLINK_PARAM_ID_VTU,
+struct dsa_loop_port {
+	struct dsa_loop_mib_entry mib[__DSA_LOOP_CNT_MAX];
 };
 
-static u64 dsa_loop_devlink_vtu_get(void *priv)
-{
-	struct dsa_loop_priv *ps = priv;
-	unsigned int i, count = 0;
-	struct dsa_loop_vlan *vl;
+#define DSA_LOOP_VLANS	5
 
-	for (i = 0; i < ARRAY_SIZE(ps->vlans); i++) {
-		vl = &ps->vlans[i];
-		if (vl->members)
-			count++;
-	}
+struct dsa_loop_priv {
+	struct mii_bus	*bus;
+	unsigned int	port_base;
+	struct dsa_loop_vlan vlans[DSA_LOOP_VLANS];
+	struct net_device *netdev;
+	struct dsa_loop_port ports[DSA_MAX_PORTS];
+	u16 pvid;
+};
 
-	return count;
-}
-
-static int dsa_loop_setup_devlink_resources(struct dsa_switch *ds)
-{
-	struct devlink_resource_size_params size_params;
-	struct dsa_loop_priv *ps = ds->priv;
-	int err;
-
-	devlink_resource_size_params_init(&size_params, ARRAY_SIZE(ps->vlans),
-					  ARRAY_SIZE(ps->vlans),
-					  1, DEVLINK_RESOURCE_UNIT_ENTRY);
-
-	err = dsa_devlink_resource_register(ds, "VTU", ARRAY_SIZE(ps->vlans),
-					    DSA_LOOP_DEVLINK_PARAM_ID_VTU,
-					    DEVLINK_RESOURCE_ID_PARENT_TOP,
-					    &size_params);
-	if (err)
-		goto out;
-
-	dsa_devlink_resource_occ_get_register(ds,
-					      DSA_LOOP_DEVLINK_PARAM_ID_VTU,
-					      dsa_loop_devlink_vtu_get, ps);
-
-	return 0;
-
-out:
-	dsa_devlink_resources_unregister(ds);
-	return err;
-}
+static struct phy_device *phydevs[PHY_MAX_ADDR];
 
 static enum dsa_tag_protocol dsa_loop_get_protocol(struct dsa_switch *ds,
-						   int port,
-						   enum dsa_tag_protocol mp)
+						   int port)
 {
-	dev_dbg(ds->dev, "%s: port: %d\n", __func__, port);
+	dev_dbg(ds->dev, "%s\n", __func__);
 
 	return DSA_TAG_PROTO_NONE;
 }
@@ -95,30 +83,18 @@ static int dsa_loop_setup(struct dsa_switch *ds)
 
 	dev_dbg(ds->dev, "%s\n", __func__);
 
-	return dsa_loop_setup_devlink_resources(ds);
+	return 0;
 }
 
-static void dsa_loop_teardown(struct dsa_switch *ds)
+static int dsa_loop_get_sset_count(struct dsa_switch *ds, int port)
 {
-	dsa_devlink_resources_unregister(ds);
-}
-
-static int dsa_loop_get_sset_count(struct dsa_switch *ds, int port, int sset)
-{
-	if (sset != ETH_SS_STATS && sset != ETH_SS_PHY_STATS)
-		return 0;
-
 	return __DSA_LOOP_CNT_MAX;
 }
 
-static void dsa_loop_get_strings(struct dsa_switch *ds, int port,
-				 u32 stringset, uint8_t *data)
+static void dsa_loop_get_strings(struct dsa_switch *ds, int port, uint8_t *data)
 {
 	struct dsa_loop_priv *ps = ds->priv;
 	unsigned int i;
-
-	if (stringset != ETH_SS_STATS && stringset != ETH_SS_PHY_STATS)
-		return;
 
 	for (i = 0; i < __DSA_LOOP_CNT_MAX; i++)
 		memcpy(data + i * ETH_GSTRING_LEN,
@@ -141,6 +117,8 @@ static int dsa_loop_phy_read(struct dsa_switch *ds, int port, int regnum)
 	struct mii_bus *bus = ps->bus;
 	int ret;
 
+	dev_dbg(ds->dev, "%s\n", __func__);
+
 	ret = mdiobus_read_nested(bus, ps->port_base + port, regnum);
 	if (ret < 0)
 		ps->ports[port].mib[DSA_LOOP_PHY_READ_ERR].val++;
@@ -157,6 +135,8 @@ static int dsa_loop_phy_write(struct dsa_switch *ds, int port,
 	struct mii_bus *bus = ps->bus;
 	int ret;
 
+	dev_dbg(ds->dev, "%s\n", __func__);
+
 	ret = mdiobus_write_nested(bus, ps->port_base + port, regnum, value);
 	if (ret < 0)
 		ps->ports[port].mib[DSA_LOOP_PHY_WRITE_ERR].val++;
@@ -167,71 +147,78 @@ static int dsa_loop_phy_write(struct dsa_switch *ds, int port,
 }
 
 static int dsa_loop_port_bridge_join(struct dsa_switch *ds, int port,
-				     struct dsa_bridge bridge,
-				     bool *tx_fwd_offload,
-				     struct netlink_ext_ack *extack)
+				     struct net_device *bridge)
 {
-	dev_dbg(ds->dev, "%s: port: %d, bridge: %s\n",
-		__func__, port, bridge.dev->name);
+	dev_dbg(ds->dev, "%s\n", __func__);
 
 	return 0;
 }
 
 static void dsa_loop_port_bridge_leave(struct dsa_switch *ds, int port,
-				       struct dsa_bridge bridge)
+				       struct net_device *bridge)
 {
-	dev_dbg(ds->dev, "%s: port: %d, bridge: %s\n",
-		__func__, port, bridge.dev->name);
+	dev_dbg(ds->dev, "%s\n", __func__);
 }
 
 static void dsa_loop_port_stp_state_set(struct dsa_switch *ds, int port,
 					u8 state)
 {
-	dev_dbg(ds->dev, "%s: port: %d, state: %d\n",
-		__func__, port, state);
+	dev_dbg(ds->dev, "%s\n", __func__);
 }
 
 static int dsa_loop_port_vlan_filtering(struct dsa_switch *ds, int port,
-					bool vlan_filtering,
-					struct netlink_ext_ack *extack)
+					bool vlan_filtering)
 {
-	dev_dbg(ds->dev, "%s: port: %d, vlan_filtering: %d\n",
-		__func__, port, vlan_filtering);
+	dev_dbg(ds->dev, "%s\n", __func__);
 
 	return 0;
 }
 
-static int dsa_loop_port_vlan_add(struct dsa_switch *ds, int port,
-				  const struct switchdev_obj_port_vlan *vlan,
-				  struct netlink_ext_ack *extack)
+static int
+dsa_loop_port_vlan_prepare(struct dsa_switch *ds, int port,
+			   const struct switchdev_obj_port_vlan *vlan)
+{
+	struct dsa_loop_priv *ps = ds->priv;
+	struct mii_bus *bus = ps->bus;
+
+	dev_dbg(ds->dev, "%s\n", __func__);
+
+	/* Just do a sleeping operation to make lockdep checks effective */
+	mdiobus_read(bus, ps->port_base + port, MII_BMSR);
+
+	if (vlan->vid_end > DSA_LOOP_VLANS)
+		return -ERANGE;
+
+	return 0;
+}
+
+static void dsa_loop_port_vlan_add(struct dsa_switch *ds, int port,
+				   const struct switchdev_obj_port_vlan *vlan)
 {
 	bool untagged = vlan->flags & BRIDGE_VLAN_INFO_UNTAGGED;
 	bool pvid = vlan->flags & BRIDGE_VLAN_INFO_PVID;
 	struct dsa_loop_priv *ps = ds->priv;
 	struct mii_bus *bus = ps->bus;
 	struct dsa_loop_vlan *vl;
+	u16 vid;
 
-	if (vlan->vid >= ARRAY_SIZE(ps->vlans))
-		return -ERANGE;
+	dev_dbg(ds->dev, "%s\n", __func__);
 
 	/* Just do a sleeping operation to make lockdep checks effective */
 	mdiobus_read(bus, ps->port_base + port, MII_BMSR);
 
-	vl = &ps->vlans[vlan->vid];
+	for (vid = vlan->vid_begin; vid <= vlan->vid_end; ++vid) {
+		vl = &ps->vlans[vid];
 
-	vl->members |= BIT(port);
-	if (untagged)
-		vl->untagged |= BIT(port);
-	else
-		vl->untagged &= ~BIT(port);
-
-	dev_dbg(ds->dev, "%s: port: %d vlan: %d, %stagged, pvid: %d\n",
-		__func__, port, vlan->vid, untagged ? "un" : "", pvid);
+		vl->members |= BIT(port);
+		if (untagged)
+			vl->untagged |= BIT(port);
+		else
+			vl->untagged &= ~BIT(port);
+	}
 
 	if (pvid)
-		ps->ports[port].pvid = vlan->vid;
-
-	return 0;
+		ps->pvid = vid;
 }
 
 static int dsa_loop_port_vlan_del(struct dsa_switch *ds, int port,
@@ -239,62 +226,45 @@ static int dsa_loop_port_vlan_del(struct dsa_switch *ds, int port,
 {
 	bool untagged = vlan->flags & BRIDGE_VLAN_INFO_UNTAGGED;
 	struct dsa_loop_priv *ps = ds->priv;
-	u16 pvid = ps->ports[port].pvid;
 	struct mii_bus *bus = ps->bus;
 	struct dsa_loop_vlan *vl;
+	u16 vid, pvid = ps->pvid;
+
+	dev_dbg(ds->dev, "%s\n", __func__);
 
 	/* Just do a sleeping operation to make lockdep checks effective */
 	mdiobus_read(bus, ps->port_base + port, MII_BMSR);
 
-	vl = &ps->vlans[vlan->vid];
+	for (vid = vlan->vid_begin; vid <= vlan->vid_end; ++vid) {
+		vl = &ps->vlans[vid];
 
-	vl->members &= ~BIT(port);
-	if (untagged)
-		vl->untagged &= ~BIT(port);
+		vl->members &= ~BIT(port);
+		if (untagged)
+			vl->untagged &= ~BIT(port);
 
-	if (pvid == vlan->vid)
-		pvid = 1;
-
-	dev_dbg(ds->dev, "%s: port: %d vlan: %d, %stagged, pvid: %d\n",
-		__func__, port, vlan->vid, untagged ? "un" : "", pvid);
-	ps->ports[port].pvid = pvid;
-
-	return 0;
-}
-
-static int dsa_loop_port_change_mtu(struct dsa_switch *ds, int port,
-				    int new_mtu)
-{
-	struct dsa_loop_priv *priv = ds->priv;
-
-	priv->ports[port].mtu = new_mtu;
+		if (pvid == vid)
+			pvid = 1;
+	}
+	ps->pvid = pvid;
 
 	return 0;
-}
-
-static int dsa_loop_port_max_mtu(struct dsa_switch *ds, int port)
-{
-	return ETH_MAX_MTU;
 }
 
 static const struct dsa_switch_ops dsa_loop_driver = {
 	.get_tag_protocol	= dsa_loop_get_protocol,
 	.setup			= dsa_loop_setup,
-	.teardown		= dsa_loop_teardown,
 	.get_strings		= dsa_loop_get_strings,
 	.get_ethtool_stats	= dsa_loop_get_ethtool_stats,
 	.get_sset_count		= dsa_loop_get_sset_count,
-	.get_ethtool_phy_stats	= dsa_loop_get_ethtool_stats,
 	.phy_read		= dsa_loop_phy_read,
 	.phy_write		= dsa_loop_phy_write,
 	.port_bridge_join	= dsa_loop_port_bridge_join,
 	.port_bridge_leave	= dsa_loop_port_bridge_leave,
 	.port_stp_state_set	= dsa_loop_port_stp_state_set,
 	.port_vlan_filtering	= dsa_loop_port_vlan_filtering,
+	.port_vlan_prepare	= dsa_loop_port_vlan_prepare,
 	.port_vlan_add		= dsa_loop_port_vlan_add,
 	.port_vlan_del		= dsa_loop_port_vlan_del,
-	.port_change_mtu	= dsa_loop_port_change_mtu,
-	.port_max_mtu		= dsa_loop_port_max_mtu,
 };
 
 static int dsa_loop_drv_probe(struct mdio_device *mdiodev)
@@ -302,17 +272,16 @@ static int dsa_loop_drv_probe(struct mdio_device *mdiodev)
 	struct dsa_loop_pdata *pdata = mdiodev->dev.platform_data;
 	struct dsa_loop_priv *ps;
 	struct dsa_switch *ds;
-	int ret;
 
 	if (!pdata)
 		return -ENODEV;
 
-	ds = devm_kzalloc(&mdiodev->dev, sizeof(*ds), GFP_KERNEL);
+	dev_info(&mdiodev->dev, "%s: 0x%0x\n",
+		 pdata->name, pdata->enabled_ports);
+
+	ds = dsa_switch_alloc(&mdiodev->dev, DSA_MAX_PORTS);
 	if (!ds)
 		return -ENOMEM;
-
-	ds->dev = &mdiodev->dev;
-	ds->num_ports = DSA_LOOP_NUM_PORTS;
 
 	ps = devm_kzalloc(&mdiodev->dev, sizeof(*ps), GFP_KERNEL);
 	if (!ps)
@@ -331,38 +300,16 @@ static int dsa_loop_drv_probe(struct mdio_device *mdiodev)
 
 	dev_set_drvdata(&mdiodev->dev, ds);
 
-	ret = dsa_register_switch(ds);
-	if (!ret)
-		dev_info(&mdiodev->dev, "%s: 0x%0x\n",
-			 pdata->name, pdata->enabled_ports);
-
-	return ret;
+	return dsa_register_switch(ds);
 }
 
 static void dsa_loop_drv_remove(struct mdio_device *mdiodev)
 {
 	struct dsa_switch *ds = dev_get_drvdata(&mdiodev->dev);
-	struct dsa_loop_priv *ps;
-
-	if (!ds)
-		return;
-
-	ps = ds->priv;
+	struct dsa_loop_priv *ps = ds->priv;
 
 	dsa_unregister_switch(ds);
 	dev_put(ps->netdev);
-}
-
-static void dsa_loop_drv_shutdown(struct mdio_device *mdiodev)
-{
-	struct dsa_switch *ds = dev_get_drvdata(&mdiodev->dev);
-
-	if (!ds)
-		return;
-
-	dsa_switch_shutdown(ds);
-
-	dev_set_drvdata(&mdiodev->dev, NULL);
 }
 
 static struct mdio_driver dsa_loop_drv = {
@@ -371,21 +318,9 @@ static struct mdio_driver dsa_loop_drv = {
 	},
 	.probe	= dsa_loop_drv_probe,
 	.remove	= dsa_loop_drv_remove,
-	.shutdown = dsa_loop_drv_shutdown,
 };
 
 #define NUM_FIXED_PHYS	(DSA_LOOP_NUM_PORTS - 2)
-
-static void dsa_loop_phydevs_unregister(void)
-{
-	unsigned int i;
-
-	for (i = 0; i < NUM_FIXED_PHYS; i++)
-		if (!IS_ERR(phydevs[i])) {
-			fixed_phy_unregister(phydevs[i]);
-			phy_device_free(phydevs[i]);
-		}
-}
 
 static int __init dsa_loop_init(void)
 {
@@ -394,27 +329,26 @@ static int __init dsa_loop_init(void)
 		.speed = SPEED_100,
 		.duplex = DUPLEX_FULL,
 	};
-	unsigned int i, ret;
+	unsigned int i;
 
 	for (i = 0; i < NUM_FIXED_PHYS; i++)
-		phydevs[i] = fixed_phy_register(PHY_POLL, &status, NULL);
+		phydevs[i] = fixed_phy_register(PHY_POLL, &status, -1, NULL);
 
-	ret = mdio_driver_register(&dsa_loop_drv);
-	if (ret)
-		dsa_loop_phydevs_unregister();
-
-	return ret;
+	return mdio_driver_register(&dsa_loop_drv);
 }
 module_init(dsa_loop_init);
 
 static void __exit dsa_loop_exit(void)
 {
+	unsigned int i;
+
 	mdio_driver_unregister(&dsa_loop_drv);
-	dsa_loop_phydevs_unregister();
+	for (i = 0; i < NUM_FIXED_PHYS; i++)
+		if (!IS_ERR(phydevs[i]))
+			fixed_phy_unregister(phydevs[i]);
 }
 module_exit(dsa_loop_exit);
 
-MODULE_SOFTDEP("pre: dsa_loop_bdinfo");
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Florian Fainelli");
 MODULE_DESCRIPTION("DSA loopback driver");

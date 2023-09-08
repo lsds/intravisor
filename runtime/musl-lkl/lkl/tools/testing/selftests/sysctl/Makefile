@@ -1,4 +1,3 @@
-# SPDX-License-Identifier: GPL-2.0-only
 # Makefile for sysctl selftests.
 # Expects kernel.sysctl_writes_strict=1.
 

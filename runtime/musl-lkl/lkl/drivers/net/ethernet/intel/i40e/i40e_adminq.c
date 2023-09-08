@@ -1,5 +1,29 @@
 // SPDX-License-Identifier: GPL-2.0
-/* Copyright(c) 2013 - 2018 Intel Corporation. */
+/*******************************************************************************
+ *
+ * Intel Ethernet Controller XL710 Family Linux Driver
+ * Copyright(c) 2013 - 2016 Intel Corporation.
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms and conditions of the GNU General Public License,
+ * version 2, as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+ * more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program.  If not, see <http://www.gnu.org/licenses/>.
+ *
+ * The full GNU General Public License is included in this distribution in
+ * the file called "COPYING".
+ *
+ * Contact Information:
+ * e1000-devel Mailing List <e1000-devel@lists.sourceforge.net>
+ * Intel Corporation, 5200 N.E. Elam Young Parkway, Hillsboro, OR 97124-6497
+ *
+ ******************************************************************************/
 
 #include "i40e_status.h"
 #include "i40e_type.h"
@@ -508,70 +532,6 @@ shutdown_arq_out:
 }
 
 /**
- *  i40e_set_hw_flags - set HW flags
- *  @hw: pointer to the hardware structure
- **/
-static void i40e_set_hw_flags(struct i40e_hw *hw)
-{
-	struct i40e_adminq_info *aq = &hw->aq;
-
-	hw->flags = 0;
-
-	switch (hw->mac.type) {
-	case I40E_MAC_XL710:
-		if (aq->api_maj_ver > 1 ||
-		    (aq->api_maj_ver == 1 &&
-		     aq->api_min_ver >= I40E_MINOR_VER_GET_LINK_INFO_XL710)) {
-			hw->flags |= I40E_HW_FLAG_AQ_PHY_ACCESS_CAPABLE;
-			hw->flags |= I40E_HW_FLAG_FW_LLDP_STOPPABLE;
-			/* The ability to RX (not drop) 802.1ad frames */
-			hw->flags |= I40E_HW_FLAG_802_1AD_CAPABLE;
-		}
-		break;
-	case I40E_MAC_X722:
-		hw->flags |= I40E_HW_FLAG_AQ_SRCTL_ACCESS_ENABLE |
-			     I40E_HW_FLAG_NVM_READ_REQUIRES_LOCK;
-
-		if (aq->api_maj_ver > 1 ||
-		    (aq->api_maj_ver == 1 &&
-		     aq->api_min_ver >= I40E_MINOR_VER_FW_LLDP_STOPPABLE_X722))
-			hw->flags |= I40E_HW_FLAG_FW_LLDP_STOPPABLE;
-
-		if (aq->api_maj_ver > 1 ||
-		    (aq->api_maj_ver == 1 &&
-		     aq->api_min_ver >= I40E_MINOR_VER_GET_LINK_INFO_X722))
-			hw->flags |= I40E_HW_FLAG_AQ_PHY_ACCESS_CAPABLE;
-
-		if (aq->api_maj_ver > 1 ||
-		    (aq->api_maj_ver == 1 &&
-		     aq->api_min_ver >= I40E_MINOR_VER_FW_REQUEST_FEC_X722))
-			hw->flags |= I40E_HW_FLAG_X722_FEC_REQUEST_CAPABLE;
-
-		fallthrough;
-	default:
-		break;
-	}
-
-	/* Newer versions of firmware require lock when reading the NVM */
-	if (aq->api_maj_ver > 1 ||
-	    (aq->api_maj_ver == 1 &&
-	     aq->api_min_ver >= 5))
-		hw->flags |= I40E_HW_FLAG_NVM_READ_REQUIRES_LOCK;
-
-	if (aq->api_maj_ver > 1 ||
-	    (aq->api_maj_ver == 1 &&
-	     aq->api_min_ver >= 8)) {
-		hw->flags |= I40E_HW_FLAG_FW_LLDP_PERSISTENT;
-		hw->flags |= I40E_HW_FLAG_DROP_MODE;
-	}
-
-	if (aq->api_maj_ver > 1 ||
-	    (aq->api_maj_ver == 1 &&
-	     aq->api_min_ver >= 9))
-		hw->flags |= I40E_HW_FLAG_AQ_PHY_ACCESS_EXTENDED;
-}
-
-/**
  *  i40e_init_adminq - main initialization routine for Admin Queue
  *  @hw: pointer to the hardware structure
  *
@@ -635,11 +595,6 @@ i40e_status i40e_init_adminq(struct i40e_hw *hw)
 	if (ret_code != I40E_SUCCESS)
 		goto init_adminq_free_arq;
 
-	/* Some features were introduced in different FW API version
-	 * for different MAC type.
-	 */
-	i40e_set_hw_flags(hw);
-
 	/* get the NVM version info */
 	i40e_read_nvm_word(hw, I40E_SR_NVM_DEV_STARTER_VERSION,
 			   &hw->nvm.version);
@@ -657,13 +612,13 @@ i40e_status i40e_init_adminq(struct i40e_hw *hw)
 	    hw->aq.api_maj_ver == I40E_FW_API_VERSION_MAJOR &&
 	    hw->aq.api_min_ver >= I40E_MINOR_VER_GET_LINK_INFO_XL710) {
 		hw->flags |= I40E_HW_FLAG_AQ_PHY_ACCESS_CAPABLE;
-		hw->flags |= I40E_HW_FLAG_FW_LLDP_STOPPABLE;
 	}
-	if (hw->mac.type == I40E_MAC_X722 &&
-	    hw->aq.api_maj_ver == I40E_FW_API_VERSION_MAJOR &&
-	    hw->aq.api_min_ver >= I40E_MINOR_VER_FW_LLDP_STOPPABLE_X722) {
-		hw->flags |= I40E_HW_FLAG_FW_LLDP_STOPPABLE;
-	}
+
+	/* Newer versions of firmware require lock when reading the NVM */
+	if (hw->aq.api_maj_ver > 1 ||
+	    (hw->aq.api_maj_ver == 1 &&
+	     hw->aq.api_min_ver >= 5))
+		hw->flags |= I40E_HW_FLAG_NVM_READ_REQUIRES_LOCK;
 
 	/* The ability to RX (not drop) 802.1ad frames was added in API 1.7 */
 	if (hw->aq.api_maj_ver > 1 ||
@@ -700,8 +655,10 @@ init_adminq_exit:
  *  i40e_shutdown_adminq - shutdown routine for the Admin Queue
  *  @hw: pointer to the hardware structure
  **/
-void i40e_shutdown_adminq(struct i40e_hw *hw)
+i40e_status i40e_shutdown_adminq(struct i40e_hw *hw)
 {
+	i40e_status ret_code = 0;
+
 	if (i40e_check_asq_alive(hw))
 		i40e_aq_queue_shutdown(hw, true);
 
@@ -710,6 +667,8 @@ void i40e_shutdown_adminq(struct i40e_hw *hw)
 
 	if (hw->nvm_buff.va)
 		i40e_free_virt_mem(hw, &hw->nvm_buff);
+
+	return ret_code;
 }
 
 /**
@@ -729,7 +688,7 @@ static u16 i40e_clean_asq(struct i40e_hw *hw)
 	desc = I40E_ADMINQ_DESC(*asq, ntc);
 	details = I40E_ADMINQ_DETAILS(*asq, ntc);
 	while (rd32(hw, hw->aq.asq.head) != ntc) {
-		i40e_debug(hw, I40E_DEBUG_AQ_COMMAND,
+		i40e_debug(hw, I40E_DEBUG_AQ_MESSAGE,
 			   "ntc %d head %d.\n", ntc, rd32(hw, hw->aq.asq.head));
 
 		if (details->callback) {
@@ -769,24 +728,21 @@ static bool i40e_asq_done(struct i40e_hw *hw)
 }
 
 /**
- *  i40e_asq_send_command_atomic_exec - send command to Admin Queue
+ *  i40e_asq_send_command - send command to Admin Queue
  *  @hw: pointer to the hw struct
  *  @desc: prefilled descriptor describing the command (non DMA mem)
  *  @buff: buffer to use for indirect commands
  *  @buff_size: size of buffer for indirect commands
  *  @cmd_details: pointer to command details structure
- *  @is_atomic_context: is the function called in an atomic context?
  *
  *  This is the main send command driver routine for the Admin Queue send
  *  queue.  It runs the queue, cleans the queue, etc
  **/
-static i40e_status
-i40e_asq_send_command_atomic_exec(struct i40e_hw *hw,
-				  struct i40e_aq_desc *desc,
-				  void *buff, /* can be NULL */
-				  u16  buff_size,
-				  struct i40e_asq_cmd_details *cmd_details,
-				  bool is_atomic_context)
+i40e_status i40e_asq_send_command(struct i40e_hw *hw,
+				struct i40e_aq_desc *desc,
+				void *buff, /* can be NULL */
+				u16  buff_size,
+				struct i40e_asq_cmd_details *cmd_details)
 {
 	i40e_status status = 0;
 	struct i40e_dma_mem *dma_buff = NULL;
@@ -795,6 +751,8 @@ i40e_asq_send_command_atomic_exec(struct i40e_hw *hw,
 	bool cmd_completed = false;
 	u16  retval = 0;
 	u32  val = 0;
+
+	mutex_lock(&hw->aq.asq_mutex);
 
 	if (hw->aq.asq.count == 0) {
 		i40e_debug(hw, I40E_DEBUG_AQ_MESSAGE,
@@ -809,7 +767,7 @@ i40e_asq_send_command_atomic_exec(struct i40e_hw *hw,
 	if (val >= hw->aq.num_asq_entries) {
 		i40e_debug(hw, I40E_DEBUG_AQ_MESSAGE,
 			   "AQTX: head overrun at %d\n", val);
-		status = I40E_ERR_ADMIN_QUEUE_FULL;
+		status = I40E_ERR_QUEUE_EMPTY;
 		goto asq_send_command_error;
 	}
 
@@ -890,7 +848,7 @@ i40e_asq_send_command_atomic_exec(struct i40e_hw *hw,
 	}
 
 	/* bump the tail */
-	i40e_debug(hw, I40E_DEBUG_AQ_COMMAND, "AQTX: desc and buffer:\n");
+	i40e_debug(hw, I40E_DEBUG_AQ_MESSAGE, "AQTX: desc and buffer:\n");
 	i40e_debug_aq(hw, I40E_DEBUG_AQ_COMMAND, (void *)desc_on_ring,
 		      buff, buff_size);
 	(hw->aq.asq.next_to_use)++;
@@ -911,12 +869,7 @@ i40e_asq_send_command_atomic_exec(struct i40e_hw *hw,
 			 */
 			if (i40e_asq_done(hw))
 				break;
-
-			if (is_atomic_context)
-				udelay(50);
-			else
-				usleep_range(40, 60);
-
+			udelay(50);
 			total_delay += 50;
 		} while (total_delay < hw->aq.asq_cmd_timeout);
 	}
@@ -939,14 +892,12 @@ i40e_asq_send_command_atomic_exec(struct i40e_hw *hw,
 		cmd_completed = true;
 		if ((enum i40e_admin_queue_err)retval == I40E_AQ_RC_OK)
 			status = 0;
-		else if ((enum i40e_admin_queue_err)retval == I40E_AQ_RC_EBUSY)
-			status = I40E_ERR_NOT_READY;
 		else
 			status = I40E_ERR_ADMIN_QUEUE_ERROR;
 		hw->aq.asq_last_status = (enum i40e_admin_queue_err)retval;
 	}
 
-	i40e_debug(hw, I40E_DEBUG_AQ_COMMAND,
+	i40e_debug(hw, I40E_DEBUG_AQ_MESSAGE,
 		   "AQTX: desc and buffer writeback:\n");
 	i40e_debug_aq(hw, I40E_DEBUG_AQ_COMMAND, (void *)desc, buff, buff_size);
 
@@ -969,93 +920,8 @@ i40e_asq_send_command_atomic_exec(struct i40e_hw *hw,
 	}
 
 asq_send_command_error:
-	return status;
-}
-
-/**
- *  i40e_asq_send_command_atomic - send command to Admin Queue
- *  @hw: pointer to the hw struct
- *  @desc: prefilled descriptor describing the command (non DMA mem)
- *  @buff: buffer to use for indirect commands
- *  @buff_size: size of buffer for indirect commands
- *  @cmd_details: pointer to command details structure
- *  @is_atomic_context: is the function called in an atomic context?
- *
- *  Acquires the lock and calls the main send command execution
- *  routine.
- **/
-i40e_status
-i40e_asq_send_command_atomic(struct i40e_hw *hw,
-			     struct i40e_aq_desc *desc,
-			     void *buff, /* can be NULL */
-			     u16  buff_size,
-			     struct i40e_asq_cmd_details *cmd_details,
-			     bool is_atomic_context)
-{
-	i40e_status status;
-
-	mutex_lock(&hw->aq.asq_mutex);
-	status = i40e_asq_send_command_atomic_exec(hw, desc, buff, buff_size,
-						   cmd_details,
-						   is_atomic_context);
-
 	mutex_unlock(&hw->aq.asq_mutex);
 	return status;
-}
-
-i40e_status
-i40e_asq_send_command(struct i40e_hw *hw, struct i40e_aq_desc *desc,
-		      void *buff, /* can be NULL */ u16  buff_size,
-		      struct i40e_asq_cmd_details *cmd_details)
-{
-	return i40e_asq_send_command_atomic(hw, desc, buff, buff_size,
-					    cmd_details, false);
-}
-
-/**
- *  i40e_asq_send_command_atomic_v2 - send command to Admin Queue
- *  @hw: pointer to the hw struct
- *  @desc: prefilled descriptor describing the command (non DMA mem)
- *  @buff: buffer to use for indirect commands
- *  @buff_size: size of buffer for indirect commands
- *  @cmd_details: pointer to command details structure
- *  @is_atomic_context: is the function called in an atomic context?
- *  @aq_status: pointer to Admin Queue status return value
- *
- *  Acquires the lock and calls the main send command execution
- *  routine. Returns the last Admin Queue status in aq_status
- *  to avoid race conditions in access to hw->aq.asq_last_status.
- **/
-i40e_status
-i40e_asq_send_command_atomic_v2(struct i40e_hw *hw,
-				struct i40e_aq_desc *desc,
-				void *buff, /* can be NULL */
-				u16  buff_size,
-				struct i40e_asq_cmd_details *cmd_details,
-				bool is_atomic_context,
-				enum i40e_admin_queue_err *aq_status)
-{
-	i40e_status status;
-
-	mutex_lock(&hw->aq.asq_mutex);
-	status = i40e_asq_send_command_atomic_exec(hw, desc, buff,
-						   buff_size,
-						   cmd_details,
-						   is_atomic_context);
-	if (aq_status)
-		*aq_status = hw->aq.asq_last_status;
-	mutex_unlock(&hw->aq.asq_mutex);
-	return status;
-}
-
-i40e_status
-i40e_asq_send_command_v2(struct i40e_hw *hw, struct i40e_aq_desc *desc,
-			 void *buff, /* can be NULL */ u16  buff_size,
-			 struct i40e_asq_cmd_details *cmd_details,
-			 enum i40e_admin_queue_err *aq_status)
-{
-	return i40e_asq_send_command_atomic_v2(hw, desc, buff, buff_size,
-					       cmd_details, true, aq_status);
 }
 
 /**
@@ -1140,7 +1006,7 @@ i40e_status i40e_clean_arq_element(struct i40e_hw *hw,
 		memcpy(e->msg_buf, hw->aq.arq.r.arq_bi[desc_idx].va,
 		       e->msg_len);
 
-	i40e_debug(hw, I40E_DEBUG_AQ_COMMAND, "AQRX: desc and buffer:\n");
+	i40e_debug(hw, I40E_DEBUG_AQ_MESSAGE, "AQRX: desc and buffer:\n");
 	i40e_debug_aq(hw, I40E_DEBUG_AQ_COMMAND, (void *)desc, e->msg_buf,
 		      hw->aq.arq_buf_size);
 

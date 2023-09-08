@@ -1,8 +1,16 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
- * Intel BXT WhiskeyCove PMIC operation region driver
+ * intel_pmic_bxtwc.c - Intel BXT WhiskeyCove PMIC operation region driver
  *
  * Copyright (C) 2015 Intel Corporation. All rights reserved.
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License version
+ * 2 as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
  */
 
 #include <linux/init.h>
@@ -369,14 +377,13 @@ intel_bxtwc_pmic_update_policy(struct regmap *regmap,
 	return regmap_update_bits(regmap, reg, mask, val);
 }
 
-static const struct intel_pmic_opregion_data intel_bxtwc_pmic_opregion_data = {
+static struct intel_pmic_opregion_data intel_bxtwc_pmic_opregion_data = {
 	.get_power      = intel_bxtwc_pmic_get_power,
 	.update_power   = intel_bxtwc_pmic_update_power,
 	.get_raw_temp   = intel_bxtwc_pmic_get_raw_temp,
 	.update_aux     = intel_bxtwc_pmic_update_aux,
 	.get_policy     = intel_bxtwc_pmic_get_policy,
 	.update_policy  = intel_bxtwc_pmic_update_policy,
-	.lpat_raw_to_temp = acpi_lpat_raw_to_temp,
 	.power_table      = power_table,
 	.power_table_count = ARRAY_SIZE(power_table),
 	.thermal_table     = thermal_table,

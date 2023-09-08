@@ -1,9 +1,13 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * driver for the i2c-tiny-usb adapter - 1.0
  * http://www.harbaum.org/till/i2c_tiny_usb
  *
  * Copyright (C) 2006-2007 Till Harbaum (Till@Harbaum.org)
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License as
+ * published by the Free Software Foundation, version 2.
+ *
  */
 
 #include <linux/kernel.h>
@@ -84,7 +88,7 @@ static int usb_xfer(struct i2c_adapter *adapter, struct i2c_msg *msgs, int num)
 				     pmsg->buf, pmsg->len) != pmsg->len) {
 				dev_err(&adapter->dev,
 					"failure reading data\n");
-				ret = -EIO;
+				ret = -EREMOTEIO;
 				goto out;
 			}
 		} else {
@@ -94,7 +98,7 @@ static int usb_xfer(struct i2c_adapter *adapter, struct i2c_msg *msgs, int num)
 				      pmsg->buf, pmsg->len) != pmsg->len) {
 				dev_err(&adapter->dev,
 					"failure writing data\n");
-				ret = -EIO;
+				ret = -EREMOTEIO;
 				goto out;
 			}
 		}
@@ -102,13 +106,13 @@ static int usb_xfer(struct i2c_adapter *adapter, struct i2c_msg *msgs, int num)
 		/* read status */
 		if (usb_read(adapter, CMD_GET_STATUS, 0, 0, pstatus, 1) != 1) {
 			dev_err(&adapter->dev, "failure reading status\n");
-			ret = -EIO;
+			ret = -EREMOTEIO;
 			goto out;
 		}
 
 		dev_dbg(&adapter->dev, "  status = %d\n", *pstatus);
 		if (*pstatus == STATUS_ADDRESS_NAK) {
-			ret = -ENXIO;
+			ret = -EREMOTEIO;
 			goto out;
 		}
 	}

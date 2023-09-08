@@ -1,16 +1,19 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Support for CompuLab CL-SOM-AM57x System-on-Module
  *
  * Copyright (C) 2015 CompuLab Ltd. - http://www.compulab.co.il/
  * Author: Dmitry Lifshitz <lifshitz@compulab.co.il>
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License version 2 as published by
+ * the Free Software Foundation.
  */
 
 /dts-v1/;
 
 #include <dt-bindings/gpio/gpio.h>
 #include <dt-bindings/interrupt-controller/irq.h>
-#include "am5728.dtsi"
+#include "dra74x.dtsi"
 
 / {
 	model = "CompuLab CL-SOM-AM57x";
@@ -454,20 +457,20 @@
 
 &mailbox5 {
 	status = "okay";
-	mbox_ipu1_ipc3x: mbox-ipu1-ipc3x {
+	mbox_ipu1_ipc3x: mbox_ipu1_ipc3x {
 		status = "okay";
 	};
-	mbox_dsp1_ipc3x: mbox-dsp1-ipc3x {
+	mbox_dsp1_ipc3x: mbox_dsp1_ipc3x {
 		status = "okay";
 	};
 };
 
 &mailbox6 {
 	status = "okay";
-	mbox_ipu2_ipc3x: mbox-ipu2-ipc3x {
+	mbox_ipu2_ipc3x: mbox_ipu2_ipc3x {
 		status = "okay";
 	};
-	mbox_dsp2_ipc3x: mbox-dsp2-ipc3x {
+	mbox_dsp2_ipc3x: mbox_dsp2_ipc3x {
 		status = "okay";
 	};
 };
@@ -491,7 +494,7 @@
 
 	spi-max-frequency = <48000000>;
 
-	spi_flash: flash@0 {
+	spi_flash: spi_flash@0 {
 		#address-cells = <1>;
 		#size-cells = <1>;
 		compatible = "spansion,m25p80", "jedec,spi-nor";
@@ -515,7 +518,7 @@
 	};
 
 	/* touch controller */
-	touchscreen@1 {
+	ads7846@0 {
 		pinctrl-names = "default";
 		pinctrl-0 = <&ads7846_pins>;
 
@@ -546,37 +549,30 @@
 	};
 };
 
-&mac_sw {
+&mac {
 	status = "okay";
 	pinctrl-names = "default", "sleep";
 	pinctrl-0 = <&cpsw_pins_default>;
 	pinctrl-1 = <&cpsw_pins_sleep>;
+	dual_emac;
 };
 
-&cpsw_port1 {
-	phy-handle = <&ethphy0>;
+&cpsw_emac0 {
+	phy_id = <&davinci_mdio>, <0>;
 	phy-mode = "rgmii-txid";
-	ti,dual-emac-pvid = <1>;
+	dual_emac_res_vlan = <0>;
 };
 
-&cpsw_port2 {
-	phy-handle = <&ethphy1>;
+&cpsw_emac1 {
+	phy_id = <&davinci_mdio>, <1>;
 	phy-mode = "rgmii-txid";
-	ti,dual-emac-pvid = <2>;
+	dual_emac_res_vlan = <1>;
 };
 
-&davinci_mdio_sw {
+&davinci_mdio {
 	pinctrl-names = "default", "sleep";
 	pinctrl-0 = <&davinci_mdio_pins_default>;
 	pinctrl-1 = <&davinci_mdio_pins_sleep>;
-
-	ethphy0: ethernet-phy@0 {
-		reg = <0>;
-	};
-
-	ethphy1: ethernet-phy@1 {
-		reg = <1>;
-	};
 };
 
 &usb2_phy1 {
@@ -610,19 +606,12 @@
 	>;
 };
 
-&gpio3_target {
-	ti,no-reset-on-init;
-};
-
-&gpio2_target {
+&gpio3 {
 	status = "okay";
 	ti,no-reset-on-init;
 };
 
-&pruss1_mdio {
-	status = "disabled";
-};
-
-&pruss2_mdio {
-	status = "disabled";
+&gpio2 {
+	status = "okay";
+	ti,no-reset-on-init;
 };

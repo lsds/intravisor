@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Host AP (software wireless LAN access point) driver for
  * Intersil Prism2/2.5/3 - hostap.o module, common routines
@@ -6,6 +5,11 @@
  * Copyright (c) 2001-2002, SSH Communications Security Corp and Jouni Malinen
  * <j@w1.fi>
  * Copyright (c) 2002-2005, Jouni Malinen <j@w1.fi>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation. See README and COPYING for
+ * more details.
  */
 
 #include <linux/module.h>
@@ -686,7 +690,7 @@ static int prism2_open(struct net_device *dev)
 		/* Master radio interface is needed for all operation, so open
 		 * it automatically when any virtual net_device is opened. */
 		local->master_dev_auto_open = 1;
-		dev_open(local->dev, NULL);
+		dev_open(local->dev);
 	}
 
 	netif_device_attach(dev);
@@ -713,9 +717,9 @@ static int prism2_set_mac_address(struct net_device *dev, void *p)
 	read_lock_bh(&local->iface_lock);
 	list_for_each(ptr, &local->hostap_interfaces) {
 		iface = list_entry(ptr, struct hostap_interface, list);
-		eth_hw_addr_set(iface->dev, addr->sa_data);
+		memcpy(iface->dev->dev_addr, addr->sa_data, ETH_ALEN);
 	}
-	eth_hw_addr_set(local->dev, addr->sa_data);
+	memcpy(local->dev->dev_addr, addr->sa_data, ETH_ALEN);
 	read_unlock_bh(&local->iface_lock);
 
 	return 0;
@@ -761,7 +765,7 @@ static void hostap_set_multicast_list(struct net_device *dev)
 }
 
 
-static void prism2_tx_timeout(struct net_device *dev, unsigned int txqueue)
+static void prism2_tx_timeout(struct net_device *dev)
 {
 	struct hostap_interface *iface;
 	local_info_t *local;
@@ -797,7 +801,6 @@ static const struct net_device_ops hostap_netdev_ops = {
 	.ndo_open		= prism2_open,
 	.ndo_stop		= prism2_close,
 	.ndo_do_ioctl		= hostap_ioctl,
-	.ndo_siocdevprivate	= hostap_siocdevprivate,
 	.ndo_set_mac_address	= prism2_set_mac_address,
 	.ndo_set_rx_mode	= hostap_set_multicast_list,
 	.ndo_tx_timeout 	= prism2_tx_timeout,
@@ -810,7 +813,6 @@ static const struct net_device_ops hostap_mgmt_netdev_ops = {
 	.ndo_open		= prism2_open,
 	.ndo_stop		= prism2_close,
 	.ndo_do_ioctl		= hostap_ioctl,
-	.ndo_siocdevprivate	= hostap_siocdevprivate,
 	.ndo_set_mac_address	= prism2_set_mac_address,
 	.ndo_set_rx_mode	= hostap_set_multicast_list,
 	.ndo_tx_timeout 	= prism2_tx_timeout,
@@ -823,7 +825,6 @@ static const struct net_device_ops hostap_master_ops = {
 	.ndo_open		= prism2_open,
 	.ndo_stop		= prism2_close,
 	.ndo_do_ioctl		= hostap_ioctl,
-	.ndo_siocdevprivate	= hostap_siocdevprivate,
 	.ndo_set_mac_address	= prism2_set_mac_address,
 	.ndo_set_rx_mode	= hostap_set_multicast_list,
 	.ndo_tx_timeout 	= prism2_tx_timeout,

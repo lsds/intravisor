@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0-or-later */
 /**
  * eCryptfs: Linux filesystem encryption layer
  * Kernel declarations.
@@ -8,7 +7,22 @@
  * Copyright (C) 2004-2008 International Business Machines Corp.
  *   Author(s): Michael A. Halcrow <mahalcro@us.ibm.com>
  *              Trevor S. Highland <trevor.highland@gmail.com>
- *              Tyler Hicks <code@tyhicks.com>
+ *              Tyler Hicks <tyhicks@ou.edu>
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License as
+ * published by the Free Software Foundation; either version 2 of the
+ * License, or (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
+ * 02111-1307, USA.
  */
 
 #ifndef ECRYPTFS_KERNEL_H
@@ -262,7 +276,10 @@ struct ecryptfs_inode_info {
  * vfsmount too. */
 struct ecryptfs_dentry_info {
 	struct path lower_path;
-	struct rcu_head rcu;
+	union {
+		struct ecryptfs_crypt_stat *crypt_stat;
+		struct rcu_head rcu;
+	};
 };
 
 /**
@@ -493,6 +510,12 @@ ecryptfs_set_superblock_lower(struct super_block *sb,
 	((struct ecryptfs_sb_info *)sb->s_fs_info)->wsi_sb = lower_sb;
 }
 
+static inline struct ecryptfs_dentry_info *
+ecryptfs_dentry_to_private(struct dentry *dentry)
+{
+	return (struct ecryptfs_dentry_info *)dentry->d_fsdata;
+}
+
 static inline void
 ecryptfs_set_dentry_private(struct dentry *dentry,
 			    struct ecryptfs_dentry_info *dentry_info)
@@ -506,14 +529,20 @@ ecryptfs_dentry_to_lower(struct dentry *dentry)
 	return ((struct ecryptfs_dentry_info *)dentry->d_fsdata)->lower_path.dentry;
 }
 
-static inline const struct path *
+static inline struct vfsmount *
+ecryptfs_dentry_to_lower_mnt(struct dentry *dentry)
+{
+	return ((struct ecryptfs_dentry_info *)dentry->d_fsdata)->lower_path.mnt;
+}
+
+static inline struct path *
 ecryptfs_dentry_to_lower_path(struct dentry *dentry)
 {
 	return &((struct ecryptfs_dentry_info *)dentry->d_fsdata)->lower_path;
 }
 
 #define ecryptfs_printk(type, fmt, arg...) \
-        __ecryptfs_printk(type "%s: " fmt, __func__, ## arg)
+        __ecryptfs_printk(type "%s: " fmt, __func__, ## arg);
 __printf(1, 2)
 void __ecryptfs_printk(const char *fmt, ...);
 

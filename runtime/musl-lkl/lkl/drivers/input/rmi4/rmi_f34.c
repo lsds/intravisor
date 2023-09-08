@@ -1,7 +1,10 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2007-2016, Synaptics Incorporated
  * Copyright (C) 2016 Zodiac Inflight Innovations
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License version 2 as published by
+ * the Free Software Foundation.
  */
 
 #include <linux/kernel.h>
@@ -97,9 +100,8 @@ static int rmi_f34_command(struct f34_data *f34, u8 command,
 	return 0;
 }
 
-static irqreturn_t rmi_f34_attention(int irq, void *ctx)
+static int rmi_f34_attention(struct rmi_function *fn, unsigned long *irq_bits)
 {
-	struct rmi_function *fn = ctx;
 	struct f34_data *f34 = dev_get_drvdata(&fn->dev);
 	int ret;
 	u8 status;
@@ -114,17 +116,17 @@ static irqreturn_t rmi_f34_attention(int irq, void *ctx)
 			complete(&f34->v5.cmd_done);
 	} else {
 		ret = rmi_read_block(f34->fn->rmi_dev,
-					f34->fn->fd.data_base_addr +
-						V7_COMMAND_OFFSET,
-					&status, sizeof(status));
-		rmi_dbg(RMI_DEBUG_FN, &f34->fn->dev, "%s: cmd: %#02x, ret: %d\n",
+				     f34->fn->fd.data_base_addr +
+						f34->v7.off.flash_status,
+				     &status, sizeof(status));
+		rmi_dbg(RMI_DEBUG_FN, &fn->dev, "%s: status: %#02x, ret: %d\n",
 			__func__, status, ret);
 
-		if (!ret && status == CMD_V7_IDLE)
+		if (!ret && !(status & 0x1f))
 			complete(&f34->v7.cmd_done);
 	}
 
-	return IRQ_HANDLED;
+	return 0;
 }
 
 static int rmi_f34_write_blocks(struct f34_data *f34, const void *data,
@@ -321,13 +323,13 @@ static ssize_t rmi_driver_bootloader_id_show(struct device *dev,
 		f34 = dev_get_drvdata(&fn->dev);
 
 		if (f34->bl_version == 5)
-			return sysfs_emit(buf, "%c%c\n",
-					  f34->bootloader_id[0],
-					  f34->bootloader_id[1]);
+			return scnprintf(buf, PAGE_SIZE, "%c%c\n",
+					 f34->bootloader_id[0],
+					 f34->bootloader_id[1]);
 		else
-			return sysfs_emit(buf, "V%d.%d\n",
-					  f34->bootloader_id[1],
-					  f34->bootloader_id[0]);
+			return scnprintf(buf, PAGE_SIZE, "V%d.%d\n",
+					 f34->bootloader_id[1],
+					 f34->bootloader_id[0]);
 	}
 
 	return 0;
@@ -346,7 +348,7 @@ static ssize_t rmi_driver_configuration_id_show(struct device *dev,
 	if (fn) {
 		f34 = dev_get_drvdata(&fn->dev);
 
-		return sysfs_emit(buf, "%s\n", f34->configuration_id);
+		return scnprintf(buf, PAGE_SIZE, "%s\n", f34->configuration_id);
 	}
 
 	return 0;
@@ -370,7 +372,7 @@ static int rmi_firmware_update(struct rmi_driver_data *data,
 
 	f34 = dev_get_drvdata(&data->f34_container->dev);
 
-	if (f34->bl_version >= 7) {
+	if (f34->bl_version == 7) {
 		if (data->pdt_props & HAS_BSR) {
 			dev_err(dev, "%s: LTS not supported\n", __func__);
 			return -ENODEV;
@@ -382,7 +384,7 @@ static int rmi_firmware_update(struct rmi_driver_data *data,
 	}
 
 	/* Enter flash mode */
-	if (f34->bl_version >= 7)
+	if (f34->bl_version == 7)
 		ret = rmi_f34v7_start_reflash(f34, fw);
 	else
 		ret = rmi_f34_enable_flash(f34);
@@ -413,7 +415,7 @@ static int rmi_firmware_update(struct rmi_driver_data *data,
 	f34 = dev_get_drvdata(&data->f34_container->dev);
 
 	/* Perform firmware update */
-	if (f34->bl_version >= 7)
+	if (f34->bl_version == 7)
 		ret = rmi_f34v7_do_reflash(f34, fw);
 	else
 		ret = rmi_f34_update_firmware(f34, fw);
@@ -499,7 +501,7 @@ static ssize_t rmi_driver_update_fw_status_show(struct device *dev,
 	if (data->f34_container)
 		update_status = rmi_f34_status(data->f34_container);
 
-	return sysfs_emit(buf, "%d\n", update_status);
+	return scnprintf(buf, PAGE_SIZE, "%d\n", update_status);
 }
 
 static DEVICE_ATTR(update_fw_status, 0444,

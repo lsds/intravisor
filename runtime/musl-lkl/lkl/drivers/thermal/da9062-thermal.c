@@ -1,7 +1,16 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Thermal device driver for DA9062 and DA9061
  * Copyright (C) 2017  Dialog Semiconductor
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version 2
+ * of the License, or (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
  */
 
 /* When over-temperature is reached, an interrupt from the device will be
@@ -49,6 +58,7 @@ struct da9062_thermal {
 	struct da9062 *hw;
 	struct delayed_work work;
 	struct thermal_zone_device *zone;
+	enum thermal_device_mode mode;
 	struct mutex lock; /* protection for da9062_thermal temperature */
 	int temperature;
 	int irq;
@@ -95,8 +105,8 @@ static void da9062_thermal_poll_on(struct work_struct *work)
 		thermal_zone_device_update(thermal->zone,
 					   THERMAL_EVENT_UNSPECIFIED);
 
-		delay = thermal->zone->passive_delay_jiffies;
-		queue_delayed_work(system_freezable_wq, &thermal->work, delay);
+		delay = msecs_to_jiffies(thermal->zone->passive_delay);
+		schedule_delayed_work(&thermal->work, delay);
 		return;
 	}
 
@@ -115,9 +125,17 @@ static irqreturn_t da9062_thermal_irq_handler(int irq, void *data)
 	struct da9062_thermal *thermal = data;
 
 	disable_irq_nosync(thermal->irq);
-	queue_delayed_work(system_freezable_wq, &thermal->work, 0);
+	schedule_delayed_work(&thermal->work, 0);
 
 	return IRQ_HANDLED;
+}
+
+static int da9062_thermal_get_mode(struct thermal_zone_device *z,
+				   enum thermal_device_mode *mode)
+{
+	struct da9062_thermal *thermal = z->devdata;
+	*mode = thermal->mode;
+	return 0;
 }
 
 static int da9062_thermal_get_trip_type(struct thermal_zone_device *z,
@@ -172,6 +190,7 @@ static int da9062_thermal_get_temp(struct thermal_zone_device *z,
 
 static struct thermal_zone_device_ops da9062_thermal_ops = {
 	.get_temp	= da9062_thermal_get_temp,
+	.get_mode	= da9062_thermal_get_mode,
 	.get_trip_type	= da9062_thermal_get_trip_type,
 	.get_trip_temp	= da9062_thermal_get_trip_temp,
 };
@@ -223,6 +242,7 @@ static int da9062_thermal_probe(struct platform_device *pdev)
 
 	thermal->config = match->data;
 	thermal->hw = chip;
+	thermal->mode = THERMAL_DEVICE_ENABLED;
 	thermal->dev = &pdev->dev;
 
 	INIT_DELAYED_WORK(&thermal->work, da9062_thermal_poll_on);
@@ -237,20 +257,16 @@ static int da9062_thermal_probe(struct platform_device *pdev)
 		ret = PTR_ERR(thermal->zone);
 		goto err;
 	}
-	ret = thermal_zone_device_enable(thermal->zone);
-	if (ret) {
-		dev_err(&pdev->dev, "Cannot enable thermal zone device\n");
-		goto err_zone;
-	}
 
 	dev_dbg(&pdev->dev,
 		"TJUNC temperature polling period set at %d ms\n",
-		jiffies_to_msecs(thermal->zone->passive_delay_jiffies));
+		thermal->zone->passive_delay);
 
 	ret = platform_get_irq_byname(pdev, "THERMAL");
-	if (ret < 0)
+	if (ret < 0) {
+		dev_err(&pdev->dev, "Failed to get platform IRQ.\n");
 		goto err_zone;
-
+	}
 	thermal->irq = ret;
 
 	ret = request_threaded_irq(thermal->irq, NULL,

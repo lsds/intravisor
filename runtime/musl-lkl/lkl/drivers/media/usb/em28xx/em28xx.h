@@ -8,6 +8,16 @@
  * Copyright (C) 2012 Frank Schäfer <fschaefer.oss@googlemail.com>
  *
  * Based on the em2800 driver from Sascha Sommer <saschasommer@freenet.de>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
  */
 
 #ifndef _EM28XX_H
@@ -31,7 +41,7 @@
 #include <media/v4l2-fh.h>
 #include <media/i2c/ir-kbd-i2c.h>
 #include <media/rc-core.h>
-#include "xc2028.h"
+#include "tuner-xc2028.h"
 #include "xc5000.h"
 #include "em28xx-reg.h"
 
@@ -138,11 +148,6 @@
 #define EM28174_BOARD_HAUPPAUGE_WINTV_DUALHD_DVB  99
 #define EM28174_BOARD_HAUPPAUGE_WINTV_DUALHD_01595 100
 #define EM2884_BOARD_TERRATEC_H6		  101
-#define EM2882_BOARD_ZOLID_HYBRID_TV_STICK		102
-#define EM2861_BOARD_MAGIX_VIDEOWANDLER2          103
-#define EM28178_BOARD_PCTV_461E_V2                104
-#define EM2860_BOARD_MYGICA_IGRABBER              105
-#define EM2874_BOARD_HAUPPAUGE_USB_QUADHD         106
 
 /* Limits minimum and default number of buffers */
 #define EM28XX_MIN_BUF 4
@@ -245,11 +250,13 @@ struct em28xx_usb_ctl {
 /**
  * struct em28xx_fmt - Struct to enumberate video formats
  *
+ * @name:	Name for the video standard
  * @fourcc:	v4l2 format id
  * @depth:	mean number of bits to represent a pixel
  * @reg:	em28xx register value to set it
  */
 struct em28xx_fmt {
+	char	*name;
 	u32	fourcc;
 	int	depth;
 	int	reg;
@@ -325,11 +332,8 @@ enum em28xx_usb_audio_type {
 };
 
 /**
- * enum em28xx_amux - describes the type of audio input used by em28xx
+ * em28xx_amux - describes the type of audio input used by em28xx
  *
- * @EM28XX_AMUX_UNUSED:
- *	Used only on em28xx dev->map field, in order to mark an entry
- *	as unused.
  * @EM28XX_AMUX_VIDEO:
  *	On devices without AC97, this is the only value that it is currently
  *	allowed.
@@ -364,8 +368,7 @@ enum em28xx_usb_audio_type {
  * same time, via the alsa mux.
  */
 enum em28xx_amux {
-	EM28XX_AMUX_UNUSED = -1,
-	EM28XX_AMUX_VIDEO = 0,
+	EM28XX_AMUX_VIDEO,
 	EM28XX_AMUX_LINE_IN,
 
 	/* Some less-common mixer setups */
@@ -618,6 +621,8 @@ struct em28xx_audio {
 	atomic_t       stream_started;	/* stream should be running if true */
 };
 
+struct em28xx;
+
 enum em28xx_i2c_algo_type {
 	EM28XX_I2C_ALGO_EM28XX = 0,
 	EM28XX_I2C_ALGO_EM2800,
@@ -647,7 +652,7 @@ struct em28xx {
 	enum em28xx_chip_id chip_id;
 
 	unsigned int is_em25xx:1;	// em25xx/em276x/7x/8x family bridge
-	unsigned int disconnected:1;	// device has been disconnected
+	unsigned int disconnected:1;	// device has been diconnected
 	unsigned int has_video:1;
 	unsigned int is_audio_only:1;
 	unsigned int is_webcam:1;
@@ -686,8 +691,6 @@ struct em28xx {
 	unsigned int ctl_input;	// selected input
 	unsigned int ctl_ainput;// selected audio input
 	unsigned int ctl_aoutput;// selected audio output
-	enum em28xx_amux amux_map[MAX_EM28XX_INPUT];
-
 	int mute;
 	int volume;
 

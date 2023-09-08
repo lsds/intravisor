@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * INET		An implementation of the TCP/IP protocol suite for the LINUX
  *		operating system.  INET is implemented using the  BSD Socket
@@ -26,13 +25,17 @@
  *					split functions for more readibility.
  *	Andi Kleen		:	Add support for /proc/net/netstat
  *	Arnaldo C. Melo		:	Convert to seq_file
+ *
+ *		This program is free software; you can redistribute it and/or
+ *		modify it under the terms of the GNU General Public License
+ *		as published by the Free Software Foundation; either version
+ *		2 of the License, or (at your option) any later version.
  */
 #include <linux/types.h>
 #include <net/net_namespace.h>
 #include <net/icmp.h>
 #include <net/protocol.h>
 #include <net/tcp.h>
-#include <net/mptcp.h>
 #include <net/udp.h>
 #include <net/udplite.h>
 #include <linux/bottom_half.h>
@@ -53,14 +56,14 @@ static int sockstat_seq_show(struct seq_file *seq, void *v)
 	struct net *net = seq->private;
 	int orphans, sockets;
 
-	orphans = tcp_orphan_count_sum();
+	orphans = percpu_counter_sum_positive(&tcp_orphan_count);
 	sockets = proto_sockets_allocated_sum_positive(&tcp_prot);
 
 	socket_seq_show(seq);
 	seq_printf(seq, "TCP: inuse %d orphan %d tw %d alloc %d mem %ld\n",
 		   sock_prot_inuse_get(net, &tcp_prot), orphans,
-		   refcount_read(&net->ipv4.tcp_death_row.tw_refcount) - 1,
-		   sockets, proto_memory_allocated(&tcp_prot));
+		   atomic_read(&net->ipv4.tcp_death_row.tw_count), sockets,
+		   proto_memory_allocated(&tcp_prot));
 	seq_printf(seq, "UDP: inuse %d mem %ld\n",
 		   sock_prot_inuse_get(net, &udp_prot),
 		   proto_memory_allocated(&udp_prot));
@@ -69,10 +72,22 @@ static int sockstat_seq_show(struct seq_file *seq, void *v)
 	seq_printf(seq, "RAW: inuse %d\n",
 		   sock_prot_inuse_get(net, &raw_prot));
 	seq_printf(seq,  "FRAG: inuse %u memory %lu\n",
-		   atomic_read(&net->ipv4.fqdir->rhashtable.nelems),
-		   frag_mem_limit(net->ipv4.fqdir));
+		   atomic_read(&net->ipv4.frags.rhashtable.nelems),
+		   frag_mem_limit(&net->ipv4.frags));
 	return 0;
 }
+
+static int sockstat_seq_open(struct inode *inode, struct file *file)
+{
+	return single_open_net(inode, file, sockstat_seq_show);
+}
+
+static const struct file_operations sockstat_seq_fops = {
+	.open	 = sockstat_seq_open,
+	.read	 = seq_read,
+	.llseek	 = seq_lseek,
+	.release = single_release_net,
+};
 
 /* snmp items */
 static const struct snmp_mib snmp4_ipstats_list[] = {
@@ -116,7 +131,6 @@ static const struct snmp_mib snmp4_ipextstats_list[] = {
 	SNMP_MIB_ITEM("InECT1Pkts", IPSTATS_MIB_ECT1PKTS),
 	SNMP_MIB_ITEM("InECT0Pkts", IPSTATS_MIB_ECT0PKTS),
 	SNMP_MIB_ITEM("InCEPkts", IPSTATS_MIB_CEPKTS),
-	SNMP_MIB_ITEM("ReasmOverlaps", IPSTATS_MIB_REASM_OVERLAPS),
 	SNMP_MIB_SENTINEL
 };
 
@@ -167,7 +181,6 @@ static const struct snmp_mib snmp4_udp_list[] = {
 	SNMP_MIB_ITEM("SndbufErrors", UDP_MIB_SNDBUFERRORS),
 	SNMP_MIB_ITEM("InCsumErrors", UDP_MIB_CSUMERRORS),
 	SNMP_MIB_ITEM("IgnoredMulti", UDP_MIB_IGNOREDMULTI),
-	SNMP_MIB_ITEM("MemErrors", UDP_MIB_MEMERRORS),
 	SNMP_MIB_SENTINEL
 };
 
@@ -217,7 +230,6 @@ static const struct snmp_mib snmp4_net_list[] = {
 	SNMP_MIB_ITEM("TCPRenoRecoveryFail", LINUX_MIB_TCPRENORECOVERYFAIL),
 	SNMP_MIB_ITEM("TCPSackRecoveryFail", LINUX_MIB_TCPSACKRECOVERYFAIL),
 	SNMP_MIB_ITEM("TCPRcvCollapsed", LINUX_MIB_TCPRCVCOLLAPSED),
-	SNMP_MIB_ITEM("TCPBacklogCoalesce", LINUX_MIB_TCPBACKLOGCOALESCE),
 	SNMP_MIB_ITEM("TCPDSACKOldSent", LINUX_MIB_TCPDSACKOLDSENT),
 	SNMP_MIB_ITEM("TCPDSACKOfoSent", LINUX_MIB_TCPDSACKOFOSENT),
 	SNMP_MIB_ITEM("TCPDSACKRecv", LINUX_MIB_TCPDSACKRECV),
@@ -284,19 +296,6 @@ static const struct snmp_mib snmp4_net_list[] = {
 	SNMP_MIB_ITEM("TCPKeepAlive", LINUX_MIB_TCPKEEPALIVE),
 	SNMP_MIB_ITEM("TCPMTUPFail", LINUX_MIB_TCPMTUPFAIL),
 	SNMP_MIB_ITEM("TCPMTUPSuccess", LINUX_MIB_TCPMTUPSUCCESS),
-	SNMP_MIB_ITEM("TCPDelivered", LINUX_MIB_TCPDELIVERED),
-	SNMP_MIB_ITEM("TCPDeliveredCE", LINUX_MIB_TCPDELIVEREDCE),
-	SNMP_MIB_ITEM("TCPAckCompressed", LINUX_MIB_TCPACKCOMPRESSED),
-	SNMP_MIB_ITEM("TCPZeroWindowDrop", LINUX_MIB_TCPZEROWINDOWDROP),
-	SNMP_MIB_ITEM("TCPRcvQDrop", LINUX_MIB_TCPRCVQDROP),
-	SNMP_MIB_ITEM("TCPWqueueTooBig", LINUX_MIB_TCPWQUEUETOOBIG),
-	SNMP_MIB_ITEM("TCPFastOpenPassiveAltKey", LINUX_MIB_TCPFASTOPENPASSIVEALTKEY),
-	SNMP_MIB_ITEM("TcpTimeoutRehash", LINUX_MIB_TCPTIMEOUTREHASH),
-	SNMP_MIB_ITEM("TcpDuplicateDataRehash", LINUX_MIB_TCPDUPLICATEDATAREHASH),
-	SNMP_MIB_ITEM("TCPDSACKRecvSegs", LINUX_MIB_TCPDSACKRECVSEGS),
-	SNMP_MIB_ITEM("TCPDSACKIgnoredDubious", LINUX_MIB_TCPDSACKIGNOREDDUBIOUS),
-	SNMP_MIB_ITEM("TCPMigrateReqSuccess", LINUX_MIB_TCPMIGRATEREQSUCCESS),
-	SNMP_MIB_ITEM("TCPMigrateReqFailure", LINUX_MIB_TCPMIGRATEREQFAILURE),
 	SNMP_MIB_SENTINEL
 };
 
@@ -387,7 +386,7 @@ static int snmp_seq_show_ipstats(struct seq_file *seq, void *v)
 
 	seq_printf(seq, "\nIp: %d %d",
 		   IPV4_DEVCONF_ALL(net, FORWARDING) ? 1 : 2,
-		   READ_ONCE(net->ipv4.sysctl_ip_default_ttl));
+		   net->ipv4.sysctl_ip_default_ttl);
 
 	BUILD_BUG_ON(offsetof(struct ipstats_mib, mibs) != 0);
 	snmp_get_cpu_field64_batch(buff64, snmp4_ipstats_list,
@@ -461,72 +460,73 @@ static int snmp_seq_show(struct seq_file *seq, void *v)
 	return 0;
 }
 
+static int snmp_seq_open(struct inode *inode, struct file *file)
+{
+	return single_open_net(inode, file, snmp_seq_show);
+}
+
+static const struct file_operations snmp_seq_fops = {
+	.open	 = snmp_seq_open,
+	.read	 = seq_read,
+	.llseek	 = seq_lseek,
+	.release = single_release_net,
+};
+
+
+
 /*
  *	Output /proc/net/netstat
  */
 static int netstat_seq_show(struct seq_file *seq, void *v)
 {
-	const int ip_cnt = ARRAY_SIZE(snmp4_ipextstats_list) - 1;
-	const int tcp_cnt = ARRAY_SIZE(snmp4_net_list) - 1;
-	struct net *net = seq->private;
-	unsigned long *buff;
 	int i;
+	struct net *net = seq->private;
 
 	seq_puts(seq, "TcpExt:");
-	for (i = 0; i < tcp_cnt; i++)
+	for (i = 0; snmp4_net_list[i].name; i++)
 		seq_printf(seq, " %s", snmp4_net_list[i].name);
 
 	seq_puts(seq, "\nTcpExt:");
-	buff = kzalloc(max(tcp_cnt * sizeof(long), ip_cnt * sizeof(u64)),
-		       GFP_KERNEL);
-	if (buff) {
-		snmp_get_cpu_field_batch(buff, snmp4_net_list,
-					 net->mib.net_statistics);
-		for (i = 0; i < tcp_cnt; i++)
-			seq_printf(seq, " %lu", buff[i]);
-	} else {
-		for (i = 0; i < tcp_cnt; i++)
-			seq_printf(seq, " %lu",
-				   snmp_fold_field(net->mib.net_statistics,
-						   snmp4_net_list[i].entry));
-	}
+	for (i = 0; snmp4_net_list[i].name; i++)
+		seq_printf(seq, " %lu",
+			   snmp_fold_field(net->mib.net_statistics,
+					   snmp4_net_list[i].entry));
+
 	seq_puts(seq, "\nIpExt:");
-	for (i = 0; i < ip_cnt; i++)
+	for (i = 0; snmp4_ipextstats_list[i].name; i++)
 		seq_printf(seq, " %s", snmp4_ipextstats_list[i].name);
 
 	seq_puts(seq, "\nIpExt:");
-	if (buff) {
-		u64 *buff64 = (u64 *)buff;
+	for (i = 0; snmp4_ipextstats_list[i].name; i++)
+		seq_printf(seq, " %llu",
+			   snmp_fold_field64(net->mib.ip_statistics,
+					     snmp4_ipextstats_list[i].entry,
+					     offsetof(struct ipstats_mib, syncp)));
 
-		memset(buff64, 0, ip_cnt * sizeof(u64));
-		snmp_get_cpu_field64_batch(buff64, snmp4_ipextstats_list,
-					   net->mib.ip_statistics,
-					   offsetof(struct ipstats_mib, syncp));
-		for (i = 0; i < ip_cnt; i++)
-			seq_printf(seq, " %llu", buff64[i]);
-	} else {
-		for (i = 0; i < ip_cnt; i++)
-			seq_printf(seq, " %llu",
-				   snmp_fold_field64(net->mib.ip_statistics,
-						     snmp4_ipextstats_list[i].entry,
-						     offsetof(struct ipstats_mib, syncp)));
-	}
-	kfree(buff);
 	seq_putc(seq, '\n');
-	mptcp_seq_show(seq);
 	return 0;
 }
 
+static int netstat_seq_open(struct inode *inode, struct file *file)
+{
+	return single_open_net(inode, file, netstat_seq_show);
+}
+
+static const struct file_operations netstat_seq_fops = {
+	.open	 = netstat_seq_open,
+	.read	 = seq_read,
+	.llseek	 = seq_lseek,
+	.release = single_release_net,
+};
+
 static __net_init int ip_proc_init_net(struct net *net)
 {
-	if (!proc_create_net_single("sockstat", 0444, net->proc_net,
-			sockstat_seq_show, NULL))
+	if (!proc_create("sockstat", 0444, net->proc_net,
+			 &sockstat_seq_fops))
 		goto out_sockstat;
-	if (!proc_create_net_single("netstat", 0444, net->proc_net,
-			netstat_seq_show, NULL))
+	if (!proc_create("netstat", 0444, net->proc_net, &netstat_seq_fops))
 		goto out_netstat;
-	if (!proc_create_net_single("snmp", 0444, net->proc_net, snmp_seq_show,
-			NULL))
+	if (!proc_create("snmp", 0444, net->proc_net, &snmp_seq_fops))
 		goto out_snmp;
 
 	return 0;

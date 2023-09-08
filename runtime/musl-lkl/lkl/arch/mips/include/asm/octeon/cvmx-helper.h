@@ -51,7 +51,7 @@ typedef enum {
 	CVMX_HELPER_INTERFACE_MODE_LOOP,
 } cvmx_helper_interface_mode_t;
 
-union cvmx_helper_link_info {
+typedef union {
 	uint64_t u64;
 	struct {
 		uint64_t reserved_20_63:44;
@@ -59,7 +59,7 @@ union cvmx_helper_link_info {
 		uint64_t full_duplex:1;	    /**< 1 if the link is full duplex */
 		uint64_t speed:18;	    /**< Speed of the link in Mbps */
 	} s;
-};
+} cvmx_helper_link_info_t;
 
 #include <asm/octeon/cvmx-helper-errata.h>
 #include <asm/octeon/cvmx-helper-loop.h>
@@ -69,6 +69,26 @@ union cvmx_helper_link_info {
 #include <asm/octeon/cvmx-helper-spi.h>
 #include <asm/octeon/cvmx-helper-util.h>
 #include <asm/octeon/cvmx-helper-xaui.h>
+
+/**
+ * cvmx_override_pko_queue_priority(int ipd_port, uint64_t
+ * priorities[16]) is a function pointer. It is meant to allow
+ * customization of the PKO queue priorities based on the port
+ * number. Users should set this pointer to a function before
+ * calling any cvmx-helper operations.
+ */
+extern void (*cvmx_override_pko_queue_priority) (int pko_port,
+						 uint64_t priorities[16]);
+
+/**
+ * cvmx_override_ipd_port_setup(int ipd_port) is a function
+ * pointer. It is meant to allow customization of the IPD port
+ * setup before packet input/output comes online. It is called
+ * after cvmx-helper does the default IPD configuration, but
+ * before IPD is enabled. Users should set this pointer to a
+ * function before calling any cvmx-helper operations.
+ */
+extern void (*cvmx_override_ipd_port_setup) (int ipd_port);
 
 /**
  * This function enables the IPD and also enables the packet interfaces.
@@ -92,6 +112,13 @@ extern int cvmx_helper_ipd_and_packet_input_enable(void);
  * Returns Zero on success, non-zero on failure
  */
 extern int cvmx_helper_initialize_packet_io_global(void);
+
+/**
+ * Does core local initialization for packet io
+ *
+ * Returns Zero on success, non-zero on failure
+ */
+extern int cvmx_helper_initialize_packet_io_local(void);
 
 /**
  * Returns the number of ports on the given interface.
@@ -138,7 +165,7 @@ extern cvmx_helper_interface_mode_t cvmx_helper_interface_get_mode(int
  *
  * Returns Link state
  */
-extern union cvmx_helper_link_info cvmx_helper_link_get(int ipd_port);
+extern cvmx_helper_link_info_t cvmx_helper_link_get(int ipd_port);
 
 /**
  * Configure an IPD/PKO port for the specified link state. This
@@ -152,7 +179,7 @@ extern union cvmx_helper_link_info cvmx_helper_link_get(int ipd_port);
  * Returns Zero on success, negative on failure
  */
 extern int cvmx_helper_link_set(int ipd_port,
-				union cvmx_helper_link_info link_info);
+				cvmx_helper_link_info_t link_info);
 
 /**
  * This function probes an interface to determine the actual
@@ -167,5 +194,21 @@ extern int cvmx_helper_link_set(int ipd_port,
  */
 extern int cvmx_helper_interface_probe(int interface);
 extern int cvmx_helper_interface_enumerate(int interface);
+
+/**
+ * Configure a port for internal and/or external loopback. Internal loopback
+ * causes packets sent by the port to be received by Octeon. External loopback
+ * causes packets received from the wire to sent out again.
+ *
+ * @ipd_port: IPD/PKO port to loopback.
+ * @enable_internal:
+ *		   Non zero if you want internal loopback
+ * @enable_external:
+ *		   Non zero if you want external loopback
+ *
+ * Returns Zero on success, negative on failure.
+ */
+extern int cvmx_helper_configure_loopback(int ipd_port, int enable_internal,
+					  int enable_external);
 
 #endif /* __CVMX_HELPER_H__ */

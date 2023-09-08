@@ -15,28 +15,16 @@
 
 #include "btree.h"
 
-void hfs_bnode_read(struct hfs_bnode *node, void *buf, int off, int len)
+void hfs_bnode_read(struct hfs_bnode *node, void *buf,
+		int off, int len)
 {
 	struct page *page;
-	int pagenum;
-	int bytes_read;
-	int bytes_to_read;
 
 	off += node->page_offset;
-	pagenum = off >> PAGE_SHIFT;
-	off &= ~PAGE_MASK; /* compute page offset for the first page */
+	page = node->page[0];
 
-	for (bytes_read = 0; bytes_read < len; bytes_read += bytes_to_read) {
-		if (pagenum >= node->tree->pages_per_bnode)
-			break;
-		page = node->page[pagenum];
-		bytes_to_read = min_t(int, len - bytes_read, PAGE_SIZE - off);
-
-		memcpy_from_page(buf + bytes_read, page, off, bytes_to_read);
-
-		pagenum++;
-		off = 0; /* page offset only applies to the first page */
-	}
+	memcpy(buf, kmap(page) + off, len);
+	kunmap(page);
 }
 
 u16 hfs_bnode_read_u16(struct hfs_bnode *node, int off)
@@ -77,7 +65,8 @@ void hfs_bnode_write(struct hfs_bnode *node, void *buf, int off, int len)
 	off += node->page_offset;
 	page = node->page[0];
 
-	memcpy_to_page(page, off, buf, len);
+	memcpy(kmap(page) + off, buf, len);
+	kunmap(page);
 	set_page_dirty(page);
 }
 
@@ -101,7 +90,8 @@ void hfs_bnode_clear(struct hfs_bnode *node, int off, int len)
 	off += node->page_offset;
 	page = node->page[0];
 
-	memzero_page(page, off, len);
+	memset(kmap(page) + off, 0, len);
+	kunmap(page);
 	set_page_dirty(page);
 }
 
@@ -118,7 +108,9 @@ void hfs_bnode_copy(struct hfs_bnode *dst_node, int dst,
 	src_page = src_node->page[0];
 	dst_page = dst_node->page[0];
 
-	memcpy_page(dst_page, dst, src_page, src, len);
+	memcpy(kmap(dst_page) + dst, kmap(src_page) + src, len);
+	kunmap(src_page);
+	kunmap(dst_page);
 	set_page_dirty(dst_page);
 }
 
@@ -133,9 +125,9 @@ void hfs_bnode_move(struct hfs_bnode *node, int dst, int src, int len)
 	src += node->page_offset;
 	dst += node->page_offset;
 	page = node->page[0];
-	ptr = kmap_local_page(page);
+	ptr = kmap(page);
 	memmove(ptr + dst, ptr + src, len);
-	kunmap_local(ptr);
+	kunmap(page);
 	set_page_dirty(page);
 }
 
@@ -289,6 +281,10 @@ static struct hfs_bnode *__hfs_bnode_create(struct hfs_btree *tree, u32 cnid)
 		page = read_mapping_page(mapping, block++, NULL);
 		if (IS_ERR(page))
 			goto fail;
+		if (PageError(page)) {
+			put_page(page);
+			goto fail;
+		}
 		node->page[i] = page;
 	}
 
@@ -339,14 +335,13 @@ struct hfs_bnode *hfs_bnode_find(struct hfs_btree *tree, u32 num)
 	if (!test_bit(HFS_BNODE_NEW, &node->flags))
 		return node;
 
-	desc = (struct hfs_bnode_desc *)(kmap_local_page(node->page[0]) +
-					 node->page_offset);
+	desc = (struct hfs_bnode_desc *)(kmap(node->page[0]) + node->page_offset);
 	node->prev = be32_to_cpu(desc->prev);
 	node->next = be32_to_cpu(desc->next);
 	node->num_recs = be16_to_cpu(desc->num_recs);
 	node->type = desc->type;
 	node->height = desc->height;
-	kunmap_local(desc);
+	kunmap(node->page[0]);
 
 	switch (node->type) {
 	case HFS_NODE_HEADER:
@@ -430,12 +425,14 @@ struct hfs_bnode *hfs_bnode_create(struct hfs_btree *tree, u32 num)
 	}
 
 	pagep = node->page;
-	memzero_page(*pagep, node->page_offset,
-		     min((int)PAGE_SIZE, (int)tree->node_size));
+	memset(kmap(*pagep) + node->page_offset, 0,
+	       min((int)PAGE_SIZE, (int)tree->node_size));
 	set_page_dirty(*pagep);
+	kunmap(*pagep);
 	for (i = 1; i < tree->pages_per_bnode; i++) {
-		memzero_page(*++pagep, 0, PAGE_SIZE);
+		memset(kmap(*++pagep), 0, PAGE_SIZE);
 		set_page_dirty(*pagep);
+		kunmap(*pagep);
 	}
 	clear_bit(HFS_BNODE_NEW, &node->flags);
 	wake_up(&node->lock_wq);

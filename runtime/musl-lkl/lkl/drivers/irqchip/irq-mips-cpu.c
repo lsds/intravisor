@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Copyright 2001 MontaVista Software Inc.
  * Author: Jun Sun, jsun@mvista.com or jsun@junsun.net
@@ -8,6 +7,11 @@
  *	Author: Maciej W. Rozycki <macro@mips.com>
  *
  * This file define the irq handler for MIPS CPU interrupts.
+ *
+ * This program is free software; you can redistribute	it and/or modify it
+ * under  the terms of	the GNU General	 Public License as published by the
+ * Free Software Foundation;  either version 2 of the  License, or (at your
+ * option) any later version.
  */
 
 /*
@@ -127,6 +131,7 @@ static struct irq_chip mips_mt_cpu_irq_controller = {
 asmlinkage void __weak plat_irq_dispatch(void)
 {
 	unsigned long pending = read_c0_cause() & read_c0_status() & ST0_IM;
+	unsigned int virq;
 	int irq;
 
 	if (!pending) {
@@ -136,15 +141,12 @@ asmlinkage void __weak plat_irq_dispatch(void)
 
 	pending >>= CAUSEB_IP;
 	while (pending) {
-		struct irq_domain *d;
-
 		irq = fls(pending) - 1;
 		if (IS_ENABLED(CONFIG_GENERIC_IRQ_IPI) && irq < 2)
-			d = ipi_domain;
+			virq = irq_linear_revmap(ipi_domain, irq);
 		else
-			d = irq_domain;
-
-		do_domain_IRQ(d, irq);
+			virq = irq_linear_revmap(irq_domain, irq);
+		do_IRQ(virq);
 		pending &= ~BIT(irq);
 	}
 }
@@ -196,13 +198,6 @@ static int mips_cpu_ipi_alloc(struct irq_domain *domain, unsigned int virq,
 		ret = irq_domain_set_hwirq_and_chip(domain, virq + i, hwirq,
 						    &mips_mt_cpu_irq_controller,
 						    NULL);
-		if (ret)
-			return ret;
-
-		ret = irq_domain_set_hwirq_and_chip(domain->parent, virq + i, hwirq,
-						    &mips_mt_cpu_irq_controller,
-						    NULL);
-
 		if (ret)
 			return ret;
 

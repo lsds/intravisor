@@ -169,12 +169,14 @@ static int spcp8x5_port_probe(struct usb_serial_port *port)
 	return 0;
 }
 
-static void spcp8x5_port_remove(struct usb_serial_port *port)
+static int spcp8x5_port_remove(struct usb_serial_port *port)
 {
 	struct spcp8x5_private *priv;
 
 	priv = usb_get_serial_port_data(port);
 	kfree(priv);
+
+	return 0;
 }
 
 static int spcp8x5_set_ctrl_line(struct usb_serial_port *port, u8 mcr)
@@ -279,12 +281,14 @@ static void spcp8x5_dtr_rts(struct usb_serial_port *port, int on)
 
 static void spcp8x5_init_termios(struct tty_struct *tty)
 {
-	tty_encode_baud_rate(tty, 115200, 115200);
+	tty->termios = tty_std_termios;
+	tty->termios.c_cflag = B115200 | CS8 | CREAD | HUPCL | CLOCAL;
+	tty->termios.c_ispeed = 115200;
+	tty->termios.c_ospeed = 115200;
 }
 
 static void spcp8x5_set_termios(struct tty_struct *tty,
-				struct usb_serial_port *port,
-				const struct ktermios *old_termios)
+		struct usb_serial_port *port, struct ktermios *old_termios)
 {
 	struct usb_serial *serial = port->serial;
 	struct spcp8x5_private *priv = usb_get_serial_port_data(port);

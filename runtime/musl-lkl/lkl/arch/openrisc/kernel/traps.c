@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * OpenRISC traps.c
  *
@@ -10,9 +9,15 @@
  * Copyright (C) 2003 Matjaz Breskvar <phoenix@bsemi.com>
  * Copyright (C) 2010-2011 Jonas Bonn <jonas@southpole.se>
  *
+ *      This program is free software; you can redistribute it and/or
+ *      modify it under the terms of the GNU General Public License
+ *      as published by the Free Software Foundation; either version
+ *      2 of the License, or (at your option) any later version.
+ *
  *  Here we handle the break vectors not used by the system call
  *  mechanism, as well as some general stack/register dumping
  *  things.
+ *
  */
 
 #include <linux/init.h>
@@ -30,38 +35,37 @@
 #include <linux/kallsyms.h>
 #include <linux/uaccess.h>
 
+#include <asm/segment.h>
 #include <asm/io.h>
+#include <asm/pgtable.h>
 #include <asm/unwinder.h>
 #include <asm/sections.h>
 
-static int kstack_depth_to_print = 0x180;
+int kstack_depth_to_print = 0x180;
 int lwa_flag;
-static unsigned long __user *lwa_addr;
+unsigned long __user *lwa_addr;
 
-static void print_trace(void *data, unsigned long addr, int reliable)
+void print_trace(void *data, unsigned long addr, int reliable)
 {
-	const char *loglvl = data;
-
-	printk("%s[<%p>] %s%pS\n", loglvl, (void *) addr, reliable ? "" : "? ",
+	pr_emerg("[<%p>] %s%pS\n", (void *) addr, reliable ? "" : "? ",
 	       (void *) addr);
 }
 
-static void print_data(unsigned long base_addr, unsigned long word, int i)
-{
-	if (i == 0)
-		printk("(%08lx:)\t%08lx", base_addr + (i * 4), word);
-	else
-		printk(" %08lx:\t%08lx", base_addr + (i * 4), word);
-}
-
 /* displays a short stack trace */
-void show_stack(struct task_struct *task, unsigned long *esp, const char *loglvl)
+void show_stack(struct task_struct *task, unsigned long *esp)
 {
 	if (esp == NULL)
 		esp = (unsigned long *)&esp;
 
-	printk("%sCall trace:\n", loglvl);
-	unwind_stack((void *)loglvl, esp, print_trace);
+	pr_emerg("Call trace:\n");
+	unwind_stack(NULL, esp, print_trace);
+}
+
+void show_trace_task(struct task_struct *tsk)
+{
+	/*
+	 * TODO: SysRq-T trace dump...
+	 */
 }
 
 void show_registers(struct pt_regs *regs)
@@ -105,38 +109,24 @@ void show_registers(struct pt_regs *regs)
 	if (in_kernel) {
 
 		printk("\nStack: ");
-		show_stack(NULL, (unsigned long *)esp, KERN_EMERG);
-
-		if (esp < PAGE_OFFSET)
-			goto bad_stack;
-
-		printk("\n");
-		for (i = -8; i < 24; i += 1) {
-			unsigned long word;
-
-			if (__get_user(word, &((unsigned long *)esp)[i])) {
-bad_stack:
-				printk(" Bad Stack value.");
-				break;
-			}
-
-			print_data(esp, word, i);
-		}
+		show_stack(NULL, (unsigned long *)esp);
 
 		printk("\nCode: ");
 		if (regs->pc < PAGE_OFFSET)
 			goto bad;
 
-		for (i = -6; i < 6; i += 1) {
-			unsigned long word;
-
-			if (__get_user(word, &((unsigned long *)regs->pc)[i])) {
+		for (i = -24; i < 24; i++) {
+			unsigned char c;
+			if (__get_user(c, &((unsigned char *)regs->pc)[i])) {
 bad:
 				printk(" Bad PC value.");
 				break;
 			}
 
-			print_data(regs->pc, word, i);
+			if (i == 0)
+				printk("(%02x) ", c);
+			else
+				printk("%02x ", c);
 		}
 	}
 	printk("\n");
@@ -207,17 +197,19 @@ void nommu_dump_state(struct pt_regs *regs,
 	printk("\nCode: ");
 
 	for (i = -24; i < 24; i++) {
-		unsigned long word;
+		unsigned char c;
+		c = ((unsigned char *)(__pa(regs->pc)))[i];
 
-		word = ((unsigned long *)(__pa(regs->pc)))[i];
-
-		print_data(regs->pc, word, i);
+		if (i == 0)
+			printk("(%02x) ", c);
+		else
+			printk("%02x ", c);
 	}
 	printk("\n");
 }
 
 /* This is normally the 'Oops' routine */
-void __noreturn die(const char *str, struct pt_regs *regs, long err)
+void die(const char *str, struct pt_regs *regs, long err)
 {
 
 	console_verbose();
@@ -232,26 +224,53 @@ void __noreturn die(const char *str, struct pt_regs *regs, long err)
 	__asm__ __volatile__("l.nop   1");
 	do {} while (1);
 #endif
-	make_task_dead(SIGSEGV);
+	do_exit(SIGSEGV);
 }
 
-asmlinkage void unhandled_exception(struct pt_regs *regs, int ea, int vector)
+/* This is normally the 'Oops' routine */
+void die_if_kernel(const char *str, struct pt_regs *regs, long err)
+{
+	if (user_mode(regs))
+		return;
+
+	die(str, regs, err);
+}
+
+void unhandled_exception(struct pt_regs *regs, int ea, int vector)
 {
 	printk("Unable to handle exception at EA =0x%x, vector 0x%x",
 	       ea, vector);
 	die("Oops", regs, 9);
 }
 
+void __init trap_init(void)
+{
+	/* Nothing needs to be done */
+}
+
 asmlinkage void do_trap(struct pt_regs *regs, unsigned long address)
 {
-	force_sig_fault(SIGTRAP, TRAP_BRKPT, (void __user *)regs->pc);
+	siginfo_t info;
+	memset(&info, 0, sizeof(info));
+	info.si_signo = SIGTRAP;
+	info.si_code = TRAP_TRACE;
+	info.si_addr = (void *)address;
+	force_sig_info(SIGTRAP, &info, current);
+
+	regs->pc += 4;
 }
 
 asmlinkage void do_unaligned_access(struct pt_regs *regs, unsigned long address)
 {
+	siginfo_t info;
+
 	if (user_mode(regs)) {
 		/* Send a SIGBUS */
-		force_sig_fault(SIGBUS, BUS_ADRALN, (void __user *)address);
+		info.si_signo = SIGBUS;
+		info.si_errno = 0;
+		info.si_code = BUS_ADRALN;
+		info.si_addr = (void __user *)address;
+		force_sig_info(SIGBUS, &info, current);
 	} else {
 		printk("KERNEL: Unaligned Access 0x%.8lx\n", address);
 		show_registers(regs);
@@ -262,9 +281,15 @@ asmlinkage void do_unaligned_access(struct pt_regs *regs, unsigned long address)
 
 asmlinkage void do_bus_fault(struct pt_regs *regs, unsigned long address)
 {
+	siginfo_t info;
+
 	if (user_mode(regs)) {
 		/* Send a SIGBUS */
-		force_sig_fault(SIGBUS, BUS_ADRERR, (void __user *)address);
+		info.si_signo = SIGBUS;
+		info.si_errno = 0;
+		info.si_code = BUS_ADRERR;
+		info.si_addr = (void *)address;
+		force_sig_info(SIGBUS, &info, current);
 	} else {		/* Kernel mode */
 		printk("KERNEL: Bus error (SIGBUS) 0x%.8lx\n", address);
 		show_registers(regs);
@@ -292,7 +317,7 @@ static inline int in_delay_slot(struct pt_regs *regs)
 		return 0;
 	}
 #else
-	return mfspr(SPR_SR) & SPR_SR_DSX;
+	return regs->sr & SPR_SR_DSX;
 #endif
 }
 
@@ -369,7 +394,7 @@ static inline void simulate_lwa(struct pt_regs *regs, unsigned long address,
 
 	if (get_user(value, lwa_addr)) {
 		if (user_mode(regs)) {
-			force_sig(SIGSEGV);
+			force_sig(SIGSEGV, current);
 			return;
 		}
 
@@ -416,7 +441,7 @@ static inline void simulate_swa(struct pt_regs *regs, unsigned long address,
 
 	if (put_user(regs->gpr[rb], vaddr)) {
 		if (user_mode(regs)) {
-			force_sig(SIGSEGV);
+			force_sig(SIGSEGV, current);
 			return;
 		}
 
@@ -439,6 +464,7 @@ static inline void simulate_swa(struct pt_regs *regs, unsigned long address,
 asmlinkage void do_illegal_instruction(struct pt_regs *regs,
 				       unsigned long address)
 {
+	siginfo_t info;
 	unsigned int op;
 	unsigned int insn = *((unsigned int *)address);
 
@@ -459,7 +485,11 @@ asmlinkage void do_illegal_instruction(struct pt_regs *regs,
 
 	if (user_mode(regs)) {
 		/* Send a SIGILL */
-		force_sig_fault(SIGILL, ILL_ILLOPC, (void __user *)address);
+		info.si_signo = SIGILL;
+		info.si_errno = 0;
+		info.si_code = ILL_ILLOPC;
+		info.si_addr = (void *)address;
+		force_sig_info(SIGBUS, &info, current);
 	} else {		/* Kernel mode */
 		printk("KERNEL: Illegal instruction (SIGILL) 0x%.8lx\n",
 		       address);

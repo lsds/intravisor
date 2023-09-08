@@ -11,6 +11,7 @@
 #include <linux/kdb.h>
 #include <linux/keyboard.h>
 #include <linux/ctype.h>
+#include <linux/module.h>
 #include <linux/io.h>
 
 /* Keyboard Controller Registers on normal PCs. */
@@ -172,11 +173,11 @@ int kdb_get_kbd_char(void)
 	case KT_LATIN:
 		if (isprint(keychar))
 			break;		/* printable characters */
-		fallthrough;
+		/* drop through */
 	case KT_SPEC:
 		if (keychar == K_ENTER)
 			break;
-		fallthrough;
+		/* drop through */
 	default:
 		return -1;	/* ignore unprintables */
 	}

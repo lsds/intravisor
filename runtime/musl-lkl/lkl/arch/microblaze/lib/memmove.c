@@ -30,7 +30,31 @@
 #include <linux/compiler.h>
 #include <linux/string.h>
 
-#ifdef CONFIG_OPT_LIB_FUNCTION
+#ifdef __HAVE_ARCH_MEMMOVE
+#ifndef CONFIG_OPT_LIB_FUNCTION
+void *memmove(void *v_dst, const void *v_src, __kernel_size_t c)
+{
+	const char *src = v_src;
+	char *dst = v_dst;
+
+	if (!c)
+		return v_dst;
+
+	/* Use memcpy when source is higher than dest */
+	if (v_dst <= v_src)
+		return memcpy(v_dst, v_src, c);
+
+	/* copy backwards, from end to beginning */
+	src += c;
+	dst += c;
+
+	/* Simple, byte oriented memmove. */
+	while (c--)
+		*--dst = *--src;
+
+	return v_dst;
+}
+#else /* CONFIG_OPT_LIB_FUNCTION */
 void *memmove(void *v_dst, const void *v_src, __kernel_size_t c)
 {
 	const char *src = v_src;
@@ -66,11 +90,9 @@ void *memmove(void *v_dst, const void *v_src, __kernel_size_t c)
 		case 3:
 			*--dst = *--src;
 			--c;
-			fallthrough;
 		case 2:
 			*--dst = *--src;
 			--c;
-			fallthrough;
 		case 1:
 			*--dst = *--src;
 			--c;
@@ -78,7 +100,7 @@ void *memmove(void *v_dst, const void *v_src, __kernel_size_t c)
 
 		i_dst = (void *)dst;
 		/* Choose a copy scheme based on the source */
-		/* alignment relative to destination. */
+		/* alignment relative to dstination. */
 		switch ((unsigned long)src & 3) {
 		case 0x0:	/* Both byte offsets are aligned */
 
@@ -179,17 +201,15 @@ void *memmove(void *v_dst, const void *v_src, __kernel_size_t c)
 	switch (c) {
 	case 4:
 		*--dst = *--src;
-		fallthrough;
 	case 3:
 		*--dst = *--src;
-		fallthrough;
 	case 2:
 		*--dst = *--src;
-		fallthrough;
 	case 1:
 		*--dst = *--src;
 	}
 	return v_dst;
 }
-EXPORT_SYMBOL(memmove);
 #endif /* CONFIG_OPT_LIB_FUNCTION */
+EXPORT_SYMBOL(memmove);
+#endif /* __HAVE_ARCH_MEMMOVE */

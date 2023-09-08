@@ -357,7 +357,7 @@ found:
 		default:
 			break;
 		}
-		fallthrough;
+		/*FALLTHROUGH*/
 	default:
 		bridge->driver = &ali_generic_bridge;
 	}

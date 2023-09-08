@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0+
 /*
  *      NS pc87413-wdt Watchdog Timer driver for Linux 2.6.x.x
  *
@@ -6,6 +5,11 @@
  *
  *      (C) Copyright 2006 Sven Anders, <anders@anduras.de>
  *                     and Marcus Junker, <junker@anduras.de>
+ *
+ *      This program is free software; you can redistribute it and/or
+ *      modify it under the terms of the GNU General Public License
+ *      as published by the Free Software Foundation; either version
+ *      2 of the License, or (at your option) any later version.
  *
  *      Neither Sven Anders, Marcus Junker nor ANDURAS AG
  *      admit liability nor provide warranty for any of this software.
@@ -282,7 +286,7 @@ static int pc87413_open(struct inode *inode, struct file *file)
 
 	pr_info("Watchdog enabled. Timeout set to %d minute(s).\n", timeout);
 
-	return stream_open(inode, file);
+	return nonseekable_open(inode, file);
 }
 
 /**
@@ -433,7 +437,7 @@ static long pc87413_ioctl(struct file *file, unsigned int cmd,
 			return -EINVAL;
 		timeout = new_timeout;
 		pc87413_refresh();
-		fallthrough;	/* and return the new timeout */
+		/* fall through and return the new timeout... */
 	case WDIOC_GETTIMEOUT:
 		new_timeout = timeout * 60;
 		return put_user(new_timeout, uarg.i);
@@ -442,10 +446,10 @@ static long pc87413_ioctl(struct file *file, unsigned int cmd,
 	}
 }
 
-/* -- Notifier functions -----------------------------------------*/
+/* -- Notifier funtions -----------------------------------------*/
 
 /**
- *	pc87413_notify_sys:
+ *	notify_sys:
  *	@this: our notifier block
  *	@code: the event being reported
  *	@unused: unused
@@ -473,7 +477,6 @@ static const struct file_operations pc87413_fops = {
 	.llseek		= no_llseek,
 	.write		= pc87413_write,
 	.unlocked_ioctl	= pc87413_ioctl,
-	.compat_ioctl	= compat_ptr_ioctl,
 	.open		= pc87413_open,
 	.release	= pc87413_release,
 };

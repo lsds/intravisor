@@ -1,6 +1,14 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Copyright (C) 2010 Texas Instruments Incorporated - https://www.ti.com/
+ * Copyright (C) 2010 Texas Instruments Incorporated - http://www.ti.com/
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License as
+ * published by the Free Software Foundation version 2.
+ *
+ * This program is distributed WITHOUT ANY WARRANTY of any
+ * kind, whether express or implied; without even the implied warranty
+ * of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
  */
 #ifndef VPBE_DISPLAY_H
 #define VPBE_DISPLAY_H
@@ -69,13 +77,13 @@ struct vpbe_layer {
 	struct vpbe_disp_buffer *cur_frm;
 	/* Pointer pointing to next v4l2_buffer */
 	struct vpbe_disp_buffer *next_frm;
-	/* vb2 specific parameters
-	 * Buffer queue used in vb2
+	/* videobuf specific parameters
+	 * Buffer queue used in video-buf
 	 */
 	struct vb2_queue buffer_queue;
 	/* Queue of filled frames */
 	struct list_head dma_queue;
-	/* Used for video buffer handling */
+	/* Used in video-buf */
 	spinlock_t irqlock;
 	/* V4l2 specific parameters */
 	/* Identifies video device for this layer */

@@ -29,7 +29,6 @@
 
 #include "mpc86xads.h"
 #include "mpc8xx.h"
-#include "pic.h"
 
 struct cpm_pin {
 	int port, pin, flags;
@@ -141,7 +140,7 @@ define_machine(mpc86x_ads) {
 	.name			= "MPC86x ADS",
 	.probe			= mpc86xads_probe,
 	.setup_arch		= mpc86xads_setup_arch,
-	.init_IRQ		= mpc8xx_pic_init,
+	.init_IRQ		= mpc8xx_pics_init,
 	.get_irq		= mpc8xx_get_irq,
 	.restart		= mpc8xx_restart,
 	.calibrate_decr		= mpc8xx_calibrate_decr,

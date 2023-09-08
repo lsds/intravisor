@@ -2,7 +2,7 @@
 #ifndef LINUX_SPI_MAX7301_H
 #define LINUX_SPI_MAX7301_H
 
-#include <linux/gpio/driver.h>
+#include <linux/gpio.h>
 
 /*
  * Some registers must be read back to modify.
@@ -31,6 +31,6 @@ struct max7301_platform_data {
 	u32		input_pullup_active;
 };
 
-extern void __max730x_remove(struct device *dev);
+extern int __max730x_remove(struct device *dev);
 extern int __max730x_probe(struct max7301 *ts);
 #endif

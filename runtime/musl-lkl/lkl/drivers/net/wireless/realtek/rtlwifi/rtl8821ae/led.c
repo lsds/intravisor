@@ -1,5 +1,27 @@
-// SPDX-License-Identifier: GPL-2.0
-/* Copyright(c) 2009-2010  Realtek Corporation.*/
+/******************************************************************************
+ *
+ * Copyright(c) 2009-2010  Realtek Corporation.
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of version 2 of the GNU General Public License as
+ * published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+ * more details.
+ *
+ * The full GNU General Public License is included in this distribution in the
+ * file called LICENSE.
+ *
+ * Contact Information:
+ * wlanfae <wlanfae@realtek.com>
+ * Realtek Corporation, No. 2, Innovation Road II, Hsinchu Science Park,
+ * Hsinchu 300, Taiwan.
+ *
+ * Larry Finger <Larry.Finger@lwfinger.net>
+ *
+ *****************************************************************************/
 
 #include "../wifi.h"
 #include "../pci.h"
@@ -20,8 +42,8 @@ void rtl8821ae_sw_led_on(struct ieee80211_hw *hw, struct rtl_led *pled)
 	u8 ledcfg;
 	struct rtl_priv *rtlpriv = rtl_priv(hw);
 
-	rtl_dbg(rtlpriv, COMP_LED, DBG_LOUD,
-		"LedAddr:%X ledpin=%d\n", REG_LEDCFG2, pled->ledpin);
+	RT_TRACE(rtlpriv, COMP_LED, DBG_LOUD,
+		 "LedAddr:%X ledpin=%d\n", REG_LEDCFG2, pled->ledpin);
 
 	switch (pled->ledpin) {
 	case LED_PIN_GPIO0:
@@ -37,8 +59,8 @@ void rtl8821ae_sw_led_on(struct ieee80211_hw *hw, struct rtl_led *pled)
 		rtl_write_byte(rtlpriv, REG_LEDCFG1, ledcfg & 0x10);
 		break;
 	default:
-		rtl_dbg(rtlpriv, COMP_ERR, DBG_LOUD,
-			"switch case %#x not processed\n", pled->ledpin);
+		RT_TRACE(rtlpriv, COMP_ERR, DBG_LOUD,
+			 "switch case %#x not processed\n", pled->ledpin);
 		break;
 	}
 	pled->ledon = true;
@@ -64,9 +86,9 @@ void rtl8812ae_sw_led_on(struct ieee80211_hw *hw, struct rtl_led *pled)
 		break;
 	}
 
-	rtl_dbg(rtlpriv, COMP_LED, DBG_LOUD,
-		"In SwLedOn, LedAddr:%X LEDPIN=%d\n",
-		ledreg, pled->ledpin);
+	RT_TRACE(rtlpriv, COMP_LED, DBG_LOUD,
+		 "In SwLedOn, LedAddr:%X LEDPIN=%d\n",
+		 ledreg, pled->ledpin);
 
 	ledcfg =  rtl_read_byte(rtlpriv, ledreg);
 	ledcfg |= BIT(5); /*Set 0x4c[21]*/
@@ -81,8 +103,8 @@ void rtl8821ae_sw_led_off(struct ieee80211_hw *hw, struct rtl_led *pled)
 	struct rtl_priv *rtlpriv = rtl_priv(hw);
 	u8 ledcfg;
 
-	rtl_dbg(rtlpriv, COMP_LED, DBG_LOUD,
-		"LedAddr:%X ledpin=%d\n", REG_LEDCFG2, pled->ledpin);
+	RT_TRACE(rtlpriv, COMP_LED, DBG_LOUD,
+		 "LedAddr:%X ledpin=%d\n", REG_LEDCFG2, pled->ledpin);
 
 	ledcfg = rtl_read_byte(rtlpriv, REG_LEDCFG2);
 
@@ -109,8 +131,8 @@ void rtl8821ae_sw_led_off(struct ieee80211_hw *hw, struct rtl_led *pled)
 		rtl_write_byte(rtlpriv, REG_LEDCFG1, ledcfg|BIT(3));
 		break;
 	default:
-		rtl_dbg(rtlpriv, COMP_ERR, DBG_LOUD,
-			"switch case %#x not processed\n", pled->ledpin);
+		RT_TRACE(rtlpriv, COMP_ERR, DBG_LOUD,
+			 "switch case %#x not processed\n", pled->ledpin);
 		break;
 	}
 	pled->ledon = false;
@@ -135,9 +157,9 @@ void rtl8812ae_sw_led_off(struct ieee80211_hw *hw, struct rtl_led *pled)
 		break;
 	}
 
-	rtl_dbg(rtlpriv, COMP_LED, DBG_LOUD,
-		"In SwLedOff,LedAddr:%X LEDPIN=%d\n",
-		ledreg, pled->ledpin);
+	RT_TRACE(rtlpriv, COMP_LED, DBG_LOUD,
+		 "In SwLedOff,LedAddr:%X LEDPIN=%d\n",
+		 ledreg, pled->ledpin);
 	/*Open-drain arrangement for controlling the LED*/
 	if (rtlpriv->ledctl.led_opendrain) {
 		u8 ledcfg = rtl_read_byte(rtlpriv, ledreg);
@@ -207,7 +229,7 @@ void rtl8821ae_led_control(struct ieee80211_hw *hw,
 	     ledaction == LED_CTL_POWER_ON)) {
 		return;
 	}
-	rtl_dbg(rtlpriv, COMP_LED, DBG_LOUD, "ledaction %d,\n",
-		ledaction);
+	RT_TRACE(rtlpriv, COMP_LED, DBG_LOUD, "ledaction %d,\n",
+		 ledaction);
 	_rtl8821ae_sw_led_control(hw, ledaction);
 }

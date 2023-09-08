@@ -2,19 +2,13 @@
 /dts-v1/;
 
 #include <dt-bindings/input/input.h>
-#include <dt-bindings/thermal/thermal.h>
-
 #include "tegra20.dtsi"
-#include "tegra20-cpu-opp.dtsi"
-#include "tegra20-cpu-opp-microvolt.dtsi"
 
 / {
 	model = "Toshiba AC100 / Dynabook AZ";
 	compatible = "compal,paz00", "nvidia,tegra20";
 
 	aliases {
-		mmc0 = &sdmmc4; /* eMMC */
-		mmc1 = &sdmmc1; /* MicroSD */
 		rtc0 = "/i2c@7000d000/tps6586x@34";
 		rtc1 = "/rtc@7000e000";
 		serial0 = &uarta;
@@ -25,7 +19,7 @@
 		stdout-path = "serial0:115200n8";
 	};
 
-	memory@0 {
+	memory {
 		reg = <0x00000000 0x20000000>;
 	};
 
@@ -266,16 +260,8 @@
 		};
 	};
 
-	spdif@70002400 {
-		status = "okay";
-
-		nvidia,fixed-parent-rate;
-	};
-
 	i2s@70002800 {
 		status = "okay";
-
-		nvidia,fixed-parent-rate;
 	};
 
 	serial@70006000 {
@@ -317,57 +303,10 @@
 		request-gpios = <&gpio TEGRA_GPIO(V, 2) GPIO_ACTIVE_HIGH>;
 		slave-addr = <138>;
 		clocks = <&tegra_car TEGRA20_CLK_I2C3>,
-			 <&tegra_car TEGRA20_CLK_PLL_P_OUT3>;
+		         <&tegra_car TEGRA20_CLK_PLL_P_OUT3>;
 		clock-names = "div-clk", "fast-clk";
 		resets = <&tegra_car 67>;
 		reset-names = "i2c";
-	};
-
-	memory-controller@7000f400 {
-		nvidia,use-ram-code;
-
-		emc-tables@0 {
-			nvidia,ram-code = <0x0>;
-			#address-cells = <1>;
-			#size-cells = <0>;
-			reg = <0>;
-
-			emc-table@166500 {
-				reg = <166500>;
-				compatible = "nvidia,tegra20-emc-table";
-				clock-frequency = <166500>;
-				nvidia,emc-registers = <0x0000000a 0x00000016
-					0x00000008 0x00000003 0x00000004 0x00000004
-					0x00000002 0x0000000c 0x00000003 0x00000003
-					0x00000002 0x00000001 0x00000004 0x00000005
-					0x00000004 0x00000009 0x0000000d 0x000004df
-					0x00000000 0x00000003 0x00000003 0x00000003
-					0x00000003 0x00000001 0x0000000a 0x000000c8
-					0x00000003 0x00000006 0x00000004 0x00000008
-					0x00000002 0x00000000 0x00000000 0x00000002
-					0x00000000 0x00000000 0x00000083 0xe03b0323
-					0x007fe010 0x00001414 0x00000000 0x00000000
-					0x00000000 0x00000000 0x00000000 0x00000000>;
-			};
-
-			emc-table@333000 {
-				reg = <333000>;
-				compatible = "nvidia,tegra20-emc-table";
-				clock-frequency = <333000>;
-				nvidia,emc-registers = <0x00000018 0x00000033
-					0x00000012 0x00000004 0x00000004 0x00000005
-					0x00000003 0x0000000c 0x00000006 0x00000006
-					0x00000003 0x00000001 0x00000004 0x00000005
-					0x00000004 0x00000009 0x0000000d 0x00000bff
-					0x00000000 0x00000003 0x00000003 0x00000006
-					0x00000006 0x00000001 0x00000011 0x000000c8
-					0x00000003 0x0000000e 0x00000007 0x00000008
-					0x00000002 0x00000000 0x00000000 0x00000002
-					0x00000000 0x00000000 0x00000083 0xf0440303
-					0x007fe010 0x00001414 0x00000000 0x00000000
-					0x00000000 0x00000000 0x00000000 0x00000000>;
-			};
-		};
 	};
 
 	i2c@7000d000 {
@@ -398,26 +337,18 @@
 					regulator-always-on;
 				};
 
-				core_vdd_reg: sm0 {
+				sm0 {
 					regulator-name = "+1.2vs_sm0,vdd_core";
-					regulator-min-microvolt = <950000>;
-					regulator-max-microvolt = <1300000>;
-					regulator-coupled-with = <&rtc_vdd_reg &cpu_vdd_reg>;
-					regulator-coupled-max-spread = <170000 550000>;
+					regulator-min-microvolt = <1200000>;
+					regulator-max-microvolt = <1200000>;
 					regulator-always-on;
-
-					nvidia,tegra-core-regulator;
 				};
 
-				cpu_vdd_reg: sm1 {
+				sm1 {
 					regulator-name = "+1.0vs_sm1,vdd_cpu";
-					regulator-min-microvolt = <750000>;
-					regulator-max-microvolt = <1100000>;
-					regulator-coupled-with = <&core_vdd_reg &rtc_vdd_reg>;
-					regulator-coupled-max-spread = <550000 550000>;
+					regulator-min-microvolt = <1000000>;
+					regulator-max-microvolt = <1000000>;
 					regulator-always-on;
-
-					nvidia,tegra-cpu-regulator;
 				};
 
 				sm2_reg: sm2 {
@@ -436,15 +367,10 @@
 					regulator-always-on;
 				};
 
-				rtc_vdd_reg: ldo2 {
+				ldo2 {
 					regulator-name = "+1.2vs_ldo2,vdd_rtc";
-					regulator-min-microvolt = <950000>;
-					regulator-max-microvolt = <1300000>;
-					regulator-coupled-with = <&core_vdd_reg &cpu_vdd_reg>;
-					regulator-coupled-max-spread = <170000 550000>;
-					regulator-always-on;
-
-					nvidia,tegra-rtc-regulator;
+					regulator-min-microvolt = <1200000>;
+					regulator-max-microvolt = <1200000>;
 				};
 
 				ldo3 {
@@ -510,14 +436,9 @@
 			};
 		};
 
-		adt7461: temperature-sensor@4c {
+		adt7461@4c {
 			compatible = "adi,adt7461";
 			reg = <0x4c>;
-
-			interrupt-parent = <&gpio>;
-			interrupts = <TEGRA_GPIO(N, 6) IRQ_TYPE_EDGE_FALLING>;
-
-			#thermal-sensor-cells = <1>;
 		};
 	};
 
@@ -529,7 +450,6 @@
 		nvidia,core-pwr-good-time = <3845 3845>;
 		nvidia,core-pwr-off-time = <0>;
 		nvidia,sys-clock-req-active-high;
-		core-supply = <&core_vdd_reg>;
 	};
 
 	usb@c5000000 {
@@ -544,6 +464,8 @@
 
 	usb@c5004000 {
 		status = "okay";
+		nvidia,phy-reset-gpio = <&gpio TEGRA_GPIO(V, 0)
+			GPIO_ACTIVE_LOW>;
 	};
 
 	usb-phy@c5004000 {
@@ -560,7 +482,7 @@
 		status = "okay";
 	};
 
-	sdmmc1: mmc@c8000000 {
+	sdhci@c8000000 {
 		status = "okay";
 		cd-gpios = <&gpio TEGRA_GPIO(V, 5) GPIO_ACTIVE_LOW>;
 		wp-gpios = <&gpio TEGRA_GPIO(H, 1) GPIO_ACTIVE_HIGH>;
@@ -568,7 +490,7 @@
 		bus-width = <4>;
 	};
 
-	sdmmc4: mmc@c8000600 {
+	sdhci@c8000600 {
 		status = "okay";
 		bus-width = <8>;
 		non-removable;
@@ -583,23 +505,29 @@
 		brightness-levels = <0 16 32 48 64 80 96 112 128 144 160 176 192 208 224 240 255>;
 		default-brightness-level = <10>;
 
-		/* close enough */
-		power-supply = <&vdd_pnl_reg>;
+		backlight-boot-off;
 	};
 
-	clk32k_in: clock-32k {
-		compatible = "fixed-clock";
-		clock-frequency = <32768>;
-		#clock-cells = <0>;
+	clocks {
+		compatible = "simple-bus";
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		clk32k_in: clock@0 {
+			compatible = "fixed-clock";
+			reg = <0>;
+			#clock-cells = <0>;
+			clock-frequency = <32768>;
+		};
 	};
 
 	gpio-keys {
 		compatible = "gpio-keys";
 
-		key-wakeup {
-			label = "Wakeup";
+		power {
+			label = "Power";
 			gpios = <&gpio TEGRA_GPIO(J, 7) GPIO_ACTIVE_LOW>;
-			linux,code = <KEY_WAKEUP>;
+			linux,code = <KEY_POWER>;
 			wakeup-source;
 		};
 	};
@@ -607,7 +535,7 @@
 	gpio-leds {
 		compatible = "gpio-leds";
 
-		led-0 {
+		wifi {
 			label = "wifi-led";
 			gpios = <&gpio TEGRA_GPIO(D, 0) GPIO_ACTIVE_HIGH>;
 			linux,default-trigger = "rfkill0";
@@ -615,7 +543,7 @@
 	};
 
 	panel: panel {
-		compatible = "samsung,ltn101nt05";
+		compatible = "samsung,ltn101nt05", "simple-panel";
 
 		ddc-i2c-bus = <&lvds_ddc>;
 		power-supply = <&vdd_pnl_reg>;
@@ -624,22 +552,30 @@
 		backlight = <&backlight>;
 	};
 
-	p5valw_reg: regulator-5v0alw {
-		compatible = "regulator-fixed";
-		regulator-name = "+5valw";
-		regulator-min-microvolt = <5000000>;
-		regulator-max-microvolt = <5000000>;
-		regulator-always-on;
-	};
+	regulators {
+		compatible = "simple-bus";
+		#address-cells = <1>;
+		#size-cells = <0>;
 
-	vdd_pnl_reg: regulator-3v0 {
-		compatible = "regulator-fixed";
-		regulator-name = "+3VS,vdd_pnl";
-		regulator-min-microvolt = <3300000>;
-		regulator-max-microvolt = <3300000>;
-		regulator-boot-on;
-		gpio = <&gpio TEGRA_GPIO(A, 4) GPIO_ACTIVE_HIGH>;
-		enable-active-high;
+		p5valw_reg: regulator@0 {
+			compatible = "regulator-fixed";
+			reg = <0>;
+			regulator-name = "+5valw";
+			regulator-min-microvolt = <5000000>;
+			regulator-max-microvolt = <5000000>;
+			regulator-always-on;
+		};
+
+		vdd_pnl_reg: regulator@1 {
+			compatible = "regulator-fixed";
+			reg = <1>;
+			regulator-name = "+3VS,vdd_pnl";
+			regulator-min-microvolt = <3300000>;
+			regulator-max-microvolt = <3300000>;
+			regulator-boot-on;
+			gpio = <&gpio TEGRA_GPIO(A, 4) GPIO_ACTIVE_HIGH>;
+			enable-active-high;
+		};
 	};
 
 	sound {
@@ -663,59 +599,8 @@
 			GPIO_ACTIVE_HIGH>;
 
 		clocks = <&tegra_car TEGRA20_CLK_PLL_A>,
-			 <&tegra_car TEGRA20_CLK_PLL_A_OUT0>,
-			 <&tegra_car TEGRA20_CLK_CDEV1>;
+		         <&tegra_car TEGRA20_CLK_PLL_A_OUT0>,
+		         <&tegra_car TEGRA20_CLK_CDEV1>;
 		clock-names = "pll_a", "pll_a_out0", "mclk";
 	};
-
-	cpus {
-		cpu0: cpu@0 {
-			cpu-supply = <&cpu_vdd_reg>;
-			operating-points-v2 = <&cpu0_opp_table>;
-			#cooling-cells = <2>;
-		};
-
-		cpu1: cpu@1 {
-			cpu-supply = <&cpu_vdd_reg>;
-			operating-points-v2 = <&cpu0_opp_table>;
-			#cooling-cells = <2>;
-		};
-	};
-
-	thermal-zones {
-		cpu-thermal {
-			polling-delay-passive = <500>; /* milliseconds */
-			polling-delay = <1500>; /* milliseconds */
-
-			thermal-sensors = <&adt7461 1>;
-
-			trips {
-				trip0: cpu-alert0 {
-					/* start throttling at 80C */
-					temperature = <80000>;
-					hysteresis = <200>;
-					type = "passive";
-				};
-
-				trip1: cpu-crit {
-					/* shut down at 85C */
-					temperature = <85000>;
-					hysteresis = <2000>;
-					type = "critical";
-				};
-			};
-
-			cooling-maps {
-				map0 {
-					trip = <&trip0>;
-					cooling-device = <&cpu0 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
-							 <&cpu1 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
-				};
-			};
-		};
-	};
-};
-
-&emc_icc_dvfs_opp_table {
-	/delete-node/ opp-760000000;
 };

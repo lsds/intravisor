@@ -1,12 +1,22 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (C) 1999 - 2010 Intel Corporation.
  * Copyright (C) 2010 LAPIS SEMICONDUCTOR CO., LTD.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; version 2 of the License.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, see <http://www.gnu.org/licenses/>.
  */
 
 #include <linux/interrupt.h>
 #include <linux/delay.h>
-#include <linux/ethtool.h>
 #include <linux/io.h>
 #include <linux/module.h>
 #include <linux/sched.h>
@@ -462,7 +472,7 @@ static void pch_can_int_clr(struct pch_can_priv *priv, u32 mask)
 			       PCH_ID2_DIR | (0x7ff << 2));
 		iowrite32(0x0, &priv->regs->ifregs[1].id1);
 
-		/* Clearing NewDat, TxRqst & IntPnd */
+		/* Claring NewDat, TxRqst & IntPnd */
 		pch_can_bit_clear(&priv->regs->ifregs[1].mcont,
 				  PCH_IF_MCONT_NEWDAT | PCH_IF_MCONT_INTPND |
 				  PCH_IF_MCONT_TXRQXT);
@@ -490,7 +500,6 @@ static void pch_can_error(struct net_device *ndev, u32 status)
 	if (!skb)
 		return;
 
-	errc = ioread32(&priv->regs->errc);
 	if (status & PCH_BUS_OFF) {
 		pch_can_set_tx_all(priv, 0);
 		pch_can_set_rx_all(priv, 0);
@@ -498,12 +507,9 @@ static void pch_can_error(struct net_device *ndev, u32 status)
 		cf->can_id |= CAN_ERR_BUSOFF;
 		priv->can.can_stats.bus_off++;
 		can_bus_off(ndev);
-	} else {
-		cf->can_id |= CAN_ERR_CNT;
-		cf->data[6] = errc & PCH_TEC;
-		cf->data[7] = (errc & PCH_REC) >> 8;
 	}
 
+	errc = ioread32(&priv->regs->errc);
 	/* Warning interrupt. */
 	if (status & PCH_EWARN) {
 		state = CAN_STATE_ERROR_WARNING;
@@ -561,8 +567,14 @@ static void pch_can_error(struct net_device *ndev, u32 status)
 		break;
 	}
 
+	cf->data[6] = errc & PCH_TEC;
+	cf->data[7] = (errc & PCH_REC) >> 8;
+
 	priv->can.state = state;
 	netif_receive_skb(skb);
+
+	stats->rx_packets++;
+	stats->rx_bytes += cf->can_dlc;
 }
 
 static irqreturn_t pch_can_interrupt(int irq, void *dev_id)
@@ -679,24 +691,23 @@ static int pch_can_rx_normal(struct net_device *ndev, u32 obj_num, int quota)
 			cf->can_id = id;
 		}
 
-		cf->len = can_cc_dlc2len((ioread32(&priv->regs->
+		if (id2 & PCH_ID2_DIR)
+			cf->can_id |= CAN_RTR_FLAG;
+
+		cf->can_dlc = get_can_dlc((ioread32(&priv->regs->
 						    ifregs[0].mcont)) & 0xF);
 
-		if (id2 & PCH_ID2_DIR) {
-			cf->can_id |= CAN_RTR_FLAG;
-		} else {
-			for (i = 0; i < cf->len; i += 2) {
-				data_reg = ioread16(&priv->regs->ifregs[0].data[i / 2]);
-				cf->data[i] = data_reg;
-				cf->data[i + 1] = data_reg >> 8;
-			}
-
-			stats->rx_bytes += cf->len;
+		for (i = 0; i < cf->can_dlc; i += 2) {
+			data_reg = ioread16(&priv->regs->ifregs[0].data[i / 2]);
+			cf->data[i] = data_reg;
+			cf->data[i + 1] = data_reg >> 8;
 		}
-		stats->rx_packets++;
-		rcv_pkts++;
-		quota--;
+
 		netif_receive_skb(skb);
+		rcv_pkts++;
+		stats->rx_packets++;
+		quota--;
+		stats->rx_bytes += cf->can_dlc;
 
 		pch_fifo_thresh(priv, obj_num);
 		obj_num++;
@@ -709,13 +720,16 @@ static void pch_can_tx_complete(struct net_device *ndev, u32 int_stat)
 {
 	struct pch_can_priv *priv = netdev_priv(ndev);
 	struct net_device_stats *stats = &(priv->ndev->stats);
+	u32 dlc;
 
-	stats->tx_bytes += can_get_echo_skb(ndev, int_stat - PCH_RX_OBJ_END - 1,
-					    NULL);
-	stats->tx_packets++;
+	can_get_echo_skb(ndev, int_stat - PCH_RX_OBJ_END - 1);
 	iowrite32(PCH_CMASK_RX_TX_GET | PCH_CMASK_CLRINTPND,
 		  &priv->regs->ifregs[1].cmask);
 	pch_can_rw_msg_obj(&priv->regs->ifregs[1].creq, int_stat);
+	dlc = get_can_dlc(ioread32(&priv->regs->ifregs[1].mcont) &
+			  PCH_IF_MCONT_DLC);
+	stats->tx_bytes += dlc;
+	stats->tx_packets++;
 	if (int_stat == PCH_TX_OBJ_END)
 		netif_wake_queue(ndev);
 }
@@ -831,7 +845,7 @@ static int pch_can_open(struct net_device *ndev)
 	struct pch_can_priv *priv = netdev_priv(ndev);
 	int retval;
 
-	/* Registering the interrupt. */
+	/* Regstering the interrupt. */
 	retval = request_irq(priv->dev->irq, pch_can_interrupt, IRQF_SHARED,
 			     ndev->name, ndev);
 	if (retval) {
@@ -882,7 +896,7 @@ static netdev_tx_t pch_xmit(struct sk_buff *skb, struct net_device *ndev)
 	int i;
 	u32 id2;
 
-	if (can_dev_dropped_skb(ndev, skb))
+	if (can_dropped_invalid_skb(ndev, skb))
 		return NETDEV_TX_OK;
 
 	tx_obj_no = priv->tx_obj;
@@ -916,15 +930,15 @@ static netdev_tx_t pch_xmit(struct sk_buff *skb, struct net_device *ndev)
 	iowrite32(id2, &priv->regs->ifregs[1].id2);
 
 	/* Copy data to register */
-	for (i = 0; i < cf->len; i += 2) {
+	for (i = 0; i < cf->can_dlc; i += 2) {
 		iowrite16(cf->data[i] | (cf->data[i + 1] << 8),
 			  &priv->regs->ifregs[1].data[i / 2]);
 	}
 
-	can_put_echo_skb(skb, ndev, tx_obj_no - PCH_RX_OBJ_END - 1, 0);
+	can_put_echo_skb(skb, ndev, tx_obj_no - PCH_RX_OBJ_END - 1);
 
 	/* Set the size of the data. Update if2_mcont */
-	iowrite32(cf->len | PCH_IF_MCONT_NEWDAT | PCH_IF_MCONT_TXRQXT |
+	iowrite32(cf->can_dlc | PCH_IF_MCONT_NEWDAT | PCH_IF_MCONT_TXRQXT |
 		  PCH_IF_MCONT_TXIE, &priv->regs->ifregs[1].mcont);
 
 	pch_can_rw_msg_obj(&priv->regs->ifregs[1].creq, tx_obj_no);
@@ -937,10 +951,6 @@ static const struct net_device_ops pch_can_netdev_ops = {
 	.ndo_stop		= pch_close,
 	.ndo_start_xmit		= pch_xmit,
 	.ndo_change_mtu		= can_change_mtu,
-};
-
-static const struct ethtool_ops pch_can_ethtool_ops = {
-	.get_ts_info = ethtool_op_get_ts_info,
 };
 
 static void pch_can_remove(struct pci_dev *pdev)
@@ -958,7 +968,8 @@ static void pch_can_remove(struct pci_dev *pdev)
 	free_candev(priv->ndev);
 }
 
-static void __maybe_unused pch_can_set_int_custom(struct pch_can_priv *priv)
+#ifdef CONFIG_PM
+static void pch_can_set_int_custom(struct pch_can_priv *priv)
 {
 	/* Clearing the IE, SIE and EIE bits of Can control register. */
 	pch_can_bit_clear(&priv->regs->cont, PCH_CTRL_IE_SIE_EIE);
@@ -969,14 +980,14 @@ static void __maybe_unused pch_can_set_int_custom(struct pch_can_priv *priv)
 }
 
 /* This function retrieves interrupt enabled for the CAN device. */
-static u32 __maybe_unused pch_can_get_int_enables(struct pch_can_priv *priv)
+static u32 pch_can_get_int_enables(struct pch_can_priv *priv)
 {
 	/* Obtaining the status of IE, SIE and EIE interrupt bits. */
 	return (ioread32(&priv->regs->cont) & PCH_CTRL_IE_SIE_EIE) >> 1;
 }
 
-static u32 __maybe_unused pch_can_get_rxtx_ir(struct pch_can_priv *priv,
-					      u32 buff_num, enum pch_ifreg dir)
+static u32 pch_can_get_rxtx_ir(struct pch_can_priv *priv, u32 buff_num,
+			       enum pch_ifreg dir)
 {
 	u32 ie, enable;
 
@@ -997,8 +1008,8 @@ static u32 __maybe_unused pch_can_get_rxtx_ir(struct pch_can_priv *priv,
 	return enable;
 }
 
-static void __maybe_unused pch_can_set_rx_buffer_link(struct pch_can_priv *priv,
-						      u32 buffer_num, int set)
+static void pch_can_set_rx_buffer_link(struct pch_can_priv *priv,
+				       u32 buffer_num, int set)
 {
 	iowrite32(PCH_CMASK_RX_TX_GET, &priv->regs->ifregs[0].cmask);
 	pch_can_rw_msg_obj(&priv->regs->ifregs[0].creq, buffer_num);
@@ -1013,8 +1024,7 @@ static void __maybe_unused pch_can_set_rx_buffer_link(struct pch_can_priv *priv,
 	pch_can_rw_msg_obj(&priv->regs->ifregs[0].creq, buffer_num);
 }
 
-static u32 __maybe_unused pch_can_get_rx_buffer_link(struct pch_can_priv *priv,
-						     u32 buffer_num)
+static u32 pch_can_get_rx_buffer_link(struct pch_can_priv *priv, u32 buffer_num)
 {
 	u32 link;
 
@@ -1028,19 +1038,20 @@ static u32 __maybe_unused pch_can_get_rx_buffer_link(struct pch_can_priv *priv,
 	return link;
 }
 
-static int __maybe_unused pch_can_get_buffer_status(struct pch_can_priv *priv)
+static int pch_can_get_buffer_status(struct pch_can_priv *priv)
 {
 	return (ioread32(&priv->regs->treq1) & 0xffff) |
 	       (ioread32(&priv->regs->treq2) << 16);
 }
 
-static int __maybe_unused pch_can_suspend(struct device *dev_d)
+static int pch_can_suspend(struct pci_dev *pdev, pm_message_t state)
 {
 	int i;
+	int retval;
 	u32 buf_stat;	/* Variable for reading the transmit buffer status. */
 	int counter = PCH_COUNTER_LIMIT;
 
-	struct net_device *dev = dev_get_drvdata(dev_d);
+	struct net_device *dev = pci_get_drvdata(pdev);
 	struct pch_can_priv *priv = netdev_priv(dev);
 
 	/* Stop the CAN controller */
@@ -1058,7 +1069,7 @@ static int __maybe_unused pch_can_suspend(struct device *dev_d)
 		udelay(1);
 	}
 	if (!counter)
-		dev_err(dev_d, "%s -> Transmission time out.\n", __func__);
+		dev_err(&pdev->dev, "%s -> Transmission time out.\n", __func__);
 
 	/* Save interrupt configuration and then disable them */
 	priv->int_enables = pch_can_get_int_enables(priv);
@@ -1081,15 +1092,34 @@ static int __maybe_unused pch_can_suspend(struct device *dev_d)
 
 	/* Disable all Receive buffers */
 	pch_can_set_rx_all(priv, 0);
+	retval = pci_save_state(pdev);
+	if (retval) {
+		dev_err(&pdev->dev, "pci_save_state failed.\n");
+	} else {
+		pci_enable_wake(pdev, PCI_D3hot, 0);
+		pci_disable_device(pdev);
+		pci_set_power_state(pdev, pci_choose_state(pdev, state));
+	}
 
-	return 0;
+	return retval;
 }
 
-static int __maybe_unused pch_can_resume(struct device *dev_d)
+static int pch_can_resume(struct pci_dev *pdev)
 {
 	int i;
-	struct net_device *dev = dev_get_drvdata(dev_d);
+	int retval;
+	struct net_device *dev = pci_get_drvdata(pdev);
 	struct pch_can_priv *priv = netdev_priv(dev);
+
+	pci_set_power_state(pdev, PCI_D0);
+	pci_restore_state(pdev);
+	retval = pci_enable_device(pdev);
+	if (retval) {
+		dev_err(&pdev->dev, "pci_enable_device failed.\n");
+		return retval;
+	}
+
+	pci_enable_wake(pdev, PCI_D3hot, 0);
 
 	priv->can.state = CAN_STATE_ERROR_ACTIVE;
 
@@ -1127,8 +1157,12 @@ static int __maybe_unused pch_can_resume(struct device *dev_d)
 	/* Restore Run Mode */
 	pch_can_set_run_mode(priv, PCH_CAN_RUN);
 
-	return 0;
+	return retval;
 }
+#else
+#define pch_can_suspend NULL
+#define pch_can_resume NULL
+#endif
 
 static int pch_can_get_berr_counter(const struct net_device *dev,
 				    struct can_berr_counter *bec)
@@ -1193,10 +1227,9 @@ static int pch_can_probe(struct pci_dev *pdev,
 	pci_set_drvdata(pdev, ndev);
 	SET_NETDEV_DEV(ndev, &pdev->dev);
 	ndev->netdev_ops = &pch_can_netdev_ops;
-	ndev->ethtool_ops = &pch_can_ethtool_ops;
 	priv->can.clock.freq = PCH_CAN_CLK; /* Hz */
 
-	netif_napi_add_weight(ndev, &priv->napi, pch_can_poll, PCH_RX_OBJ_END);
+	netif_napi_add(ndev, &priv->napi, pch_can_poll, PCH_RX_OBJ_END);
 
 	rc = pci_enable_msi(priv->dev);
 	if (rc) {
@@ -1230,16 +1263,13 @@ probe_exit_endev:
 	return rc;
 }
 
-static SIMPLE_DEV_PM_OPS(pch_can_pm_ops,
-			 pch_can_suspend,
-			 pch_can_resume);
-
 static struct pci_driver pch_can_pci_driver = {
 	.name = "pch_can",
 	.id_table = pch_pci_tbl,
 	.probe = pch_can_probe,
 	.remove = pch_can_remove,
-	.driver.pm = &pch_can_pm_ops,
+	.suspend = pch_can_suspend,
+	.resume = pch_can_resume,
 };
 
 module_pci_driver(pch_can_pci_driver);

@@ -51,6 +51,11 @@ static irqreturn_t rtlx_interrupt(int irq, void *dev_id)
 	return IRQ_HANDLED;
 }
 
+static struct irqaction rtlx_irq = {
+	.handler	= rtlx_interrupt,
+	.name		= "RTLX",
+};
+
 static int rtlx_irq_num = MIPS_CPU_IRQ_BASE + MIPS_CPU_RTLX_IRQ;
 
 void _interrupt_sp(void)
@@ -119,7 +124,8 @@ int __init rtlx_module_init(void)
 		goto out_class;
 	}
 
-	err = request_irq(rtlx_irq_num, rtlx_interrupt, 0, "RTLX", rtlx);
+	rtlx_irq.dev_id = rtlx;
+	err = setup_irq(rtlx_irq_num, &rtlx_irq);
 	if (err)
 		goto out_class;
 

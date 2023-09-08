@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * TLB support routines.
  *
@@ -22,11 +21,12 @@
 #include <linux/sched.h>
 #include <linux/smp.h>
 #include <linux/mm.h>
-#include <linux/memblock.h>
+#include <linux/bootmem.h>
 #include <linux/slab.h>
 
 #include <asm/delay.h>
 #include <asm/mmu_context.h>
+#include <asm/pgalloc.h>
 #include <asm/pal.h>
 #include <asm/tlbflush.h>
 #include <asm/dma.h>
@@ -59,16 +59,8 @@ struct ia64_tr_entry *ia64_idtrs[NR_CPUS];
 void __init
 mmu_context_init (void)
 {
-	ia64_ctx.bitmap = memblock_alloc((ia64_ctx.max_ctx + 1) >> 3,
-					 SMP_CACHE_BYTES);
-	if (!ia64_ctx.bitmap)
-		panic("%s: Failed to allocate %u bytes\n", __func__,
-		      (ia64_ctx.max_ctx + 1) >> 3);
-	ia64_ctx.flushmap = memblock_alloc((ia64_ctx.max_ctx + 1) >> 3,
-					   SMP_CACHE_BYTES);
-	if (!ia64_ctx.flushmap)
-		panic("%s: Failed to allocate %u bytes\n", __func__,
-		      (ia64_ctx.max_ctx + 1) >> 3);
+	ia64_ctx.bitmap = alloc_bootmem((ia64_ctx.max_ctx+1)>>3);
+	ia64_ctx.flushmap = alloc_bootmem((ia64_ctx.max_ctx+1)>>3);
 }
 
 /*
@@ -174,7 +166,7 @@ __setup("nptcg=", set_nptcg);
  * override table (in which case we should ignore the value from
  * PAL_VM_SUMMARY).
  *
- * Kernel parameter "nptcg=" overrides maximum number of simultaneous ptc.g
+ * Kernel parameter "nptcg=" overrides maximum number of simultanesous ptc.g
  * purges defined in either PAL_VM_SUMMARY or PAL override table. In this case,
  * we should ignore the value from either PAL_VM_SUMMARY or PAL override table.
  *
@@ -244,8 +236,7 @@ resetsema:
 	spinaphore_init(&ptcg_sem, max_purges);
 }
 
-#ifdef CONFIG_SMP
-static void
+void
 ia64_global_tlb_purge (struct mm_struct *mm, unsigned long start,
 		       unsigned long end, unsigned long nbits)
 {
@@ -282,7 +273,6 @@ ia64_global_tlb_purge (struct mm_struct *mm, unsigned long start,
                 activate_context(active_mm);
         }
 }
-#endif /* CONFIG_SMP */
 
 void
 local_flush_tlb_all (void)
@@ -307,8 +297,8 @@ local_flush_tlb_all (void)
 	ia64_srlz_i();			/* srlz.i implies srlz.d */
 }
 
-static void
-__flush_tlb_range (struct vm_area_struct *vma, unsigned long start,
+void
+flush_tlb_range (struct vm_area_struct *vma, unsigned long start,
 		 unsigned long end)
 {
 	struct mm_struct *mm = vma->vm_mm;
@@ -333,7 +323,7 @@ __flush_tlb_range (struct vm_area_struct *vma, unsigned long start,
 	preempt_disable();
 #ifdef CONFIG_SMP
 	if (mm != current->active_mm || cpumask_weight(mm_cpumask(mm)) != 1) {
-		ia64_global_tlb_purge(mm, start, end, nbits);
+		platform_global_tlb_purge(mm, start, end, nbits);
 		preempt_enable();
 		return;
 	}
@@ -345,30 +335,11 @@ __flush_tlb_range (struct vm_area_struct *vma, unsigned long start,
 	preempt_enable();
 	ia64_srlz_i();			/* srlz.i implies srlz.d */
 }
-
-void flush_tlb_range(struct vm_area_struct *vma,
-		unsigned long start, unsigned long end)
-{
-	if (unlikely(end - start >= 1024*1024*1024*1024UL
-			|| REGION_NUMBER(start) != REGION_NUMBER(end - 1))) {
-		/*
-		 * If we flush more than a tera-byte or across regions, we're
-		 * probably better off just flushing the entire TLB(s).  This
-		 * should be very rare and is not worth optimizing for.
-		 */
-		flush_tlb_all();
-	} else {
-		/* flush the address range from the tlb */
-		__flush_tlb_range(vma, start, end);
-		/* flush the virt. page-table area mapping the addr range */
-		__flush_tlb_range(vma, ia64_thash(start), ia64_thash(end));
-	}
-}
 EXPORT_SYMBOL(flush_tlb_range);
 
 void ia64_tlb_init(void)
 {
-	ia64_ptce_info_t ptce_info;
+	ia64_ptce_info_t uninitialized_var(ptce_info); /* GCC be quiet */
 	u64 tr_pgbits;
 	long status;
 	pal_vm_info_1_u_t vm_info_1;
@@ -459,9 +430,8 @@ int ia64_itr_entry(u64 target_mask, u64 va, u64 pte, u64 log_size)
 	int cpu = smp_processor_id();
 
 	if (!ia64_idtrs[cpu]) {
-		ia64_idtrs[cpu] = kmalloc_array(2 * IA64_TR_ALLOC_MAX,
-						sizeof(struct ia64_tr_entry),
-						GFP_KERNEL);
+		ia64_idtrs[cpu] = kmalloc(2 * IA64_TR_ALLOC_MAX *
+				sizeof (struct ia64_tr_entry), GFP_KERNEL);
 		if (!ia64_idtrs[cpu])
 			return -ENOMEM;
 	}
@@ -516,7 +486,7 @@ found:
 	if (i >= per_cpu(ia64_tr_num, cpu))
 		return -EBUSY;
 
-	/*Record tr info for mca handler use!*/
+	/*Record tr info for mca hander use!*/
 	if (i > per_cpu(ia64_tr_used, cpu))
 		per_cpu(ia64_tr_used, cpu) = i;
 

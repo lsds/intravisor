@@ -1,5 +1,17 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version 2
+ * of the License, or (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
  *
  * Copyright (C) 2001, 2002, 2003 Broadcom Corporation
  * Copyright (C) 2007 Ralf Baechle <ralf@linux-mips.org>
@@ -437,16 +449,16 @@ static int sbprof_tb_release(struct inode *inode, struct file *filp)
 	return 0;
 }
 
-static ssize_t sbprof_tb_read(struct file *filp, char __user *buf,
+static ssize_t sbprof_tb_read(struct file *filp, char *buf,
 			      size_t size, loff_t *offp)
 {
 	int cur_sample, sample_off, cur_count, sample_left;
 	char *src;
 	int   count   =	 0;
-	char __user *dest    =	 buf;
+	char *dest    =	 buf;
 	long  cur_off = *offp;
 
-	if (!access_ok(buf, size))
+	if (!access_ok(VERIFY_WRITE, buf, size))
 		return -EFAULT;
 
 	mutex_lock(&sbp.lock);
@@ -512,7 +524,7 @@ static long sbprof_tb_ioctl(struct file *filp,
 		if (err)
 			break;
 
-		err = put_user(TB_FULL, (int __user *) arg);
+		err = put_user(TB_FULL, (int *) arg);
 		break;
 	}
 

@@ -2,10 +2,8 @@
 #ifndef _NFT_FIB_H_
 #define _NFT_FIB_H_
 
-#include <net/netfilter/nf_tables.h>
-
 struct nft_fib {
-	u8			dreg;
+	enum nft_registers	dreg:8;
 	u8			result;
 	u32			flags;
 };
@@ -36,8 +34,5 @@ void nft_fib6_eval(const struct nft_expr *expr, struct nft_regs *regs,
 		   const struct nft_pktinfo *pkt);
 
 void nft_fib_store_result(void *reg, const struct nft_fib *priv,
-			  const struct net_device *dev);
-
-bool nft_fib_reduce(struct nft_regs_track *track,
-		    const struct nft_expr *expr);
+			  const struct nft_pktinfo *pkt, int index);
 #endif

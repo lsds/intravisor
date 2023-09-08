@@ -9,8 +9,6 @@
 
 #include <uapi/linux/atm_tcp.h>
 
-struct atm_vcc;
-struct module;
 
 struct atm_tcp_ops {
 	int (*attach)(struct atm_vcc *vcc,int itf);

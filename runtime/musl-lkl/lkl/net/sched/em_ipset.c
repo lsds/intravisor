@@ -1,8 +1,11 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * net/sched/em_ipset.c	ipset ematch
  *
  * Copyright (c) 2012 Florian Westphal <fw@strlen.de>
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * version 2 as published by the Free Software Foundation.
  */
 
 #include <linux/gfp.h>
@@ -59,7 +62,7 @@ static int em_ipset_match(struct sk_buff *skb, struct tcf_ematch *em,
 	};
 	int ret, network_offset;
 
-	switch (skb_protocol(skb, true)) {
+	switch (tc_skb_protocol(skb)) {
 	case htons(ETH_P_IP):
 		state.pf = NFPROTO_IPV4;
 		if (!pskb_network_may_pull(skb, sizeof(struct iphdr)))

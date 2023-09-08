@@ -15,7 +15,6 @@
 
 #include <linux/random.h>
 #include <linux/version.h>
-#include <asm/pointer_auth.h>
 
 extern unsigned long __stack_chk_guard;
 
@@ -27,7 +26,6 @@ extern unsigned long __stack_chk_guard;
  */
 static __always_inline void boot_init_stack_canary(void)
 {
-#if defined(CONFIG_STACKPROTECTOR)
 	unsigned long canary;
 
 	/* Try to get a semi random initial value. */
@@ -36,12 +34,7 @@ static __always_inline void boot_init_stack_canary(void)
 	canary &= CANARY_MASK;
 
 	current->stack_canary = canary;
-	if (!IS_ENABLED(CONFIG_STACKPROTECTOR_PER_TASK))
-		__stack_chk_guard = current->stack_canary;
-#endif
-	ptrauth_thread_init_kernel(current);
-	ptrauth_thread_switch_kernel(current);
-	ptrauth_enable();
+	__stack_chk_guard = current->stack_canary;
 }
 
 #endif	/* _ASM_STACKPROTECTOR_H */

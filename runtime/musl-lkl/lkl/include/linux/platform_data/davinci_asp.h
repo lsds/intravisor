@@ -1,8 +1,16 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * TI DaVinci Audio Serial Port support
  *
- * Copyright (C) 2012 Texas Instruments Incorporated - https://www.ti.com/
+ * Copyright (C) 2012 Texas Instruments Incorporated - http://www.ti.com/
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License as
+ * published by the Free Software Foundation version 2.
+ *
+ * This program is distributed "as is" WITHOUT ANY WARRANTY of any
+ * kind, whether express or implied; without even the implied warranty
+ * of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
  */
 
 #ifndef __DAVINCI_ASP_H
@@ -71,7 +79,6 @@ struct davinci_mcasp_pdata {
 	/* McASP specific fields */
 	int tdm_slots;
 	u8 op_mode;
-	u8 dismod;
 	u8 num_serializer;
 	u8 *serial_dir;
 	u8 version;
@@ -88,7 +95,6 @@ enum {
 	MCASP_VERSION_2,	/* DA8xx/OMAPL1x */
 	MCASP_VERSION_3,        /* TI81xx/AM33xx */
 	MCASP_VERSION_4,	/* DRA7xxx */
-	MCASP_VERSION_OMAP,	/* OMAP4/5 */
 };
 
 enum mcbsp_clk_input_pin {

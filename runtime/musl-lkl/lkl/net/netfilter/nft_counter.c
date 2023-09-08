@@ -1,6 +1,9 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2008-2009 Patrick McHardy <kaber@trash.net>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  *
  * Development of this code funded by Astaro AG (http://www.astaro.com/)
  */
@@ -13,8 +16,6 @@
 #include <linux/netfilter.h>
 #include <linux/netfilter/nf_tables.h>
 #include <net/netfilter/nf_tables.h>
-#include <net/netfilter/nf_tables_core.h>
-#include <net/netfilter/nf_tables_offload.h>
 
 struct nft_counter {
 	s64		bytes;
@@ -62,7 +63,7 @@ static int nft_counter_do_init(const struct nlattr * const tb[],
 	struct nft_counter __percpu *cpu_stats;
 	struct nft_counter *this_cpu;
 
-	cpu_stats = alloc_percpu_gfp(struct nft_counter, GFP_KERNEL_ACCOUNT);
+	cpu_stats = alloc_percpu(struct nft_counter);
 	if (cpu_stats == NULL)
 		return -ENOMEM;
 
@@ -95,15 +96,14 @@ static void nft_counter_do_destroy(struct nft_counter_percpu_priv *priv)
 	free_percpu(priv->counter);
 }
 
-static void nft_counter_obj_destroy(const struct nft_ctx *ctx,
-				    struct nft_object *obj)
+static void nft_counter_obj_destroy(struct nft_object *obj)
 {
 	struct nft_counter_percpu_priv *priv = nft_obj_data(obj);
 
 	nft_counter_do_destroy(priv);
 }
 
-static void nft_counter_reset(struct nft_counter_percpu_priv *priv,
+static void nft_counter_reset(struct nft_counter_percpu_priv __percpu *priv,
 			      struct nft_counter *total)
 {
 	struct nft_counter *this_cpu;
@@ -175,7 +175,7 @@ static const struct nla_policy nft_counter_policy[NFTA_COUNTER_MAX + 1] = {
 	[NFTA_COUNTER_BYTES]	= { .type = NLA_U64 },
 };
 
-struct nft_object_type nft_counter_obj_type;
+static struct nft_object_type nft_counter_obj_type;
 static const struct nft_object_ops nft_counter_obj_ops = {
 	.type		= &nft_counter_obj_type,
 	.size		= sizeof(struct nft_counter_percpu_priv),
@@ -185,7 +185,7 @@ static const struct nft_object_ops nft_counter_obj_ops = {
 	.dump		= nft_counter_obj_dump,
 };
 
-struct nft_object_type nft_counter_obj_type __read_mostly = {
+static struct nft_object_type nft_counter_obj_type __read_mostly = {
 	.type		= NFT_OBJECT_COUNTER,
 	.ops		= &nft_counter_obj_ops,
 	.maxattr	= NFTA_COUNTER_MAX,
@@ -193,8 +193,9 @@ struct nft_object_type nft_counter_obj_type __read_mostly = {
 	.owner		= THIS_MODULE,
 };
 
-void nft_counter_eval(const struct nft_expr *expr, struct nft_regs *regs,
-		      const struct nft_pktinfo *pkt)
+static void nft_counter_eval(const struct nft_expr *expr,
+			     struct nft_regs *regs,
+			     const struct nft_pktinfo *pkt)
 {
 	struct nft_counter_percpu_priv *priv = nft_expr_priv(expr);
 
@@ -249,56 +250,18 @@ static int nft_counter_clone(struct nft_expr *dst, const struct nft_expr *src)
 	return 0;
 }
 
-static int nft_counter_offload(struct nft_offload_ctx *ctx,
-			       struct nft_flow_rule *flow,
-			       const struct nft_expr *expr)
-{
-	/* No specific offload action is needed, but report success. */
-	return 0;
-}
-
-static void nft_counter_offload_stats(struct nft_expr *expr,
-				      const struct flow_stats *stats)
-{
-	struct nft_counter_percpu_priv *priv = nft_expr_priv(expr);
-	struct nft_counter *this_cpu;
-	seqcount_t *myseq;
-
-	preempt_disable();
-	this_cpu = this_cpu_ptr(priv->counter);
-	myseq = this_cpu_ptr(&nft_counter_seq);
-
-	write_seqcount_begin(myseq);
-	this_cpu->packets += stats->pkts;
-	this_cpu->bytes += stats->bytes;
-	write_seqcount_end(myseq);
-	preempt_enable();
-}
-
-void nft_counter_init_seqcount(void)
-{
-	int cpu;
-
-	for_each_possible_cpu(cpu)
-		seqcount_init(per_cpu_ptr(&nft_counter_seq, cpu));
-}
-
-struct nft_expr_type nft_counter_type;
+static struct nft_expr_type nft_counter_type;
 static const struct nft_expr_ops nft_counter_ops = {
 	.type		= &nft_counter_type,
 	.size		= NFT_EXPR_SIZE(sizeof(struct nft_counter_percpu_priv)),
 	.eval		= nft_counter_eval,
 	.init		= nft_counter_init,
 	.destroy	= nft_counter_destroy,
-	.destroy_clone	= nft_counter_destroy,
 	.dump		= nft_counter_dump,
 	.clone		= nft_counter_clone,
-	.reduce		= NFT_REDUCE_READONLY,
-	.offload	= nft_counter_offload,
-	.offload_stats	= nft_counter_offload_stats,
 };
 
-struct nft_expr_type nft_counter_type __read_mostly = {
+static struct nft_expr_type nft_counter_type __read_mostly = {
 	.name		= "counter",
 	.ops		= &nft_counter_ops,
 	.policy		= nft_counter_policy,
@@ -306,3 +269,38 @@ struct nft_expr_type nft_counter_type __read_mostly = {
 	.flags		= NFT_EXPR_STATEFUL,
 	.owner		= THIS_MODULE,
 };
+
+static int __init nft_counter_module_init(void)
+{
+	int cpu, err;
+
+	for_each_possible_cpu(cpu)
+		seqcount_init(per_cpu_ptr(&nft_counter_seq, cpu));
+
+	err = nft_register_obj(&nft_counter_obj_type);
+	if (err < 0)
+		return err;
+
+	err = nft_register_expr(&nft_counter_type);
+	if (err < 0)
+		goto err1;
+
+	return 0;
+err1:
+	nft_unregister_obj(&nft_counter_obj_type);
+	return err;
+}
+
+static void __exit nft_counter_module_exit(void)
+{
+	nft_unregister_expr(&nft_counter_type);
+	nft_unregister_obj(&nft_counter_obj_type);
+}
+
+module_init(nft_counter_module_init);
+module_exit(nft_counter_module_exit);
+
+MODULE_LICENSE("GPL");
+MODULE_AUTHOR("Patrick McHardy <kaber@trash.net>");
+MODULE_ALIAS_NFT_EXPR("counter");
+MODULE_ALIAS_NFT_OBJ(NFT_OBJECT_COUNTER);

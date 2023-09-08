@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Copyright (C) 2006-2009 DENX Software Engineering.
  *
@@ -6,6 +5,19 @@
  *
  * Further porting to arch/powerpc by
  * 	Anatolij Gustschin <agust@denx.de>
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License as published by the Free
+ * Software Foundation; either version 2 of the License, or (at your option)
+ * any later version.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+ * more details.
+ *
+ * The full GNU General Public License is included in this distribution in the
+ * file called COPYING.
  */
 
 /*
@@ -69,7 +81,7 @@ struct ppc_dma_chan_ref {
 };
 
 /* The list of channels exported by ppc440spe ADMA */
-static struct list_head
+struct list_head
 ppc440spe_adma_chan_list = LIST_HEAD_INIT(ppc440spe_adma_chan_list);
 
 /* This flag is set when want to refetch the xor chain in the interrupt
@@ -559,6 +571,7 @@ static void ppc440spe_desc_set_src_mult(struct ppc440spe_adma_desc_slot *desc,
 			int sg_index, unsigned char mult_value)
 {
 	struct dma_cdb *dma_hw_desc;
+	struct xor_cb *xor_hw_desc;
 	u32 *psgu;
 
 	switch (chan->device->id) {
@@ -589,6 +602,7 @@ static void ppc440spe_desc_set_src_mult(struct ppc440spe_adma_desc_slot *desc,
 		*psgu |= cpu_to_le32(mult_value << mult_index);
 		break;
 	case PPC440SPE_XOR_ID:
+		xor_hw_desc = desc->hw_desc;
 		break;
 	default:
 		BUG();
@@ -1658,9 +1672,9 @@ static void __ppc440spe_adma_slot_cleanup(struct ppc440spe_adma_chan *chan)
 /**
  * ppc440spe_adma_tasklet - clean up watch-dog initiator
  */
-static void ppc440spe_adma_tasklet(struct tasklet_struct *t)
+static void ppc440spe_adma_tasklet(unsigned long data)
 {
-	struct ppc440spe_adma_chan *chan = from_tasklet(chan, t, irq_tasklet);
+	struct ppc440spe_adma_chan *chan = (struct ppc440spe_adma_chan *) data;
 
 	spin_lock_nested(&chan->lock, SINGLE_DEPTH_NESTING);
 	__ppc440spe_adma_slot_cleanup(chan);
@@ -1686,8 +1700,8 @@ static struct ppc440spe_adma_desc_slot *ppc440spe_adma_alloc_slots(
 {
 	struct ppc440spe_adma_desc_slot *iter = NULL, *_iter;
 	struct ppc440spe_adma_desc_slot *alloc_start = NULL;
+	struct list_head chain = LIST_HEAD_INIT(chain);
 	int slots_found, retry = 0;
-	LIST_HEAD(chain);
 
 
 	BUG_ON(!num_slots || !slots_per_op);
@@ -3240,6 +3254,7 @@ static int ppc440spe_adma_dma2rxor_prep_src(
 		struct ppc440spe_rxor *cursor, int index,
 		int src_cnt, u32 addr)
 {
+	int rval = 0;
 	u32 sign;
 	struct ppc440spe_adma_desc_slot *desc = hdesc;
 	int i;
@@ -3347,7 +3362,7 @@ static int ppc440spe_adma_dma2rxor_prep_src(
 		break;
 	}
 
-	return 0;
+	return rval;
 }
 
 /**
@@ -4138,7 +4153,8 @@ static int ppc440spe_adma_probe(struct platform_device *ofdev)
 	chan->common.device = &adev->common;
 	dma_cookie_init(&chan->common);
 	list_add_tail(&chan->common.device_node, &adev->common.channels);
-	tasklet_setup(&chan->irq_tasklet, ppc440spe_adma_tasklet);
+	tasklet_init(&chan->irq_tasklet, ppc440spe_adma_tasklet,
+		     (unsigned long)chan);
 
 	/* allocate and map helper pages for async validation or
 	 * async_mult/async_sum_product operations on DMA0/1.
@@ -4299,7 +4315,7 @@ static ssize_t devices_show(struct device_driver *dev, char *buf)
 	for (i = 0; i < PPC440SPE_ADMA_ENGINES_NUM; i++) {
 		if (ppc440spe_adma_devices[i] == -1)
 			continue;
-		size += scnprintf(buf + size, PAGE_SIZE - size,
+		size += snprintf(buf + size, PAGE_SIZE - size,
 				 "PPC440SP(E)-ADMA.%d: %s\n", i,
 				 ppc_adma_errors[ppc440spe_adma_devices[i]]);
 	}
@@ -4318,7 +4334,6 @@ static ssize_t enable_store(struct device_driver *dev, const char *buf,
 			    size_t count)
 {
 	unsigned long val;
-	int err;
 
 	if (!count || count > 11)
 		return -EINVAL;
@@ -4327,10 +4342,7 @@ static ssize_t enable_store(struct device_driver *dev, const char *buf,
 		return -EFAULT;
 
 	/* Write a key */
-	err = kstrtoul(buf, 16, &val);
-	if (err)
-		return err;
-
+	sscanf(buf, "%lx", &val);
 	dcr_write(ppc440spe_mq_dcr_host, DCRN_MQ0_XORBA, val);
 	isync();
 
@@ -4348,7 +4360,7 @@ static ssize_t enable_store(struct device_driver *dev, const char *buf,
 }
 static DRIVER_ATTR_RW(enable);
 
-static ssize_t poly_show(struct device_driver *dev, char *buf)
+static ssize_t poly_store(struct device_driver *dev, char *buf)
 {
 	ssize_t size = 0;
 	u32 reg;
@@ -4371,7 +4383,7 @@ static ssize_t poly_store(struct device_driver *dev, const char *buf,
 			  size_t count)
 {
 	unsigned long reg, val;
-	int err;
+
 #ifdef CONFIG_440SP
 	/* 440SP uses default 0x14D polynomial only */
 	return -EINVAL;
@@ -4381,9 +4393,7 @@ static ssize_t poly_store(struct device_driver *dev, const char *buf,
 		return -EINVAL;
 
 	/* e.g., 0x14D or 0x11D */
-	err = kstrtoul(buf, 16, &val);
-	if (err)
-		return err;
+	sscanf(buf, "%lx", &val);
 
 	if (val & ~0x1FF)
 		return -EINVAL;

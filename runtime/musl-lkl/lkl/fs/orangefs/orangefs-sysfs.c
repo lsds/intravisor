@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * Documentation/ABI/stable/sysfs-fs-orangefs:
+ * Documentation/ABI/stable/orangefs-sysfs:
  *
  * What:		/sys/fs/orangefs/perf_counter_reset
  * Date:		June 2015
@@ -61,14 +61,6 @@
  *			between the kernel module and userspace.
  *			Slots are requested and waited for,
  *			the wait times out after slot_timeout_secs.
- *
- * What:		/sys/fs/orangefs/cache_timeout_msecs
- * Date:		Mar 2018
- * Contact:		Martin Brandenburg <martin@omnibond.com>
- * Description:
- *			Time in milliseconds between which
- *			orangefs_revalidate_mapping will invalidate the page
- *			cache.
  *
  * What:		/sys/fs/orangefs/dcache_timeout_msecs
  * Date:		Jul 2016
@@ -230,13 +222,6 @@ static ssize_t sysfs_int_show(struct kobject *kobj,
 				       slot_timeout_secs);
 			goto out;
 		} else if (!strcmp(attr->attr.name,
-				   "cache_timeout_msecs")) {
-			rc = scnprintf(buf,
-				       PAGE_SIZE,
-				       "%d\n",
-				       orangefs_cache_timeout_msecs);
-			goto out;
-		} else if (!strcmp(attr->attr.name,
 				   "dcache_timeout_msecs")) {
 			rc = scnprintf(buf,
 				       PAGE_SIZE,
@@ -292,9 +277,6 @@ static ssize_t sysfs_int_store(struct kobject *kobj,
 	} else if (!strcmp(attr->attr.name, "slot_timeout_secs")) {
 		rc = kstrtoint(buf, 0, &slot_timeout_secs);
 		goto out;
-	} else if (!strcmp(attr->attr.name, "cache_timeout_msecs")) {
-		rc = kstrtoint(buf, 0, &orangefs_cache_timeout_msecs);
-		goto out;
 	} else if (!strcmp(attr->attr.name, "dcache_timeout_msecs")) {
 		rc = kstrtoint(buf, 0, &orangefs_dcache_timeout_msecs);
 		goto out;
@@ -341,7 +323,7 @@ static ssize_t sysfs_service_op_show(struct kobject *kobj,
 	/* Can't do a service_operation if the client is not running... */
 	rc = is_daemon_in_service();
 	if (rc) {
-		pr_info_ratelimited("%s: Client not running :%d:\n",
+		pr_info("%s: Client not running :%d:\n",
 			__func__,
 			is_daemon_in_service());
 		goto out;
@@ -836,9 +818,6 @@ static struct orangefs_attribute op_timeout_secs_attribute =
 static struct orangefs_attribute slot_timeout_secs_attribute =
 	__ATTR(slot_timeout_secs, 0664, sysfs_int_show, sysfs_int_store);
 
-static struct orangefs_attribute cache_timeout_msecs_attribute =
-	__ATTR(cache_timeout_msecs, 0664, sysfs_int_show, sysfs_int_store);
-
 static struct orangefs_attribute dcache_timeout_msecs_attribute =
 	__ATTR(dcache_timeout_msecs, 0664, sysfs_int_show, sysfs_int_store);
 
@@ -882,7 +861,6 @@ static struct orangefs_attribute perf_time_interval_secs_attribute =
 static struct attribute *orangefs_default_attrs[] = {
 	&op_timeout_secs_attribute.attr,
 	&slot_timeout_secs_attribute.attr,
-	&cache_timeout_msecs_attribute.attr,
 	&dcache_timeout_msecs_attribute.attr,
 	&getattr_timeout_msecs_attribute.attr,
 	&readahead_count_attribute.attr,
@@ -894,11 +872,10 @@ static struct attribute *orangefs_default_attrs[] = {
 	&perf_time_interval_secs_attribute.attr,
 	NULL,
 };
-ATTRIBUTE_GROUPS(orangefs_default);
 
 static struct kobj_type orangefs_ktype = {
 	.sysfs_ops = &orangefs_sysfs_ops,
-	.default_groups = orangefs_default_groups,
+	.default_attrs = orangefs_default_attrs,
 };
 
 static struct orangefs_attribute acache_hard_limit_attribute =
@@ -932,11 +909,10 @@ static struct attribute *acache_orangefs_default_attrs[] = {
 	&acache_timeout_msecs_attribute.attr,
 	NULL,
 };
-ATTRIBUTE_GROUPS(acache_orangefs_default);
 
 static struct kobj_type acache_orangefs_ktype = {
 	.sysfs_ops = &orangefs_sysfs_ops,
-	.default_groups = acache_orangefs_default_groups,
+	.default_attrs = acache_orangefs_default_attrs,
 };
 
 static struct orangefs_attribute capcache_hard_limit_attribute =
@@ -970,11 +946,10 @@ static struct attribute *capcache_orangefs_default_attrs[] = {
 	&capcache_timeout_secs_attribute.attr,
 	NULL,
 };
-ATTRIBUTE_GROUPS(capcache_orangefs_default);
 
 static struct kobj_type capcache_orangefs_ktype = {
 	.sysfs_ops = &orangefs_sysfs_ops,
-	.default_groups = capcache_orangefs_default_groups,
+	.default_attrs = capcache_orangefs_default_attrs,
 };
 
 static struct orangefs_attribute ccache_hard_limit_attribute =
@@ -1008,11 +983,10 @@ static struct attribute *ccache_orangefs_default_attrs[] = {
 	&ccache_timeout_secs_attribute.attr,
 	NULL,
 };
-ATTRIBUTE_GROUPS(ccache_orangefs_default);
 
 static struct kobj_type ccache_orangefs_ktype = {
 	.sysfs_ops = &orangefs_sysfs_ops,
-	.default_groups = ccache_orangefs_default_groups,
+	.default_attrs = ccache_orangefs_default_attrs,
 };
 
 static struct orangefs_attribute ncache_hard_limit_attribute =
@@ -1046,11 +1020,10 @@ static struct attribute *ncache_orangefs_default_attrs[] = {
 	&ncache_timeout_msecs_attribute.attr,
 	NULL,
 };
-ATTRIBUTE_GROUPS(ncache_orangefs_default);
 
 static struct kobj_type ncache_orangefs_ktype = {
 	.sysfs_ops = &orangefs_sysfs_ops,
-	.default_groups = ncache_orangefs_default_groups,
+	.default_attrs = ncache_orangefs_default_attrs,
 };
 
 static struct orangefs_attribute pc_acache_attribute =
@@ -1077,11 +1050,10 @@ static struct attribute *pc_orangefs_default_attrs[] = {
 	&pc_ncache_attribute.attr,
 	NULL,
 };
-ATTRIBUTE_GROUPS(pc_orangefs_default);
 
 static struct kobj_type pc_orangefs_ktype = {
 	.sysfs_ops = &orangefs_sysfs_ops,
-	.default_groups = pc_orangefs_default_groups,
+	.default_attrs = pc_orangefs_default_attrs,
 };
 
 static struct orangefs_attribute stats_reads_attribute =
@@ -1101,11 +1073,10 @@ static struct attribute *stats_orangefs_default_attrs[] = {
 	&stats_writes_attribute.attr,
 	NULL,
 };
-ATTRIBUTE_GROUPS(stats_orangefs_default);
 
 static struct kobj_type stats_orangefs_ktype = {
 	.sysfs_ops = &orangefs_sysfs_ops,
-	.default_groups = stats_orangefs_default_groups,
+	.default_attrs = stats_orangefs_default_attrs,
 };
 
 static struct kobject *orangefs_obj;

@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * mISDNinfineon.c
  *		Support for cards based on following Infineon ISDN chipsets
@@ -18,9 +17,25 @@
  *		- Berkom Scitel BRIX Quadro
  *		- Dr.Neuhaus (Sagem) Niccy
  *
+ *
+ *
  * Author       Karsten Keil <keil@isdn4linux.de>
  *
  * Copyright 2009  by Karsten Keil <keil@isdn4linux.de>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ *
  */
 
 #include <linux/interrupt.h>
@@ -630,19 +645,17 @@ static void
 release_io(struct inf_hw *hw)
 {
 	if (hw->cfg.mode) {
-		if (hw->cfg.mode == AM_MEMIO) {
+		if (hw->cfg.p) {
 			release_mem_region(hw->cfg.start, hw->cfg.size);
-			if (hw->cfg.p)
-				iounmap(hw->cfg.p);
+			iounmap(hw->cfg.p);
 		} else
 			release_region(hw->cfg.start, hw->cfg.size);
 		hw->cfg.mode = AM_NONE;
 	}
 	if (hw->addr.mode) {
-		if (hw->addr.mode == AM_MEMIO) {
+		if (hw->addr.p) {
 			release_mem_region(hw->addr.start, hw->addr.size);
-			if (hw->addr.p)
-				iounmap(hw->addr.p);
+			iounmap(hw->addr.p);
 		} else
 			release_region(hw->addr.start, hw->addr.size);
 		hw->addr.mode = AM_NONE;
@@ -672,12 +685,9 @@ setup_io(struct inf_hw *hw)
 				(ulong)hw->cfg.start, (ulong)hw->cfg.size);
 			return err;
 		}
-		hw->cfg.mode = hw->ci->cfg_mode;
-		if (hw->ci->cfg_mode == AM_MEMIO) {
+		if (hw->ci->cfg_mode == AM_MEMIO)
 			hw->cfg.p = ioremap(hw->cfg.start, hw->cfg.size);
-			if (!hw->cfg.p)
-				return -ENOMEM;
-		}
+		hw->cfg.mode = hw->ci->cfg_mode;
 		if (debug & DEBUG_HW)
 			pr_notice("%s: IO cfg %lx (%lu bytes) mode%d\n",
 				  hw->name, (ulong)hw->cfg.start,
@@ -702,12 +712,9 @@ setup_io(struct inf_hw *hw)
 				(ulong)hw->addr.start, (ulong)hw->addr.size);
 			return err;
 		}
-		hw->addr.mode = hw->ci->addr_mode;
-		if (hw->ci->addr_mode == AM_MEMIO) {
+		if (hw->ci->addr_mode == AM_MEMIO)
 			hw->addr.p = ioremap(hw->addr.start, hw->addr.size);
-			if (!hw->addr.p)
-				return -ENOMEM;
-		}
+		hw->addr.mode = hw->ci->addr_mode;
 		if (debug & DEBUG_HW)
 			pr_notice("%s: IO addr %lx (%lu bytes) mode%d\n",
 				  hw->name, (ulong)hw->addr.start,
@@ -880,7 +887,6 @@ release_card(struct inf_hw *card) {
 				release_card(card->sc[i]);
 			card->sc[i] = NULL;
 		}
-		fallthrough;
 	default:
 		pci_disable_device(card->pdev);
 		pci_set_drvdata(card->pdev, NULL);

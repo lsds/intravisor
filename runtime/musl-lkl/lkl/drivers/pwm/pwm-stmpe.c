@@ -1,8 +1,12 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (C) 2016 Linaro Ltd.
  *
  * Author: Linus Walleij <linus.walleij@linaro.org>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2, as
+ * published by the Free Software Foundation.
+ *
  */
 
 #include <linux/bitops.h>
@@ -259,52 +263,30 @@ static int stmpe_24xx_pwm_config(struct pwm_chip *chip, struct pwm_device *pwm,
 	return 0;
 }
 
-static int stmpe_24xx_pwm_apply(struct pwm_chip *chip, struct pwm_device *pwm,
-				const struct pwm_state *state)
-{
-	int err;
-
-	if (state->polarity != PWM_POLARITY_NORMAL)
-		return -EINVAL;
-
-	if (!state->enabled) {
-		if (pwm->state.enabled)
-			stmpe_24xx_pwm_disable(chip, pwm);
-
-		return 0;
-	}
-
-	err = stmpe_24xx_pwm_config(pwm->chip, pwm, state->duty_cycle, state->period);
-	if (err)
-		return err;
-
-	if (!pwm->state.enabled)
-		err = stmpe_24xx_pwm_enable(chip, pwm);
-
-	return err;
-}
-
 static const struct pwm_ops stmpe_24xx_pwm_ops = {
-	.apply = stmpe_24xx_pwm_apply,
+	.config = stmpe_24xx_pwm_config,
+	.enable = stmpe_24xx_pwm_enable,
+	.disable = stmpe_24xx_pwm_disable,
 	.owner = THIS_MODULE,
 };
 
 static int __init stmpe_pwm_probe(struct platform_device *pdev)
 {
 	struct stmpe *stmpe = dev_get_drvdata(pdev->dev.parent);
-	struct stmpe_pwm *stmpe_pwm;
+	struct stmpe_pwm *pwm;
 	int ret;
 
-	stmpe_pwm = devm_kzalloc(&pdev->dev, sizeof(*stmpe_pwm), GFP_KERNEL);
-	if (!stmpe_pwm)
+	pwm = devm_kzalloc(&pdev->dev, sizeof(*pwm), GFP_KERNEL);
+	if (!pwm)
 		return -ENOMEM;
 
-	stmpe_pwm->stmpe = stmpe;
-	stmpe_pwm->chip.dev = &pdev->dev;
+	pwm->stmpe = stmpe;
+	pwm->chip.dev = &pdev->dev;
+	pwm->chip.base = -1;
 
 	if (stmpe->partnum == STMPE2401 || stmpe->partnum == STMPE2403) {
-		stmpe_pwm->chip.ops = &stmpe_24xx_pwm_ops;
-		stmpe_pwm->chip.npwm = 3;
+		pwm->chip.ops = &stmpe_24xx_pwm_ops;
+		pwm->chip.npwm = 3;
 	} else {
 		if (stmpe->partnum == STMPE1601)
 			dev_err(&pdev->dev, "STMPE1601 not yet supported\n");
@@ -318,11 +300,13 @@ static int __init stmpe_pwm_probe(struct platform_device *pdev)
 	if (ret)
 		return ret;
 
-	ret = pwmchip_add(&stmpe_pwm->chip);
+	ret = pwmchip_add(&pwm->chip);
 	if (ret) {
 		stmpe_disable(stmpe, STMPE_BLOCK_PWM);
 		return ret;
 	}
+
+	platform_set_drvdata(pdev, pwm);
 
 	return 0;
 }

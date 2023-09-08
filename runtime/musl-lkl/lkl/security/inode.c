@@ -1,8 +1,11 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  *  inode.c - securityfs
  *
  *  Copyright (C) 2005 Greg Kroah-Hartman <gregkh@suse.de>
+ *
+ *	This program is free software; you can redistribute it and/or
+ *	modify it under the terms of the GNU General Public License version
+ *	2 as published by the Free Software Foundation.
  *
  *  Based on fs/debugfs/inode.c which had the following copyright notice:
  *    Copyright (C) 2004 Greg Kroah-Hartman <greg@kroah.com>
@@ -10,10 +13,8 @@
  */
 
 /* #define DEBUG */
-#include <linux/sysfs.h>
-#include <linux/kobject.h>
+#include <linux/module.h>
 #include <linux/fs.h>
-#include <linux/fs_context.h>
 #include <linux/mount.h>
 #include <linux/pagemap.h>
 #include <linux/init.h>
@@ -25,19 +26,20 @@
 static struct vfsmount *mount;
 static int mount_count;
 
-static void securityfs_free_inode(struct inode *inode)
+static void securityfs_evict_inode(struct inode *inode)
 {
+	truncate_inode_pages_final(&inode->i_data);
+	clear_inode(inode);
 	if (S_ISLNK(inode->i_mode))
 		kfree(inode->i_link);
-	free_inode_nonrcu(inode);
 }
 
 static const struct super_operations securityfs_super_operations = {
 	.statfs		= simple_statfs,
-	.free_inode	= securityfs_free_inode,
+	.evict_inode	= securityfs_evict_inode,
 };
 
-static int securityfs_fill_super(struct super_block *sb, struct fs_context *fc)
+static int fill_super(struct super_block *sb, void *data, int silent)
 {
 	static const struct tree_descr files[] = {{""}};
 	int error;
@@ -51,25 +53,17 @@ static int securityfs_fill_super(struct super_block *sb, struct fs_context *fc)
 	return 0;
 }
 
-static int securityfs_get_tree(struct fs_context *fc)
+static struct dentry *get_sb(struct file_system_type *fs_type,
+		  int flags, const char *dev_name,
+		  void *data)
 {
-	return get_tree_single(fc, securityfs_fill_super);
-}
-
-static const struct fs_context_operations securityfs_context_ops = {
-	.get_tree	= securityfs_get_tree,
-};
-
-static int securityfs_init_fs_context(struct fs_context *fc)
-{
-	fc->ops = &securityfs_context_ops;
-	return 0;
+	return mount_single(fs_type, flags, data, fill_super);
 }
 
 static struct file_system_type fs_type = {
 	.owner =	THIS_MODULE,
 	.name =		"securityfs",
-	.init_fs_context = securityfs_init_fs_context,
+	.mount =	get_sb,
 	.kill_sb =	kill_litter_super,
 };
 
@@ -347,4 +341,7 @@ static int __init securityfs_init(void)
 #endif
 	return 0;
 }
+
 core_initcall(securityfs_init);
+MODULE_LICENSE("GPL");
+

@@ -1,21 +1,28 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
- * Intel Crystal Cove GPIO Driver
+ * gpio-crystalcove.c - Intel Crystal Cove GPIO Driver
  *
  * Copyright (C) 2012, 2014 Intel Corporation. All rights reserved.
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License version
+ * 2 as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
  *
  * Author: Yang, Bin <bin.yang@intel.com>
  */
 
-#include <linux/bitops.h>
-#include <linux/gpio/driver.h>
 #include <linux/interrupt.h>
-#include <linux/mfd/intel_soc_pmic.h>
 #include <linux/module.h>
 #include <linux/platform_device.h>
-#include <linux/regmap.h>
+#include <linux/gpio/driver.h>
 #include <linux/seq_file.h>
-#include <linux/types.h>
+#include <linux/bitops.h>
+#include <linux/regmap.h>
+#include <linux/mfd/intel_soc_pmic.h>
 
 #define CRYSTALCOVE_GPIO_NUM	16
 #define CRYSTALCOVE_VGPIO_NUM	95
@@ -111,7 +118,8 @@ static inline int to_reg(int gpio, enum ctrl_register reg_type)
 	return reg + gpio % 8;
 }
 
-static void crystalcove_update_irq_mask(struct crystalcove_gpio *cg, int gpio)
+static void crystalcove_update_irq_mask(struct crystalcove_gpio *cg,
+					int gpio)
 {
 	u8 mirqs0 = gpio < 8 ? MGPIO0IRQS0 : MGPIO1IRQS0;
 	int mask = BIT(gpio % 8);
@@ -129,7 +137,7 @@ static void crystalcove_update_irq_ctrl(struct crystalcove_gpio *cg, int gpio)
 	regmap_update_bits(cg->regmap, reg, CTLI_INTCNT_BE, cg->intcnt_value);
 }
 
-static int crystalcove_gpio_dir_in(struct gpio_chip *chip, unsigned int gpio)
+static int crystalcove_gpio_dir_in(struct gpio_chip *chip, unsigned gpio)
 {
 	struct crystalcove_gpio *cg = gpiochip_get_data(chip);
 	int reg = to_reg(gpio, CTRL_OUT);
@@ -140,7 +148,8 @@ static int crystalcove_gpio_dir_in(struct gpio_chip *chip, unsigned int gpio)
 	return regmap_write(cg->regmap, reg, CTLO_INPUT_SET);
 }
 
-static int crystalcove_gpio_dir_out(struct gpio_chip *chip, unsigned int gpio, int value)
+static int crystalcove_gpio_dir_out(struct gpio_chip *chip, unsigned gpio,
+				    int value)
 {
 	struct crystalcove_gpio *cg = gpiochip_get_data(chip);
 	int reg = to_reg(gpio, CTRL_OUT);
@@ -151,7 +160,7 @@ static int crystalcove_gpio_dir_out(struct gpio_chip *chip, unsigned int gpio, i
 	return regmap_write(cg->regmap, reg, CTLO_OUTPUT_SET | value);
 }
 
-static int crystalcove_gpio_get(struct gpio_chip *chip, unsigned int gpio)
+static int crystalcove_gpio_get(struct gpio_chip *chip, unsigned gpio)
 {
 	struct crystalcove_gpio *cg = gpiochip_get_data(chip);
 	unsigned int val;
@@ -167,7 +176,8 @@ static int crystalcove_gpio_get(struct gpio_chip *chip, unsigned int gpio)
 	return val & 0x1;
 }
 
-static void crystalcove_gpio_set(struct gpio_chip *chip, unsigned int gpio, int value)
+static void crystalcove_gpio_set(struct gpio_chip *chip,
+				 unsigned gpio, int value)
 {
 	struct crystalcove_gpio *cg = gpiochip_get_data(chip);
 	int reg = to_reg(gpio, CTRL_OUT);
@@ -181,12 +191,12 @@ static void crystalcove_gpio_set(struct gpio_chip *chip, unsigned int gpio, int 
 		regmap_update_bits(cg->regmap, reg, 1, 0);
 }
 
-static int crystalcove_irq_type(struct irq_data *data, unsigned int type)
+static int crystalcove_irq_type(struct irq_data *data, unsigned type)
 {
-	struct crystalcove_gpio *cg = gpiochip_get_data(irq_data_get_irq_chip_data(data));
-	irq_hw_number_t hwirq = irqd_to_hwirq(data);
+	struct crystalcove_gpio *cg =
+		gpiochip_get_data(irq_data_get_irq_chip_data(data));
 
-	if (hwirq >= CRYSTALCOVE_GPIO_NUM)
+	if (data->hwirq >= CRYSTALCOVE_GPIO_NUM)
 		return 0;
 
 	switch (type) {
@@ -213,20 +223,22 @@ static int crystalcove_irq_type(struct irq_data *data, unsigned int type)
 
 static void crystalcove_bus_lock(struct irq_data *data)
 {
-	struct crystalcove_gpio *cg = gpiochip_get_data(irq_data_get_irq_chip_data(data));
+	struct crystalcove_gpio *cg =
+		gpiochip_get_data(irq_data_get_irq_chip_data(data));
 
 	mutex_lock(&cg->buslock);
 }
 
 static void crystalcove_bus_sync_unlock(struct irq_data *data)
 {
-	struct crystalcove_gpio *cg = gpiochip_get_data(irq_data_get_irq_chip_data(data));
-	irq_hw_number_t hwirq = irqd_to_hwirq(data);
+	struct crystalcove_gpio *cg =
+		gpiochip_get_data(irq_data_get_irq_chip_data(data));
+	int gpio = data->hwirq;
 
 	if (cg->update & UPDATE_IRQ_TYPE)
-		crystalcove_update_irq_ctrl(cg, hwirq);
+		crystalcove_update_irq_ctrl(cg, gpio);
 	if (cg->update & UPDATE_IRQ_MASK)
-		crystalcove_update_irq_mask(cg, hwirq);
+		crystalcove_update_irq_mask(cg, gpio);
 	cg->update = 0;
 
 	mutex_unlock(&cg->buslock);
@@ -234,50 +246,41 @@ static void crystalcove_bus_sync_unlock(struct irq_data *data)
 
 static void crystalcove_irq_unmask(struct irq_data *data)
 {
-	struct gpio_chip *gc = irq_data_get_irq_chip_data(data);
-	struct crystalcove_gpio *cg = gpiochip_get_data(gc);
-	irq_hw_number_t hwirq = irqd_to_hwirq(data);
+	struct crystalcove_gpio *cg =
+		gpiochip_get_data(irq_data_get_irq_chip_data(data));
 
-	if (hwirq >= CRYSTALCOVE_GPIO_NUM)
-		return;
-
-	gpiochip_enable_irq(gc, hwirq);
-
-	cg->set_irq_mask = false;
-	cg->update |= UPDATE_IRQ_MASK;
+	if (data->hwirq < CRYSTALCOVE_GPIO_NUM) {
+		cg->set_irq_mask = false;
+		cg->update |= UPDATE_IRQ_MASK;
+	}
 }
 
 static void crystalcove_irq_mask(struct irq_data *data)
 {
-	struct gpio_chip *gc = irq_data_get_irq_chip_data(data);
-	struct crystalcove_gpio *cg = gpiochip_get_data(gc);
-	irq_hw_number_t hwirq = irqd_to_hwirq(data);
+	struct crystalcove_gpio *cg =
+		gpiochip_get_data(irq_data_get_irq_chip_data(data));
 
-	if (hwirq >= CRYSTALCOVE_GPIO_NUM)
-		return;
-
-	cg->set_irq_mask = true;
-	cg->update |= UPDATE_IRQ_MASK;
-
-	gpiochip_disable_irq(gc, hwirq);
+	if (data->hwirq < CRYSTALCOVE_GPIO_NUM) {
+		cg->set_irq_mask = true;
+		cg->update |= UPDATE_IRQ_MASK;
+	}
 }
 
-static const struct irq_chip crystalcove_irqchip = {
+static struct irq_chip crystalcove_irqchip = {
 	.name			= "Crystal Cove",
 	.irq_mask		= crystalcove_irq_mask,
 	.irq_unmask		= crystalcove_irq_unmask,
 	.irq_set_type		= crystalcove_irq_type,
 	.irq_bus_lock		= crystalcove_bus_lock,
 	.irq_bus_sync_unlock	= crystalcove_bus_sync_unlock,
-	.flags			= IRQCHIP_SKIP_SET_WAKE | IRQCHIP_IMMUTABLE,
-	GPIOCHIP_IRQ_RESOURCE_HELPERS,
+	.flags			= IRQCHIP_SKIP_SET_WAKE,
 };
 
 static irqreturn_t crystalcove_gpio_irq_handler(int irq, void *data)
 {
 	struct crystalcove_gpio *cg = data;
-	unsigned long pending;
 	unsigned int p0, p1;
+	int pending;
 	int gpio;
 	unsigned int virq;
 
@@ -290,15 +293,18 @@ static irqreturn_t crystalcove_gpio_irq_handler(int irq, void *data)
 
 	pending = p0 | p1 << 8;
 
-	for_each_set_bit(gpio, &pending, CRYSTALCOVE_GPIO_NUM) {
-		virq = irq_find_mapping(cg->chip.irq.domain, gpio);
-		handle_nested_irq(virq);
+	for (gpio = 0; gpio < CRYSTALCOVE_GPIO_NUM; gpio++) {
+		if (pending & BIT(gpio)) {
+			virq = irq_find_mapping(cg->chip.irq.domain, gpio);
+			handle_nested_irq(virq);
+		}
 	}
 
 	return IRQ_HANDLED;
 }
 
-static void crystalcove_gpio_dbg_show(struct seq_file *s, struct gpio_chip *chip)
+static void crystalcove_gpio_dbg_show(struct seq_file *s,
+				      struct gpio_chip *chip)
 {
 	struct crystalcove_gpio *cg = gpiochip_get_data(chip);
 	int gpio, offset;
@@ -334,7 +340,6 @@ static int crystalcove_gpio_probe(struct platform_device *pdev)
 	int retval;
 	struct device *dev = pdev->dev.parent;
 	struct intel_soc_pmic *pmic = dev_get_drvdata(dev);
-	struct gpio_irq_chip *girq;
 
 	if (irq < 0)
 		return irq;
@@ -342,6 +347,8 @@ static int crystalcove_gpio_probe(struct platform_device *pdev)
 	cg = devm_kzalloc(&pdev->dev, sizeof(*cg), GFP_KERNEL);
 	if (!cg)
 		return -ENOMEM;
+
+	platform_set_drvdata(pdev, cg);
 
 	mutex_init(&cg->buslock);
 	cg->chip.label = KBUILD_MODNAME;
@@ -356,40 +363,46 @@ static int crystalcove_gpio_probe(struct platform_device *pdev)
 	cg->chip.dbg_show = crystalcove_gpio_dbg_show;
 	cg->regmap = pmic->regmap;
 
-	girq = &cg->chip.irq;
-	gpio_irq_chip_set_chip(girq, &crystalcove_irqchip);
-	/* This will let us handle the parent IRQ in the driver */
-	girq->parent_handler = NULL;
-	girq->num_parents = 0;
-	girq->parents = NULL;
-	girq->default_type = IRQ_TYPE_NONE;
-	girq->handler = handle_simple_irq;
-	girq->threaded = true;
+	retval = devm_gpiochip_add_data(&pdev->dev, &cg->chip, cg);
+	if (retval) {
+		dev_warn(&pdev->dev, "add gpio chip error: %d\n", retval);
+		return retval;
+	}
 
-	retval = devm_request_threaded_irq(&pdev->dev, irq, NULL,
-					   crystalcove_gpio_irq_handler,
-					   IRQF_ONESHOT, KBUILD_MODNAME, cg);
+	gpiochip_irqchip_add_nested(&cg->chip, &crystalcove_irqchip, 0,
+				    handle_simple_irq, IRQ_TYPE_NONE);
+
+	retval = request_threaded_irq(irq, NULL, crystalcove_gpio_irq_handler,
+				      IRQF_ONESHOT, KBUILD_MODNAME, cg);
+
 	if (retval) {
 		dev_warn(&pdev->dev, "request irq failed: %d\n", retval);
 		return retval;
 	}
 
-	retval = devm_gpiochip_add_data(&pdev->dev, &cg->chip, cg);
-	if (retval)
-		return retval;
+	gpiochip_set_nested_irqchip(&cg->chip, &crystalcove_irqchip, irq);
 
-	/* Distuingish IRQ domain from others sharing (MFD) the same fwnode */
-	irq_domain_update_bus_token(cg->chip.irq.domain, DOMAIN_BUS_WIRED);
+	return 0;
+}
 
+static int crystalcove_gpio_remove(struct platform_device *pdev)
+{
+	struct crystalcove_gpio *cg = platform_get_drvdata(pdev);
+	int irq = platform_get_irq(pdev, 0);
+
+	if (irq >= 0)
+		free_irq(irq, cg);
 	return 0;
 }
 
 static struct platform_driver crystalcove_gpio_driver = {
 	.probe = crystalcove_gpio_probe,
+	.remove = crystalcove_gpio_remove,
 	.driver = {
 		.name = "crystal_cove_gpio",
 	},
 };
+
 module_platform_driver(crystalcove_gpio_driver);
 
 MODULE_AUTHOR("Yang, Bin <bin.yang@intel.com>");

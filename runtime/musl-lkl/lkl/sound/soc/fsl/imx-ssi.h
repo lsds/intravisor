@@ -1,4 +1,8 @@
-/* SPDX-License-Identifier: GPL-2.0 */
+/*
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ */
 
 #ifndef _IMX_SSI_H
 #define _IMX_SSI_H
@@ -182,7 +186,7 @@
 #define DRV_NAME "imx-ssi"
 
 #include <linux/dmaengine.h>
-#include <linux/dma/imx-dma.h>
+#include <linux/platform_data/dma-imx.h>
 #include <sound/dmaengine_pcm.h>
 #include "imx-pcm.h"
 

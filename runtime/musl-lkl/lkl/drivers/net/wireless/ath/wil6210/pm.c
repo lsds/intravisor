@@ -1,7 +1,18 @@
-// SPDX-License-Identifier: ISC
 /*
  * Copyright (c) 2014,2017 Qualcomm Atheros, Inc.
- * Copyright (c) 2018-2019, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2018, The Linux Foundation. All rights reserved.
+ *
+ * Permission to use, copy, modify, and/or distribute this software for any
+ * purpose with or without fee is hereby granted, provided that the above
+ * copyright notice and this permission notice appear in all copies.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+ * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+ * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+ * ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+ * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+ * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+ * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
 #include "wil6210.h"
@@ -15,7 +26,7 @@ static void wil_pm_wake_connected_net_queues(struct wil6210_priv *wil)
 	int i;
 
 	mutex_lock(&wil->vif_mutex);
-	for (i = 0; i < GET_MAX_VIFS(wil); i++) {
+	for (i = 0; i < wil->max_vifs; i++) {
 		struct wil6210_vif *vif = wil->vifs[i];
 
 		if (vif && test_bit(wil_vif_fwconnected, vif->status))
@@ -29,7 +40,7 @@ static void wil_pm_stop_all_net_queues(struct wil6210_priv *wil)
 	int i;
 
 	mutex_lock(&wil->vif_mutex);
-	for (i = 0; i < GET_MAX_VIFS(wil); i++) {
+	for (i = 0; i < wil->max_vifs; i++) {
 		struct wil6210_vif *vif = wil->vifs[i];
 
 		if (vif)
@@ -112,7 +123,7 @@ int wil_can_suspend(struct wil6210_priv *wil, bool is_runtime)
 
 	/* interface is running */
 	mutex_lock(&wil->vif_mutex);
-	for (i = 0; i < GET_MAX_VIFS(wil); i++) {
+	for (i = 0; i < wil->max_vifs; i++) {
 		struct wil6210_vif *vif = wil->vifs[i];
 
 		if (!vif)
@@ -179,23 +190,19 @@ out:
 static int wil_suspend_keep_radio_on(struct wil6210_priv *wil)
 {
 	int rc = 0;
-	unsigned long data_comp_to;
+	unsigned long start, data_comp_to;
 
 	wil_dbg_pm(wil, "suspend keep radio on\n");
 
 	/* Prevent handling of new tx and wmi commands */
-	rc = down_write_trylock(&wil->mem_lock);
-	if (!rc) {
-		wil_err(wil,
-			"device is busy. down_write_trylock failed, returned (0x%x)\n",
-			rc);
+	set_bit(wil_status_suspending, wil->status);
+	if (test_bit(wil_status_collecting_dumps, wil->status)) {
+		/* Device collects crash dump, cancel the suspend */
+		wil_dbg_pm(wil, "reject suspend while collecting crash dump\n");
+		clear_bit(wil_status_suspending, wil->status);
 		wil->suspend_stats.rejected_by_host++;
 		return -EBUSY;
 	}
-
-	set_bit(wil_status_suspending, wil->status);
-	up_write(&wil->mem_lock);
-
 	wil_pm_stop_all_net_queues(wil);
 
 	if (!wil_is_tx_idle(wil)) {
@@ -204,7 +211,7 @@ static int wil_suspend_keep_radio_on(struct wil6210_priv *wil)
 		goto reject_suspend;
 	}
 
-	if (!wil->txrx_ops.is_rx_idle(wil)) {
+	if (!wil_is_rx_idle(wil)) {
 		wil_dbg_pm(wil, "Pending RX data, reject suspend\n");
 		wil->suspend_stats.rejected_by_host++;
 		goto reject_suspend;
@@ -225,11 +232,12 @@ static int wil_suspend_keep_radio_on(struct wil6210_priv *wil)
 	}
 
 	/* Wait for completion of the pending RX packets */
+	start = jiffies;
 	data_comp_to = jiffies + msecs_to_jiffies(WIL_DATA_COMPLETION_TO_MS);
 	if (test_bit(wil_status_napi_en, wil->status)) {
-		while (!wil->txrx_ops.is_rx_idle(wil)) {
+		while (!wil_is_rx_idle(wil)) {
 			if (time_after(jiffies, data_comp_to)) {
-				if (wil->txrx_ops.is_rx_idle(wil))
+				if (wil_is_rx_idle(wil))
 					break;
 				wil_err(wil,
 					"TO waiting for idle RX, suspend failed\n");
@@ -303,17 +311,14 @@ static int wil_suspend_radio_off(struct wil6210_priv *wil)
 
 	wil_dbg_pm(wil, "suspend radio off\n");
 
-	rc = down_write_trylock(&wil->mem_lock);
-	if (!rc) {
-		wil_err(wil,
-			"device is busy. down_write_trylock failed, returned (0x%x)\n",
-			rc);
+	set_bit(wil_status_suspending, wil->status);
+	if (test_bit(wil_status_collecting_dumps, wil->status)) {
+		/* Device collects crash dump, cancel the suspend */
+		wil_dbg_pm(wil, "reject suspend while collecting crash dump\n");
+		clear_bit(wil_status_suspending, wil->status);
 		wil->suspend_stats.rejected_by_host++;
 		return -EBUSY;
 	}
-
-	set_bit(wil_status_suspending, wil->status);
-	up_write(&wil->mem_lock);
 
 	/* if netif up, hardware is alive, shut it down */
 	mutex_lock(&wil->vif_mutex);
@@ -445,9 +450,10 @@ int wil_pm_runtime_get(struct wil6210_priv *wil)
 	int rc;
 	struct device *dev = wil_to_dev(wil);
 
-	rc = pm_runtime_resume_and_get(dev);
+	rc = pm_runtime_get_sync(dev);
 	if (rc < 0) {
-		wil_err(wil, "pm_runtime_resume_and_get() failed, rc = %d\n", rc);
+		wil_err(wil, "pm_runtime_get_sync() failed, rc = %d\n", rc);
+		pm_runtime_put_noidle(dev);
 		return rc;
 	}
 

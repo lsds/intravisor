@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
 #include <linux/i2c.h>
@@ -425,7 +424,7 @@ static int i2c_adapter_init(struct i2c_adapter *i2c_adap,
 				struct i2c_algorithm *algo, const char *name,
 				struct dibx000_i2c_master *mst)
 {
-	strscpy(i2c_adap->name, name, sizeof(i2c_adap->name));
+	strlcpy(i2c_adap->name, name, sizeof(i2c_adap->name));
 	i2c_adap->algo = algo;
 	i2c_adap->algo_data = NULL;
 	i2c_set_adapdata(i2c_adap, mst);

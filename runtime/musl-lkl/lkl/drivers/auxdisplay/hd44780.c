@@ -1,21 +1,24 @@
-// SPDX-License-Identifier: GPL-2.0+
 /*
  * HD44780 Character LCD driver for Linux
  *
  * Copyright (C) 2000-2008, Willy Tarreau <w@1wt.eu>
  * Copyright (C) 2016-2017 Glider bvba
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version
+ * 2 of the License, or (at your option) any later version.
  */
 
 #include <linux/delay.h>
 #include <linux/gpio/consumer.h>
 #include <linux/module.h>
-#include <linux/mod_devicetable.h>
 #include <linux/platform_device.h>
 #include <linux/property.h>
 #include <linux/slab.h>
 
-#include "charlcd.h"
-#include "hd44780_common.h"
+#include <misc/charlcd.h>
+
 
 enum hd44780_pin {
 	/* Order does matter due to writing to GPIO array subsets! */
@@ -38,10 +41,9 @@ struct hd44780 {
 	struct gpio_desc *pins[PIN_NUM];
 };
 
-static void hd44780_backlight(struct charlcd *lcd, enum charlcd_onoff on)
+static void hd44780_backlight(struct charlcd *lcd, int on)
 {
-	struct hd44780_common *hdc = lcd->drvdata;
-	struct hd44780 *hd = hdc->hd44780;
+	struct hd44780 *hd = lcd->drvdata;
 
 	if (hd->pins[PIN_CTRL_BL])
 		gpiod_set_value_cansleep(hd->pins[PIN_CTRL_BL], on);
@@ -63,15 +65,20 @@ static void hd44780_strobe_gpio(struct hd44780 *hd)
 /* write to an LCD panel register in 8 bit GPIO mode */
 static void hd44780_write_gpio8(struct hd44780 *hd, u8 val, unsigned int rs)
 {
-	DECLARE_BITMAP(values, 10); /* for DATA[0-7], RS, RW */
-	unsigned int n;
+	int values[10];	/* for DATA[0-7], RS, RW */
+	unsigned int i, n;
 
-	values[0] = val;
-	__assign_bit(8, values, rs);
-	n = hd->pins[PIN_CTRL_RW] ? 10 : 9;
+	for (i = 0; i < 8; i++)
+		values[PIN_DATA0 + i] = !!(val & BIT(i));
+	values[PIN_CTRL_RS] = rs;
+	n = 9;
+	if (hd->pins[PIN_CTRL_RW]) {
+		values[PIN_CTRL_RW] = 0;
+		n++;
+	}
 
 	/* Present the data to the port */
-	gpiod_set_array_value_cansleep(n, &hd->pins[PIN_DATA0], NULL, values);
+	gpiod_set_array_value_cansleep(n, &hd->pins[PIN_DATA0], values);
 
 	hd44780_strobe_gpio(hd);
 }
@@ -79,33 +86,40 @@ static void hd44780_write_gpio8(struct hd44780 *hd, u8 val, unsigned int rs)
 /* write to an LCD panel register in 4 bit GPIO mode */
 static void hd44780_write_gpio4(struct hd44780 *hd, u8 val, unsigned int rs)
 {
-	DECLARE_BITMAP(values, 6); /* for DATA[4-7], RS, RW */
-	unsigned int n;
+	int values[10];	/* for DATA[0-7], RS, RW, but DATA[0-3] is unused */
+	unsigned int i, n;
 
 	/* High nibble + RS, RW */
-	values[0] = val >> 4;
-	__assign_bit(4, values, rs);
-	n = hd->pins[PIN_CTRL_RW] ? 6 : 5;
+	for (i = 4; i < 8; i++)
+		values[PIN_DATA0 + i] = !!(val & BIT(i));
+	values[PIN_CTRL_RS] = rs;
+	n = 5;
+	if (hd->pins[PIN_CTRL_RW]) {
+		values[PIN_CTRL_RW] = 0;
+		n++;
+	}
 
 	/* Present the data to the port */
-	gpiod_set_array_value_cansleep(n, &hd->pins[PIN_DATA4], NULL, values);
+	gpiod_set_array_value_cansleep(n, &hd->pins[PIN_DATA4],
+				       &values[PIN_DATA4]);
 
 	hd44780_strobe_gpio(hd);
 
 	/* Low nibble */
-	values[0] &= ~0x0fUL;
-	values[0] |= val & 0x0f;
+	for (i = 0; i < 4; i++)
+		values[PIN_DATA4 + i] = !!(val & BIT(i));
 
 	/* Present the data to the port */
-	gpiod_set_array_value_cansleep(n, &hd->pins[PIN_DATA4], NULL, values);
+	gpiod_set_array_value_cansleep(n, &hd->pins[PIN_DATA4],
+				       &values[PIN_DATA4]);
 
 	hd44780_strobe_gpio(hd);
 }
 
 /* Send a command to the LCD panel in 8 bit GPIO mode */
-static void hd44780_write_cmd_gpio8(struct hd44780_common *hdc, int cmd)
+static void hd44780_write_cmd_gpio8(struct charlcd *lcd, int cmd)
 {
-	struct hd44780 *hd = hdc->hd44780;
+	struct hd44780 *hd = lcd->drvdata;
 
 	hd44780_write_gpio8(hd, cmd, 0);
 
@@ -114,9 +128,9 @@ static void hd44780_write_cmd_gpio8(struct hd44780_common *hdc, int cmd)
 }
 
 /* Send data to the LCD panel in 8 bit GPIO mode */
-static void hd44780_write_data_gpio8(struct hd44780_common *hdc, int data)
+static void hd44780_write_data_gpio8(struct charlcd *lcd, int data)
 {
-	struct hd44780 *hd = hdc->hd44780;
+	struct hd44780 *hd = lcd->drvdata;
 
 	hd44780_write_gpio8(hd, data, 1);
 
@@ -125,26 +139,15 @@ static void hd44780_write_data_gpio8(struct hd44780_common *hdc, int data)
 }
 
 static const struct charlcd_ops hd44780_ops_gpio8 = {
+	.write_cmd	= hd44780_write_cmd_gpio8,
+	.write_data	= hd44780_write_data_gpio8,
 	.backlight	= hd44780_backlight,
-	.print		= hd44780_common_print,
-	.gotoxy		= hd44780_common_gotoxy,
-	.home		= hd44780_common_home,
-	.clear_display	= hd44780_common_clear_display,
-	.init_display	= hd44780_common_init_display,
-	.shift_cursor	= hd44780_common_shift_cursor,
-	.shift_display	= hd44780_common_shift_display,
-	.display	= hd44780_common_display,
-	.cursor		= hd44780_common_cursor,
-	.blink		= hd44780_common_blink,
-	.fontsize	= hd44780_common_fontsize,
-	.lines		= hd44780_common_lines,
-	.redefine_char	= hd44780_common_redefine_char,
 };
 
 /* Send a command to the LCD panel in 4 bit GPIO mode */
-static void hd44780_write_cmd_gpio4(struct hd44780_common *hdc, int cmd)
+static void hd44780_write_cmd_gpio4(struct charlcd *lcd, int cmd)
 {
-	struct hd44780 *hd = hdc->hd44780;
+	struct hd44780 *hd = lcd->drvdata;
 
 	hd44780_write_gpio4(hd, cmd, 0);
 
@@ -153,26 +156,33 @@ static void hd44780_write_cmd_gpio4(struct hd44780_common *hdc, int cmd)
 }
 
 /* Send 4-bits of a command to the LCD panel in raw 4 bit GPIO mode */
-static void hd44780_write_cmd_raw_gpio4(struct hd44780_common *hdc, int cmd)
+static void hd44780_write_cmd_raw_gpio4(struct charlcd *lcd, int cmd)
 {
-	DECLARE_BITMAP(values, 6); /* for DATA[4-7], RS, RW */
-	struct hd44780 *hd = hdc->hd44780;
-	unsigned int n;
+	int values[10];	/* for DATA[0-7], RS, RW, but DATA[0-3] is unused */
+	struct hd44780 *hd = lcd->drvdata;
+	unsigned int i, n;
 
 	/* Command nibble + RS, RW */
-	values[0] = cmd & 0x0f;
-	n = hd->pins[PIN_CTRL_RW] ? 6 : 5;
+	for (i = 0; i < 4; i++)
+		values[PIN_DATA4 + i] = !!(cmd & BIT(i));
+	values[PIN_CTRL_RS] = 0;
+	n = 5;
+	if (hd->pins[PIN_CTRL_RW]) {
+		values[PIN_CTRL_RW] = 0;
+		n++;
+	}
 
 	/* Present the data to the port */
-	gpiod_set_array_value_cansleep(n, &hd->pins[PIN_DATA4], NULL, values);
+	gpiod_set_array_value_cansleep(n, &hd->pins[PIN_DATA4],
+				       &values[PIN_DATA4]);
 
 	hd44780_strobe_gpio(hd);
 }
 
 /* Send data to the LCD panel in 4 bit GPIO mode */
-static void hd44780_write_data_gpio4(struct hd44780_common *hdc, int data)
+static void hd44780_write_data_gpio4(struct charlcd *lcd, int data)
 {
-	struct hd44780 *hd = hdc->hd44780;
+	struct hd44780 *hd = lcd->drvdata;
 
 	hd44780_write_gpio4(hd, data, 1);
 
@@ -181,20 +191,10 @@ static void hd44780_write_data_gpio4(struct hd44780_common *hdc, int data)
 }
 
 static const struct charlcd_ops hd44780_ops_gpio4 = {
+	.write_cmd	= hd44780_write_cmd_gpio4,
+	.write_cmd_raw4	= hd44780_write_cmd_raw_gpio4,
+	.write_data	= hd44780_write_data_gpio4,
 	.backlight	= hd44780_backlight,
-	.print		= hd44780_common_print,
-	.gotoxy		= hd44780_common_gotoxy,
-	.home		= hd44780_common_home,
-	.clear_display	= hd44780_common_clear_display,
-	.init_display	= hd44780_common_init_display,
-	.shift_cursor	= hd44780_common_shift_cursor,
-	.shift_display	= hd44780_common_shift_display,
-	.display	= hd44780_common_display,
-	.cursor		= hd44780_common_cursor,
-	.blink		= hd44780_common_blink,
-	.fontsize	= hd44780_common_fontsize,
-	.lines		= hd44780_common_lines,
-	.redefine_char	= hd44780_common_redefine_char,
 };
 
 static int hd44780_probe(struct platform_device *pdev)
@@ -202,9 +202,8 @@ static int hd44780_probe(struct platform_device *pdev)
 	struct device *dev = &pdev->dev;
 	unsigned int i, base;
 	struct charlcd *lcd;
-	struct hd44780_common *hdc;
 	struct hd44780 *hd;
-	int ifwidth, ret = -ENOMEM;
+	int ifwidth, ret;
 
 	/* Required pins */
 	ifwidth = gpiod_count(dev, "data");
@@ -222,39 +221,31 @@ static int hd44780_probe(struct platform_device *pdev)
 		return -EINVAL;
 	}
 
-	hdc = hd44780_common_alloc();
-	if (!hdc)
+	lcd = charlcd_alloc(sizeof(struct hd44780));
+	if (!lcd)
 		return -ENOMEM;
 
-	lcd = charlcd_alloc();
-	if (!lcd)
-		goto fail1;
+	hd = lcd->drvdata;
 
-	hd = kzalloc(sizeof(struct hd44780), GFP_KERNEL);
-	if (!hd)
-		goto fail2;
-
-	hdc->hd44780 = hd;
-	lcd->drvdata = hdc;
 	for (i = 0; i < ifwidth; i++) {
 		hd->pins[base + i] = devm_gpiod_get_index(dev, "data", i,
 							  GPIOD_OUT_LOW);
 		if (IS_ERR(hd->pins[base + i])) {
 			ret = PTR_ERR(hd->pins[base + i]);
-			goto fail3;
+			goto fail;
 		}
 	}
 
 	hd->pins[PIN_CTRL_E] = devm_gpiod_get(dev, "enable", GPIOD_OUT_LOW);
 	if (IS_ERR(hd->pins[PIN_CTRL_E])) {
 		ret = PTR_ERR(hd->pins[PIN_CTRL_E]);
-		goto fail3;
+		goto fail;
 	}
 
 	hd->pins[PIN_CTRL_RS] = devm_gpiod_get(dev, "rs", GPIOD_OUT_HIGH);
 	if (IS_ERR(hd->pins[PIN_CTRL_RS])) {
 		ret = PTR_ERR(hd->pins[PIN_CTRL_RS]);
-		goto fail3;
+		goto fail;
 	}
 
 	/* Optional pins */
@@ -262,60 +253,47 @@ static int hd44780_probe(struct platform_device *pdev)
 							GPIOD_OUT_LOW);
 	if (IS_ERR(hd->pins[PIN_CTRL_RW])) {
 		ret = PTR_ERR(hd->pins[PIN_CTRL_RW]);
-		goto fail3;
+		goto fail;
 	}
 
 	hd->pins[PIN_CTRL_BL] = devm_gpiod_get_optional(dev, "backlight",
 							GPIOD_OUT_LOW);
 	if (IS_ERR(hd->pins[PIN_CTRL_BL])) {
 		ret = PTR_ERR(hd->pins[PIN_CTRL_BL]);
-		goto fail3;
+		goto fail;
 	}
 
 	/* Required properties */
 	ret = device_property_read_u32(dev, "display-height-chars",
 				       &lcd->height);
 	if (ret)
-		goto fail3;
+		goto fail;
 	ret = device_property_read_u32(dev, "display-width-chars", &lcd->width);
 	if (ret)
-		goto fail3;
+		goto fail;
 
 	/*
 	 * On displays with more than two rows, the internal buffer width is
 	 * usually equal to the display width
 	 */
 	if (lcd->height > 2)
-		hdc->bwidth = lcd->width;
+		lcd->bwidth = lcd->width;
 
 	/* Optional properties */
-	device_property_read_u32(dev, "internal-buffer-width", &hdc->bwidth);
+	device_property_read_u32(dev, "internal-buffer-width", &lcd->bwidth);
 
-	hdc->ifwidth = ifwidth;
-	if (ifwidth == 8) {
-		lcd->ops = &hd44780_ops_gpio8;
-		hdc->write_data = hd44780_write_data_gpio8;
-		hdc->write_cmd = hd44780_write_cmd_gpio8;
-	} else {
-		lcd->ops = &hd44780_ops_gpio4;
-		hdc->write_data = hd44780_write_data_gpio4;
-		hdc->write_cmd = hd44780_write_cmd_gpio4;
-		hdc->write_cmd_raw4 = hd44780_write_cmd_raw_gpio4;
-	}
+	lcd->ifwidth = ifwidth;
+	lcd->ops = ifwidth == 8 ? &hd44780_ops_gpio8 : &hd44780_ops_gpio4;
 
 	ret = charlcd_register(lcd);
 	if (ret)
-		goto fail3;
+		goto fail;
 
 	platform_set_drvdata(pdev, lcd);
 	return 0;
 
-fail3:
-	kfree(hd);
-fail2:
+fail:
 	kfree(lcd);
-fail1:
-	kfree(hdc);
 	return ret;
 }
 
@@ -324,9 +302,6 @@ static int hd44780_remove(struct platform_device *pdev)
 	struct charlcd *lcd = platform_get_drvdata(pdev);
 
 	charlcd_unregister(lcd);
-	kfree(lcd->drvdata);
-
-	kfree(lcd);
 	return 0;
 }
 

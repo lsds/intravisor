@@ -16,7 +16,6 @@
  */
 
 #include <linux/module.h>
-#include <linux/pgtable.h>
 
 #include <linux/jiffies.h>
 #include <linux/errno.h>
@@ -38,7 +37,13 @@
 #include <asm/intrinsics.h>
 #include <asm/io.h>
 #include <asm/hw_irq.h>
+#include <asm/machvec.h>
+#include <asm/pgtable.h>
 #include <asm/tlbflush.h>
+
+#ifdef CONFIG_PERFMON
+# include <asm/perfmon.h>
+#endif
 
 #define IRQ_DEBUG	0
 
@@ -48,6 +53,7 @@
 #define IRQ_USED		(1)
 #define IRQ_RSVD		(2)
 
+/* These can be overridden in platform_irq_init */
 int ia64_first_device_vector = IA64_DEF_FIRST_DEVICE_VECTOR;
 int ia64_last_device_vector = IA64_DEF_LAST_DEVICE_VECTOR;
 
@@ -244,7 +250,7 @@ void __setup_vector_irq(int cpu)
 	}
 }
 
-#ifdef CONFIG_SMP
+#if defined(CONFIG_SMP) && (defined(CONFIG_IA64_GENERIC) || defined(CONFIG_IA64_DIG))
 
 static enum vector_domain_type {
 	VECTOR_DOMAIN_NONE,
@@ -308,7 +314,7 @@ void irq_complete_move(unsigned irq)
 	cpumask_and(&cleanup_mask, &cfg->old_domain, cpu_online_mask);
 	cfg->move_cleanup_count = cpumask_weight(&cleanup_mask);
 	for_each_cpu(i, &cleanup_mask)
-		ia64_send_ipi(i, IA64_IRQ_MOVE_VECTOR, IA64_IPI_DM_INT, 0);
+		platform_send_ipi(i, IA64_IRQ_MOVE_VECTOR, IA64_IPI_DM_INT, 0);
 	cfg->move_in_progress = 0;
 }
 
@@ -346,6 +352,11 @@ static irqreturn_t smp_irq_move_cleanup_interrupt(int irq, void *dev_id)
 	}
 	return IRQ_HANDLED;
 }
+
+static struct irqaction irq_move_irqaction = {
+	.handler =	smp_irq_move_cleanup_interrupt,
+	.name =		"irq_move"
+};
 
 static int __init parse_vector_domain(char *arg)
 {
@@ -574,18 +585,30 @@ void ia64_process_pending_intr(void)
 static irqreturn_t dummy_handler (int irq, void *dev_id)
 {
 	BUG();
-	return IRQ_NONE;
 }
+
+static struct irqaction ipi_irqaction = {
+	.handler =	handle_IPI,
+	.name =		"IPI"
+};
 
 /*
  * KVM uses this interrupt to force a cpu out of guest mode
  */
+static struct irqaction resched_irqaction = {
+	.handler =	dummy_handler,
+	.name =		"resched"
+};
+
+static struct irqaction tlb_irqaction = {
+	.handler =	dummy_handler,
+	.name =		"tlb_flush"
+};
 
 #endif
 
 void
-register_percpu_irq(ia64_vector vec, irq_handler_t handler, unsigned long flags,
-		    const char *name)
+ia64_native_register_percpu_irq (ia64_vector vec, struct irqaction *action)
 {
 	unsigned int irq;
 
@@ -593,9 +616,8 @@ register_percpu_irq(ia64_vector vec, irq_handler_t handler, unsigned long flags,
 	BUG_ON(bind_irq_vector(irq, vec, CPU_MASK_ALL));
 	irq_set_status_flags(irq, IRQ_PER_CPU);
 	irq_set_chip(irq, &irq_type_ia64_lsapic);
-	if (handler)
-		if (request_irq(irq, handler, flags, name, NULL))
-			pr_err("Failed to request irq %u (%s)\n", irq, name);
+	if (action)
+		setup_irq(irq, action);
 	irq_set_handler(irq, handle_percpu_irq);
 }
 
@@ -603,26 +625,30 @@ void __init
 ia64_native_register_ipi(void)
 {
 #ifdef CONFIG_SMP
-	register_percpu_irq(IA64_IPI_VECTOR, handle_IPI, 0, "IPI");
-	register_percpu_irq(IA64_IPI_RESCHEDULE, dummy_handler, 0, "resched");
-	register_percpu_irq(IA64_IPI_LOCAL_TLB_FLUSH, dummy_handler, 0,
-			    "tlb_flush");
+	register_percpu_irq(IA64_IPI_VECTOR, &ipi_irqaction);
+	register_percpu_irq(IA64_IPI_RESCHEDULE, &resched_irqaction);
+	register_percpu_irq(IA64_IPI_LOCAL_TLB_FLUSH, &tlb_irqaction);
 #endif
 }
 
 void __init
 init_IRQ (void)
 {
+#ifdef CONFIG_ACPI
 	acpi_boot_init();
-	ia64_register_ipi();
-	register_percpu_irq(IA64_SPURIOUS_INT_VECTOR, NULL, 0, NULL);
-#ifdef CONFIG_SMP
-	if (vector_domain_type != VECTOR_DOMAIN_NONE) {
-		register_percpu_irq(IA64_IRQ_MOVE_VECTOR,
-				    smp_irq_move_cleanup_interrupt, 0,
-				    "irq_move");
-	}
 #endif
+	ia64_register_ipi();
+	register_percpu_irq(IA64_SPURIOUS_INT_VECTOR, NULL);
+#ifdef CONFIG_SMP
+#if defined(CONFIG_IA64_GENERIC) || defined(CONFIG_IA64_DIG)
+	if (vector_domain_type != VECTOR_DOMAIN_NONE)
+		register_percpu_irq(IA64_IRQ_MOVE_VECTOR, &irq_move_irqaction);
+#endif
+#endif
+#ifdef CONFIG_PERFMON
+	pfm_init_percpu();
+#endif
+	platform_irq_init();
 }
 
 void

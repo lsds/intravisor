@@ -1,5 +1,5 @@
-/* SPDX-License-Identifier: (GPL-2.0 OR MPL-1.1) */
-/*
+// SPDX-License-Identifier: (GPL-2.0 OR MPL-1.1)
+/* hfa384x.h
  *
  * Defines the constants and data structures for the hfa384x
  *
@@ -355,7 +355,7 @@
 /* Commonly used basic types */
 struct hfa384x_bytestr {
 	__le16 len;
-	u8 data[];
+	u8 data[0];
 } __packed;
 
 struct hfa384x_bytestr32 {
@@ -421,7 +421,7 @@ struct hfa384x_authenticate_station_data {
 /*-- Configuration Record: WPAData       (data portion only) --*/
 struct hfa384x_wpa_data {
 	__le16 datalen;
-	u8 data[];		/* max 80 */
+	u8 data[0];		/* max 80 */
 } __packed;
 
 /*--------------------------------------------------------------------
@@ -475,7 +475,14 @@ struct hfa384x_tx_frame {
 	u16 tx_control;
 
 	/*-- 802.11 Header Information --*/
-	struct p80211_hdr hdr;
+
+	u16 frame_control;
+	u16 duration_id;
+	u8 address1[6];
+	u8 address2[6];
+	u8 address3[6];
+	u16 sequence_control;
+	u8 address4[6];
 	__le16 data_len;		/* little endian format */
 
 	/*-- 802.3 Header Information --*/
@@ -534,7 +541,13 @@ struct hfa384x_rx_frame {
 	u16 reserved2;
 
 	/*-- 802.11 Header Information (802.11 byte order) --*/
-	struct p80211_hdr hdr;
+	__le16 frame_control;
+	u16 duration_id;
+	u8 address1[6];
+	u8 address2[6];
+	u8 address3[6];
+	u16 sequence_control;
+	u8 address4[6];
 	__le16 data_len;		/* hfa384x (little endian) format */
 
 	/*-- 802.3 Header Information --*/
@@ -1163,11 +1176,13 @@ struct hfa384x_usbctlx {
 	enum ctlx_state state;	/* Tracks running state */
 
 	struct completion done;
-	int reapable;		/* Food for the reaper task */
+	volatile int reapable;	/* Food for the reaper task */
 
 	ctlx_cmdcb_t cmdcb;	/* Async command callback */
 	ctlx_usercb_t usercb;	/* Async user callback, */
 	void *usercb_data;	/*  at CTLX completion  */
+
+	int variant;		/* Identifies cmd variant */
 };
 
 struct hfa384x_usbctlxq {
@@ -1227,8 +1242,8 @@ struct hfa384x {
 
 	struct timer_list throttle;
 
-	struct work_struct reaper_bh;
-	struct work_struct completion_bh;
+	struct tasklet_struct reaper_bh;
+	struct tasklet_struct completion_bh;
 
 	struct work_struct usb_work;
 
@@ -1322,9 +1337,7 @@ struct hfa384x {
 						  * interface
 						  */
 
-	struct hfa384x_caplevel cap_act_sta_mfi; /*
-						  * sta f/w to modem interface
-						  */
+	struct hfa384x_caplevel cap_act_sta_mfi; /* sta f/w to modem interface */
 
 	struct hfa384x_caplevel cap_act_ap_cfi;	/*
 						 * ap f/w to controller
@@ -1346,9 +1359,7 @@ struct hfa384x {
 
 	struct hfa384x_inf_frame *scanresults;
 
-	struct prism2sta_authlist authlist;	/*
-						 * Authenticated station list.
-						 */
+	struct prism2sta_authlist authlist;	/* Authenticated station list. */
 	unsigned int accessmode;		/* Access mode. */
 	struct prism2sta_accesslist allow;	/* Allowed station list. */
 	struct prism2sta_accesslist deny;	/* Denied station list. */
@@ -1358,14 +1369,13 @@ struct hfa384x {
 void hfa384x_create(struct hfa384x *hw, struct usb_device *usb);
 void hfa384x_destroy(struct hfa384x *hw);
 
-int hfa384x_corereset(struct hfa384x *hw, int holdtime, int settletime,
-		      int genesis);
+int
+hfa384x_corereset(struct hfa384x *hw, int holdtime, int settletime, int genesis);
 int hfa384x_drvr_disable(struct hfa384x *hw, u16 macport);
 int hfa384x_drvr_enable(struct hfa384x *hw, u16 macport);
 int hfa384x_drvr_flashdl_enable(struct hfa384x *hw);
 int hfa384x_drvr_flashdl_disable(struct hfa384x *hw);
-int hfa384x_drvr_flashdl_write(struct hfa384x *hw, u32 daddr, void *buf,
-			       u32 len);
+int hfa384x_drvr_flashdl_write(struct hfa384x *hw, u32 daddr, void *buf, u32 len);
 int hfa384x_drvr_getconfig(struct hfa384x *hw, u16 rid, void *buf, u16 len);
 int hfa384x_drvr_ramdl_enable(struct hfa384x *hw, u32 exeaddr);
 int hfa384x_drvr_ramdl_disable(struct hfa384x *hw);
@@ -1373,8 +1383,7 @@ int hfa384x_drvr_ramdl_write(struct hfa384x *hw, u32 daddr, void *buf, u32 len);
 int hfa384x_drvr_readpda(struct hfa384x *hw, void *buf, unsigned int len);
 int hfa384x_drvr_setconfig(struct hfa384x *hw, u16 rid, void *buf, u16 len);
 
-static inline int
-hfa384x_drvr_getconfig16(struct hfa384x *hw, u16 rid, void *val)
+static inline int hfa384x_drvr_getconfig16(struct hfa384x *hw, u16 rid, void *val)
 {
 	int result = 0;
 
@@ -1410,7 +1419,7 @@ int hfa384x_drvr_start(struct hfa384x *hw);
 int hfa384x_drvr_stop(struct hfa384x *hw);
 int
 hfa384x_drvr_txframe(struct hfa384x *hw, struct sk_buff *skb,
-		     struct p80211_hdr *p80211_hdr,
+		     union p80211_hdr *p80211_hdr,
 		     struct p80211_metawep *p80211_wep);
 void hfa384x_tx_timeout(struct wlandevice *wlandev);
 

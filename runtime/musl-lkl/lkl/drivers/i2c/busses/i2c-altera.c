@@ -1,6 +1,17 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  *  Copyright Intel Corporation (C) 2017.
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms and conditions of the GNU General Public License,
+ * version 2, as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+ * more details.
+ *
+ * You should have received a copy of the GNU General Public License along with
+ * this program.  If not, see <http://www.gnu.org/licenses/>.
  *
  * Based on the i2c-axxia.c driver.
  */
@@ -55,7 +66,7 @@
 #define ALTR_I2C_XFER_TIMEOUT	(msecs_to_jiffies(250))
 
 /**
- * struct altr_i2c_dev - I2C device context
+ * altr_i2c_dev - I2C device context
  * @base: pointer to register struct
  * @msg: pointer to current message
  * @msg_len: number of bytes transferred in msg
@@ -69,7 +80,7 @@
  * @fifo_size: size of the FIFO passed in.
  * @isr_mask: cached copy of local ISR enables.
  * @isr_status: cached copy of local ISR status.
- * @isr_mutex: mutex for IRQ thread.
+ * @lock: spinlock for IRQ synchronization.
  */
 struct altr_i2c_dev {
 	void __iomem *base;
@@ -85,13 +96,16 @@ struct altr_i2c_dev {
 	u32 fifo_size;
 	u32 isr_mask;
 	u32 isr_status;
-	struct mutex isr_mutex;
+	spinlock_t lock;	/* IRQ synchronization */
 };
 
 static void
 altr_i2c_int_enable(struct altr_i2c_dev *idev, u32 mask, bool enable)
 {
+	unsigned long flags;
 	u32 int_en;
+
+	spin_lock_irqsave(&idev->lock, flags);
 
 	int_en = readl(idev->base + ALTR_I2C_ISER);
 	if (enable)
@@ -100,6 +114,8 @@ altr_i2c_int_enable(struct altr_i2c_dev *idev, u32 mask, bool enable)
 		idev->isr_mask = int_en & ~mask;
 
 	writel(idev->isr_mask, idev->base + ALTR_I2C_ISER);
+
+	spin_unlock_irqrestore(&idev->lock, flags);
 }
 
 static void altr_i2c_int_clear(struct altr_i2c_dev *idev, u32 mask)
@@ -142,7 +158,7 @@ static void altr_i2c_init(struct altr_i2c_dev *idev)
 		  (ALTR_I2C_THRESHOLD << ALTR_I2C_CTRL_TCT_SHFT);
 	u32 t_high, t_low;
 
-	if (idev->bus_clk_rate <= I2C_MAX_STANDARD_MODE_FREQ) {
+	if (idev->bus_clk_rate <= 100000) {
 		tmp &= ~ALTR_I2C_CTRL_BSPEED;
 		/* Standard mode SCL 50/50 */
 		t_high = divisor * 1 / 2;
@@ -166,13 +182,13 @@ static void altr_i2c_init(struct altr_i2c_dev *idev)
 	/* SCL Low Time */
 	writel(t_low, idev->base + ALTR_I2C_SCL_LOW);
 	/* SDA Hold Time, 300ns */
-	writel(3 * clk_mhz / 10, idev->base + ALTR_I2C_SDA_HOLD);
+	writel(div_u64(300 * clk_mhz, 1000), idev->base + ALTR_I2C_SDA_HOLD);
 
 	/* Mask all master interrupt bits */
 	altr_i2c_int_enable(idev, ALTR_I2C_ALL_IRQ, false);
 }
 
-/*
+/**
  * altr_i2c_transfer - On the last byte to be transmitted, send
  * a Stop bit on the last byte.
  */
@@ -185,7 +201,7 @@ static void altr_i2c_transfer(struct altr_i2c_dev *idev, u32 data)
 		writel(data, idev->base + ALTR_I2C_TFR_CMD);
 }
 
-/*
+/**
  * altr_i2c_empty_rx_fifo - Fetch data from RX FIFO until end of
  * transfer. Send a Stop bit on the last byte.
  */
@@ -201,8 +217,9 @@ static void altr_i2c_empty_rx_fifo(struct altr_i2c_dev *idev)
 	}
 }
 
-/*
+/**
  * altr_i2c_fill_tx_fifo - Fill TX FIFO from current message buffer.
+ * @return: Number of bytes left to transfer.
  */
 static int altr_i2c_fill_tx_fifo(struct altr_i2c_dev *idev)
 {
@@ -239,11 +256,10 @@ static irqreturn_t altr_i2c_isr(int irq, void *_dev)
 	struct altr_i2c_dev *idev = _dev;
 	u32 status = idev->isr_status;
 
-	mutex_lock(&idev->isr_mutex);
 	if (!idev->msg) {
 		dev_warn(idev->dev, "unexpected interrupt\n");
 		altr_i2c_int_clear(idev, ALTR_I2C_ALL_IRQ);
-		goto out;
+		return IRQ_HANDLED;
 	}
 	read = (idev->msg->flags & I2C_M_RD) != 0;
 
@@ -296,8 +312,6 @@ static irqreturn_t altr_i2c_isr(int irq, void *_dev)
 		complete(&idev->msg_complete);
 		dev_dbg(idev->dev, "Message Complete\n");
 	}
-out:
-	mutex_unlock(&idev->isr_mutex);
 
 	return IRQ_HANDLED;
 }
@@ -309,7 +323,6 @@ static int altr_i2c_xfer_msg(struct altr_i2c_dev *idev, struct i2c_msg *msg)
 	u32 value;
 	u8 addr = i2c_8bit_addr_from_msg(msg);
 
-	mutex_lock(&idev->isr_mutex);
 	idev->msg = msg;
 	idev->msg_len = msg->len;
 	idev->buf = msg->buf;
@@ -334,11 +347,9 @@ static int altr_i2c_xfer_msg(struct altr_i2c_dev *idev, struct i2c_msg *msg)
 		altr_i2c_int_enable(idev, imask, true);
 		altr_i2c_fill_tx_fifo(idev);
 	}
-	mutex_unlock(&idev->isr_mutex);
 
 	time_left = wait_for_completion_timeout(&idev->msg_complete,
 						ALTR_I2C_XFER_TIMEOUT);
-	mutex_lock(&idev->isr_mutex);
 	altr_i2c_int_enable(idev, imask, false);
 
 	value = readl(idev->base + ALTR_I2C_STATUS) & ALTR_I2C_STAT_CORE;
@@ -351,7 +362,6 @@ static int altr_i2c_xfer_msg(struct altr_i2c_dev *idev, struct i2c_msg *msg)
 	}
 
 	altr_i2c_core_disable(idev);
-	mutex_unlock(&idev->isr_mutex);
 
 	return idev->msg_err;
 }
@@ -383,19 +393,24 @@ static const struct i2c_algorithm altr_i2c_algo = {
 static int altr_i2c_probe(struct platform_device *pdev)
 {
 	struct altr_i2c_dev *idev = NULL;
+	struct resource *res;
 	int irq, ret;
+	u32 val;
 
 	idev = devm_kzalloc(&pdev->dev, sizeof(*idev), GFP_KERNEL);
 	if (!idev)
 		return -ENOMEM;
 
-	idev->base = devm_platform_ioremap_resource(pdev, 0);
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	idev->base = devm_ioremap_resource(&pdev->dev, res);
 	if (IS_ERR(idev->base))
 		return PTR_ERR(idev->base);
 
 	irq = platform_get_irq(pdev, 0);
-	if (irq < 0)
+	if (irq < 0) {
+		dev_err(&pdev->dev, "missing interrupt resource\n");
 		return irq;
+	}
 
 	idev->i2c_clk = devm_clk_get(&pdev->dev, NULL);
 	if (IS_ERR(idev->i2c_clk)) {
@@ -405,24 +420,24 @@ static int altr_i2c_probe(struct platform_device *pdev)
 
 	idev->dev = &pdev->dev;
 	init_completion(&idev->msg_complete);
-	mutex_init(&idev->isr_mutex);
+	spin_lock_init(&idev->lock);
 
-	ret = device_property_read_u32(idev->dev, "fifo-size",
+	val = device_property_read_u32(idev->dev, "fifo-size",
 				       &idev->fifo_size);
-	if (ret) {
+	if (val) {
 		dev_err(&pdev->dev, "FIFO size set to default of %d\n",
 			ALTR_I2C_DFLT_FIFO_SZ);
 		idev->fifo_size = ALTR_I2C_DFLT_FIFO_SZ;
 	}
 
-	ret = device_property_read_u32(idev->dev, "clock-frequency",
+	val = device_property_read_u32(idev->dev, "clock-frequency",
 				       &idev->bus_clk_rate);
-	if (ret) {
+	if (val) {
 		dev_err(&pdev->dev, "Default to 100kHz\n");
-		idev->bus_clk_rate = I2C_MAX_STANDARD_MODE_FREQ;	/* default clock rate */
+		idev->bus_clk_rate = 100000;	/* default clock rate */
 	}
 
-	if (idev->bus_clk_rate > I2C_MAX_FAST_MODE_FREQ) {
+	if (idev->bus_clk_rate > 400000) {
 		dev_err(&pdev->dev, "invalid clock-frequency %d\n",
 			idev->bus_clk_rate);
 		return -EINVAL;
@@ -442,12 +457,10 @@ static int altr_i2c_probe(struct platform_device *pdev)
 		return ret;
 	}
 
-	mutex_lock(&idev->isr_mutex);
 	altr_i2c_init(idev);
-	mutex_unlock(&idev->isr_mutex);
 
 	i2c_set_adapdata(&idev->adapter, idev);
-	strscpy(idev->adapter.name, pdev->name, sizeof(idev->adapter.name));
+	strlcpy(idev->adapter.name, pdev->name, sizeof(idev->adapter.name));
 	idev->adapter.owner = THIS_MODULE;
 	idev->adapter.algo = &altr_i2c_algo;
 	idev->adapter.dev.parent = &pdev->dev;

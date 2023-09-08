@@ -1,10 +1,11 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * at91-tse850-3.dts - Device Tree file for the Axentia TSE-850 3.0 board
  *
  * Copyright (C) 2017 Axentia Technologies AB
  *
  * Author: Peter Rosin <peda@axentia.se>
+ *
+ * Licensed under GPLv2 or later.
  */
 /dts-v1/;
 #include <dt-bindings/pwm/pwm.h>
@@ -14,6 +15,25 @@
 	model = "Axentia TSE-850 3.0";
 	compatible = "axentia,tse850v3", "axentia,linea",
 		     "atmel,sama5d31", "atmel,sama5d3", "atmel,sama5";
+
+	ahb {
+		apb {
+			pinctrl@fffff200 {
+				tse850 {
+					pinctrl_usba_vbus: usba-vbus {
+						atmel,pins =
+							<AT91_PIOC 31
+							 AT91_PERIPH_GPIO
+							 AT91_PINCTRL_DEGLITCH>;
+					};
+				};
+			};
+
+			watchdog@fffffe40 {
+				status = "okay";
+			};
+		};
+	};
 
 	sck: oscillator {
 		compatible = "fixed-clock";
@@ -233,19 +253,6 @@
 	};
 };
 
-&pinctrl {
-	tse850 {
-		pinctrl_usba_vbus: usba-vbus {
-			atmel,pins = <AT91_PIOC 31 AT91_PERIPH_GPIO
-				      AT91_PINCTRL_DEGLITCH>;
-		};
-	};
-};
-
-&watchdog {
-	status = "okay";
-};
-
 &usart0 {
 	status = "okay";
 
@@ -262,7 +269,7 @@
 &macb1 {
 	status = "okay";
 
-	phy-mode = "rmii";
+	phy-mode = "rgmii";
 
 	#address-cells = <1>;
 	#size-cells = <0>;

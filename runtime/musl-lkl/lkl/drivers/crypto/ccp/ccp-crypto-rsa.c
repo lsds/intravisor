@@ -1,10 +1,13 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * AMD Cryptographic Coprocessor (CCP) RSA crypto API support
  *
  * Copyright (C) 2017 Advanced Micro Devices, Inc.
  *
  * Author: Gary R Hook <gary.hook@amd.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 
 #include <linux/module.h>
@@ -34,9 +37,10 @@ static inline int ccp_copy_and_save_keypart(u8 **kpbuf, unsigned int *kplen,
 		if (buf[nskip])
 			break;
 	*kplen = sz - nskip;
-	*kpbuf = kmemdup(buf + nskip, *kplen, GFP_KERNEL);
+	*kpbuf = kzalloc(*kplen, GFP_KERNEL);
 	if (!*kpbuf)
 		return -ENOMEM;
+	memcpy(*kpbuf, buf + nskip, *kplen);
 
 	return 0;
 }
@@ -112,13 +116,13 @@ static int ccp_check_key_length(unsigned int len)
 static void ccp_rsa_free_key_bufs(struct ccp_ctx *ctx)
 {
 	/* Clean up old key data */
-	kfree_sensitive(ctx->u.rsa.e_buf);
+	kzfree(ctx->u.rsa.e_buf);
 	ctx->u.rsa.e_buf = NULL;
 	ctx->u.rsa.e_len = 0;
-	kfree_sensitive(ctx->u.rsa.n_buf);
+	kzfree(ctx->u.rsa.n_buf);
 	ctx->u.rsa.n_buf = NULL;
 	ctx->u.rsa.n_len = 0;
-	kfree_sensitive(ctx->u.rsa.d_buf);
+	kzfree(ctx->u.rsa.d_buf);
 	ctx->u.rsa.d_buf = NULL;
 	ctx->u.rsa.d_len = 0;
 }
@@ -210,6 +214,8 @@ static void ccp_rsa_exit_tfm(struct crypto_akcipher *tfm)
 static struct akcipher_alg ccp_rsa_defaults = {
 	.encrypt = ccp_rsa_encrypt,
 	.decrypt = ccp_rsa_decrypt,
+	.sign = ccp_rsa_decrypt,
+	.verify = ccp_rsa_encrypt,
 	.set_pub_key = ccp_rsa_setpubkey,
 	.set_priv_key = ccp_rsa_setprivkey,
 	.max_size = ccp_rsa_maxsize,
@@ -242,8 +248,7 @@ static struct ccp_rsa_def rsa_algs[] = {
 	}
 };
 
-static int ccp_register_rsa_alg(struct list_head *head,
-			        const struct ccp_rsa_def *def)
+int ccp_register_rsa_alg(struct list_head *head, const struct ccp_rsa_def *def)
 {
 	struct ccp_crypto_akcipher_alg *ccp_alg;
 	struct akcipher_alg *alg;

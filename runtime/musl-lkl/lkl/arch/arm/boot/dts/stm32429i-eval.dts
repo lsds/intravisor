@@ -60,8 +60,7 @@
 		stdout-path = "serial0:115200n8";
 	};
 
-	memory@0 {
-		device_type = "memory";
+	memory {
 		reg = <0x00000000 0x2000000>;
 	};
 
@@ -81,53 +80,48 @@
 		dma-ranges = <0xc0000000 0x0 0x10000000>;
 	};
 
-	vdda: regulator-vdda {
-		compatible = "regulator-fixed";
-		regulator-name = "vdda";
-		regulator-min-microvolt = <3300000>;
-		regulator-max-microvolt = <3300000>;
-	};
+	regulators {
+		compatible = "simple-bus";
+		#address-cells = <1>;
+		#size-cells = <0>;
 
-	vref: regulator-vref {
-		compatible = "regulator-fixed";
-		regulator-name = "vref";
-		regulator-min-microvolt = <3300000>;
-		regulator-max-microvolt = <3300000>;
-	};
-
-	vdd_panel: vdd-panel {
-		compatible = "regulator-fixed";
-		regulator-name = "vdd_panel";
-		regulator-min-microvolt = <3300000>;
-		regulator-max-microvolt = <3300000>;
+		reg_vref: regulator@0 {
+			compatible = "regulator-fixed";
+			reg = <0>;
+			regulator-name = "vref";
+			regulator-min-microvolt = <3300000>;
+			regulator-max-microvolt = <3300000>;
+		};
 	};
 
 	leds {
 		compatible = "gpio-leds";
-		led-green {
+		green {
 			gpios = <&gpiog 6 1>;
 			linux,default-trigger = "heartbeat";
 		};
-		led-orange {
+		orange {
 			gpios = <&gpiog 7 1>;
 		};
-		led-red {
+		red {
 			gpios = <&gpiog 10 1>;
 		};
-		led-blue {
+		blue {
 			gpios = <&gpiog 12 1>;
 		};
 	};
 
-	gpio-keys {
+	gpio_keys {
 		compatible = "gpio-keys";
+		#address-cells = <1>;
+		#size-cells = <0>;
 		autorepeat;
-		button-0 {
+		button@0 {
 			label = "Wake up";
 			linux,code = <KEY_WAKEUP>;
 			gpios = <&gpioa 0 0>;
 		};
-		button-1 {
+		button@1 {
 			label = "Tamper";
 			linux,code = <KEY_RESTART>;
 			gpios = <&gpioc 13 0>;
@@ -143,7 +137,6 @@
 
 	panel_rgb: panel-rgb {
 		compatible = "ampire,am-480272h3tmqw-t01h";
-		power-supply = <&vdd_panel>;
 		status = "okay";
 		port {
 			panel_in_rgb: endpoint {
@@ -163,8 +156,7 @@
 &adc {
 	pinctrl-names = "default";
 	pinctrl-0 = <&adc3_in8_pin>;
-	vdda-supply = <&vdda>;
-	vref-supply = <&vref>;
+	vref-supply = <&reg_vref>;
 	status = "okay";
 	adc3: adc@200 {
 		st,adc-channels = <8>;
@@ -186,7 +178,6 @@
 	port {
 		dcmi_0: endpoint {
 			remote-endpoint = <&ov2640_0>;
-			bus-type = <5>;
 			bus-width = <8>;
 			hsync-active = <0>;
 			vsync-active = <0>;
@@ -239,8 +230,9 @@
 
 &ltdc {
 	status = "okay";
-	pinctrl-0 = <&ltdc_pins_a>;
+	pinctrl-0 = <&ltdc_pins>;
 	pinctrl-names = "default";
+	dma-ranges;
 
 	port {
 		ltdc_out_rgb: endpoint {
@@ -251,10 +243,10 @@
 
 &mac {
 	status = "okay";
-	pinctrl-0 = <&ethernet_mii>;
-	pinctrl-names = "default";
-	phy-mode = "mii";
-	phy-handle = <&phy1>;
+	pinctrl-0	= <&ethernet_mii>;
+	pinctrl-names	= "default";
+	phy-mode	= "mii";
+	phy-handle	= <&phy1>;
 	mdio0 {
 		#address-cells = <1>;
 		#size-cells = <0>;
@@ -272,7 +264,8 @@
 &sdio {
 	status = "okay";
 	vmmc-supply = <&mmc_vcard>;
-	cd-gpios = <&stmpegpio 15 GPIO_ACTIVE_LOW>;
+	cd-gpios = <&stmpegpio 15 GPIO_ACTIVE_HIGH>;
+	cd-inverted;
 	pinctrl-names = "default", "opendrain";
 	pinctrl-0 = <&sdio_pins>;
 	pinctrl-1 = <&sdio_pins_od>;
@@ -306,18 +299,6 @@
 	timer@2 {
 		status = "okay";
 	};
-};
-
-&timers5 {
-	/* Override timer5 to act as clockevent */
-	compatible = "st,stm32-timer";
-	interrupts = <50>;
-	status = "okay";
-	/delete-property/#address-cells;
-	/delete-property/#size-cells;
-	/delete-property/clock-names;
-	/delete-node/pwm;
-	/delete-node/timer@4;
 };
 
 &usart1 {

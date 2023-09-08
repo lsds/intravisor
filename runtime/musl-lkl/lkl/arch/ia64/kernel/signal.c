@@ -12,6 +12,7 @@
 #include <linux/kernel.h>
 #include <linux/mm.h>
 #include <linux/ptrace.h>
+#include <linux/tracehook.h>
 #include <linux/sched.h>
 #include <linux/signal.h>
 #include <linux/smp.h>
@@ -109,6 +110,7 @@ ia64_rt_sigreturn (struct sigscratch *scr)
 {
 	extern char ia64_strace_leave_kernel, ia64_leave_kernel;
 	struct sigcontext __user *sc;
+	struct siginfo si;
 	sigset_t set;
 	long retval;
 
@@ -131,7 +133,7 @@ ia64_rt_sigreturn (struct sigscratch *scr)
 		 */
 		retval = (long) &ia64_strace_leave_kernel;
 
-	if (!access_ok(sc, sizeof(*sc)))
+	if (!access_ok(VERIFY_READ, sc, sizeof(*sc)))
 		goto give_sigsegv;
 
 	if (GET_SIGSET(&set, &sc->sc_mask))
@@ -151,7 +153,13 @@ ia64_rt_sigreturn (struct sigscratch *scr)
 	return retval;
 
   give_sigsegv:
-	force_sig(SIGSEGV);
+	si.si_signo = SIGSEGV;
+	si.si_errno = 0;
+	si.si_code = SI_KERNEL;
+	si.si_pid = task_pid_vnr(current);
+	si.si_uid = from_kuid_munged(current_user_ns(), current_uid());
+	si.si_addr = sc;
+	force_sig_info(SIGSEGV, &si, current);
 	return retval;
 }
 
@@ -223,6 +231,36 @@ rbs_on_sig_stack (unsigned long bsp)
 }
 
 static long
+force_sigsegv_info (int sig, void __user *addr)
+{
+	unsigned long flags;
+	struct siginfo si;
+
+	if (sig == SIGSEGV) {
+		/*
+		 * Acquiring siglock around the sa_handler-update is almost
+		 * certainly overkill, but this isn't a
+		 * performance-critical path and I'd rather play it safe
+		 * here than having to debug a nasty race if and when
+		 * something changes in kernel/signal.c that would make it
+		 * no longer safe to modify sa_handler without holding the
+		 * lock.
+		 */
+		spin_lock_irqsave(&current->sighand->siglock, flags);
+		current->sighand->action[sig - 1].sa.sa_handler = SIG_DFL;
+		spin_unlock_irqrestore(&current->sighand->siglock, flags);
+	}
+	si.si_signo = SIGSEGV;
+	si.si_errno = 0;
+	si.si_code = SI_KERNEL;
+	si.si_pid = task_pid_vnr(current);
+	si.si_uid = from_kuid_munged(current_user_ns(), current_uid());
+	si.si_addr = addr;
+	force_sig_info(SIGSEGV, &si, current);
+	return 1;
+}
+
+static long
 setup_frame(struct ksignal *ksig, sigset_t *set, struct sigscratch *scr)
 {
 	extern char __kernel_sigtramp[];
@@ -255,18 +293,15 @@ setup_frame(struct ksignal *ksig, sigset_t *set, struct sigscratch *scr)
 			 * instead so we will die with SIGSEGV.
 			 */
 			check_sp = (new_sp - sizeof(*frame)) & -STACK_ALIGN;
-			if (!likely(on_sig_stack(check_sp))) {
-				force_sigsegv(ksig->sig);
-				return 1;
-			}
+			if (!likely(on_sig_stack(check_sp)))
+				return force_sigsegv_info(ksig->sig, (void __user *)
+							  check_sp);
 		}
 	}
 	frame = (void __user *) ((new_sp - sizeof(*frame)) & -STACK_ALIGN);
 
-	if (!access_ok(frame, sizeof(*frame))) {
-		force_sigsegv(ksig->sig);
-		return 1;
-	}
+	if (!access_ok(VERIFY_WRITE, frame, sizeof(*frame)))
+		return force_sigsegv_info(ksig->sig, frame);
 
 	err  = __put_user(ksig->sig, &frame->arg0);
 	err |= __put_user(&frame->info, &frame->arg1);
@@ -280,10 +315,8 @@ setup_frame(struct ksignal *ksig, sigset_t *set, struct sigscratch *scr)
 	err |= __save_altstack(&frame->sc.sc_stack, scr->pt.r12);
 	err |= setup_sigcontext(&frame->sc, set, scr);
 
-	if (unlikely(err)) {
-		force_sigsegv(ksig->sig);
-		return 1;
-	}
+	if (unlikely(err))
+		return force_sigsegv_info(ksig->sig, frame);
 
 	scr->pt.r12 = (unsigned long) frame - 16;	/* new stack pointer */
 	scr->pt.ar_fpsr = FPSR_DEFAULT;			/* reset fpsr for signal handler */
@@ -340,14 +373,13 @@ ia64_do_signal (struct sigscratch *scr, long in_syscall)
 	 * need to push through a forced SIGSEGV.
 	 */
 	while (1) {
-		if (!get_signal(&ksig))
-			break;
+		get_signal(&ksig);
 
 		/*
-		 * get_signal() may have run a debugger (via notify_parent())
+		 * get_signal_to_deliver() may have run a debugger (via notify_parent())
 		 * and the debugger may have modified the state (e.g., to arrange for an
 		 * inferior call), thus it's important to check for restarting _after_
-		 * get_signal().
+		 * get_signal_to_deliver().
 		 */
 		if ((long) scr->pt.r10 != -1)
 			/*
@@ -363,19 +395,19 @@ ia64_do_signal (struct sigscratch *scr, long in_syscall)
 
 		if (unlikely(restart)) {
 			switch (errno) {
-			case ERESTART_RESTARTBLOCK:
-			case ERESTARTNOHAND:
+			      case ERESTART_RESTARTBLOCK:
+			      case ERESTARTNOHAND:
 				scr->pt.r8 = EINTR;
 				/* note: scr->pt.r10 is already -1 */
 				break;
-			case ERESTARTSYS:
+
+			      case ERESTARTSYS:
 				if ((ksig.ka.sa.sa_flags & SA_RESTART) == 0) {
 					scr->pt.r8 = EINTR;
 					/* note: scr->pt.r10 is already -1 */
 					break;
 				}
-				fallthrough;
-			case ERESTARTNOINTR:
+			      case ERESTARTNOINTR:
 				ia64_decrement_ip(&scr->pt);
 				restart = 0; /* don't restart twice if handle_signal() fails... */
 			}

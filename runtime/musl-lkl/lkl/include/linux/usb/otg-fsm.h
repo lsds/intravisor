@@ -1,6 +1,19 @@
 // SPDX-License-Identifier: GPL-2.0+
-/*
- * Copyright (C) 2007,2008 Freescale Semiconductor, Inc.
+/* Copyright (C) 2007,2008 Freescale Semiconductor, Inc.
+ *
+ * This program is free software; you can redistribute  it and/or modify it
+ * under  the terms of  the GNU General  Public License as published by the
+ * Free Software Foundation;  either version 2 of the  License, or (at your
+ * option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * General Public License for more details.
+ *
+ * You should have received a copy of the  GNU General Public License along
+ * with this program; if not, write  to the Free Software Foundation, Inc.,
+ * 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
 #ifndef __LINUX_USB_OTG_FSM_H
@@ -85,7 +98,7 @@ enum otg_fsm_timer {
  * @b_bus_req:	TRUE during the time that the Application running on the
  *		B-device wants to use the bus
  *
- *	Auxiliary inputs (OTG v1.3 only. Obsolete now.)
+ *	Auxilary inputs (OTG v1.3 only. Obsolete now.)
  * @a_sess_vld:	TRUE if the A-device detects that VBUS is above VA_SESS_VLD
  * @b_bus_suspend: TRUE when the A-device detects that the B-device has put
  *		the bus into suspend
@@ -140,7 +153,7 @@ struct otg_fsm {
 	int a_bus_req;
 	int b_bus_req;
 
-	/* Auxiliary inputs */
+	/* Auxilary inputs */
 	int a_sess_vld;
 	int b_bus_resume;
 	int b_bus_suspend;
@@ -164,7 +177,7 @@ struct otg_fsm {
 	int a_bus_req_inf;
 	int a_clr_err_inf;
 	int b_bus_req_inf;
-	/* Auxiliary informative variables */
+	/* Auxilary informative variables */
 	int a_suspend_req_inf;
 
 	/* Timeout indicator for timers */
@@ -183,7 +196,6 @@ struct otg_fsm {
 	struct mutex lock;
 	u8 *host_req_flag;
 	struct delayed_work hnp_polling_work;
-	bool hnp_work_inited;
 	bool state_changed;
 };
 

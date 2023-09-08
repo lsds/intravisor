@@ -1,8 +1,20 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * This file is part of UBIFS.
  *
  * Copyright (C) 2006-2008 Nokia Corporation
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License version 2 as published by
+ * the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+ * more details.
+ *
+ * You should have received a copy of the GNU General Public License along with
+ * this program; if not, write to the Free Software Foundation, Inc., 51
+ * Franklin St, Fifth Floor, Boston, MA 02110-1301 USA
  *
  * Authors: Adrian Hunter
  *          Artem Bityutskiy (Битюцкий Артём)
@@ -76,7 +88,7 @@ int ubifs_scan_a_node(const struct ubifs_info *c, void *buf, int len, int lnum,
 	dbg_scan("scanning %s at LEB %d:%d",
 		 dbg_ntype(ch->node_type), lnum, offs);
 
-	if (ubifs_check_node(c, buf, len, lnum, offs, quiet, 1))
+	if (ubifs_check_node(c, buf, lnum, offs, quiet, 1))
 		return SCANNED_A_CORRUPT_NODE;
 
 	if (ch->node_type == UBIFS_PAD_NODE) {
@@ -90,7 +102,7 @@ int ubifs_scan_a_node(const struct ubifs_info *c, void *buf, int len, int lnum,
 			if (!quiet) {
 				ubifs_err(c, "bad pad node at LEB %d:%d",
 					  lnum, offs);
-				ubifs_dump_node(c, pad, len);
+				ubifs_dump_node(c, pad);
 			}
 			return SCANNED_A_BAD_PAD_NODE;
 		}
@@ -164,7 +176,7 @@ void ubifs_end_scan(const struct ubifs_info *c, struct ubifs_scan_leb *sleb,
 		    int lnum, int offs)
 {
 	dbg_scan("stop scanning LEB %d at offset %d", lnum, offs);
-	ubifs_assert(c, offs % c->min_io_size == 0);
+	ubifs_assert(offs % c->min_io_size == 0);
 
 	sleb->endpt = ALIGN(offs, c->min_io_size);
 }

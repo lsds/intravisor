@@ -48,7 +48,7 @@
 	compatible = "karo,imx6ul-tx6ul", "fsl,imx6ul";
 
 	aliases {
-		lcdif-24bit-pins-a = &pinctrl_disp0_3;
+		lcdif_24bit_pins_a = &pinctrl_disp0_3;
 		mmc0 = &usdhc1;
 		/delete-property/ mmc1;
 		serial2 = &uart3;
@@ -119,7 +119,7 @@
 	/delete-node/ codec@a;
 	/delete-node/ touchscreen@48;
 
-	rtc: rtc@6f {
+	rtc: mcp7940x@6f {
 		compatible = "microchip,mcp7940x";
 		reg = <0x6f>;
 	};

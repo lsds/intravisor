@@ -22,7 +22,6 @@
  *
  */
 
-#include <linux/aperture.h>
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/errno.h>
@@ -45,7 +44,7 @@
 #define DPRINTK(a, b...)	\
 	printk(KERN_DEBUG "pm3fb: %s: " a, __func__ , ## b)
 #else
-#define DPRINTK(a, b...)	no_printk(a, ##b)
+#define DPRINTK(a, b...)
 #endif
 
 #define PM3_PIXMAP_SIZE	(2048 * 4)
@@ -307,7 +306,7 @@ static void pm3fb_init_engine(struct fb_info *info)
 					   PM3PixelSize_GLOBAL_32BIT);
 			break;
 		default:
-			DPRINTK("Unsupported depth %d\n",
+			DPRINTK(1, "Unsupported depth %d\n",
 				info->var.bits_per_pixel);
 			break;
 		}
@@ -350,8 +349,8 @@ static void pm3fb_init_engine(struct fb_info *info)
 					   (1 << 10) | (0 << 3));
 			break;
 		default:
-			DPRINTK("Unsupported depth %d\n",
-				info->var.bits_per_pixel);
+			DPRINTK(1, "Unsupported depth %d\n",
+				info->current_par->depth);
 			break;
 		}
 	}
@@ -822,9 +821,9 @@ static void pm3fb_write_mode(struct fb_info *info)
 
 	wmb();
 	{
-		unsigned char m;	/* ClkPreScale */
-		unsigned char n;	/* ClkFeedBackScale */
-		unsigned char p;	/* ClkPostScale */
+		unsigned char uninitialized_var(m);	/* ClkPreScale */
+		unsigned char uninitialized_var(n);	/* ClkFeedBackScale */
+		unsigned char uninitialized_var(p);	/* ClkPostScale */
 		unsigned long pixclock = PICOS2KHZ(info->var.pixclock);
 
 		(void)pm3fb_calculate_clock(pixclock, &m, &n, &p);
@@ -1201,7 +1200,7 @@ static int pm3fb_blank(int blank_mode, struct fb_info *info)
 	 *  Frame buffer operations
 	 */
 
-static const struct fb_ops pm3fb_ops = {
+static struct fb_ops pm3fb_ops = {
 	.owner		= THIS_MODULE,
 	.fb_check_var	= pm3fb_check_var,
 	.fb_set_par	= pm3fb_set_par,
@@ -1237,7 +1236,7 @@ static unsigned long pm3fb_size_memory(struct pm3_par *par)
 		return 0;
 	}
 	screen_mem =
-		ioremap(pm3fb_fix.smem_start, pm3fb_fix.smem_len);
+		ioremap_nocache(pm3fb_fix.smem_start, pm3fb_fix.smem_len);
 	if (!screen_mem) {
 		printk(KERN_WARNING "pm3fb: Can't ioremap smem area.\n");
 		release_mem_region(pm3fb_fix.smem_start, pm3fb_fix.smem_len);
@@ -1316,10 +1315,6 @@ static int pm3fb_probe(struct pci_dev *dev, const struct pci_device_id *ent)
 	int err;
 	int retval = -ENXIO;
 
-	err = aperture_remove_conflicting_pci_devices(dev, "pm3fb");
-	if (err)
-		return err;
-
 	err = pci_enable_device(dev);
 	if (err) {
 		printk(KERN_WARNING "pm3fb: Can't enable PCI dev: %d\n", err);
@@ -1352,7 +1347,7 @@ static int pm3fb_probe(struct pci_dev *dev, const struct pci_device_id *ent)
 		goto err_exit_neither;
 	}
 	par->v_regs =
-		ioremap(pm3fb_fix.mmio_start, pm3fb_fix.mmio_len);
+		ioremap_nocache(pm3fb_fix.mmio_start, pm3fb_fix.mmio_len);
 	if (!par->v_regs) {
 		printk(KERN_WARNING "pm3fb: Can't remap %s register area.\n",
 			pm3fb_fix.id);

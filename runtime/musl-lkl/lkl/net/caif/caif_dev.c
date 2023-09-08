@@ -1,8 +1,8 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * CAIF Interface registration.
  * Copyright (C) ST-Ericsson AB 2010
  * Author:	Sjur Brendeland
+ * License terms: GNU General Public License (GPL) version 2
  *
  * Borrowed heavily from file: pn_dev.c. Thanks to Remi Denis-Courmont
  *  and Sakari Ailus <sakari.ailus@nokia.com>
@@ -112,8 +112,7 @@ static struct caif_device_entry *caif_get(struct net_device *dev)
 	    caif_device_list(dev_net(dev));
 	struct caif_device_entry *caifd;
 
-	list_for_each_entry_rcu(caifd, &caifdevs->list, list,
-				lockdep_rtnl_is_held()) {
+	list_for_each_entry_rcu(caifd, &caifdevs->list, list) {
 		if (caifd->netdev == dev)
 			return caifd;
 	}
@@ -132,17 +131,15 @@ static void caif_flow_cb(struct sk_buff *skb)
 	caifd = caif_get(skb->dev);
 
 	WARN_ON(caifd == NULL);
-	if (!caifd) {
-		rcu_read_unlock();
+	if (caifd == NULL)
 		return;
-	}
 
 	caifd_hold(caifd);
 	rcu_read_unlock();
 
 	spin_lock_bh(&caifd->flow_lock);
 	send_xoff = caifd->xoff;
-	caifd->xoff = false;
+	caifd->xoff = 0;
 	dtor = caifd->xoff_skb_dtor;
 
 	if (WARN_ON(caifd->xoff_skb != skb))
@@ -187,19 +184,15 @@ static int transmit(struct cflayer *layer, struct cfpkt *pkt)
 		goto noxoff;
 
 	if (likely(!netif_queue_stopped(caifd->netdev))) {
-		struct Qdisc *sch;
-
 		/* If we run with a TX queue, check if the queue is too long*/
 		txq = netdev_get_tx_queue(skb->dev, 0);
-		sch = rcu_dereference_bh(txq->qdisc);
-		if (likely(qdisc_is_empty(sch)))
+		qlen = qdisc_qlen(rcu_dereference_bh(txq->qdisc));
+
+		if (likely(qlen == 0))
 			goto noxoff;
 
-		/* can check for explicit qdisc len value only !NOLOCK,
-		 * always set flow off otherwise
-		 */
 		high = (caifd->netdev->tx_queue_len * q_high) / 100;
-		if (!(sch->flags & TCQ_F_NOLOCK) && likely(sch->q.qlen < high))
+		if (likely(qlen < high))
 			goto noxoff;
 	}
 
@@ -220,7 +213,7 @@ static int transmit(struct cflayer *layer, struct cfpkt *pkt)
 	pr_debug("queue has stopped(%d) or is full (%d > %d)\n",
 			netif_queue_stopped(caifd->netdev),
 			qlen, high);
-	caifd->xoff = true;
+	caifd->xoff = 1;
 	caifd->xoff_skb = skb;
 	caifd->xoff_skb_dtor = skb->destructor;
 	skb->destructor = caif_flow_cb;
@@ -268,7 +261,7 @@ static int receive(struct sk_buff *skb, struct net_device *dev,
 
 	err = caifd->layer.up->receive(caifd->layer.up, pkt);
 
-	/* For -EILSEQ the packet is not freed so free it now */
+	/* For -EILSEQ the packet is not freed so so it now */
 	if (err == -EILSEQ)
 		cfpkt_destroy(pkt);
 
@@ -308,7 +301,7 @@ static void dev_flowctrl(struct net_device *dev, int on)
 	caifd_put(caifd);
 }
 
-int caif_enroll_dev(struct net_device *dev, struct caif_dev_common *caifdev,
+void caif_enroll_dev(struct net_device *dev, struct caif_dev_common *caifdev,
 		     struct cflayer *link_support, int head_room,
 		     struct cflayer **layer,
 		     int (**rcv_func)(struct sk_buff *, struct net_device *,
@@ -319,12 +312,11 @@ int caif_enroll_dev(struct net_device *dev, struct caif_dev_common *caifdev,
 	enum cfcnfg_phy_preference pref;
 	struct cfcnfg *cfg = get_cfcnfg(dev_net(dev));
 	struct caif_device_entry_list *caifdevs;
-	int res;
 
 	caifdevs = caif_device_list(dev_net(dev));
 	caifd = caif_device_alloc(dev);
 	if (!caifd)
-		return -ENOMEM;
+		return;
 	*layer = &caifd->layer;
 	spin_lock_init(&caifd->flow_lock);
 
@@ -342,10 +334,10 @@ int caif_enroll_dev(struct net_device *dev, struct caif_dev_common *caifdev,
 	mutex_lock(&caifdevs->lock);
 	list_add_rcu(&caifd->list, &caifdevs->list);
 
-	strscpy(caifd->layer.name, dev->name,
+	strlcpy(caifd->layer.name, dev->name,
 		sizeof(caifd->layer.name));
 	caifd->layer.transmit = transmit;
-	res = cfcnfg_add_phy_layer(cfg,
+	cfcnfg_add_phy_layer(cfg,
 				dev,
 				&caifd->layer,
 				pref,
@@ -355,7 +347,6 @@ int caif_enroll_dev(struct net_device *dev, struct caif_dev_common *caifdev,
 	mutex_unlock(&caifdevs->lock);
 	if (rcv_func)
 		*rcv_func = receive;
-	return res;
 }
 EXPORT_SYMBOL(caif_enroll_dev);
 
@@ -370,7 +361,6 @@ static int caif_device_notify(struct notifier_block *me, unsigned long what,
 	struct cflayer *layer, *link_support;
 	int head_room = 0;
 	struct caif_device_entry_list *caifdevs;
-	int res;
 
 	cfg = get_cfcnfg(dev_net(dev));
 	caifdevs = caif_device_list(dev_net(dev));
@@ -396,10 +386,8 @@ static int caif_device_notify(struct notifier_block *me, unsigned long what,
 				break;
 			}
 		}
-		res = caif_enroll_dev(dev, caifdev, link_support, head_room,
+		caif_enroll_dev(dev, caifdev, link_support, head_room,
 				&layer, NULL);
-		if (res)
-			cfserl_release(link_support);
 		caifdev->flowctrl = dev_flowctrl;
 		break;
 
@@ -412,7 +400,7 @@ static int caif_device_notify(struct notifier_block *me, unsigned long what,
 			break;
 		}
 
-		caifd->xoff = false;
+		caifd->xoff = 0;
 		cfcnfg_set_phy_state(cfg, &caifd->layer, true);
 		rcu_read_unlock();
 
@@ -447,7 +435,7 @@ static int caif_device_notify(struct notifier_block *me, unsigned long what,
 		if (caifd->xoff_skb_dtor != NULL && caifd->xoff_skb != NULL)
 			caifd->xoff_skb->destructor = caifd->xoff_skb_dtor;
 
-		caifd->xoff = false;
+		caifd->xoff = 0;
 		caifd->xoff_skb_dtor = NULL;
 		caifd->xoff_skb = NULL;
 

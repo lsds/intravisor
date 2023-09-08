@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2006, 2017 Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2006 Oracle.  All rights reserved.
  *
  * This software is available to you under a choice of one of two
  * licenses.  You may choose to be licensed under the terms of the GNU
@@ -38,18 +38,23 @@
 #include "rds.h"
 #include "tcp.h"
 
+static void rds_tcp_cork(struct socket *sock, int val)
+{
+	kernel_setsockopt(sock, SOL_TCP, TCP_CORK, (void *)&val, sizeof(val));
+}
+
 void rds_tcp_xmit_path_prepare(struct rds_conn_path *cp)
 {
 	struct rds_tcp_connection *tc = cp->cp_transport_data;
 
-	tcp_sock_set_cork(tc->t_sock->sk, true);
+	rds_tcp_cork(tc->t_sock, 1);
 }
 
 void rds_tcp_xmit_path_complete(struct rds_conn_path *cp)
 {
 	struct rds_tcp_connection *tc = cp->cp_transport_data;
 
-	tcp_sock_set_cork(tc->t_sock->sk, false);
+	rds_tcp_cork(tc->t_sock, 0);
 }
 
 /* the core send_sem serializes this with other xmit and shutdown */
@@ -148,7 +153,7 @@ out:
 			 * an incoming RST.
 			 */
 			if (rds_conn_path_up(cp)) {
-				pr_warn("RDS/tcp: send to %pI6c on cp [%d]"
+				pr_warn("RDS/tcp: send to %pI4 on cp [%d]"
 					"returned %d, "
 					"disconnecting and reconnecting\n",
 					&conn->c_faddr, cp->cp_index, ret);

@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * arch/um/drivers/mmapper_kern.c
  *
@@ -122,7 +121,7 @@ static int __init mmapper_init(void)
 	return 0;
 }
 
-static void __exit mmapper_exit(void)
+static void mmapper_exit(void)
 {
 	misc_deregister(&mmapper_dev);
 }

@@ -1,11 +1,15 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  *  Sony MemoryStick support
  *
  *  Copyright (C) 2007 Alex Dubov <oakad@yahoo.com>
  *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ *
  * Special thanks to Carlos Corbacho for providing various MemoryStick cards
  * that made this driver possible.
+ *
  */
 
 #include <linux/memstick.h>
@@ -14,7 +18,6 @@
 #include <linux/delay.h>
 #include <linux/slab.h>
 #include <linux/module.h>
-#include <linux/pm_runtime.h>
 
 #define DRIVER_NAME "memstick"
 
@@ -91,7 +94,7 @@ static int memstick_device_probe(struct device *dev)
 	return rc;
 }
 
-static void memstick_device_remove(struct device *dev)
+static int memstick_device_remove(struct device *dev)
 {
 	struct memstick_dev *card = container_of(dev, struct memstick_dev,
 						  dev);
@@ -105,6 +108,7 @@ static void memstick_device_remove(struct device *dev)
 	}
 
 	put_device(dev);
+	return 0;
 }
 
 #ifdef CONFIG_PM
@@ -330,17 +334,18 @@ static int h_memstick_read_dev_id(struct memstick_dev *card,
 				  sizeof(struct ms_id_register));
 		*mrq = &card->current_mrq;
 		return 0;
+	} else {
+		if (!(*mrq)->error) {
+			memcpy(&id_reg, (*mrq)->data, sizeof(id_reg));
+			card->id.match_flags = MEMSTICK_MATCH_ALL;
+			card->id.type = id_reg.type;
+			card->id.category = id_reg.category;
+			card->id.class = id_reg.class;
+			dev_dbg(&card->dev, "if_mode = %02x\n", id_reg.if_mode);
+		}
+		complete(&card->mrq_complete);
+		return -EAGAIN;
 	}
-	if (!(*mrq)->error) {
-		memcpy(&id_reg, (*mrq)->data, sizeof(id_reg));
-		card->id.match_flags = MEMSTICK_MATCH_ALL;
-		card->id.type = id_reg.type;
-		card->id.category = id_reg.category;
-		card->id.class = id_reg.class;
-		dev_dbg(&card->dev, "if_mode = %02x\n", id_reg.if_mode);
-	}
-	complete(&card->mrq_complete);
-	return -EAGAIN;
 }
 
 static int h_memstick_set_rw_addr(struct memstick_dev *card,
@@ -431,16 +436,12 @@ static void memstick_check(struct work_struct *work)
 	struct memstick_dev *card;
 
 	dev_dbg(&host->dev, "memstick_check started\n");
-	pm_runtime_get_noresume(host->dev.parent);
 	mutex_lock(&host->lock);
 	if (!host->card) {
 		if (memstick_power_on(host))
 			goto out_power_off;
 	} else if (host->card->stop)
 		host->card->stop(host->card);
-
-	if (host->removing)
-		goto out_power_off;
 
 	card = memstick_alloc_card(host);
 
@@ -466,6 +467,7 @@ static void memstick_check(struct work_struct *work)
 			host->card = card;
 			if (device_register(&card->dev)) {
 				put_device(&card->dev);
+				kfree(host->card);
 				host->card = NULL;
 			}
 		} else
@@ -477,7 +479,6 @@ out_power_off:
 		host->set_param(host, MEMSTICK_POWER, MEMSTICK_POWER_OFF);
 
 	mutex_unlock(&host->lock);
-	pm_runtime_put(host->dev.parent);
 	dev_dbg(&host->dev, "memstick_check finished\n");
 }
 
@@ -545,7 +546,6 @@ EXPORT_SYMBOL(memstick_add_host);
  */
 void memstick_remove_host(struct memstick_host *host)
 {
-	host->removing = 1;
 	flush_workqueue(workqueue);
 	mutex_lock(&host->lock);
 	if (host->card)
@@ -626,18 +626,13 @@ static int __init memstick_init(void)
 		return -ENOMEM;
 
 	rc = bus_register(&memstick_bus_type);
-	if (rc)
-		goto error_destroy_workqueue;
+	if (!rc)
+		rc = class_register(&memstick_host_class);
 
-	rc = class_register(&memstick_host_class);
-	if (rc)
-		goto error_bus_unregister;
+	if (!rc)
+		return 0;
 
-	return 0;
-
-error_bus_unregister:
 	bus_unregister(&memstick_bus_type);
-error_destroy_workqueue:
 	destroy_workqueue(workqueue);
 
 	return rc;

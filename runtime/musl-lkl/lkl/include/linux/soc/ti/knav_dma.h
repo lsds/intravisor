@@ -1,9 +1,17 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (C) 2014 Texas Instruments Incorporated
  * Authors:	Sandeep Nair <sandeep_n@ti.com
  *		Cyril Chemparathy <cyril@ti.com
 		Santosh Shilimkar <santosh.shilimkar@ti.com>
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License as
+ * published by the Free Software Foundation version 2.
+ *
+ * This program is distributed "as is" WITHOUT ANY WARRANTY of any
+ * kind, whether express or implied; without even the implied warranty
+ * of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
  */
 
 #ifndef __SOC_TI_KEYSTONE_NAVIGATOR_DMA_H__
@@ -159,8 +167,6 @@ struct knav_dma_desc {
 void *knav_dma_open_channel(struct device *dev, const char *name,
 				struct knav_dma_cfg *config);
 void knav_dma_close_channel(void *channel);
-int knav_dma_get_flow(void *channel);
-bool knav_dma_device_ready(void);
 #else
 static inline void *knav_dma_open_channel(struct device *dev, const char *name,
 				struct knav_dma_cfg *config)
@@ -169,16 +175,6 @@ static inline void *knav_dma_open_channel(struct device *dev, const char *name,
 }
 static inline void knav_dma_close_channel(void *channel)
 {}
-
-static inline int knav_dma_get_flow(void *channel)
-{
-	return -EINVAL;
-}
-
-static inline bool knav_dma_device_ready(void)
-{
-	return false;
-}
 
 #endif
 

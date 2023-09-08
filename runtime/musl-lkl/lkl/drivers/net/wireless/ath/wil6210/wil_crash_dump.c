@@ -1,7 +1,17 @@
-// SPDX-License-Identifier: ISC
 /*
  * Copyright (c) 2015,2017 Qualcomm Atheros, Inc.
- * Copyright (c) 2018-2019, The Linux Foundation. All rights reserved.
+ *
+ * Permission to use, copy, modify, and/or distribute this software for any
+ * purpose with or without fee is hereby granted, provided that the above
+ * copyright notice and this permission notice appear in all copies.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+ * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+ * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+ * ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+ * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+ * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+ * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
 #include "wil6210.h"
@@ -26,7 +36,7 @@ static int wil_fw_get_crash_dump_bounds(struct wil6210_priv *wil,
 	for (i = 1; i < ARRAY_SIZE(fw_mapping); i++) {
 		map = &fw_mapping[i];
 
-		if (!map->crash_dump)
+		if (!map->fw)
 			continue;
 
 		if (map->host < host_min)
@@ -62,21 +72,20 @@ int wil_fw_copy_crash_dump(struct wil6210_priv *wil, void *dest, u32 size)
 		return -EINVAL;
 	}
 
-	down_write(&wil->mem_lock);
-
+	set_bit(wil_status_collecting_dumps, wil->status);
 	if (test_bit(wil_status_suspending, wil->status) ||
-	    test_bit(wil_status_suspended, wil->status)) {
-		wil_err(wil,
-			"suspend/resume in progress. cannot copy crash dump\n");
-		up_write(&wil->mem_lock);
-		return -EBUSY;
+	    test_bit(wil_status_suspended, wil->status) ||
+	    test_bit(wil_status_resetting, wil->status)) {
+		wil_err(wil, "cannot collect fw dump during suspend/reset\n");
+		clear_bit(wil_status_collecting_dumps, wil->status);
+		return -EINVAL;
 	}
 
 	/* copy to crash dump area */
 	for (i = 0; i < ARRAY_SIZE(fw_mapping); i++) {
 		map = &fw_mapping[i];
 
-		if (!map->crash_dump)
+		if (!map->fw)
 			continue;
 
 		data = (void * __force)wil->csr + HOSTADDR(map->host);
@@ -91,7 +100,7 @@ int wil_fw_copy_crash_dump(struct wil6210_priv *wil, void *dest, u32 size)
 				     (const void __iomem * __force)data, len);
 	}
 
-	up_write(&wil->mem_lock);
+	clear_bit(wil_status_collecting_dumps, wil->status);
 
 	return 0;
 }

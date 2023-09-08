@@ -8,7 +8,7 @@
 #include "bcm63138.dtsi"
 
 / {
-	compatible = "brcm,BCM963138DVT", "brcm,bcm63138", "brcm,bcmbca";
+	compatible = "brcm,BCM963138DVT", "brcm,bcm63138";
 	model = "Broadcom BCM963138DVT";
 
 	chosen {
@@ -16,8 +16,7 @@
 		stdout-path = &serial0;
 	};
 
-	memory@0 {
-		device_type = "memory";
+	memory {
 		reg = <0x0 0x08000000>;
 	};
 
@@ -31,22 +30,14 @@
 	status = "okay";
 };
 
-&nand_controller {
+&nand {
 	status = "okay";
 
-	nand@0 {
+	nandcs@0 {
 		compatible = "brcm,nandcs";
 		reg = <0>;
 		nand-ecc-strength = <4>;
 		nand-ecc-step-size = <512>;
 		brcm,nand-oob-sectors-size = <16>;
 	};
-};
-
-&ahci {
-	status = "okay";
-};
-
-&sata_phy {
-	status = "okay";
 };

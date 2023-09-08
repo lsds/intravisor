@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0+ */
 /*
  * IMX pinmux core definitions
  *
@@ -6,6 +5,11 @@
  * Copyright (C) 2012 Linaro Ltd.
  *
  * Author: Dong Aisheng <dong.aisheng@linaro.org>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
  */
 
 #ifndef __DRIVERS_PINCTRL_IMX_H
@@ -17,44 +21,22 @@
 struct platform_device;
 
 extern struct pinmux_ops imx_pmx_ops;
-extern const struct dev_pm_ops imx_pinctrl_pm_ops;
 
 /**
- * struct imx_pin_mmio - MMIO pin configurations
+ * struct imx_pin - describes a single i.MX pin
+ * @pin: the pin_id of this pin
  * @mux_mode: the mux mode for this pin.
  * @input_reg: the select input register offset for this pin if any
  *	0 if no select input setting needed.
  * @input_val: the select input value for this pin.
  * @configs: the config for this pin.
  */
-struct imx_pin_mmio {
+struct imx_pin {
+	unsigned int pin;
 	unsigned int mux_mode;
 	u16 input_reg;
 	unsigned int input_val;
 	unsigned long config;
-};
-
-/**
- * struct imx_pin_scu - SCU pin configurations
- * @mux: the mux mode for this pin.
- * @configs: the config for this pin.
- */
-struct imx_pin_scu {
-	unsigned int mux_mode;
-	unsigned long config;
-};
-
-/**
- * struct imx_pin - describes a single i.MX pin
- * @pin: the pin_id of this pin
- * @conf: config type of this pin, either mmio or scu
- */
-struct imx_pin {
-	unsigned int pin;
-	union {
-		struct imx_pin_mmio mmio;
-		struct imx_pin_scu scu;
-	} conf;
 };
 
 /**
@@ -73,21 +55,6 @@ struct imx_cfg_params_decode {
 	u32 mask;
 	u8 shift;
 	bool invert;
-};
-
-/**
- * @dev: a pointer back to containing device
- * @base: the offset to the controller in virtual memory
- */
-struct imx_pinctrl {
-	struct device *dev;
-	struct pinctrl_dev *pctl;
-	void __iomem *base;
-	void __iomem *input_sel_base;
-	const struct imx_pinctrl_soc_info *info;
-	struct imx_pin_reg *pin_regs;
-	unsigned int group_index;
-	struct mutex mutex;
 };
 
 struct imx_pinctrl_soc_info {
@@ -113,13 +80,21 @@ struct imx_pinctrl_soc_info {
 				  struct pinctrl_gpio_range *range,
 				  unsigned offset,
 				  bool input);
-	int (*imx_pinconf_get)(struct pinctrl_dev *pctldev, unsigned int pin_id,
-			       unsigned long *config);
-	int (*imx_pinconf_set)(struct pinctrl_dev *pctldev, unsigned int pin_id,
-			       unsigned long *configs, unsigned int num_configs);
-	void (*imx_pinctrl_parse_pin)(struct imx_pinctrl *ipctl,
-				      unsigned int *pin_id, struct imx_pin *pin,
-				      const __be32 **list_p);
+};
+
+/**
+ * @dev: a pointer back to containing device
+ * @base: the offset to the controller in virtual memory
+ */
+struct imx_pinctrl {
+	struct device *dev;
+	struct pinctrl_dev *pctl;
+	void __iomem *base;
+	void __iomem *input_sel_base;
+	const struct imx_pinctrl_soc_info *info;
+	struct imx_pin_reg *pin_regs;
+	unsigned int group_index;
+	struct mutex mutex;
 };
 
 #define IMX_CFG_PARAMS_DECODE(p, m, o) \
@@ -128,9 +103,8 @@ struct imx_pinctrl_soc_info {
 #define IMX_CFG_PARAMS_DECODE_INVERT(p, m, o) \
 	{ .param = p, .mask = m, .shift = o, .invert = true, }
 
-#define SHARE_MUX_CONF_REG	BIT(0)
-#define ZERO_OFFSET_VALID	BIT(1)
-#define IMX_USE_SCU		BIT(2)
+#define SHARE_MUX_CONF_REG	0x1
+#define ZERO_OFFSET_VALID	0x2
 
 #define NO_MUX		0x0
 #define NO_PAD		0x0
@@ -143,17 +117,4 @@ struct imx_pinctrl_soc_info {
 
 int imx_pinctrl_probe(struct platform_device *pdev,
 			const struct imx_pinctrl_soc_info *info);
-
-#define BM_PAD_CTL_GP_ENABLE		BIT(30)
-#define BM_PAD_CTL_IFMUX_ENABLE		BIT(31)
-#define BP_PAD_CTL_IFMUX		27
-
-int imx_pinctrl_sc_ipc_init(struct platform_device *pdev);
-int imx_pinconf_get_scu(struct pinctrl_dev *pctldev, unsigned pin_id,
-			unsigned long *config);
-int imx_pinconf_set_scu(struct pinctrl_dev *pctldev, unsigned pin_id,
-			unsigned long *configs, unsigned num_configs);
-void imx_pinctrl_parse_pin_scu(struct imx_pinctrl *ipctl,
-			       unsigned int *pin_id, struct imx_pin *pin,
-			       const __be32 **list_p);
 #endif /* __DRIVERS_PINCTRL_IMX_H */

@@ -1,7 +1,15 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (C) 2014 Felix Fietkau <nbd@openwrt.org>
  * Copyright (C) 2015 Jakub Kicinski <kubakici@wp.pl>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2
+ * as published by the Free Software Foundation
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
  */
 
 #include "mt7601u.h"
@@ -109,9 +117,9 @@ void mt7601u_tx_status(struct mt7601u_dev *dev, struct sk_buff *skb)
 	info->status.rates[0].idx = -1;
 	info->flags |= IEEE80211_TX_STAT_ACK;
 
-	spin_lock_bh(&dev->mac_lock);
+	spin_lock(&dev->mac_lock);
 	ieee80211_tx_status(dev->hw, skb);
-	spin_unlock_bh(&dev->mac_lock);
+	spin_unlock(&dev->mac_lock);
 }
 
 static int mt7601u_skb_rooms(struct mt7601u_dev *dev, struct sk_buff *skb)
@@ -163,7 +171,7 @@ mt7601u_push_txwi(struct mt7601u_dev *dev, struct sk_buff *skb,
 	if ((info->flags & IEEE80211_TX_CTL_AMPDU) && sta) {
 		u8 ba_size = IEEE80211_MIN_AMPDU_BUF;
 
-		ba_size <<= sta->deflink.ht_cap.ampdu_factor;
+		ba_size <<= sta->ht_cap.ampdu_factor;
 		ba_size = min_t(int, 63, ba_size);
 		if (info->flags & IEEE80211_TX_CTL_RATE_CTRL_PROBE)
 			ba_size = 0;
@@ -172,7 +180,7 @@ mt7601u_push_txwi(struct mt7601u_dev *dev, struct sk_buff *skb,
 		txwi->flags =
 			cpu_to_le16(MT_TXWI_FLAGS_AMPDU |
 				    FIELD_PREP(MT_TXWI_FLAGS_MPDU_DENSITY,
-					       sta->deflink.ht_cap.ampdu_density));
+					       sta->ht_cap.ampdu_density));
 		if (info->flags & IEEE80211_TX_CTL_RATE_CTRL_PROBE)
 			txwi->flags = 0;
 	}
@@ -258,8 +266,7 @@ void mt7601u_tx_stat(struct work_struct *work)
 }
 
 int mt7601u_conf_tx(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
-		    unsigned int link_id, u16 queue,
-		    const struct ieee80211_tx_queue_params *params)
+		    u16 queue, const struct ieee80211_tx_queue_params *params)
 {
 	struct mt7601u_dev *dev = hw->priv;
 	u8 cw_min = 5, cw_max = 10, hw_q = q2hwq(queue);

@@ -1,6 +1,11 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  *  MachZ ZF-Logic Watchdog Timer driver for Linux
+ *
+ *
+ *  This program is free software; you can redistribute it and/or
+ *  modify it under the terms of the GNU General Public License
+ *  as published by the Free Software Foundation; either version
+ *  2 of the License, or (at your option) any later version.
  *
  *  The author does NOT admit liability nor provide warranty for
  *  any of this software. This material is provided "AS-IS" in
@@ -9,6 +14,7 @@
  *  Author: Fernando Fuganti <fuganti@conectiva.com.br>
  *
  *  Based on sbc60xxwdt.c by Jakob Oestergaard
+ *
  *
  *  We have two timers (wd#1, wd#2) driven by a 32 KHz clock with the
  *  following periods:
@@ -171,10 +177,8 @@ static inline void zf_set_timer(unsigned short new, unsigned char n)
 	switch (n) {
 	case WD1:
 		zf_writew(COUNTER_1, new);
-		fallthrough;
 	case WD2:
 		zf_writeb(COUNTER_2, new > 0xff ? 0xff : new);
-		fallthrough;
 	default:
 		return;
 	}
@@ -314,7 +318,7 @@ static long zf_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 	case WDIOC_GETBOOTSTATUS:
 		return put_user(0, p);
 	case WDIOC_KEEPALIVE:
-		zf_ping(NULL);
+		zf_ping(0);
 		break;
 	default:
 		return -ENOTTY;
@@ -329,7 +333,7 @@ static int zf_open(struct inode *inode, struct file *file)
 	if (nowayout)
 		__module_get(THIS_MODULE);
 	zf_timer_on();
-	return stream_open(inode, file);
+	return nonseekable_open(inode, file);
 }
 
 static int zf_close(struct inode *inode, struct file *file)
@@ -362,7 +366,6 @@ static const struct file_operations zf_fops = {
 	.llseek		= no_llseek,
 	.write		= zf_write,
 	.unlocked_ioctl = zf_ioctl,
-	.compat_ioctl	= compat_ptr_ioctl,
 	.open		= zf_open,
 	.release	= zf_close,
 };

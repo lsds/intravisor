@@ -9,12 +9,6 @@
 #include <sys/timeb.h>
 #include <sched.h>
 #include <errno.h>
-#include <string.h>
-#include <time.h>
-#include "../kselftest.h"
-
-#define MSEC_PER_SEC	1000L
-#define NSEC_PER_MSEC	1000000L
 
 void usage(char *name) {
 	printf ("Usage: %s cpunum\n", name);
@@ -26,7 +20,7 @@ int main(int argc, char **argv) {
 	long long tsc, old_tsc, new_tsc;
 	long long aperf, old_aperf, new_aperf;
 	long long mperf, old_mperf, new_mperf;
-	struct timespec before, after;
+	struct timeb before, after;
 	long long int start, finish, total;
 	cpu_set_t cpuset;
 
@@ -47,8 +41,8 @@ int main(int argc, char **argv) {
 	fd = open(msr_file_name, O_RDONLY);
 
 	if (fd == -1) {
-		printf("/dev/cpu/%d/msr: %s\n", cpu, strerror(errno));
-		return KSFT_SKIP;
+		perror("Failed to open");
+		return 1;
 	}
 
 	CPU_ZERO(&cpuset);
@@ -59,10 +53,7 @@ int main(int argc, char **argv) {
 		return 1;
 	}
 
-	if (clock_gettime(CLOCK_MONOTONIC, &before) < 0) {
-		perror("clock_gettime");
-		return 1;
-	}
+	ftime(&before);
 	pread(fd, &old_tsc,  sizeof(old_tsc), 0x10);
 	pread(fd, &old_aperf,  sizeof(old_mperf), 0xe7);
 	pread(fd, &old_mperf,  sizeof(old_aperf), 0xe8);
@@ -71,10 +62,7 @@ int main(int argc, char **argv) {
 		sqrt(i);
 	}
 
-	if (clock_gettime(CLOCK_MONOTONIC, &after) < 0) {
-		perror("clock_gettime");
-		return 1;
-	}
+	ftime(&after);
 	pread(fd, &new_tsc,  sizeof(new_tsc), 0x10);
 	pread(fd, &new_aperf,  sizeof(new_mperf), 0xe7);
 	pread(fd, &new_mperf,  sizeof(new_aperf), 0xe8);
@@ -83,11 +71,11 @@ int main(int argc, char **argv) {
 	aperf = new_aperf-old_aperf;
 	mperf = new_mperf-old_mperf;
 
-	start = before.tv_sec*MSEC_PER_SEC + before.tv_nsec/NSEC_PER_MSEC;
-	finish = after.tv_sec*MSEC_PER_SEC + after.tv_nsec/NSEC_PER_MSEC;
+	start = before.time*1000 + before.millitm;
+	finish = after.time*1000 + after.millitm;
 	total = finish - start;
 
-	printf("runTime: %4.2f\n", 1.0*total/MSEC_PER_SEC);
+	printf("runTime: %4.2f\n", 1.0*total/1000);
 	printf("freq: %7.0f\n", tsc / (1.0*aperf / (1.0 * mperf)) / total);
 	return 0;
 }

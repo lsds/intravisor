@@ -55,8 +55,8 @@
 #include "fw_qos.h"
 
 #define DRV_NAME	"mlx4_core"
+#define PFX		DRV_NAME ": "
 #define DRV_VERSION	"4.0-0"
-#define DRV_NAME_FOR_FW		"Linux," DRV_NAME "," DRV_VERSION
 
 #define MLX4_FS_UDP_UC_EN		(1 << 1)
 #define MLX4_FS_TCP_UC_EN		(1 << 2)
@@ -84,6 +84,7 @@ enum {
 	MLX4_MIN_MGM_LOG_ENTRY_SIZE = 7,
 	MLX4_MAX_MGM_LOG_ENTRY_SIZE = 12,
 	MLX4_MAX_QP_PER_MGM = 4 * ((1 << MLX4_MAX_MGM_LOG_ENTRY_SIZE) / 16 - 2),
+	MLX4_MTT_ENTRY_PER_SEG	= 8,
 };
 
 enum {
@@ -540,8 +541,8 @@ struct slave_list {
 struct resource_allocator {
 	spinlock_t alloc_lock; /* protect quotas */
 	union {
-		unsigned int res_reserved;
-		unsigned int res_port_rsvd[MLX4_MAX_PORTS];
+		int res_reserved;
+		int res_port_rsvd[MLX4_MAX_PORTS];
 	};
 	union {
 		int res_free;
@@ -603,7 +604,6 @@ struct mlx4_mfunc_master_ctx {
 	struct mlx4_slave_event_eq slave_eq;
 	struct mutex		gen_eqe_mutex[MLX4_MFUNC_MAX];
 	struct mlx4_qos_manager qos_ctl[MLX4_MAX_PORTS + 1];
-	u32			next_slave; /* mlx4_master_comm_channel */
 };
 
 struct mlx4_mfunc {
@@ -1042,8 +1042,6 @@ void mlx4_start_catas_poll(struct mlx4_dev *dev);
 void mlx4_stop_catas_poll(struct mlx4_dev *dev);
 int mlx4_catas_init(struct mlx4_dev *dev);
 void mlx4_catas_end(struct mlx4_dev *dev);
-int mlx4_crdump_init(struct mlx4_dev *dev);
-void mlx4_crdump_end(struct mlx4_dev *dev);
 int mlx4_restart_one(struct pci_dev *pdev);
 int mlx4_register_device(struct mlx4_dev *dev);
 void mlx4_unregister_device(struct mlx4_dev *dev);
@@ -1218,7 +1216,7 @@ void mlx4_cmd_use_polling(struct mlx4_dev *dev);
 int mlx4_comm_cmd(struct mlx4_dev *dev, u8 cmd, u16 param,
 		  u16 op, unsigned long timeout);
 
-void mlx4_cq_tasklet_cb(struct tasklet_struct *t);
+void mlx4_cq_tasklet_cb(unsigned long data);
 void mlx4_cq_completion(struct mlx4_dev *dev, u32 cqn);
 void mlx4_cq_event(struct mlx4_dev *dev, u32 cqn, int event_type);
 
@@ -1228,8 +1226,6 @@ void mlx4_srq_event(struct mlx4_dev *dev, u32 srqn, int event_type);
 
 void mlx4_enter_error_state(struct mlx4_dev_persistent *persist);
 int mlx4_comm_internal_err(u32 slave_read);
-
-int mlx4_crdump_collect(struct mlx4_dev *dev);
 
 int mlx4_SENSE_PORT(struct mlx4_dev *dev, int port,
 		    enum mlx4_port_type *type);

@@ -2,7 +2,7 @@
 /*
  * Texas Instruments PCM186x Universal Audio ADC
  *
- * Copyright (C) 2015-2017 Texas Instruments Incorporated - https://www.ti.com
+ * Copyright (C) 2015-2017 Texas Instruments Incorporated - http://www.ti.com
  *	Andreas Dannenberg <dannenberg@ti.com>
  *	Andrew F. Davis <afd@ti.com>
  */
@@ -39,10 +39,10 @@ struct pcm186x_priv {
 	unsigned int sysclk;
 	unsigned int tdm_offset;
 	bool is_tdm_mode;
-	bool is_provider_mode;
+	bool is_master_mode;
 };
 
-static const DECLARE_TLV_DB_SCALE(pcm186x_pga_tlv, -1200, 50, 0);
+static const DECLARE_TLV_DB_SCALE(pcm186x_pga_tlv, -1200, 4000, 50);
 
 static const struct snd_kcontrol_new pcm1863_snd_controls[] = {
 	SOC_DOUBLE_R_S_TLV("ADC Capture Volume", PCM186X_PGA_VAL_CH1_L,
@@ -158,7 +158,7 @@ static const struct snd_soc_dapm_widget pcm1863_dapm_widgets[] = {
 	 * Put the codec into SLEEP mode when not in use, allowing the
 	 * Energysense mechanism to operate.
 	 */
-	SND_SOC_DAPM_ADC("ADC", "HiFi Capture", PCM186X_POWER_CTRL, 1,  1),
+	SND_SOC_DAPM_ADC("ADC", "HiFi Capture", PCM186X_POWER_CTRL, 1,  0),
 };
 
 static const struct snd_soc_dapm_widget pcm1865_dapm_widgets[] = {
@@ -184,8 +184,8 @@ static const struct snd_soc_dapm_widget pcm1865_dapm_widgets[] = {
 	 * Put the codec into SLEEP mode when not in use, allowing the
 	 * Energysense mechanism to operate.
 	 */
-	SND_SOC_DAPM_ADC("ADC1", "HiFi Capture 1", PCM186X_POWER_CTRL, 1,  1),
-	SND_SOC_DAPM_ADC("ADC2", "HiFi Capture 2", PCM186X_POWER_CTRL, 1,  1),
+	SND_SOC_DAPM_ADC("ADC1", "HiFi Capture 1", PCM186X_POWER_CTRL, 1,  0),
+	SND_SOC_DAPM_ADC("ADC2", "HiFi Capture 2", PCM186X_POWER_CTRL, 1,  0),
 };
 
 static const struct snd_soc_dapm_route pcm1863_dapm_routes[] = {
@@ -265,7 +265,7 @@ static int pcm186x_hw_params(struct snd_pcm_substream *substream,
 	struct snd_soc_component *component = dai->component;
 	struct pcm186x_priv *priv = snd_soc_component_get_drvdata(component);
 	unsigned int rate = params_rate(params);
-	snd_pcm_format_t format = params_format(params);
+	unsigned int format = params_format(params);
 	unsigned int width = params_width(params);
 	unsigned int channels = params_channels(params);
 	unsigned int div_lrck;
@@ -340,8 +340,8 @@ static int pcm186x_hw_params(struct snd_pcm_substream *substream,
 				    PCM186X_PCM_CFG_TDM_LRCK_MODE);
 	}
 
-	/* Only configure clock dividers in provider mode. */
-	if (priv->is_provider_mode) {
+	/* Only configure clock dividers in master mode. */
+	if (priv->is_master_mode) {
 		div_bck = priv->sysclk / (div_lrck * rate);
 
 		dev_dbg(component->dev,
@@ -364,17 +364,18 @@ static int pcm186x_set_fmt(struct snd_soc_dai *dai, unsigned int format)
 
 	dev_dbg(component->dev, "%s() format=0x%x\n", __func__, format);
 
-	switch (format & SND_SOC_DAIFMT_CLOCK_PROVIDER_MASK) {
-	case SND_SOC_DAIFMT_CBP_CFP:
+	/* set master/slave audio interface */
+	switch (format & SND_SOC_DAIFMT_MASTER_MASK) {
+	case SND_SOC_DAIFMT_CBM_CFM:
 		if (!priv->sysclk) {
-			dev_err(component->dev, "operating in provider mode requires sysclock to be configured\n");
+			dev_err(component->dev, "operating in master mode requires sysclock to be configured\n");
 			return -EINVAL;
 		}
 		clk_ctrl |= PCM186X_CLK_CTRL_MST_MODE;
-		priv->is_provider_mode = true;
+		priv->is_master_mode = true;
 		break;
-	case SND_SOC_DAIFMT_CBC_CFC:
-		priv->is_provider_mode = false;
+	case SND_SOC_DAIFMT_CBS_CFS:
+		priv->is_master_mode = false;
 		break;
 	default:
 		dev_err(component->dev, "Invalid DAI master/slave interface\n");
@@ -400,8 +401,7 @@ static int pcm186x_set_fmt(struct snd_soc_dai *dai, unsigned int format)
 		break;
 	case SND_SOC_DAIFMT_DSP_A:
 		priv->tdm_offset += 1;
-		fallthrough;
-		/* DSP_A uses the same basic config as DSP_B
+		/* Fall through... DSP_A uses the same basic config as DSP_B
 		 * except we need to shift the TDM output by one BCK cycle
 		 */
 	case SND_SOC_DAIFMT_DSP_B:
@@ -534,14 +534,19 @@ static int pcm186x_power_on(struct snd_soc_component *component)
 static int pcm186x_power_off(struct snd_soc_component *component)
 {
 	struct pcm186x_priv *priv = snd_soc_component_get_drvdata(component);
+	int ret;
 
 	snd_soc_component_update_bits(component, PCM186X_POWER_CTRL,
 			    PCM186X_PWR_CTRL_PWRDN, PCM186X_PWR_CTRL_PWRDN);
 
 	regcache_cache_only(priv->regmap, true);
 
-	return regulator_bulk_disable(ARRAY_SIZE(priv->supplies),
+	ret = regulator_bulk_disable(ARRAY_SIZE(priv->supplies),
 				     priv->supplies);
+	if (ret)
+		return ret;
+
+	return 0;
 }
 
 static int pcm186x_set_bias_level(struct snd_soc_component *component,
@@ -578,6 +583,7 @@ static struct snd_soc_component_driver soc_codec_dev_pcm1863 = {
 	.idle_bias_on		= 1,
 	.use_pmdown_time	= 1,
 	.endianness		= 1,
+	.non_legacy_dai_naming	= 1,
 };
 
 static struct snd_soc_component_driver soc_codec_dev_pcm1865 = {
@@ -592,6 +598,7 @@ static struct snd_soc_component_driver soc_codec_dev_pcm1865 = {
 	.idle_bias_on		= 1,
 	.use_pmdown_time	= 1,
 	.endianness		= 1,
+	.non_legacy_dai_naming	= 1,
 };
 
 static bool pcm186x_volatile(struct device *dev, unsigned int reg)

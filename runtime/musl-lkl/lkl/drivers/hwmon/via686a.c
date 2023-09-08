@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * via686a.c - Part of lm_sensors, Linux kernel modules
  *	       for hardware monitoring
@@ -10,6 +9,20 @@
  *
  * (Some conversion-factor data were contributed by Jonathan Teh Soon Yew
  * <j.teh@iname.com> and Alex van Kaam <darkside@chello.nl>.)
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
 /*
@@ -34,7 +47,6 @@
 #include <linux/acpi.h>
 #include <linux/io.h>
 
-#define DRIVER_NAME "via686a"
 
 /*
  * If force_addr is set to anything different from 0, we forcibly enable
@@ -306,7 +318,7 @@ struct via686a_data {
 	const char *name;
 	struct device *hwmon_dev;
 	struct mutex update_lock;
-	bool valid;		/* true if following fields are valid */
+	char valid;		/* !=0 if following fields are valid */
 	unsigned long last_updated;	/* In jiffies */
 
 	u8 in[5];		/* Register value */
@@ -323,6 +335,9 @@ struct via686a_data {
 
 static struct pci_dev *s_bridge;	/* pointer to the (only) via686a */
 
+static int via686a_probe(struct platform_device *pdev);
+static int via686a_remove(struct platform_device *pdev);
+
 static inline int via686a_read_value(struct via686a_data *data, u8 reg)
 {
 	return inb_p(data->addr + reg);
@@ -334,106 +349,38 @@ static inline void via686a_write_value(struct via686a_data *data, u8 reg,
 	outb_p(value, data->addr + reg);
 }
 
-static void via686a_update_fan_div(struct via686a_data *data)
-{
-	int reg = via686a_read_value(data, VIA686A_REG_FANDIV);
-	data->fan_div[0] = (reg >> 4) & 0x03;
-	data->fan_div[1] = reg >> 6;
-}
-
-static struct via686a_data *via686a_update_device(struct device *dev)
-{
-	struct via686a_data *data = dev_get_drvdata(dev);
-	int i;
-
-	mutex_lock(&data->update_lock);
-
-	if (time_after(jiffies, data->last_updated + HZ + HZ / 2)
-	    || !data->valid) {
-		for (i = 0; i <= 4; i++) {
-			data->in[i] =
-			    via686a_read_value(data, VIA686A_REG_IN(i));
-			data->in_min[i] = via686a_read_value(data,
-							     VIA686A_REG_IN_MIN
-							     (i));
-			data->in_max[i] =
-			    via686a_read_value(data, VIA686A_REG_IN_MAX(i));
-		}
-		for (i = 1; i <= 2; i++) {
-			data->fan[i - 1] =
-			    via686a_read_value(data, VIA686A_REG_FAN(i));
-			data->fan_min[i - 1] = via686a_read_value(data,
-						     VIA686A_REG_FAN_MIN(i));
-		}
-		for (i = 0; i <= 2; i++) {
-			data->temp[i] = via686a_read_value(data,
-						 VIA686A_REG_TEMP[i]) << 2;
-			data->temp_over[i] =
-			    via686a_read_value(data,
-					       VIA686A_REG_TEMP_OVER[i]);
-			data->temp_hyst[i] =
-			    via686a_read_value(data,
-					       VIA686A_REG_TEMP_HYST[i]);
-		}
-		/*
-		 * add in lower 2 bits
-		 * temp1 uses bits 7-6 of VIA686A_REG_TEMP_LOW1
-		 * temp2 uses bits 5-4 of VIA686A_REG_TEMP_LOW23
-		 * temp3 uses bits 7-6 of VIA686A_REG_TEMP_LOW23
-		 */
-		data->temp[0] |= (via686a_read_value(data,
-						     VIA686A_REG_TEMP_LOW1)
-				  & 0xc0) >> 6;
-		data->temp[1] |=
-		    (via686a_read_value(data, VIA686A_REG_TEMP_LOW23) &
-		     0x30) >> 4;
-		data->temp[2] |=
-		    (via686a_read_value(data, VIA686A_REG_TEMP_LOW23) &
-		     0xc0) >> 6;
-
-		via686a_update_fan_div(data);
-		data->alarms =
-		    via686a_read_value(data,
-				       VIA686A_REG_ALARM1) |
-		    (via686a_read_value(data, VIA686A_REG_ALARM2) << 8);
-		data->last_updated = jiffies;
-		data->valid = true;
-	}
-
-	mutex_unlock(&data->update_lock);
-
-	return data;
-}
+static struct via686a_data *via686a_update_device(struct device *dev);
+static void via686a_init_device(struct via686a_data *data);
 
 /* following are the sysfs callback functions */
 
 /* 7 voltage sensors */
-static ssize_t in_show(struct device *dev, struct device_attribute *da,
-		       char *buf) {
+static ssize_t show_in(struct device *dev, struct device_attribute *da,
+		char *buf) {
 	struct via686a_data *data = via686a_update_device(dev);
 	struct sensor_device_attribute *attr = to_sensor_dev_attr(da);
 	int nr = attr->index;
 	return sprintf(buf, "%ld\n", IN_FROM_REG(data->in[nr], nr));
 }
 
-static ssize_t in_min_show(struct device *dev, struct device_attribute *da,
-			   char *buf) {
+static ssize_t show_in_min(struct device *dev, struct device_attribute *da,
+		char *buf) {
 	struct via686a_data *data = via686a_update_device(dev);
 	struct sensor_device_attribute *attr = to_sensor_dev_attr(da);
 	int nr = attr->index;
 	return sprintf(buf, "%ld\n", IN_FROM_REG(data->in_min[nr], nr));
 }
 
-static ssize_t in_max_show(struct device *dev, struct device_attribute *da,
-			   char *buf) {
+static ssize_t show_in_max(struct device *dev, struct device_attribute *da,
+		char *buf) {
 	struct via686a_data *data = via686a_update_device(dev);
 	struct sensor_device_attribute *attr = to_sensor_dev_attr(da);
 	int nr = attr->index;
 	return sprintf(buf, "%ld\n", IN_FROM_REG(data->in_max[nr], nr));
 }
 
-static ssize_t in_min_store(struct device *dev, struct device_attribute *da,
-			    const char *buf, size_t count) {
+static ssize_t set_in_min(struct device *dev, struct device_attribute *da,
+		const char *buf, size_t count) {
 	struct via686a_data *data = dev_get_drvdata(dev);
 	struct sensor_device_attribute *attr = to_sensor_dev_attr(da);
 	int nr = attr->index;
@@ -451,8 +398,8 @@ static ssize_t in_min_store(struct device *dev, struct device_attribute *da,
 	mutex_unlock(&data->update_lock);
 	return count;
 }
-static ssize_t in_max_store(struct device *dev, struct device_attribute *da,
-			    const char *buf, size_t count) {
+static ssize_t set_in_max(struct device *dev, struct device_attribute *da,
+		const char *buf, size_t count) {
 	struct via686a_data *data = dev_get_drvdata(dev);
 	struct sensor_device_attribute *attr = to_sensor_dev_attr(da);
 	int nr = attr->index;
@@ -470,48 +417,44 @@ static ssize_t in_max_store(struct device *dev, struct device_attribute *da,
 	mutex_unlock(&data->update_lock);
 	return count;
 }
+#define show_in_offset(offset)					\
+static SENSOR_DEVICE_ATTR(in##offset##_input, S_IRUGO,		\
+		show_in, NULL, offset);				\
+static SENSOR_DEVICE_ATTR(in##offset##_min, S_IRUGO | S_IWUSR,	\
+		show_in_min, set_in_min, offset);		\
+static SENSOR_DEVICE_ATTR(in##offset##_max, S_IRUGO | S_IWUSR,	\
+		show_in_max, set_in_max, offset);
 
-static SENSOR_DEVICE_ATTR_RO(in0_input, in, 0);
-static SENSOR_DEVICE_ATTR_RW(in0_min, in_min, 0);
-static SENSOR_DEVICE_ATTR_RW(in0_max, in_max, 0);
-static SENSOR_DEVICE_ATTR_RO(in1_input, in, 1);
-static SENSOR_DEVICE_ATTR_RW(in1_min, in_min, 1);
-static SENSOR_DEVICE_ATTR_RW(in1_max, in_max, 1);
-static SENSOR_DEVICE_ATTR_RO(in2_input, in, 2);
-static SENSOR_DEVICE_ATTR_RW(in2_min, in_min, 2);
-static SENSOR_DEVICE_ATTR_RW(in2_max, in_max, 2);
-static SENSOR_DEVICE_ATTR_RO(in3_input, in, 3);
-static SENSOR_DEVICE_ATTR_RW(in3_min, in_min, 3);
-static SENSOR_DEVICE_ATTR_RW(in3_max, in_max, 3);
-static SENSOR_DEVICE_ATTR_RO(in4_input, in, 4);
-static SENSOR_DEVICE_ATTR_RW(in4_min, in_min, 4);
-static SENSOR_DEVICE_ATTR_RW(in4_max, in_max, 4);
+show_in_offset(0);
+show_in_offset(1);
+show_in_offset(2);
+show_in_offset(3);
+show_in_offset(4);
 
 /* 3 temperatures */
-static ssize_t temp_show(struct device *dev, struct device_attribute *da,
-			 char *buf) {
+static ssize_t show_temp(struct device *dev, struct device_attribute *da,
+		char *buf) {
 	struct via686a_data *data = via686a_update_device(dev);
 	struct sensor_device_attribute *attr = to_sensor_dev_attr(da);
 	int nr = attr->index;
 	return sprintf(buf, "%ld\n", TEMP_FROM_REG10(data->temp[nr]));
 }
-static ssize_t temp_over_show(struct device *dev, struct device_attribute *da,
-			      char *buf) {
+static ssize_t show_temp_over(struct device *dev, struct device_attribute *da,
+		char *buf) {
 	struct via686a_data *data = via686a_update_device(dev);
 	struct sensor_device_attribute *attr = to_sensor_dev_attr(da);
 	int nr = attr->index;
 	return sprintf(buf, "%ld\n", TEMP_FROM_REG(data->temp_over[nr]));
 }
-static ssize_t temp_hyst_show(struct device *dev, struct device_attribute *da,
-			      char *buf) {
+static ssize_t show_temp_hyst(struct device *dev, struct device_attribute *da,
+		char *buf) {
 	struct via686a_data *data = via686a_update_device(dev);
 	struct sensor_device_attribute *attr = to_sensor_dev_attr(da);
 	int nr = attr->index;
 	return sprintf(buf, "%ld\n", TEMP_FROM_REG(data->temp_hyst[nr]));
 }
-static ssize_t temp_over_store(struct device *dev,
-			       struct device_attribute *da, const char *buf,
-			       size_t count) {
+static ssize_t set_temp_over(struct device *dev, struct device_attribute *da,
+		const char *buf, size_t count) {
 	struct via686a_data *data = dev_get_drvdata(dev);
 	struct sensor_device_attribute *attr = to_sensor_dev_attr(da);
 	int nr = attr->index;
@@ -529,9 +472,8 @@ static ssize_t temp_over_store(struct device *dev,
 	mutex_unlock(&data->update_lock);
 	return count;
 }
-static ssize_t temp_hyst_store(struct device *dev,
-			       struct device_attribute *da, const char *buf,
-			       size_t count) {
+static ssize_t set_temp_hyst(struct device *dev, struct device_attribute *da,
+		const char *buf, size_t count) {
 	struct via686a_data *data = dev_get_drvdata(dev);
 	struct sensor_device_attribute *attr = to_sensor_dev_attr(da);
 	int nr = attr->index;
@@ -549,28 +491,29 @@ static ssize_t temp_hyst_store(struct device *dev,
 	mutex_unlock(&data->update_lock);
 	return count;
 }
+#define show_temp_offset(offset)					\
+static SENSOR_DEVICE_ATTR(temp##offset##_input, S_IRUGO,		\
+		show_temp, NULL, offset - 1);				\
+static SENSOR_DEVICE_ATTR(temp##offset##_max, S_IRUGO | S_IWUSR,	\
+		show_temp_over, set_temp_over, offset - 1);		\
+static SENSOR_DEVICE_ATTR(temp##offset##_max_hyst, S_IRUGO | S_IWUSR,	\
+		show_temp_hyst, set_temp_hyst, offset - 1);
 
-static SENSOR_DEVICE_ATTR_RO(temp1_input, temp, 0);
-static SENSOR_DEVICE_ATTR_RW(temp1_max, temp_over, 0);
-static SENSOR_DEVICE_ATTR_RW(temp1_max_hyst, temp_hyst, 0);
-static SENSOR_DEVICE_ATTR_RO(temp2_input, temp, 1);
-static SENSOR_DEVICE_ATTR_RW(temp2_max, temp_over, 1);
-static SENSOR_DEVICE_ATTR_RW(temp2_max_hyst, temp_hyst, 1);
-static SENSOR_DEVICE_ATTR_RO(temp3_input, temp, 2);
-static SENSOR_DEVICE_ATTR_RW(temp3_max, temp_over, 2);
-static SENSOR_DEVICE_ATTR_RW(temp3_max_hyst, temp_hyst, 2);
+show_temp_offset(1);
+show_temp_offset(2);
+show_temp_offset(3);
 
 /* 2 Fans */
-static ssize_t fan_show(struct device *dev, struct device_attribute *da,
-			char *buf) {
+static ssize_t show_fan(struct device *dev, struct device_attribute *da,
+		char *buf) {
 	struct via686a_data *data = via686a_update_device(dev);
 	struct sensor_device_attribute *attr = to_sensor_dev_attr(da);
 	int nr = attr->index;
 	return sprintf(buf, "%d\n", FAN_FROM_REG(data->fan[nr],
 				DIV_FROM_REG(data->fan_div[nr])));
 }
-static ssize_t fan_min_show(struct device *dev, struct device_attribute *da,
-			    char *buf) {
+static ssize_t show_fan_min(struct device *dev, struct device_attribute *da,
+		char *buf) {
 	struct via686a_data *data = via686a_update_device(dev);
 	struct sensor_device_attribute *attr = to_sensor_dev_attr(da);
 	int nr = attr->index;
@@ -578,15 +521,15 @@ static ssize_t fan_min_show(struct device *dev, struct device_attribute *da,
 		FAN_FROM_REG(data->fan_min[nr],
 			     DIV_FROM_REG(data->fan_div[nr])));
 }
-static ssize_t fan_div_show(struct device *dev, struct device_attribute *da,
-			    char *buf) {
+static ssize_t show_fan_div(struct device *dev, struct device_attribute *da,
+		char *buf) {
 	struct via686a_data *data = via686a_update_device(dev);
 	struct sensor_device_attribute *attr = to_sensor_dev_attr(da);
 	int nr = attr->index;
 	return sprintf(buf, "%d\n", DIV_FROM_REG(data->fan_div[nr]));
 }
-static ssize_t fan_min_store(struct device *dev, struct device_attribute *da,
-			     const char *buf, size_t count) {
+static ssize_t set_fan_min(struct device *dev, struct device_attribute *da,
+		const char *buf, size_t count) {
 	struct via686a_data *data = dev_get_drvdata(dev);
 	struct sensor_device_attribute *attr = to_sensor_dev_attr(da);
 	int nr = attr->index;
@@ -603,8 +546,8 @@ static ssize_t fan_min_store(struct device *dev, struct device_attribute *da,
 	mutex_unlock(&data->update_lock);
 	return count;
 }
-static ssize_t fan_div_store(struct device *dev, struct device_attribute *da,
-			     const char *buf, size_t count) {
+static ssize_t set_fan_div(struct device *dev, struct device_attribute *da,
+		const char *buf, size_t count) {
 	struct via686a_data *data = dev_get_drvdata(dev);
 	struct sensor_device_attribute *attr = to_sensor_dev_attr(da);
 	int nr = attr->index;
@@ -625,12 +568,16 @@ static ssize_t fan_div_store(struct device *dev, struct device_attribute *da,
 	return count;
 }
 
-static SENSOR_DEVICE_ATTR_RO(fan1_input, fan, 0);
-static SENSOR_DEVICE_ATTR_RW(fan1_min, fan_min, 0);
-static SENSOR_DEVICE_ATTR_RW(fan1_div, fan_div, 0);
-static SENSOR_DEVICE_ATTR_RO(fan2_input, fan, 1);
-static SENSOR_DEVICE_ATTR_RW(fan2_min, fan_min, 1);
-static SENSOR_DEVICE_ATTR_RW(fan2_div, fan_div, 1);
+#define show_fan_offset(offset)						\
+static SENSOR_DEVICE_ATTR(fan##offset##_input, S_IRUGO,			\
+		show_fan, NULL, offset - 1);				\
+static SENSOR_DEVICE_ATTR(fan##offset##_min, S_IRUGO | S_IWUSR,		\
+		show_fan_min, set_fan_min, offset - 1);			\
+static SENSOR_DEVICE_ATTR(fan##offset##_div, S_IRUGO | S_IWUSR,		\
+		show_fan_div, set_fan_div, offset - 1);
+
+show_fan_offset(1);
+show_fan_offset(2);
 
 /* Alarms */
 static ssize_t alarms_show(struct device *dev, struct device_attribute *attr,
@@ -642,23 +589,23 @@ static ssize_t alarms_show(struct device *dev, struct device_attribute *attr,
 
 static DEVICE_ATTR_RO(alarms);
 
-static ssize_t alarm_show(struct device *dev, struct device_attribute *attr,
+static ssize_t show_alarm(struct device *dev, struct device_attribute *attr,
 			  char *buf)
 {
 	int bitnr = to_sensor_dev_attr(attr)->index;
 	struct via686a_data *data = via686a_update_device(dev);
 	return sprintf(buf, "%u\n", (data->alarms >> bitnr) & 1);
 }
-static SENSOR_DEVICE_ATTR_RO(in0_alarm, alarm, 0);
-static SENSOR_DEVICE_ATTR_RO(in1_alarm, alarm, 1);
-static SENSOR_DEVICE_ATTR_RO(in2_alarm, alarm, 2);
-static SENSOR_DEVICE_ATTR_RO(in3_alarm, alarm, 3);
-static SENSOR_DEVICE_ATTR_RO(in4_alarm, alarm, 8);
-static SENSOR_DEVICE_ATTR_RO(temp1_alarm, alarm, 4);
-static SENSOR_DEVICE_ATTR_RO(temp2_alarm, alarm, 11);
-static SENSOR_DEVICE_ATTR_RO(temp3_alarm, alarm, 15);
-static SENSOR_DEVICE_ATTR_RO(fan1_alarm, alarm, 6);
-static SENSOR_DEVICE_ATTR_RO(fan2_alarm, alarm, 7);
+static SENSOR_DEVICE_ATTR(in0_alarm, S_IRUGO, show_alarm, NULL, 0);
+static SENSOR_DEVICE_ATTR(in1_alarm, S_IRUGO, show_alarm, NULL, 1);
+static SENSOR_DEVICE_ATTR(in2_alarm, S_IRUGO, show_alarm, NULL, 2);
+static SENSOR_DEVICE_ATTR(in3_alarm, S_IRUGO, show_alarm, NULL, 3);
+static SENSOR_DEVICE_ATTR(in4_alarm, S_IRUGO, show_alarm, NULL, 8);
+static SENSOR_DEVICE_ATTR(temp1_alarm, S_IRUGO, show_alarm, NULL, 4);
+static SENSOR_DEVICE_ATTR(temp2_alarm, S_IRUGO, show_alarm, NULL, 11);
+static SENSOR_DEVICE_ATTR(temp3_alarm, S_IRUGO, show_alarm, NULL, 15);
+static SENSOR_DEVICE_ATTR(fan1_alarm, S_IRUGO, show_alarm, NULL, 6);
+static SENSOR_DEVICE_ATTR(fan2_alarm, S_IRUGO, show_alarm, NULL, 7);
 
 static ssize_t name_show(struct device *dev, struct device_attribute
 			 *devattr, char *buf)
@@ -721,23 +668,14 @@ static const struct attribute_group via686a_group = {
 	.attrs = via686a_attributes,
 };
 
-static void via686a_init_device(struct via686a_data *data)
-{
-	u8 reg;
+static struct platform_driver via686a_driver = {
+	.driver = {
+		.name	= "via686a",
+	},
+	.probe		= via686a_probe,
+	.remove		= via686a_remove,
+};
 
-	/* Start monitoring */
-	reg = via686a_read_value(data, VIA686A_REG_CONFIG);
-	via686a_write_value(data, VIA686A_REG_CONFIG, (reg | 0x01) & 0x7F);
-
-	/* Configure temp interrupt mode for continuous-interrupt operation */
-	reg = via686a_read_value(data, VIA686A_REG_TEMP_MODE);
-	via686a_write_value(data, VIA686A_REG_TEMP_MODE,
-			    (reg & ~VIA686A_TEMP_MODE_MASK)
-			    | VIA686A_TEMP_MODE_CONTINUOUS);
-
-	/* Pre-read fan clock divisor values */
-	via686a_update_fan_div(data);
-}
 
 /* This is called when the module is loaded */
 static int via686a_probe(struct platform_device *pdev)
@@ -749,7 +687,7 @@ static int via686a_probe(struct platform_device *pdev)
 	/* Reserve the ISA region */
 	res = platform_get_resource(pdev, IORESOURCE_IO, 0);
 	if (!devm_request_region(&pdev->dev, res->start, VIA686A_EXTENT,
-				 DRIVER_NAME)) {
+				 via686a_driver.driver.name)) {
 		dev_err(&pdev->dev, "Region 0x%lx-0x%lx already in use!\n",
 			(unsigned long)res->start, (unsigned long)res->end);
 		return -ENODEV;
@@ -762,7 +700,7 @@ static int via686a_probe(struct platform_device *pdev)
 
 	platform_set_drvdata(pdev, data);
 	data->addr = res->start;
-	data->name = DRIVER_NAME;
+	data->name = "via686a";
 	mutex_init(&data->update_lock);
 
 	/* Initialize the VIA686A chip */
@@ -796,13 +734,94 @@ static int via686a_remove(struct platform_device *pdev)
 	return 0;
 }
 
-static struct platform_driver via686a_driver = {
-	.driver = {
-		.name	= DRIVER_NAME,
-	},
-	.probe		= via686a_probe,
-	.remove		= via686a_remove,
-};
+static void via686a_update_fan_div(struct via686a_data *data)
+{
+	int reg = via686a_read_value(data, VIA686A_REG_FANDIV);
+	data->fan_div[0] = (reg >> 4) & 0x03;
+	data->fan_div[1] = reg >> 6;
+}
+
+static void via686a_init_device(struct via686a_data *data)
+{
+	u8 reg;
+
+	/* Start monitoring */
+	reg = via686a_read_value(data, VIA686A_REG_CONFIG);
+	via686a_write_value(data, VIA686A_REG_CONFIG, (reg | 0x01) & 0x7F);
+
+	/* Configure temp interrupt mode for continuous-interrupt operation */
+	reg = via686a_read_value(data, VIA686A_REG_TEMP_MODE);
+	via686a_write_value(data, VIA686A_REG_TEMP_MODE,
+			    (reg & ~VIA686A_TEMP_MODE_MASK)
+			    | VIA686A_TEMP_MODE_CONTINUOUS);
+
+	/* Pre-read fan clock divisor values */
+	via686a_update_fan_div(data);
+}
+
+static struct via686a_data *via686a_update_device(struct device *dev)
+{
+	struct via686a_data *data = dev_get_drvdata(dev);
+	int i;
+
+	mutex_lock(&data->update_lock);
+
+	if (time_after(jiffies, data->last_updated + HZ + HZ / 2)
+	    || !data->valid) {
+		for (i = 0; i <= 4; i++) {
+			data->in[i] =
+			    via686a_read_value(data, VIA686A_REG_IN(i));
+			data->in_min[i] = via686a_read_value(data,
+							     VIA686A_REG_IN_MIN
+							     (i));
+			data->in_max[i] =
+			    via686a_read_value(data, VIA686A_REG_IN_MAX(i));
+		}
+		for (i = 1; i <= 2; i++) {
+			data->fan[i - 1] =
+			    via686a_read_value(data, VIA686A_REG_FAN(i));
+			data->fan_min[i - 1] = via686a_read_value(data,
+						     VIA686A_REG_FAN_MIN(i));
+		}
+		for (i = 0; i <= 2; i++) {
+			data->temp[i] = via686a_read_value(data,
+						 VIA686A_REG_TEMP[i]) << 2;
+			data->temp_over[i] =
+			    via686a_read_value(data,
+					       VIA686A_REG_TEMP_OVER[i]);
+			data->temp_hyst[i] =
+			    via686a_read_value(data,
+					       VIA686A_REG_TEMP_HYST[i]);
+		}
+		/*
+		 * add in lower 2 bits
+		 * temp1 uses bits 7-6 of VIA686A_REG_TEMP_LOW1
+		 * temp2 uses bits 5-4 of VIA686A_REG_TEMP_LOW23
+		 * temp3 uses bits 7-6 of VIA686A_REG_TEMP_LOW23
+		 */
+		data->temp[0] |= (via686a_read_value(data,
+						     VIA686A_REG_TEMP_LOW1)
+				  & 0xc0) >> 6;
+		data->temp[1] |=
+		    (via686a_read_value(data, VIA686A_REG_TEMP_LOW23) &
+		     0x30) >> 4;
+		data->temp[2] |=
+		    (via686a_read_value(data, VIA686A_REG_TEMP_LOW23) &
+		     0xc0) >> 6;
+
+		via686a_update_fan_div(data);
+		data->alarms =
+		    via686a_read_value(data,
+				       VIA686A_REG_ALARM1) |
+		    (via686a_read_value(data, VIA686A_REG_ALARM2) << 8);
+		data->last_updated = jiffies;
+		data->valid = 1;
+	}
+
+	mutex_unlock(&data->update_lock);
+
+	return data;
+}
 
 static const struct pci_device_id via686a_pci_ids[] = {
 	{ PCI_DEVICE(PCI_VENDOR_ID_VIA, PCI_DEVICE_ID_VIA_82C686_4) },
@@ -815,7 +834,7 @@ static int via686a_device_add(unsigned short address)
 	struct resource res = {
 		.start	= address,
 		.end	= address + VIA686A_EXTENT - 1,
-		.name	= DRIVER_NAME,
+		.name	= "via686a",
 		.flags	= IORESOURCE_IO,
 	};
 	int err;
@@ -824,7 +843,7 @@ static int via686a_device_add(unsigned short address)
 	if (err)
 		goto exit;
 
-	pdev = platform_device_alloc(DRIVER_NAME, address);
+	pdev = platform_device_alloc("via686a", address);
 	if (!pdev) {
 		err = -ENOMEM;
 		pr_err("Device allocation failed\n");
@@ -914,7 +933,7 @@ exit:
 }
 
 static struct pci_driver via686a_pci_driver = {
-	.name		= DRIVER_NAME,
+	.name		= "via686a",
 	.id_table	= via686a_pci_ids,
 	.probe		= via686a_pci_probe,
 };

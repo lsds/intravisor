@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Dumb driver for LiIon batteries using TWL4030 madc.
  *

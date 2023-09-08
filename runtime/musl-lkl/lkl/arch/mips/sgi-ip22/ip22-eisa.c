@@ -92,6 +92,11 @@ static irqreturn_t ip22_eisa_intr(int irq, void *dev_id)
 	return IRQ_NONE;
 }
 
+static struct irqaction eisa_action = {
+	.handler	= ip22_eisa_intr,
+	.name		= "EISA",
+};
+
 int __init ip22_eisa_init(void)
 {
 	int i, c;
@@ -131,8 +136,9 @@ int __init ip22_eisa_init(void)
 
 	init_i8259_irqs();
 
-	if (request_irq(SGI_EISA_IRQ, ip22_eisa_intr, 0, "EISA", NULL))
-		pr_err("Failed to request irq %d (EISA)\n", SGI_EISA_IRQ);
+	/* Cannot use request_irq because of kmalloc not being ready at such
+	 * an early stage. Yes, I've been bitten... */
+	setup_irq(SGI_EISA_IRQ, &eisa_action);
 
 	EISA_bus = 1;
 	return 0;

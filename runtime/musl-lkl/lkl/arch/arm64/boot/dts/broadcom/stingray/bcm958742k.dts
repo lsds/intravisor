@@ -43,10 +43,6 @@
 	enet-phy-lane-swap;
 };
 
-&sdio0 {
-	mmc-ddr-1_8v;
-};
-
 &uart2 {
 	status = "okay";
 };
@@ -61,7 +57,7 @@
 	cs-gpios = <&gpio_hsls 34 0>;
 	status = "okay";
 
-	flash@0 {
+	spi-flash@0 {
 		compatible = "jedec,spi-nor";
 		reg = <0>;
 		spi-max-frequency = <20000000>;
@@ -76,7 +72,7 @@
 	cs-gpios = <&gpio_hsls 96 0>;
 	status = "okay";
 
-	flash@0 {
+	spi-flash@0 {
 		compatible = "jedec,spi-nor";
 		reg = <0>;
 		spi-max-frequency = <20000000>;

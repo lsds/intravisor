@@ -37,10 +37,10 @@
 	.endm
 
 	/*
-	 * int sha3_ce_transform(u64 *st, const u8 *data, int blocks, int dg_size)
+	 * sha3_ce_transform(u64 *st, const u8 *data, int blocks, int dg_size)
 	 */
 	.text
-SYM_FUNC_START(sha3_ce_transform)
+ENTRY(sha3_ce_transform)
 	/* load state */
 	add	x8, x0, #32
 	ld1	{ v0.1d- v3.1d}, [x0]
@@ -184,20 +184,18 @@ SYM_FUNC_START(sha3_ce_transform)
 	eor	 v0.16b,  v0.16b, v31.16b
 
 	cbnz	w8, 3b
-	cond_yield 4f, x8, x9
 	cbnz	w2, 0b
 
 	/* save state */
-4:	st1	{ v0.1d- v3.1d}, [x0], #32
+	st1	{ v0.1d- v3.1d}, [x0], #32
 	st1	{ v4.1d- v7.1d}, [x0], #32
 	st1	{ v8.1d-v11.1d}, [x0], #32
 	st1	{v12.1d-v15.1d}, [x0], #32
 	st1	{v16.1d-v19.1d}, [x0], #32
 	st1	{v20.1d-v23.1d}, [x0], #32
 	st1	{v24.1d}, [x0]
-	mov	w0, w2
 	ret
-SYM_FUNC_END(sha3_ce_transform)
+ENDPROC(sha3_ce_transform)
 
 	.section	".rodata", "a"
 	.align		8

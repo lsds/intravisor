@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * LED flash driver for LM3554
  *
@@ -19,13 +18,14 @@
 #include <linux/i2c.h>
 #include <linux/mutex.h>
 #include <linux/delay.h>
-#include <linux/gpio/consumer.h>
+#include <linux/gpio.h>
 #include <linux/slab.h>
 
 #include "../include/media/lm3554.h"
 #include <media/v4l2-ctrls.h>
 #include <media/v4l2-device.h>
 #include <linux/acpi.h>
+#include <linux/gpio/consumer.h>
 #include "../include/linux/atomisp_gmin_platform.h"
 #include "../include/linux/atomisp.h"
 
@@ -46,14 +46,14 @@
 #define LM3554_CURRENT_LIMIT_SHIFT	5
 
 #define LM3554_FLAGS_REG		0xD0
-#define LM3554_FLAG_TIMEOUT		BIT(0)
-#define LM3554_FLAG_THERMAL_SHUTDOWN	BIT(1)
-#define LM3554_FLAG_LED_FAULT		BIT(2)
-#define LM3554_FLAG_TX1_INTERRUPT	BIT(3)
-#define LM3554_FLAG_TX2_INTERRUPT	BIT(4)
-#define LM3554_FLAG_LED_THERMAL_FAULT	BIT(5)
-#define LM3554_FLAG_UNUSED		BIT(6)
-#define LM3554_FLAG_INPUT_VOLTAGE_LOW	BIT(7)
+#define LM3554_FLAG_TIMEOUT		(1 << 0)
+#define LM3554_FLAG_THERMAL_SHUTDOWN	(1 << 1)
+#define LM3554_FLAG_LED_FAULT		(1 << 2)
+#define LM3554_FLAG_TX1_INTERRUPT	(1 << 3)
+#define LM3554_FLAG_TX2_INTERRUPT	(1 << 4)
+#define LM3554_FLAG_LED_THERMAL_FAULT	(1 << 5)
+#define LM3554_FLAG_UNUSED		(1 << 6)
+#define LM3554_FLAG_INPUT_VOLTAGE_LOW	(1 << 7)
 
 #define LM3554_CONFIG_REG_1		0xE0
 #define LM3554_ENVM_TX2_SHIFT		5
@@ -172,7 +172,7 @@ static void lm3554_flash_off_delay(struct timer_list *t)
 	struct lm3554 *flash = from_timer(flash, t, flash_off_delay);
 	struct lm3554_platform_data *pdata = flash->pdata;
 
-	gpiod_set_value(pdata->gpio_strobe, 0);
+	gpio_set_value(pdata->gpio_strobe, 0);
 }
 
 static int lm3554_hw_strobe(struct i2c_client *client, bool strobe)
@@ -208,7 +208,7 @@ static int lm3554_hw_strobe(struct i2c_client *client, bool strobe)
 	 * so must strobe off here
 	 */
 	if (timer_pending)
-		gpiod_set_value(pdata->gpio_strobe, 0);
+		gpio_set_value(pdata->gpio_strobe, 0);
 
 	/* Restore flash current settings */
 	ret = lm3554_set_flash(flash);
@@ -216,7 +216,7 @@ static int lm3554_hw_strobe(struct i2c_client *client, bool strobe)
 		goto err;
 
 	/* Strobe on Flash */
-	gpiod_set_value(pdata->gpio_strobe, 1);
+	gpio_set_value(pdata->gpio_strobe, 1);
 
 	return 0;
 err:
@@ -296,7 +296,7 @@ static int lm3554_g_flash_intensity(struct v4l2_subdev *sd, s32 *val)
 	struct lm3554 *flash = to_lm3554(sd);
 
 	*val = LM3554_VALUE_TO_PERCENT((u32)flash->flash_current,
-				       LM3554_FLASH_STEP);
+			LM3554_FLASH_STEP);
 
 	return 0;
 }
@@ -318,7 +318,7 @@ static int lm3554_g_torch_intensity(struct v4l2_subdev *sd, s32 *val)
 	struct lm3554 *flash = to_lm3554(sd);
 
 	*val = LM3554_VALUE_TO_PERCENT((u32)flash->torch_current,
-				       LM3554_TORCH_STEP);
+			LM3554_TORCH_STEP);
 
 	return 0;
 }
@@ -340,7 +340,7 @@ static int lm3554_g_indicator_intensity(struct v4l2_subdev *sd, s32 *val)
 	struct lm3554 *flash = to_lm3554(sd);
 
 	*val = LM3554_VALUE_TO_PERCENT((u32)flash->indicator_current,
-				       LM3554_INDICATOR_STEP);
+			LM3554_INDICATOR_STEP);
 
 	return 0;
 }
@@ -403,6 +403,7 @@ static int lm3554_g_flash_status(struct v4l2_subdev *sd, s32 *val)
 	return 0;
 }
 
+#ifndef CSS15
 static int lm3554_g_flash_status_register(struct v4l2_subdev *sd, s32 *val)
 {
 	struct lm3554 *flash = to_lm3554(sd);
@@ -416,6 +417,7 @@ static int lm3554_g_flash_status_register(struct v4l2_subdev *sd, s32 *val)
 	*val = ret;
 	return 0;
 }
+#endif
 
 static int lm3554_s_ctrl(struct v4l2_ctrl *ctrl)
 {
@@ -473,9 +475,11 @@ static int lm3554_g_volatile_ctrl(struct v4l2_ctrl *ctrl)
 	case V4L2_CID_FLASH_STATUS:
 		ret = lm3554_g_flash_status(&dev->sd, &ctrl->val);
 		break;
+#ifndef CSS15
 	case V4L2_CID_FLASH_STATUS_REGISTER:
 		ret = lm3554_g_flash_status_register(&dev->sd, &ctrl->val);
 		break;
+#endif
 	default:
 		ret = -EINVAL;
 	}
@@ -490,93 +494,95 @@ static const struct v4l2_ctrl_ops ctrl_ops = {
 
 static const struct v4l2_ctrl_config lm3554_controls[] = {
 	{
-		.ops = &ctrl_ops,
-		.id = V4L2_CID_FLASH_TIMEOUT,
-		.type = V4L2_CTRL_TYPE_INTEGER,
-		.name = "Flash Timeout",
-		.min = 0x0,
-		.max = LM3554_MAX_TIMEOUT,
-		.step = 0x01,
-		.def = LM3554_DEFAULT_TIMEOUT,
-		.flags = 0,
-	},
+	 .ops = &ctrl_ops,
+	 .id = V4L2_CID_FLASH_TIMEOUT,
+	 .type = V4L2_CTRL_TYPE_INTEGER,
+	 .name = "Flash Timeout",
+	 .min = 0x0,
+	 .max = LM3554_MAX_TIMEOUT,
+	 .step = 0x01,
+	 .def = LM3554_DEFAULT_TIMEOUT,
+	 .flags = 0,
+	 },
 	{
-		.ops = &ctrl_ops,
-		.id = V4L2_CID_FLASH_INTENSITY,
-		.type = V4L2_CTRL_TYPE_INTEGER,
-		.name = "Flash Intensity",
-		.min = LM3554_MIN_PERCENT,
-		.max = LM3554_MAX_PERCENT,
-		.step = 0x01,
-		.def = LM3554_FLASH_DEFAULT_BRIGHTNESS,
-		.flags = 0,
-	},
+	 .ops = &ctrl_ops,
+	 .id = V4L2_CID_FLASH_INTENSITY,
+	 .type = V4L2_CTRL_TYPE_INTEGER,
+	 .name = "Flash Intensity",
+	 .min = LM3554_MIN_PERCENT,
+	 .max = LM3554_MAX_PERCENT,
+	 .step = 0x01,
+	 .def = LM3554_FLASH_DEFAULT_BRIGHTNESS,
+	 .flags = 0,
+	 },
 	{
-		.ops = &ctrl_ops,
-		.id = V4L2_CID_FLASH_TORCH_INTENSITY,
-		.type = V4L2_CTRL_TYPE_INTEGER,
-		.name = "Torch Intensity",
-		.min = LM3554_MIN_PERCENT,
-		.max = LM3554_MAX_PERCENT,
-		.step = 0x01,
-		.def = LM3554_TORCH_DEFAULT_BRIGHTNESS,
-		.flags = 0,
-	},
+	 .ops = &ctrl_ops,
+	 .id = V4L2_CID_FLASH_TORCH_INTENSITY,
+	 .type = V4L2_CTRL_TYPE_INTEGER,
+	 .name = "Torch Intensity",
+	 .min = LM3554_MIN_PERCENT,
+	 .max = LM3554_MAX_PERCENT,
+	 .step = 0x01,
+	 .def = LM3554_TORCH_DEFAULT_BRIGHTNESS,
+	 .flags = 0,
+	 },
 	{
-		.ops = &ctrl_ops,
-		.id = V4L2_CID_FLASH_INDICATOR_INTENSITY,
-		.type = V4L2_CTRL_TYPE_INTEGER,
-		.name = "Indicator Intensity",
-		.min = LM3554_MIN_PERCENT,
-		.max = LM3554_MAX_PERCENT,
-		.step = 0x01,
-		.def = LM3554_INDICATOR_DEFAULT_BRIGHTNESS,
-		.flags = 0,
-	},
+	 .ops = &ctrl_ops,
+	 .id = V4L2_CID_FLASH_INDICATOR_INTENSITY,
+	 .type = V4L2_CTRL_TYPE_INTEGER,
+	 .name = "Indicator Intensity",
+	 .min = LM3554_MIN_PERCENT,
+	 .max = LM3554_MAX_PERCENT,
+	 .step = 0x01,
+	 .def = LM3554_INDICATOR_DEFAULT_BRIGHTNESS,
+	 .flags = 0,
+	 },
 	{
-		.ops = &ctrl_ops,
-		.id = V4L2_CID_FLASH_STROBE,
-		.type = V4L2_CTRL_TYPE_BOOLEAN,
-		.name = "Flash Strobe",
-		.min = 0,
-		.max = 1,
-		.step = 1,
-		.def = 0,
-		.flags = 0,
-	},
+	 .ops = &ctrl_ops,
+	 .id = V4L2_CID_FLASH_STROBE,
+	 .type = V4L2_CTRL_TYPE_BOOLEAN,
+	 .name = "Flash Strobe",
+	 .min = 0,
+	 .max = 1,
+	 .step = 1,
+	 .def = 0,
+	 .flags = 0,
+	 },
 	{
-		.ops = &ctrl_ops,
-		.id = V4L2_CID_FLASH_MODE,
-		.type = V4L2_CTRL_TYPE_INTEGER,
-		.name = "Flash Mode",
-		.min = 0,
-		.max = 100,
-		.step = 1,
-		.def = ATOMISP_FLASH_MODE_OFF,
-		.flags = 0,
-	},
+	 .ops = &ctrl_ops,
+	 .id = V4L2_CID_FLASH_MODE,
+	 .type = V4L2_CTRL_TYPE_INTEGER,
+	 .name = "Flash Mode",
+	 .min = 0,
+	 .max = 100,
+	 .step = 1,
+	 .def = ATOMISP_FLASH_MODE_OFF,
+	 .flags = 0,
+	 },
 	{
-		.ops = &ctrl_ops,
-		.id = V4L2_CID_FLASH_STATUS,
-		.type = V4L2_CTRL_TYPE_INTEGER,
-		.name = "Flash Status",
-		.min = ATOMISP_FLASH_STATUS_OK,
-		.max = ATOMISP_FLASH_STATUS_TIMEOUT,
-		.step = 1,
-		.def = ATOMISP_FLASH_STATUS_OK,
-		.flags = 0,
-	},
+	 .ops = &ctrl_ops,
+	 .id = V4L2_CID_FLASH_STATUS,
+	 .type = V4L2_CTRL_TYPE_INTEGER,
+	 .name = "Flash Status",
+	 .min = ATOMISP_FLASH_STATUS_OK,
+	 .max = ATOMISP_FLASH_STATUS_TIMEOUT,
+	 .step = 1,
+	 .def = ATOMISP_FLASH_STATUS_OK,
+	 .flags = 0,
+	 },
+#ifndef CSS15
 	{
-		.ops = &ctrl_ops,
-		.id = V4L2_CID_FLASH_STATUS_REGISTER,
-		.type = V4L2_CTRL_TYPE_INTEGER,
-		.name = "Flash Status Register",
-		.min = 0,
-		.max = 255,
-		.step = 1,
-		.def = 0,
-		.flags = 0,
-	},
+	 .ops = &ctrl_ops,
+	 .id = V4L2_CID_FLASH_STATUS_REGISTER,
+	 .type = V4L2_CTRL_TYPE_INTEGER,
+	 .name = "Flash Status Register",
+	 .min = 0,
+	 .max = 255,
+	 .step = 1,
+	 .def = 0,
+	 .flags = 0,
+	 },
+#endif
 };
 
 /* -----------------------------------------------------------------------------
@@ -626,7 +632,7 @@ static int __lm3554_s_power(struct lm3554 *flash, int power)
 	int ret;
 
 	/*initialize flash driver*/
-	gpiod_set_value(pdata->gpio_reset, power);
+	gpio_set_value(pdata->gpio_reset, power);
 	usleep_range(100, 100 + 1);
 
 	if (power) {
@@ -765,57 +771,71 @@ static int lm3554_gpio_init(struct i2c_client *client)
 	struct lm3554_platform_data *pdata = flash->pdata;
 	int ret;
 
-	if (!pdata->gpio_reset)
+	if (!gpio_is_valid(pdata->gpio_reset))
 		return -EINVAL;
 
-	ret = gpiod_direction_output(pdata->gpio_reset, 0);
+	ret = gpio_direction_output(pdata->gpio_reset, 0);
 	if (ret < 0)
-		return ret;
+		goto err_gpio_reset;
+	dev_info(&client->dev, "flash led reset successfully\n");
 
-	if (!pdata->gpio_strobe)
-		return -EINVAL;
+	if (!gpio_is_valid(pdata->gpio_strobe)) {
+		ret = -EINVAL;
+		goto err_gpio_dir_reset;
+	}
 
-	ret = gpiod_direction_output(pdata->gpio_strobe, 0);
+	ret = gpio_direction_output(pdata->gpio_strobe, 0);
 	if (ret < 0)
-		return ret;
+		goto err_gpio_strobe;
 
 	return 0;
+
+err_gpio_strobe:
+	gpio_free(pdata->gpio_strobe);
+err_gpio_dir_reset:
+	gpio_direction_output(pdata->gpio_reset, 0);
+err_gpio_reset:
+	gpio_free(pdata->gpio_reset);
+
+	return ret;
 }
 
-static void lm3554_gpio_uninit(struct i2c_client *client)
+static int lm3554_gpio_uninit(struct i2c_client *client)
 {
 	struct v4l2_subdev *sd = i2c_get_clientdata(client);
 	struct lm3554 *flash = to_lm3554(sd);
 	struct lm3554_platform_data *pdata = flash->pdata;
 	int ret;
 
-	ret = gpiod_direction_output(pdata->gpio_strobe, 0);
+	ret = gpio_direction_output(pdata->gpio_strobe, 0);
 	if (ret < 0)
-		dev_err(&client->dev,
-			"gpio request/direction_output fail for gpio_strobe");
+		return ret;
 
-	ret = gpiod_direction_output(pdata->gpio_reset, 0);
+	ret = gpio_direction_output(pdata->gpio_reset, 0);
 	if (ret < 0)
-		dev_err(&client->dev,
-			"gpio request/direction_output fail for gpio_reset");
+		return ret;
+
+	gpio_free(pdata->gpio_strobe);
+	gpio_free(pdata->gpio_reset);
+	return 0;
 }
 
 static void *lm3554_platform_data_func(struct i2c_client *client)
 {
 	static struct lm3554_platform_data platform_data;
 
-	platform_data.gpio_reset = gpiod_get_index(&client->dev,
-						   NULL, 2, GPIOD_OUT_LOW);
-	if (IS_ERR(platform_data.gpio_reset))
-		return ERR_CAST(platform_data.gpio_reset);
-	platform_data.gpio_strobe = gpiod_get_index(&client->dev,
-						    NULL, 0, GPIOD_OUT_LOW);
-	if (IS_ERR(platform_data.gpio_strobe))
-		return ERR_CAST(platform_data.gpio_strobe);
-	platform_data.gpio_torch = gpiod_get_index(&client->dev,
-						   NULL, 1, GPIOD_OUT_LOW);
-	if (IS_ERR(platform_data.gpio_torch))
-		return ERR_CAST(platform_data.gpio_torch);
+	platform_data.gpio_reset =
+		    desc_to_gpio(gpiod_get_index(&client->dev,
+						 NULL, 2, GPIOD_OUT_LOW));
+	platform_data.gpio_strobe =
+		    desc_to_gpio(gpiod_get_index(&client->dev,
+						 NULL, 0, GPIOD_OUT_LOW));
+	platform_data.gpio_torch =
+		    desc_to_gpio(gpiod_get_index(&client->dev,
+						 NULL, 1, GPIOD_OUT_LOW));
+	dev_info(&client->dev, "camera pdata: lm3554: reset: %d strobe %d torch %d\n",
+		platform_data.gpio_reset, platform_data.gpio_strobe,
+		platform_data.gpio_torch);
 
 	/* Set to TX2 mode, then ENVM/TX2 pin is a power amplifier sync input:
 	 * ENVM/TX pin asserted, flash forced into torch;
@@ -835,28 +855,25 @@ static int lm3554_probe(struct i2c_client *client)
 	int err = 0;
 	struct lm3554 *flash;
 	unsigned int i;
+	int ret;
 
 	flash = kzalloc(sizeof(*flash), GFP_KERNEL);
 	if (!flash)
 		return -ENOMEM;
 
 	flash->pdata = lm3554_platform_data_func(client);
-	if (IS_ERR(flash->pdata)) {
-		err = PTR_ERR(flash->pdata);
-		goto free_flash;
-	}
 
 	v4l2_i2c_subdev_init(&flash->sd, client, &lm3554_ops);
 	flash->sd.internal_ops = &lm3554_internal_ops;
 	flash->sd.flags |= V4L2_SUBDEV_FL_HAS_DEVNODE;
 	flash->mode = ATOMISP_FLASH_MODE_OFF;
 	flash->timeout = LM3554_MAX_TIMEOUT / LM3554_TIMEOUT_STEPSIZE - 1;
-	err =
+	ret =
 	    v4l2_ctrl_handler_init(&flash->ctrl_handler,
 				   ARRAY_SIZE(lm3554_controls));
-	if (err) {
+	if (ret) {
 		dev_err(&client->dev, "error initialize a ctrl_handler.\n");
-		goto unregister_subdev;
+		goto fail2;
 	}
 
 	for (i = 0; i < ARRAY_SIZE(lm3554_controls); i++)
@@ -864,16 +881,16 @@ static int lm3554_probe(struct i2c_client *client)
 				     NULL);
 
 	if (flash->ctrl_handler.error) {
+
 		dev_err(&client->dev, "ctrl_handler error.\n");
-		err = flash->ctrl_handler.error;
-		goto free_handler;
+		goto fail2;
 	}
 
 	flash->sd.ctrl_handler = &flash->ctrl_handler;
 	err = media_entity_pads_init(&flash->sd.entity, 0, NULL);
 	if (err) {
 		dev_err(&client->dev, "error initialize a media entity.\n");
-		goto free_handler;
+		goto fail1;
 	}
 
 	flash->sd.entity.function = MEDIA_ENT_F_FLASH;
@@ -884,36 +901,25 @@ static int lm3554_probe(struct i2c_client *client)
 
 	err = lm3554_gpio_init(client);
 	if (err) {
-		dev_err(&client->dev, "gpio request/direction_output fail.\n");
-		goto cleanup_media;
+		dev_err(&client->dev, "gpio request/direction_output fail");
+		goto fail2;
 	}
-
-	err = atomisp_register_i2c_module(&flash->sd, NULL, LED_FLASH);
-	if (err) {
-		dev_err(&client->dev, "fail to register atomisp i2c module.\n");
-		goto uninit_gpio;
-	}
-
-	return 0;
-
-uninit_gpio:
-	lm3554_gpio_uninit(client);
-cleanup_media:
+	return atomisp_register_i2c_module(&flash->sd, NULL, LED_FLASH);
+fail2:
 	media_entity_cleanup(&flash->sd.entity);
-free_handler:
 	v4l2_ctrl_handler_free(&flash->ctrl_handler);
-unregister_subdev:
+fail1:
 	v4l2_device_unregister_subdev(&flash->sd);
-free_flash:
 	kfree(flash);
 
 	return err;
 }
 
-static void lm3554_remove(struct i2c_client *client)
+static int lm3554_remove(struct i2c_client *client)
 {
 	struct v4l2_subdev *sd = i2c_get_clientdata(client);
 	struct lm3554 *flash = to_lm3554(sd);
+	int ret;
 
 	media_entity_cleanup(&flash->sd.entity);
 	v4l2_ctrl_handler_free(&flash->ctrl_handler);
@@ -923,9 +929,16 @@ static void lm3554_remove(struct i2c_client *client)
 
 	del_timer_sync(&flash->flash_off_delay);
 
-	lm3554_gpio_uninit(client);
+	ret = lm3554_gpio_uninit(client);
+	if (ret < 0)
+		goto fail;
 
 	kfree(flash);
+
+	return 0;
+fail:
+	dev_err(&client->dev, "gpio request/direction_output fail");
+	return ret;
 }
 
 static const struct dev_pm_ops lm3554_pm_ops = {

@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * lm63.c - driver for the National Semiconductor LM63 temperature sensor
  *          with integrated fan control
@@ -22,6 +21,20 @@
  * I had a explanation from National Semiconductor though. The two lower
  * bits of the read value have to be masked out. The value is still 16 bit
  * in width.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
 #include <linux/module.h>
@@ -139,7 +152,7 @@ struct lm63_data {
 	struct i2c_client *client;
 	struct mutex update_lock;
 	const struct attribute_group *groups[5];
-	bool valid; /* false until following fields are valid */
+	char valid; /* zero until following fields are valid */
 	char lut_valid; /* zero until lut fields are valid */
 	unsigned long last_updated; /* in jiffies */
 	unsigned long lut_last_updated; /* in jiffies */
@@ -289,7 +302,7 @@ static struct lm63_data *lm63_update_device(struct device *dev)
 			       LM63_REG_ALERT_STATUS) & 0x7F;
 
 		data->last_updated = jiffies;
-		data->valid = true;
+		data->valid = 1;
 	}
 
 	lm63_update_lut(data);
@@ -714,7 +727,7 @@ static ssize_t temp2_type_store(struct device *dev,
 	reg = i2c_smbus_read_byte_data(client, LM96163_REG_TRUTHERM) & ~0x02;
 	i2c_smbus_write_byte_data(client, LM96163_REG_TRUTHERM,
 				  reg | (data->trutherm ? 0x02 : 0x00));
-	data->valid = false;
+	data->valid = 0;
 	mutex_unlock(&data->update_lock);
 
 	return count;
@@ -931,7 +944,7 @@ static const struct attribute_group lm63_group_extra_lut = {
 static umode_t lm63_attribute_mode(struct kobject *kobj,
 				   struct attribute *attr, int index)
 {
-	struct device *dev = kobj_to_dev(kobj);
+	struct device *dev = container_of(kobj, struct device, kobj);
 	struct lm63_data *data = dev_get_drvdata(dev);
 
 	if (attr == &sensor_dev_attr_temp2_crit.dev_attr.attr
@@ -996,11 +1009,11 @@ static int lm63_detect(struct i2c_client *client,
 	}
 
 	if (chip_id == 0x41 && address == 0x4c)
-		strscpy(info->type, "lm63", I2C_NAME_SIZE);
+		strlcpy(info->type, "lm63", I2C_NAME_SIZE);
 	else if (chip_id == 0x51 && (address == 0x18 || address == 0x4e))
-		strscpy(info->type, "lm64", I2C_NAME_SIZE);
+		strlcpy(info->type, "lm64", I2C_NAME_SIZE);
 	else if (chip_id == 0x49 && address == 0x4c)
-		strscpy(info->type, "lm96163", I2C_NAME_SIZE);
+		strlcpy(info->type, "lm96163", I2C_NAME_SIZE);
 	else
 		return -ENODEV;
 
@@ -1087,9 +1100,8 @@ static void lm63_init_client(struct lm63_data *data)
 		(data->config_fan & 0x20) ? "manual" : "auto");
 }
 
-static const struct i2c_device_id lm63_id[];
-
-static int lm63_probe(struct i2c_client *client)
+static int lm63_probe(struct i2c_client *client,
+		      const struct i2c_device_id *id)
 {
 	struct device *dev = &client->dev;
 	struct device *hwmon_dev;
@@ -1107,7 +1119,8 @@ static int lm63_probe(struct i2c_client *client)
 	if (client->dev.of_node)
 		data->kind = (enum chips)of_device_get_match_data(&client->dev);
 	else
-		data->kind = i2c_match_id(lm63_id, client)->driver_data;
+		data->kind = id->driver_data;
+	data->kind = id->driver_data;
 	if (data->kind == lm64)
 		data->temp2_offset = 16000;
 
@@ -1141,7 +1154,7 @@ static const struct i2c_device_id lm63_id[] = {
 };
 MODULE_DEVICE_TABLE(i2c, lm63_id);
 
-static const struct of_device_id __maybe_unused lm63_of_match[] = {
+static const struct of_device_id lm63_of_match[] = {
 	{
 		.compatible = "national,lm63",
 		.data = (void *)lm63
@@ -1164,7 +1177,7 @@ static struct i2c_driver lm63_driver = {
 		.name	= "lm63",
 		.of_match_table = of_match_ptr(lm63_of_match),
 	},
-	.probe_new	= lm63_probe,
+	.probe		= lm63_probe,
 	.id_table	= lm63_id,
 	.detect		= lm63_detect,
 	.address_list	= normal_i2c,

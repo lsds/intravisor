@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (C) 2015 Linaro, Ltd.
  * Rob Herring <robh@kernel.org>
@@ -6,6 +5,16 @@
  * Based on vendor driver:
  * Copyright (C) 2013 Marvell Inc.
  * Author: Chao Xie <xiechao.mail@gmail.com>
+ *
+ * This software is licensed under the terms of the GNU General Public
+ * License version 2, as published by the Free Software Foundation, and
+ * may be copied, distributed, and modified under those terms.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
  */
 
 #include <linux/delay.h>
@@ -13,7 +22,6 @@
 #include <linux/of.h>
 #include <linux/of_device.h>
 #include <linux/io.h>
-#include <linux/iopoll.h>
 #include <linux/err.h>
 #include <linux/clk.h>
 #include <linux/module.h>
@@ -139,12 +147,15 @@ struct mv_usb2_phy {
 	struct clk		*clk;
 };
 
-static int wait_for_reg(void __iomem *reg, u32 mask, u32 ms)
+static bool wait_for_reg(void __iomem *reg, u32 mask, unsigned long timeout)
 {
-	u32 val;
-
-	return readl_poll_timeout(reg, val, ((val & mask) == mask),
-				   1000, 1000 * ms);
+	timeout += jiffies;
+	while (time_is_after_eq_jiffies(timeout)) {
+		if ((readl(reg) & mask) == mask)
+			return true;
+		msleep(1);
+	}
+	return false;
 }
 
 static int mv_usb2_phy_28nm_init(struct phy *phy)
@@ -206,23 +217,24 @@ static int mv_usb2_phy_28nm_init(struct phy *phy)
 	 */
 
 	/* Make sure PHY Calibration is ready */
-	ret = wait_for_reg(base + PHY_28NM_CAL_REG,
-			   PHY_28NM_PLL_PLLCAL_DONE | PHY_28NM_PLL_IMPCAL_DONE,
-			   100);
-	if (ret) {
+	if (!wait_for_reg(base + PHY_28NM_CAL_REG,
+	    PHY_28NM_PLL_PLLCAL_DONE | PHY_28NM_PLL_IMPCAL_DONE,
+	    HZ / 10)) {
 		dev_warn(&pdev->dev, "USB PHY PLL calibrate not done after 100mS.");
+		ret = -ETIMEDOUT;
 		goto err_clk;
 	}
-	ret = wait_for_reg(base + PHY_28NM_RX_REG1,
-			   PHY_28NM_RX_SQCAL_DONE, 100);
-	if (ret) {
+	if (!wait_for_reg(base + PHY_28NM_RX_REG1,
+	    PHY_28NM_RX_SQCAL_DONE, HZ / 10)) {
 		dev_warn(&pdev->dev, "USB PHY RX SQ calibrate not done after 100mS.");
+		ret = -ETIMEDOUT;
 		goto err_clk;
 	}
 	/* Make sure PHY PLL is ready */
-	ret = wait_for_reg(base + PHY_28NM_PLL_REG0, PHY_28NM_PLL_READY, 100);
-	if (ret) {
+	if (!wait_for_reg(base + PHY_28NM_PLL_REG0,
+	    PHY_28NM_PLL_READY, HZ / 10)) {
 		dev_warn(&pdev->dev, "PLL_READY not set after 100mS.");
+		ret = -ETIMEDOUT;
 		goto err_clk;
 	}
 
@@ -294,6 +306,7 @@ static int mv_usb2_phy_probe(struct platform_device *pdev)
 {
 	struct phy_provider *phy_provider;
 	struct mv_usb2_phy *mv_phy;
+	struct resource *r;
 
 	mv_phy = devm_kzalloc(&pdev->dev, sizeof(*mv_phy), GFP_KERNEL);
 	if (!mv_phy)
@@ -307,7 +320,8 @@ static int mv_usb2_phy_probe(struct platform_device *pdev)
 		return PTR_ERR(mv_phy->clk);
 	}
 
-	mv_phy->base = devm_platform_ioremap_resource(pdev, 0);
+	r = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	mv_phy->base = devm_ioremap_resource(&pdev->dev, r);
 	if (IS_ERR(mv_phy->base))
 		return PTR_ERR(mv_phy->base);
 

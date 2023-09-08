@@ -1,10 +1,14 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Copyright (C) 2013 DENX Software Engineering
  *
  * Gerhard Sittig, <gsi@denx.de>
  *
  * common clock driver support for the MPC512x platform
+ *
+ * This is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
  */
 
 #include <linux/bitops.h>
@@ -97,7 +101,7 @@ static enum soc_type {
 	MPC512x_SOC_MPC5125,
 } soc;
 
-static void __init mpc512x_clk_determine_soc(void)
+static void mpc512x_clk_determine_soc(void)
 {
 	if (of_machine_is_compatible("fsl,mpc5121")) {
 		soc = MPC512x_SOC_MPC5121;
@@ -113,98 +117,98 @@ static void __init mpc512x_clk_determine_soc(void)
 	}
 }
 
-static bool __init soc_has_mbx(void)
+static bool soc_has_mbx(void)
 {
 	if (soc == MPC512x_SOC_MPC5121)
 		return true;
 	return false;
 }
 
-static bool __init soc_has_axe(void)
+static bool soc_has_axe(void)
 {
 	if (soc == MPC512x_SOC_MPC5125)
 		return false;
 	return true;
 }
 
-static bool __init soc_has_viu(void)
+static bool soc_has_viu(void)
 {
 	if (soc == MPC512x_SOC_MPC5125)
 		return false;
 	return true;
 }
 
-static bool __init soc_has_spdif(void)
+static bool soc_has_spdif(void)
 {
 	if (soc == MPC512x_SOC_MPC5125)
 		return false;
 	return true;
 }
 
-static bool __init soc_has_pata(void)
+static bool soc_has_pata(void)
 {
 	if (soc == MPC512x_SOC_MPC5125)
 		return false;
 	return true;
 }
 
-static bool __init soc_has_sata(void)
+static bool soc_has_sata(void)
 {
 	if (soc == MPC512x_SOC_MPC5125)
 		return false;
 	return true;
 }
 
-static bool __init soc_has_pci(void)
+static bool soc_has_pci(void)
 {
 	if (soc == MPC512x_SOC_MPC5125)
 		return false;
 	return true;
 }
 
-static bool __init soc_has_fec2(void)
+static bool soc_has_fec2(void)
 {
 	if (soc == MPC512x_SOC_MPC5125)
 		return true;
 	return false;
 }
 
-static int __init soc_max_pscnum(void)
+static int soc_max_pscnum(void)
 {
 	if (soc == MPC512x_SOC_MPC5125)
 		return 10;
 	return 12;
 }
 
-static bool __init soc_has_sdhc2(void)
+static bool soc_has_sdhc2(void)
 {
 	if (soc == MPC512x_SOC_MPC5125)
 		return true;
 	return false;
 }
 
-static bool __init soc_has_nfc_5125(void)
+static bool soc_has_nfc_5125(void)
 {
 	if (soc == MPC512x_SOC_MPC5125)
 		return true;
 	return false;
 }
 
-static bool __init soc_has_outclk(void)
+static bool soc_has_outclk(void)
 {
 	if (soc == MPC512x_SOC_MPC5125)
 		return true;
 	return false;
 }
 
-static bool __init soc_has_cpmf_0_bypass(void)
+static bool soc_has_cpmf_0_bypass(void)
 {
 	if (soc == MPC512x_SOC_MPC5125)
 		return true;
 	return false;
 }
 
-static bool __init soc_has_mclk_mux0_canin(void)
+static bool soc_has_mclk_mux0_canin(void)
 {
 	if (soc == MPC512x_SOC_MPC5125)
 		return true;
@@ -235,7 +239,6 @@ static inline struct clk *mpc512x_clk_divider(
 	const char *name, const char *parent_name, u8 clkflags,
 	u32 __iomem *reg, u8 pos, u8 len, int divflags)
 {
-	divflags |= CLK_DIVIDER_BIG_ENDIAN;
 	return clk_register_divider(NULL, name, parent_name, clkflags,
 				    reg, pos, len, divflags, &clklock);
 }
@@ -247,7 +250,7 @@ static inline struct clk *mpc512x_clk_divtable(
 {
 	u8 divflags;
 
-	divflags = CLK_DIVIDER_BIG_ENDIAN;
+	divflags = 0;
 	return clk_register_divider_table(NULL, name, parent_name, 0,
 					  reg, pos, len, divflags,
 					  divtab, &clklock);
@@ -258,12 +261,10 @@ static inline struct clk *mpc512x_clk_gated(
 	u32 __iomem *reg, u8 pos)
 {
 	int clkflags;
-	u8 gateflags;
 
 	clkflags = CLK_SET_RATE_PARENT;
-	gateflags = CLK_GATE_BIG_ENDIAN;
 	return clk_register_gate(NULL, name, parent_name, clkflags,
-				 reg, pos, gateflags, &clklock);
+				 reg, pos, 0, &clklock);
 }
 
 static inline struct clk *mpc512x_clk_muxed(const char *name,
@@ -274,7 +275,7 @@ static inline struct clk *mpc512x_clk_muxed(const char *name,
 	u8 muxflags;
 
 	clkflags = CLK_SET_RATE_PARENT;
-	muxflags = CLK_MUX_BIG_ENDIAN;
+	muxflags = 0;
 	return clk_register_mux(NULL, name,
 				parent_names, parent_count, clkflags,
 				reg, pos, len, muxflags, &clklock);
@@ -294,7 +295,7 @@ static inline int get_bit_field(uint32_t __iomem *reg, uint8_t pos, uint8_t len)
 }
 
 /* get the SPMF and translate it into the "sys pll" multiplier */
-static int __init get_spmf_mult(void)
+static int get_spmf_mult(void)
 {
 	static int spmf_to_mult[] = {
 		68, 1, 12, 16, 20, 24, 28, 32,
@@ -312,7 +313,7 @@ static int __init get_spmf_mult(void)
  * values returned from here are a multiple of the real factor since the
  * divide ratio is fractional
  */
-static int __init get_sys_div_x2(void)
+static int get_sys_div_x2(void)
 {
 	static int sysdiv_code_to_x2[] = {
 		4, 5, 6, 7, 8, 9, 10, 14,
@@ -333,7 +334,7 @@ static int __init get_sys_div_x2(void)
  * values returned from here are a multiple of the real factor since the
  * multiplier ratio is fractional
  */
-static int __init get_cpmf_mult_x2(void)
+static int get_cpmf_mult_x2(void)
 {
 	static int cpmf_to_mult_x36[] = {
 		/* 0b000 is "times 36" */
@@ -379,7 +380,7 @@ static const struct clk_div_table divtab_1234[] = {
 	{ .div = 0, },
 };
 
-static int __init get_freq_from_dt(char *propname)
+static int get_freq_from_dt(char *propname)
 {
 	struct device_node *np;
 	const unsigned int *prop;
@@ -396,7 +397,7 @@ static int __init get_freq_from_dt(char *propname)
 	return val;
 }
 
-static void __init mpc512x_clk_preset_data(void)
+static void mpc512x_clk_preset_data(void)
 {
 	size_t i;
 
@@ -418,7 +419,7 @@ static void __init mpc512x_clk_preset_data(void)
  *   SYS -> CSB -> IPS) from the REF clock rate and the returned mul/div
  *   values
  */
-static void __init mpc512x_clk_setup_ref_clock(struct device_node *np, int bus_freq,
+static void mpc512x_clk_setup_ref_clock(struct device_node *np, int bus_freq,
 					int *sys_mul, int *sys_div,
 					int *ips_div)
 {
@@ -592,7 +593,7 @@ static struct mclk_setup_data mclk_outclk_data[] = {
 };
 
 /* setup the MCLK clock subtree of an individual PSC/MSCAN/SPDIF */
-static void __init mpc512x_clk_setup_mclk(struct mclk_setup_data *entry, size_t idx)
+static void mpc512x_clk_setup_mclk(struct mclk_setup_data *entry, size_t idx)
 {
 	size_t clks_idx_pub, clks_idx_int;
 	u32 __iomem *mccr_reg;	/* MCLK control register (mux, en, div) */
@@ -663,7 +664,7 @@ static void __init mpc512x_clk_setup_mclk(struct mclk_setup_data *entry, size_t 
 	 *   the PSC/MSCAN/SPDIF (serial drivers et al) need the MCLK
 	 *   for their bitrate
 	 * - in the absence of "aliases" for clocks we need to create
-	 *   individual 'struct clk' items for whatever might get
+	 *   individial 'struct clk' items for whatever might get
 	 *   referenced or looked up, even if several of those items are
 	 *   identical from the logical POV (their rate value)
 	 * - for easier future maintenance and for better reflection of
@@ -701,7 +702,7 @@ static void __init mpc512x_clk_setup_mclk(struct mclk_setup_data *entry, size_t 
 
 /* }}} MCLK helpers */
 
-static void __init mpc512x_clk_setup_clock_tree(struct device_node *np, int busfreq)
+static void mpc512x_clk_setup_clock_tree(struct device_node *np, int busfreq)
 {
 	int sys_mul, sys_div, ips_div;
 	int mul, div;
@@ -937,7 +938,7 @@ static void __init mpc512x_clk_setup_clock_tree(struct device_node *np, int busf
  * registers the set of public clocks (those listed in the dt-bindings/
  * header file) for OF lookups, keeps the intermediates private to us
  */
-static void __init mpc5121_clk_register_of_provider(struct device_node *np)
+static void mpc5121_clk_register_of_provider(struct device_node *np)
 {
 	clk_data.clks = clks;
 	clk_data.clk_num = MPC512x_CLK_LAST_PUBLIC + 1;	/* _not_ ARRAY_SIZE() */
@@ -948,9 +949,9 @@ static void __init mpc5121_clk_register_of_provider(struct device_node *np)
  * temporary support for the period of time between introduction of CCF
  * support and the adjustment of peripheral drivers to OF based lookups
  */
-static void __init mpc5121_clk_provide_migration_support(void)
+static void mpc5121_clk_provide_migration_support(void)
 {
-	struct device_node *np;
+
 	/*
 	 * pre-enable those clock items which are not yet appropriately
 	 * acquired by their peripheral driver
@@ -970,9 +971,7 @@ static void __init mpc5121_clk_provide_migration_support(void)
 	 * unused and so it gets disabled
 	 */
 	clk_prepare_enable(clks[MPC512x_CLK_PSC3_MCLK]);/* serial console */
-	np = of_find_compatible_node(NULL, "pci", "fsl,mpc5121-pci");
-	of_node_put(np);
-	if (np)
+	if (of_find_compatible_node(NULL, "pci", "fsl,mpc5121-pci"))
 		clk_prepare_enable(clks[MPC512x_CLK_PCI]);
 }
 
@@ -1011,7 +1010,7 @@ static void __init mpc5121_clk_provide_migration_support(void)
  * case of not yet adjusted device tree data, where clock related specs
  * are missing)
  */
-static void __init mpc5121_clk_provide_backwards_compat(void)
+static void mpc5121_clk_provide_backwards_compat(void)
 {
 	enum did_reg_flags {
 		DID_REG_PSC	= BIT(0),
@@ -1209,8 +1208,6 @@ int __init mpc5121_clk_init(void)
 
 	/* register as an OF clock provider */
 	mpc5121_clk_register_of_provider(clk_np);
-
-	of_node_put(clk_np);
 
 	/*
 	 * unbreak not yet adjusted peripheral drivers during migration

@@ -1,9 +1,18 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (C) 2017 Pengutronix, Juergen Borleis <kernel@pengutronix.de>
  *
  * Partially based on a patch from
  * Copyright (c) 2014 Stefan Roese <sr@denx.de>
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * version 2, as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
  */
 #include <linux/kernel.h>
 #include <linux/module.h>
@@ -140,23 +149,10 @@ static void lan9303_mdio_remove(struct mdio_device *mdiodev)
 	lan9303_remove(&sw_dev->chip);
 }
 
-static void lan9303_mdio_shutdown(struct mdio_device *mdiodev)
-{
-	struct lan9303_mdio *sw_dev = dev_get_drvdata(&mdiodev->dev);
-
-	if (!sw_dev)
-		return;
-
-	lan9303_shutdown(&sw_dev->chip);
-
-	dev_set_drvdata(&mdiodev->dev, NULL);
-}
-
 /*-------------------------------------------------------------------------*/
 
 static const struct of_device_id lan9303_mdio_of_match[] = {
 	{ .compatible = "smsc,lan9303-mdio" },
-	{ .compatible = "microchip,lan9354-mdio" },
 	{ /* sentinel */ },
 };
 MODULE_DEVICE_TABLE(of, lan9303_mdio_of_match);
@@ -168,7 +164,6 @@ static struct mdio_driver lan9303_mdio_driver = {
 	},
 	.probe  = lan9303_mdio_probe,
 	.remove = lan9303_mdio_remove,
-	.shutdown = lan9303_mdio_shutdown,
 };
 mdio_module_driver(lan9303_mdio_driver);
 

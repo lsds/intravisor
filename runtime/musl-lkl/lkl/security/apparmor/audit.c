@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * AppArmor security module
  *
@@ -6,6 +5,11 @@
  *
  * Copyright (C) 1998-2008 Novell/SUSE
  * Copyright 2009-2010 Canonical Ltd.
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License as
+ * published by the Free Software Foundation, version 2 of the
+ * License.
  */
 
 #include <linux/audit.h>
@@ -15,7 +19,7 @@
 #include "include/audit.h"
 #include "include/policy.h"
 #include "include/policy_ns.h"
-#include "include/secid.h"
+
 
 const char *const audit_mode_names[] = {
 	"normal",
@@ -57,16 +61,18 @@ static void audit_pre(struct audit_buffer *ab, void *ca)
 	struct common_audit_data *sa = ca;
 
 	if (aa_g_audit_header) {
-		audit_log_format(ab, "apparmor=\"%s\"",
-				 aa_audit_type[aad(sa)->type]);
+		audit_log_format(ab, "apparmor=");
+		audit_log_string(ab, aa_audit_type[aad(sa)->type]);
 	}
 
 	if (aad(sa)->op) {
-		audit_log_format(ab, " operation=\"%s\"", aad(sa)->op);
+		audit_log_format(ab, " operation=");
+		audit_log_string(ab, aad(sa)->op);
 	}
 
 	if (aad(sa)->info) {
-		audit_log_format(ab, " info=\"%s\"", aad(sa)->info);
+		audit_log_format(ab, " info=");
+		audit_log_string(ab, aad(sa)->info);
 		if (aad(sa)->error)
 			audit_log_format(ab, " error=%d", aad(sa)->error);
 	}
@@ -137,7 +143,7 @@ int aa_audit(int type, struct aa_profile *profile, struct common_audit_data *sa,
 	}
 	if (AUDIT_MODE(profile) == AUDIT_QUIET ||
 	    (type == AUDIT_APPARMOR_DENIED &&
-	     AUDIT_MODE(profile) == AUDIT_QUIET_DENIED))
+	     AUDIT_MODE(profile) == AUDIT_QUIET))
 		return aad(sa)->error;
 
 	if (KILL_MODE(profile) && type == AUDIT_APPARMOR_DENIED)
@@ -156,92 +162,4 @@ int aa_audit(int type, struct aa_profile *profile, struct common_audit_data *sa,
 		return complain_error(aad(sa)->error);
 
 	return aad(sa)->error;
-}
-
-struct aa_audit_rule {
-	struct aa_label *label;
-};
-
-void aa_audit_rule_free(void *vrule)
-{
-	struct aa_audit_rule *rule = vrule;
-
-	if (rule) {
-		if (!IS_ERR(rule->label))
-			aa_put_label(rule->label);
-		kfree(rule);
-	}
-}
-
-int aa_audit_rule_init(u32 field, u32 op, char *rulestr, void **vrule)
-{
-	struct aa_audit_rule *rule;
-
-	switch (field) {
-	case AUDIT_SUBJ_ROLE:
-		if (op != Audit_equal && op != Audit_not_equal)
-			return -EINVAL;
-		break;
-	default:
-		return -EINVAL;
-	}
-
-	rule = kzalloc(sizeof(struct aa_audit_rule), GFP_KERNEL);
-
-	if (!rule)
-		return -ENOMEM;
-
-	/* Currently rules are treated as coming from the root ns */
-	rule->label = aa_label_parse(&root_ns->unconfined->label, rulestr,
-				     GFP_KERNEL, true, false);
-	if (IS_ERR(rule->label)) {
-		int err = PTR_ERR(rule->label);
-		aa_audit_rule_free(rule);
-		return err;
-	}
-
-	*vrule = rule;
-	return 0;
-}
-
-int aa_audit_rule_known(struct audit_krule *rule)
-{
-	int i;
-
-	for (i = 0; i < rule->field_count; i++) {
-		struct audit_field *f = &rule->fields[i];
-
-		switch (f->type) {
-		case AUDIT_SUBJ_ROLE:
-			return 1;
-		}
-	}
-
-	return 0;
-}
-
-int aa_audit_rule_match(u32 sid, u32 field, u32 op, void *vrule)
-{
-	struct aa_audit_rule *rule = vrule;
-	struct aa_label *label;
-	int found = 0;
-
-	label = aa_secid_to_label(sid);
-
-	if (!label)
-		return -ENOENT;
-
-	if (aa_label_is_subset(label, rule->label))
-		found = 1;
-
-	switch (field) {
-	case AUDIT_SUBJ_ROLE:
-		switch (op) {
-		case Audit_equal:
-			return found;
-		case Audit_not_equal:
-			return !found;
-		}
-	}
-	return 0;
 }

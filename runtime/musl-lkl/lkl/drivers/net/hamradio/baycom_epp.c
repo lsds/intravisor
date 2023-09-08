@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*****************************************************************************/
 
 /*
@@ -7,9 +6,24 @@
  *	Copyright (C) 1998-2000
  *          Thomas Sailer (sailer@ife.ee.ethz.ch)
  *
+ *	This program is free software; you can redistribute it and/or modify
+ *	it under the terms of the GNU General Public License as published by
+ *	the Free Software Foundation; either version 2 of the License, or
+ *	(at your option) any later version.
+ *
+ *	This program is distributed in the hope that it will be useful,
+ *	but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *	GNU General Public License for more details.
+ *
+ *	You should have received a copy of the GNU General Public License
+ *	along with this program; if not, write to the Free Software
+ *	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ *
  *  Please note that the GPL allows you to use the driver, NOT the radio.
  *  In order to use the radio, you need a license from the communications
  *  authority of your country.
+ *
  *
  *  History:
  *   0.1  xx.xx.1998  Initial version by Matthias Welwarsky (dg2fef)
@@ -21,6 +35,7 @@
  *                    removed some pre-2.2 kernel compatibility cruft
  *   0.6  10.08.1999  Check if parport can do SPP and is safe to access during interrupt contexts
  *   0.7  12.02.2000  adapted to softnet driver interface
+ *
  */
 
 /*****************************************************************************/
@@ -231,7 +246,7 @@ struct baycom_state {
 #if 0
 static inline void append_crc_ccitt(unsigned char *buffer, int len)
 {
-	unsigned int crc = 0xffff;
+ 	unsigned int crc = 0xffff;
 
 	for (;len>0;len--)
 		crc = (crc >> 8) ^ crc_ccitt_table[(crc ^ *buffer++) & 0xff];
@@ -390,7 +405,7 @@ static void encode_hdlc(struct baycom_state *bc)
 		for (j = 0; j < 8; j++)
 			if (unlikely(!(notbitstream & (0x1f0 << j)))) {
 				bitstream &= ~(0x100 << j);
-				bitbuf = (bitbuf & (((2 << j) << numbit) - 1)) |
+ 				bitbuf = (bitbuf & (((2 << j) << numbit) - 1)) |
 					((bitbuf & ~(((2 << j) << numbit) - 1)) << 1);
 				numbit++;
 				notbitstream = ~bitstream;
@@ -438,7 +453,7 @@ static int transmit(struct baycom_state *bc, int cnt, unsigned char stat)
 			if ((--bc->hdlctx.slotcnt) > 0)
 				return 0;
 			bc->hdlctx.slotcnt = bc->ch_params.slottime;
-			if (get_random_u8() > bc->ch_params.ppersist)
+			if ((prandom_u32() % 256) > bc->ch_params.ppersist)
 				return 0;
 		}
 	}
@@ -500,9 +515,8 @@ static int transmit(struct baycom_state *bc, int cnt, unsigned char stat)
 				}
 				break;
 			}
-			fallthrough;
 
-		default:
+		default:  /* fall through */
 			if (bc->hdlctx.calibrate <= 0)
 				return 0;
 			i = min_t(int, cnt, bc->hdlctx.calibrate);
@@ -623,16 +637,16 @@ static int receive(struct net_device *dev, int cnt)
 
 /* --------------------------------------------------------------------- */
 
-#if defined(__i386__) && !defined(CONFIG_UML)
+#ifdef __i386__
 #include <asm/msr.h>
 #define GETTICK(x)						\
 ({								\
 	if (boot_cpu_has(X86_FEATURE_TSC))			\
 		x = (unsigned int)rdtsc();			\
 })
-#else /* __i386__  && !CONFIG_UML */
+#else /* __i386__ */
 #define GETTICK(x)
-#endif /* __i386__  && !CONFIG_UML */
+#endif /* __i386__ */
 
 static void epp_bh(struct work_struct *work)
 {
@@ -791,7 +805,7 @@ static int baycom_set_mac_address(struct net_device *dev, void *addr)
 	struct sockaddr *sa = (struct sockaddr *)addr;
 
 	/* addr is an AX.25 shifted ASCII mac address */
-	dev_addr_set(dev, sa->sa_data);
+	memcpy(dev->dev_addr, sa->sa_data, dev->addr_len); 
 	return 0;                                         
 }
 
@@ -961,7 +975,8 @@ static int epp_close(struct net_device *dev)
 	parport_write_control(pp, 0); /* reset the adapter */
         parport_release(bc->pdev);
         parport_unregister_device(bc->pdev);
-	dev_kfree_skb(bc->skb);
+	if (bc->skb)
+		dev_kfree_skb(bc->skb);
 	bc->skb = NULL;
 	printk(KERN_INFO "%s: close epp at iobase 0x%lx irq %u\n",
 	       bc_drvname, dev->base_addr, dev->irq);
@@ -982,10 +997,10 @@ static int baycom_setmode(struct baycom_state *bc, const char *modestr)
 		bc->cfg.extmodem = 0;
 	if (strstr(modestr,"extmodem"))
 		bc->cfg.extmodem = 1;
+	if (strstr(modestr,"noloopback"))
+		bc->cfg.loopback = 0;
 	if (strstr(modestr,"loopback"))
 		bc->cfg.loopback = 1;
-	if (strstr(modestr, "noloopback"))
-		bc->cfg.loopback = 0;
 	if ((cp = strstr(modestr,"fclk="))) {
 		bc->cfg.fclk = simple_strtoul(cp+5, NULL, 0);
 		if (bc->cfg.fclk < 1000000)
@@ -1005,8 +1020,7 @@ static int baycom_setmode(struct baycom_state *bc, const char *modestr)
 
 /* --------------------------------------------------------------------- */
 
-static int baycom_siocdevprivate(struct net_device *dev, struct ifreq *ifr,
-				 void __user *data, int cmd)
+static int baycom_ioctl(struct net_device *dev, struct ifreq *ifr, int cmd)
 {
 	struct baycom_state *bc = netdev_priv(dev);
 	struct hdlcdrv_ioctl hi;
@@ -1014,7 +1028,7 @@ static int baycom_siocdevprivate(struct net_device *dev, struct ifreq *ifr,
 	if (cmd != SIOCDEVPRIVATE)
 		return -ENOIOCTLCMD;
 
-	if (copy_from_user(&hi, data, sizeof(hi)))
+	if (copy_from_user(&hi, ifr->ifr_data, sizeof(hi)))
 		return -EFAULT;
 	switch (hi.cmd) {
 	default:
@@ -1105,7 +1119,7 @@ static int baycom_siocdevprivate(struct net_device *dev, struct ifreq *ifr,
 		return HDLCDRV_PARMASK_IOBASE;
 
 	}
-	if (copy_to_user(data, &hi, sizeof(hi)))
+	if (copy_to_user(ifr->ifr_data, &hi, sizeof(hi)))
 		return -EFAULT;
 	return 0;
 }
@@ -1115,7 +1129,7 @@ static int baycom_siocdevprivate(struct net_device *dev, struct ifreq *ifr,
 static const struct net_device_ops baycom_netdev_ops = {
 	.ndo_open	     = epp_open,
 	.ndo_stop	     = epp_close,
-	.ndo_siocdevprivate  = baycom_siocdevprivate,
+	.ndo_do_ioctl	     = baycom_ioctl,
 	.ndo_start_xmit      = baycom_send_packet,
 	.ndo_set_mac_address = baycom_set_mac_address,
 };
@@ -1159,7 +1173,7 @@ static void baycom_probe(struct net_device *dev)
 	dev->mtu = AX25_DEF_PACLEN;        /* eth_mtu is the default */
 	dev->addr_len = AX25_ADDR_LEN;     /* sizeof an ax.25 address */
 	memcpy(dev->broadcast, &ax25_bcast, AX25_ADDR_LEN);
-	dev_addr_set(dev, (u8 *)&null_ax25_address);
+	memcpy(dev->dev_addr, &null_ax25_address, AX25_ADDR_LEN);
 	dev->tx_queue_len = 16;
 
 	/* New style flags */

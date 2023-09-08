@@ -1,16 +1,32 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
+ *  net/9p/9p.c
+ *
  *  9P entry point
  *
  *  Copyright (C) 2007 by Latchesar Ionkov <lucho@ionkov.net>
  *  Copyright (C) 2004 by Eric Van Hensbergen <ericvh@gmail.com>
  *  Copyright (C) 2002 by Ron Minnich <rminnich@lanl.gov>
+ *
+ *  This program is free software; you can redistribute it and/or modify
+ *  it under the terms of the GNU General Public License version 2
+ *  as published by the Free Software Foundation.
+ *
+ *  This program is distributed in the hope that it will be useful,
+ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *  GNU General Public License for more details.
+ *
+ *  You should have received a copy of the GNU General Public License
+ *  along with this program; if not, write to:
+ *  Free Software Foundation
+ *  51 Franklin Street, Fifth Floor
+ *  Boston, MA  02111-1301  USA
+ *
  */
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
 #include <linux/module.h>
-#include <linux/kmod.h>
 #include <linux/errno.h>
 #include <linux/sched.h>
 #include <linux/moduleparam.h>
@@ -23,13 +39,13 @@
 #include <linux/spinlock.h>
 
 #ifdef CONFIG_NET_9P_DEBUG
-unsigned int p9_debug_level;	/* feature-rific global debug level  */
+unsigned int p9_debug_level = 0;	/* feature-rific global debug level  */
 EXPORT_SYMBOL(p9_debug_level);
 module_param_named(debug, p9_debug_level, uint, 0);
 MODULE_PARM_DESC(debug, "9P debugging level");
 
 void _p9_debug(enum p9_debug_flags level, const char *func,
-	       const char *fmt, ...)
+		const char *fmt, ...)
 {
 	struct va_format vaf;
 	va_list args;
@@ -52,7 +68,10 @@ void _p9_debug(enum p9_debug_flags level, const char *func,
 EXPORT_SYMBOL(_p9_debug);
 #endif
 
-/* Dynamic Transport Registration Routines */
+/*
+ * Dynamic Transport Registration Routines
+ *
+ */
 
 static DEFINE_SPINLOCK(v9fs_trans_lock);
 static LIST_HEAD(v9fs_trans_list);
@@ -83,7 +102,12 @@ void v9fs_unregister_trans(struct p9_trans_module *m)
 }
 EXPORT_SYMBOL(v9fs_unregister_trans);
 
-static struct p9_trans_module *_p9_get_trans_by_name(const char *s)
+/**
+ * v9fs_get_trans_by_name - get transport with the matching name
+ * @name: string identifying transport
+ *
+ */
+struct p9_trans_module *v9fs_get_trans_by_name(char *s)
 {
 	struct p9_trans_module *t, *found = NULL;
 
@@ -97,35 +121,9 @@ static struct p9_trans_module *_p9_get_trans_by_name(const char *s)
 		}
 
 	spin_unlock(&v9fs_trans_lock);
-
-	return found;
-}
-
-/**
- * v9fs_get_trans_by_name - get transport with the matching name
- * @s: string identifying transport
- *
- */
-struct p9_trans_module *v9fs_get_trans_by_name(const char *s)
-{
-	struct p9_trans_module *found = NULL;
-
-	found = _p9_get_trans_by_name(s);
-
-#ifdef CONFIG_MODULES
-	if (!found) {
-		request_module("9p-%s", s);
-		found = _p9_get_trans_by_name(s);
-	}
-#endif
-
 	return found;
 }
 EXPORT_SYMBOL(v9fs_get_trans_by_name);
-
-static const char * const v9fs_default_transports[] = {
-	"virtio", "tcp", "fd", "unix", "xen", "rdma",
-};
 
 /**
  * v9fs_get_default_trans - get the default transport
@@ -135,7 +133,6 @@ static const char * const v9fs_default_transports[] = {
 struct p9_trans_module *v9fs_get_default_trans(void)
 {
 	struct p9_trans_module *t, *found = NULL;
-	int i;
 
 	spin_lock(&v9fs_trans_lock);
 
@@ -153,10 +150,6 @@ struct p9_trans_module *v9fs_get_default_trans(void)
 			}
 
 	spin_unlock(&v9fs_trans_lock);
-
-	for (i = 0; !found && i < ARRAY_SIZE(v9fs_default_transports); i++)
-		found = v9fs_get_trans_by_name(v9fs_default_transports[i]);
-
 	return found;
 }
 EXPORT_SYMBOL(v9fs_get_default_trans);
@@ -178,14 +171,11 @@ void v9fs_put_trans(struct p9_trans_module *m)
  */
 static int __init init_p9(void)
 {
-	int ret;
-
-	ret = p9_client_init();
-	if (ret)
-		return ret;
+	int ret = 0;
 
 	p9_error_init();
 	pr_info("Installing 9P2000 support\n");
+	p9_trans_fd_init();
 
 	return ret;
 }
@@ -199,7 +189,7 @@ static void __exit exit_p9(void)
 {
 	pr_info("Unloading 9P2000 support\n");
 
-	p9_client_exit();
+	p9_trans_fd_exit();
 }
 
 module_init(init_p9)
@@ -209,4 +199,3 @@ MODULE_AUTHOR("Latchesar Ionkov <lucho@ionkov.net>");
 MODULE_AUTHOR("Eric Van Hensbergen <ericvh@gmail.com>");
 MODULE_AUTHOR("Ron Minnich <rminnich@lanl.gov>");
 MODULE_LICENSE("GPL");
-MODULE_DESCRIPTION("Plan 9 Resource Sharing Support (9P2000)");

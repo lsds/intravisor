@@ -161,11 +161,9 @@
 			};
 
 			timer2: dual-timer@2000 {
-				compatible = "arm,sp804", "arm,primecell";
+				compatible = "arm,sp804";
 				reg = <0x2000 0x1000>;
-				clocks = <&sysclk>, <&sysclk>, <&sysclk>;
-				clock-names = "timer0clk", "timer1clk",
-					       "apb_pclk";
+				clocks = <&sysclk>;
 				interrupts = <10>;
 				status = "disabled";
 			};
@@ -173,7 +171,7 @@
 			uart0: serial@4000 {
 				compatible = "arm,mps2-uart";
 				reg = <0x4000 0x1000>;
-				interrupts = <0>, <1>, <12>;
+				interrupts = <0 1 12>;
 				clocks = <&sysclk>;
 				status = "disabled";
 			};
@@ -181,7 +179,7 @@
 			uart1: serial@5000 {
 				compatible = "arm,mps2-uart";
 				reg = <0x5000 0x1000>;
-				interrupts = <2>, <3>, <12>;
+				interrupts = <2 3 12>;
 				clocks = <&sysclk>;
 				status = "disabled";
 			};
@@ -189,7 +187,7 @@
 			uart2: serial@6000 {
 				compatible = "arm,mps2-uart";
 				reg = <0x6000 0x1000>;
-				interrupts = <4>, <5>, <12>;
+				interrupts = <4 5 12>;
 				clocks = <&sysclk>;
 				status = "disabled";
 			};
@@ -199,8 +197,8 @@
 				arm,primecell-periphid = <0x00141805>;
 				reg = <0x8000 0x1000>;
 				interrupts = <0>;
-				clocks = <&sysclk>, <&sysclk>;
-				clock-names = "wdog_clk", "apb_pclk";
+				clocks = <&sysclk>;
+				clock-names = "apb_pclk";
 				status = "disabled";
 			};
 		};
@@ -216,13 +214,8 @@
 			compatible = "syscon", "simple-mfd";
 			reg = <0x8000 0x10>;
 
-			ranges = <0x0 0x8000 0x10>;
-			#address-cells = <1>;
-			#size-cells = <1>;
-
-			led@0,0 {
+			led0 {
 				compatible = "register-bit-led";
-				reg = <0x00 0x04>;
 				offset = <0x0>;
 				mask = <0x01>;
 				label = "userled:0";
@@ -230,9 +223,8 @@
 				default-state = "on";
 			};
 
-			led@0,1 {
+			led1 {
 				compatible = "register-bit-led";
-				reg = <0x00 0x04>;
 				offset = <0x0>;
 				mask = <0x02>;
 				label = "userled:1";

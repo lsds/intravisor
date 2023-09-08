@@ -30,7 +30,22 @@
 #include <linux/compiler.h>
 #include <linux/string.h>
 
-#ifdef CONFIG_OPT_LIB_FUNCTION
+#ifdef __HAVE_ARCH_MEMSET
+#ifndef CONFIG_OPT_LIB_FUNCTION
+void *memset(void *v_src, int c, __kernel_size_t n)
+{
+	char *src = v_src;
+
+	/* Truncate c to 8 bits */
+	c = (c & 0xFF);
+
+	/* Simple, byte oriented memset or the rest of count. */
+	while (n--)
+		*src++ = c;
+
+	return v_src;
+}
+#else /* CONFIG_OPT_LIB_FUNCTION */
 void *memset(void *v_src, int c, __kernel_size_t n)
 {
 	char *src = v_src;
@@ -54,11 +69,9 @@ void *memset(void *v_src, int c, __kernel_size_t n)
 		case 1:
 			*src++ = c;
 			--n;
-			fallthrough;
 		case 2:
 			*src++ = c;
 			--n;
-			fallthrough;
 		case 3:
 			*src++ = c;
 			--n;
@@ -74,21 +87,11 @@ void *memset(void *v_src, int c, __kernel_size_t n)
 	}
 
 	/* Simple, byte oriented memset or the rest of count. */
-	switch (n) {
-	case 3:
+	while (n--)
 		*src++ = c;
-		fallthrough;
-	case 2:
-		*src++ = c;
-		fallthrough;
-	case 1:
-		*src++ = c;
-		break;
-	default:
-		break;
-	}
 
 	return v_src;
 }
-EXPORT_SYMBOL(memset);
 #endif /* CONFIG_OPT_LIB_FUNCTION */
+EXPORT_SYMBOL(memset);
+#endif /* __HAVE_ARCH_MEMSET */

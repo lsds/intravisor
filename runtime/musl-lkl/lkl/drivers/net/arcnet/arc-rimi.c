@@ -33,7 +33,7 @@
 #include <linux/ioport.h>
 #include <linux/delay.h>
 #include <linux/netdevice.h>
-#include <linux/memblock.h>
+#include <linux/bootmem.h>
 #include <linux/init.h>
 #include <linux/interrupt.h>
 #include <linux/io.h>
@@ -207,8 +207,7 @@ static int __init arcrimi_found(struct net_device *dev)
 	}
 
 	/* get and check the station ID from offset 1 in shmem */
-	arcnet_set_addr(dev, arcnet_readb(lp->mem_start,
-					  COM9026_REG_R_STATION));
+	dev->dev_addr[0] = arcnet_readb(lp->mem_start, COM9026_REG_R_STATION);
 
 	arc_printk(D_NORMAL, dev, "ARCnet RIM I: station %02Xh found at IRQ %d, ShMem %lXh (%ld*%d bytes)\n",
 		   dev->dev_addr[0],
@@ -325,7 +324,7 @@ static int __init arc_rimi_init(void)
 		return -ENOMEM;
 
 	if (node && node != 0xff)
-		arcnet_set_addr(dev, node);
+		dev->dev_addr[0] = node;
 
 	dev->mem_start = io;
 	dev->irq = irq;
@@ -333,7 +332,7 @@ static int __init arc_rimi_init(void)
 		dev->irq = 9;
 
 	if (arcrimi_probe(dev)) {
-		free_arcdev(dev);
+		free_netdev(dev);
 		return -EIO;
 	}
 
@@ -350,7 +349,7 @@ static void __exit arc_rimi_exit(void)
 	iounmap(lp->mem_start);
 	release_mem_region(dev->mem_start, dev->mem_end - dev->mem_start + 1);
 	free_irq(dev->irq, dev);
-	free_arcdev(dev);
+	free_netdev(dev);
 }
 
 #ifndef MODULE
@@ -364,13 +363,10 @@ static int __init arcrimi_setup(char *s)
 	switch (ints[0]) {
 	default:		/* ERROR */
 		pr_err("Too many arguments\n");
-		fallthrough;
 	case 3:		/* Node ID */
 		node = ints[3];
-		fallthrough;
 	case 2:		/* IRQ */
 		irq = ints[2];
-		fallthrough;
 	case 1:		/* IO address */
 		io = ints[1];
 	}

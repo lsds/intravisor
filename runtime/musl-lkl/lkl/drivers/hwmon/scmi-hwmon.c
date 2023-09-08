@@ -2,7 +2,7 @@
 /*
  * System Control and Management Interface(SCMI) based hwmon sensor driver
  *
- * Copyright (C) 2018-2021 ARM Ltd.
+ * Copyright (C) 2018 ARM Ltd.
  * Sudeep Holla <sudeep.holla@arm.com>
  */
 
@@ -13,89 +13,26 @@
 #include <linux/sysfs.h>
 #include <linux/thermal.h>
 
-static const struct scmi_sensor_proto_ops *sensor_ops;
-
 struct scmi_sensors {
-	const struct scmi_protocol_handle *ph;
+	const struct scmi_handle *handle;
 	const struct scmi_sensor_info **info[hwmon_max];
 };
-
-struct scmi_thermal_sensor {
-	const struct scmi_protocol_handle *ph;
-	const struct scmi_sensor_info *info;
-};
-
-static inline u64 __pow10(u8 x)
-{
-	u64 r = 1;
-
-	while (x--)
-		r *= 10;
-
-	return r;
-}
-
-static int scmi_hwmon_scale(const struct scmi_sensor_info *sensor, u64 *value)
-{
-	int scale = sensor->scale;
-	u64 f;
-
-	switch (sensor->type) {
-	case TEMPERATURE_C:
-	case VOLTAGE:
-	case CURRENT:
-		scale += 3;
-		break;
-	case POWER:
-	case ENERGY:
-		scale += 6;
-		break;
-	default:
-		break;
-	}
-
-	if (scale == 0)
-		return 0;
-
-	if (abs(scale) > 19)
-		return -E2BIG;
-
-	f = __pow10(abs(scale));
-	if (scale > 0)
-		*value *= f;
-	else
-		*value = div64_u64(*value, f);
-
-	return 0;
-}
-
-static int scmi_hwmon_read_scaled_value(const struct scmi_protocol_handle *ph,
-					const struct scmi_sensor_info *sensor,
-					long *val)
-{
-	int ret;
-	u64 value;
-
-	ret = sensor_ops->reading_get(ph, sensor->id, &value);
-	if (ret)
-		return ret;
-
-	ret = scmi_hwmon_scale(sensor, &value);
-	if (!ret)
-		*val = value;
-
-	return ret;
-}
 
 static int scmi_hwmon_read(struct device *dev, enum hwmon_sensor_types type,
 			   u32 attr, int channel, long *val)
 {
+	int ret;
+	u64 value;
 	const struct scmi_sensor_info *sensor;
 	struct scmi_sensors *scmi_sensors = dev_get_drvdata(dev);
+	const struct scmi_handle *h = scmi_sensors->handle;
 
 	sensor = *(scmi_sensors->info[type] + channel);
+	ret = h->sensor_ops->reading_get(h, sensor->id, false, &value);
+	if (!ret)
+		*val = value;
 
-	return scmi_hwmon_read_scaled_value(scmi_sensors->ph, sensor, val);
+	return ret;
 }
 
 static int
@@ -119,8 +56,8 @@ scmi_hwmon_is_visible(const void *drvdata, enum hwmon_sensor_types type,
 	const struct scmi_sensors *scmi_sensors = drvdata;
 
 	sensor = *(scmi_sensors->info[type] + channel);
-	if (sensor)
-		return 0444;
+	if (sensor && sensor->name)
+		return S_IRUGO;
 
 	return 0;
 }
@@ -134,25 +71,6 @@ static const struct hwmon_ops scmi_hwmon_ops = {
 static struct hwmon_chip_info scmi_chip_info = {
 	.ops = &scmi_hwmon_ops,
 	.info = NULL,
-};
-
-static int scmi_hwmon_thermal_get_temp(struct thermal_zone_device *tz,
-				       int *temp)
-{
-	int ret;
-	long value;
-	struct scmi_thermal_sensor *th_sensor = tz->devdata;
-
-	ret = scmi_hwmon_read_scaled_value(th_sensor->ph, th_sensor->info,
-					   &value);
-	if (!ret)
-		*temp = value;
-
-	return ret;
-}
-
-static const struct thermal_zone_device_ops scmi_hwmon_thermal_ops = {
-	.get_temp = scmi_hwmon_thermal_get_temp,
 };
 
 static int scmi_hwmon_add_chan_info(struct hwmon_channel_info *scmi_hwmon_chan,
@@ -181,50 +99,14 @@ static enum hwmon_sensor_types scmi_types[] = {
 	[ENERGY] = hwmon_energy,
 };
 
-static u32 hwmon_attributes[hwmon_max] = {
+static u32 hwmon_attributes[] = {
+	[hwmon_chip] = HWMON_C_REGISTER_TZ,
 	[hwmon_temp] = HWMON_T_INPUT | HWMON_T_LABEL,
 	[hwmon_in] = HWMON_I_INPUT | HWMON_I_LABEL,
 	[hwmon_curr] = HWMON_C_INPUT | HWMON_C_LABEL,
 	[hwmon_power] = HWMON_P_INPUT | HWMON_P_LABEL,
 	[hwmon_energy] = HWMON_E_INPUT | HWMON_E_LABEL,
 };
-
-static int scmi_thermal_sensor_register(struct device *dev,
-					const struct scmi_protocol_handle *ph,
-					const struct scmi_sensor_info *sensor)
-{
-	struct scmi_thermal_sensor *th_sensor;
-	struct thermal_zone_device *tzd;
-
-	th_sensor = devm_kzalloc(dev, sizeof(*th_sensor), GFP_KERNEL);
-	if (!th_sensor)
-		return -ENOMEM;
-
-	th_sensor->ph = ph;
-	th_sensor->info = sensor;
-
-	/*
-	 * Try to register a temperature sensor with the Thermal Framework:
-	 * skip sensors not defined as part of any thermal zone (-ENODEV) but
-	 * report any other errors related to misconfigured zones/sensors.
-	 */
-	tzd = devm_thermal_of_zone_register(dev, th_sensor->info->id, th_sensor,
-					    &scmi_hwmon_thermal_ops);
-	if (IS_ERR(tzd)) {
-		devm_kfree(dev, th_sensor);
-
-		if (PTR_ERR(tzd) != -ENODEV)
-			return PTR_ERR(tzd);
-
-		dev_dbg(dev, "Sensor '%s' not attached to any thermal zone.\n",
-			sensor->name);
-	} else {
-		dev_dbg(dev, "Sensor '%s' attached to thermal zone ID:%d\n",
-			sensor->name, tzd->id);
-	}
-
-	return 0;
-}
 
 static int scmi_hwmon_probe(struct scmi_device *sdev)
 {
@@ -233,22 +115,17 @@ static int scmi_hwmon_probe(struct scmi_device *sdev)
 	enum hwmon_sensor_types type;
 	struct scmi_sensors *scmi_sensors;
 	const struct scmi_sensor_info *sensor;
-	int nr_count[hwmon_max] = {0}, nr_types = 0, nr_count_temp = 0;
+	int nr_count[hwmon_max] = {0}, nr_types = 0;
 	const struct hwmon_chip_info *chip_info;
 	struct device *hwdev, *dev = &sdev->dev;
 	struct hwmon_channel_info *scmi_hwmon_chan;
 	const struct hwmon_channel_info **ptr_scmi_ci;
 	const struct scmi_handle *handle = sdev->handle;
-	struct scmi_protocol_handle *ph;
 
-	if (!handle)
+	if (!handle || !handle->sensor_ops)
 		return -ENODEV;
 
-	sensor_ops = handle->devm_protocol_get(sdev, SCMI_PROTOCOL_SENSOR, &ph);
-	if (IS_ERR(sensor_ops))
-		return PTR_ERR(sensor_ops);
-
-	nr_sensors = sensor_ops->count_get(ph);
+	nr_sensors = handle->sensor_ops->count_get(handle);
 	if (!nr_sensors)
 		return -EIO;
 
@@ -256,10 +133,10 @@ static int scmi_hwmon_probe(struct scmi_device *sdev)
 	if (!scmi_sensors)
 		return -ENOMEM;
 
-	scmi_sensors->ph = ph;
+	scmi_sensors->handle = handle;
 
 	for (i = 0; i < nr_sensors; i++) {
-		sensor = sensor_ops->info_get(ph, i);
+		sensor = handle->sensor_ops->info_get(handle, i);
 		if (!sensor)
 			return -EINVAL;
 
@@ -278,7 +155,7 @@ static int scmi_hwmon_probe(struct scmi_device *sdev)
 	}
 
 	if (nr_count[hwmon_temp])
-		nr_count_temp = nr_count[hwmon_temp];
+		nr_count[hwmon_chip]++, nr_types++;
 
 	scmi_hwmon_chan = devm_kcalloc(dev, nr_types, sizeof(*scmi_hwmon_chan),
 				       GFP_KERNEL);
@@ -309,7 +186,7 @@ static int scmi_hwmon_probe(struct scmi_device *sdev)
 	}
 
 	for (i = nr_sensors - 1; i >= 0 ; i--) {
-		sensor = sensor_ops->info_get(ph, i);
+		sensor = handle->sensor_ops->info_get(handle, i);
 		if (!sensor)
 			continue;
 
@@ -329,35 +206,12 @@ static int scmi_hwmon_probe(struct scmi_device *sdev)
 	hwdev = devm_hwmon_device_register_with_info(dev, "scmi_sensors",
 						     scmi_sensors, chip_info,
 						     NULL);
-	if (IS_ERR(hwdev))
-		return PTR_ERR(hwdev);
 
-	for (i = 0; i < nr_count_temp; i++) {
-		int ret;
-
-		sensor = *(scmi_sensors->info[hwmon_temp] + i);
-		if (!sensor)
-			continue;
-
-		/*
-		 * Warn on any misconfiguration related to thermal zones but
-		 * bail out of probing only on memory errors.
-		 */
-		ret = scmi_thermal_sensor_register(dev, ph, sensor);
-		if (ret) {
-			if (ret == -ENOMEM)
-				return ret;
-			dev_warn(dev,
-				 "Thermal zone misconfigured for %s. err=%d\n",
-				 sensor->name, ret);
-		}
-	}
-
-	return 0;
+	return PTR_ERR_OR_ZERO(hwdev);
 }
 
 static const struct scmi_device_id scmi_id_table[] = {
-	{ SCMI_PROTOCOL_SENSOR, "hwmon" },
+	{ SCMI_PROTOCOL_SENSOR },
 	{ },
 };
 MODULE_DEVICE_TABLE(scmi, scmi_id_table);

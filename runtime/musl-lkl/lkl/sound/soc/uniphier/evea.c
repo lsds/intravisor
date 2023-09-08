@@ -54,21 +54,8 @@ struct evea_priv {
 	int switch_hp;
 };
 
-static const char * const linsw1_sel1_text[] = {
-	"LIN1", "LIN2", "LIN3"
-};
-
-static SOC_ENUM_SINGLE_DECL(linsw1_sel1_enum,
-	ALINSW1, ALINSW1_SEL1_SHIFT,
-	linsw1_sel1_text);
-
-static const struct snd_kcontrol_new linesw1_mux[] = {
-	SOC_DAPM_ENUM("Line In 1 Source", linsw1_sel1_enum),
-};
-
 static const struct snd_soc_dapm_widget evea_widgets[] = {
-	SND_SOC_DAPM_ADC("ADC", NULL, SND_SOC_NOPM, 0, 0),
-	SND_SOC_DAPM_MUX("Line In 1 Mux", SND_SOC_NOPM, 0, 0, linesw1_mux),
+	SND_SOC_DAPM_ADC("ADC", "Capture", SND_SOC_NOPM, 0, 0),
 	SND_SOC_DAPM_INPUT("LIN1_LP"),
 	SND_SOC_DAPM_INPUT("LIN1_RP"),
 	SND_SOC_DAPM_INPUT("LIN2_LP"),
@@ -76,9 +63,7 @@ static const struct snd_soc_dapm_widget evea_widgets[] = {
 	SND_SOC_DAPM_INPUT("LIN3_LP"),
 	SND_SOC_DAPM_INPUT("LIN3_RP"),
 
-	SND_SOC_DAPM_DAC("DAC HP", NULL, SND_SOC_NOPM, 0, 0),
-	SND_SOC_DAPM_DAC("DAC LO1", NULL, SND_SOC_NOPM, 0, 0),
-	SND_SOC_DAPM_DAC("DAC LO2", NULL, SND_SOC_NOPM, 0, 0),
+	SND_SOC_DAPM_DAC("DAC", "Playback", SND_SOC_NOPM, 0, 0),
 	SND_SOC_DAPM_OUTPUT("HP1_L"),
 	SND_SOC_DAPM_OUTPUT("HP1_R"),
 	SND_SOC_DAPM_OUTPUT("LO2_L"),
@@ -86,22 +71,17 @@ static const struct snd_soc_dapm_widget evea_widgets[] = {
 };
 
 static const struct snd_soc_dapm_route evea_routes[] = {
-	{ "Line In 1", NULL, "ADC" },
-	{ "ADC", NULL, "Line In 1 Mux" },
-	{ "Line In 1 Mux", "LIN1", "LIN1_LP" },
-	{ "Line In 1 Mux", "LIN1", "LIN1_RP" },
-	{ "Line In 1 Mux", "LIN2", "LIN2_LP" },
-	{ "Line In 1 Mux", "LIN2", "LIN2_RP" },
-	{ "Line In 1 Mux", "LIN3", "LIN3_LP" },
-	{ "Line In 1 Mux", "LIN3", "LIN3_RP" },
+	{ "ADC", NULL, "LIN1_LP" },
+	{ "ADC", NULL, "LIN1_RP" },
+	{ "ADC", NULL, "LIN2_LP" },
+	{ "ADC", NULL, "LIN2_RP" },
+	{ "ADC", NULL, "LIN3_LP" },
+	{ "ADC", NULL, "LIN3_RP" },
 
-	{ "DAC HP", NULL, "Headphone 1" },
-	{ "DAC LO1", NULL, "Line Out 1" },
-	{ "DAC LO2", NULL, "Line Out 2" },
-	{ "HP1_L", NULL, "DAC HP" },
-	{ "HP1_R", NULL, "DAC HP" },
-	{ "LO2_L", NULL, "DAC LO2" },
-	{ "LO2_R", NULL, "DAC LO2" },
+	{ "HP1_L", NULL, "DAC" },
+	{ "HP1_R", NULL, "DAC" },
+	{ "LO2_L", NULL, "DAC" },
+	{ "LO2_R", NULL, "DAC" },
 };
 
 static void evea_set_power_state_on(struct evea_priv *evea)
@@ -300,7 +280,16 @@ static int evea_set_switch_hp(struct snd_kcontrol *kcontrol,
 	return evea_update_switch_hp(evea);
 }
 
+static const char * const linsw1_sel1_text[] = {
+	"LIN1", "LIN2", "LIN3"
+};
+
+static SOC_ENUM_SINGLE_DECL(linsw1_sel1_enum,
+	ALINSW1, ALINSW1_SEL1_SHIFT,
+	linsw1_sel1_text);
+
 static const struct snd_kcontrol_new evea_controls[] = {
+	SOC_ENUM("Line Capture Source", linsw1_sel1_enum),
 	SOC_SINGLE_BOOL_EXT("Line Capture Switch", 0,
 			    evea_get_switch_lin, evea_set_switch_lin),
 	SOC_SINGLE_BOOL_EXT("Line Playback Switch", 0,
@@ -397,6 +386,7 @@ static struct snd_soc_component_driver soc_codec_evea = {
 	.idle_bias_on		= 1,
 	.use_pmdown_time	= 1,
 	.endianness		= 1,
+	.non_legacy_dai_naming	= 1,
 };
 
 static struct snd_soc_dai_driver soc_dai_evea[] = {
@@ -450,6 +440,7 @@ static const struct regmap_config evea_regmap_config = {
 static int evea_probe(struct platform_device *pdev)
 {
 	struct evea_priv *evea;
+	struct resource *res;
 	void __iomem *preg;
 	int ret;
 
@@ -473,7 +464,8 @@ static int evea_probe(struct platform_device *pdev)
 	if (IS_ERR(evea->rst_exiv))
 		return PTR_ERR(evea->rst_exiv);
 
-	preg = devm_platform_ioremap_resource(pdev, 0);
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	preg = devm_ioremap_resource(&pdev->dev, res);
 	if (IS_ERR(preg))
 		return PTR_ERR(preg);
 
@@ -550,7 +542,7 @@ static int evea_remove(struct platform_device *pdev)
 	return 0;
 }
 
-static const struct of_device_id evea_of_match[] __maybe_unused = {
+static const struct of_device_id evea_of_match[] = {
 	{ .compatible = "socionext,uniphier-evea", },
 	{}
 };

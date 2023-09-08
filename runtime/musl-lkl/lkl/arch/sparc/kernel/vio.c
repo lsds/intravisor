@@ -93,7 +93,7 @@ static int vio_device_probe(struct device *dev)
 	return drv->probe(vdev, id);
 }
 
-static void vio_device_remove(struct device *dev)
+static int vio_device_remove(struct device *dev)
 {
 	struct vio_dev *vdev = to_vio_dev(dev);
 	struct vio_driver *drv = to_vio_driver(dev->driver);
@@ -105,8 +105,10 @@ static void vio_device_remove(struct device *dev)
 		 * routines to do so at the moment. TBD
 		 */
 
-		drv->remove(vdev);
+		return drv->remove(vdev);
 	}
+
+	return 1;
 }
 
 static ssize_t devspec_show(struct device *dev,
@@ -191,7 +193,7 @@ show_pciobppath_attr(struct device *dev, struct device_attribute *attr,
 	vdev = to_vio_dev(dev);
 	dp = vdev->dp;
 
-	return scnprintf(buf, PAGE_SIZE, "%pOF\n", dp);
+	return snprintf (buf, PAGE_SIZE, "%s\n", dp->full_name);
 }
 
 static DEVICE_ATTR(obppath, S_IRUSR | S_IRGRP | S_IROTH,
@@ -364,9 +366,12 @@ static struct vio_dev *vio_create_one(struct mdesc_handle *hp, u64 mp,
 	if (parent == NULL) {
 		dp = cdev_node;
 	} else if (to_vio_dev(parent) == root_vdev) {
-		for_each_child_of_node(cdev_node, dp) {
-			if (of_node_is_type(dp, type))
+		dp = of_get_next_child(cdev_node, NULL);
+		while (dp) {
+			if (!strcmp(dp->type, type))
 				break;
+
+			dp = of_get_next_child(cdev_node, dp);
 		}
 	} else {
 		dp = to_vio_dev(parent)->dp;

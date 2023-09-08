@@ -12,8 +12,7 @@ CFLAGS	+= -std=gnu99 -Wall -Wextra -g \
 	    -Wredundant-decls \
 	    -Wcast-align \
 	    -Wsign-compare \
-	    -Wno-missing-field-initializers \
-	    -Wno-shift-negative-value
+	    -Wno-missing-field-initializers
 
 CC	:= $(CROSS_COMPILE)gcc
 

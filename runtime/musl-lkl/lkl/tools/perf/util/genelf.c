@@ -1,36 +1,41 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * genelf.c
  * Copyright (C) 2014, Google, Inc
  *
  * Contributed by:
  * 	Stephane Eranian <eranian@gmail.com>
+ *
+ * Released under the GPL v2. (and only v2, not any later version)
  */
 
 #include <sys/types.h>
+#include <stdio.h>
+#include <getopt.h>
 #include <stddef.h>
 #include <libelf.h>
 #include <string.h>
 #include <stdlib.h>
-#include <unistd.h>
 #include <inttypes.h>
+#include <limits.h>
 #include <fcntl.h>
 #include <err.h>
 #ifdef HAVE_DWARF_SUPPORT
 #include <dwarf.h>
 #endif
 
+#include "perf.h"
 #include "genelf.h"
 #include "../util/jitdump.h"
-#include <linux/compiler.h>
 
 #ifndef NT_GNU_BUILD_ID
 #define NT_GNU_BUILD_ID 3
 #endif
 
+#define JVMTI
+
 #define BUILD_ID_URANDOM /* different uuid for each run */
 
-#ifdef HAVE_LIBCRYPTO_SUPPORT
+#ifdef HAVE_LIBCRYPTO
 
 #define BUILD_ID_MD5
 #undef BUILD_ID_SHA	/* does not seem to work well when linked with Java */
@@ -41,7 +46,6 @@
 #endif
 
 #ifdef BUILD_ID_MD5
-#include <openssl/evp.h>
 #include <openssl/md5.h>
 #endif
 #endif
@@ -110,7 +114,7 @@ gen_build_id(struct buildid_note *note,
 
 	fd = open("/dev/urandom", O_RDONLY);
 	if (fd == -1)
-		err(1, "cannot access /dev/urandom for buildid");
+		err(1, "cannot access /dev/urandom for builid");
 
 	sret = read(fd, note->build_id, sz);
 
@@ -139,20 +143,15 @@ gen_build_id(struct buildid_note *note,
 static void
 gen_build_id(struct buildid_note *note, unsigned long load_addr, const void *code, size_t csize)
 {
-	EVP_MD_CTX *mdctx;
+	MD5_CTX context;
 
 	if (sizeof(note->build_id) < 16)
 		errx(1, "build_id too small for MD5");
 
-	mdctx = EVP_MD_CTX_new();
-	if (!mdctx)
-		errx(2, "failed to create EVP_MD_CTX");
-
-	EVP_DigestInit_ex(mdctx, EVP_md5(), NULL);
-	EVP_DigestUpdate(mdctx, &load_addr, sizeof(load_addr));
-	EVP_DigestUpdate(mdctx, code, csize);
-	EVP_DigestFinal_ex(mdctx, (unsigned char *)note->build_id, NULL);
-	EVP_MD_CTX_free(mdctx);
+	MD5_Init(&context);
+	MD5_Update(&context, &load_addr, sizeof(load_addr));
+	MD5_Update(&context, code, csize);
+	MD5_Final((unsigned char *)note->build_id, &context);
 }
 #endif
 
@@ -253,7 +252,6 @@ jit_write_elf(int fd, uint64_t load_addr, const char *sym,
 	Elf_Data *d;
 	Elf_Scn *scn;
 	Elf_Ehdr *ehdr;
-	Elf_Phdr *phdr;
 	Elf_Shdr *shdr;
 	uint64_t eh_frame_base_offset;
 	char *strsym = NULL;
@@ -287,19 +285,6 @@ jit_write_elf(int fd, uint64_t load_addr, const char *sym,
 	ehdr->e_entry = GEN_ELF_TEXT_OFFSET;
 	ehdr->e_version = EV_CURRENT;
 	ehdr->e_shstrndx= unwinding ? 4 : 2; /* shdr index for section name */
-
-	/*
-	 * setup program header
-	 */
-	phdr = elf_newphdr(e, 1);
-	phdr[0].p_type = PT_LOAD;
-	phdr[0].p_offset = 0;
-	phdr[0].p_vaddr = 0;
-	phdr[0].p_paddr = 0;
-	phdr[0].p_filesz = csize;
-	phdr[0].p_memsz = csize;
-	phdr[0].p_flags = PF_X | PF_R;
-	phdr[0].p_align = 8;
 
 	/*
 	 * setup text section
@@ -345,7 +330,6 @@ jit_write_elf(int fd, uint64_t load_addr, const char *sym,
 					       eh_frame_base_offset);
 		if (retval)
 			goto error;
-		retval = -1;
 	}
 
 	/*
@@ -527,3 +511,44 @@ error:
 
 	return retval;
 }
+
+#ifndef JVMTI
+
+static unsigned char x86_code[] = {
+    0xBB, 0x2A, 0x00, 0x00, 0x00, /* movl $42, %ebx */
+    0xB8, 0x01, 0x00, 0x00, 0x00, /* movl $1, %eax */
+    0xCD, 0x80            /* int $0x80 */
+};
+
+static struct options options;
+
+int main(int argc, char **argv)
+{
+	int c, fd, ret;
+
+	while ((c = getopt(argc, argv, "o:h")) != -1) {
+		switch (c) {
+		case 'o':
+			options.output = optarg;
+			break;
+		case 'h':
+			printf("Usage: genelf -o output_file [-h]\n");
+			return 0;
+		default:
+			errx(1, "unknown option");
+		}
+	}
+
+	fd = open(options.output, O_CREAT|O_TRUNC|O_RDWR, 0666);
+	if (fd == -1)
+		err(1, "cannot create file %s", options.output);
+
+	ret = jit_write_elf(fd, "main", x86_code, sizeof(x86_code));
+	close(fd);
+
+	if (ret != 0)
+		unlink(options.output);
+
+	return ret;
+}
+#endif

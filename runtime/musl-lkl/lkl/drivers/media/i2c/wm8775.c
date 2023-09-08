@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * wm8775 - driver version 0.0.1
  *
@@ -10,6 +9,16 @@
  * - Cleanup
  * - V4L2 API update
  * - sound fixes
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
  */
 
 #include <linux/module.h>
@@ -280,13 +289,14 @@ static int wm8775_probe(struct i2c_client *client,
 	return 0;
 }
 
-static void wm8775_remove(struct i2c_client *client)
+static int wm8775_remove(struct i2c_client *client)
 {
 	struct v4l2_subdev *sd = i2c_get_clientdata(client);
 	struct wm8775_state *state = to_state(sd);
 
 	v4l2_device_unregister_subdev(sd);
 	v4l2_ctrl_handler_free(&state->hdl);
+	return 0;
 }
 
 static const struct i2c_device_id wm8775_id[] = {

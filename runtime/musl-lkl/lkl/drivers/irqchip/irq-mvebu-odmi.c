@@ -171,7 +171,8 @@ static int __init mvebu_odmi_init(struct device_node *node,
 	if (!odmis)
 		return -ENOMEM;
 
-	odmis_bm = bitmap_zalloc(odmis_count * NODMIS_PER_FRAME, GFP_KERNEL);
+	odmis_bm = kcalloc(BITS_TO_LONGS(odmis_count * NODMIS_PER_FRAME),
+			   sizeof(long), GFP_KERNEL);
 	if (!odmis_bm) {
 		ret = -ENOMEM;
 		goto err_alloc;
@@ -226,7 +227,7 @@ err_unmap:
 		if (odmi->base && !IS_ERR(odmi->base))
 			iounmap(odmis[i].base);
 	}
-	bitmap_free(odmis_bm);
+	kfree(odmis_bm);
 err_alloc:
 	kfree(odmis);
 	return ret;

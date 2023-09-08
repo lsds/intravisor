@@ -1,7 +1,10 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright © 2009 - Maxim Levitsky
  * driver for Ricoh xD readers
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 
 #define DRV_NAME "r852"
@@ -42,6 +45,7 @@ static inline void r852_write_reg(struct r852_device *dev,
 						int address, uint8_t value)
 {
 	writeb(value, dev->mmio + address);
+	mmiowb();
 }
 
 
@@ -57,6 +61,7 @@ static inline void r852_write_reg_dword(struct r852_device *dev,
 							int address, uint32_t value)
 {
 	writel(cpu_to_le32(value), dev->mmio + address);
+	mmiowb();
 }
 
 /* returns pointer to our private structure */
@@ -146,9 +151,8 @@ static void r852_dma_done(struct r852_device *dev, int error)
 	dev->dma_stage = 0;
 
 	if (dev->phys_dma_addr && dev->phys_dma_addr != dev->phys_bounce_buffer)
-		dma_unmap_single(&dev->pci_dev->dev, dev->phys_dma_addr,
-			R852_DMA_LEN,
-			dev->dma_dir ? DMA_FROM_DEVICE : DMA_TO_DEVICE);
+		pci_unmap_single(dev->pci_dev, dev->phys_dma_addr, R852_DMA_LEN,
+			dev->dma_dir ? PCI_DMA_FROMDEVICE : PCI_DMA_TODEVICE);
 }
 
 /*
@@ -193,10 +197,11 @@ static void r852_do_dma(struct r852_device *dev, uint8_t *buf, int do_read)
 		bounce = 1;
 
 	if (!bounce) {
-		dev->phys_dma_addr = dma_map_single(&dev->pci_dev->dev, buf,
+		dev->phys_dma_addr = pci_map_single(dev->pci_dev, (void *)buf,
 			R852_DMA_LEN,
-			do_read ? DMA_FROM_DEVICE : DMA_TO_DEVICE);
-		if (dma_mapping_error(&dev->pci_dev->dev, dev->phys_dma_addr))
+			(do_read ? PCI_DMA_FROMDEVICE : PCI_DMA_TODEVICE));
+
+		if (pci_dma_mapping_error(dev->pci_dev, dev->phys_dma_addr))
 			bounce = 1;
 	}
 
@@ -227,9 +232,9 @@ static void r852_do_dma(struct r852_device *dev, uint8_t *buf, int do_read)
 /*
  * Program data lines of the nand chip to send data to it
  */
-static void r852_write_buf(struct nand_chip *chip, const uint8_t *buf, int len)
+static void r852_write_buf(struct mtd_info *mtd, const uint8_t *buf, int len)
 {
-	struct r852_device *dev = r852_get_dev(nand_to_mtd(chip));
+	struct r852_device *dev = r852_get_dev(mtd);
 	uint32_t reg;
 
 	/* Don't allow any access to hardware if we suspect card removal */
@@ -261,9 +266,9 @@ static void r852_write_buf(struct nand_chip *chip, const uint8_t *buf, int len)
 /*
  * Read data lines of the nand chip to retrieve data
  */
-static void r852_read_buf(struct nand_chip *chip, uint8_t *buf, int len)
+static void r852_read_buf(struct mtd_info *mtd, uint8_t *buf, int len)
 {
-	struct r852_device *dev = r852_get_dev(nand_to_mtd(chip));
+	struct r852_device *dev = r852_get_dev(mtd);
 	uint32_t reg;
 
 	if (dev->card_unstable) {
@@ -298,9 +303,9 @@ static void r852_read_buf(struct nand_chip *chip, uint8_t *buf, int len)
 /*
  * Read one byte from nand chip
  */
-static uint8_t r852_read_byte(struct nand_chip *chip)
+static uint8_t r852_read_byte(struct mtd_info *mtd)
 {
-	struct r852_device *dev = r852_get_dev(nand_to_mtd(chip));
+	struct r852_device *dev = r852_get_dev(mtd);
 
 	/* Same problem as in r852_read_buf.... */
 	if (dev->card_unstable)
@@ -312,9 +317,9 @@ static uint8_t r852_read_byte(struct nand_chip *chip)
 /*
  * Control several chip lines & send commands
  */
-static void r852_cmdctl(struct nand_chip *chip, int dat, unsigned int ctrl)
+static void r852_cmdctl(struct mtd_info *mtd, int dat, unsigned int ctrl)
 {
-	struct r852_device *dev = r852_get_dev(nand_to_mtd(chip));
+	struct r852_device *dev = r852_get_dev(mtd);
 
 	if (dev->card_unstable)
 		return;
@@ -357,17 +362,18 @@ static void r852_cmdctl(struct nand_chip *chip, int dat, unsigned int ctrl)
  * Wait till card is ready.
  * based on nand_wait, but returns errors on DMA error
  */
-static int r852_wait(struct nand_chip *chip)
+static int r852_wait(struct mtd_info *mtd, struct nand_chip *chip)
 {
 	struct r852_device *dev = nand_get_controller_data(chip);
 
 	unsigned long timeout;
 	u8 status;
 
-	timeout = jiffies + msecs_to_jiffies(400);
+	timeout = jiffies + (chip->state == FL_ERASING ?
+		msecs_to_jiffies(400) : msecs_to_jiffies(20));
 
 	while (time_before(jiffies, timeout))
-		if (chip->legacy.dev_ready(chip))
+		if (chip->dev_ready(mtd))
 			break;
 
 	nand_status_op(chip, &status);
@@ -384,9 +390,9 @@ static int r852_wait(struct nand_chip *chip)
  * Check if card is ready
  */
 
-static int r852_ready(struct nand_chip *chip)
+static int r852_ready(struct mtd_info *mtd)
 {
-	struct r852_device *dev = r852_get_dev(nand_to_mtd(chip));
+	struct r852_device *dev = r852_get_dev(mtd);
 	return !(r852_read_reg(dev, R852_CARD_STA) & R852_CARD_STA_BUSY);
 }
 
@@ -395,9 +401,9 @@ static int r852_ready(struct nand_chip *chip)
  * Set ECC engine mode
 */
 
-static void r852_ecc_hwctl(struct nand_chip *chip, int mode)
+static void r852_ecc_hwctl(struct mtd_info *mtd, int mode)
 {
-	struct r852_device *dev = r852_get_dev(nand_to_mtd(chip));
+	struct r852_device *dev = r852_get_dev(mtd);
 
 	if (dev->card_unstable)
 		return;
@@ -427,10 +433,10 @@ static void r852_ecc_hwctl(struct nand_chip *chip, int mode)
  * Calculate ECC, only used for writes
  */
 
-static int r852_ecc_calculate(struct nand_chip *chip, const uint8_t *dat,
-			      uint8_t *ecc_code)
+static int r852_ecc_calculate(struct mtd_info *mtd, const uint8_t *dat,
+							uint8_t *ecc_code)
 {
-	struct r852_device *dev = r852_get_dev(nand_to_mtd(chip));
+	struct r852_device *dev = r852_get_dev(mtd);
 	struct sm_oob *oob = (struct sm_oob *)ecc_code;
 	uint32_t ecc1, ecc2;
 
@@ -459,14 +465,14 @@ static int r852_ecc_calculate(struct nand_chip *chip, const uint8_t *dat,
  * Correct the data using ECC, hw did almost everything for us
  */
 
-static int r852_ecc_correct(struct nand_chip *chip, uint8_t *dat,
-			    uint8_t *read_ecc, uint8_t *calc_ecc)
+static int r852_ecc_correct(struct mtd_info *mtd, uint8_t *dat,
+				uint8_t *read_ecc, uint8_t *calc_ecc)
 {
 	uint32_t ecc_reg;
 	uint8_t ecc_status, err_byte;
 	int i, error = 0;
 
-	struct r852_device *dev = r852_get_dev(nand_to_mtd(chip));
+	struct r852_device *dev = r852_get_dev(mtd);
 
 	if (dev->card_unstable)
 		return 0;
@@ -515,10 +521,9 @@ exit:
  * This is copy of nand_read_oob_std
  * nand_read_oob_syndrome assumes we can send column address - we can't
  */
-static int r852_read_oob(struct nand_chip *chip, int page)
+static int r852_read_oob(struct mtd_info *mtd, struct nand_chip *chip,
+			     int page)
 {
-	struct mtd_info *mtd = nand_to_mtd(chip);
-
 	return nand_read_oob_op(chip, page, 0, chip->oob_poi, mtd->oobsize);
 }
 
@@ -583,8 +588,8 @@ static void r852_update_card_detect(struct r852_device *dev)
 	r852_write_reg(dev, R852_CARD_IRQ_ENABLE, card_detect_reg);
 }
 
-static ssize_t media_type_show(struct device *sys_dev,
-			       struct device_attribute *attr, char *buf)
+static ssize_t r852_media_type_show(struct device *sys_dev,
+			struct device_attribute *attr, char *buf)
 {
 	struct mtd_info *mtd = container_of(sys_dev, struct mtd_info, dev);
 	struct r852_device *dev = r852_get_dev(mtd);
@@ -593,7 +598,8 @@ static ssize_t media_type_show(struct device *sys_dev,
 	strcpy(buf, data);
 	return strlen(data);
 }
-static DEVICE_ATTR_RO(media_type);
+
+static DEVICE_ATTR(media_type, S_IRUGO, r852_media_type_show, NULL);
 
 
 /* Detect properties of card in slot */
@@ -630,7 +636,7 @@ static int r852_register_nand_device(struct r852_device *dev)
 {
 	struct mtd_info *mtd = nand_to_mtd(dev->chip);
 
-	WARN_ON(dev->card_registered);
+	WARN_ON(dev->card_registred);
 
 	mtd->dev.parent = &dev->pci_dev->dev;
 
@@ -647,11 +653,10 @@ static int r852_register_nand_device(struct r852_device *dev)
 		goto error3;
 	}
 
-	dev->card_registered = 1;
+	dev->card_registred = 1;
 	return 0;
 error3:
-	WARN_ON(mtd_device_unregister(nand_to_mtd(dev->chip)));
-	nand_cleanup(dev->chip);
+	nand_release(mtd);
 error1:
 	/* Force card redetect */
 	dev->card_detected = 0;
@@ -666,14 +671,13 @@ static void r852_unregister_nand_device(struct r852_device *dev)
 {
 	struct mtd_info *mtd = nand_to_mtd(dev->chip);
 
-	if (!dev->card_registered)
+	if (!dev->card_registred)
 		return;
 
 	device_remove_file(&mtd->dev, &dev_attr_media_type);
-	WARN_ON(mtd_device_unregister(mtd));
-	nand_cleanup(dev->chip);
+	nand_release(mtd);
 	r852_engine_disable(dev);
-	dev->card_registered = 0;
+	dev->card_registred = 0;
 }
 
 /* Card state updater */
@@ -687,7 +691,7 @@ static void r852_card_detect_work(struct work_struct *work)
 	dev->card_unstable = 0;
 
 	/* False alarm */
-	if (dev->card_detected == dev->card_registered)
+	if (dev->card_detected == dev->card_registred)
 		goto exit;
 
 	/* Read media properties */
@@ -723,9 +727,10 @@ static irqreturn_t r852_irq(int irq, void *data)
 	struct r852_device *dev = (struct r852_device *)data;
 
 	uint8_t card_status, dma_status;
+	unsigned long flags;
 	irqreturn_t ret = IRQ_NONE;
 
-	spin_lock(&dev->irqlock);
+	spin_lock_irqsave(&dev->irqlock, flags);
 
 	/* handle card detection interrupts first */
 	card_status = r852_read_reg(dev, R852_CARD_IRQ_STA);
@@ -811,32 +816,9 @@ static irqreturn_t r852_irq(int irq, void *data)
 		dbg("strange card status = %x", card_status);
 
 out:
-	spin_unlock(&dev->irqlock);
+	spin_unlock_irqrestore(&dev->irqlock, flags);
 	return ret;
 }
-
-static int r852_attach_chip(struct nand_chip *chip)
-{
-	if (chip->ecc.engine_type != NAND_ECC_ENGINE_TYPE_ON_HOST)
-		return 0;
-
-	chip->ecc.placement = NAND_ECC_PLACEMENT_INTERLEAVED;
-	chip->ecc.size = R852_DMA_LEN;
-	chip->ecc.bytes = SM_OOB_SIZE;
-	chip->ecc.strength = 2;
-	chip->ecc.hwctl = r852_ecc_hwctl;
-	chip->ecc.calculate = r852_ecc_calculate;
-	chip->ecc.correct = r852_ecc_correct;
-
-	/* TODO: hack */
-	chip->ecc.read_oob = r852_read_oob;
-
-	return 0;
-}
-
-static const struct nand_controller_ops r852_ops = {
-	.attach_chip = r852_attach_chip,
-};
 
 static int  r852_probe(struct pci_dev *pci_dev, const struct pci_device_id *id)
 {
@@ -852,7 +834,7 @@ static int  r852_probe(struct pci_dev *pci_dev, const struct pci_device_id *id)
 
 	pci_set_master(pci_dev);
 
-	error = dma_set_mask(&pci_dev->dev, DMA_BIT_MASK(32));
+	error = pci_set_dma_mask(pci_dev, DMA_BIT_MASK(32));
 	if (error)
 		goto error2;
 
@@ -870,14 +852,26 @@ static int  r852_probe(struct pci_dev *pci_dev, const struct pci_device_id *id)
 		goto error4;
 
 	/* commands */
-	chip->legacy.cmd_ctrl = r852_cmdctl;
-	chip->legacy.waitfunc = r852_wait;
-	chip->legacy.dev_ready = r852_ready;
+	chip->cmd_ctrl = r852_cmdctl;
+	chip->waitfunc = r852_wait;
+	chip->dev_ready = r852_ready;
 
 	/* I/O */
-	chip->legacy.read_byte = r852_read_byte;
-	chip->legacy.read_buf = r852_read_buf;
-	chip->legacy.write_buf = r852_write_buf;
+	chip->read_byte = r852_read_byte;
+	chip->read_buf = r852_read_buf;
+	chip->write_buf = r852_write_buf;
+
+	/* ecc */
+	chip->ecc.mode = NAND_ECC_HW_SYNDROME;
+	chip->ecc.size = R852_DMA_LEN;
+	chip->ecc.bytes = SM_OOB_SIZE;
+	chip->ecc.strength = 2;
+	chip->ecc.hwctl = r852_ecc_hwctl;
+	chip->ecc.calculate = r852_ecc_calculate;
+	chip->ecc.correct = r852_ecc_correct;
+
+	/* TODO: hack */
+	chip->ecc.read_oob = r852_read_oob;
 
 	/* init our device structure */
 	dev = kzalloc(sizeof(struct r852_device), GFP_KERNEL);
@@ -890,12 +884,8 @@ static int  r852_probe(struct pci_dev *pci_dev, const struct pci_device_id *id)
 	dev->pci_dev = pci_dev;
 	pci_set_drvdata(pci_dev, dev);
 
-	nand_controller_init(&dev->controller);
-	dev->controller.ops = &r852_ops;
-	chip->controller = &dev->controller;
-
-	dev->bounce_buffer = dma_alloc_coherent(&pci_dev->dev, R852_DMA_LEN,
-		&dev->phys_bounce_buffer, GFP_KERNEL);
+	dev->bounce_buffer = pci_alloc_consistent(pci_dev, R852_DMA_LEN,
+		&dev->phys_bounce_buffer);
 
 	if (!dev->bounce_buffer)
 		goto error6;
@@ -955,8 +945,8 @@ error9:
 error8:
 	pci_iounmap(pci_dev, dev->mmio);
 error7:
-	dma_free_coherent(&pci_dev->dev, R852_DMA_LEN, dev->bounce_buffer,
-			  dev->phys_bounce_buffer);
+	pci_free_consistent(pci_dev, R852_DMA_LEN,
+		dev->bounce_buffer, dev->phys_bounce_buffer);
 error6:
 	kfree(dev);
 error5:
@@ -989,8 +979,8 @@ static void r852_remove(struct pci_dev *pci_dev)
 	/* Cleanup */
 	kfree(dev->tmp_buffer);
 	pci_iounmap(pci_dev, dev->mmio);
-	dma_free_coherent(&pci_dev->dev, R852_DMA_LEN, dev->bounce_buffer,
-			  dev->phys_bounce_buffer);
+	pci_free_consistent(pci_dev, R852_DMA_LEN,
+		dev->bounce_buffer, dev->phys_bounce_buffer);
 
 	kfree(dev->chip);
 	kfree(dev);
@@ -1013,7 +1003,7 @@ static void r852_shutdown(struct pci_dev *pci_dev)
 #ifdef CONFIG_PM_SLEEP
 static int r852_suspend(struct device *device)
 {
-	struct r852_device *dev = dev_get_drvdata(device);
+	struct r852_device *dev = pci_get_drvdata(to_pci_dev(device));
 
 	if (dev->ctlreg & R852_CTL_CARDENABLE)
 		return -EBUSY;
@@ -1034,7 +1024,8 @@ static int r852_suspend(struct device *device)
 
 static int r852_resume(struct device *device)
 {
-	struct r852_device *dev = dev_get_drvdata(device);
+	struct r852_device *dev = pci_get_drvdata(to_pci_dev(device));
+	struct mtd_info *mtd = nand_to_mtd(dev->chip);
 
 	r852_disable_irqs(dev);
 	r852_card_update_present(dev);
@@ -1042,7 +1033,7 @@ static int r852_resume(struct device *device)
 
 
 	/* If card status changed, just do the work */
-	if (dev->card_detected != dev->card_registered) {
+	if (dev->card_detected != dev->card_registred) {
 		dbg("card was %s during low power state",
 			dev->card_detected ? "added" : "removed");
 
@@ -1052,11 +1043,11 @@ static int r852_resume(struct device *device)
 	}
 
 	/* Otherwise, initialize the card */
-	if (dev->card_registered) {
+	if (dev->card_registred) {
 		r852_engine_enable(dev);
-		nand_select_target(dev->chip, 0);
+		dev->chip->select_chip(mtd, 0);
 		nand_reset_op(dev->chip);
-		nand_deselect_target(dev->chip);
+		dev->chip->select_chip(mtd, -1);
 	}
 
 	/* Program card detection IRQ */

@@ -137,13 +137,14 @@ static int ocfs2_read_quota_block(struct inode *inode, u64 v_block,
 	int rc = 0;
 	struct buffer_head *tmp = *bh;
 
-	if (i_size_read(inode) >> inode->i_sb->s_blocksize_bits <= v_block)
-		return ocfs2_error(inode->i_sb,
-				"Quota file %llu is probably corrupted! Requested to read block %Lu but file has size only %Lu\n",
-				(unsigned long long)OCFS2_I(inode)->ip_blkno,
-				(unsigned long long)v_block,
-				(unsigned long long)i_size_read(inode));
-
+	if (i_size_read(inode) >> inode->i_sb->s_blocksize_bits <= v_block) {
+		ocfs2_error(inode->i_sb,
+			    "Quota file %llu is probably corrupted! Requested to read block %Lu but file has size only %Lu\n",
+			    (unsigned long long)OCFS2_I(inode)->ip_blkno,
+			    (unsigned long long)v_block,
+			    (unsigned long long)i_size_read(inode));
+		return -EIO;
+	}
 	rc = ocfs2_read_virt_blocks(inode, v_block, 1, &tmp, 0,
 				    ocfs2_validate_quota_block);
 	if (rc)
@@ -921,19 +922,19 @@ static struct ocfs2_quota_chunk *ocfs2_find_free_entry(struct super_block *sb,
 {
 	struct mem_dqinfo *info = sb_dqinfo(sb, type);
 	struct ocfs2_mem_dqinfo *oinfo = info->dqi_priv;
-	struct ocfs2_quota_chunk *chunk = NULL, *iter;
+	struct ocfs2_quota_chunk *chunk;
 	struct ocfs2_local_disk_chunk *dchunk;
 	int found = 0, len;
 
-	list_for_each_entry(iter, &oinfo->dqi_chunk, qc_chunk) {
+	list_for_each_entry(chunk, &oinfo->dqi_chunk, qc_chunk) {
 		dchunk = (struct ocfs2_local_disk_chunk *)
-						iter->qc_headerbh->b_data;
+						chunk->qc_headerbh->b_data;
 		if (le32_to_cpu(dchunk->dqc_free) > 0) {
-			chunk = iter;
+			found = 1;
 			break;
 		}
 	}
-	if (!chunk)
+	if (!found)
 		return NULL;
 
 	if (chunk->qc_num < oinfo->dqi_chunks - 1) {

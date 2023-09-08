@@ -1,5 +1,15 @@
-// SPDX-License-Identifier: GPL-2.0-only
-// Copyright (C) 2015-2017 Broadcom
+/*
+ * Copyright (C) 2015-2017 Broadcom
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License as
+ * published by the Free Software Foundation version 2.
+ *
+ * This program is distributed "as is" WITHOUT ANY WARRANTY of any
+ * kind, whether express or implied; without even the implied warranty
+ * of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ */
 
 #include <linux/bitops.h>
 #include <linux/gpio/driver.h>
@@ -82,9 +92,9 @@ brcmstb_gpio_get_active_irqs(struct brcmstb_gpio_bank *bank)
 	unsigned long status;
 	unsigned long flags;
 
-	raw_spin_lock_irqsave(&bank->gc.bgpio_lock, flags);
+	spin_lock_irqsave(&bank->gc.bgpio_lock, flags);
 	status = __brcmstb_gpio_get_active_irqs(bank);
-	raw_spin_unlock_irqrestore(&bank->gc.bgpio_lock, flags);
+	spin_unlock_irqrestore(&bank->gc.bgpio_lock, flags);
 
 	return status;
 }
@@ -104,14 +114,14 @@ static void brcmstb_gpio_set_imask(struct brcmstb_gpio_bank *bank,
 	u32 imask;
 	unsigned long flags;
 
-	raw_spin_lock_irqsave(&gc->bgpio_lock, flags);
+	spin_lock_irqsave(&gc->bgpio_lock, flags);
 	imask = gc->read_reg(priv->reg_base + GIO_MASK(bank->id));
 	if (enable)
 		imask |= mask;
 	else
 		imask &= ~mask;
 	gc->write_reg(priv->reg_base + GIO_MASK(bank->id), imask);
-	raw_spin_unlock_irqrestore(&gc->bgpio_lock, flags);
+	spin_unlock_irqrestore(&gc->bgpio_lock, flags);
 }
 
 static int brcmstb_gpio_to_irq(struct gpio_chip *gc, unsigned offset)
@@ -194,7 +204,7 @@ static int brcmstb_gpio_irq_set_type(struct irq_data *d, unsigned int type)
 		return -EINVAL;
 	}
 
-	raw_spin_lock_irqsave(&bank->gc.bgpio_lock, flags);
+	spin_lock_irqsave(&bank->gc.bgpio_lock, flags);
 
 	iedge_config = bank->gc.read_reg(priv->reg_base +
 			GIO_EC(bank->id)) & ~mask;
@@ -210,7 +220,7 @@ static int brcmstb_gpio_irq_set_type(struct irq_data *d, unsigned int type)
 	bank->gc.write_reg(priv->reg_base + GIO_LEVEL(bank->id),
 			ilevel | level);
 
-	raw_spin_unlock_irqrestore(&bank->gc.bgpio_lock, flags);
+	spin_unlock_irqrestore(&bank->gc.bgpio_lock, flags);
 	return 0;
 }
 
@@ -267,14 +277,15 @@ static void brcmstb_gpio_irq_bank_handler(struct brcmstb_gpio_bank *bank)
 	unsigned long status;
 
 	while ((status = brcmstb_gpio_get_active_irqs(bank))) {
-		unsigned int offset;
+		unsigned int irq, offset;
 
 		for_each_set_bit(offset, &status, 32) {
 			if (offset >= bank->width)
 				dev_warn(&priv->pdev->dev,
 					 "IRQ for invalid GPIO (bank=%d, offset=%d)\n",
 					 bank->id, offset);
-			generic_handle_domain_irq(domain, hwbase + offset);
+			irq = irq_linear_revmap(domain, hwbase + offset);
+			generic_handle_irq(irq);
 		}
 	}
 }
@@ -375,7 +386,12 @@ static int brcmstb_gpio_remove(struct platform_device *pdev)
 {
 	struct brcmstb_gpio_priv *priv = platform_get_drvdata(pdev);
 	struct brcmstb_gpio_bank *bank;
-	int offset, virq;
+	int offset, ret = 0, virq;
+
+	if (!priv) {
+		dev_err(&pdev->dev, "called %s without drvdata!\n", __func__);
+		return -EFAULT;
+	}
 
 	if (priv->parent_irq > 0)
 		irq_set_chained_handler_and_data(priv->parent_irq, NULL, NULL);
@@ -396,7 +412,7 @@ static int brcmstb_gpio_remove(struct platform_device *pdev)
 	list_for_each_entry(bank, &priv->bank_list, node)
 		gpiochip_remove(&bank->gc);
 
-	return 0;
+	return ret;
 }
 
 static int brcmstb_gpio_of_xlate(struct gpio_chip *gc,
@@ -620,8 +636,10 @@ static int brcmstb_gpio_probe(struct platform_device *pdev)
 
 	if (of_property_read_bool(np, "interrupt-controller")) {
 		priv->parent_irq = platform_get_irq(pdev, 0);
-		if (priv->parent_irq <= 0)
+		if (priv->parent_irq <= 0) {
+			dev_err(dev, "Couldn't get IRQ");
 			return -ENOENT;
+		}
 	} else {
 		priv->parent_irq = -ENOENT;
 	}
@@ -645,18 +663,6 @@ static int brcmstb_gpio_probe(struct platform_device *pdev)
 			bank_width) {
 		struct brcmstb_gpio_bank *bank;
 		struct gpio_chip *gc;
-
-		/*
-		 * If bank_width is 0, then there is an empty bank in the
-		 * register block. Special handling for this case.
-		 */
-		if (bank_width == 0) {
-			dev_dbg(dev, "Width 0 found: Empty bank @ %d\n",
-				num_banks);
-			num_banks++;
-			gpio_base += MAX_GPIO_PER_BANK;
-			continue;
-		}
 
 		bank = devm_kzalloc(dev, sizeof(*bank), GFP_KERNEL);
 		if (!bank) {
@@ -688,8 +694,9 @@ static int brcmstb_gpio_probe(struct platform_device *pdev)
 			goto fail;
 		}
 
+		gc->of_node = np;
 		gc->owner = THIS_MODULE;
-		gc->label = devm_kasprintf(dev, GFP_KERNEL, "%pOF", np);
+		gc->label = devm_kasprintf(dev, GFP_KERNEL, "%pOF", dev->of_node);
 		if (!gc->label) {
 			err = -ENOMEM;
 			goto fail;
@@ -699,7 +706,6 @@ static int brcmstb_gpio_probe(struct platform_device *pdev)
 		gc->of_xlate = brcmstb_gpio_of_xlate;
 		/* not all ngpio lines are valid, will use bank width later */
 		gc->ngpio = MAX_GPIO_PER_BANK;
-		gc->offset = bank->id * MAX_GPIO_PER_BANK;
 		if (priv->parent_irq > 0)
 			gc->to_irq = brcmstb_gpio_to_irq;
 
@@ -733,6 +739,9 @@ static int brcmstb_gpio_probe(struct platform_device *pdev)
 		if (err)
 			goto fail;
 	}
+
+	dev_info(dev, "Registered %d banks (GPIO(s): %d-%d)\n",
+			num_banks, priv->gpio_base, gpio_base - 1);
 
 	if (priv->parent_wake_irq && need_wakeup_event)
 		pm_wakeup_event(dev, 0);

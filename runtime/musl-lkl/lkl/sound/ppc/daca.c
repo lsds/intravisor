@@ -1,8 +1,21 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * PMac DACA lowlevel functions
  *
  * Copyright (c) by Takashi Iwai <tiwai@suse.de>
+ *
+ *   This program is free software; you can redistribute it and/or modify
+ *   it under the terms of the GNU General Public License as published by
+ *   the Free Software Foundation; either version 2 of the License, or
+ *   (at your option) any later version.
+ *
+ *   This program is distributed in the hope that it will be useful,
+ *   but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *   GNU General Public License for more details.
+ *
+ *   You should have received a copy of the GNU General Public License
+ *   along with this program; if not, write to the Free Software
+ *   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307 USA
  */
 
 
@@ -84,8 +97,7 @@ static int daca_get_deemphasis(struct snd_kcontrol *kcontrol,
 {
 	struct snd_pmac *chip = snd_kcontrol_chip(kcontrol);
 	struct pmac_daca *mix;
-	mix = chip->mixer_data;
-	if (!mix)
+	if (! (mix = chip->mixer_data))
 		return -ENODEV;
 	ucontrol->value.integer.value[0] = mix->deemphasis ? 1 : 0;
 	return 0;
@@ -98,8 +110,7 @@ static int daca_put_deemphasis(struct snd_kcontrol *kcontrol,
 	struct pmac_daca *mix;
 	int change;
 
-	mix = chip->mixer_data;
-	if (!mix)
+	if (! (mix = chip->mixer_data))
 		return -ENODEV;
 	change = mix->deemphasis != ucontrol->value.integer.value[0];
 	if (change) {
@@ -125,8 +136,7 @@ static int daca_get_volume(struct snd_kcontrol *kcontrol,
 {
 	struct snd_pmac *chip = snd_kcontrol_chip(kcontrol);
 	struct pmac_daca *mix;
-	mix = chip->mixer_data;
-	if (!mix)
+	if (! (mix = chip->mixer_data))
 		return -ENODEV;
 	ucontrol->value.integer.value[0] = mix->left_vol;
 	ucontrol->value.integer.value[1] = mix->right_vol;
@@ -141,8 +151,7 @@ static int daca_put_volume(struct snd_kcontrol *kcontrol,
 	unsigned int vol[2];
 	int change;
 
-	mix = chip->mixer_data;
-	if (!mix)
+	if (! (mix = chip->mixer_data))
 		return -ENODEV;
 	vol[0] = ucontrol->value.integer.value[0];
 	vol[1] = ucontrol->value.integer.value[1];
@@ -166,8 +175,7 @@ static int daca_get_amp(struct snd_kcontrol *kcontrol,
 {
 	struct snd_pmac *chip = snd_kcontrol_chip(kcontrol);
 	struct pmac_daca *mix;
-	mix = chip->mixer_data;
-	if (!mix)
+	if (! (mix = chip->mixer_data))
 		return -ENODEV;
 	ucontrol->value.integer.value[0] = mix->amp_on ? 1 : 0;
 	return 0;
@@ -180,8 +188,7 @@ static int daca_put_amp(struct snd_kcontrol *kcontrol,
 	struct pmac_daca *mix;
 	int change;
 
-	mix = chip->mixer_data;
-	if (!mix)
+	if (! (mix = chip->mixer_data))
 		return -ENODEV;
 	change = mix->amp_on != ucontrol->value.integer.value[0];
 	if (change) {
@@ -192,7 +199,7 @@ static int daca_put_amp(struct snd_kcontrol *kcontrol,
 	return change;
 }
 
-static const struct snd_kcontrol_new daca_mixers[] = {
+static struct snd_kcontrol_new daca_mixers[] = {
 	{ .iface = SNDRV_CTL_ELEM_IFACE_MIXER,
 	  .name = "Deemphasis Switch",
 	  .info = daca_info_deemphasis,
@@ -254,8 +261,7 @@ int snd_pmac_daca_init(struct snd_pmac *chip)
 	mix->i2c.addr = DACA_I2C_ADDR;
 	mix->i2c.init_client = daca_init_client;
 	mix->i2c.name = "DACA";
-	err = snd_pmac_keywest_init(&mix->i2c);
-	if (err < 0)
+	if ((err = snd_pmac_keywest_init(&mix->i2c)) < 0)
 		return err;
 
 	/*
@@ -264,8 +270,7 @@ int snd_pmac_daca_init(struct snd_pmac *chip)
 	strcpy(chip->card->mixername, "PowerMac DACA");
 
 	for (i = 0; i < ARRAY_SIZE(daca_mixers); i++) {
-		err = snd_ctl_add(chip->card, snd_ctl_new1(&daca_mixers[i], chip));
-		if (err < 0)
+		if ((err = snd_ctl_add(chip->card, snd_ctl_new1(&daca_mixers[i], chip))) < 0)
 			return err;
 	}
 

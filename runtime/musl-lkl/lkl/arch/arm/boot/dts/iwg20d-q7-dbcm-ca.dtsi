@@ -1,8 +1,11 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * Device Tree Source for the iWave-RZ-G1M/N Daughter Board Camera Module
  *
  * Copyright (C) 2017 Renesas Electronics Corp.
+ *
+ * This file is licensed under the terms of the GNU General Public License
+ * version 2.  This program is licensed "as is" without any warranty of any
+ * kind, whether express or implied.
  */
 
 / {
@@ -39,6 +42,7 @@
 &du {
 	pinctrl-0 = <&du_pins>;
 	pinctrl-names = "default";
+	status = "okay";
 
 	ports {
 		port@0 {
@@ -72,6 +76,8 @@
 		adi,input-depth = <8>;
 		adi,input-colorspace = "rgb";
 		adi,input-clock = "1x";
+		adi,input-style = <1>;
+		adi,input-justification = "evenly";
 
 		ports {
 			#address-cells = <1>;

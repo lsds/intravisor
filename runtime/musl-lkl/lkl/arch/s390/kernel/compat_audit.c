@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0
 #undef __s390x__
-#include <linux/audit_arch.h>
 #include <asm/unistd.h>
 #include "audit.h"
 
@@ -33,16 +32,14 @@ int s390_classify_syscall(unsigned syscall)
 {
 	switch(syscall) {
 	case __NR_open:
-		return AUDITSC_OPEN;
+		return 2;
 	case __NR_openat:
-		return AUDITSC_OPENAT;
+		return 3;
 	case __NR_socketcall:
-		return AUDITSC_SOCKETCALL;
+		return 4;
 	case __NR_execve:
-		return AUDITSC_EXECVE;
-	case __NR_openat2:
-		return AUDITSC_OPENAT2;
+		return 5;
 	default:
-		return AUDITSC_COMPAT;
+		return 1;
 	}
 }

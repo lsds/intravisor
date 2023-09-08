@@ -6,11 +6,8 @@ SoundWire Documentation
    :maxdepth: 1
 
    summary
-   stream
-   error_handling
-   locking
 
-.. only::  subproject and html
+.. only::  subproject
 
    Indices
    =======

@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * vMTRR implementation
  *
@@ -12,6 +11,9 @@
  *   Marcelo Tosatti <mtosatti@redhat.com>
  *   Paolo Bonzini <pbonzini@redhat.com>
  *   Xiao Guangrong <guangrong.xiao@linux.intel.com>
+ *
+ * This work is licensed under the terms of the GNU GPL, version 2.  See
+ * the COPYING file in the top-level directory.
  */
 
 #include <linux/kvm_host.h>
@@ -46,6 +48,11 @@ static bool msr_mtrr_valid(unsigned msr)
 	return false;
 }
 
+static bool valid_pat_type(unsigned t)
+{
+	return t < 8 && (1 << t) & 0xf3; /* 0, 1, 4, 5, 6, 7 */
+}
+
 static bool valid_mtrr_type(unsigned t)
 {
 	return t < 8 && (1 << t) & 0x73; /* 0, 1, 4, 5, 6 */
@@ -60,7 +67,10 @@ bool kvm_mtrr_valid(struct kvm_vcpu *vcpu, u32 msr, u64 data)
 		return false;
 
 	if (msr == MSR_IA32_CR_PAT) {
-		return kvm_pat_valid(data);
+		for (i = 0; i < 8; i++)
+			if (!valid_pat_type((data >> (i * 8)) & 0xff))
+				return false;
+		return true;
 	} else if (msr == MSR_MTRRdefType) {
 		if (data & ~0xcff)
 			return false;
@@ -75,7 +85,7 @@ bool kvm_mtrr_valid(struct kvm_vcpu *vcpu, u32 msr, u64 data)
 	/* variable MTRRs */
 	WARN_ON(!(msr >= 0x200 && msr < 0x200 + 2 * KVM_NR_VAR_MTRR));
 
-	mask = kvm_vcpu_reserved_gpa_bits_raw(vcpu);
+	mask = (~0ULL) << cpuid_maxphyaddr(vcpu);
 	if ((msr & 1) == 0) {
 		/* MTRR base */
 		if (!valid_mtrr_type(data & 0xff))
@@ -84,8 +94,12 @@ bool kvm_mtrr_valid(struct kvm_vcpu *vcpu, u32 msr, u64 data)
 	} else
 		/* MTRR mask */
 		mask |= 0x7ff;
+	if (data & mask) {
+		kvm_inject_gp(vcpu, 0);
+		return false;
+	}
 
-	return (data & mask) == 0;
+	return true;
 }
 EXPORT_SYMBOL_GPL(kvm_mtrr_valid);
 
@@ -188,15 +202,11 @@ static bool fixed_msr_to_seg_unit(u32 msr, int *seg, int *unit)
 		break;
 	case MSR_MTRRfix16K_80000 ... MSR_MTRRfix16K_A0000:
 		*seg = 1;
-		*unit = array_index_nospec(
-			msr - MSR_MTRRfix16K_80000,
-			MSR_MTRRfix16K_A0000 - MSR_MTRRfix16K_80000 + 1);
+		*unit = msr - MSR_MTRRfix16K_80000;
 		break;
 	case MSR_MTRRfix4K_C0000 ... MSR_MTRRfix4K_F8000:
 		*seg = 2;
-		*unit = array_index_nospec(
-			msr - MSR_MTRRfix4K_C0000,
-			MSR_MTRRfix4K_F8000 - MSR_MTRRfix4K_C0000 + 1);
+		*unit = msr - MSR_MTRRfix4K_C0000;
 		break;
 	default:
 		return false;
@@ -351,14 +361,14 @@ static void set_var_mtrr_msr(struct kvm_vcpu *vcpu, u32 msr, u64 data)
 	if (var_mtrr_range_is_valid(cur))
 		list_del(&mtrr_state->var_ranges[index].node);
 
-	/*
-	 * Set all illegal GPA bits in the mask, since those bits must
-	 * implicitly be 0.  The bits are then cleared when reading them.
+	/* Extend the mask with all 1 bits to the left, since those
+	 * bits must implicitly be 0.  The bits are then cleared
+	 * when reading them.
 	 */
 	if (!is_mtrr_mask)
 		cur->base = data;
 	else
-		cur->mask = data | kvm_vcpu_reserved_gpa_bits_raw(vcpu);
+		cur->mask = data | (-1LL << cpuid_maxphyaddr(vcpu));
 
 	/* add it to the list if it's enabled. */
 	if (var_mtrr_range_is_valid(cur)) {
@@ -426,7 +436,7 @@ int kvm_mtrr_get_msr(struct kvm_vcpu *vcpu, u32 msr, u64 *pdata)
 		else
 			*pdata = vcpu->arch.mtrr_state.var_ranges[index].mask;
 
-		*pdata &= ~kvm_vcpu_reserved_gpa_bits_raw(vcpu);
+		*pdata &= (1ULL << cpuid_maxphyaddr(vcpu)) - 1;
 	}
 
 	return 0;

@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * CM3605 Ambient Light and Proximity Sensor
  *
@@ -10,7 +9,6 @@
  */
 
 #include <linux/module.h>
-#include <linux/mod_devicetable.h>
 #include <linux/iio/iio.h>
 #include <linux/iio/sysfs.h>
 #include <linux/iio/events.h>
@@ -19,7 +17,7 @@
 #include <linux/init.h>
 #include <linux/leds.h>
 #include <linux/platform_device.h>
-#include <linux/property.h>
+#include <linux/of.h>
 #include <linux/regulator/consumer.h>
 #include <linux/gpio/consumer.h>
 #include <linux/interrupt.h>
@@ -157,9 +155,9 @@ static int cm3605_probe(struct platform_device *pdev)
 	struct cm3605 *cm3605;
 	struct iio_dev *indio_dev;
 	struct device *dev = &pdev->dev;
+	struct device_node *np = dev->of_node;
 	enum iio_chan_type ch_type;
 	u32 rset;
-	int irq;
 	int ret;
 
 	indio_dev = devm_iio_device_alloc(dev, sizeof(*cm3605));
@@ -171,7 +169,7 @@ static int cm3605_probe(struct platform_device *pdev)
 	cm3605->dev = dev;
 	cm3605->dir = IIO_EV_DIR_FALLING;
 
-	ret = device_property_read_u32(dev, "capella,aset-resistance-ohms", &rset);
+	ret = of_property_read_u32(np, "capella,aset-resistance-ohms", &rset);
 	if (ret) {
 		dev_info(dev, "no RSET specified, assuming 100K\n");
 		rset = 100000;
@@ -196,9 +194,12 @@ static int cm3605_probe(struct platform_device *pdev)
 
 	cm3605->aout = devm_iio_channel_get(dev, "aout");
 	if (IS_ERR(cm3605->aout)) {
-		ret = PTR_ERR(cm3605->aout);
-		ret = (ret == -ENODEV) ? -EPROBE_DEFER : ret;
-		return dev_err_probe(dev, ret, "failed to get AOUT ADC channel\n");
+		if (PTR_ERR(cm3605->aout) == -ENODEV) {
+			dev_err(dev, "no ADC, deferring...\n");
+			return -EPROBE_DEFER;
+		}
+		dev_err(dev, "failed to get AOUT ADC channel\n");
+		return PTR_ERR(cm3605->aout);
 	}
 	ret = iio_get_channel_type(cm3605->aout, &ch_type);
 	if (ret < 0)
@@ -209,10 +210,10 @@ static int cm3605_probe(struct platform_device *pdev)
 	}
 
 	cm3605->vdd = devm_regulator_get(dev, "vdd");
-	if (IS_ERR(cm3605->vdd))
-		return dev_err_probe(dev, PTR_ERR(cm3605->vdd),
-				     "failed to get VDD regulator\n");
-
+	if (IS_ERR(cm3605->vdd)) {
+		dev_err(dev, "failed to get VDD regulator\n");
+		return PTR_ERR(cm3605->vdd);
+	}
 	ret = regulator_enable(cm3605->vdd);
 	if (ret) {
 		dev_err(dev, "failed to enable VDD regulator\n");
@@ -221,18 +222,13 @@ static int cm3605_probe(struct platform_device *pdev)
 
 	cm3605->aset = devm_gpiod_get(dev, "aset", GPIOD_OUT_HIGH);
 	if (IS_ERR(cm3605->aset)) {
-		ret = dev_err_probe(dev, PTR_ERR(cm3605->aset), "no ASET GPIO\n");
+		dev_err(dev, "no ASET GPIO\n");
+		ret = PTR_ERR(cm3605->aset);
 		goto out_disable_vdd;
 	}
 
-	irq = platform_get_irq(pdev, 0);
-	if (irq < 0) {
-		ret = dev_err_probe(dev, irq, "failed to get irq\n");
-		goto out_disable_aset;
-	}
-
-	ret = devm_request_threaded_irq(dev, irq, cm3605_prox_irq,
-					NULL, 0, "cm3605", indio_dev);
+	ret = devm_request_threaded_irq(dev, platform_get_irq(pdev, 0),
+			cm3605_prox_irq, NULL, 0, "cm3605", indio_dev);
 	if (ret) {
 		dev_err(dev, "unable to request IRQ\n");
 		goto out_disable_aset;
@@ -242,6 +238,7 @@ static int cm3605_probe(struct platform_device *pdev)
 	led_trigger_register_simple("cm3605", &cm3605->led);
 	led_trigger_event(cm3605->led, LED_FULL);
 
+	indio_dev->dev.parent = dev;
 	indio_dev->info = &cm3605_info;
 	indio_dev->name = "cm3605";
 	indio_dev->channels = cm3605_channels;
@@ -280,7 +277,7 @@ static int cm3605_remove(struct platform_device *pdev)
 	return 0;
 }
 
-static int cm3605_pm_suspend(struct device *dev)
+static int __maybe_unused cm3605_pm_suspend(struct device *dev)
 {
 	struct iio_dev *indio_dev = dev_get_drvdata(dev);
 	struct cm3605 *cm3605 = iio_priv(indio_dev);
@@ -291,7 +288,7 @@ static int cm3605_pm_suspend(struct device *dev)
 	return 0;
 }
 
-static int cm3605_pm_resume(struct device *dev)
+static int __maybe_unused cm3605_pm_resume(struct device *dev)
 {
 	struct iio_dev *indio_dev = dev_get_drvdata(dev);
 	struct cm3605 *cm3605 = iio_priv(indio_dev);
@@ -304,8 +301,11 @@ static int cm3605_pm_resume(struct device *dev)
 
 	return 0;
 }
-static DEFINE_SIMPLE_DEV_PM_OPS(cm3605_dev_pm_ops, cm3605_pm_suspend,
-				cm3605_pm_resume);
+
+static const struct dev_pm_ops cm3605_dev_pm_ops = {
+	SET_SYSTEM_SLEEP_PM_OPS(cm3605_pm_suspend,
+				cm3605_pm_resume)
+};
 
 static const struct of_device_id cm3605_of_match[] = {
 	{.compatible = "capella,cm3605"},
@@ -317,7 +317,7 @@ static struct platform_driver cm3605_driver = {
 	.driver = {
 		.name = "cm3605",
 		.of_match_table = cm3605_of_match,
-		.pm = pm_sleep_ptr(&cm3605_dev_pm_ops),
+		.pm = &cm3605_dev_pm_ops,
 	},
 	.probe = cm3605_probe,
 	.remove = cm3605_remove,

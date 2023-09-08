@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Architecture specific sysfs attributes in /sys/kernel
  *
@@ -6,6 +5,8 @@
  *      Huang Ying <ying.huang@intel.com>
  * Copyright (C) 2013, 2013 Red Hat, Inc.
  *      Dave Young <dyoung@redhat.com>
+ *
+ * This file is released under the GPLv2
  */
 
 #include <linux/kobject.h>
@@ -91,41 +92,21 @@ static int get_setup_data_paddr(int nr, u64 *paddr)
 
 static int __init get_setup_data_size(int nr, size_t *size)
 {
-	u64 pa_data = boot_params.hdr.setup_data, pa_next;
-	struct setup_indirect *indirect;
-	struct setup_data *data;
 	int i = 0;
-	u32 len;
+	struct setup_data *data;
+	u64 pa_data = boot_params.hdr.setup_data;
 
 	while (pa_data) {
 		data = memremap(pa_data, sizeof(*data), MEMREMAP_WB);
 		if (!data)
 			return -ENOMEM;
-		pa_next = data->next;
-
 		if (nr == i) {
-			if (data->type == SETUP_INDIRECT) {
-				len = sizeof(*data) + data->len;
-				memunmap(data);
-				data = memremap(pa_data, len, MEMREMAP_WB);
-				if (!data)
-					return -ENOMEM;
-
-				indirect = (struct setup_indirect *)data->data;
-
-				if (indirect->type != SETUP_INDIRECT)
-					*size = indirect->len;
-				else
-					*size = data->len;
-			} else {
-				*size = data->len;
-			}
-
+			*size = data->len;
 			memunmap(data);
 			return 0;
 		}
 
-		pa_data = pa_next;
+		pa_data = data->next;
 		memunmap(data);
 		i++;
 	}
@@ -135,11 +116,9 @@ static int __init get_setup_data_size(int nr, size_t *size)
 static ssize_t type_show(struct kobject *kobj,
 			 struct kobj_attribute *attr, char *buf)
 {
-	struct setup_indirect *indirect;
-	struct setup_data *data;
 	int nr, ret;
 	u64 paddr;
-	u32 len;
+	struct setup_data *data;
 
 	ret = kobj_to_setup_data_nr(kobj, &nr);
 	if (ret)
@@ -152,20 +131,7 @@ static ssize_t type_show(struct kobject *kobj,
 	if (!data)
 		return -ENOMEM;
 
-	if (data->type == SETUP_INDIRECT) {
-		len = sizeof(*data) + data->len;
-		memunmap(data);
-		data = memremap(paddr, len, MEMREMAP_WB);
-		if (!data)
-			return -ENOMEM;
-
-		indirect = (struct setup_indirect *)data->data;
-
-		ret = sprintf(buf, "0x%x\n", indirect->type);
-	} else {
-		ret = sprintf(buf, "0x%x\n", data->type);
-	}
-
+	ret = sprintf(buf, "0x%x\n", data->type);
 	memunmap(data);
 	return ret;
 }
@@ -176,10 +142,9 @@ static ssize_t setup_data_data_read(struct file *fp,
 				    char *buf,
 				    loff_t off, size_t count)
 {
-	struct setup_indirect *indirect;
-	struct setup_data *data;
 	int nr, ret = 0;
-	u64 paddr, len;
+	u64 paddr;
+	struct setup_data *data;
 	void *p;
 
 	ret = kobj_to_setup_data_nr(kobj, &nr);
@@ -193,45 +158,19 @@ static ssize_t setup_data_data_read(struct file *fp,
 	if (!data)
 		return -ENOMEM;
 
-	if (data->type == SETUP_INDIRECT) {
-		len = sizeof(*data) + data->len;
-		memunmap(data);
-		data = memremap(paddr, len, MEMREMAP_WB);
-		if (!data)
-			return -ENOMEM;
-
-		indirect = (struct setup_indirect *)data->data;
-
-		if (indirect->type != SETUP_INDIRECT) {
-			paddr = indirect->addr;
-			len = indirect->len;
-		} else {
-			/*
-			 * Even though this is technically undefined, return
-			 * the data as though it is a normal setup_data struct.
-			 * This will at least allow it to be inspected.
-			 */
-			paddr += sizeof(*data);
-			len = data->len;
-		}
-	} else {
-		paddr += sizeof(*data);
-		len = data->len;
-	}
-
-	if (off > len) {
+	if (off > data->len) {
 		ret = -EINVAL;
 		goto out;
 	}
 
-	if (count > len - off)
-		count = len - off;
+	if (count > data->len - off)
+		count = data->len - off;
 
 	if (!count)
 		goto out;
 
 	ret = count;
-	p = memremap(paddr, len, MEMREMAP_WB);
+	p = memremap(paddr + sizeof(*data), data->len, MEMREMAP_WB);
 	if (!p) {
 		ret = -ENOMEM;
 		goto out;
@@ -344,7 +283,7 @@ static int __init create_setup_data_nodes(struct kobject *parent)
 	if (ret)
 		goto out_setup_data_kobj;
 
-	kobjp = kmalloc_array(nr, sizeof(*kobjp), GFP_KERNEL);
+	kobjp = kmalloc(sizeof(*kobjp) * nr, GFP_KERNEL);
 	if (!kobjp) {
 		ret = -ENOMEM;
 		goto out_setup_data_kobj;

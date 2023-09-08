@@ -34,8 +34,6 @@
 #include <sys/stat.h>
 #include <linux/media.h>
 
-#include "../kselftest.h"
-
 int main(int argc, char **argv)
 {
 	int opt;
@@ -63,8 +61,10 @@ int main(int argc, char **argv)
 		}
 	}
 
-	if (getuid() != 0)
-		ksft_exit_skip("Please run the test as root - Exiting.\n");
+	if (getuid() != 0) {
+		printf("Please run the test as root - Exiting.\n");
+		exit(-1);
+	}
 
 	/* Open Media device and keep it open */
 	fd = open(media_device, O_RDWR);

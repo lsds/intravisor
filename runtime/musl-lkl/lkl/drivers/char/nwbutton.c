@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * 	NetWinder Button Driver-
  *	Copyright (C) Alex Holden <alex@linuxhacker.org> 1998, 1999.

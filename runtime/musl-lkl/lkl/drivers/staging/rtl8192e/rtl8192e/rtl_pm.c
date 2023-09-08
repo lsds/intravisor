@@ -1,18 +1,27 @@
-// SPDX-License-Identifier: GPL-2.0
-/*
+/******************************************************************************
  * Copyright(c) 2008 - 2010 Realtek Corporation. All rights reserved.
  *
- * Contact Information: wlanfae <wlanfae@realtek.com>
- */
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+ * more details.
+ *
+ * The full GNU General Public License is included in this distribution in the
+ * file called LICENSE.
+ *
+ * Contact Information:
+ * wlanfae <wlanfae@realtek.com>
+ *****************************************************************************/
+
 #include "rtl_core.h"
 #include "r8192E_hw.h"
 #include "r8190P_rtl8256.h"
 #include "rtl_pm.h"
 
 
-int rtl92e_suspend(struct device *dev_d)
+int rtl92e_suspend(struct pci_dev *pdev, pm_message_t state)
 {
-	struct net_device *dev = dev_get_drvdata(dev_d);
+	struct net_device *dev = pci_get_drvdata(pdev);
 	struct r8192_priv *priv = rtllib_priv(dev);
 	u32	ulRegRead;
 
@@ -32,7 +41,7 @@ int rtl92e_suspend(struct device *dev_d)
 	netif_device_detach(dev);
 
 	if (!priv->rtllib->bSupportRemoteWakeUp) {
-		rtl92e_set_rf_state(dev, rf_off, RF_CHANGE_BY_INIT);
+		rtl92e_set_rf_state(dev, eRfOff, RF_CHANGE_BY_INIT);
 		ulRegRead = rtl92e_readl(dev, CPU_GEN);
 		ulRegRead |= CPU_GEN_SYSTEM_RESET;
 		rtl92e_writel(dev, CPU_GEN, ulRegRead);
@@ -46,28 +55,40 @@ int rtl92e_suspend(struct device *dev_d)
 out_pci_suspend:
 	netdev_info(dev, "WOL is %s\n", priv->rtllib->bSupportRemoteWakeUp ?
 			    "Supported" : "Not supported");
-	device_set_wakeup_enable(dev_d, priv->rtllib->bSupportRemoteWakeUp);
+	pci_save_state(pdev);
+	pci_disable_device(pdev);
+	pci_enable_wake(pdev, pci_choose_state(pdev, state),
+			priv->rtllib->bSupportRemoteWakeUp ? 1 : 0);
+	pci_set_power_state(pdev, pci_choose_state(pdev, state));
 
 	mdelay(20);
 
 	return 0;
 }
 
-int rtl92e_resume(struct device *dev_d)
+int rtl92e_resume(struct pci_dev *pdev)
 {
-	struct pci_dev *pdev = to_pci_dev(dev_d);
-	struct net_device *dev = dev_get_drvdata(dev_d);
+	struct net_device *dev = pci_get_drvdata(pdev);
 	struct r8192_priv *priv = rtllib_priv(dev);
+	int err;
 	u32 val;
 
 	netdev_info(dev, "================>r8192E resume call.\n");
 
+	pci_set_power_state(pdev, PCI_D0);
+
+	err = pci_enable_device(pdev);
+	if (err) {
+		netdev_err(dev, "pci_enable_device failed on resume\n");
+		return err;
+	}
+	pci_restore_state(pdev);
 
 	pci_read_config_dword(pdev, 0x40, &val);
 	if ((val & 0x0000ff00) != 0)
 		pci_write_config_dword(pdev, 0x40, val & 0xffff00ff);
 
-	device_wakeup_disable(dev_d);
+	pci_enable_wake(pdev, PCI_D0, 0);
 
 	if (priv->polling_timer_on == 0)
 		rtl92e_check_rfctrl_gpio_timer(&priv->gpio_polling_timer);
@@ -83,9 +104,10 @@ int rtl92e_resume(struct device *dev_d)
 		dev->netdev_ops->ndo_open(dev);
 
 	if (!priv->rtllib->bSupportRemoteWakeUp)
-		rtl92e_set_rf_state(dev, rf_on, RF_CHANGE_BY_INIT);
+		rtl92e_set_rf_state(dev, eRfOn, RF_CHANGE_BY_INIT);
 
 out:
+	RT_TRACE(COMP_POWER, "<================r8192E resume call.\n");
 	return 0;
 }
 

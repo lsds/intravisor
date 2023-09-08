@@ -12,7 +12,7 @@
  *
  */
 .macro op_safe_regs op
-SYM_FUNC_START(\op\()_safe_regs)
+ENTRY(\op\()_safe_regs)
 	pushq %rbx
 	pushq %r12
 	movq	%rdi, %r10	/* Save pointer */
@@ -35,19 +35,19 @@ SYM_FUNC_START(\op\()_safe_regs)
 	movl    %edi, 28(%r10)
 	popq %r12
 	popq %rbx
-	RET
+	ret
 3:
 	movl    $-EIO, %r11d
 	jmp     2b
 
 	_ASM_EXTABLE(1b, 3b)
-SYM_FUNC_END(\op\()_safe_regs)
+ENDPROC(\op\()_safe_regs)
 .endm
 
 #else /* X86_32 */
 
 .macro op_safe_regs op
-SYM_FUNC_START(\op\()_safe_regs)
+ENTRY(\op\()_safe_regs)
 	pushl %ebx
 	pushl %ebp
 	pushl %esi
@@ -77,13 +77,13 @@ SYM_FUNC_START(\op\()_safe_regs)
 	popl %esi
 	popl %ebp
 	popl %ebx
-	RET
+	ret
 3:
 	movl    $-EIO, 4(%esp)
 	jmp     2b
 
 	_ASM_EXTABLE(1b, 3b)
-SYM_FUNC_END(\op\()_safe_regs)
+ENDPROC(\op\()_safe_regs)
 .endm
 
 #endif

@@ -44,6 +44,8 @@ struct lkl_netdev_fd {
 	int poll_tx, poll_rx;
 	/* controle pipe */
 	int pipe[2];
+
+	unsigned long cmp_to_mon;
 };
 
 static int fd_net_tx(struct lkl_netdev *nd, struct iovec *iov, int cnt)

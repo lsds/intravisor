@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  *
  *  Support for a cx23417 mpeg encoder via cx23885 host port.
@@ -9,6 +8,16 @@
  *      - CX23885/7/8 support
  *
  *  Includes parts from the ivtv driver <http://sourceforge.net/projects/ivtv/>
+ *
+ *  This program is free software; you can redistribute it and/or modify
+ *  it under the terms of the GNU General Public License as published by
+ *  the Free Software Foundation; either version 2 of the License, or
+ *  (at your option) any later version.
+ *
+ *  This program is distributed in the hope that it will be useful,
+ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *  GNU General Public License for more details.
  */
 
 #include "cx23885.h"
@@ -1271,7 +1280,7 @@ static int vidioc_g_tuner(struct file *file, void *priv,
 		return -EINVAL;
 	if (0 != t->index)
 		return -EINVAL;
-	strscpy(t->name, "Television", sizeof(t->name));
+	strcpy(t->name, "Television");
 	call_all(dev, tuner, g_tuner, t);
 
 	dprintk(1, "VIDIOC_G_TUNER: tuner type %d\n", t->type);
@@ -1320,15 +1329,16 @@ static int vidioc_querycap(struct file *file, void  *priv,
 	struct cx23885_dev *dev = video_drvdata(file);
 	struct cx23885_tsport  *tsport = &dev->ts1;
 
-	strscpy(cap->driver, dev->name, sizeof(cap->driver));
-	strscpy(cap->card, cx23885_boards[tsport->dev->board].name,
+	strlcpy(cap->driver, dev->name, sizeof(cap->driver));
+	strlcpy(cap->card, cx23885_boards[tsport->dev->board].name,
 		sizeof(cap->card));
 	sprintf(cap->bus_info, "PCIe:%s", pci_name(dev->pci));
-	cap->capabilities = V4L2_CAP_VIDEO_CAPTURE | V4L2_CAP_READWRITE |
-			    V4L2_CAP_STREAMING | V4L2_CAP_VBI_CAPTURE |
-			    V4L2_CAP_AUDIO | V4L2_CAP_DEVICE_CAPS;
+	cap->device_caps = V4L2_CAP_VIDEO_CAPTURE | V4L2_CAP_READWRITE |
+			   V4L2_CAP_STREAMING;
 	if (dev->tuner_type != TUNER_ABSENT)
-		cap->capabilities |= V4L2_CAP_TUNER;
+		cap->device_caps |= V4L2_CAP_TUNER;
+	cap->capabilities = cap->device_caps | V4L2_CAP_VBI_CAPTURE |
+		V4L2_CAP_AUDIO | V4L2_CAP_DEVICE_CAPS;
 
 	return 0;
 }
@@ -1339,6 +1349,7 @@ static int vidioc_enum_fmt_vid_cap(struct file *file, void  *priv,
 	if (f->index != 0)
 		return -EINVAL;
 
+	strlcpy(f->description, "MPEG", sizeof(f->description));
 	f->pixelformat = V4L2_PIX_FMT_MPEG;
 
 	return 0;
@@ -1516,7 +1527,7 @@ int cx23885_417_register(struct cx23885_dev *dev)
 	dev->cxhdl.priv = dev;
 	dev->cxhdl.func = cx23885_api_func;
 	cx2341x_handler_set_50hz(&dev->cxhdl, tsport->height == 576);
-	v4l2_ctrl_add_handler(&dev->ctrl_handler, &dev->cxhdl.hdl, NULL, false);
+	v4l2_ctrl_add_handler(&dev->ctrl_handler, &dev->cxhdl.hdl, NULL);
 
 	/* Allocate and initialize V4L video device */
 	dev->v4l_device = cx23885_video_dev_alloc(tsport,
@@ -1540,12 +1551,8 @@ int cx23885_417_register(struct cx23885_dev *dev)
 	video_set_drvdata(dev->v4l_device, dev);
 	dev->v4l_device->lock = &dev->lock;
 	dev->v4l_device->queue = q;
-	dev->v4l_device->device_caps = V4L2_CAP_VIDEO_CAPTURE |
-				       V4L2_CAP_READWRITE | V4L2_CAP_STREAMING;
-	if (dev->tuner_type != TUNER_ABSENT)
-		dev->v4l_device->device_caps |= V4L2_CAP_TUNER;
 	err = video_register_device(dev->v4l_device,
-		VFL_TYPE_VIDEO, -1);
+		VFL_TYPE_GRABBER, -1);
 	if (err < 0) {
 		pr_info("%s: can't register mpeg device\n", dev->name);
 		return err;
@@ -1554,7 +1561,7 @@ int cx23885_417_register(struct cx23885_dev *dev)
 	pr_info("%s: registered device %s [mpeg]\n",
 	       dev->name, video_device_node_name(dev->v4l_device));
 
-	/* ST: Configure the encoder parameters, but don't begin
+	/* ST: Configure the encoder paramaters, but don't begin
 	 * encoding, this resolves an issue where the first time the
 	 * encoder is started video can be choppy.
 	 */

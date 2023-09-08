@@ -1,14 +1,24 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
- * STA2x11 mfd for GPIO, SCTL and APBREG
- *
  * Copyright (c) 2009-2011 Wind River Systems, Inc.
  * Copyright (c) 2011 ST Microelectronics (Alessandro Rubini, Davide Ciminaghi)
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+ * See the GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
+ *
  */
 
 #include <linux/kernel.h>
-#include <linux/init.h>
-#include <linux/export.h>
+#include <linux/module.h>
 #include <linux/spinlock.h>
 #include <linux/errno.h>
 #include <linux/device.h>
@@ -590,7 +600,7 @@ static int sta2x11_mfd_probe(struct pci_dev *pdev,
 
 	/* Record this pdev before mfd_add_devices: their probe looks for it */
 	if (!sta2x11_mfd_find(pdev))
-		sta2x11_mfd_add(pdev, GFP_KERNEL);
+		sta2x11_mfd_add(pdev, GFP_ATOMIC);
 
 	/* Just 2 bars for all mfd's at present */
 	for (i = 0; i < 2; i++) {
@@ -643,3 +653,8 @@ static int __init sta2x11_mfd_init(void)
  */
 subsys_initcall(sta2x11_drivers_init);
 rootfs_initcall(sta2x11_mfd_init);
+
+MODULE_LICENSE("GPL v2");
+MODULE_AUTHOR("Wind River");
+MODULE_DESCRIPTION("STA2x11 mfd for GPIO, SCTL and APBREG");
+MODULE_DEVICE_TABLE(pci, sta2x11_mfd_tbl);

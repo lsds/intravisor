@@ -1,7 +1,12 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2008 Nuovation System Designs, LLC
  *   Grant Erickson <gerickson@nuovations.com>
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License as
+ * published by the Free Software Foundation; version 2 of the
+ * License.
+ *
  */
 
 #include <linux/edac.h>
@@ -11,7 +16,6 @@
 #include <linux/mm.h>
 #include <linux/module.h>
 #include <linux/of_device.h>
-#include <linux/of_irq.h>
 #include <linux/of_platform.h>
 #include <linux/types.h>
 
@@ -178,6 +182,11 @@ struct ppc4xx_ecc_status {
 	u32 wmirq;
 };
 
+/* Function Prototypes */
+
+static int ppc4xx_edac_probe(struct platform_device *device);
+static int ppc4xx_edac_remove(struct platform_device *device);
+
 /* Global Variables */
 
 /*
@@ -191,6 +200,15 @@ static const struct of_device_id ppc4xx_edac_match[] = {
 	{ }
 };
 MODULE_DEVICE_TABLE(of, ppc4xx_edac_match);
+
+static struct platform_driver ppc4xx_edac_driver = {
+	.probe			= ppc4xx_edac_probe,
+	.remove			= ppc4xx_edac_remove,
+	.driver = {
+		.name = PPC4XX_EDAC_MODULE_NAME,
+		.of_match_table = ppc4xx_edac_match,
+	},
+};
 
 /*
  * TODO: The row and channel parameters likely need to be dynamically
@@ -1045,7 +1063,7 @@ static int ppc4xx_edac_mc_init(struct mem_ctl_info *mci,
 	/* Initialize strings */
 
 	mci->mod_name		= PPC4XX_EDAC_MODULE_NAME;
-	mci->ctl_name		= ppc4xx_edac_match->compatible;
+	mci->ctl_name		= ppc4xx_edac_match->compatible,
 	mci->dev_name		= np->full_name;
 
 	/* Initialize callbacks */
@@ -1376,15 +1394,6 @@ ppc4xx_edac_opstate_init(void)
 			     EDAC_OPSTATE_INT_STR :
 			     EDAC_OPSTATE_UNKNOWN_STR)));
 }
-
-static struct platform_driver ppc4xx_edac_driver = {
-	.probe			= ppc4xx_edac_probe,
-	.remove			= ppc4xx_edac_remove,
-	.driver = {
-		.name = PPC4XX_EDAC_MODULE_NAME,
-		.of_match_table = ppc4xx_edac_match,
-	},
-};
 
 /**
  * ppc4xx_edac_init - driver/module insertion entry point

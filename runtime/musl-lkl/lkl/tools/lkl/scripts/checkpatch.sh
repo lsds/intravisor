@@ -1,30 +1,23 @@
-#!/bin/sh -e
-# SPDX-License-Identifier: GPL-2.0-only
-
-if [ -n "$VERBOSE" ]; then
-  set -x
-  git remote -v
-  Q=
-else
-  Q=-q
-fi
+#!/bin/sh -ex
 
 if [ -z "$origin_master" ]; then
     origin_master="origin/master"
 fi
 
 UPSTREAM=git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git
-LKL=github.com[:/]lkl/linux
+LKL=github.com:lkl/linux.git
 
 upstream=`git remote -v | grep $UPSTREAM | cut -f1 | head -n1`
 lkl=`git remote -v | grep $LKL | cut -f1 | head -n1`
 
 if [ -z "$upstream" ]; then
-    upstream=git://$UPSTREAM
+    git fetch --tags --progress git://$UPSTREAM
+else
+    git fetch --tags $upstream
 fi
 
 if [ -z "$lkl" ]; then
-    git remote add lkl-upstream https://github.com/lkl/linux || true
+    git remote add lkl-upstream git@$LKL || true
     lkl=`git remote -v | grep $LKL | cut -f1 | head -n1`
 fi
 
@@ -33,8 +26,8 @@ if [ -z "$lkl" ]; then
     exit 1
 fi
 
-git fetch $Q $lkl
-git fetch $Q --tags $upstream
+git fetch $lkl
+git fetch --tags $upstream
 
 # find the last upstream tag to avoid checking upstream commits during
 # upstream merges
@@ -43,7 +36,7 @@ tmp=`mktemp -d`
 
 commits=$(git log --no-merges --pretty=format:%h HEAD ^$lkl/master ^$tag)
 for c in $commits; do
-    git format-patch $Q -1 -o $tmp $c
+    git format-patch -1 -o $tmp $c
 done
 
 if [ -z "$c" ]; then
@@ -52,8 +45,7 @@ if [ -z "$c" ]; then
     exit 0
 fi
 
-./scripts/checkpatch.pl $Q --summary-file --ignore FILE_PATH_CHANGES \
-       --ignore PREFER_DEFINED_ATTRIBUTE_MACRO $tmp/*.patch
+./scripts/checkpatch.pl --ignore FILE_PATH_CHANGES $tmp/*.patch
 rm $tmp/*.patch
 
 # checkpatch.pl does not know how to deal with 3 way diffs which would

@@ -116,7 +116,6 @@ static int hydra_init(struct zorro_dev *z)
     unsigned long ioaddr = board+HYDRA_NIC_BASE;
     const char name[] = "NE2000";
     int start_page, stop_page;
-    u8 macaddr[ETH_ALEN];
     int j;
     int err;
 
@@ -130,8 +129,7 @@ static int hydra_init(struct zorro_dev *z)
 	return -ENOMEM;
 
     for (j = 0; j < ETH_ALEN; j++)
-	macaddr[j] = *((u8 *)(board + HYDRA_ADDRPROM + 2*j));
-    eth_hw_addr_set(dev, macaddr);
+	dev->dev_addr[j] = *((u8 *)(board + HYDRA_ADDRPROM + 2*j));
 
     /* We must set the 8390 for word mode. */
     z_writeb(0x4b, ioaddr + NE_EN0_DCFG);

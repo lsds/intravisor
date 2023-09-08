@@ -80,8 +80,7 @@ struct hfs_btree *hfs_btree_open(struct super_block *sb, u32 id, btree_keycmp ke
 		goto free_inode;
 
 	/* Load the header */
-	head = (struct hfs_btree_header_rec *)(kmap_local_page(page) +
-					       sizeof(struct hfs_bnode_desc));
+	head = (struct hfs_btree_header_rec *)(kmap(page) + sizeof(struct hfs_bnode_desc));
 	tree->root = be32_to_cpu(head->root);
 	tree->leaf_count = be32_to_cpu(head->leaf_count);
 	tree->leaf_head = be32_to_cpu(head->leaf_head);
@@ -120,12 +119,11 @@ struct hfs_btree *hfs_btree_open(struct super_block *sb, u32 id, btree_keycmp ke
 	tree->node_size_shift = ffs(size) - 1;
 	tree->pages_per_bnode = (tree->node_size + PAGE_SIZE - 1) >> PAGE_SHIFT;
 
-	kunmap_local(head);
+	kunmap(page);
 	put_page(page);
 	return tree;
 
 fail_page:
-	kunmap_local(head);
 	put_page(page);
 free_inode:
 	tree->inode->i_mapping->a_ops = &hfs_aops;
@@ -171,8 +169,7 @@ void hfs_btree_write(struct hfs_btree *tree)
 		return;
 	/* Load the header */
 	page = node->page[0];
-	head = (struct hfs_btree_header_rec *)(kmap_local_page(page) +
-					       sizeof(struct hfs_bnode_desc));
+	head = (struct hfs_btree_header_rec *)(kmap(page) + sizeof(struct hfs_bnode_desc));
 
 	head->root = cpu_to_be32(tree->root);
 	head->leaf_count = cpu_to_be32(tree->leaf_count);
@@ -183,7 +180,7 @@ void hfs_btree_write(struct hfs_btree *tree)
 	head->attributes = cpu_to_be32(tree->attributes);
 	head->depth = cpu_to_be16(tree->depth);
 
-	kunmap_local(head);
+	kunmap(page);
 	set_page_dirty(page);
 	hfs_bnode_put(node);
 }
@@ -223,30 +220,6 @@ static struct hfs_bnode *hfs_bmap_new_bmap(struct hfs_bnode *prev, u32 idx)
 	return node;
 }
 
-/* Make sure @tree has enough space for the @rsvd_nodes */
-int hfs_bmap_reserve(struct hfs_btree *tree, int rsvd_nodes)
-{
-	struct inode *inode = tree->inode;
-	u32 count;
-	int res;
-
-	while (tree->free_nodes < rsvd_nodes) {
-		res = hfs_extend_file(inode);
-		if (res)
-			return res;
-		HFS_I(inode)->phys_size = inode->i_size =
-				(loff_t)HFS_I(inode)->alloc_blocks *
-				HFS_SB(tree->sb)->alloc_blksz;
-		HFS_I(inode)->fs_blocks = inode->i_size >>
-					  tree->sb->s_blocksize_bits;
-		inode_set_bytes(inode, inode->i_size);
-		count = inode->i_size >> tree->node_size_shift;
-		tree->free_nodes += count - tree->node_count;
-		tree->node_count = count;
-	}
-	return 0;
-}
-
 struct hfs_bnode *hfs_bmap_alloc(struct hfs_btree *tree)
 {
 	struct hfs_bnode *node, *next_node;
@@ -256,11 +229,26 @@ struct hfs_bnode *hfs_bmap_alloc(struct hfs_btree *tree)
 	u16 off16;
 	u16 len;
 	u8 *data, byte, m;
-	int i, res;
+	int i;
 
-	res = hfs_bmap_reserve(tree, 1);
-	if (res)
-		return ERR_PTR(res);
+	while (!tree->free_nodes) {
+		struct inode *inode = tree->inode;
+		u32 count;
+		int res;
+
+		res = hfs_extend_file(inode);
+		if (res)
+			return ERR_PTR(res);
+		HFS_I(inode)->phys_size = inode->i_size =
+				(loff_t)HFS_I(inode)->alloc_blocks *
+				HFS_SB(tree->sb)->alloc_blksz;
+		HFS_I(inode)->fs_blocks = inode->i_size >>
+					  tree->sb->s_blocksize_bits;
+		inode_set_bytes(inode, inode->i_size);
+		count = inode->i_size >> tree->node_size_shift;
+		tree->free_nodes = count - tree->node_count;
+		tree->node_count = count;
+	}
 
 	nidx = 0;
 	node = hfs_bnode_find(tree, nidx);
@@ -271,7 +259,7 @@ struct hfs_bnode *hfs_bmap_alloc(struct hfs_btree *tree)
 
 	off += node->page_offset;
 	pagep = node->page + (off >> PAGE_SHIFT);
-	data = kmap_local_page(*pagep);
+	data = kmap(*pagep);
 	off &= ~PAGE_MASK;
 	idx = 0;
 
@@ -284,7 +272,7 @@ struct hfs_bnode *hfs_bmap_alloc(struct hfs_btree *tree)
 						idx += i;
 						data[off] |= m;
 						set_page_dirty(*pagep);
-						kunmap_local(data);
+						kunmap(*pagep);
 						tree->free_nodes--;
 						mark_inode_dirty(tree->inode);
 						hfs_bnode_put(node);
@@ -293,14 +281,14 @@ struct hfs_bnode *hfs_bmap_alloc(struct hfs_btree *tree)
 				}
 			}
 			if (++off >= PAGE_SIZE) {
-				kunmap_local(data);
-				data = kmap_local_page(*++pagep);
+				kunmap(*pagep);
+				data = kmap(*++pagep);
 				off = 0;
 			}
 			idx += 8;
 			len--;
 		}
-		kunmap_local(data);
+		kunmap(*pagep);
 		nidx = node->next;
 		if (!nidx) {
 			printk(KERN_DEBUG "create new bmap node...\n");
@@ -316,7 +304,7 @@ struct hfs_bnode *hfs_bmap_alloc(struct hfs_btree *tree)
 		off = off16;
 		off += node->page_offset;
 		pagep = node->page + (off >> PAGE_SHIFT);
-		data = kmap_local_page(*pagep);
+		data = kmap(*pagep);
 		off &= ~PAGE_MASK;
 	}
 }
@@ -341,14 +329,13 @@ void hfs_bmap_free(struct hfs_bnode *node)
 
 		nidx -= len * 8;
 		i = node->next;
+		hfs_bnode_put(node);
 		if (!i) {
 			/* panic */;
 			pr_crit("unable to free bnode %u. bmap not found!\n",
 				node->this);
-			hfs_bnode_put(node);
 			return;
 		}
-		hfs_bnode_put(node);
 		node = hfs_bnode_find(tree, i);
 		if (IS_ERR(node))
 			return;
@@ -363,20 +350,20 @@ void hfs_bmap_free(struct hfs_bnode *node)
 	}
 	off += node->page_offset + nidx / 8;
 	page = node->page[off >> PAGE_SHIFT];
-	data = kmap_local_page(page);
+	data = kmap(page);
 	off &= ~PAGE_MASK;
 	m = 1 << (~nidx & 7);
 	byte = data[off];
 	if (!(byte & m)) {
 		pr_crit("trying to free free bnode %u(%d)\n",
 			node->this, node->type);
-		kunmap_local(data);
+		kunmap(page);
 		hfs_bnode_put(node);
 		return;
 	}
 	data[off] = byte & ~m;
 	set_page_dirty(page);
-	kunmap_local(data);
+	kunmap(page);
 	hfs_bnode_put(node);
 	tree->free_nodes++;
 	mark_inode_dirty(tree->inode);

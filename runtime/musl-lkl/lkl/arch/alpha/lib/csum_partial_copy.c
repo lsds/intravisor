@@ -13,7 +13,6 @@
 #include <linux/types.h>
 #include <linux/string.h>
 #include <linux/uaccess.h>
-#include <net/checksum.h>
 
 
 #define ldq_u(x,y) \
@@ -40,17 +39,31 @@ __asm__ __volatile__("insql %1,%2,%0":"=r" (z):"r" (x),"r" (y))
 #define insqh(x,y,z) \
 __asm__ __volatile__("insqh %1,%2,%0":"=r" (z):"r" (x),"r" (y))
 
-#define __get_word(insn,x,ptr)				\
+
+#define __get_user_u(x,ptr)				\
 ({							\
 	long __guu_err;					\
 	__asm__ __volatile__(				\
-	"1:	"#insn" %0,%2\n"			\
+	"1:	ldq_u %0,%2\n"				\
 	"2:\n"						\
 	EXC(1b,2b,%0,%1)				\
 		: "=r"(x), "=r"(__guu_err)		\
 		: "m"(__m(ptr)), "1"(0));		\
 	__guu_err;					\
 })
+
+#define __put_user_u(x,ptr)				\
+({							\
+	long __puu_err;					\
+	__asm__ __volatile__(				\
+	"1:	stq_u %2,%1\n"				\
+	"2:\n"						\
+	EXC(1b,2b,$31,%0)				\
+		: "=r"(__puu_err)			\
+		: "m"(__m(addr)), "rJ"(x), "0"(0));	\
+	__puu_err;					\
+})
+
 
 static inline unsigned short from64to16(unsigned long x)
 {
@@ -82,15 +95,15 @@ static inline unsigned short from64to16(unsigned long x)
  */
 static inline unsigned long
 csum_partial_cfu_aligned(const unsigned long __user *src, unsigned long *dst,
-			 long len)
+			 long len, unsigned long checksum,
+			 int *errp)
 {
-	unsigned long checksum = ~0U;
 	unsigned long carry = 0;
+	int err = 0;
 
 	while (len >= 0) {
 		unsigned long word;
-		if (__get_word(ldq, word, src))
-			return 0;
+		err |= __get_user(word, src);
 		checksum += carry;
 		src++;
 		checksum += word;
@@ -103,8 +116,7 @@ csum_partial_cfu_aligned(const unsigned long __user *src, unsigned long *dst,
 	checksum += carry;
 	if (len) {
 		unsigned long word, tmp;
-		if (__get_word(ldq, word, src))
-			return 0;
+		err |= __get_user(word, src);
 		tmp = *dst;
 		mskql(word, len, word);
 		checksum += word;
@@ -113,6 +125,7 @@ csum_partial_cfu_aligned(const unsigned long __user *src, unsigned long *dst,
 		*dst = word | tmp;
 		checksum += carry;
 	}
+	if (err && errp) *errp = err;
 	return checksum;
 }
 
@@ -124,21 +137,20 @@ static inline unsigned long
 csum_partial_cfu_dest_aligned(const unsigned long __user *src,
 			      unsigned long *dst,
 			      unsigned long soff,
-			      long len)
+			      long len, unsigned long checksum,
+			      int *errp)
 {
 	unsigned long first;
 	unsigned long word, carry;
 	unsigned long lastsrc = 7+len+(unsigned long)src;
-	unsigned long checksum = ~0U;
+	int err = 0;
 
-	if (__get_word(ldq_u, first,src))
-		return 0;
+	err |= __get_user_u(first,src);
 	carry = 0;
 	while (len >= 0) {
 		unsigned long second;
 
-		if (__get_word(ldq_u, second, src+1))
-			return 0;
+		err |= __get_user_u(second, src+1);
 		extql(first, soff, word);
 		len -= 8;
 		src++;
@@ -156,8 +168,7 @@ csum_partial_cfu_dest_aligned(const unsigned long __user *src,
 	if (len) {
 		unsigned long tmp;
 		unsigned long second;
-		if (__get_word(ldq_u, second, lastsrc))
-			return 0;
+		err |= __get_user_u(second, lastsrc);
 		tmp = *dst;
 		extql(first, soff, word);
 		extqh(second, soff, first);
@@ -169,6 +180,7 @@ csum_partial_cfu_dest_aligned(const unsigned long __user *src,
 		*dst = word | tmp;
 		checksum += carry;
 	}
+	if (err && errp) *errp = err;
 	return checksum;
 }
 
@@ -179,18 +191,18 @@ static inline unsigned long
 csum_partial_cfu_src_aligned(const unsigned long __user *src,
 			     unsigned long *dst,
 			     unsigned long doff,
-			     long len,
-			     unsigned long partial_dest)
+			     long len, unsigned long checksum,
+			     unsigned long partial_dest,
+			     int *errp)
 {
 	unsigned long carry = 0;
 	unsigned long word;
 	unsigned long second_dest;
-	unsigned long checksum = ~0U;
+	int err = 0;
 
 	mskql(partial_dest, doff, partial_dest);
 	while (len >= 0) {
-		if (__get_word(ldq, word, src))
-			return 0;
+		err |= __get_user(word, src);
 		len -= 8;
 		insql(word, doff, second_dest);
 		checksum += carry;
@@ -204,8 +216,7 @@ csum_partial_cfu_src_aligned(const unsigned long __user *src,
 	len += 8;
 	if (len) {
 		checksum += carry;
-		if (__get_word(ldq, word, src))
-			return 0;
+		err |= __get_user(word, src);
 		mskql(word, len, word);
 		len -= 8;
 		checksum += word;
@@ -226,6 +237,7 @@ csum_partial_cfu_src_aligned(const unsigned long __user *src,
 	stq_u(partial_dest | second_dest, dst);
 out:
 	checksum += carry;
+	if (err && errp) *errp = err;
 	return checksum;
 }
 
@@ -237,23 +249,23 @@ static inline unsigned long
 csum_partial_cfu_unaligned(const unsigned long __user * src,
 			   unsigned long * dst,
 			   unsigned long soff, unsigned long doff,
-			   long len, unsigned long partial_dest)
+			   long len, unsigned long checksum,
+			   unsigned long partial_dest,
+			   int *errp)
 {
 	unsigned long carry = 0;
 	unsigned long first;
 	unsigned long lastsrc;
-	unsigned long checksum = ~0U;
+	int err = 0;
 
-	if (__get_word(ldq_u, first, src))
-		return 0;
+	err |= __get_user_u(first, src);
 	lastsrc = 7+len+(unsigned long)src;
 	mskql(partial_dest, doff, partial_dest);
 	while (len >= 0) {
 		unsigned long second, word;
 		unsigned long second_dest;
 
-		if (__get_word(ldq_u, second, src+1))
-			return 0;
+		err |= __get_user_u(second, src+1);
 		extql(first, soff, word);
 		checksum += carry;
 		len -= 8;
@@ -274,8 +286,7 @@ csum_partial_cfu_unaligned(const unsigned long __user * src,
 		unsigned long second, word;
 		unsigned long second_dest;
 
-		if (__get_word(ldq_u, second, lastsrc))
-			return 0;
+		err |= __get_user_u(second, lastsrc);
 		extql(first, soff, word);
 		extqh(second, soff, first);
 		word |= first;
@@ -296,8 +307,7 @@ csum_partial_cfu_unaligned(const unsigned long __user * src,
 		unsigned long second, word;
 		unsigned long second_dest;
 
-		if (__get_word(ldq_u, second, lastsrc))
-			return 0;
+		err |= __get_user_u(second, lastsrc);
 		extql(first, soff, word);
 		extqh(second, soff, first);
 		word |= first;
@@ -310,54 +320,66 @@ csum_partial_cfu_unaligned(const unsigned long __user * src,
 		stq_u(partial_dest | word | second_dest, dst);
 		checksum += carry;
 	}
+	if (err && errp) *errp = err;
 	return checksum;
 }
 
-static __wsum __csum_and_copy(const void __user *src, void *dst, int len)
+__wsum
+csum_partial_copy_from_user(const void __user *src, void *dst, int len,
+			       __wsum sum, int *errp)
 {
+	unsigned long checksum = (__force u32) sum;
 	unsigned long soff = 7 & (unsigned long) src;
 	unsigned long doff = 7 & (unsigned long) dst;
-	unsigned long checksum;
 
-	if (!doff) {
-		if (!soff)
-			checksum = csum_partial_cfu_aligned(
-				(const unsigned long __user *) src,
-				(unsigned long *) dst, len-8);
-		else
-			checksum = csum_partial_cfu_dest_aligned(
-				(const unsigned long __user *) src,
-				(unsigned long *) dst,
-				soff, len-8);
-	} else {
-		unsigned long partial_dest;
-		ldq_u(partial_dest, dst);
-		if (!soff)
-			checksum = csum_partial_cfu_src_aligned(
-				(const unsigned long __user *) src,
-				(unsigned long *) dst,
-				doff, len-8, partial_dest);
-		else
-			checksum = csum_partial_cfu_unaligned(
-				(const unsigned long __user *) src,
-				(unsigned long *) dst,
-				soff, doff, len-8, partial_dest);
+	if (len) {
+		if (!access_ok(VERIFY_READ, src, len)) {
+			if (errp) *errp = -EFAULT;
+			memset(dst, 0, len);
+			return sum;
+		}
+		if (!doff) {
+			if (!soff)
+				checksum = csum_partial_cfu_aligned(
+					(const unsigned long __user *) src,
+					(unsigned long *) dst,
+					len-8, checksum, errp);
+			else
+				checksum = csum_partial_cfu_dest_aligned(
+					(const unsigned long __user *) src,
+					(unsigned long *) dst,
+					soff, len-8, checksum, errp);
+		} else {
+			unsigned long partial_dest;
+			ldq_u(partial_dest, dst);
+			if (!soff)
+				checksum = csum_partial_cfu_src_aligned(
+					(const unsigned long __user *) src,
+					(unsigned long *) dst,
+					doff, len-8, checksum,
+					partial_dest, errp);
+			else
+				checksum = csum_partial_cfu_unaligned(
+					(const unsigned long __user *) src,
+					(unsigned long *) dst,
+					soff, doff, len-8, checksum,
+					partial_dest, errp);
+		}
+		checksum = from64to16 (checksum);
 	}
-	return (__force __wsum)from64to16 (checksum);
+	return (__force __wsum)checksum;
 }
+EXPORT_SYMBOL(csum_partial_copy_from_user);
 
 __wsum
-csum_and_copy_from_user(const void __user *src, void *dst, int len)
+csum_partial_copy_nocheck(const void *src, void *dst, int len, __wsum sum)
 {
-	if (!access_ok(src, len))
-		return 0;
-	return __csum_and_copy(src, dst, len);
-}
-
-__wsum
-csum_partial_copy_nocheck(const void *src, void *dst, int len)
-{
-	return __csum_and_copy((__force const void __user *)src,
-						dst, len);
+	__wsum checksum;
+	mm_segment_t oldfs = get_fs();
+	set_fs(KERNEL_DS);
+	checksum = csum_partial_copy_from_user((__force const void __user *)src,
+						dst, len, sum, NULL);
+	set_fs(oldfs);
+	return checksum;
 }
 EXPORT_SYMBOL(csum_partial_copy_nocheck);

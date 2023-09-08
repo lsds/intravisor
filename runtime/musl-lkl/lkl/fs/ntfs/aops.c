@@ -1,9 +1,23 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /**
  * aops.c - NTFS kernel address space operations and page cache handling.
  *
  * Copyright (c) 2001-2014 Anton Altaparmakov and Tuxera Inc.
  * Copyright (c) 2002 Richard Russon
+ *
+ * This program/include file is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License as published
+ * by the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program/include file is distributed in the hope that it will be
+ * useful, but WITHOUT ANY WARRANTY; without even the implied warranty
+ * of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program (in the main directory of the Linux-NTFS
+ * distribution in the file COPYING); if not, write to the Free Software
+ * Foundation,Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  */
 
 #include <linux/errno.h>
@@ -79,11 +93,13 @@ static void ntfs_end_buffer_async_read(struct buffer_head *bh, int uptodate)
 			ofs = 0;
 			if (file_ofs < init_size)
 				ofs = init_size - file_ofs;
+			local_irq_save(flags);
 			kaddr = kmap_atomic(page);
 			memset(kaddr + bh_offset(bh) + ofs, 0,
 					bh->b_size - ofs);
 			flush_dcache_page(page);
 			kunmap_atomic(kaddr);
+			local_irq_restore(flags);
 		}
 	} else {
 		clear_buffer_uptodate(bh);
@@ -92,7 +108,8 @@ static void ntfs_end_buffer_async_read(struct buffer_head *bh, int uptodate)
 				"0x%llx.", (unsigned long long)bh->b_blocknr);
 	}
 	first = page_buffers(page);
-	spin_lock_irqsave(&first->b_uptodate_lock, flags);
+	local_irq_save(flags);
+	bit_spin_lock(BH_Uptodate_Lock, &first->b_state);
 	clear_buffer_async_read(bh);
 	unlock_buffer(bh);
 	tmp = bh;
@@ -107,7 +124,8 @@ static void ntfs_end_buffer_async_read(struct buffer_head *bh, int uptodate)
 		}
 		tmp = tmp->b_this_page;
 	} while (tmp != bh);
-	spin_unlock_irqrestore(&first->b_uptodate_lock, flags);
+	bit_spin_unlock(BH_Uptodate_Lock, &first->b_state);
+	local_irq_restore(flags);
 	/*
 	 * If none of the buffers had errors then we can set the page uptodate,
 	 * but we first have to perform the post read mst fixups, if the
@@ -128,11 +146,13 @@ static void ntfs_end_buffer_async_read(struct buffer_head *bh, int uptodate)
 		recs = PAGE_SIZE / rec_size;
 		/* Should have been verified before we got here... */
 		BUG_ON(!recs);
+		local_irq_save(flags);
 		kaddr = kmap_atomic(page);
 		for (i = 0; i < recs; i++)
 			post_read_mst_fixup((NTFS_RECORD*)(kaddr +
 					i * rec_size), rec_size);
 		kunmap_atomic(kaddr);
+		local_irq_restore(flags);
 		flush_dcache_page(page);
 		if (likely(page_uptodate && !PageError(page)))
 			SetPageUptodate(page);
@@ -140,7 +160,8 @@ static void ntfs_end_buffer_async_read(struct buffer_head *bh, int uptodate)
 	unlock_page(page);
 	return;
 still_busy:
-	spin_unlock_irqrestore(&first->b_uptodate_lock, flags);
+	bit_spin_unlock(BH_Uptodate_Lock, &first->b_state);
+	local_irq_restore(flags);
 	return;
 }
 
@@ -159,7 +180,7 @@ still_busy:
  *
  * Return 0 on success and -errno on error.
  *
- * Contains an adapted version of fs/buffer.c::block_read_full_folio().
+ * Contains an adapted version of fs/buffer.c::block_read_full_page().
  */
 static int ntfs_read_block(struct page *page)
 {
@@ -342,7 +363,7 @@ handle_zblock:
 		for (i = 0; i < nr; i++) {
 			tbh = arr[i];
 			if (likely(!buffer_uptodate(tbh)))
-				submit_bh(REQ_OP_READ, tbh);
+				submit_bh(REQ_OP_READ, 0, tbh);
 			else
 				ntfs_end_buffer_async_read(tbh, 1);
 		}
@@ -358,16 +379,16 @@ handle_zblock:
 }
 
 /**
- * ntfs_read_folio - fill a @folio of a @file with data from the device
- * @file:	open file to which the folio @folio belongs or NULL
- * @folio:	page cache folio to fill with data
+ * ntfs_readpage - fill a @page of a @file with data from the device
+ * @file:	open file to which the page @page belongs or NULL
+ * @page:	page cache page to fill with data
  *
- * For non-resident attributes, ntfs_read_folio() fills the @folio of the open
- * file @file by calling the ntfs version of the generic block_read_full_folio()
+ * For non-resident attributes, ntfs_readpage() fills the @page of the open
+ * file @file by calling the ntfs version of the generic block_read_full_page()
  * function, ntfs_read_block(), which in turn creates and reads in the buffers
- * associated with the folio asynchronously.
+ * associated with the page asynchronously.
  *
- * For resident attributes, OTOH, ntfs_read_folio() fills @folio by copying the
+ * For resident attributes, OTOH, ntfs_readpage() fills @page by copying the
  * data from the mft record (which at this stage is most likely in memory) and
  * fills the remainder with zeroes. Thus, in this case, I/O is synchronous, as
  * even if the mft record is not cached at this point in time, we need to wait
@@ -375,9 +396,8 @@ handle_zblock:
  *
  * Return 0 on success and -errno on error.
  */
-static int ntfs_read_folio(struct file *file, struct folio *folio)
+static int ntfs_readpage(struct file *file, struct page *page)
 {
-	struct page *page = &folio->page;
 	loff_t i_size;
 	struct inode *vi;
 	ntfs_inode *ni, *base_ni;
@@ -459,7 +479,7 @@ retry_readpage:
 	}
 	/*
 	 * If a parallel write made the attribute non-resident, drop the mft
-	 * record and retry the read_folio.
+	 * record and retry the readpage.
 	 */
 	if (unlikely(NInoNonResident(ni))) {
 		unmap_mft_record(base_ni);
@@ -594,12 +614,12 @@ static int ntfs_write_block(struct page *page, struct writeback_control *wbc)
 	iblock = initialized_size >> blocksize_bits;
 
 	/*
-	 * Be very careful.  We have no exclusion from block_dirty_folio
+	 * Be very careful.  We have no exclusion from __set_page_dirty_buffers
 	 * here, and the (potentially unmapped) buffers may become dirty at
 	 * any time.  If a buffer becomes dirty here after we've inspected it
 	 * then we just miss that fact, and the page stays dirty.
 	 *
-	 * Buffers outside i_size may be dirtied by block_dirty_folio;
+	 * Buffers outside i_size may be dirtied by __set_page_dirty_buffers;
 	 * handle that here by just cleaning them.
 	 */
 
@@ -638,11 +658,10 @@ static int ntfs_write_block(struct page *page, struct writeback_control *wbc)
 		if (unlikely((block >= iblock) &&
 				(initialized_size < i_size))) {
 			/*
-			 * If this page is fully outside initialized
-			 * size, zero out all pages between the current
-			 * initialized size and the current page. Just
-			 * use ntfs_read_folio() to do the zeroing
-			 * transparently.
+			 * If this page is fully outside initialized size, zero
+			 * out all pages between the current initialized size
+			 * and the current page. Just use ntfs_readpage() to do
+			 * the zeroing transparently.
 			 */
 			if (block > iblock) {
 				// TODO:
@@ -655,7 +674,7 @@ static int ntfs_write_block(struct page *page, struct writeback_control *wbc)
 				// Update initialized size in the attribute and
 				// in the inode.
 				// Again, for each page do:
-				//	block_dirty_folio();
+				//	__set_page_dirty_buffers();
 				// put_page()
 				// We don't need to wait on the writes.
 				// Update iblock.
@@ -800,7 +819,7 @@ lock_retry_remap:
 	/* For the error case, need to reset bh to the beginning. */
 	bh = head;
 
-	/* Just an optimization, so ->read_folio() is not called later. */
+	/* Just an optimization, so ->readpage() is not called later. */
 	if (unlikely(!PageUptodate(page))) {
 		int uptodate = 1;
 		do {
@@ -859,7 +878,7 @@ lock_retry_remap:
 	do {
 		struct buffer_head *next = bh->b_this_page;
 		if (buffer_async_write(bh)) {
-			submit_bh(REQ_OP_WRITE, bh);
+			submit_bh(REQ_OP_WRITE, 0, bh);
 			need_end_writeback = false;
 		}
 		bh = next;
@@ -907,7 +926,7 @@ static int ntfs_write_mst_block(struct page *page,
 	ntfs_volume *vol = ni->vol;
 	u8 *kaddr;
 	unsigned int rec_size = ni->itype.index.block_size;
-	ntfs_inode *locked_nis[PAGE_SIZE / NTFS_BLOCK_SIZE];
+	ntfs_inode *locked_nis[PAGE_SIZE / rec_size];
 	struct buffer_head *bh, *head, *tbh, *rec_start_bh;
 	struct buffer_head *bhs[MAX_BUF_PER_PAGE];
 	runlist_element *rl;
@@ -915,9 +934,6 @@ static int ntfs_write_mst_block(struct page *page,
 	unsigned bh_size, rec_size_bits;
 	bool sync, is_mft, page_is_dirty, rec_is_dirty;
 	unsigned char bh_size_bits;
-
-	if (WARN_ON(rec_size < NTFS_BLOCK_SIZE))
-		return -EINVAL;
 
 	ntfs_debug("Entering for inode 0x%lx, attribute type 0x%x, page index "
 			"0x%lx.", vi->i_ino, ni->type, page->index);
@@ -1187,7 +1203,7 @@ lock_retry_remap:
 		BUG_ON(!buffer_mapped(tbh));
 		get_bh(tbh);
 		tbh->b_end_io = end_buffer_write_sync;
-		submit_bh(REQ_OP_WRITE, tbh);
+		submit_bh(REQ_OP_WRITE, 0, tbh);
 	}
 	/* Synchronize the mft mirror now if not @sync. */
 	if (is_mft && !sync)
@@ -1331,7 +1347,7 @@ done:
  * vfs inode dirty code path for the inode the mft record belongs to or via the
  * vm page dirty code path for the page the mft record is in.
  *
- * Based on ntfs_read_folio() and fs/buffer.c::block_write_full_page().
+ * Based on ntfs_readpage() and fs/buffer.c::block_write_full_page().
  *
  * Return 0 on success and -errno on error.
  */
@@ -1352,13 +1368,12 @@ retry_writepage:
 	/* Is the page fully outside i_size? (truncate in progress) */
 	if (unlikely(page->index >= (i_size + PAGE_SIZE - 1) >>
 			PAGE_SHIFT)) {
-		struct folio *folio = page_folio(page);
 		/*
 		 * The page may have dirty, unmapped buffers.  Make them
 		 * freeable here, so the page does not leak.
 		 */
-		block_invalidate_folio(folio, 0, folio_size(folio));
-		folio_unlock(folio);
+		block_invalidatepage(page, 0, PAGE_SIZE);
+		unlock_page(page);
 		ntfs_debug("Write outside i_size - truncated?");
 		return 0;
 	}
@@ -1653,13 +1668,13 @@ hole:
  * attributes.
  */
 const struct address_space_operations ntfs_normal_aops = {
-	.read_folio	= ntfs_read_folio,
+	.readpage	= ntfs_readpage,
 #ifdef NTFS_RW
 	.writepage	= ntfs_writepage,
-	.dirty_folio	= block_dirty_folio,
+	.set_page_dirty	= __set_page_dirty_buffers,
 #endif /* NTFS_RW */
 	.bmap		= ntfs_bmap,
-	.migrate_folio	= buffer_migrate_folio,
+	.migratepage	= buffer_migrate_page,
 	.is_partially_uptodate = block_is_partially_uptodate,
 	.error_remove_page = generic_error_remove_page,
 };
@@ -1668,12 +1683,12 @@ const struct address_space_operations ntfs_normal_aops = {
  * ntfs_compressed_aops - address space operations for compressed inodes
  */
 const struct address_space_operations ntfs_compressed_aops = {
-	.read_folio	= ntfs_read_folio,
+	.readpage	= ntfs_readpage,
 #ifdef NTFS_RW
 	.writepage	= ntfs_writepage,
-	.dirty_folio	= block_dirty_folio,
+	.set_page_dirty	= __set_page_dirty_buffers,
 #endif /* NTFS_RW */
-	.migrate_folio	= buffer_migrate_folio,
+	.migratepage	= buffer_migrate_page,
 	.is_partially_uptodate = block_is_partially_uptodate,
 	.error_remove_page = generic_error_remove_page,
 };
@@ -1683,12 +1698,14 @@ const struct address_space_operations ntfs_compressed_aops = {
  *		   and attributes
  */
 const struct address_space_operations ntfs_mst_aops = {
-	.read_folio	= ntfs_read_folio,	/* Fill page with data. */
+	.readpage	= ntfs_readpage,	/* Fill page with data. */
 #ifdef NTFS_RW
 	.writepage	= ntfs_writepage,	/* Write dirty page to disk. */
-	.dirty_folio	= filemap_dirty_folio,
+	.set_page_dirty	= __set_page_dirty_nobuffers,	/* Set the page dirty
+						   without touching the buffers
+						   belonging to the page. */
 #endif /* NTFS_RW */
-	.migrate_folio	= buffer_migrate_folio,
+	.migratepage	= buffer_migrate_page,
 	.is_partially_uptodate	= block_is_partially_uptodate,
 	.error_remove_page = generic_error_remove_page,
 };
@@ -1733,7 +1750,7 @@ void mark_ntfs_record_dirty(struct page *page, const unsigned int ofs) {
 				bh = bh->b_this_page;
 			} while (bh);
 			tail->b_this_page = head;
-			attach_page_private(page, head);
+			attach_page_buffers(page, head);
 		} else
 			buffers_to_free = bh;
 	}
@@ -1748,7 +1765,7 @@ void mark_ntfs_record_dirty(struct page *page, const unsigned int ofs) {
 		set_buffer_dirty(bh);
 	} while ((bh = bh->b_this_page) != head);
 	spin_unlock(&mapping->private_lock);
-	filemap_dirty_folio(mapping, page_folio(page));
+	__set_page_dirty_nobuffers(page);
 	if (unlikely(buffers_to_free)) {
 		do {
 			bh = buffers_to_free->b_this_page;

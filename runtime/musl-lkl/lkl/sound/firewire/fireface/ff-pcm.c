@@ -1,11 +1,17 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * ff-pcm.c - a part of driver for RME Fireface series
  *
  * Copyright (c) 2015-2017 Takashi Sakamoto
+ *
+ * Licensed under the terms of the GNU General Public License, version 2.
  */
 
 #include "ff.h"
+
+static inline unsigned int get_multiplier_mode_with_index(unsigned int index)
+{
+	return ((int)index - 1) / 2;
+}
 
 static int hw_rule_rate(struct snd_pcm_hw_params *params,
 			struct snd_pcm_hw_rule *rule)
@@ -18,16 +24,10 @@ static int hw_rule_rate(struct snd_pcm_hw_params *params,
 	struct snd_interval t = {
 		.min = UINT_MAX, .max = 0, .integer = 1
 	};
-	unsigned int i;
+	unsigned int i, mode;
 
 	for (i = 0; i < ARRAY_SIZE(amdtp_rate_table); i++) {
-		enum snd_ff_stream_mode mode;
-		int err;
-
-		err = snd_ff_stream_get_multiplier_mode(i, &mode);
-		if (err < 0)
-			continue;
-
+		mode = get_multiplier_mode_with_index(i);
 		if (!snd_interval_test(c, pcm_channels[mode]))
 			continue;
 
@@ -49,16 +49,10 @@ static int hw_rule_channels(struct snd_pcm_hw_params *params,
 	struct snd_interval t = {
 		.min = UINT_MAX, .max = 0, .integer = 1
 	};
-	unsigned int i;
+	unsigned int i, mode;
 
 	for (i = 0; i < ARRAY_SIZE(amdtp_rate_table); i++) {
-		enum snd_ff_stream_mode mode;
-		int err;
-
-		err = snd_ff_stream_get_multiplier_mode(i, &mode);
-		if (err < 0)
-			continue;
-
+		mode = get_multiplier_mode_with_index(i);
 		if (!snd_interval_test(r, amdtp_rate_table[i]))
 			continue;
 
@@ -72,6 +66,7 @@ static int hw_rule_channels(struct snd_pcm_hw_params *params,
 static void limit_channels_and_rates(struct snd_pcm_hardware *hw,
 				     const unsigned int *pcm_channels)
 {
+	unsigned int mode;
 	unsigned int rate, channels;
 	int i;
 
@@ -81,12 +76,7 @@ static void limit_channels_and_rates(struct snd_pcm_hardware *hw,
 	hw->rate_max = 0;
 
 	for (i = 0; i < ARRAY_SIZE(amdtp_rate_table); i++) {
-		enum snd_ff_stream_mode mode;
-		int err;
-
-		err = snd_ff_stream_get_multiplier_mode(i, &mode);
-		if (err < 0)
-			continue;
+		mode = get_multiplier_mode_with_index(i);
 
 		channels = pcm_channels[mode];
 		if (pcm_channels[mode] == 0)
@@ -139,7 +129,6 @@ static int pcm_init_hw_params(struct snd_ff *ff,
 static int pcm_open(struct snd_pcm_substream *substream)
 {
 	struct snd_ff *ff = substream->private_data;
-	struct amdtp_domain *d = &ff->domain;
 	unsigned int rate;
 	enum snd_ff_clock_src src;
 	int i, err;
@@ -156,21 +145,16 @@ static int pcm_open(struct snd_pcm_substream *substream)
 	if (err < 0)
 		goto release_lock;
 
-	mutex_lock(&ff->mutex);
-
-	// When source of clock is not internal or any stream is reserved for
-	// transmission of PCM frames, the available sampling rate is limited
-	// at current one.
 	if (src != SND_FF_CLOCK_SRC_INTERNAL) {
 		for (i = 0; i < CIP_SFC_COUNT; ++i) {
 			if (amdtp_rate_table[i] == rate)
 				break;
 		}
-
-		// The unit is configured at sampling frequency which packet
-		// streaming engine can't support.
+		/*
+		 * The unit is configured at sampling frequency which packet
+		 * streaming engine can't support.
+		 */
 		if (i >= CIP_SFC_COUNT) {
-			mutex_unlock(&ff->mutex);
 			err = -EIO;
 			goto release_lock;
 		}
@@ -178,33 +162,13 @@ static int pcm_open(struct snd_pcm_substream *substream)
 		substream->runtime->hw.rate_min = rate;
 		substream->runtime->hw.rate_max = rate;
 	} else {
-		if (ff->substreams_counter > 0) {
-			unsigned int frames_per_period = d->events_per_period;
-			unsigned int frames_per_buffer = d->events_per_buffer;
-
+		if (amdtp_stream_pcm_running(&ff->rx_stream) ||
+		    amdtp_stream_pcm_running(&ff->tx_stream)) {
 			rate = amdtp_rate_table[ff->rx_stream.sfc];
 			substream->runtime->hw.rate_min = rate;
 			substream->runtime->hw.rate_max = rate;
-
-			err = snd_pcm_hw_constraint_minmax(substream->runtime,
-					SNDRV_PCM_HW_PARAM_PERIOD_SIZE,
-					frames_per_period, frames_per_period);
-			if (err < 0) {
-				mutex_unlock(&ff->mutex);
-				goto release_lock;
-			}
-
-			err = snd_pcm_hw_constraint_minmax(substream->runtime,
-					SNDRV_PCM_HW_PARAM_BUFFER_SIZE,
-					frames_per_buffer, frames_per_buffer);
-			if (err < 0) {
-				mutex_unlock(&ff->mutex);
-				goto release_lock;
-			}
 		}
 	}
-
-	mutex_unlock(&ff->mutex);
 
 	snd_pcm_set_sync(substream);
 
@@ -224,42 +188,76 @@ static int pcm_close(struct snd_pcm_substream *substream)
 	return 0;
 }
 
-static int pcm_hw_params(struct snd_pcm_substream *substream,
-			 struct snd_pcm_hw_params *hw_params)
+static int pcm_capture_hw_params(struct snd_pcm_substream *substream,
+				 struct snd_pcm_hw_params *hw_params)
 {
 	struct snd_ff *ff = substream->private_data;
-	int err = 0;
+	int err;
 
-	if (substream->runtime->state == SNDRV_PCM_STATE_OPEN) {
-		unsigned int rate = params_rate(hw_params);
-		unsigned int frames_per_period = params_period_size(hw_params);
-		unsigned int frames_per_buffer = params_buffer_size(hw_params);
+	err = snd_pcm_lib_alloc_vmalloc_buffer(substream,
+					       params_buffer_bytes(hw_params));
+	if (err < 0)
+		return err;
 
+	if (substream->runtime->status->state == SNDRV_PCM_STATE_OPEN) {
 		mutex_lock(&ff->mutex);
-		err = snd_ff_stream_reserve_duplex(ff, rate, frames_per_period,
-						   frames_per_buffer);
-		if (err >= 0)
-			++ff->substreams_counter;
+		ff->substreams_counter++;
 		mutex_unlock(&ff->mutex);
 	}
 
-	return err;
+	return 0;
 }
 
-static int pcm_hw_free(struct snd_pcm_substream *substream)
+static int pcm_playback_hw_params(struct snd_pcm_substream *substream,
+				  struct snd_pcm_hw_params *hw_params)
+{
+	struct snd_ff *ff = substream->private_data;
+	int err;
+
+	err = snd_pcm_lib_alloc_vmalloc_buffer(substream,
+					       params_buffer_bytes(hw_params));
+	if (err < 0)
+		return err;
+
+	if (substream->runtime->status->state == SNDRV_PCM_STATE_OPEN) {
+		mutex_lock(&ff->mutex);
+		ff->substreams_counter++;
+		mutex_unlock(&ff->mutex);
+	}
+
+	return 0;
+}
+
+static int pcm_capture_hw_free(struct snd_pcm_substream *substream)
 {
 	struct snd_ff *ff = substream->private_data;
 
 	mutex_lock(&ff->mutex);
 
-	if (substream->runtime->state != SNDRV_PCM_STATE_OPEN)
-		--ff->substreams_counter;
+	if (substream->runtime->status->state != SNDRV_PCM_STATE_OPEN)
+		ff->substreams_counter--;
 
 	snd_ff_stream_stop_duplex(ff);
 
 	mutex_unlock(&ff->mutex);
 
-	return 0;
+	return snd_pcm_lib_free_vmalloc_buffer(substream);
+}
+
+static int pcm_playback_hw_free(struct snd_pcm_substream *substream)
+{
+	struct snd_ff *ff = substream->private_data;
+
+	mutex_lock(&ff->mutex);
+
+	if (substream->runtime->status->state != SNDRV_PCM_STATE_OPEN)
+		ff->substreams_counter--;
+
+	snd_ff_stream_stop_duplex(ff);
+
+	mutex_unlock(&ff->mutex);
+
+	return snd_pcm_lib_free_vmalloc_buffer(substream);
 }
 
 static int pcm_capture_prepare(struct snd_pcm_substream *substream)
@@ -336,28 +334,28 @@ static snd_pcm_uframes_t pcm_capture_pointer(struct snd_pcm_substream *sbstrm)
 {
 	struct snd_ff *ff = sbstrm->private_data;
 
-	return amdtp_domain_stream_pcm_pointer(&ff->domain, &ff->tx_stream);
+	return amdtp_stream_pcm_pointer(&ff->tx_stream);
 }
 
 static snd_pcm_uframes_t pcm_playback_pointer(struct snd_pcm_substream *sbstrm)
 {
 	struct snd_ff *ff = sbstrm->private_data;
 
-	return amdtp_domain_stream_pcm_pointer(&ff->domain, &ff->rx_stream);
+	return amdtp_stream_pcm_pointer(&ff->rx_stream);
 }
 
 static int pcm_capture_ack(struct snd_pcm_substream *substream)
 {
 	struct snd_ff *ff = substream->private_data;
 
-	return amdtp_domain_stream_pcm_ack(&ff->domain, &ff->tx_stream);
+	return amdtp_stream_pcm_ack(&ff->tx_stream);
 }
 
 static int pcm_playback_ack(struct snd_pcm_substream *substream)
 {
 	struct snd_ff *ff = substream->private_data;
 
-	return amdtp_domain_stream_pcm_ack(&ff->domain, &ff->rx_stream);
+	return amdtp_stream_pcm_ack(&ff->rx_stream);
 }
 
 int snd_ff_create_pcm_devices(struct snd_ff *ff)
@@ -365,22 +363,27 @@ int snd_ff_create_pcm_devices(struct snd_ff *ff)
 	static const struct snd_pcm_ops pcm_capture_ops = {
 		.open		= pcm_open,
 		.close		= pcm_close,
-		.hw_params	= pcm_hw_params,
-		.hw_free	= pcm_hw_free,
+		.ioctl		= snd_pcm_lib_ioctl,
+		.hw_params	= pcm_capture_hw_params,
+		.hw_free	= pcm_capture_hw_free,
 		.prepare	= pcm_capture_prepare,
 		.trigger	= pcm_capture_trigger,
 		.pointer	= pcm_capture_pointer,
 		.ack		= pcm_capture_ack,
+		.page		= snd_pcm_lib_get_vmalloc_page,
 	};
 	static const struct snd_pcm_ops pcm_playback_ops = {
 		.open		= pcm_open,
 		.close		= pcm_close,
-		.hw_params	= pcm_hw_params,
-		.hw_free	= pcm_hw_free,
+		.ioctl		= snd_pcm_lib_ioctl,
+		.hw_params	= pcm_playback_hw_params,
+		.hw_free	= pcm_playback_hw_free,
 		.prepare	= pcm_playback_prepare,
 		.trigger	= pcm_playback_trigger,
 		.pointer	= pcm_playback_pointer,
 		.ack		= pcm_playback_ack,
+		.page		= snd_pcm_lib_get_vmalloc_page,
+		.mmap		= snd_pcm_lib_mmap_vmalloc,
 	};
 	struct snd_pcm *pcm;
 	int err;
@@ -394,7 +397,6 @@ int snd_ff_create_pcm_devices(struct snd_ff *ff)
 		 "%s PCM", ff->card->shortname);
 	snd_pcm_set_ops(pcm, SNDRV_PCM_STREAM_PLAYBACK, &pcm_playback_ops);
 	snd_pcm_set_ops(pcm, SNDRV_PCM_STREAM_CAPTURE, &pcm_capture_ops);
-	snd_pcm_set_managed_buffer_all(pcm, SNDRV_DMA_TYPE_VMALLOC, NULL, 0, 0);
 
 	return 0;
 }

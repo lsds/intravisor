@@ -813,7 +813,7 @@ struct fcoe_confqe {
 
 
 /*
- * FCoE connection data base
+ * FCoE conection data base
  */
 struct fcoe_conn_db {
 #if defined(__BIG_ENDIAN)

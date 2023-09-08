@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * APEI Error Record Serialization Table support
  *
@@ -10,6 +9,15 @@
  *
  * Copyright 2010 Intel Corp.
  *   Author: Huang Ying <ying.huang@intel.com>
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License version
+ * 2 as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
  */
 
 #include <linux/kernel.h>
@@ -54,7 +62,7 @@ EXPORT_SYMBOL_GPL(erst_disable);
 
 static struct acpi_table_erst *erst_tab;
 
-/* ERST Error Log Address Range attributes */
+/* ERST Error Log Address Range atrributes */
 #define ERST_RANGE_RESERVED	0x0001
 #define ERST_RANGE_NVRAM	0x0002
 #define ERST_RANGE_SLOW		0x0004
@@ -516,8 +524,7 @@ retry:
 				pr_warn(FW_WARN "too many record IDs!\n");
 			return 0;
 		}
-		new_entries = kvmalloc_array(new_size, sizeof(entries[0]),
-					     GFP_KERNEL);
+		new_entries = kvmalloc(new_size * sizeof(entries[0]), GFP_KERNEL);
 		if (!new_entries)
 			return -ENOMEM;
 		memcpy(new_entries, entries,
@@ -688,7 +695,7 @@ static int __erst_read_from_storage(u64 record_id, u64 offset)
 			break;
 		if (erst_timedout(&timeout, SPIN_UNIT))
 			return -EIO;
-	}
+	};
 	rc = apei_exec_run(&ctx, ACPI_ERST_GET_COMMAND_STATUS);
 	if (rc)
 		return rc;
@@ -856,74 +863,6 @@ ssize_t erst_read(u64 record_id, struct cper_record_header *record,
 }
 EXPORT_SYMBOL_GPL(erst_read);
 
-static void erst_clear_cache(u64 record_id)
-{
-	int i;
-	u64 *entries;
-
-	mutex_lock(&erst_record_id_cache.lock);
-
-	entries = erst_record_id_cache.entries;
-	for (i = 0; i < erst_record_id_cache.len; i++) {
-		if (entries[i] == record_id)
-			entries[i] = APEI_ERST_INVALID_RECORD_ID;
-	}
-	__erst_record_id_cache_compact();
-
-	mutex_unlock(&erst_record_id_cache.lock);
-}
-
-ssize_t erst_read_record(u64 record_id, struct cper_record_header *record,
-		size_t buflen, size_t recordlen, const guid_t *creatorid)
-{
-	ssize_t len;
-
-	/*
-	 * if creatorid is NULL, read any record for erst-dbg module
-	 */
-	if (creatorid == NULL) {
-		len = erst_read(record_id, record, buflen);
-		if (len == -ENOENT)
-			erst_clear_cache(record_id);
-
-		return len;
-	}
-
-	len = erst_read(record_id, record, buflen);
-	/*
-	 * if erst_read return value is -ENOENT skip to next record_id,
-	 * and clear the record_id cache.
-	 */
-	if (len == -ENOENT) {
-		erst_clear_cache(record_id);
-		goto out;
-	}
-
-	if (len < 0)
-		goto out;
-
-	/*
-	 * if erst_read return value is less than record head length,
-	 * consider it as -EIO, and clear the record_id cache.
-	 */
-	if (len < recordlen) {
-		len = -EIO;
-		erst_clear_cache(record_id);
-		goto out;
-	}
-
-	/*
-	 * if creatorid is not wanted, consider it as not found,
-	 * for skipping to next record_id.
-	 */
-	if (!guid_equal(&record->creator_id, creatorid))
-		len = -ENOENT;
-
-out:
-	return len;
-}
-EXPORT_SYMBOL_GPL(erst_read_record);
-
 int erst_clear(u64 record_id)
 {
 	int rc, i;
@@ -959,7 +898,7 @@ EXPORT_SYMBOL_GPL(erst_clear);
 static int __init setup_erst_disable(char *str)
 {
 	erst_disable = 1;
-	return 1;
+	return 0;
 }
 
 __setup("erst_disable", setup_erst_disable);
@@ -998,17 +937,17 @@ static struct pstore_info erst_info = {
 };
 
 #define CPER_CREATOR_PSTORE						\
-	GUID_INIT(0x75a574e3, 0x5052, 0x4b29, 0x8a, 0x8e, 0xbe, 0x2c,	\
-		  0x64, 0x90, 0xb8, 0x9d)
+	UUID_LE(0x75a574e3, 0x5052, 0x4b29, 0x8a, 0x8e, 0xbe, 0x2c,	\
+		0x64, 0x90, 0xb8, 0x9d)
 #define CPER_SECTION_TYPE_DMESG						\
-	GUID_INIT(0xc197e04e, 0xd545, 0x4a70, 0x9c, 0x17, 0xa5, 0x54,	\
-		  0x94, 0x19, 0xeb, 0x12)
+	UUID_LE(0xc197e04e, 0xd545, 0x4a70, 0x9c, 0x17, 0xa5, 0x54,	\
+		0x94, 0x19, 0xeb, 0x12)
 #define CPER_SECTION_TYPE_DMESG_Z					\
-	GUID_INIT(0x4f118707, 0x04dd, 0x4055, 0xb5, 0xdd, 0x95, 0x6d,	\
-		  0x34, 0xdd, 0xfa, 0xc6)
+	UUID_LE(0x4f118707, 0x04dd, 0x4055, 0xb5, 0xdd, 0x95, 0x6d,	\
+		0x34, 0xdd, 0xfa, 0xc6)
 #define CPER_SECTION_TYPE_MCE						\
-	GUID_INIT(0xfe08ffbe, 0x95e4, 0x4be7, 0xbc, 0x73, 0x40, 0x96,	\
-		  0x04, 0x4a, 0x38, 0xfc)
+	UUID_LE(0xfe08ffbe, 0x95e4, 0x4be7, 0xbc, 0x73, 0x40, 0x96,	\
+		0x04, 0x4a, 0x38, 0xfc)
 
 struct cper_pstore_record {
 	struct cper_record_header hdr;
@@ -1020,10 +959,14 @@ static int reader_pos;
 
 static int erst_open_pstore(struct pstore_info *psi)
 {
+	int rc;
+
 	if (erst_disable)
 		return -ENODEV;
 
-	return erst_get_record_id_begin(&reader_pos);
+	rc = erst_get_record_id_begin(&reader_pos);
+
+	return rc;
 }
 
 static int erst_close_pstore(struct pstore_info *psi)
@@ -1060,13 +1003,16 @@ skip:
 		goto out;
 	}
 
-	len = erst_read_record(record_id, &rcd->hdr, rcd_len, sizeof(*rcd),
-			&CPER_CREATOR_PSTORE);
+	len = erst_read(record_id, &rcd->hdr, rcd_len);
 	/* The record may be cleared by others, try read next record */
 	if (len == -ENOENT)
 		goto skip;
-	else if (len < 0)
+	else if (len < 0 || len < sizeof(*rcd)) {
+		rc = -EIO;
 		goto out;
+	}
+	if (uuid_le_cmp(rcd->hdr.creator_id, CPER_CREATOR_PSTORE) != 0)
+		goto skip;
 
 	record->buf = kmalloc(len, GFP_KERNEL);
 	if (record->buf == NULL) {
@@ -1077,15 +1023,18 @@ skip:
 	record->id = record_id;
 	record->compressed = false;
 	record->ecc_notice_size = 0;
-	if (guid_equal(&rcd->sec_hdr.section_type, &CPER_SECTION_TYPE_DMESG_Z)) {
+	if (uuid_le_cmp(rcd->sec_hdr.section_type,
+			CPER_SECTION_TYPE_DMESG_Z) == 0) {
 		record->type = PSTORE_TYPE_DMESG;
 		record->compressed = true;
-	} else if (guid_equal(&rcd->sec_hdr.section_type, &CPER_SECTION_TYPE_DMESG))
+	} else if (uuid_le_cmp(rcd->sec_hdr.section_type,
+			CPER_SECTION_TYPE_DMESG) == 0)
 		record->type = PSTORE_TYPE_DMESG;
-	else if (guid_equal(&rcd->sec_hdr.section_type, &CPER_SECTION_TYPE_MCE))
+	else if (uuid_le_cmp(rcd->sec_hdr.section_type,
+			     CPER_SECTION_TYPE_MCE) == 0)
 		record->type = PSTORE_TYPE_MCE;
 	else
-		record->type = PSTORE_TYPE_MAX;
+		record->type = PSTORE_TYPE_UNKNOWN;
 
 	if (rcd->hdr.validation_bits & CPER_VALID_TIMESTAMP)
 		record->time.tv_sec = rcd->hdr.timestamp;
@@ -1183,7 +1132,7 @@ static int __init erst_init(void)
 	rc = erst_check_table(erst_tab);
 	if (rc) {
 		pr_err(FW_BUG "ERST table is invalid.\n");
-		goto err_put_erst_tab;
+		goto err;
 	}
 
 	apei_resources_init(&erst_resources);
@@ -1226,6 +1175,7 @@ static int __init erst_init(void)
 	"Error Record Serialization Table (ERST) support is initialized.\n");
 
 	buf = kmalloc(erst_erange.size, GFP_KERNEL);
+	spin_lock_init(&erst_info.buf_lock);
 	if (buf) {
 		erst_info.buf = buf + sizeof(struct cper_pstore_record);
 		erst_info.bufsize = erst_erange.size -
@@ -1257,8 +1207,6 @@ err_release:
 	apei_resources_release(&erst_resources);
 err_fini:
 	apei_resources_fini(&erst_resources);
-err_put_erst_tab:
-	acpi_put_table((struct acpi_table_header *)erst_tab);
 err:
 	erst_disable = 1;
 	return rc;

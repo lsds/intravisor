@@ -1,7 +1,11 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-2.0
 # description: Test creation and deletion of trace instances while setting an event
-# requires: instances
+
+if [ ! -d instances ] ; then
+    echo "no instance directory with this kernel"
+    exit_unsupported;
+fi
 
 fail() { # mesg
     rmdir foo 2>/dev/null

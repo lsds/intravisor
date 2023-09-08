@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /* DVB USB compliant Linux driver for the TwinhanDTV StarBox USB2.0 DVB-S
  * receiver.
  *
@@ -9,7 +8,11 @@
  *
  * Thanks to Twinhan who kindly provided hardware and information.
  *
- * see Documentation/driver-api/media/drivers/dvb-usb.rst for more information
+ *	This program is free software; you can redistribute it and/or modify it
+ *	under the terms of the GNU General Public License as published by the Free
+ *	Software Foundation, version 2.
+ *
+ * see Documentation/dvb/README.dvb-usb for more information
  */
 #include "vp702x.h"
 #include <linux/mutex.h>
@@ -291,22 +294,16 @@ static int vp702x_rc_query(struct dvb_usb_device *d, u32 *event, int *state)
 static int vp702x_read_mac_addr(struct dvb_usb_device *d,u8 mac[6])
 {
 	u8 i, *buf;
-	int ret;
 	struct vp702x_device_state *st = d->priv;
 
 	mutex_lock(&st->buf_mutex);
 	buf = st->buf;
-	for (i = 6; i < 12; i++) {
-		ret = vp702x_usb_in_op(d, READ_EEPROM_REQ, i, 1,
-				       &buf[i - 6], 1);
-		if (ret < 0)
-			goto err;
-	}
+	for (i = 6; i < 12; i++)
+		vp702x_usb_in_op(d, READ_EEPROM_REQ, i, 1, &buf[i - 6], 1);
 
 	memcpy(mac, buf, 6);
-err:
 	mutex_unlock(&st->buf_mutex);
-	return ret;
+	return 0;
 }
 
 static int vp702x_frontend_attach(struct dvb_usb_adapter *adap)
@@ -369,19 +366,12 @@ static void vp702x_usb_disconnect(struct usb_interface *intf)
 	dvb_usb_device_exit(intf);
 }
 
-enum {
-	VISIONPLUS_VP7021_COLD,
-	VISIONPLUS_VP7020_COLD,
-	VISIONPLUS_VP7020_WARM,
+static struct usb_device_id vp702x_usb_table [] = {
+	    { USB_DEVICE(USB_VID_VISIONPLUS, USB_PID_TWINHAN_VP7021_COLD) },
+//	    { USB_DEVICE(USB_VID_VISIONPLUS, USB_PID_TWINHAN_VP7020_COLD) },
+//	    { USB_DEVICE(USB_VID_VISIONPLUS, USB_PID_TWINHAN_VP7020_WARM) },
+	    { 0 },
 };
-
-static struct usb_device_id vp702x_usb_table[] = {
-	DVB_USB_DEV(VISIONPLUS, VISIONPLUS_VP7021_COLD),
-//	DVB_USB_DEV(VISIONPLUS, VISIONPLUS_VP7020_COLD),
-//	DVB_USB_DEV(VISIONPLUS, VISIONPLUS_VP7020_WARM),
-	{ }
-};
-
 MODULE_DEVICE_TABLE(usb, vp702x_usb_table);
 
 static struct dvb_usb_device_properties vp702x_properties = {
@@ -428,12 +418,12 @@ static struct dvb_usb_device_properties vp702x_properties = {
 	.num_device_descs = 1,
 	.devices = {
 		{ .name = "TwinhanDTV StarBox DVB-S USB2.0 (VP7021)",
-		  .cold_ids = { &vp702x_usb_table[VISIONPLUS_VP7021_COLD], NULL },
+		  .cold_ids = { &vp702x_usb_table[0], NULL },
 		  .warm_ids = { NULL },
 		},
 /*		{ .name = "TwinhanDTV StarBox DVB-S USB2.0 (VP7020)",
-		  .cold_ids = { &vp702x_usb_table[VISIONPLUS_VP7020_COLD], NULL },
-		  .warm_ids = { &vp702x_usb_table[VISIONPLUS_VP7020_WARM], NULL },
+		  .cold_ids = { &vp702x_usb_table[2], NULL },
+		  .warm_ids = { &vp702x_usb_table[3], NULL },
 		},
 */		{ NULL },
 	}

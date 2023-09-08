@@ -1,8 +1,20 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (c) 2000-2006 Silicon Graphics, Inc.
  * Copyright (c) 2012-2013 Red Hat, Inc.
  * All rights reserved.
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License as
+ * published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it would be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write the Free Software Foundation,
+ * Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
  */
 #include "xfs.h"
 #include "xfs_fs.h"
@@ -11,8 +23,12 @@
 #include "xfs_shared.h"
 #include "xfs_trans_resv.h"
 #include "xfs_mount.h"
+#include "xfs_bmap_btree.h"
 #include "xfs_inode.h"
 #include "xfs_error.h"
+#include "xfs_trace.h"
+#include "xfs_symlink.h"
+#include "xfs_cksum.h"
 #include "xfs_trans.h"
 #include "xfs_buf_item.h"
 #include "xfs_log.h"
@@ -42,7 +58,7 @@ xfs_symlink_hdr_set(
 {
 	struct xfs_dsymlink_hdr	*dsl = bp->b_addr;
 
-	if (!xfs_has_crc(mp))
+	if (!xfs_sb_version_hascrc(&mp->m_sb))
 		return 0;
 
 	memset(dsl, 0, sizeof(struct xfs_dsymlink_hdr));
@@ -51,7 +67,7 @@ xfs_symlink_hdr_set(
 	dsl->sl_bytes = cpu_to_be32(size);
 	uuid_copy(&dsl->sl_uuid, &mp->m_sb.sb_meta_uuid);
 	dsl->sl_owner = cpu_to_be64(ino);
-	dsl->sl_blkno = cpu_to_be64(xfs_buf_daddr(bp));
+	dsl->sl_blkno = cpu_to_be64(bp->b_bn);
 	bp->b_ops = &xfs_symlink_buf_ops;
 
 	return sizeof(struct xfs_dsymlink_hdr);
@@ -86,16 +102,16 @@ static xfs_failaddr_t
 xfs_symlink_verify(
 	struct xfs_buf		*bp)
 {
-	struct xfs_mount	*mp = bp->b_mount;
+	struct xfs_mount	*mp = bp->b_target->bt_mount;
 	struct xfs_dsymlink_hdr	*dsl = bp->b_addr;
 
-	if (!xfs_has_crc(mp))
+	if (!xfs_sb_version_hascrc(&mp->m_sb))
 		return __this_address;
-	if (!xfs_verify_magic(bp, dsl->sl_magic))
+	if (dsl->sl_magic != cpu_to_be32(XFS_SYMLINK_MAGIC))
 		return __this_address;
 	if (!uuid_equal(&dsl->sl_uuid, &mp->m_sb.sb_meta_uuid))
 		return __this_address;
-	if (xfs_buf_daddr(bp) != be64_to_cpu(dsl->sl_blkno))
+	if (bp->b_bn != be64_to_cpu(dsl->sl_blkno))
 		return __this_address;
 	if (be32_to_cpu(dsl->sl_offset) +
 				be32_to_cpu(dsl->sl_bytes) >= XFS_SYMLINK_MAXLEN)
@@ -112,11 +128,11 @@ static void
 xfs_symlink_read_verify(
 	struct xfs_buf	*bp)
 {
-	struct xfs_mount *mp = bp->b_mount;
+	struct xfs_mount *mp = bp->b_target->bt_mount;
 	xfs_failaddr_t	fa;
 
 	/* no verification of non-crc buffers */
-	if (!xfs_has_crc(mp))
+	if (!xfs_sb_version_hascrc(&mp->m_sb))
 		return;
 
 	if (!xfs_buf_verify_cksum(bp, XFS_SYMLINK_CRC_OFF))
@@ -132,12 +148,12 @@ static void
 xfs_symlink_write_verify(
 	struct xfs_buf	*bp)
 {
-	struct xfs_mount *mp = bp->b_mount;
+	struct xfs_mount *mp = bp->b_target->bt_mount;
 	struct xfs_buf_log_item	*bip = bp->b_log_item;
 	xfs_failaddr_t		fa;
 
 	/* no verification of non-crc buffers */
-	if (!xfs_has_crc(mp))
+	if (!xfs_sb_version_hascrc(&mp->m_sb))
 		return;
 
 	fa = xfs_symlink_verify(bp);
@@ -155,7 +171,6 @@ xfs_symlink_write_verify(
 
 const struct xfs_buf_ops xfs_symlink_buf_ops = {
 	.name = "xfs_symlink",
-	.magic = { 0, cpu_to_be32(XFS_SYMLINK_MAGIC) },
 	.verify_read = xfs_symlink_read_verify,
 	.verify_write = xfs_symlink_write_verify,
 	.verify_struct = xfs_symlink_verify,
@@ -173,7 +188,7 @@ xfs_symlink_local_to_remote(
 
 	xfs_trans_buf_set_type(tp, bp, XFS_BLFT_SYMLINK_BUF);
 
-	if (!xfs_has_crc(mp)) {
+	if (!xfs_sb_version_hascrc(&mp->m_sb)) {
 		bp->b_ops = NULL;
 		memcpy(bp->b_addr, ifp->if_u1.if_data, ifp->if_bytes);
 		xfs_trans_log_buf(tp, bp, 0, ifp->if_bytes - 1);
@@ -196,27 +211,25 @@ xfs_symlink_local_to_remote(
 					ifp->if_bytes - 1);
 }
 
-/*
- * Verify the in-memory consistency of an inline symlink data fork. This
- * does not do on-disk format checks.
- */
+/* Verify the consistency of an inline symlink. */
 xfs_failaddr_t
 xfs_symlink_shortform_verify(
 	struct xfs_inode	*ip)
 {
-	struct xfs_ifork	*ifp = xfs_ifork_ptr(ip, XFS_DATA_FORK);
-	char			*sfp = (char *)ifp->if_u1.if_data;
-	int			size = ifp->if_bytes;
-	char			*endp = sfp + size;
+	char			*sfp;
+	char			*endp;
+	struct xfs_ifork	*ifp;
+	int			size;
 
-	ASSERT(ifp->if_format == XFS_DINODE_FMT_LOCAL);
+	ASSERT(ip->i_d.di_format == XFS_DINODE_FMT_LOCAL);
+	ifp = XFS_IFORK_PTR(ip, XFS_DATA_FORK);
+	sfp = (char *)ifp->if_u1.if_data;
+	size = ifp->if_bytes;
+	endp = sfp + size;
 
-	/*
-	 * Zero length symlinks should never occur in memory as they are
-	 * never allowed to exist on disk.
-	 */
-	if (!size)
-		return __this_address;
+	/* Zero length symlinks can exist while we're deleting a remote one. */
+	if (size == 0)
+		return NULL;
 
 	/* No negative sizes or overly long symlink targets. */
 	if (size < 0 || size > XFS_SYMLINK_MAXLEN)

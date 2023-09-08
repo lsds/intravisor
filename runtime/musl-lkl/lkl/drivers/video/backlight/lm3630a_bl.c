@@ -1,7 +1,11 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
 * Simple driver for Texas Instruments LM3630A Backlight driver chip
 * Copyright (C) 2012 Texas Instruments
+*
+* This program is free software; you can redistribute it and/or modify
+* it under the terms of the GNU General Public License version 2 as
+* published by the Free Software Foundation.
+*
 */
 #include <linux/module.h>
 #include <linux/slab.h>
@@ -12,7 +16,6 @@
 #include <linux/uaccess.h>
 #include <linux/interrupt.h>
 #include <linux/regmap.h>
-#include <linux/gpio/consumer.h>
 #include <linux/pwm.h>
 #include <linux/platform_data/lm3630a_bl.h>
 
@@ -32,14 +35,6 @@
 #define REG_MAX		0x50
 
 #define INT_DEBOUNCE_MSEC	10
-
-#define LM3630A_BANK_0		0
-#define LM3630A_BANK_1		1
-
-#define LM3630A_NUM_SINKS	2
-#define LM3630A_SINK_0		0
-#define LM3630A_SINK_1		1
-
 struct lm3630a_chip {
 	struct device *dev;
 	struct delayed_work work;
@@ -49,10 +44,8 @@ struct lm3630a_chip {
 	struct lm3630a_platform_data *pdata;
 	struct backlight_device *bleda;
 	struct backlight_device *bledb;
-	struct gpio_desc *enable_gpio;
 	struct regmap *regmap;
 	struct pwm_device *pwmd;
-	struct pwm_state pwmd_state;
 };
 
 /* i2c access */
@@ -168,19 +161,16 @@ static int lm3630a_intr_config(struct lm3630a_chip *pchip)
 	return rval;
 }
 
-static int lm3630a_pwm_ctrl(struct lm3630a_chip *pchip, int br, int br_max)
+static void lm3630a_pwm_ctrl(struct lm3630a_chip *pchip, int br, int br_max)
 {
-	int err;
+	unsigned int period = pchip->pdata->pwm_period;
+	unsigned int duty = br * period / br_max;
 
-	pchip->pwmd_state.period = pchip->pdata->pwm_period;
-
-	err = pwm_set_relative_duty_cycle(&pchip->pwmd_state, br, br_max);
-	if (err)
-		return err;
-
-	pchip->pwmd_state.enabled = pchip->pwmd_state.duty_cycle ? true : false;
-
-	return pwm_apply_state(pchip->pwmd, &pchip->pwmd_state);
+	pwm_config(pchip->pwmd, duty, period);
+	if (duty)
+		pwm_enable(pchip->pwmd);
+	else
+		pwm_disable(pchip->pwmd);
 }
 
 /* update and get brightness */
@@ -191,9 +181,11 @@ static int lm3630a_bank_a_update_status(struct backlight_device *bl)
 	enum lm3630a_pwm_ctrl pwm_ctrl = pchip->pdata->pwm_ctrl;
 
 	/* pwm control */
-	if ((pwm_ctrl & LM3630A_PWM_BANK_A) != 0)
-		return lm3630a_pwm_ctrl(pchip, bl->props.brightness,
-					bl->props.max_brightness);
+	if ((pwm_ctrl & LM3630A_PWM_BANK_A) != 0) {
+		lm3630a_pwm_ctrl(pchip, bl->props.brightness,
+				 bl->props.max_brightness);
+		return bl->props.brightness;
+	}
 
 	/* disable sleep */
 	ret = lm3630a_update(pchip, REG_CTRL, 0x80, 0x00);
@@ -209,11 +201,11 @@ static int lm3630a_bank_a_update_status(struct backlight_device *bl)
 				      LM3630A_LEDA_ENABLE, LM3630A_LEDA_ENABLE);
 	if (ret < 0)
 		goto out_i2c_err;
-	return 0;
+	return bl->props.brightness;
 
 out_i2c_err:
-	dev_err(pchip->dev, "i2c failed to access (%pe)\n", ERR_PTR(ret));
-	return ret;
+	dev_err(pchip->dev, "i2c failed to access\n");
+	return bl->props.brightness;
 }
 
 static int lm3630a_bank_a_get_brightness(struct backlight_device *bl)
@@ -266,9 +258,11 @@ static int lm3630a_bank_b_update_status(struct backlight_device *bl)
 	enum lm3630a_pwm_ctrl pwm_ctrl = pchip->pdata->pwm_ctrl;
 
 	/* pwm control */
-	if ((pwm_ctrl & LM3630A_PWM_BANK_B) != 0)
-		return lm3630a_pwm_ctrl(pchip, bl->props.brightness,
-					bl->props.max_brightness);
+	if ((pwm_ctrl & LM3630A_PWM_BANK_B) != 0) {
+		lm3630a_pwm_ctrl(pchip, bl->props.brightness,
+				 bl->props.max_brightness);
+		return bl->props.brightness;
+	}
 
 	/* disable sleep */
 	ret = lm3630a_update(pchip, REG_CTRL, 0x80, 0x00);
@@ -284,11 +278,11 @@ static int lm3630a_bank_b_update_status(struct backlight_device *bl)
 				      LM3630A_LEDB_ENABLE, LM3630A_LEDB_ENABLE);
 	if (ret < 0)
 		goto out_i2c_err;
-	return 0;
+	return bl->props.brightness;
 
 out_i2c_err:
-	dev_err(pchip->dev, "i2c failed to access (%pe)\n", ERR_PTR(ret));
-	return ret;
+	dev_err(pchip->dev, "i2c failed to access REG_CTRL\n");
+	return bl->props.brightness;
 }
 
 static int lm3630a_bank_b_get_brightness(struct backlight_device *bl)
@@ -335,17 +329,15 @@ static const struct backlight_ops lm3630a_bank_b_ops = {
 
 static int lm3630a_backlight_register(struct lm3630a_chip *pchip)
 {
-	struct lm3630a_platform_data *pdata = pchip->pdata;
 	struct backlight_properties props;
-	const char *label;
+	struct lm3630a_platform_data *pdata = pchip->pdata;
 
 	props.type = BACKLIGHT_RAW;
 	if (pdata->leda_ctrl != LM3630A_LEDA_DISABLE) {
 		props.brightness = pdata->leda_init_brt;
 		props.max_brightness = pdata->leda_max_brt;
-		label = pdata->leda_label ? pdata->leda_label : "lm3630a_leda";
 		pchip->bleda =
-		    devm_backlight_device_register(pchip->dev, label,
+		    devm_backlight_device_register(pchip->dev, "lm3630a_leda",
 						   pchip->dev, pchip,
 						   &lm3630a_bank_a_ops, &props);
 		if (IS_ERR(pchip->bleda))
@@ -356,9 +348,8 @@ static int lm3630a_backlight_register(struct lm3630a_chip *pchip)
 	    (pdata->ledb_ctrl != LM3630A_LEDB_ON_A)) {
 		props.brightness = pdata->ledb_init_brt;
 		props.max_brightness = pdata->ledb_max_brt;
-		label = pdata->ledb_label ? pdata->ledb_label : "lm3630a_ledb";
 		pchip->bledb =
-		    devm_backlight_device_register(pchip->dev, label,
+		    devm_backlight_device_register(pchip->dev, "lm3630a_ledb",
 						   pchip->dev, pchip,
 						   &lm3630a_bank_b_ops, &props);
 		if (IS_ERR(pchip->bledb))
@@ -372,124 +363,6 @@ static const struct regmap_config lm3630a_regmap = {
 	.val_bits = 8,
 	.max_register = REG_MAX,
 };
-
-static int lm3630a_parse_led_sources(struct fwnode_handle *node,
-				     int default_led_sources)
-{
-	u32 sources[LM3630A_NUM_SINKS];
-	int ret, num_sources, i;
-
-	num_sources = fwnode_property_count_u32(node, "led-sources");
-	if (num_sources < 0)
-		return default_led_sources;
-	else if (num_sources > ARRAY_SIZE(sources))
-		return -EINVAL;
-
-	ret = fwnode_property_read_u32_array(node, "led-sources", sources,
-					     num_sources);
-	if (ret)
-		return ret;
-
-	for (i = 0; i < num_sources; i++) {
-		if (sources[i] != LM3630A_SINK_0 && sources[i] != LM3630A_SINK_1)
-			return -EINVAL;
-
-		ret |= BIT(sources[i]);
-	}
-
-	return ret;
-}
-
-static int lm3630a_parse_bank(struct lm3630a_platform_data *pdata,
-			      struct fwnode_handle *node, int *seen_led_sources)
-{
-	int led_sources, ret;
-	const char *label;
-	u32 bank, val;
-	bool linear;
-
-	ret = fwnode_property_read_u32(node, "reg", &bank);
-	if (ret)
-		return ret;
-
-	if (bank != LM3630A_BANK_0 && bank != LM3630A_BANK_1)
-		return -EINVAL;
-
-	led_sources = lm3630a_parse_led_sources(node, BIT(bank));
-	if (led_sources < 0)
-		return led_sources;
-
-	if (*seen_led_sources & led_sources)
-		return -EINVAL;
-
-	*seen_led_sources |= led_sources;
-
-	linear = fwnode_property_read_bool(node,
-					   "ti,linear-mapping-mode");
-	if (bank) {
-		if (led_sources & BIT(LM3630A_SINK_0) ||
-		    !(led_sources & BIT(LM3630A_SINK_1)))
-			return -EINVAL;
-
-		pdata->ledb_ctrl = linear ?
-			LM3630A_LEDB_ENABLE_LINEAR :
-			LM3630A_LEDB_ENABLE;
-	} else {
-		if (!(led_sources & BIT(LM3630A_SINK_0)))
-			return -EINVAL;
-
-		pdata->leda_ctrl = linear ?
-			LM3630A_LEDA_ENABLE_LINEAR :
-			LM3630A_LEDA_ENABLE;
-
-		if (led_sources & BIT(LM3630A_SINK_1))
-			pdata->ledb_ctrl = LM3630A_LEDB_ON_A;
-	}
-
-	ret = fwnode_property_read_string(node, "label", &label);
-	if (!ret) {
-		if (bank)
-			pdata->ledb_label = label;
-		else
-			pdata->leda_label = label;
-	}
-
-	ret = fwnode_property_read_u32(node, "default-brightness",
-				       &val);
-	if (!ret) {
-		if (bank)
-			pdata->ledb_init_brt = val;
-		else
-			pdata->leda_init_brt = val;
-	}
-
-	ret = fwnode_property_read_u32(node, "max-brightness", &val);
-	if (!ret) {
-		if (bank)
-			pdata->ledb_max_brt = val;
-		else
-			pdata->leda_max_brt = val;
-	}
-
-	return 0;
-}
-
-static int lm3630a_parse_node(struct lm3630a_chip *pchip,
-			      struct lm3630a_platform_data *pdata)
-{
-	int ret = -ENODEV, seen_led_sources = 0;
-	struct fwnode_handle *node;
-
-	device_for_each_child_node(pchip->dev, node) {
-		ret = lm3630a_parse_bank(pdata, node, &seen_led_sources);
-		if (ret) {
-			fwnode_handle_put(node);
-			return ret;
-		}
-	}
-
-	return ret;
-}
 
 static int lm3630a_probe(struct i2c_client *client,
 			 const struct i2c_device_id *id)
@@ -523,27 +396,15 @@ static int lm3630a_probe(struct i2c_client *client,
 				     GFP_KERNEL);
 		if (pdata == NULL)
 			return -ENOMEM;
-
 		/* default values */
+		pdata->leda_ctrl = LM3630A_LEDA_ENABLE;
+		pdata->ledb_ctrl = LM3630A_LEDB_ENABLE;
 		pdata->leda_max_brt = LM3630A_MAX_BRIGHTNESS;
 		pdata->ledb_max_brt = LM3630A_MAX_BRIGHTNESS;
 		pdata->leda_init_brt = LM3630A_MAX_BRIGHTNESS;
 		pdata->ledb_init_brt = LM3630A_MAX_BRIGHTNESS;
-
-		rval = lm3630a_parse_node(pchip, pdata);
-		if (rval) {
-			dev_err(&client->dev, "fail : parse node\n");
-			return rval;
-		}
 	}
 	pchip->pdata = pdata;
-
-	pchip->enable_gpio = devm_gpiod_get_optional(&client->dev, "enable",
-						GPIOD_OUT_HIGH);
-	if (IS_ERR(pchip->enable_gpio)) {
-		rval = PTR_ERR(pchip->enable_gpio);
-		return rval;
-	}
 
 	/* chip initialize */
 	rval = lm3630a_chip_init(pchip);
@@ -565,7 +426,11 @@ static int lm3630a_probe(struct i2c_client *client,
 			return PTR_ERR(pchip->pwmd);
 		}
 
-		pwm_init_state(pchip->pwmd, &pchip->pwmd_state);
+		/*
+		 * FIXME: pwm_apply_args() should be removed when switching to
+		 * the atomic PWM API.
+		 */
+		pwm_apply_args(pchip->pwmd);
 	}
 
 	/* interrupt enable  : irq 0 is not allowed */
@@ -579,7 +444,7 @@ static int lm3630a_probe(struct i2c_client *client,
 	return 0;
 }
 
-static void lm3630a_remove(struct i2c_client *client)
+static int lm3630a_remove(struct i2c_client *client)
 {
 	int rval;
 	struct lm3630a_chip *pchip = i2c_get_clientdata(client);
@@ -594,8 +459,10 @@ static void lm3630a_remove(struct i2c_client *client)
 
 	if (pchip->irq) {
 		free_irq(pchip->irq, pchip);
+		flush_workqueue(pchip->irqthread);
 		destroy_workqueue(pchip->irqthread);
 	}
+	return 0;
 }
 
 static const struct i2c_device_id lm3630a_id[] = {
@@ -605,17 +472,9 @@ static const struct i2c_device_id lm3630a_id[] = {
 
 MODULE_DEVICE_TABLE(i2c, lm3630a_id);
 
-static const struct of_device_id lm3630a_match_table[] = {
-	{ .compatible = "ti,lm3630a", },
-	{ },
-};
-
-MODULE_DEVICE_TABLE(of, lm3630a_match_table);
-
 static struct i2c_driver lm3630a_i2c_driver = {
 	.driver = {
 		   .name = LM3630A_NAME,
-		   .of_match_table = lm3630a_match_table,
 		   },
 	.probe = lm3630a_probe,
 	.remove = lm3630a_remove,

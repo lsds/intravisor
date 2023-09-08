@@ -50,7 +50,7 @@ static unsigned long chp_info_expires;
 static struct work_struct cfg_work;
 
 /* Wait queue for configure completion events. */
-static DECLARE_WAIT_QUEUE_HEAD(cfg_wait_queue);
+static wait_queue_head_t cfg_wait_queue;
 
 /* Set vary state for given chpid. */
 static void set_chp_logically_online(struct chp_id chpid, int onoff)
@@ -135,7 +135,7 @@ static ssize_t chp_measurement_chars_read(struct file *filp,
 	struct channel_path *chp;
 	struct device *device;
 
-	device = kobj_to_dev(kobj);
+	device = container_of(kobj, struct device, kobj);
 	chp = to_channelpath(device);
 	if (chp->cmg == -1)
 		return 0;
@@ -184,7 +184,7 @@ static ssize_t chp_measurement_read(struct file *filp, struct kobject *kobj,
 	struct device *device;
 	unsigned int size;
 
-	device = kobj_to_dev(kobj);
+	device = container_of(kobj, struct device, kobj);
 	chp = to_channelpath(device);
 	css = to_css(chp->dev.parent);
 
@@ -255,9 +255,6 @@ static ssize_t chp_status_write(struct device *dev,
 	if (!num_args)
 		return count;
 
-	/* Wait until previous actions have settled. */
-	css_wait_for_slow_path();
-
 	if (!strncasecmp(cmd, "on", 2) || !strcmp(cmd, "1")) {
 		mutex_lock(&cp->lock);
 		error = s390_vary_chpid(cp->chpid, 1);
@@ -285,7 +282,7 @@ static ssize_t chp_configure_show(struct device *dev,
 	if (status < 0)
 		return status;
 
-	return sysfs_emit(buf, "%d\n", status);
+	return snprintf(buf, PAGE_SIZE, "%d\n", status);
 }
 
 static int cfg_wait_idle(void);
@@ -387,20 +384,6 @@ static ssize_t chp_chid_external_show(struct device *dev,
 }
 static DEVICE_ATTR(chid_external, 0444, chp_chid_external_show, NULL);
 
-static ssize_t chp_esc_show(struct device *dev,
-			    struct device_attribute *attr, char *buf)
-{
-	struct channel_path *chp = to_channelpath(dev);
-	ssize_t rc;
-
-	mutex_lock(&chp->lock);
-	rc = sprintf(buf, "%x\n", chp->desc_fmt1.esc);
-	mutex_unlock(&chp->lock);
-
-	return rc;
-}
-static DEVICE_ATTR(esc, 0444, chp_esc_show, NULL);
-
 static ssize_t util_string_read(struct file *filp, struct kobject *kobj,
 				struct bin_attribute *attr, char *buf,
 				loff_t off, size_t count)
@@ -431,7 +414,6 @@ static struct attribute *chp_attrs[] = {
 	&dev_attr_shared.attr,
 	&dev_attr_chid.attr,
 	&dev_attr_chid_external.attr,
-	&dev_attr_esc.attr,
 	NULL,
 };
 static struct attribute_group chp_attr_group = {
@@ -489,17 +471,14 @@ int chp_new(struct chp_id chpid)
 {
 	struct channel_subsystem *css = css_by_id(chpid.cssid);
 	struct channel_path *chp;
-	int ret = 0;
+	int ret;
 
-	mutex_lock(&css->mutex);
 	if (chp_is_registered(chpid))
-		goto out;
-
+		return 0;
 	chp = kzalloc(sizeof(struct channel_path), GFP_KERNEL);
-	if (!chp) {
-		ret = -ENOMEM;
-		goto out;
-	}
+	if (!chp)
+		return -ENOMEM;
+
 	/* fill in status, etc. */
 	chp->chpid = chpid;
 	chp->state = 1;
@@ -526,20 +505,21 @@ int chp_new(struct chp_id chpid)
 		put_device(&chp->dev);
 		goto out;
 	}
-
+	mutex_lock(&css->mutex);
 	if (css->cm_enabled) {
 		ret = chp_add_cmg_attr(chp);
 		if (ret) {
 			device_unregister(&chp->dev);
+			mutex_unlock(&css->mutex);
 			goto out;
 		}
 	}
 	css->chps[chpid.id] = chp;
+	mutex_unlock(&css->mutex);
 	goto out;
 out_free:
 	kfree(chp);
 out:
-	mutex_unlock(&css->mutex);
 	return ret;
 }
 
@@ -605,7 +585,8 @@ static void chp_process_crw(struct crw *crw0, struct crw *crw1,
 	switch (crw0->erc) {
 	case CRW_ERC_IPARM: /* Path has come. */
 	case CRW_ERC_INIT:
-		chp_new(chpid);
+		if (!chp_is_registered(chpid))
+			chp_new(chpid);
 		chsc_chp_online(chpid);
 		break;
 	case CRW_ERC_PERRI: /* Path has gone. */
@@ -832,6 +813,7 @@ static int __init chp_init(void)
 	if (ret)
 		return ret;
 	INIT_WORK(&cfg_work, cfg_func);
+	init_waitqueue_head(&cfg_wait_queue);
 	if (info_update())
 		return 0;
 	/* Register available channel-paths. */

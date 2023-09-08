@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * PS/2 mouse driver
  *
@@ -6,6 +5,11 @@
  * Copyright (c) 2003-2004 Dmitry Torokhov
  */
 
+/*
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License version 2 as published by
+ * the Free Software Foundation.
+ */
 
 #define pr_fmt(fmt)		KBUILD_MODNAME ": " fmt
 #define psmouse_fmt(fmt)	fmt
@@ -94,7 +98,7 @@ PSMOUSE_DEFINE_ATTR(resync_time, S_IWUSR | S_IRUGO,
 			(void *) offsetof(struct psmouse, resync_time),
 			psmouse_show_int_attr, psmouse_set_int_attr);
 
-static struct attribute *psmouse_dev_attrs[] = {
+static struct attribute *psmouse_attributes[] = {
 	&psmouse_attr_protocol.dattr.attr,
 	&psmouse_attr_rate.dattr.attr,
 	&psmouse_attr_resolution.dattr.attr,
@@ -103,7 +107,9 @@ static struct attribute *psmouse_dev_attrs[] = {
 	NULL
 };
 
-ATTRIBUTE_GROUPS(psmouse_dev);
+static const struct attribute_group psmouse_attribute_group = {
+	.attrs	= psmouse_attributes,
+};
 
 /*
  * psmouse_mutex protects all operations changing state of mouse
@@ -186,8 +192,8 @@ psmouse_ret_t psmouse_process_byte(struct psmouse *psmouse)
 			else
 				input_report_rel(dev, REL_WHEEL, -wheel);
 
-			input_report_key(dev, BTN_SIDE,  packet[3] & BIT(4));
-			input_report_key(dev, BTN_EXTRA, packet[3] & BIT(5));
+			input_report_key(dev, BTN_SIDE,  BIT(4));
+			input_report_key(dev, BTN_EXTRA, BIT(5));
 			break;
 		}
 		break;
@@ -197,13 +203,13 @@ psmouse_ret_t psmouse_process_byte(struct psmouse *psmouse)
 		input_report_rel(dev, REL_WHEEL, -(s8) packet[3]);
 
 		/* Extra buttons on Genius NewNet 3D */
-		input_report_key(dev, BTN_SIDE,  packet[0] & BIT(6));
-		input_report_key(dev, BTN_EXTRA, packet[0] & BIT(7));
+		input_report_key(dev, BTN_SIDE,  BIT(6));
+		input_report_key(dev, BTN_EXTRA, BIT(7));
 		break;
 
 	case PSMOUSE_THINKPS:
 		/* Extra button on ThinkingMouse */
-		input_report_key(dev, BTN_EXTRA, packet[0] & BIT(3));
+		input_report_key(dev, BTN_EXTRA, BIT(3));
 
 		/*
 		 * Without this bit of weirdness moving up gives wildly
@@ -217,7 +223,7 @@ psmouse_ret_t psmouse_process_byte(struct psmouse *psmouse)
 		 * Cortron PS2 Trackball reports SIDE button in the
 		 * 4th bit of the first byte.
 		 */
-		input_report_key(dev, BTN_SIDE, packet[0] & BIT(3));
+		input_report_key(dev, BTN_SIDE, BIT(3));
 		packet[0] |= BIT(3);
 		break;
 
@@ -366,8 +372,6 @@ static irqreturn_t psmouse_interrupt(struct serio *serio,
 	if (unlikely(psmouse->ps2dev.flags & PS2_FLAG_CMD))
 		if  (ps2_handle_response(&psmouse->ps2dev, data))
 			goto out;
-
-	pm_wakeup_event(&serio->dev, 0);
 
 	if (psmouse->state <= PSMOUSE_RESYNCING)
 		goto out;
@@ -852,17 +856,7 @@ static const struct psmouse_protocol psmouse_protocols[] = {
 		.name		= "ETPS/2",
 		.alias		= "elantech",
 		.detect		= elantech_detect,
-		.init		= elantech_init_ps2,
-	},
-#endif
-#ifdef CONFIG_MOUSE_PS2_ELANTECH_SMBUS
-	{
-		.type		= PSMOUSE_ELANTECH_SMBUS,
-		.name		= "ETSMBus",
-		.alias		= "elantech-smbus",
-		.detect		= elantech_detect,
-		.init		= elantech_init_smbus,
-		.smbus_companion = true,
+		.init		= elantech_init,
 	},
 #endif
 #ifdef CONFIG_MOUSE_PS2_SENTELIC
@@ -1164,13 +1158,8 @@ static int psmouse_extensions(struct psmouse *psmouse,
 	/* Try Elantech touchpad */
 	if (max_proto > PSMOUSE_IMEX &&
 	    psmouse_try_protocol(psmouse, PSMOUSE_ELANTECH,
-				 &max_proto, set_properties, false)) {
-		if (!set_properties)
-			return PSMOUSE_ELANTECH;
-
-		ret = elantech_init(psmouse);
-		if (ret >= 0)
-			return ret;
+				 &max_proto, set_properties, true)) {
+		return PSMOUSE_ELANTECH;
 	}
 
 	if (max_proto > PSMOUSE_IMEX) {
@@ -1479,6 +1468,8 @@ static void psmouse_disconnect(struct serio *serio)
 	struct psmouse *psmouse = serio_get_drvdata(serio);
 	struct psmouse *parent = NULL;
 
+	sysfs_remove_group(&serio->dev.kobj, &psmouse_attribute_group);
+
 	mutex_lock(&psmouse_mutex);
 
 	psmouse_set_state(psmouse, PSMOUSE_CMD_MODE);
@@ -1643,6 +1634,10 @@ static int psmouse_connect(struct serio *serio, struct serio_driver *drv)
 	if (parent && parent->pt_activate)
 		parent->pt_activate(parent);
 
+	error = sysfs_create_group(&serio->dev.kobj, &psmouse_attribute_group);
+	if (error)
+		goto err_pt_deactivate;
+
 	/*
 	 * PS/2 devices having SMBus companions should stay disabled
 	 * on PS/2 side, in order to have SMBus part operable.
@@ -1658,6 +1653,13 @@ static int psmouse_connect(struct serio *serio, struct serio_driver *drv)
 	mutex_unlock(&psmouse_mutex);
 	return retval;
 
+ err_pt_deactivate:
+	if (parent && parent->pt_deactivate)
+		parent->pt_deactivate(parent);
+	if (input_dev) {
+		input_unregister_device(input_dev);
+		input_dev = NULL; /* so we don't try to free it below */
+	}
  err_protocol_disconnect:
 	if (psmouse->disconnect)
 		psmouse->disconnect(psmouse);
@@ -1776,8 +1778,7 @@ MODULE_DEVICE_TABLE(serio, psmouse_serio_ids);
 
 static struct serio_driver psmouse_drv = {
 	.driver		= {
-		.name		= "psmouse",
-		.dev_groups	= psmouse_dev_groups,
+		.name	= "psmouse",
 	},
 	.description	= DRIVER_DESC,
 	.id_table	= psmouse_serio_ids,
@@ -2028,7 +2029,7 @@ static int psmouse_get_maxproto(char *buffer, const struct kernel_param *kp)
 {
 	int type = *((unsigned int *)kp->arg);
 
-	return sprintf(buffer, "%s\n", psmouse_protocol_by_type(type)->name);
+	return sprintf(buffer, "%s", psmouse_protocol_by_type(type)->name);
 }
 
 static int __init psmouse_init(void)

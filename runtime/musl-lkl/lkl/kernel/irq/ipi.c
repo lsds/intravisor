@@ -14,11 +14,11 @@
 /**
  * irq_reserve_ipi() - Setup an IPI to destination cpumask
  * @domain:	IPI domain
- * @dest:	cpumask of CPUs which can receive the IPI
+ * @dest:	cpumask of cpus which can receive the IPI
  *
  * Allocate a virq that can be used to send IPI to any CPU in dest mask.
  *
- * Return: Linux IRQ number on success or error code on failure
+ * On success it'll return linux irq number and error code on failure
  */
 int irq_reserve_ipi(struct irq_domain *domain,
 			     const struct cpumask *dest)
@@ -56,7 +56,7 @@ int irq_reserve_ipi(struct irq_domain *domain,
 		unsigned int next;
 
 		/*
-		 * The IPI requires a separate HW irq on each CPU. We require
+		 * The IPI requires a seperate HW irq on each CPU. We require
 		 * that the destination mask is consecutive. If an
 		 * implementation needs to support holes, it can reserve
 		 * several IPI ranges.
@@ -104,22 +104,22 @@ free_descs:
 
 /**
  * irq_destroy_ipi() - unreserve an IPI that was previously allocated
- * @irq:	Linux IRQ number to be destroyed
- * @dest:	cpumask of CPUs which should have the IPI removed
+ * @irq:	linux irq number to be destroyed
+ * @dest:	cpumask of cpus which should have the IPI removed
  *
- * The IPIs allocated with irq_reserve_ipi() are returned to the system
+ * The IPIs allocated with irq_reserve_ipi() are retuerned to the system
  * destroying all virqs associated with them.
  *
- * Return: %0 on success or error code on failure.
+ * Return 0 on success or error code on failure.
  */
 int irq_destroy_ipi(unsigned int irq, const struct cpumask *dest)
 {
 	struct irq_data *data = irq_get_irq_data(irq);
-	const struct cpumask *ipimask;
+	struct cpumask *ipimask = data ? irq_data_get_affinity_mask(data) : NULL;
 	struct irq_domain *domain;
 	unsigned int nr_irqs;
 
-	if (!irq || !data)
+	if (!irq || !data || !ipimask)
 		return -EINVAL;
 
 	domain = data->domain;
@@ -131,8 +131,7 @@ int irq_destroy_ipi(unsigned int irq, const struct cpumask *dest)
 		return -EINVAL;
 	}
 
-	ipimask = irq_data_get_affinity_mask(data);
-	if (!ipimask || WARN_ON(!cpumask_subset(dest, ipimask)))
+	if (WARN_ON(!cpumask_subset(dest, ipimask)))
 		/*
 		 * Must be destroying a subset of CPUs to which this IPI
 		 * was set up to target
@@ -151,30 +150,29 @@ int irq_destroy_ipi(unsigned int irq, const struct cpumask *dest)
 }
 
 /**
- * ipi_get_hwirq - Get the hwirq associated with an IPI to a CPU
- * @irq:	Linux IRQ number
- * @cpu:	the target CPU
+ * ipi_get_hwirq - Get the hwirq associated with an IPI to a cpu
+ * @irq:	linux irq number
+ * @cpu:	the target cpu
  *
  * When dealing with coprocessors IPI, we need to inform the coprocessor of
  * the hwirq it needs to use to receive and send IPIs.
  *
- * Return: hwirq value on success or INVALID_HWIRQ on failure.
+ * Returns hwirq value on success and INVALID_HWIRQ on failure.
  */
 irq_hw_number_t ipi_get_hwirq(unsigned int irq, unsigned int cpu)
 {
 	struct irq_data *data = irq_get_irq_data(irq);
-	const struct cpumask *ipimask;
+	struct cpumask *ipimask = data ? irq_data_get_affinity_mask(data) : NULL;
 
-	if (!data || cpu >= nr_cpu_ids)
+	if (!data || !ipimask || cpu >= nr_cpu_ids)
 		return INVALID_HWIRQ;
 
-	ipimask = irq_data_get_affinity_mask(data);
-	if (!ipimask || !cpumask_test_cpu(cpu, ipimask))
+	if (!cpumask_test_cpu(cpu, ipimask))
 		return INVALID_HWIRQ;
 
 	/*
 	 * Get the real hardware irq number if the underlying implementation
-	 * uses a separate irq per cpu. If the underlying implementation uses
+	 * uses a seperate irq per cpu. If the underlying implementation uses
 	 * a single hardware irq for all cpus then the IPI send mechanism
 	 * needs to take care of the cpu destinations.
 	 */
@@ -188,7 +186,7 @@ EXPORT_SYMBOL_GPL(ipi_get_hwirq);
 static int ipi_send_verify(struct irq_chip *chip, struct irq_data *data,
 			   const struct cpumask *dest, unsigned int cpu)
 {
-	const struct cpumask *ipimask = irq_data_get_affinity_mask(data);
+	struct cpumask *ipimask = irq_data_get_affinity_mask(data);
 
 	if (!chip || !ipimask)
 		return -EINVAL;
@@ -218,7 +216,7 @@ static int ipi_send_verify(struct irq_chip *chip, struct irq_data *data,
  * This function is for architecture or core code to speed up IPI sending. Not
  * usable from driver code.
  *
- * Return: %0 on success or negative error number on failure.
+ * Returns zero on success and negative error number on failure.
  */
 int __ipi_send_single(struct irq_desc *desc, unsigned int cpu)
 {
@@ -252,7 +250,7 @@ int __ipi_send_single(struct irq_desc *desc, unsigned int cpu)
 }
 
 /**
- * __ipi_send_mask - send an IPI to target Linux SMP CPU(s)
+ * ipi_send_mask - send an IPI to target Linux SMP CPU(s)
  * @desc:	pointer to irq_desc of the IRQ
  * @dest:	dest CPU(s), must be a subset of the mask passed to
  *		irq_reserve_ipi()
@@ -260,7 +258,7 @@ int __ipi_send_single(struct irq_desc *desc, unsigned int cpu)
  * This function is for architecture or core code to speed up IPI sending. Not
  * usable from driver code.
  *
- * Return: %0 on success or negative error number on failure.
+ * Returns zero on success and negative error number on failure.
  */
 int __ipi_send_mask(struct irq_desc *desc, const struct cpumask *dest)
 {
@@ -300,11 +298,11 @@ int __ipi_send_mask(struct irq_desc *desc, const struct cpumask *dest)
 
 /**
  * ipi_send_single - Send an IPI to a single CPU
- * @virq:	Linux IRQ number from irq_reserve_ipi()
+ * @virq:	linux irq number from irq_reserve_ipi()
  * @cpu:	destination CPU, must in the destination mask passed to
  *		irq_reserve_ipi()
  *
- * Return: %0 on success or negative error number on failure.
+ * Returns zero on success and negative error number on failure.
  */
 int ipi_send_single(unsigned int virq, unsigned int cpu)
 {
@@ -321,11 +319,11 @@ EXPORT_SYMBOL_GPL(ipi_send_single);
 
 /**
  * ipi_send_mask - Send an IPI to target CPU(s)
- * @virq:	Linux IRQ number from irq_reserve_ipi()
+ * @virq:	linux irq number from irq_reserve_ipi()
  * @dest:	dest CPU(s), must be a subset of the mask passed to
  *		irq_reserve_ipi()
  *
- * Return: %0 on success or negative error number on failure.
+ * Returns zero on success and negative error number on failure.
  */
 int ipi_send_mask(unsigned int virq, const struct cpumask *dest)
 {

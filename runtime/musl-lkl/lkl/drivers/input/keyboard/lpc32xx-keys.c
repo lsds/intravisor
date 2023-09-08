@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * NXP LPC32xx SoC Key Scan Interface
  *
@@ -8,6 +7,17 @@
  *
  * Copyright (C) 2010 NXP Semiconductors
  * Copyright (C) 2012 Roland Stigge
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
  *
  * This controller supports square key matrices from 1x1 up to 8x8
  */
@@ -172,8 +182,10 @@ static int lpc32xx_kscan_probe(struct platform_device *pdev)
 	}
 
 	irq = platform_get_irq(pdev, 0);
-	if (irq < 0)
+	if (irq < 0) {
+		dev_err(&pdev->dev, "failed to get platform irq\n");
 		return -EINVAL;
+	}
 
 	kscandat = devm_kzalloc(&pdev->dev, sizeof(*kscandat),
 				GFP_KERNEL);
@@ -273,7 +285,7 @@ static int lpc32xx_kscan_suspend(struct device *dev)
 
 	mutex_lock(&input->mutex);
 
-	if (input_device_enabled(input)) {
+	if (input->users) {
 		/* Clear IRQ and disable clock */
 		writel(1, LPC32XX_KS_IRQ(kscandat->kscan_base));
 		clk_disable_unprepare(kscandat->clk);
@@ -292,7 +304,7 @@ static int lpc32xx_kscan_resume(struct device *dev)
 
 	mutex_lock(&input->mutex);
 
-	if (input_device_enabled(input)) {
+	if (input->users) {
 		/* Enable clock and clear IRQ */
 		retval = clk_prepare_enable(kscandat->clk);
 		if (retval == 0)

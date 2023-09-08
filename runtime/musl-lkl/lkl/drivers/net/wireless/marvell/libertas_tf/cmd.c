@@ -1,7 +1,11 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  *  Copyright (C) 2008, cozybit Inc.
  *  Copyright (C) 2003-2006, Marvell International Ltd.
+ *
+ *  This program is free software; you can redistribute it and/or modify
+ *  it under the terms of the GNU General Public License as published by
+ *  the Free Software Foundation; either version 2 of the License, or (at
+ *  your option) any later version.
  */
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
@@ -32,10 +36,10 @@ static struct cmd_ctrl_node *lbtf_get_cmd_ctrl_node(struct lbtf_private *priv);
 /**
  *  lbtf_cmd_copyback - Simple callback that copies response back into command
  *
- *  @priv:	A pointer to struct lbtf_private structure
- *  @extra:	A pointer to the original command structure for which
+ *  @priv	A pointer to struct lbtf_private structure
+ *  @extra	A pointer to the original command structure for which
  *		'resp' is a response
- *  @resp:	A pointer to the command response
+ *  @resp	A pointer to the command response
  *
  *  Returns: 0 on success, error on failure
  */
@@ -65,14 +69,14 @@ static void lbtf_geo_init(struct lbtf_private *priv)
 			break;
 		}
 
-	for (ch = range->start; ch < range->end; ch++)
+	for (ch = priv->range.start; ch < priv->range.end; ch++)
 		priv->channels[CHAN_TO_IDX(ch)].flags = 0;
 }
 
 /**
  *  lbtf_update_hw_spec: Updates the hardware details.
  *
- *  @priv:    	A pointer to struct lbtf_private structure
+ *  @priv    	A pointer to struct lbtf_private structure
  *
  *  Returns: 0 on success, error on failure
  */
@@ -141,8 +145,8 @@ out:
 /**
  *  lbtf_set_channel: Set the radio channel
  *
- *  @priv:	A pointer to struct lbtf_private structure
- *  @channel:	The desired channel, or 0 to clear a locked channel
+ *  @priv	A pointer to struct lbtf_private structure
+ *  @channel	The desired channel, or 0 to clear a locked channel
  *
  *  Returns: 0 on success, error on failure
  */
@@ -252,7 +256,7 @@ static void lbtf_submit_command(struct lbtf_private *priv,
 		     command, le16_to_cpu(cmd->seqnum), cmdsize);
 	lbtf_deb_hex(LBTF_DEB_CMD, "DNLD_CMD", (void *) cmdnode->cmdbuf, cmdsize);
 
-	ret = priv->ops->hw_host_to_card(priv, MVMS_CMD, (u8 *)cmd, cmdsize);
+	ret = priv->hw_host_to_card(priv, MVMS_CMD, (u8 *) cmd, cmdsize);
 	spin_unlock_irqrestore(&priv->driver_lock, flags);
 
 	if (ret) {
@@ -268,7 +272,7 @@ static void lbtf_submit_command(struct lbtf_private *priv,
 	lbtf_deb_leave(LBTF_DEB_HOST);
 }
 
-/*
+/**
  *  This function inserts command node to cmdfreeq
  *  after cleans it. Requires priv->driver_lock held.
  */
@@ -434,7 +438,7 @@ void lbtf_set_mac_control(struct lbtf_private *priv)
 /**
  *  lbtf_allocate_cmd_buffer - Allocates cmd buffer, links it to free cmd queue
  *
- *  @priv:	A pointer to struct lbtf_private structure
+ *  @priv	A pointer to struct lbtf_private structure
  *
  *  Returns: 0 on success.
  */
@@ -482,7 +486,7 @@ done:
 /**
  *  lbtf_free_cmd_buffer - Frees the cmd buffer.
  *
- *  @priv:	A pointer to struct lbtf_private structure
+ *  @priv	A pointer to struct lbtf_private structure
  *
  *  Returns: 0
  */
@@ -519,7 +523,7 @@ done:
 /**
  *  lbtf_get_cmd_ctrl_node - Gets free cmd node from free cmd queue.
  *
- *  @priv:		A pointer to struct lbtf_private structure
+ *  @priv		A pointer to struct lbtf_private structure
  *
  *  Returns: pointer to a struct cmd_ctrl_node or NULL if none available.
  */
@@ -553,7 +557,7 @@ static struct cmd_ctrl_node *lbtf_get_cmd_ctrl_node(struct lbtf_private *priv)
 /**
  *  lbtf_execute_next_command: execute next command in cmd pending queue.
  *
- *  @priv:     A pointer to struct lbtf_private structure
+ *  @priv     A pointer to struct lbtf_private structure
  *
  *  Returns: 0 on success.
  */
@@ -733,9 +737,10 @@ int lbtf_process_rx_command(struct lbtf_private *priv)
 	respcmd = le16_to_cpu(resp->command);
 	result = le16_to_cpu(resp->result);
 
-	lbtf_deb_cmd("libertastf: cmd response 0x%04x, seq %d, size %d\n",
-		     respcmd, le16_to_cpu(resp->seqnum),
-		     le16_to_cpu(resp->size));
+	if (net_ratelimit())
+		pr_info("libertastf: cmd response 0x%04x, seq %d, size %d\n",
+			respcmd, le16_to_cpu(resp->seqnum),
+			le16_to_cpu(resp->size));
 
 	if (resp->seqnum != priv->cur_cmd->cmdbuf->seqnum) {
 		spin_unlock_irqrestore(&priv->driver_lock, flags);

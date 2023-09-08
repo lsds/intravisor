@@ -1,6 +1,9 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (C) 2004, 2007-2010, 2011-2012 Synopsys, Inc. (www.synopsys.com)
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  *
  * Vineetg: August 2010: From Android kernel work
  */
@@ -75,12 +78,10 @@ static inline int arch_futex_atomic_op_inuser(int op, int oparg, int *oval,
 {
 	int oldval = 0, ret;
 
-	if (!access_ok(uaddr, sizeof(u32)))
-		return -EFAULT;
-
 #ifndef CONFIG_ARC_HAS_LLSC
 	preempt_disable();	/* to guarantee atomic r-m-w of futex op */
 #endif
+	pagefault_disable();
 
 	switch (op) {
 	case FUTEX_OP_SET:
@@ -103,6 +104,7 @@ static inline int arch_futex_atomic_op_inuser(int op, int oparg, int *oval,
 		ret = -ENOSYS;
 	}
 
+	pagefault_enable();
 #ifndef CONFIG_ARC_HAS_LLSC
 	preempt_enable();
 #endif
@@ -124,7 +126,7 @@ futex_atomic_cmpxchg_inatomic(u32 *uval, u32 __user *uaddr, u32 expval,
 	int ret = 0;
 	u32 existval;
 
-	if (!access_ok(uaddr, sizeof(u32)))
+	if (!access_ok(VERIFY_WRITE, uaddr, sizeof(u32)))
 		return -EFAULT;
 
 #ifndef CONFIG_ARC_HAS_LLSC

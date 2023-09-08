@@ -1,10 +1,22 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Applied Micro X-Gene SoC Ethernet v2 Driver
  *
  * Copyright (c) 2017, Applied Micro Circuits Corporation
  * Author(s): Iyappan Subramanian <isubramanian@apm.com>
  *	      Keyur Chudgar <kchudgar@apm.com>
+ *
+ * This program is free software; you can redistribute  it and/or modify it
+ * under  the terms of  the GNU General  Public License as published by the
+ * Free Software Foundation;  either version 2 of the  License, or (at your
+ * option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
 #include "main.h"
@@ -36,7 +48,7 @@ static int xge_get_resources(struct xge_pdata *pdata)
 		return -ENOMEM;
 	}
 
-	if (device_get_ethdev_address(dev, ndev))
+	if (!device_get_mac_address(dev, ndev->dev_addr, ETH_ALEN))
 		eth_hw_addr_random(ndev);
 
 	memcpy(ndev->perm_addr, ndev->dev_addr, ndev->addr_len);
@@ -54,8 +66,10 @@ static int xge_get_resources(struct xge_pdata *pdata)
 	}
 
 	ret = platform_get_irq(pdev, 0);
-	if (ret < 0)
+	if (ret < 0) {
+		dev_err(dev, "Unable to get irq\n");
 		return ret;
+	}
 	pdata->resources.irq = ret;
 
 	return 0;
@@ -192,8 +206,8 @@ static netdev_tx_t xge_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 	}
 
 	/* Packet buffers should be 64B aligned */
-	pkt_buf = dma_alloc_coherent(dev, XGENE_ENET_STD_MTU, &dma_addr,
-				     GFP_ATOMIC);
+	pkt_buf = dma_zalloc_coherent(dev, XGENE_ENET_STD_MTU, &dma_addr,
+				      GFP_ATOMIC);
 	if (unlikely(!pkt_buf)) {
 		dev_kfree_skb_any(skb);
 		return NETDEV_TX_OK;
@@ -414,8 +428,8 @@ static struct xge_desc_ring *xge_create_desc_ring(struct net_device *ndev)
 	ring->ndev = ndev;
 
 	size = XGENE_ENET_DESC_SIZE * XGENE_ENET_NUM_DESC;
-	ring->desc_addr = dma_alloc_coherent(dev, size, &ring->dma_addr,
-					     GFP_KERNEL);
+	ring->desc_addr = dma_zalloc_coherent(dev, size, &ring->dma_addr,
+					      GFP_KERNEL);
 	if (!ring->desc_addr)
 		goto err;
 
@@ -575,7 +589,7 @@ static void xge_free_pending_skb(struct net_device *ndev)
 	}
 }
 
-static void xge_timeout(struct net_device *ndev, unsigned int txqueue)
+static void xge_timeout(struct net_device *ndev)
 {
 	struct xge_pdata *pdata = netdev_priv(ndev);
 
@@ -672,18 +686,16 @@ static int xge_probe(struct platform_device *pdev)
 	if (ret)
 		goto err;
 
-	netif_napi_add(ndev, &pdata->napi, xge_napi);
+	netif_napi_add(ndev, &pdata->napi, xge_napi, NAPI_POLL_WEIGHT);
 
 	ret = register_netdev(ndev);
 	if (ret) {
 		netdev_err(ndev, "Failed to register netdev\n");
-		goto err_mdio_remove;
+		goto err;
 	}
 
 	return 0;
 
-err_mdio_remove:
-	xge_mdio_remove(ndev);
 err:
 	free_netdev(ndev);
 
@@ -743,4 +755,5 @@ module_platform_driver(xge_driver);
 
 MODULE_DESCRIPTION("APM X-Gene SoC Ethernet v2 driver");
 MODULE_AUTHOR("Iyappan Subramanian <isubramanian@apm.com>");
+MODULE_VERSION(XGENE_ENET_V2_VERSION);
 MODULE_LICENSE("GPL");

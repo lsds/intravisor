@@ -1,8 +1,10 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Apple Onboard Audio driver for Onyx codec
  *
  * Copyright 2006 Johannes Berg <johannes@sipsolutions.net>
+ *
+ * GPL v2, can be found in COPYING.
+ *
  *
  * This is a driver for the pcm3052 codec chip (codenamed Onyx)
  * that is present in newer Apple hardware (with digital output).
@@ -27,6 +29,7 @@
  *	 having just a single card on a system, and making the
  *	 'card' pointer accessible to anyone who needs it instead
  *	 of hiding it in the aoa_snd_* functions...
+ *
  */
 #include <linux/delay.h>
 #include <linux/module.h>
@@ -71,10 +74,8 @@ static int onyx_read_register(struct onyx *onyx, u8 reg, u8 *value)
 		return 0;
 	}
 	v = i2c_smbus_read_byte_data(onyx->i2c, reg);
-	if (v < 0) {
-		*value = 0;
+	if (v < 0)
 		return -1;
-	}
 	*value = (u8)v;
 	onyx->cache[ONYX_REG_CONTROL-FIRSTREGISTER] = *value;
 	return 0;
@@ -97,7 +98,7 @@ static int onyx_dev_register(struct snd_device *dev)
 	return 0;
 }
 
-static const struct snd_device_ops ops = {
+static struct snd_device_ops ops = {
 	.dev_register = onyx_dev_register,
 };
 
@@ -413,7 +414,7 @@ static int onyx_snd_single_bit_put(struct snd_kcontrol *kcontrol,
 }
 
 #define SINGLE_BIT(n, type, description, address, mask, flags)	 	\
-static const struct snd_kcontrol_new n##_control = {			\
+static struct snd_kcontrol_new n##_control = {				\
 	.iface = SNDRV_CTL_ELEM_IFACE_##type,				\
 	.name = description,						\
 	.access = SNDRV_CTL_ELEM_ACCESS_READWRITE,			\
@@ -543,7 +544,7 @@ static const struct snd_kcontrol_new onyx_spdif_ctrl = {
 
 /* our registers */
 
-static const u8 register_map[] = {
+static u8 register_map[] = {
 	ONYX_REG_DAC_ATTEN_LEFT,
 	ONYX_REG_DAC_ATTEN_RIGHT,
 	ONYX_REG_CONTROL,
@@ -559,7 +560,7 @@ static const u8 register_map[] = {
 	ONYX_REG_DIG_INFO4
 };
 
-static const u8 initial_values[ARRAY_SIZE(register_map)] = {
+static u8 initial_values[ARRAY_SIZE(register_map)] = {
 	0x80, 0x80, /* muted */
 	ONYX_MRST | ONYX_SRST, /* but handled specially! */
 	ONYX_MUTE_LEFT | ONYX_MUTE_RIGHT,
@@ -1013,7 +1014,7 @@ static int onyx_i2c_probe(struct i2c_client *client,
 		goto fail;
 	}
 
-	strscpy(onyx->codec.name, "onyx", MAX_CODEC_NAME_LEN);
+	strlcpy(onyx->codec.name, "onyx", MAX_CODEC_NAME_LEN);
 	onyx->codec.owner = THIS_MODULE;
 	onyx->codec.init = onyx_init_codec;
 	onyx->codec.exit = onyx_exit_codec;
@@ -1029,7 +1030,7 @@ static int onyx_i2c_probe(struct i2c_client *client,
 	return -ENODEV;
 }
 
-static void onyx_i2c_remove(struct i2c_client *client)
+static int onyx_i2c_remove(struct i2c_client *client)
 {
 	struct onyx *onyx = i2c_get_clientdata(client);
 
@@ -1037,6 +1038,7 @@ static void onyx_i2c_remove(struct i2c_client *client)
 	of_node_put(onyx->codec.node);
 	kfree(onyx->codec_info);
 	kfree(onyx);
+	return 0;
 }
 
 static const struct i2c_device_id onyx_i2c_id[] = {

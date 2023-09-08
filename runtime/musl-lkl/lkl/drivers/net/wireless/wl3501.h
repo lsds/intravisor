@@ -231,7 +231,7 @@ struct iw_mgmt_info_element {
 	u8 id; /* one of enum iw_mgmt_info_element_ids,
 		  but sizeof(enum) > sizeof(u8) :-( */
 	u8 len;
-	u8 data[];
+	u8 data[0];
 } __packed;
 
 struct iw_mgmt_essid_pset {
@@ -240,7 +240,7 @@ struct iw_mgmt_essid_pset {
 } __packed;
 
 /*
- * According to 802.11 Wireless Networks, the definitive guide - O'Reilly
+ * According to 802.11 Wireless Netowors, the definitive guide - O'Reilly
  * Pg 75
  */ 
 #define IW_DATA_RATE_MAX_LABELS 8
@@ -379,19 +379,6 @@ struct wl3501_get_confirm {
 	u8	mib_value[100];
 };
 
-struct wl3501_req {
-	u16			    beacon_period;
-	u16			    dtim_period;
-	u16			    cap_info;
-	u8			    bss_type;
-	u8			    bssid[ETH_ALEN];
-	struct iw_mgmt_essid_pset   ssid;
-	struct iw_mgmt_ds_pset	    ds_pset;
-	struct iw_mgmt_cf_pset	    cf_pset;
-	struct iw_mgmt_ibss_pset    ibss_pset;
-	struct iw_mgmt_data_rset    bss_basic_rset;
-};
-
 struct wl3501_join_req {
 	u16			    next_blk;
 	u8			    sig_id;
@@ -402,7 +389,16 @@ struct wl3501_join_req {
 	u16			    probe_delay;
 	u8			    timestamp[8];
 	u8			    local_time[8];
-	struct wl3501_req	    req;
+	u16			    beacon_period;
+	u16			    dtim_period;
+	u16			    cap_info;
+	u8			    bss_type;
+	u8			    bssid[ETH_ALEN];
+	struct iw_mgmt_essid_pset   ssid;
+	struct iw_mgmt_ds_pset	    ds_pset;
+	struct iw_mgmt_cf_pset	    cf_pset;
+	struct iw_mgmt_ibss_pset    ibss_pset;
+	struct iw_mgmt_data_rset    bss_basic_rset;
 };
 
 struct wl3501_join_confirm {
@@ -447,7 +443,16 @@ struct wl3501_scan_confirm {
 	u16			    status;
 	char			    timestamp[8];
 	char			    localtime[8];
-	struct wl3501_req	    req;
+	u16			    beacon_period;
+	u16			    dtim_period;
+	u16			    cap_info;
+	u8			    bss_type;
+	u8			    bssid[ETH_ALEN];
+	struct iw_mgmt_essid_pset   ssid;
+	struct iw_mgmt_ds_pset	    ds_pset;
+	struct iw_mgmt_cf_pset	    cf_pset;
+	struct iw_mgmt_ibss_pset    ibss_pset;
+	struct iw_mgmt_data_rset    bss_basic_rset;
 	u8			    rssi;
 };
 
@@ -466,10 +471,8 @@ struct wl3501_md_req {
 	u16	size;
 	u8	pri;
 	u8	service_class;
-	struct {
-		u8	daddr[ETH_ALEN];
-		u8	saddr[ETH_ALEN];
-	} addr;
+	u8	daddr[ETH_ALEN];
+	u8	saddr[ETH_ALEN];
 };
 
 struct wl3501_md_ind {
@@ -481,10 +484,8 @@ struct wl3501_md_ind {
 	u8	reception;
 	u8	pri;
 	u8	service_class;
-	struct {
-		u8	daddr[ETH_ALEN];
-		u8	saddr[ETH_ALEN];
-	} addr;
+	u8	daddr[ETH_ALEN];
+	u8	saddr[ETH_ALEN];
 };
 
 struct wl3501_md_confirm {
@@ -549,7 +550,7 @@ struct wl3501_80211_tx_plcp_hdr {
 struct wl3501_80211_tx_hdr {
 	struct wl3501_80211_tx_plcp_hdr	pclp_hdr;
 	struct ieee80211_hdr		mac_hdr;
-} __packed __aligned(2);
+} __packed;
 
 /*
    Reserve the beginning Tx space for descriptor use.

@@ -37,13 +37,17 @@
 
 / {
 	model = "NorthStar Plus SVK (BCM958622HR)";
-	compatible = "brcm,bcm958622hr", "brcm,bcm58622", "brcm,nsp";
+	compatible = "brcm,bcm58622", "brcm,nsp";
+
+	aliases {
+		serial0 = &uart0;
+	};
 
 	chosen {
 		stdout-path = "serial0:115200n8";
 	};
 
-	memory@60000000 {
+	memory {
 		device_type = "memory";
 		reg = <0x60000000 0x80000000>;
 	};
@@ -57,10 +61,6 @@
 };
 
 /* USB 3 and SLIC support needed to be complete */
-
-&dma {
-	status = "okay";
-};
 
 &amac0 {
 	status = "okay";
@@ -78,8 +78,8 @@
 	status = "okay";
 };
 
-&nand_controller {
-	nand@0 {
+&nand {
+	nandcs@0 {
 		compatible = "brcm,nandcs";
 		reg = <0>;
 		nand-on-flash-bbt;
@@ -138,9 +138,8 @@
 };
 
 &qspi {
-	status = "okay";
 	bspi-sel = <0>;
-	flash: flash@0 {
+	flash: m25p80@0 {
 		#address-cells = <1>;
 		#size-cells = <1>;
 		compatible = "m25p80";
@@ -177,6 +176,9 @@
 	status = "okay";
 
 	ports {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
 		port@0 {
 			label = "port0";
 			reg = <0>;

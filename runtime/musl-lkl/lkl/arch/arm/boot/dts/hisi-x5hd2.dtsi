@@ -1,7 +1,10 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2013-2014 Linaro Ltd.
- * Copyright (c) 2013-2014 HiSilicon Limited.
+ * Copyright (c) 2013-2014 Hisilicon Limited.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * publishhed by the Free Software Foundation.
  */
 
 #include <dt-bindings/clock/hix5hd2-clock.h>
@@ -30,7 +33,7 @@
 		interrupt-parent = <&gic>;
 		ranges = <0 0xf8000000 0x8000000>;
 
-		amba-bus {
+		amba {
 			#address-cells = <1>;
 			#size-cells = <1>;
 			compatible = "simple-bus";
@@ -86,48 +89,48 @@
 				status = "disabled";
 			};
 
-			uart0: serial@b00000 {
+			uart0: uart@b00000 {
 				compatible = "arm,pl011", "arm,primecell";
 				reg = <0x00b00000 0x1000>;
 				interrupts = <0 49 4>;
-				clocks = <&clock HIX5HD2_FIXED_83M>, <&clock HIX5HD2_FIXED_83M>;
-				clock-names = "uartclk", "apb_pclk";
+				clocks = <&clock HIX5HD2_FIXED_83M>;
+				clock-names = "apb_pclk";
 				status = "disabled";
 			};
 
-			uart1: serial@6000 {
+			uart1: uart@6000 {
 				compatible = "arm,pl011", "arm,primecell";
 				reg = <0x00006000 0x1000>;
 				interrupts = <0 50 4>;
-				clocks = <&clock HIX5HD2_FIXED_83M>, <&clock HIX5HD2_FIXED_83M>;
-				clock-names = "uartclk", "apb_pclk";
+				clocks = <&clock HIX5HD2_FIXED_83M>;
+				clock-names = "apb_pclk";
 				status = "disabled";
 			};
 
-			uart2: serial@b02000 {
+			uart2: uart@b02000 {
 				compatible = "arm,pl011", "arm,primecell";
 				reg = <0x00b02000 0x1000>;
 				interrupts = <0 51 4>;
-				clocks = <&clock HIX5HD2_FIXED_83M>, <&clock HIX5HD2_FIXED_83M>;
-				clock-names = "uartclk", "apb_pclk";
+				clocks = <&clock HIX5HD2_FIXED_83M>;
+				clock-names = "apb_pclk";
 				status = "disabled";
 			};
 
-			uart3: serial@b03000 {
+			uart3: uart@b03000 {
 				compatible = "arm,pl011", "arm,primecell";
 				reg = <0x00b03000 0x1000>;
 				interrupts = <0 52 4>;
-				clocks = <&clock HIX5HD2_FIXED_83M>, <&clock HIX5HD2_FIXED_83M>;
-				clock-names = "uartclk", "apb_pclk";
+				clocks = <&clock HIX5HD2_FIXED_83M>;
+				clock-names = "apb_pclk";
 				status = "disabled";
 			};
 
-			uart4: serial@b04000 {
+			uart4: uart@b04000 {
 				compatible = "arm,pl011", "arm,primecell";
 				reg = <0xb04000 0x1000>;
 				interrupts = <0 53 4>;
-				clocks = <&clock HIX5HD2_FIXED_83M>, <&clock HIX5HD2_FIXED_83M>;
-				clock-names = "uartclk", "apb_pclk";
+				clocks = <&clock HIX5HD2_FIXED_83M>;
+				clock-names = "apb_pclk";
 				status = "disabled";
 			};
 
@@ -370,9 +373,8 @@
 				arm,primecell-periphid = <0x00141805>;
 				reg = <0xa2c000 0x1000>;
 				interrupts = <0 29 4>;
-				clocks = <&clock HIX5HD2_WDG0_RST>,
-					 <&clock HIX5HD2_WDG0_RST>;
-				clock-names = "wdog_clk", "apb_pclk";
+				clocks = <&clock HIX5HD2_WDG0_RST>;
+				clock-names = "apb_pclk";
 			};
 		};
 
@@ -382,7 +384,7 @@
 			interrupts = <1 13 0xf01>;
 		};
 
-		l2: cache-controller {
+		l2: l2-cache {
 			compatible = "arm,pl310-cache";
 			reg = <0x00a10000 0x100000>;
 			interrupts = <0 15 4>;
@@ -423,7 +425,7 @@
 			interrupts = <0 35 4>;
 			clocks = <&clock HIX5HD2_MMC_CIU_RST>,
 				 <&clock HIX5HD2_MMC_BIU_CLK>;
-			clock-names = "biu", "ciu";
+			clock-names = "ciu", "biu";
 		};
 
 		sd: mmc@1820000 {
@@ -432,7 +434,7 @@
 			interrupts = <0 34 4>;
 			clocks = <&clock HIX5HD2_SD_CIU_RST>,
 				 <&clock HIX5HD2_SD_BIU_CLK>;
-			clock-names = "biu", "ciu";
+			clock-names = "ciu","biu";
 		};
 
 		gmac0: ethernet@1840000 {
@@ -453,14 +455,14 @@
 			status = "disabled";
 		};
 
-		usb0: usb@1890000 {
+		usb0: ehci@1890000 {
 			compatible = "generic-ehci";
 			reg = <0x1890000 0x1000>;
 			interrupts = <0 66 4>;
 			clocks = <&clock HIX5HD2_USB_CLK>;
 		};
 
-		usb1: usb@1880000 {
+		usb1: ohci@1880000 {
 			compatible = "generic-ohci";
 			reg = <0x1880000 0x1000>;
 			interrupts = <0 67 4>;
@@ -468,7 +470,7 @@
 		};
 
 		peripheral_ctrl: syscon@a20000 {
-			compatible = "hisilicon,peri-subctrl", "syscon";
+			compatible = "syscon";
 			reg = <0xa20000 0x1000>;
 		};
 

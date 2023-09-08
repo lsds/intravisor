@@ -60,10 +60,8 @@ static int exynos_cpu_boot(int cpu)
 	/*
 	 * Exynos3250 doesn't need to send smc command for secondary CPU boot
 	 * because Exynos3250 removes WFE in secure mode.
-	 *
-	 * On Exynos5 devices the call is ignored by trustzone firmware.
 	 */
-	if (!soc_is_exynos4210() && !soc_is_exynos4412())
+	if (soc_is_exynos3250())
 		return 0;
 
 	/*
@@ -187,7 +185,7 @@ static void exynos_l2_configure(const struct l2x0_regs *regs)
 	exynos_smc(SMC_CMD_L2X0SETUP2, regs->pwr_ctrl, regs->aux_ctrl, 0);
 }
 
-bool __init exynos_secure_firmware_available(void)
+void __init exynos_firmware_init(void)
 {
 	struct device_node *nd;
 	const __be32 *addr;
@@ -195,22 +193,13 @@ bool __init exynos_secure_firmware_available(void)
 	nd = of_find_compatible_node(NULL, NULL,
 					"samsung,secure-firmware");
 	if (!nd)
-		return false;
+		return;
 
 	addr = of_get_address(nd, 0, NULL, NULL);
-	of_node_put(nd);
 	if (!addr) {
 		pr_err("%s: No address specified.\n", __func__);
-		return false;
-	}
-
-	return true;
-}
-
-void __init exynos_firmware_init(void)
-{
-	if (!exynos_secure_firmware_available())
 		return;
+	}
 
 	pr_info("Running under secure firmware.\n");
 

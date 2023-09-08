@@ -60,13 +60,15 @@ out:
 	return ret;
 }
 
-static void scm_remove(struct scm_device *scmdev)
+static int scm_remove(struct scm_device *scmdev)
 {
 	struct scm_blk_dev *bdev = dev_get_drvdata(&scmdev->dev);
 
 	scm_blk_dev_cleanup(bdev);
 	dev_set_drvdata(&scmdev->dev, NULL);
 	kfree(bdev);
+
+	return 0;
 }
 
 static struct scm_driver scm_drv = {

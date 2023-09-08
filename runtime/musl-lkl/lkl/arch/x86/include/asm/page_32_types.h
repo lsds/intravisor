@@ -22,18 +22,15 @@
 #define THREAD_SIZE_ORDER	1
 #define THREAD_SIZE		(PAGE_SIZE << THREAD_SIZE_ORDER)
 
-#define IRQ_STACK_SIZE		THREAD_SIZE
-
-#define N_EXCEPTION_STACKS	1
+#define DOUBLEFAULT_STACK 1
+#define NMI_STACK 0
+#define DEBUG_STACK 0
+#define MCE_STACK 0
+#define N_EXCEPTION_STACKS 1
 
 #ifdef CONFIG_X86_PAE
-/*
- * This is beyond the 44 bit limit imposed by the 32bit long pfns,
- * but we need the full mask to make sure inverted PROT_NONE
- * entries have all the host bits set in a guest.
- * The real limit is still 44 bits.
- */
-#define __PHYSICAL_MASK_SHIFT	52
+/* 44=32+12, the limit we can fit into an unsigned long pfn */
+#define __PHYSICAL_MASK_SHIFT	44
 #define __VIRTUAL_MASK_SHIFT	32
 
 #else  /* !CONFIG_X86_PAE */
@@ -42,24 +39,7 @@
 #endif	/* CONFIG_X86_PAE */
 
 /*
- * User space process size: 3GB (default).
- */
-#define IA32_PAGE_OFFSET	__PAGE_OFFSET
-#define TASK_SIZE		__PAGE_OFFSET
-#define TASK_SIZE_LOW		TASK_SIZE
-#define TASK_SIZE_MAX		TASK_SIZE
-#define DEFAULT_MAP_WINDOW	TASK_SIZE
-#define STACK_TOP		TASK_SIZE
-#define STACK_TOP_MAX		STACK_TOP
-
-/*
- * In spite of the name, KERNEL_IMAGE_SIZE is a limit on the maximum virtual
- * address for the kernel image, rather than the limit on the size itself. On
- * 32-bit, this is not a strict limit, but this value is used to limit the
- * link-time virtual address range of the kernel, and by KASLR to limit the
- * randomized address from which the kernel is executed. A relocatable kernel
- * can be loaded somewhat higher than KERNEL_IMAGE_SIZE as long as enough space
- * remains for the vmalloc area.
+ * Kernel image size is limited to 512 MB (see in arch/x86/kernel/head_32.S)
  */
 #define KERNEL_IMAGE_SIZE	(512 * 1024 * 1024)
 

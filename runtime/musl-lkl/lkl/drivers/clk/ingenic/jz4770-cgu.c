@@ -7,13 +7,10 @@
 #include <linux/bitops.h>
 #include <linux/clk-provider.h>
 #include <linux/delay.h>
-#include <linux/io.h>
 #include <linux/of.h>
-
-#include <dt-bindings/clock/ingenic,jz4770-cgu.h>
-
+#include <linux/syscore_ops.h>
+#include <dt-bindings/clock/jz4770-cgu.h>
 #include "cgu.h"
-#include "pm.h"
 
 /*
  * CPM registers offset address definition
@@ -40,8 +37,12 @@
 #define CGU_REG_MSC2CDR		0xA8
 #define CGU_REG_BCHCDR		0xAC
 
+/* bits within the LCR register */
+#define LCR_LPM			BIT(0)		/* Low Power Mode */
+
 /* bits within the OPCR register */
 #define OPCR_SPENDH		BIT(5)		/* UHC PHY suspend */
+#define OPCR_SPENDN		BIT(7)		/* OTG PHY suspend */
 
 /* bits within the USBPCR1 register */
 #define USBPCR1_UHC_POWER	BIT(5)		/* UHC PHY power down */
@@ -82,12 +83,39 @@ static const struct clk_ops jz4770_uhc_phy_ops = {
 	.is_enabled = jz4770_uhc_phy_is_enabled,
 };
 
-static const s8 pll_od_encoding[8] = {
-	0x0, 0x1, -1, 0x2, -1, -1, -1, 0x3,
+static int jz4770_otg_phy_enable(struct clk_hw *hw)
+{
+	void __iomem *reg_opcr		= cgu->base + CGU_REG_OPCR;
+
+	writel(readl(reg_opcr) | OPCR_SPENDN, reg_opcr);
+
+	/* Wait for the clock to be stable */
+	udelay(50);
+	return 0;
+}
+
+static void jz4770_otg_phy_disable(struct clk_hw *hw)
+{
+	void __iomem *reg_opcr		= cgu->base + CGU_REG_OPCR;
+
+	writel(readl(reg_opcr) & ~OPCR_SPENDN, reg_opcr);
+}
+
+static int jz4770_otg_phy_is_enabled(struct clk_hw *hw)
+{
+	void __iomem *reg_opcr		= cgu->base + CGU_REG_OPCR;
+
+	return !!(readl(reg_opcr) & OPCR_SPENDN);
+}
+
+static const struct clk_ops jz4770_otg_phy_ops = {
+	.enable = jz4770_otg_phy_enable,
+	.disable = jz4770_otg_phy_disable,
+	.is_enabled = jz4770_otg_phy_is_enabled,
 };
 
-static const u8 jz4770_cgu_cpccr_div_table[] = {
-	1, 2, 3, 4, 6, 8, 12,
+static const s8 pll_od_encoding[8] = {
+	0x0, 0x1, -1, 0x2, -1, -1, -1, 0x3,
 };
 
 static const struct ingenic_cgu_clk_info jz4770_cgu_clocks[] = {
@@ -104,7 +132,6 @@ static const struct ingenic_cgu_clk_info jz4770_cgu_clocks[] = {
 		.parents = { JZ4770_CLK_EXT },
 		.pll = {
 			.reg = CGU_REG_CPPCR0,
-			.rate_multiplier = 1,
 			.m_shift = 24,
 			.m_bits = 7,
 			.m_offset = 1,
@@ -115,7 +142,6 @@ static const struct ingenic_cgu_clk_info jz4770_cgu_clocks[] = {
 			.od_bits = 2,
 			.od_max = 8,
 			.od_encoding = pll_od_encoding,
-			.bypass_reg = CGU_REG_CPPCR0,
 			.bypass_bit = 9,
 			.enable_bit = 8,
 			.stable_bit = 10,
@@ -128,7 +154,6 @@ static const struct ingenic_cgu_clk_info jz4770_cgu_clocks[] = {
 		.parents = { JZ4770_CLK_EXT },
 		.pll = {
 			.reg = CGU_REG_CPPCR1,
-			.rate_multiplier = 1,
 			.m_shift = 24,
 			.m_bits = 7,
 			.m_offset = 1,
@@ -139,9 +164,9 @@ static const struct ingenic_cgu_clk_info jz4770_cgu_clocks[] = {
 			.od_bits = 2,
 			.od_max = 8,
 			.od_encoding = pll_od_encoding,
-			.bypass_bit = -1,
 			.enable_bit = 7,
 			.stable_bit = 6,
+			.no_bypass_bit = true,
 		},
 	},
 
@@ -149,58 +174,34 @@ static const struct ingenic_cgu_clk_info jz4770_cgu_clocks[] = {
 
 	[JZ4770_CLK_CCLK] = {
 		"cclk", CGU_CLK_DIV,
-		/*
-		 * Disabling the CPU clock or any parent clocks will hang the
-		 * system; mark it critical.
-		 */
-		.flags = CLK_IS_CRITICAL,
 		.parents = { JZ4770_CLK_PLL0, },
-		.div = {
-			CGU_REG_CPCCR, 0, 1, 4, 22, -1, -1, 0,
-			jz4770_cgu_cpccr_div_table,
-		},
+		.div = { CGU_REG_CPCCR, 0, 1, 4, 22, -1, -1 },
 	},
 	[JZ4770_CLK_H0CLK] = {
 		"h0clk", CGU_CLK_DIV,
 		.parents = { JZ4770_CLK_PLL0, },
-		.div = {
-			CGU_REG_CPCCR, 4, 1, 4, 22, -1, -1, 0,
-			jz4770_cgu_cpccr_div_table,
-		},
+		.div = { CGU_REG_CPCCR, 4, 1, 4, 22, -1, -1 },
 	},
 	[JZ4770_CLK_H1CLK] = {
 		"h1clk", CGU_CLK_DIV | CGU_CLK_GATE,
 		.parents = { JZ4770_CLK_PLL0, },
-		.div = {
-			CGU_REG_CPCCR, 24, 1, 4, 22, -1, -1, 0,
-			jz4770_cgu_cpccr_div_table,
-		},
-		.gate = { CGU_REG_CLKGR1, 7 },
+		.div = { CGU_REG_CPCCR, 24, 1, 4, 22, -1, -1 },
+		.gate = { CGU_REG_LCR, 30 },
 	},
 	[JZ4770_CLK_H2CLK] = {
 		"h2clk", CGU_CLK_DIV,
 		.parents = { JZ4770_CLK_PLL0, },
-		.div = {
-			CGU_REG_CPCCR, 16, 1, 4, 22, -1, -1, 0,
-			jz4770_cgu_cpccr_div_table,
-		},
+		.div = { CGU_REG_CPCCR, 16, 1, 4, 22, -1, -1 },
 	},
 	[JZ4770_CLK_C1CLK] = {
-		"c1clk", CGU_CLK_DIV | CGU_CLK_GATE,
+		"c1clk", CGU_CLK_DIV,
 		.parents = { JZ4770_CLK_PLL0, },
-		.div = {
-			CGU_REG_CPCCR, 12, 1, 4, 22, -1, -1, 0,
-			jz4770_cgu_cpccr_div_table,
-		},
-		.gate = { CGU_REG_OPCR, 31, true }, // disable CCLK stop on idle
+		.div = { CGU_REG_CPCCR, 12, 1, 4, 22, -1, -1 },
 	},
 	[JZ4770_CLK_PCLK] = {
 		"pclk", CGU_CLK_DIV,
 		.parents = { JZ4770_CLK_PLL0, },
-		.div = {
-			CGU_REG_CPCCR, 8, 1, 4, 22, -1, -1, 0,
-			jz4770_cgu_cpccr_div_table,
-		},
+		.div = { CGU_REG_CPCCR, 8, 1, 4, 22, -1, -1 },
 	},
 
 	/* Those divided clocks can connect to PLL0 or PLL1 */
@@ -334,11 +335,6 @@ static const struct ingenic_cgu_clk_info jz4770_cgu_clocks[] = {
 		.parents = { JZ4770_CLK_H2CLK, },
 		.gate = { CGU_REG_CLKGR0, 21 },
 	},
-	[JZ4770_CLK_BDMA] = {
-		"bdma", CGU_CLK_GATE,
-		.parents = { JZ4770_CLK_H2CLK, },
-		.gate = { CGU_REG_CLKGR1, 0 },
-	},
 	[JZ4770_CLK_I2C0] = {
 		"i2c0", CGU_CLK_GATE,
 		.parents = { JZ4770_CLK_EXT, },
@@ -397,7 +393,7 @@ static const struct ingenic_cgu_clk_info jz4770_cgu_clocks[] = {
 	[JZ4770_CLK_VPU] = {
 		"vpu", CGU_CLK_GATE,
 		.parents = { JZ4770_CLK_H1CLK, },
-		.gate = { CGU_REG_LCR, 30, false, 150 },
+		.gate = { CGU_REG_CLKGR1, 7 },
 	},
 	[JZ4770_CLK_MMC0] = {
 		"mmc0", CGU_CLK_GATE,
@@ -414,11 +410,6 @@ static const struct ingenic_cgu_clk_info jz4770_cgu_clocks[] = {
 		.parents = { JZ4770_CLK_MMC2_MUX, },
 		.gate = { CGU_REG_CLKGR0, 12 },
 	},
-	[JZ4770_CLK_OTG_PHY] = {
-		"usb_phy", CGU_CLK_GATE,
-		.parents = { JZ4770_CLK_OTG },
-		.gate = { CGU_REG_OPCR, 7, true, 50 },
-	},
 
 	/* Custom clocks */
 
@@ -426,6 +417,11 @@ static const struct ingenic_cgu_clk_info jz4770_cgu_clocks[] = {
 		"uhc_phy", CGU_CLK_CUSTOM,
 		.parents = { JZ4770_CLK_UHC, -1, -1, -1 },
 		.custom = { &jz4770_uhc_phy_ops },
+	},
+	[JZ4770_CLK_OTG_PHY] = {
+		"usb_phy", CGU_CLK_CUSTOM,
+		.parents = { JZ4770_CLK_OTG, -1, -1, -1 },
+		.custom = { &jz4770_otg_phy_ops },
 	},
 
 	[JZ4770_CLK_EXT512] = {
@@ -441,23 +437,47 @@ static const struct ingenic_cgu_clk_info jz4770_cgu_clocks[] = {
 	},
 };
 
+#if IS_ENABLED(CONFIG_PM_SLEEP)
+static int jz4770_cgu_pm_suspend(void)
+{
+	u32 val;
+
+	val = readl(cgu->base + CGU_REG_LCR);
+	writel(val | LCR_LPM, cgu->base + CGU_REG_LCR);
+	return 0;
+}
+
+static void jz4770_cgu_pm_resume(void)
+{
+	u32 val;
+
+	val = readl(cgu->base + CGU_REG_LCR);
+	writel(val & ~LCR_LPM, cgu->base + CGU_REG_LCR);
+}
+
+static struct syscore_ops jz4770_cgu_pm_ops = {
+	.suspend = jz4770_cgu_pm_suspend,
+	.resume = jz4770_cgu_pm_resume,
+};
+#endif /* CONFIG_PM_SLEEP */
+
 static void __init jz4770_cgu_init(struct device_node *np)
 {
 	int retval;
 
 	cgu = ingenic_cgu_new(jz4770_cgu_clocks,
 			      ARRAY_SIZE(jz4770_cgu_clocks), np);
-	if (!cgu) {
+	if (!cgu)
 		pr_err("%s: failed to initialise CGU\n", __func__);
-		return;
-	}
 
 	retval = ingenic_cgu_register_clocks(cgu);
 	if (retval)
 		pr_err("%s: failed to register CGU Clocks\n", __func__);
 
-	ingenic_cgu_register_syscore_ops(cgu);
+#if IS_ENABLED(CONFIG_PM_SLEEP)
+	register_syscore_ops(&jz4770_cgu_pm_ops);
+#endif
 }
 
 /* We only probe via devicetree, no need for a platform driver */
-CLK_OF_DECLARE_DRIVER(jz4770_cgu, "ingenic,jz4770-cgu", jz4770_cgu_init);
+CLK_OF_DECLARE(jz4770_cgu, "ingenic,jz4770-cgu", jz4770_cgu_init);

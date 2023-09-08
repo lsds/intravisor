@@ -1,8 +1,10 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  *	w1_ds28e04.c - w1 family 1C (DS28E04) driver
  *
  * Copyright (c) 2012 Markus Franke <franke.m@sebakmt.com>
+ *
+ * This source code is licensed under the GNU General Public License,
+ * Version 2. See the file COPYING for more details.
  */
 
 #include <linux/kernel.h>
@@ -32,7 +34,7 @@ static int w1_strong_pullup = 1;
 module_param_named(strong_pullup, w1_strong_pullup, int, 0);
 
 /* enable/disable CRC checking on DS28E04-100 memory accesses */
-static bool w1_enable_crccheck = true;
+static char w1_enable_crccheck = 1;
 
 #define W1_EEPROM_SIZE		512
 #define W1_PAGE_COUNT		16
@@ -339,18 +341,32 @@ static BIN_ATTR_RW(pio, 1);
 static ssize_t crccheck_show(struct device *dev, struct device_attribute *attr,
 			     char *buf)
 {
-	return sysfs_emit(buf, "%d\n", w1_enable_crccheck);
+	if (put_user(w1_enable_crccheck + 0x30, buf))
+		return -EFAULT;
+
+	return sizeof(w1_enable_crccheck);
 }
 
 static ssize_t crccheck_store(struct device *dev, struct device_attribute *attr,
 			      const char *buf, size_t count)
 {
-	int err = kstrtobool(buf, &w1_enable_crccheck);
+	char val;
 
-	if (err)
-		return err;
+	if (count != 1 || !buf)
+		return -EINVAL;
 
-	return count;
+	if (get_user(val, buf))
+		return -EFAULT;
+
+	/* convert to decimal */
+	val = val - 0x30;
+	if (val != 0 && val != 1)
+		return -EINVAL;
+
+	/* set the new value */
+	w1_enable_crccheck = val;
+
+	return sizeof(w1_enable_crccheck);
 }
 
 static DEVICE_ATTR_RW(crccheck);
@@ -396,7 +412,7 @@ static void w1_f1C_remove_slave(struct w1_slave *sl)
 	sl->family_data = NULL;
 }
 
-static const struct w1_family_ops w1_f1C_fops = {
+static struct w1_family_ops w1_f1C_fops = {
 	.add_slave      = w1_f1C_add_slave,
 	.remove_slave   = w1_f1C_remove_slave,
 	.groups		= w1_f1C_groups,

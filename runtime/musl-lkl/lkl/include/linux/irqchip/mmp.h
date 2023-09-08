@@ -4,7 +4,4 @@
 
 extern struct irq_chip icu_irq_chip;
 
-extern void icu_init_irq(void);
-extern void mmp2_init_icu(void);
-
 #endif	/* __IRQCHIP_MMP_H */

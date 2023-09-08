@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * GPIO driver for AMD 8111 south bridges
  *
@@ -21,6 +20,10 @@
  * Hardware driver for Intel i810 Random Number Generator (RNG)
  * Copyright 2000,2001 Jeff Garzik <jgarzik@pobox.com>
  * Copyright 2000,2001 Philipp Rumpf <prumpf@mandrakesoft.com>
+ *
+ * This file is licensed under  the terms of the GNU General Public
+ * License version 2. This program is licensed "as is" without any
+ * warranty of any kind, whether express or implied.
  */
 #include <linux/ioport.h>
 #include <linux/module.h>
@@ -176,6 +179,7 @@ static int __init amd_gpio_init(void)
 	struct pci_dev *pdev = NULL;
 	const struct pci_device_id *ent;
 
+
 	/* We look for our device - AMD South Bridge
 	 * I don't know about a system with two such bridges,
 	 * so we can assume that there is max. one device.
@@ -219,17 +223,15 @@ found:
 
 	spin_lock_init(&gp.lock);
 
-	dev_info(&pdev->dev, "AMD-8111 GPIO detected\n");
+	printk(KERN_INFO "AMD-8111 GPIO detected\n");
 	err = gpiochip_add_data(&gp.chip, &gp);
 	if (err) {
-		dev_err(&pdev->dev, "GPIO registering failed (%d)\n", err);
+		printk(KERN_ERR "GPIO registering failed (%d)\n",
+		       err);
 		ioport_unmap(gp.pm);
 		goto out;
 	}
-	return 0;
-
 out:
-	pci_dev_put(pdev);
 	return err;
 }
 
@@ -237,7 +239,6 @@ static void __exit amd_gpio_exit(void)
 {
 	gpiochip_remove(&gp.chip);
 	ioport_unmap(gp.pm);
-	pci_dev_put(gp.pdev);
 }
 
 module_init(amd_gpio_init);

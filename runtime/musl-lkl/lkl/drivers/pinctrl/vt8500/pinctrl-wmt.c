@@ -1,8 +1,16 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Pinctrl driver for the Wondermedia SoC's
  *
  * Copyright (c) 2013 Tony Prisk <linux@prisktech.co.nz>
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms and conditions of the GNU General Public License,
+ * version 2, as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+ * more details.
  */
 
 #include <linux/err.h>
@@ -344,7 +352,7 @@ static int wmt_pctl_dt_node_to_map(struct pinctrl_dev *pctldev,
 	if (num_pulls)
 		maps_per_pin++;
 
-	cur_map = maps = kcalloc(num_pins * maps_per_pin, sizeof(*maps),
+	cur_map = maps = kzalloc(num_pins * maps_per_pin * sizeof(*maps),
 				 GFP_KERNEL);
 	if (!maps)
 		return -ENOMEM;
@@ -487,9 +495,9 @@ static int wmt_gpio_get_direction(struct gpio_chip *chip, unsigned offset)
 
 	val = readl_relaxed(data->base + reg_dir);
 	if (val & BIT(bit))
-		return GPIO_LINE_DIRECTION_OUT;
-
-	return GPIO_LINE_DIRECTION_IN;
+		return GPIOF_DIR_OUT;
+	else
+		return GPIOF_DIR_IN;
 }
 
 static int wmt_gpio_get_value(struct gpio_chip *chip, unsigned offset)
@@ -555,8 +563,10 @@ int wmt_pinctrl_probe(struct platform_device *pdev,
 		      struct wmt_pinctrl_data *data)
 {
 	int err;
+	struct resource *res;
 
-	data->base = devm_platform_ioremap_resource(pdev, 0);
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	data->base = devm_ioremap_resource(&pdev->dev, res);
 	if (IS_ERR(data->base))
 		return PTR_ERR(data->base);
 
@@ -565,6 +575,7 @@ int wmt_pinctrl_probe(struct platform_device *pdev,
 
 	data->gpio_chip = wmt_gpio_chip;
 	data->gpio_chip.parent = &pdev->dev;
+	data->gpio_chip.of_node = pdev->dev.of_node;
 	data->gpio_chip.ngpio = data->nbanks * 32;
 
 	platform_set_drvdata(pdev, data);

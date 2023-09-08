@@ -1,8 +1,18 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * NXP TDA18250 silicon tuner driver
  *
  * Copyright (C) 2017 Olli Salonen <olli.salonen@iki.fi>
+ *
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
  */
 
 #include "tda18250_priv.h"
@@ -730,9 +740,9 @@ static int tda18250_sleep(struct dvb_frontend *fe)
 
 static const struct dvb_tuner_ops tda18250_ops = {
 	.info = {
-		.name              = "NXP TDA18250",
-		.frequency_min_hz  =  42 * MHz,
-		.frequency_max_hz  = 870 * MHz,
+		.name           = "NXP TDA18250",
+		.frequency_min  = 42000000,
+		.frequency_max  = 870000000,
 	},
 
 	.init = tda18250_init,
@@ -856,7 +866,7 @@ err:
 	return ret;
 }
 
-static void tda18250_remove(struct i2c_client *client)
+static int tda18250_remove(struct i2c_client *client)
 {
 	struct tda18250_dev *dev = i2c_get_clientdata(client);
 	struct dvb_frontend *fe = dev->fe;
@@ -866,6 +876,8 @@ static void tda18250_remove(struct i2c_client *client)
 	memset(&fe->ops.tuner_ops, 0, sizeof(struct dvb_tuner_ops));
 	fe->tuner_priv = NULL;
 	kfree(dev);
+
+	return 0;
 }
 
 static const struct i2c_device_id tda18250_id_table[] = {

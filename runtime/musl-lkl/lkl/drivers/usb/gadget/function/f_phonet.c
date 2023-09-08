@@ -48,7 +48,7 @@ struct f_phonet {
 	struct usb_ep			*in_ep, *out_ep;
 
 	struct usb_request		*in_req;
-	struct usb_request		*out_reqv[];
+	struct usb_request		*out_reqv[0];
 };
 
 static int phonet_rxq_size = 17;
@@ -212,7 +212,7 @@ static void pn_tx_complete(struct usb_ep *ep, struct usb_request *req)
 	case -ESHUTDOWN: /* disconnected */
 	case -ECONNRESET: /* disabled */
 		dev->stats.tx_aborted_errors++;
-		fallthrough;
+		/* fall through */
 	default:
 		dev->stats.tx_errors++;
 	}
@@ -267,8 +267,6 @@ static const struct net_device_ops pn_netdev_ops = {
 
 static void pn_net_setup(struct net_device *dev)
 {
-	const u8 addr = PN_MEDIA_USB;
-
 	dev->features		= 0;
 	dev->type		= ARPHRD_PHONET;
 	dev->flags		= IFF_POINTOPOINT | IFF_NOARP;
@@ -276,9 +274,8 @@ static void pn_net_setup(struct net_device *dev)
 	dev->min_mtu		= PHONET_MIN_MTU;
 	dev->max_mtu		= PHONET_MAX_MTU;
 	dev->hard_header_len	= 1;
+	dev->dev_addr[0]	= PN_MEDIA_USB;
 	dev->addr_len		= 1;
-	dev_addr_set(dev, &addr);
-
 	dev->tx_queue_len	= 1;
 
 	dev->netdev_ops		= &pn_netdev_ops;
@@ -363,7 +360,7 @@ static void pn_rx_complete(struct usb_ep *ep, struct usb_request *req)
 	/* Do resubmit in these cases: */
 	case -EOVERFLOW: /* request buffer overflow */
 		dev->stats.rx_over_errors++;
-		fallthrough;
+		/* fall through */
 	default:
 		dev->stats.rx_errors++;
 		break;
@@ -668,8 +665,10 @@ static struct usb_function *phonet_alloc(struct usb_function_instance *fi)
 {
 	struct f_phonet *fp;
 	struct f_phonet_opts *opts;
+	int size;
 
-	fp = kzalloc(struct_size(fp, out_reqv, phonet_rxq_size), GFP_KERNEL);
+	size = sizeof(*fp) + (phonet_rxq_size * sizeof(struct usb_request *));
+	fp = kzalloc(size, GFP_KERNEL);
 	if (!fp)
 		return ERR_PTR(-ENOMEM);
 

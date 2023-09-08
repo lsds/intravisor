@@ -5,7 +5,7 @@
  *
  * Copyright (C) 2006. Bob Jenkins (bob_jenkins@burtleburtle.net)
  *
- * https://burtleburtle.net/bob/hash/
+ * http://burtleburtle.net/bob/hash/
  *
  * These are the credits from Bob's sources:
  *

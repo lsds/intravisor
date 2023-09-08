@@ -11,7 +11,6 @@
 #include <linux/sched.h>
 #include <linux/mm.h>
 #include <linux/fs.h>
-#include <linux/pagemap.h>
 
 #include <asm/cacheflush.h>
 #include <asm/cpuinfo.h>
@@ -199,14 +198,11 @@ void flush_dcache_page(struct page *page)
 EXPORT_SYMBOL(flush_dcache_page);
 
 void update_mmu_cache(struct vm_area_struct *vma,
-		      unsigned long address, pte_t *ptep)
+		      unsigned long address, pte_t *pte)
 {
-	pte_t pte = *ptep;
-	unsigned long pfn = pte_pfn(pte);
+	unsigned long pfn = pte_pfn(*pte);
 	struct page *page;
 	struct address_space *mapping;
-
-	reload_tlb_page(vma, address, pte);
 
 	if (!pfn_valid(pfn))
 		return;

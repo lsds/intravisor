@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
     Driver for ST STV0299 demodulator
 
@@ -27,6 +26,19 @@
 
     Copyright (C) 2004 Andrew de Quincey <adq_dvb@lidskialf.net>
 
+    This program is free software; you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation; either version 2 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program; if not, write to the Free Software
+    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
 */
 
@@ -161,9 +173,8 @@ static int stv0299_set_FEC(struct stv0299_state *state, enum fe_code_rate fec)
 
 static enum fe_code_rate stv0299_get_fec(struct stv0299_state *state)
 {
-	static const enum fe_code_rate fec_tab[] = {
-		FEC_2_3, FEC_3_4, FEC_5_6, FEC_7_8, FEC_1_2
-	};
+	static enum fe_code_rate fec_tab[] = { FEC_2_3, FEC_3_4, FEC_5_6,
+					       FEC_7_8, FEC_1_2 };
 	u8 index;
 
 	dprintk ("%s\n", __func__);
@@ -184,7 +195,7 @@ static int stv0299_wait_diseqc_fifo (struct stv0299_state* state, int timeout)
 	dprintk ("%s\n", __func__);
 
 	while (stv0299_readreg(state, 0x0a) & 1) {
-		if (time_is_before_jiffies(start + timeout)) {
+		if (jiffies - start > timeout) {
 			dprintk ("%s: timeout!!\n", __func__);
 			return -ETIMEDOUT;
 		}
@@ -201,7 +212,7 @@ static int stv0299_wait_diseqc_idle (struct stv0299_state* state, int timeout)
 	dprintk ("%s\n", __func__);
 
 	while ((stv0299_readreg(state, 0x0a) & 3) != 2 ) {
-		if (time_is_before_jiffies(start + timeout)) {
+		if (jiffies - start > timeout) {
 			dprintk ("%s: timeout!!\n", __func__);
 			return -ETIMEDOUT;
 		}
@@ -706,9 +717,10 @@ static const struct dvb_frontend_ops stv0299_ops = {
 	.delsys = { SYS_DVBS },
 	.info = {
 		.name			= "ST STV0299 DVB-S",
-		.frequency_min_hz	=  950 * MHz,
-		.frequency_max_hz	= 2150 * MHz,
-		.frequency_stepsize_hz	=  125 * kHz,
+		.frequency_min		= 950000,
+		.frequency_max		= 2150000,
+		.frequency_stepsize	= 125,	 /* kHz for QPSK frontends */
+		.frequency_tolerance	= 0,
 		.symbol_rate_min	= 1000000,
 		.symbol_rate_max	= 45000000,
 		.symbol_rate_tolerance	= 500,	/* ppm */

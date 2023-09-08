@@ -1,6 +1,9 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (C) 2016 HiSilicon Co., Ltd.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 
 #include <linux/err.h>
@@ -73,6 +76,7 @@ static int hisi_rng_read(struct hwrng *rng, void *buf, size_t max, bool wait)
 static int hisi_rng_probe(struct platform_device *pdev)
 {
 	struct hisi_rng *rng;
+	struct resource *res;
 	int ret;
 
 	rng = devm_kzalloc(&pdev->dev, sizeof(*rng), GFP_KERNEL);
@@ -81,7 +85,8 @@ static int hisi_rng_probe(struct platform_device *pdev)
 
 	platform_set_drvdata(pdev, rng);
 
-	rng->base = devm_platform_ioremap_resource(pdev, 0);
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	rng->base = devm_ioremap_resource(&pdev->dev, res);
 	if (IS_ERR(rng->base))
 		return PTR_ERR(rng->base);
 
@@ -99,7 +104,7 @@ static int hisi_rng_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static const struct of_device_id hisi_rng_dt_ids[] __maybe_unused = {
+static const struct of_device_id hisi_rng_dt_ids[] = {
 	{ .compatible = "hisilicon,hip04-rng" },
 	{ .compatible = "hisilicon,hip05-rng" },
 	{ }

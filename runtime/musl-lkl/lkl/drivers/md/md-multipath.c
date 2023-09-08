@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * multipath.c : Multiple Devices driver for Linux
  *
@@ -9,6 +8,15 @@
  * MULTIPATH management functions.
  *
  * derived from raid1.c.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2, or (at your option)
+ * any later version.
+ *
+ * You should have received a copy of the GNU General Public License
+ * (for example /usr/src/linux/COPYING); if not, write to the Free
+ * Software Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
 #include <linux/blkdev.h>
@@ -72,7 +80,7 @@ static void multipath_end_bh_io(struct multipath_bh *mp_bh, blk_status_t status)
 
 	bio->bi_status = status;
 	bio_endio(bio);
-	mempool_free(mp_bh, &conf->pool);
+	mempool_free(mp_bh, conf->pool);
 }
 
 static void multipath_end_request(struct bio *bio)
@@ -87,9 +95,10 @@ static void multipath_end_request(struct bio *bio)
 		/*
 		 * oops, IO error:
 		 */
+		char b[BDEVNAME_SIZE];
 		md_error (mp_bh->mddev, rdev);
-		pr_info("multipath: %pg: rescheduling sector %llu\n",
-			rdev->bdev,
+		pr_info("multipath: %s: rescheduling sector %llu\n",
+			bdevname(rdev->bdev,b),
 			(unsigned long long)bio->bi_iter.bi_sector);
 		multipath_reschedule_retry(mp_bh);
 	} else
@@ -103,11 +112,12 @@ static bool multipath_make_request(struct mddev *mddev, struct bio * bio)
 	struct multipath_bh * mp_bh;
 	struct multipath_info *multipath;
 
-	if (unlikely(bio->bi_opf & REQ_PREFLUSH)
-	    && md_flush_request(mddev, bio))
+	if (unlikely(bio->bi_opf & REQ_PREFLUSH)) {
+		md_flush_request(mddev, bio);
 		return true;
+	}
 
-	mp_bh = mempool_alloc(&conf->pool, GFP_NOIO);
+	mp_bh = mempool_alloc(conf->pool, GFP_NOIO);
 
 	mp_bh->master_bio = bio;
 	mp_bh->mddev = mddev;
@@ -115,19 +125,22 @@ static bool multipath_make_request(struct mddev *mddev, struct bio * bio)
 	mp_bh->path = multipath_map(conf);
 	if (mp_bh->path < 0) {
 		bio_io_error(bio);
-		mempool_free(mp_bh, &conf->pool);
+		mempool_free(mp_bh, conf->pool);
 		return true;
 	}
 	multipath = conf->multipaths + mp_bh->path;
 
-	bio_init_clone(multipath->rdev->bdev, &mp_bh->bio, bio, GFP_NOIO);
+	bio_init(&mp_bh->bio, NULL, 0);
+	__bio_clone_fast(&mp_bh->bio, bio);
 
 	mp_bh->bio.bi_iter.bi_sector += multipath->rdev->data_offset;
+	bio_set_dev(&mp_bh->bio, multipath->rdev->bdev);
 	mp_bh->bio.bi_opf |= REQ_FAILFAST_TRANSPORT;
 	mp_bh->bio.bi_end_io = multipath_end_request;
 	mp_bh->bio.bi_private = mp_bh;
+	mddev_check_writesame(mddev, &mp_bh->bio);
 	mddev_check_write_zeroes(mddev, &mp_bh->bio);
-	submit_bio_noacct(&mp_bh->bio);
+	generic_make_request(&mp_bh->bio);
 	return true;
 }
 
@@ -147,12 +160,35 @@ static void multipath_status(struct seq_file *seq, struct mddev *mddev)
 	seq_putc(seq, ']');
 }
 
+static int multipath_congested(struct mddev *mddev, int bits)
+{
+	struct mpconf *conf = mddev->private;
+	int i, ret = 0;
+
+	rcu_read_lock();
+	for (i = 0; i < mddev->raid_disks ; i++) {
+		struct md_rdev *rdev = rcu_dereference(conf->multipaths[i].rdev);
+		if (rdev && !test_bit(Faulty, &rdev->flags)) {
+			struct request_queue *q = bdev_get_queue(rdev->bdev);
+
+			ret |= bdi_congested(q->backing_dev_info, bits);
+			/* Just like multipath_map, we just check the
+			 * first available device
+			 */
+			break;
+		}
+	}
+	rcu_read_unlock();
+	return ret;
+}
+
 /*
  * Careful, this can execute in IRQ contexts as well!
  */
 static void multipath_error (struct mddev *mddev, struct md_rdev *rdev)
 {
 	struct mpconf *conf = mddev->private;
+	char b[BDEVNAME_SIZE];
 
 	if (conf->raid_disks - mddev->degraded <= 1) {
 		/*
@@ -175,9 +211,9 @@ static void multipath_error (struct mddev *mddev, struct md_rdev *rdev)
 	}
 	set_bit(Faulty, &rdev->flags);
 	set_bit(MD_SB_CHANGE_DEVS, &mddev->sb_flags);
-	pr_err("multipath: IO failure on %pg, disabling IO path.\n"
+	pr_err("multipath: IO failure on %s, disabling IO path.\n"
 	       "multipath: Operation continuing on %d IO paths.\n",
-	       rdev->bdev,
+	       bdevname(rdev->bdev, b),
 	       conf->raid_disks - mddev->degraded);
 }
 
@@ -195,11 +231,12 @@ static void print_multipath_conf (struct mpconf *conf)
 		 conf->raid_disks);
 
 	for (i = 0; i < conf->raid_disks; i++) {
+		char b[BDEVNAME_SIZE];
 		tmp = conf->multipaths + i;
 		if (tmp->rdev)
-			pr_debug(" disk%d, o:%d, dev:%pg\n",
+			pr_debug(" disk%d, o:%d, dev:%s\n",
 				 i,!test_bit(Faulty, &tmp->rdev->flags),
-				 tmp->rdev->bdev);
+				 bdevname(tmp->rdev->bdev,b));
 	}
 }
 
@@ -293,6 +330,7 @@ static void multipathd(struct md_thread *thread)
 
 	md_check_recovery(mddev);
 	for (;;) {
+		char b[BDEVNAME_SIZE];
 		spin_lock_irqsave(&conf->device_lock, flags);
 		if (list_empty(head))
 			break;
@@ -304,13 +342,13 @@ static void multipathd(struct md_thread *thread)
 		bio->bi_iter.bi_sector = mp_bh->master_bio->bi_iter.bi_sector;
 
 		if ((mp_bh->path = multipath_map (conf))<0) {
-			pr_err("multipath: %pg: unrecoverable IO read error for block %llu\n",
-			       bio->bi_bdev,
+			pr_err("multipath: %s: unrecoverable IO read error for block %llu\n",
+			       bio_devname(bio, b),
 			       (unsigned long long)bio->bi_iter.bi_sector);
 			multipath_end_bh_io(mp_bh, BLK_STS_IOERR);
 		} else {
-			pr_err("multipath: %pg: redirecting sector %llu to another IO path\n",
-			       bio->bi_bdev,
+			pr_err("multipath: %s: redirecting sector %llu to another IO path\n",
+			       bio_devname(bio, b),
 			       (unsigned long long)bio->bi_iter.bi_sector);
 			*bio = *(mp_bh->master_bio);
 			bio->bi_iter.bi_sector +=
@@ -319,7 +357,7 @@ static void multipathd(struct md_thread *thread)
 			bio->bi_opf |= REQ_FAILFAST_TRANSPORT;
 			bio->bi_end_io = multipath_end_request;
 			bio->bi_private = mp_bh;
-			submit_bio_noacct(bio);
+			generic_make_request(bio);
 		}
 	}
 	spin_unlock_irqrestore(&conf->device_lock, flags);
@@ -340,7 +378,6 @@ static int multipath_run (struct mddev *mddev)
 	struct multipath_info *disk;
 	struct md_rdev *rdev;
 	int working_disks;
-	int ret;
 
 	if (md_check_no_bitmap(mddev))
 		return -EINVAL;
@@ -361,8 +398,7 @@ static int multipath_run (struct mddev *mddev)
 	if (!conf)
 		goto out;
 
-	conf->multipaths = kcalloc(mddev->raid_disks,
-				   sizeof(struct multipath_info),
+	conf->multipaths = kzalloc(sizeof(struct multipath_info)*mddev->raid_disks,
 				   GFP_KERNEL);
 	if (!conf->multipaths)
 		goto out_free_conf;
@@ -395,9 +431,9 @@ static int multipath_run (struct mddev *mddev)
 	}
 	mddev->degraded = conf->raid_disks - working_disks;
 
-	ret = mempool_init_kmalloc_pool(&conf->pool, NR_RESERVED_BUFS,
-					sizeof(struct multipath_bh));
-	if (ret)
+	conf->pool = mempool_create_kmalloc_pool(NR_RESERVED_BUFS,
+						 sizeof(struct multipath_bh));
+	if (conf->pool == NULL)
 		goto out_free_conf;
 
 	mddev->thread = md_register_thread(multipathd, mddev,
@@ -419,7 +455,7 @@ static int multipath_run (struct mddev *mddev)
 	return 0;
 
 out_free_conf:
-	mempool_exit(&conf->pool);
+	mempool_destroy(conf->pool);
 	kfree(conf->multipaths);
 	kfree(conf);
 	mddev->private = NULL;
@@ -431,7 +467,7 @@ static void multipath_free(struct mddev *mddev, void *priv)
 {
 	struct mpconf *conf = priv;
 
-	mempool_exit(&conf->pool);
+	mempool_destroy(conf->pool);
 	kfree(conf->multipaths);
 	kfree(conf);
 }
@@ -449,6 +485,7 @@ static struct md_personality multipath_personality =
 	.hot_add_disk	= multipath_add_disk,
 	.hot_remove_disk= multipath_remove_disk,
 	.size		= multipath_size,
+	.congested	= multipath_congested,
 };
 
 static int __init multipath_init (void)
@@ -464,7 +501,7 @@ static void __exit multipath_exit (void)
 module_init(multipath_init);
 module_exit(multipath_exit);
 MODULE_LICENSE("GPL");
-MODULE_DESCRIPTION("simple multi-path personality for MD (deprecated)");
+MODULE_DESCRIPTION("simple multi-path personality for MD");
 MODULE_ALIAS("md-personality-7"); /* MULTIPATH */
 MODULE_ALIAS("md-multipath");
 MODULE_ALIAS("md-level--4");

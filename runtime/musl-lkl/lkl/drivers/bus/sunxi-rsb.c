@@ -1,8 +1,11 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * RSB (Reduced Serial Bus) driver.
  *
  * Author: Chen-Yu Tsai <wens@csie.org>
+ *
+ * This file is licensed under the terms of the GNU General Public License
+ * version 2.  This program is licensed "as is" without any warranty of any
+ * kind, whether express or implied.
  *
  * The RSB controller looks like an SMBus controller which only supports
  * byte and word data transfers. But, it differs from standard SMBus
@@ -28,6 +31,7 @@
  * This document is officially released by Allwinner.
  *
  * This driver is based on i2c-sun6i-p2wi.c, the P2WI bus driver.
+ *
  */
 
 #include <linux/clk.h>
@@ -41,8 +45,6 @@
 #include <linux/of_irq.h>
 #include <linux/of_platform.h>
 #include <linux/platform_device.h>
-#include <linux/pm.h>
-#include <linux/pm_runtime.h>
 #include <linux/regmap.h>
 #include <linux/reset.h>
 #include <linux/slab.h>
@@ -124,7 +126,6 @@ struct sunxi_rsb {
 	struct completion complete;
 	struct mutex lock;
 	unsigned int status;
-	u32 clk_freq;
 };
 
 /* bus / slave device related functions */
@@ -165,11 +166,11 @@ static int sunxi_rsb_device_probe(struct device *dev)
 	return drv->probe(rdev);
 }
 
-static void sunxi_rsb_device_remove(struct device *dev)
+static int sunxi_rsb_device_remove(struct device *dev)
 {
 	const struct sunxi_rsb_driver *drv = to_sunxi_rsb_driver(dev->driver);
 
-	drv->remove(to_sunxi_rsb_device(dev));
+	return drv->remove(to_sunxi_rsb_device(dev));
 }
 
 static struct bus_type sunxi_rsb_bus = {
@@ -223,8 +224,6 @@ static struct sunxi_rsb_device *sunxi_rsb_device_create(struct sunxi_rsb *rsb,
 
 	dev_dbg(&rdev->dev, "device %s registered\n", dev_name(&rdev->dev));
 
-	return rdev;
-
 err_device_add:
 	put_device(&rdev->dev);
 
@@ -267,9 +266,6 @@ EXPORT_SYMBOL_GPL(sunxi_rsb_driver_register);
 /* common code that starts a transfer */
 static int _sunxi_rsb_run_xfer(struct sunxi_rsb *rsb)
 {
-	u32 int_mask, status;
-	bool timeout;
-
 	if (readl(rsb->regs + RSB_CTRL) & RSB_CTRL_START_TRANS) {
 		dev_dbg(rsb->dev, "RSB transfer still in progress\n");
 		return -EBUSY;
@@ -277,23 +273,13 @@ static int _sunxi_rsb_run_xfer(struct sunxi_rsb *rsb)
 
 	reinit_completion(&rsb->complete);
 
-	int_mask = RSB_INTS_LOAD_BSY | RSB_INTS_TRANS_ERR | RSB_INTS_TRANS_OVER;
-	writel(int_mask, rsb->regs + RSB_INTE);
+	writel(RSB_INTS_LOAD_BSY | RSB_INTS_TRANS_ERR | RSB_INTS_TRANS_OVER,
+	       rsb->regs + RSB_INTE);
 	writel(RSB_CTRL_START_TRANS | RSB_CTRL_GLOBAL_INT_ENB,
 	       rsb->regs + RSB_CTRL);
 
-	if (irqs_disabled()) {
-		timeout = readl_poll_timeout_atomic(rsb->regs + RSB_INTS,
-						    status, (status & int_mask),
-						    10, 100000);
-		writel(status, rsb->regs + RSB_INTS);
-	} else {
-		timeout = !wait_for_completion_io_timeout(&rsb->complete,
-							  msecs_to_jiffies(100));
-		status = rsb->status;
-	}
-
-	if (timeout) {
+	if (!wait_for_completion_io_timeout(&rsb->complete,
+					    msecs_to_jiffies(100))) {
 		dev_dbg(rsb->dev, "RSB timeout\n");
 
 		/* abort the transfer */
@@ -305,18 +291,18 @@ static int _sunxi_rsb_run_xfer(struct sunxi_rsb *rsb)
 		return -ETIMEDOUT;
 	}
 
-	if (status & RSB_INTS_LOAD_BSY) {
+	if (rsb->status & RSB_INTS_LOAD_BSY) {
 		dev_dbg(rsb->dev, "RSB busy\n");
 		return -EBUSY;
 	}
 
-	if (status & RSB_INTS_TRANS_ERR) {
-		if (status & RSB_INTS_TRANS_ERR_ACK) {
+	if (rsb->status & RSB_INTS_TRANS_ERR) {
+		if (rsb->status & RSB_INTS_TRANS_ERR_ACK) {
 			dev_dbg(rsb->dev, "RSB slave nack\n");
 			return -EINVAL;
 		}
 
-		if (status & RSB_INTS_TRANS_ERR_DATA) {
+		if (rsb->status & RSB_INTS_TRANS_ERR_DATA) {
 			dev_dbg(rsb->dev, "RSB transfer data error\n");
 			return -EIO;
 		}
@@ -349,10 +335,6 @@ static int sunxi_rsb_read(struct sunxi_rsb *rsb, u8 rtaddr, u8 addr,
 		return -EINVAL;
 	}
 
-	ret = pm_runtime_resume_and_get(rsb->dev);
-	if (ret)
-		return ret;
-
 	mutex_lock(&rsb->lock);
 
 	writel(addr, rsb->regs + RSB_ADDR);
@@ -363,13 +345,10 @@ static int sunxi_rsb_read(struct sunxi_rsb *rsb, u8 rtaddr, u8 addr,
 	if (ret)
 		goto unlock;
 
-	*buf = readl(rsb->regs + RSB_DATA) & GENMASK(len * 8 - 1, 0);
+	*buf = readl(rsb->regs + RSB_DATA);
 
 unlock:
 	mutex_unlock(&rsb->lock);
-
-	pm_runtime_mark_last_busy(rsb->dev);
-	pm_runtime_put_autosuspend(rsb->dev);
 
 	return ret;
 }
@@ -398,10 +377,6 @@ static int sunxi_rsb_write(struct sunxi_rsb *rsb, u8 rtaddr, u8 addr,
 		return -EINVAL;
 	}
 
-	ret = pm_runtime_resume_and_get(rsb->dev);
-	if (ret)
-		return ret;
-
 	mutex_lock(&rsb->lock);
 
 	writel(addr, rsb->regs + RSB_ADDR);
@@ -411,9 +386,6 @@ static int sunxi_rsb_write(struct sunxi_rsb *rsb, u8 rtaddr, u8 addr,
 	ret = _sunxi_rsb_run_xfer(rsb);
 
 	mutex_unlock(&rsb->lock);
-
-	pm_runtime_mark_last_busy(rsb->dev);
-	pm_runtime_put_autosuspend(rsb->dev);
 
 	return ret;
 }
@@ -642,100 +614,11 @@ static int of_rsb_register_devices(struct sunxi_rsb *rsb)
 	return 0;
 }
 
-static int sunxi_rsb_hw_init(struct sunxi_rsb *rsb)
-{
-	struct device *dev = rsb->dev;
-	unsigned long p_clk_freq;
-	u32 clk_delay, reg;
-	int clk_div, ret;
-
-	ret = clk_prepare_enable(rsb->clk);
-	if (ret) {
-		dev_err(dev, "failed to enable clk: %d\n", ret);
-		return ret;
-	}
-
-	ret = reset_control_deassert(rsb->rstc);
-	if (ret) {
-		dev_err(dev, "failed to deassert reset line: %d\n", ret);
-		goto err_clk_disable;
-	}
-
-	/* reset the controller */
-	writel(RSB_CTRL_SOFT_RST, rsb->regs + RSB_CTRL);
-	readl_poll_timeout(rsb->regs + RSB_CTRL, reg,
-			   !(reg & RSB_CTRL_SOFT_RST), 1000, 100000);
-
-	/*
-	 * Clock frequency and delay calculation code is from
-	 * Allwinner U-boot sources.
-	 *
-	 * From A83 user manual:
-	 * bus clock frequency = parent clock frequency / (2 * (divider + 1))
-	 */
-	p_clk_freq = clk_get_rate(rsb->clk);
-	clk_div = p_clk_freq / rsb->clk_freq / 2;
-	if (!clk_div)
-		clk_div = 1;
-	else if (clk_div > RSB_CCR_MAX_CLK_DIV + 1)
-		clk_div = RSB_CCR_MAX_CLK_DIV + 1;
-
-	clk_delay = clk_div >> 1;
-	if (!clk_delay)
-		clk_delay = 1;
-
-	dev_info(dev, "RSB running at %lu Hz\n", p_clk_freq / clk_div / 2);
-	writel(RSB_CCR_SDA_OUT_DELAY(clk_delay) | RSB_CCR_CLK_DIV(clk_div - 1),
-	       rsb->regs + RSB_CCR);
-
-	return 0;
-
-err_clk_disable:
-	clk_disable_unprepare(rsb->clk);
-
-	return ret;
-}
-
-static void sunxi_rsb_hw_exit(struct sunxi_rsb *rsb)
-{
-	reset_control_assert(rsb->rstc);
-
-	/* Keep the clock and PM reference counts consistent. */
-	if (!pm_runtime_status_suspended(rsb->dev))
-		clk_disable_unprepare(rsb->clk);
-}
-
-static int __maybe_unused sunxi_rsb_runtime_suspend(struct device *dev)
-{
-	struct sunxi_rsb *rsb = dev_get_drvdata(dev);
-
-	clk_disable_unprepare(rsb->clk);
-
-	return 0;
-}
-
-static int __maybe_unused sunxi_rsb_runtime_resume(struct device *dev)
-{
-	struct sunxi_rsb *rsb = dev_get_drvdata(dev);
-
-	return clk_prepare_enable(rsb->clk);
-}
-
-static int __maybe_unused sunxi_rsb_suspend(struct device *dev)
-{
-	struct sunxi_rsb *rsb = dev_get_drvdata(dev);
-
-	sunxi_rsb_hw_exit(rsb);
-
-	return 0;
-}
-
-static int __maybe_unused sunxi_rsb_resume(struct device *dev)
-{
-	struct sunxi_rsb *rsb = dev_get_drvdata(dev);
-
-	return sunxi_rsb_hw_init(rsb);
-}
+static const struct of_device_id sunxi_rsb_of_match_table[] = {
+	{ .compatible = "allwinner,sun8i-a23-rsb" },
+	{}
+};
+MODULE_DEVICE_TABLE(of, sunxi_rsb_of_match_table);
 
 static int sunxi_rsb_probe(struct platform_device *pdev)
 {
@@ -743,8 +626,10 @@ static int sunxi_rsb_probe(struct platform_device *pdev)
 	struct device_node *np = dev->of_node;
 	struct resource *r;
 	struct sunxi_rsb *rsb;
-	u32 clk_freq = 3000000;
-	int irq, ret;
+	unsigned long p_clk_freq;
+	u32 clk_delay, clk_freq = 3000000;
+	int clk_div, irq, ret;
+	u32 reg;
 
 	of_property_read_u32(np, "clock-frequency", &clk_freq);
 	if (clk_freq > RSB_MAX_FREQ) {
@@ -759,7 +644,6 @@ static int sunxi_rsb_probe(struct platform_device *pdev)
 		return -ENOMEM;
 
 	rsb->dev = dev;
-	rsb->clk_freq = clk_freq;
 	platform_set_drvdata(pdev, rsb);
 	r = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	rsb->regs = devm_ioremap_resource(dev, r);
@@ -767,8 +651,10 @@ static int sunxi_rsb_probe(struct platform_device *pdev)
 		return PTR_ERR(rsb->regs);
 
 	irq = platform_get_irq(pdev, 0);
-	if (irq < 0)
+	if (irq < 0) {
+		dev_err(dev, "failed to retrieve irq: %d\n", irq);
 		return irq;
+	}
 
 	rsb->clk = devm_clk_get(dev, NULL);
 	if (IS_ERR(rsb->clk)) {
@@ -777,41 +663,79 @@ static int sunxi_rsb_probe(struct platform_device *pdev)
 		return ret;
 	}
 
+	ret = clk_prepare_enable(rsb->clk);
+	if (ret) {
+		dev_err(dev, "failed to enable clk: %d\n", ret);
+		return ret;
+	}
+
+	p_clk_freq = clk_get_rate(rsb->clk);
+
 	rsb->rstc = devm_reset_control_get(dev, NULL);
 	if (IS_ERR(rsb->rstc)) {
 		ret = PTR_ERR(rsb->rstc);
 		dev_err(dev, "failed to retrieve reset controller: %d\n", ret);
-		return ret;
+		goto err_clk_disable;
+	}
+
+	ret = reset_control_deassert(rsb->rstc);
+	if (ret) {
+		dev_err(dev, "failed to deassert reset line: %d\n", ret);
+		goto err_clk_disable;
 	}
 
 	init_completion(&rsb->complete);
 	mutex_init(&rsb->lock);
 
+	/* reset the controller */
+	writel(RSB_CTRL_SOFT_RST, rsb->regs + RSB_CTRL);
+	readl_poll_timeout(rsb->regs + RSB_CTRL, reg,
+			   !(reg & RSB_CTRL_SOFT_RST), 1000, 100000);
+
+	/*
+	 * Clock frequency and delay calculation code is from
+	 * Allwinner U-boot sources.
+	 *
+	 * From A83 user manual:
+	 * bus clock frequency = parent clock frequency / (2 * (divider + 1))
+	 */
+	clk_div = p_clk_freq / clk_freq / 2;
+	if (!clk_div)
+		clk_div = 1;
+	else if (clk_div > RSB_CCR_MAX_CLK_DIV + 1)
+		clk_div = RSB_CCR_MAX_CLK_DIV + 1;
+
+	clk_delay = clk_div >> 1;
+	if (!clk_delay)
+		clk_delay = 1;
+
+	dev_info(dev, "RSB running at %lu Hz\n", p_clk_freq / clk_div / 2);
+	writel(RSB_CCR_SDA_OUT_DELAY(clk_delay) | RSB_CCR_CLK_DIV(clk_div - 1),
+	       rsb->regs + RSB_CCR);
+
 	ret = devm_request_irq(dev, irq, sunxi_rsb_irq, 0, RSB_CTRL_NAME, rsb);
 	if (ret) {
 		dev_err(dev, "can't register interrupt handler irq %d: %d\n",
 			irq, ret);
-		return ret;
+		goto err_reset_assert;
 	}
-
-	ret = sunxi_rsb_hw_init(rsb);
-	if (ret)
-		return ret;
 
 	/* initialize all devices on the bus into RSB mode */
 	ret = sunxi_rsb_init_device_mode(rsb);
 	if (ret)
 		dev_warn(dev, "Initialize device mode failed: %d\n", ret);
 
-	pm_suspend_ignore_children(dev, true);
-	pm_runtime_set_active(dev);
-	pm_runtime_set_autosuspend_delay(dev, MSEC_PER_SEC);
-	pm_runtime_use_autosuspend(dev);
-	pm_runtime_enable(dev);
-
 	of_rsb_register_devices(rsb);
 
 	return 0;
+
+err_reset_assert:
+	reset_control_assert(rsb->rstc);
+
+err_clk_disable:
+	clk_disable_unprepare(rsb->clk);
+
+	return ret;
 }
 
 static int sunxi_rsb_remove(struct platform_device *pdev)
@@ -819,23 +743,11 @@ static int sunxi_rsb_remove(struct platform_device *pdev)
 	struct sunxi_rsb *rsb = platform_get_drvdata(pdev);
 
 	device_for_each_child(rsb->dev, NULL, sunxi_rsb_remove_devices);
-	pm_runtime_disable(&pdev->dev);
-	sunxi_rsb_hw_exit(rsb);
+	reset_control_assert(rsb->rstc);
+	clk_disable_unprepare(rsb->clk);
 
 	return 0;
 }
-
-static const struct dev_pm_ops sunxi_rsb_dev_pm_ops = {
-	SET_RUNTIME_PM_OPS(sunxi_rsb_runtime_suspend,
-			   sunxi_rsb_runtime_resume, NULL)
-	SET_NOIRQ_SYSTEM_SLEEP_PM_OPS(sunxi_rsb_suspend, sunxi_rsb_resume)
-};
-
-static const struct of_device_id sunxi_rsb_of_match_table[] = {
-	{ .compatible = "allwinner,sun8i-a23-rsb" },
-	{}
-};
-MODULE_DEVICE_TABLE(of, sunxi_rsb_of_match_table);
 
 static struct platform_driver sunxi_rsb_driver = {
 	.probe = sunxi_rsb_probe,
@@ -843,7 +755,6 @@ static struct platform_driver sunxi_rsb_driver = {
 	.driver	= {
 		.name = RSB_CTRL_NAME,
 		.of_match_table = sunxi_rsb_of_match_table,
-		.pm = &sunxi_rsb_dev_pm_ops,
 	},
 };
 

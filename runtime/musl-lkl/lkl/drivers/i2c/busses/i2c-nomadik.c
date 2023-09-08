@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (C) 2009 ST-Ericsson SA
  * Copyright (C) 2009 STMicroelectronics
@@ -8,6 +7,10 @@
  *
  * Author: Srinidhi Kasagar <srinidhi.kasagar@stericsson.com>
  * Author: Sachin Verma <sachin.verma@st.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2, as
+ * published by the Free Software Foundation.
  */
 #include <linux/init.h>
 #include <linux/module.h>
@@ -159,7 +162,7 @@ struct i2c_nmk_client {
  * @clk_freq: clock frequency for the operation mode
  * @tft: Tx FIFO Threshold in bytes
  * @rft: Rx FIFO Threshold in bytes
- * @timeout: Slave response timeout (ms)
+ * @timeout Slave response timeout (ms)
  * @sm: speed mode
  * @stop: stop condition.
  * @xfer_complete: acknowledge completion for a I2C message.
@@ -277,7 +280,7 @@ static int init_hw(struct nmk_i2c_dev *dev)
 		goto exit;
 
 	/* disable the controller */
-	i2c_clr_bit(dev->virtbase + I2C_CR, I2C_CR_PE);
+	i2c_clr_bit(dev->virtbase + I2C_CR , I2C_CR_PE);
 
 	disable_all_interrupts(dev);
 
@@ -396,7 +399,7 @@ static void setup_i2c_controller(struct nmk_i2c_dev *dev)
 	 * 2 whereas it is 3 for fast and fastplus mode of
 	 * operation. TODO - high speed support.
 	 */
-	div = (dev->clk_freq > I2C_MAX_STANDARD_MODE_FREQ) ? 3 : 2;
+	div = (dev->clk_freq > 100000) ? 3 : 2;
 
 	/*
 	 * generate the mask for baud rate counters. The controller
@@ -420,7 +423,7 @@ static void setup_i2c_controller(struct nmk_i2c_dev *dev)
 	if (dev->sm > I2C_FREQ_MODE_FAST) {
 		dev_err(&dev->adev->dev,
 			"do not support this mode defaulting to std. mode\n");
-		brcr2 = i2c_clk / (I2C_MAX_STANDARD_MODE_FREQ * 2) & 0xffff;
+		brcr2 = i2c_clk/(100000 * 2) & 0xffff;
 		writel((brcr1 | brcr2), dev->virtbase + I2C_BRCR);
 		writel(I2C_FREQ_MODE_STANDARD << 4,
 				dev->virtbase + I2C_CR);
@@ -525,7 +528,7 @@ static int write_i2c(struct nmk_i2c_dev *dev, u16 flags)
 			dev->virtbase + I2C_CR);
 
 	/* enable the controller */
-	i2c_set_bit(dev->virtbase + I2C_CR, I2C_CR_PE);
+	i2c_set_bit(dev->virtbase + I2C_CR , I2C_CR_PE);
 
 	init_completion(&dev->xfer_complete);
 
@@ -949,10 +952,10 @@ static void nmk_i2c_of_probe(struct device_node *np,
 {
 	/* Default to 100 kHz if no frequency is given in the node */
 	if (of_property_read_u32(np, "clock-frequency", &nmk->clk_freq))
-		nmk->clk_freq = I2C_MAX_STANDARD_MODE_FREQ;
+		nmk->clk_freq = 100000;
 
 	/* This driver only supports 'standard' and 'fast' modes of operation. */
-	if (nmk->clk_freq <= I2C_MAX_STANDARD_MODE_FREQ)
+	if (nmk->clk_freq <= 100000)
 		nmk->sm = I2C_FREQ_MODE_STANDARD;
 	else
 		nmk->sm = I2C_FREQ_MODE_FAST;
@@ -1009,6 +1012,8 @@ static int nmk_i2c_probe(struct amba_device *adev, const struct amba_id *id)
 		goto err_no_mem;
 	}
 
+	pm_suspend_ignore_children(&adev->dev, true);
+
 	dev->clk = devm_clk_get(&adev->dev, NULL);
 	if (IS_ERR(dev->clk)) {
 		dev_err(&adev->dev, "could not get i2c clock\n");
@@ -1055,7 +1060,7 @@ static int nmk_i2c_probe(struct amba_device *adev, const struct amba_id *id)
 	return ret;
 }
 
-static void nmk_i2c_remove(struct amba_device *adev)
+static int nmk_i2c_remove(struct amba_device *adev)
 {
 	struct resource *res = &adev->res;
 	struct nmk_i2c_dev *dev = amba_get_drvdata(adev);
@@ -1067,7 +1072,10 @@ static void nmk_i2c_remove(struct amba_device *adev)
 	/* disable the controller */
 	i2c_clr_bit(dev->virtbase + I2C_CR, I2C_CR_PE);
 	clk_disable_unprepare(dev->clk);
-	release_mem_region(res->start, resource_size(res));
+	if (res)
+		release_mem_region(res->start, resource_size(res));
+
+	return 0;
 }
 
 static struct i2c_vendor_data vendor_stn8815 = {
@@ -1120,7 +1128,6 @@ static void __exit nmk_i2c_exit(void)
 subsys_initcall(nmk_i2c_init);
 module_exit(nmk_i2c_exit);
 
-MODULE_AUTHOR("Sachin Verma");
-MODULE_AUTHOR("Srinidhi KASAGAR");
+MODULE_AUTHOR("Sachin Verma, Srinidhi KASAGAR");
 MODULE_DESCRIPTION("Nomadik/Ux500 I2C driver");
 MODULE_LICENSE("GPL");

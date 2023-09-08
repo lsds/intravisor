@@ -1,10 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0
-/*
- * Copyright (c) 2018 BayLibre, SAS.
- * Author: Jerome Brunet <jbrunet@baylibre.com>
- */
+// Copyright (c) 2018 BayLibre, SAS.
+// Author: Jerome Brunet <jbrunet@baylibre.com>
 
-#include <linux/module.h>
 #include "clk-regmap.h"
 
 static int clk_regmap_gate_endisable(struct clk_hw *hw, int enable)
@@ -51,11 +48,6 @@ const struct clk_ops clk_regmap_gate_ops = {
 };
 EXPORT_SYMBOL_GPL(clk_regmap_gate_ops);
 
-const struct clk_ops clk_regmap_gate_ro_ops = {
-	.is_enabled = clk_regmap_gate_is_enabled,
-};
-EXPORT_SYMBOL_GPL(clk_regmap_gate_ro_ops);
-
 static unsigned long clk_regmap_div_recalc_rate(struct clk_hw *hw,
 						unsigned long prate)
 {
@@ -75,8 +67,8 @@ static unsigned long clk_regmap_div_recalc_rate(struct clk_hw *hw,
 				   div->width);
 }
 
-static int clk_regmap_div_determine_rate(struct clk_hw *hw,
-					 struct clk_rate_request *req)
+static long clk_regmap_div_round_rate(struct clk_hw *hw, unsigned long rate,
+				      unsigned long *prate)
 {
 	struct clk_regmap *clk = to_clk_regmap(hw);
 	struct clk_regmap_div_data *div = clk_get_regmap_div_data(clk);
@@ -87,17 +79,18 @@ static int clk_regmap_div_determine_rate(struct clk_hw *hw,
 	if (div->flags & CLK_DIVIDER_READ_ONLY) {
 		ret = regmap_read(clk->map, div->offset, &val);
 		if (ret)
-			return ret;
+			/* Gives a hint that something is wrong */
+			return 0;
 
 		val >>= div->shift;
 		val &= clk_div_mask(div->width);
 
-		return divider_ro_determine_rate(hw, req, div->table,
-						 div->width, div->flags, val);
+		return divider_ro_round_rate(hw, rate, prate, div->table,
+					     div->width, div->flags, val);
 	}
 
-	return divider_determine_rate(hw, req, div->table, div->width,
-				      div->flags);
+	return divider_round_rate(hw, rate, prate, div->table, div->width,
+				  div->flags);
 }
 
 static int clk_regmap_div_set_rate(struct clk_hw *hw, unsigned long rate,
@@ -122,14 +115,14 @@ static int clk_regmap_div_set_rate(struct clk_hw *hw, unsigned long rate,
 
 const struct clk_ops clk_regmap_divider_ops = {
 	.recalc_rate = clk_regmap_div_recalc_rate,
-	.determine_rate = clk_regmap_div_determine_rate,
+	.round_rate = clk_regmap_div_round_rate,
 	.set_rate = clk_regmap_div_set_rate,
 };
 EXPORT_SYMBOL_GPL(clk_regmap_divider_ops);
 
 const struct clk_ops clk_regmap_divider_ro_ops = {
 	.recalc_rate = clk_regmap_div_recalc_rate,
-	.determine_rate = clk_regmap_div_determine_rate,
+	.round_rate = clk_regmap_div_round_rate,
 };
 EXPORT_SYMBOL_GPL(clk_regmap_divider_ro_ops);
 
@@ -180,7 +173,3 @@ const struct clk_ops clk_regmap_mux_ro_ops = {
 	.get_parent = clk_regmap_mux_get_parent,
 };
 EXPORT_SYMBOL_GPL(clk_regmap_mux_ro_ops);
-
-MODULE_DESCRIPTION("Amlogic regmap backed clock driver");
-MODULE_AUTHOR("Jerome Brunet <jbrunet@baylibre.com>");
-MODULE_LICENSE("GPL v2");

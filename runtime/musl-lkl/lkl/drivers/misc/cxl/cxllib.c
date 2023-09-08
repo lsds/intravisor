@@ -1,11 +1,14 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Copyright 2017 IBM Corp.
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version
+ * 2 of the License, or (at your option) any later version.
  */
 
 #include <linux/hugetlb.h>
 #include <linux/sched/mm.h>
-#include <asm/opal-api.h>
 #include <asm/pnv-pci.h>
 #include <misc/cxllib.h>
 
@@ -99,6 +102,10 @@ int cxllib_get_xsl_config(struct pci_dev *dev, struct cxllib_xsl_config *cfg)
 	rc = cxl_get_xsl9_dsnctl(dev, capp_unit_id, &cfg->dsnctl);
 	if (rc)
 		return rc;
+	if (cpu_has_feature(CPU_FTR_POWER9_DD1)) {
+		/* workaround for DD1 - nbwind = capiind */
+		cfg->dsnctl |= ((u64)0x02 << (63-47));
+	}
 
 	cfg->version  = CXL_XSL_CONFIG_CURRENT_VERSION;
 	cfg->log_bar_size = CXL_CAPI_WINDOW_LOG_SIZE;
@@ -171,6 +178,8 @@ int cxllib_get_PE_attributes(struct task_struct *task,
 			     unsigned long translation_mode,
 			     struct cxllib_pe_attributes *attr)
 {
+	struct mm_struct *mm = NULL;
+
 	if (translation_mode != CXL_TRANSLATED_MODE &&
 		translation_mode != CXL_REAL_MODE)
 		return -EINVAL;
@@ -181,7 +190,7 @@ int cxllib_get_PE_attributes(struct task_struct *task,
 				true);
 	attr->lpid = mfspr(SPRN_LPID);
 	if (task) {
-		struct mm_struct *mm = get_task_mm(task);
+		mm = get_task_mm(task);
 		if (mm == NULL)
 			return -EINVAL;
 		/*
@@ -206,7 +215,7 @@ static int get_vma_info(struct mm_struct *mm, u64 addr,
 	struct vm_area_struct *vma = NULL;
 	int rc = 0;
 
-	mmap_read_lock(mm);
+	down_read(&mm->mmap_sem);
 
 	vma = find_vma(mm, addr);
 	if (!vma) {
@@ -217,7 +226,7 @@ static int get_vma_info(struct mm_struct *mm, u64 addr,
 	*vma_start = vma->vm_start;
 	*vma_end = vma->vm_end;
 out:
-	mmap_read_unlock(mm);
+	up_read(&mm->mmap_sem);
 	return rc;
 }
 
@@ -244,8 +253,9 @@ int cxllib_handle_fault(struct mm_struct *mm, u64 addr, u64 size, u64 flags)
 	     dar += page_size) {
 		if (dar < vma_start || dar >= vma_end) {
 			/*
-			 * We don't hold mm->mmap_lock while iterating, since
-			 * the lock is required by one of the lower-level page
+			 * We don't hold the mm->mmap_sem semaphore
+			 * while iterating, since the semaphore is
+			 * required by one of the lower-level page
 			 * fault processing functions and it could
 			 * create a deadlock.
 			 *

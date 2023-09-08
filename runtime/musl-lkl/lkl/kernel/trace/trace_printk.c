@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * trace binary printk
  *
@@ -6,7 +5,6 @@
  *
  */
 #include <linux/seq_file.h>
-#include <linux/security.h>
 #include <linux/uaccess.h>
 #include <linux/kernel.h>
 #include <linux/ftrace.h>
@@ -96,7 +94,7 @@ static int module_trace_bprintk_format_notify(struct notifier_block *self,
 		if (val == MODULE_STATE_COMING)
 			hold_module_trace_bprintk_format(start, end);
 	}
-	return NOTIFY_OK;
+	return 0;
 }
 
 /*
@@ -116,7 +114,7 @@ static int module_trace_bprintk_format_notify(struct notifier_block *self,
  * section, then we need to read the link list pointers. The trick is
  * we pass the address of the string to the seq function just like
  * we do for the kernel core formats. To get back the structure that
- * holds the format, we simply use container_of() and then go to the
+ * holds the format, we simply use containerof() and then go to the
  * next format in the list.
  */
 static const char **
@@ -174,7 +172,7 @@ __init static int
 module_trace_bprintk_format_notify(struct notifier_block *self,
 		unsigned long val, void *data)
 {
-	return NOTIFY_OK;
+	return 0;
 }
 static inline const char **
 find_next_mod_format(int start_index, void *v, const char **fmt, loff_t *pos)
@@ -250,17 +248,6 @@ int __ftrace_vprintk(unsigned long ip, const char *fmt, va_list ap)
 	return trace_vprintk(ip, fmt, ap);
 }
 EXPORT_SYMBOL_GPL(__ftrace_vprintk);
-
-bool trace_is_tracepoint_string(const char *str)
-{
-	const char **ptr = __start___tracepoint_str;
-
-	for (ptr = __start___tracepoint_str; ptr < __stop___tracepoint_str; ptr++) {
-		if (str == *ptr)
-			return true;
-	}
-	return false;
-}
 
 static const char **find_next(void *v, loff_t *pos)
 {
@@ -360,12 +347,6 @@ static const struct seq_operations show_format_seq_ops = {
 static int
 ftrace_formats_open(struct inode *inode, struct file *file)
 {
-	int ret;
-
-	ret = security_locked_down(LOCKDOWN_TRACEFS);
-	if (ret)
-		return ret;
-
 	return seq_open(file, &show_format_seq_ops);
 }
 
@@ -378,13 +359,13 @@ static const struct file_operations ftrace_formats_fops = {
 
 static __init int init_trace_printk_function_export(void)
 {
-	int ret;
+	struct dentry *d_tracer;
 
-	ret = tracing_init_dentry();
-	if (ret)
+	d_tracer = tracing_init_dentry();
+	if (IS_ERR(d_tracer))
 		return 0;
 
-	trace_create_file("printk_formats", TRACE_MODE_READ, NULL,
+	trace_create_file("printk_formats", 0444, d_tracer,
 				    NULL, &ftrace_formats_fops);
 
 	return 0;

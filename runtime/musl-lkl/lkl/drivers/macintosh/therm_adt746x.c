@@ -1,12 +1,11 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Device driver for the i2c thermostat found on the iBook G4, Albook G4
  *
  * Copyright (C) 2003, 2004 Colin Leroy, Rasmus Rohde, Benjamin Herrenschmidt
  *
  * Documentation from 115254175ADT7467_pra.pdf and 3686221171167ADT7460_b.pdf
- * https://www.onsemi.com/PowerSolutions/product.do?id=ADT7467
- * https://www.onsemi.com/PowerSolutions/product.do?id=ADT7460
+ * http://www.onsemi.com/PowerSolutions/product.do?id=ADT7467
+ * http://www.onsemi.com/PowerSolutions/product.do?id=ADT7460
  *
  */
 
@@ -27,6 +26,7 @@
 #include <linux/freezer.h>
 #include <linux/of_platform.h>
 
+#include <asm/prom.h>
 #include <asm/machdep.h>
 #include <asm/io.h>
 #include <asm/sections.h>
@@ -563,7 +563,7 @@ static int probe_thermostat(struct i2c_client *client,
 	return 0;
 }
 
-static void remove_thermostat(struct i2c_client *client)
+static int remove_thermostat(struct i2c_client *client)
 {
 	struct thermostat *th = i2c_get_clientdata(client);
 	int i;
@@ -585,6 +585,8 @@ static void remove_thermostat(struct i2c_client *client)
 	write_both_fan_speed(th, -1);
 
 	kfree(th);
+
+	return 0;
 }
 
 static const struct i2c_device_id therm_adt746x_id[] = {

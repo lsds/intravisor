@@ -76,7 +76,7 @@ static const struct fb_cmap default_16_colors = {
 
 
 /**
- *	fb_alloc_cmap_gfp - allocate a colormap
+ *	fb_alloc_cmap - allocate a colormap
  *	@cmap: frame buffer colormap structure
  *	@len: length of @cmap
  *	@transp: boolean, 1 if there is transparency, 0 otherwise
@@ -94,24 +94,22 @@ int fb_alloc_cmap_gfp(struct fb_cmap *cmap, int len, int transp, gfp_t flags)
 	int size = len * sizeof(u16);
 	int ret = -ENOMEM;
 
-	flags |= __GFP_NOWARN;
-
 	if (cmap->len != len) {
 		fb_dealloc_cmap(cmap);
 		if (!len)
 			return 0;
 
-		cmap->red = kzalloc(size, flags);
+		cmap->red = kmalloc(size, flags);
 		if (!cmap->red)
 			goto fail;
-		cmap->green = kzalloc(size, flags);
+		cmap->green = kmalloc(size, flags);
 		if (!cmap->green)
 			goto fail;
-		cmap->blue = kzalloc(size, flags);
+		cmap->blue = kmalloc(size, flags);
 		if (!cmap->blue)
 			goto fail;
 		if (transp) {
-			cmap->transp = kzalloc(size, flags);
+			cmap->transp = kmalloc(size, flags);
 			if (!cmap->transp)
 				goto fail;
 		} else {
@@ -285,7 +283,11 @@ int fb_set_user_cmap(struct fb_cmap_user *cmap, struct fb_info *info)
 		goto out;
 	}
 	umap.start = cmap->start;
-	lock_fb_info(info);
+	if (!lock_fb_info(info)) {
+		rc = -ENODEV;
+		goto out;
+	}
+
 	rc = fb_set_cmap(&umap, info);
 	unlock_fb_info(info);
 out:

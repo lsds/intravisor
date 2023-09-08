@@ -34,7 +34,7 @@ struct fileIdentDesc *udf_fileident_read(struct inode *dir, loff_t *nf_pos,
 	fibh->soffset = fibh->eoffset;
 
 	if (iinfo->i_alloc_type == ICBTAG_FLAG_AD_IN_ICB) {
-		fi = udf_get_fileident(iinfo->i_data -
+		fi = udf_get_fileident(iinfo->i_ext.i_data -
 				       (iinfo->i_efe ?
 					sizeof(struct extendedFileEntry) :
 					sizeof(struct fileEntry)),
@@ -89,7 +89,7 @@ struct fileIdentDesc *udf_fileident_read(struct inode *dir, loff_t *nf_pos,
 					brelse(tmp);
 			}
 			if (num) {
-				bh_readahead_batch(num, bha, REQ_RAHEAD);
+				ll_rw_block(REQ_OP_READ, REQ_RAHEAD, num, bha);
 				for (i = 0; i < num; i++)
 					brelse(bha[i]);
 			}
@@ -141,7 +141,10 @@ struct fileIdentDesc *udf_fileident_read(struct inode *dir, loff_t *nf_pos,
 			       fibh->ebh->b_data,
 			       sizeof(struct fileIdentDesc) + fibh->soffset);
 
-			fi_len = udf_dir_entry_len(cfi);
+			fi_len = (sizeof(struct fileIdentDesc) +
+				  cfi->lengthFileIdent +
+				  le16_to_cpu(cfi->lengthOfImpUse) + 3) & ~3;
+
 			*nf_pos += fi_len - (fibh->eoffset - fibh->soffset);
 			fibh->eoffset = fibh->soffset + fi_len;
 		} else {
@@ -149,9 +152,6 @@ struct fileIdentDesc *udf_fileident_read(struct inode *dir, loff_t *nf_pos,
 			       sizeof(struct fileIdentDesc));
 		}
 	}
-	/* Got last entry outside of dir size - fs is corrupted! */
-	if (*nf_pos > dir->i_size)
-		return NULL;
 	return fi;
 }
 

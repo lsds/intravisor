@@ -1,5 +1,8 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /* Copyright (c) 2016 Facebook
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of version 2 of the GNU General Public
+ * License as published by the Free Software Foundation.
  */
 #define _GNU_SOURCE
 #include <sched.h>
@@ -11,13 +14,15 @@
 #include <sys/wait.h>
 #include <stdlib.h>
 #include <signal.h>
+#include <linux/bpf.h>
 #include <string.h>
 #include <time.h>
+#include <sys/resource.h>
 #include <arpa/inet.h>
 #include <errno.h>
 
-#include <bpf/bpf.h>
-#include <bpf/libbpf.h>
+#include "libbpf.h"
+#include "bpf_load.h"
 
 #define TEST_BIT(t) (1U << (t))
 #define MAX_NR_CPUS 1024
@@ -59,20 +64,14 @@ const char *test_map_names[NR_TESTS] = {
 	[LRU_HASH_LOOKUP] = "lru_hash_lookup_map",
 };
 
-enum map_idx {
-	array_of_lru_hashs_idx,
-	hash_map_alloc_idx,
-	lru_hash_lookup_idx,
-	NR_IDXES,
-};
-
-static int map_fd[NR_IDXES];
-
 static int test_flags = ~0;
 static uint32_t num_map_entries;
 static uint32_t inner_lru_hash_size;
+static int inner_lru_hash_idx = -1;
+static int array_of_lru_hashs_idx = -1;
+static int lru_hash_lookup_idx = -1;
 static int lru_hash_lookup_test_entries = 32;
-static uint32_t max_cnt = 10000;
+static uint32_t max_cnt = 1000000;
 
 static int check_test_flags(enum test_type t)
 {
@@ -126,33 +125,30 @@ static void do_test_lru(enum test_type test, int cpu)
 	__u64 start_time;
 	int i, ret;
 
-	if (test == INNER_LRU_HASH_PREALLOC && cpu) {
-		/* If CPU is not 0, create inner_lru hash map and insert the fd
-		 * value into the array_of_lru_hash map. In case of CPU 0,
-		 * 'inner_lru_hash_map' was statically inserted on the map init
-		 */
+	if (test == INNER_LRU_HASH_PREALLOC) {
 		int outer_fd = map_fd[array_of_lru_hashs_idx];
 		unsigned int mycpu, mynode;
-		LIBBPF_OPTS(bpf_map_create_opts, opts,
-			.map_flags = BPF_F_NUMA_NODE,
-		);
 
 		assert(cpu < MAX_NR_CPUS);
 
-		ret = syscall(__NR_getcpu, &mycpu, &mynode, NULL);
-		assert(!ret);
+		if (cpu) {
+			ret = syscall(__NR_getcpu, &mycpu, &mynode, NULL);
+			assert(!ret);
 
-		opts.numa_node = mynode;
-		inner_lru_map_fds[cpu] =
-			bpf_map_create(BPF_MAP_TYPE_LRU_HASH,
-				       test_map_names[INNER_LRU_HASH_PREALLOC],
-				       sizeof(uint32_t),
-				       sizeof(long),
-				       inner_lru_hash_size, &opts);
-		if (inner_lru_map_fds[cpu] == -1) {
-			printf("cannot create BPF_MAP_TYPE_LRU_HASH %s(%d)\n",
-			       strerror(errno), errno);
-			exit(1);
+			inner_lru_map_fds[cpu] =
+				bpf_create_map_node(BPF_MAP_TYPE_LRU_HASH,
+						    test_map_names[INNER_LRU_HASH_PREALLOC],
+						    sizeof(uint32_t),
+						    sizeof(long),
+						    inner_lru_hash_size, 0,
+						    mynode);
+			if (inner_lru_map_fds[cpu] == -1) {
+				printf("cannot create BPF_MAP_TYPE_LRU_HASH %s(%d)\n",
+				       strerror(errno), errno);
+				exit(1);
+			}
+		} else {
+			inner_lru_map_fds[cpu] = map_fd[inner_lru_hash_idx];
 		}
 
 		ret = bpf_map_update_elem(outer_fd, &cpu,
@@ -384,8 +380,7 @@ static void fill_lpm_trie(void)
 		key->data[1] = rand() & 0xff;
 		key->data[2] = rand() & 0xff;
 		key->data[3] = rand() & 0xff;
-		r = bpf_map_update_elem(map_fd[hash_map_alloc_idx],
-					key, &value, 0);
+		r = bpf_map_update_elem(map_fd[6], key, &value, 0);
 		assert(!r);
 	}
 
@@ -396,46 +391,59 @@ static void fill_lpm_trie(void)
 	key->data[3] = 1;
 	value = 128;
 
-	r = bpf_map_update_elem(map_fd[hash_map_alloc_idx], key, &value, 0);
+	r = bpf_map_update_elem(map_fd[6], key, &value, 0);
 	assert(!r);
 }
 
-static void fixup_map(struct bpf_object *obj)
+static void fixup_map(struct bpf_map_data *map, int idx)
 {
-	struct bpf_map *map;
 	int i;
 
-	bpf_object__for_each_map(map, obj) {
-		const char *name = bpf_map__name(map);
-
-		/* Only change the max_entries for the enabled test(s) */
-		for (i = 0; i < NR_TESTS; i++) {
-			if (!strcmp(test_map_names[i], name) &&
-			    (check_test_flags(i))) {
-				bpf_map__set_max_entries(map, num_map_entries);
-				continue;
-			}
-		}
+	if (!strcmp("inner_lru_hash_map", map->name)) {
+		inner_lru_hash_idx = idx;
+		inner_lru_hash_size = map->def.max_entries;
 	}
 
+	if (!strcmp("array_of_lru_hashs", map->name)) {
+		if (inner_lru_hash_idx == -1) {
+			printf("inner_lru_hash_map must be defined before array_of_lru_hashs\n");
+			exit(1);
+		}
+		map->def.inner_map_idx = inner_lru_hash_idx;
+		array_of_lru_hashs_idx = idx;
+	}
+
+	if (!strcmp("lru_hash_lookup_map", map->name))
+		lru_hash_lookup_idx = idx;
+
+	if (num_map_entries <= 0)
+		return;
+
 	inner_lru_hash_size = num_map_entries;
+
+	/* Only change the max_entries for the enabled test(s) */
+	for (i = 0; i < NR_TESTS; i++) {
+		if (!strcmp(test_map_names[i], map->name) &&
+		    (check_test_flags(i))) {
+			map->def.max_entries = num_map_entries;
+		}
+	}
 }
 
 int main(int argc, char **argv)
 {
-	int nr_cpus = sysconf(_SC_NPROCESSORS_ONLN);
-	struct bpf_link *links[8];
-	struct bpf_program *prog;
-	struct bpf_object *obj;
-	struct bpf_map *map;
+	struct rlimit r = {RLIM_INFINITY, RLIM_INFINITY};
 	char filename[256];
-	int i = 0;
+	int num_cpu = 8;
+
+	snprintf(filename, sizeof(filename), "%s_kern.o", argv[0]);
+	setrlimit(RLIMIT_MEMLOCK, &r);
 
 	if (argc > 1)
 		test_flags = atoi(argv[1]) ? : test_flags;
 
 	if (argc > 2)
-		nr_cpus = atoi(argv[2]) ? : nr_cpus;
+		num_cpu = atoi(argv[2]) ? : num_cpu;
 
 	if (argc > 3)
 		num_map_entries = atoi(argv[3]);
@@ -443,61 +451,14 @@ int main(int argc, char **argv)
 	if (argc > 4)
 		max_cnt = atoi(argv[4]);
 
-	snprintf(filename, sizeof(filename), "%s_kern.o", argv[0]);
-	obj = bpf_object__open_file(filename, NULL);
-	if (libbpf_get_error(obj)) {
-		fprintf(stderr, "ERROR: opening BPF object file failed\n");
-		return 0;
-	}
-
-	map = bpf_object__find_map_by_name(obj, "inner_lru_hash_map");
-	if (libbpf_get_error(map)) {
-		fprintf(stderr, "ERROR: finding a map in obj file failed\n");
-		goto cleanup;
-	}
-
-	inner_lru_hash_size = bpf_map__max_entries(map);
-	if (!inner_lru_hash_size) {
-		fprintf(stderr, "ERROR: failed to get map attribute\n");
-		goto cleanup;
-	}
-
-	/* resize BPF map prior to loading */
-	if (num_map_entries > 0)
-		fixup_map(obj);
-
-	/* load BPF program */
-	if (bpf_object__load(obj)) {
-		fprintf(stderr, "ERROR: loading BPF object file failed\n");
-		goto cleanup;
-	}
-
-	map_fd[0] = bpf_object__find_map_fd_by_name(obj, "array_of_lru_hashs");
-	map_fd[1] = bpf_object__find_map_fd_by_name(obj, "hash_map_alloc");
-	map_fd[2] = bpf_object__find_map_fd_by_name(obj, "lru_hash_lookup_map");
-	if (map_fd[0] < 0 || map_fd[1] < 0 || map_fd[2] < 0) {
-		fprintf(stderr, "ERROR: finding a map in obj file failed\n");
-		goto cleanup;
-	}
-
-	bpf_object__for_each_program(prog, obj) {
-		links[i] = bpf_program__attach(prog);
-		if (libbpf_get_error(links[i])) {
-			fprintf(stderr, "ERROR: bpf_program__attach failed\n");
-			links[i] = NULL;
-			goto cleanup;
-		}
-		i++;
+	if (load_bpf_file_fixup_map(filename, fixup_map)) {
+		printf("%s", bpf_log_buf);
+		return 1;
 	}
 
 	fill_lpm_trie();
 
-	run_perf_test(nr_cpus);
+	run_perf_test(num_cpu);
 
-cleanup:
-	for (i--; i >= 0; i--)
-		bpf_link__destroy(links[i]);
-
-	bpf_object__close(obj);
 	return 0;
 }

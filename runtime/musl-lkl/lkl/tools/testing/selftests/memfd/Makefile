@@ -4,27 +4,17 @@ CFLAGS += -I../../../../include/uapi/
 CFLAGS += -I../../../../include/
 CFLAGS += -I../../../../usr/include/
 
-TEST_GEN_PROGS := memfd_test
-TEST_PROGS := run_fuse_test.sh run_hugetlbfs_test.sh
-TEST_GEN_FILES := fuse_test fuse_mnt
+TEST_PROGS := run_tests.sh
+TEST_FILES := run_fuse_test.sh
+TEST_GEN_FILES := memfd_test fuse_mnt fuse_test
 
-VAR_CFLAGS := $(shell pkg-config fuse --cflags 2>/dev/null)
-ifeq ($(VAR_CFLAGS),)
-VAR_CFLAGS := -D_FILE_OFFSET_BITS=64 -I/usr/include/fuse
-endif
-
-VAR_LDLIBS := $(shell pkg-config fuse --libs 2>/dev/null)
-ifeq ($(VAR_LDLIBS),)
-VAR_LDLIBS := -lfuse -pthread
-endif
-
-fuse_mnt.o: CFLAGS += $(VAR_CFLAGS)
+fuse_mnt.o: CFLAGS += $(shell pkg-config fuse --cflags)
 
 include ../lib.mk
 
-$(OUTPUT)/fuse_mnt: LDLIBS += $(VAR_LDLIBS)
+$(OUTPUT)/fuse_mnt: LDLIBS += $(shell pkg-config fuse --libs)
 
-$(OUTPUT)/memfd_test: memfd_test.c common.c
-$(OUTPUT)/fuse_test: fuse_test.c common.c
+$(OUTPUT)/memfd_test: memfd_test.c common.o
+$(OUTPUT)/fuse_test: fuse_test.c common.o
 
-EXTRA_CLEAN = $(OUTPUT)/common.o
+EXTRA_CLEAN = common.o

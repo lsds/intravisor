@@ -1,20 +1,21 @@
-/* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
  * Symmetric key ciphers.
  * 
  * Copyright (c) 2007-2015 Herbert Xu <herbert@gondor.apana.org.au>
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License as published by the Free
+ * Software Foundation; either version 2 of the License, or (at your option) 
+ * any later version.
+ *
  */
 
 #ifndef _CRYPTO_SKCIPHER_H
 #define _CRYPTO_SKCIPHER_H
 
-#include <linux/container_of.h>
 #include <linux/crypto.h>
+#include <linux/kernel.h>
 #include <linux/slab.h>
-#include <linux/string.h>
-#include <linux/types.h>
-
-struct scatterlist;
 
 /**
  *	struct skcipher_request - Symmetric key cipher request
@@ -22,7 +23,7 @@ struct scatterlist;
  *	@iv: Initialisation Vector
  *	@src: Source SG list
  *	@dst: Destination SG list
- *	@base: Underlying async request
+ *	@base: Underlying async request request
  *	@__ctx: Start of private context data
  */
 struct skcipher_request {
@@ -38,14 +39,30 @@ struct skcipher_request {
 	void *__ctx[] CRYPTO_MINALIGN_ATTR;
 };
 
-struct crypto_skcipher {
-	unsigned int reqsize;
+/**
+ *	struct skcipher_givcrypt_request - Crypto request with IV generation
+ *	@seq: Sequence number for IV generation
+ *	@giv: Space for generated IV
+ *	@creq: The crypto request itself
+ */
+struct skcipher_givcrypt_request {
+	u64 seq;
+	u8 *giv;
 
-	struct crypto_tfm base;
+	struct ablkcipher_request creq;
 };
 
-struct crypto_sync_skcipher {
-	struct crypto_skcipher base;
+struct crypto_skcipher {
+	int (*setkey)(struct crypto_skcipher *tfm, const u8 *key,
+	              unsigned int keylen);
+	int (*encrypt)(struct skcipher_request *req);
+	int (*decrypt)(struct skcipher_request *req);
+
+	unsigned int ivsize;
+	unsigned int reqsize;
+	unsigned int keysize;
+
+	struct crypto_tfm base;
 };
 
 /**
@@ -122,17 +139,9 @@ struct skcipher_alg {
 	struct crypto_alg base;
 };
 
-#define MAX_SYNC_SKCIPHER_REQSIZE      384
-/*
- * This performs a type-check against the "tfm" argument to make sure
- * all users have the correct skcipher tfm for doing on-stack requests.
- */
-#define SYNC_SKCIPHER_REQUEST_ON_STACK(name, tfm) \
+#define SKCIPHER_REQUEST_ON_STACK(name, tfm) \
 	char __##name##_desc[sizeof(struct skcipher_request) + \
-			     MAX_SYNC_SKCIPHER_REQSIZE + \
-			     (!(sizeof((struct crypto_sync_skcipher *)1 == \
-				       (typeof(tfm))1))) \
-			    ] CRYPTO_MINALIGN_ATTR; \
+		crypto_skcipher_reqsize(tfm)] CRYPTO_MINALIGN_ATTR; \
 	struct skcipher_request *name = (void *)__##name##_desc
 
 /**
@@ -188,9 +197,6 @@ static inline struct crypto_skcipher *__crypto_skcipher_cast(
 struct crypto_skcipher *crypto_alloc_skcipher(const char *alg_name,
 					      u32 type, u32 mask);
 
-struct crypto_sync_skcipher *crypto_alloc_sync_skcipher(const char *alg_name,
-					      u32 type, u32 mask);
-
 static inline struct crypto_tfm *crypto_skcipher_tfm(
 	struct crypto_skcipher *tfm)
 {
@@ -200,21 +206,31 @@ static inline struct crypto_tfm *crypto_skcipher_tfm(
 /**
  * crypto_free_skcipher() - zeroize and free cipher handle
  * @tfm: cipher handle to be freed
- *
- * If @tfm is a NULL or error pointer, this function does nothing.
  */
 static inline void crypto_free_skcipher(struct crypto_skcipher *tfm)
 {
 	crypto_destroy_tfm(tfm, crypto_skcipher_tfm(tfm));
 }
 
-static inline void crypto_free_sync_skcipher(struct crypto_sync_skcipher *tfm)
+/**
+ * crypto_has_skcipher() - Search for the availability of an skcipher.
+ * @alg_name: is the cra_name / name or cra_driver_name / driver name of the
+ *	      skcipher
+ * @type: specifies the type of the cipher
+ * @mask: specifies the mask for the cipher
+ *
+ * Return: true when the skcipher is known to the kernel crypto API; false
+ *	   otherwise
+ */
+static inline int crypto_has_skcipher(const char *alg_name, u32 type,
+					u32 mask)
 {
-	crypto_free_skcipher(&tfm->base);
+	return crypto_has_alg(alg_name, crypto_skcipher_type(type),
+			      crypto_skcipher_mask(mask));
 }
 
 /**
- * crypto_has_skcipher() - Search for the availability of an skcipher.
+ * crypto_has_skcipher2() - Search for the availability of an skcipher.
  * @alg_name: is the cra_name / name or cra_driver_name / driver name of the
  *	      skcipher
  * @type: specifies the type of the skcipher
@@ -223,7 +239,7 @@ static inline void crypto_free_sync_skcipher(struct crypto_sync_skcipher *tfm)
  * Return: true when the skcipher is known to the kernel crypto API; false
  *	   otherwise
  */
-int crypto_has_skcipher(const char *alg_name, u32 type, u32 mask);
+int crypto_has_skcipher2(const char *alg_name, u32 type, u32 mask);
 
 static inline const char *crypto_skcipher_driver_name(
 	struct crypto_skcipher *tfm)
@@ -240,6 +256,13 @@ static inline struct skcipher_alg *crypto_skcipher_alg(
 
 static inline unsigned int crypto_skcipher_alg_ivsize(struct skcipher_alg *alg)
 {
+	if ((alg->base.cra_flags & CRYPTO_ALG_TYPE_MASK) ==
+	    CRYPTO_ALG_TYPE_BLKCIPHER)
+		return alg->base.cra_blkcipher.ivsize;
+
+	if (alg->base.cra_ablkcipher.encrypt)
+		return alg->base.cra_ablkcipher.ivsize;
+
 	return alg->ivsize;
 }
 
@@ -254,35 +277,33 @@ static inline unsigned int crypto_skcipher_alg_ivsize(struct skcipher_alg *alg)
  */
 static inline unsigned int crypto_skcipher_ivsize(struct crypto_skcipher *tfm)
 {
-	return crypto_skcipher_alg(tfm)->ivsize;
-}
-
-static inline unsigned int crypto_sync_skcipher_ivsize(
-	struct crypto_sync_skcipher *tfm)
-{
-	return crypto_skcipher_ivsize(&tfm->base);
-}
-
-/**
- * crypto_skcipher_blocksize() - obtain block size of cipher
- * @tfm: cipher handle
- *
- * The block size for the skcipher referenced with the cipher handle is
- * returned. The caller may use that information to allocate appropriate
- * memory for the data returned by the encryption or decryption operation
- *
- * Return: block size of cipher
- */
-static inline unsigned int crypto_skcipher_blocksize(
-	struct crypto_skcipher *tfm)
-{
-	return crypto_tfm_alg_blocksize(crypto_skcipher_tfm(tfm));
+	return tfm->ivsize;
 }
 
 static inline unsigned int crypto_skcipher_alg_chunksize(
 	struct skcipher_alg *alg)
 {
+	if ((alg->base.cra_flags & CRYPTO_ALG_TYPE_MASK) ==
+	    CRYPTO_ALG_TYPE_BLKCIPHER)
+		return alg->base.cra_blocksize;
+
+	if (alg->base.cra_ablkcipher.encrypt)
+		return alg->base.cra_blocksize;
+
 	return alg->chunksize;
+}
+
+static inline unsigned int crypto_skcipher_alg_walksize(
+	struct skcipher_alg *alg)
+{
+	if ((alg->base.cra_flags & CRYPTO_ALG_TYPE_MASK) ==
+	    CRYPTO_ALG_TYPE_BLKCIPHER)
+		return alg->base.cra_blocksize;
+
+	if (alg->base.cra_ablkcipher.encrypt)
+		return alg->base.cra_blocksize;
+
+	return alg->walksize;
 }
 
 /**
@@ -302,10 +323,37 @@ static inline unsigned int crypto_skcipher_chunksize(
 	return crypto_skcipher_alg_chunksize(crypto_skcipher_alg(tfm));
 }
 
-static inline unsigned int crypto_sync_skcipher_blocksize(
-	struct crypto_sync_skcipher *tfm)
+/**
+ * crypto_skcipher_walksize() - obtain walk size
+ * @tfm: cipher handle
+ *
+ * In some cases, algorithms can only perform optimally when operating on
+ * multiple blocks in parallel. This is reflected by the walksize, which
+ * must be a multiple of the chunksize (or equal if the concern does not
+ * apply)
+ *
+ * Return: walk size in bytes
+ */
+static inline unsigned int crypto_skcipher_walksize(
+	struct crypto_skcipher *tfm)
 {
-	return crypto_skcipher_blocksize(&tfm->base);
+	return crypto_skcipher_alg_walksize(crypto_skcipher_alg(tfm));
+}
+
+/**
+ * crypto_skcipher_blocksize() - obtain block size of cipher
+ * @tfm: cipher handle
+ *
+ * The block size for the skcipher referenced with the cipher handle is
+ * returned. The caller may use that information to allocate appropriate
+ * memory for the data returned by the encryption or decryption operation
+ *
+ * Return: block size of cipher
+ */
+static inline unsigned int crypto_skcipher_blocksize(
+	struct crypto_skcipher *tfm)
+{
+	return crypto_tfm_alg_blocksize(crypto_skcipher_tfm(tfm));
 }
 
 static inline unsigned int crypto_skcipher_alignmask(
@@ -331,24 +379,6 @@ static inline void crypto_skcipher_clear_flags(struct crypto_skcipher *tfm,
 	crypto_tfm_clear_flags(crypto_skcipher_tfm(tfm), flags);
 }
 
-static inline u32 crypto_sync_skcipher_get_flags(
-	struct crypto_sync_skcipher *tfm)
-{
-	return crypto_skcipher_get_flags(&tfm->base);
-}
-
-static inline void crypto_sync_skcipher_set_flags(
-	struct crypto_sync_skcipher *tfm, u32 flags)
-{
-	crypto_skcipher_set_flags(&tfm->base, flags);
-}
-
-static inline void crypto_sync_skcipher_clear_flags(
-	struct crypto_sync_skcipher *tfm, u32 flags)
-{
-	crypto_skcipher_clear_flags(&tfm->base, flags);
-}
-
 /**
  * crypto_skcipher_setkey() - set key for cipher
  * @tfm: cipher handle
@@ -365,25 +395,16 @@ static inline void crypto_sync_skcipher_clear_flags(
  *
  * Return: 0 if the setting of the key was successful; < 0 if an error occurred
  */
-int crypto_skcipher_setkey(struct crypto_skcipher *tfm,
-			   const u8 *key, unsigned int keylen);
-
-static inline int crypto_sync_skcipher_setkey(struct crypto_sync_skcipher *tfm,
+static inline int crypto_skcipher_setkey(struct crypto_skcipher *tfm,
 					 const u8 *key, unsigned int keylen)
 {
-	return crypto_skcipher_setkey(&tfm->base, key, keylen);
+	return tfm->setkey(tfm, key, keylen);
 }
 
-static inline unsigned int crypto_skcipher_min_keysize(
+static inline unsigned int crypto_skcipher_default_keysize(
 	struct crypto_skcipher *tfm)
 {
-	return crypto_skcipher_alg(tfm)->min_keysize;
-}
-
-static inline unsigned int crypto_skcipher_max_keysize(
-	struct crypto_skcipher *tfm)
-{
-	return crypto_skcipher_alg(tfm)->max_keysize;
+	return tfm->keysize;
 }
 
 /**
@@ -401,14 +422,6 @@ static inline struct crypto_skcipher *crypto_skcipher_reqtfm(
 	return __crypto_skcipher_cast(req->base.tfm);
 }
 
-static inline struct crypto_sync_skcipher *crypto_sync_skcipher_reqtfm(
-	struct skcipher_request *req)
-{
-	struct crypto_skcipher *tfm = crypto_skcipher_reqtfm(req);
-
-	return container_of(tfm, struct crypto_sync_skcipher, base);
-}
-
 /**
  * crypto_skcipher_encrypt() - encrypt plaintext
  * @req: reference to the skcipher_request handle that holds all information
@@ -420,7 +433,15 @@ static inline struct crypto_sync_skcipher *crypto_sync_skcipher_reqtfm(
  *
  * Return: 0 if the cipher operation was successful; < 0 if an error occurred
  */
-int crypto_skcipher_encrypt(struct skcipher_request *req);
+static inline int crypto_skcipher_encrypt(struct skcipher_request *req)
+{
+	struct crypto_skcipher *tfm = crypto_skcipher_reqtfm(req);
+
+	if (crypto_skcipher_get_flags(tfm) & CRYPTO_TFM_NEED_KEY)
+		return -ENOKEY;
+
+	return tfm->encrypt(req);
+}
 
 /**
  * crypto_skcipher_decrypt() - decrypt ciphertext
@@ -433,7 +454,15 @@ int crypto_skcipher_encrypt(struct skcipher_request *req);
  *
  * Return: 0 if the cipher operation was successful; < 0 if an error occurred
  */
-int crypto_skcipher_decrypt(struct skcipher_request *req);
+static inline int crypto_skcipher_decrypt(struct skcipher_request *req)
+{
+	struct crypto_skcipher *tfm = crypto_skcipher_reqtfm(req);
+
+	if (crypto_skcipher_get_flags(tfm) & CRYPTO_TFM_NEED_KEY)
+		return -ENOKEY;
+
+	return tfm->decrypt(req);
+}
 
 /**
  * DOC: Symmetric Key Cipher Request Handle
@@ -469,12 +498,6 @@ static inline void skcipher_request_set_tfm(struct skcipher_request *req,
 					    struct crypto_skcipher *tfm)
 {
 	req->base.tfm = crypto_skcipher_tfm(tfm);
-}
-
-static inline void skcipher_request_set_sync_tfm(struct skcipher_request *req,
-					    struct crypto_sync_skcipher *tfm)
-{
-	skcipher_request_set_tfm(req, &tfm->base);
 }
 
 static inline struct skcipher_request *skcipher_request_cast(
@@ -514,7 +537,7 @@ static inline struct skcipher_request *skcipher_request_alloc(
  */
 static inline void skcipher_request_free(struct skcipher_request *req)
 {
-	kfree_sensitive(req);
+	kzfree(req);
 }
 
 static inline void skcipher_request_zero(struct skcipher_request *req)

@@ -43,6 +43,7 @@
  * SOFTWARE.
  */
 
+#include <asm/inst.h>
 #include <linux/linkage.h>
 #include <asm/nospec-branch.h>
 
@@ -53,7 +54,7 @@
 .endm
 
 .macro JMPTBL_ENTRY i
-.quad crc_\i
+.word crc_\i - crc_array
 .endm
 
 .macro JNC_LESS_THAN j
@@ -73,8 +74,8 @@
 # unsigned int crc_pcl(u8 *buffer, int len, unsigned int crc_init);
 
 .text
-SYM_FUNC_START(crc_pcl)
-#define    bufp		rdi
+ENTRY(crc_pcl)
+#define    bufp		%rdi
 #define    bufp_dw	%edi
 #define    bufp_w	%di
 #define    bufp_b	%dil
@@ -104,9 +105,9 @@ SYM_FUNC_START(crc_pcl)
 	## 1) ALIGN:
 	################################################################
 
-	mov     %bufp, bufptmp		# rdi = *buf
-	neg     %bufp
-	and     $7, %bufp		# calculate the unalignment amount of
+	mov     bufp, bufptmp		# rdi = *buf
+	neg     bufp
+	and     $7, bufp		# calculate the unalignment amount of
 					# the address
 	je      proc_block		# Skip if aligned
 
@@ -122,13 +123,13 @@ SYM_FUNC_START(crc_pcl)
 do_align:
 	#### Calculate CRC of unaligned bytes of the buffer (if any)
 	movq    (bufptmp), tmp		# load a quadward from the buffer
-	add     %bufp, bufptmp		# align buffer pointer for quadword
+	add     bufp, bufptmp		# align buffer pointer for quadword
 					# processing
-	sub     %bufp, len		# update buffer length
+	sub     bufp, len		# update buffer length
 align_loop:
 	crc32b  %bl, crc_init_dw 	# compute crc32 of 1-byte
 	shr     $8, tmp			# get next byte
-	dec     %bufp
+	dec     bufp
 	jne     align_loop
 
 proc_block:
@@ -168,7 +169,10 @@ continue_block:
 	xor     crc2, crc2
 
 	## branch into array
-	mov	jump_table(,%rax,8), %bufp
+	lea	jump_table(%rip), bufp
+	movzxw  (bufp, %rax, 2), len
+	lea	crc_array(%rip), bufp
+	lea     (bufp, len, 1), bufp
 	JMP_NOSPEC bufp
 
 	################################################################
@@ -195,7 +199,6 @@ crc_array:
 .altmacro
 LABEL crc_ %i
 .noaltmacro
-	ENDBR
 	crc32q   -i*8(block_0), crc_init
 	crc32q   -i*8(block_1), crc1
 	crc32q   -i*8(block_2), crc2
@@ -205,7 +208,6 @@ LABEL crc_ %i
 .altmacro
 LABEL crc_ %i
 .noaltmacro
-	ENDBR
 	crc32q   -i*8(block_0), crc_init
 	crc32q   -i*8(block_1), crc1
 # SKIP  crc32  -i*8(block_2), crc2 ; Don't do this one yet
@@ -216,17 +218,17 @@ LABEL crc_ %i
 	## 4) Combine three results:
 	################################################################
 
-	lea	(K_table-8)(%rip), %bufp		# first entry is for idx 1
+	lea	(K_table-8)(%rip), bufp		# first entry is for idx 1
 	shlq    $3, %rax			# rax *= 8
-	pmovzxdq (%bufp,%rax), %xmm0		# 2 consts: K1:K2
+	pmovzxdq (bufp,%rax), %xmm0		# 2 consts: K1:K2
 	leal	(%eax,%eax,2), %eax		# rax *= 3 (total *24)
 	subq    %rax, tmp			# tmp -= rax*24
 
 	movq    crc_init, %xmm1			# CRC for block 1
-	pclmulqdq $0x00, %xmm0, %xmm1		# Multiply by K2
+	PCLMULQDQ 0x00,%xmm0,%xmm1		# Multiply by K2
 
 	movq    crc1, %xmm2			# CRC for block 2
-	pclmulqdq $0x10, %xmm0, %xmm2		# Multiply by K1
+	PCLMULQDQ 0x10, %xmm0, %xmm2		# Multiply by K1
 
 	pxor    %xmm2,%xmm1
 	movq    %xmm1, %rax
@@ -239,7 +241,6 @@ LABEL crc_ %i
 	################################################################
 
 LABEL crc_ 0
-	ENDBR
 	mov     tmp, len
 	cmp     $128*24, tmp
 	jae     full_block
@@ -309,8 +310,8 @@ do_return:
 	popq    %rsi
 	popq    %rdi
 	popq    %rbx
-        RET
-SYM_FUNC_END(crc_pcl)
+        ret
+ENDPROC(crc_pcl)
 
 .section	.rodata, "a", @progbits
         ################################################################

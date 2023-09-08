@@ -1,32 +1,39 @@
 // SPDX-License-Identifier: GPL-2.0
-/* Copyright(c) 2013 - 2019 Intel Corporation. */
+/* Intel(R) Ethernet Switch Host Interface Driver
+ * Copyright(c) 2013 - 2017 Intel Corporation.
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms and conditions of the GNU General Public License,
+ * version 2, as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+ * more details.
+ *
+ * The full GNU General Public License is included in this distribution in
+ * the file called "COPYING".
+ *
+ * Contact Information:
+ * e1000-devel Mailing List <e1000-devel@lists.sourceforge.net>
+ * Intel Corporation, 5200 N.E. Elam Young Parkway, Hillsboro, OR 97124-6497
+ */
 
-#include <linux/ethtool.h>
 #include <linux/vmalloc.h>
 
 #include "fm10k.h"
 
 struct fm10k_stats {
-	/* The stat_string is expected to be a format string formatted using
-	 * vsnprintf by fm10k_add_stat_strings. Every member of a stats array
-	 * should use the same format specifiers as they will be formatted
-	 * using the same variadic arguments.
-	 */
 	char stat_string[ETH_GSTRING_LEN];
 	int sizeof_stat;
 	int stat_offset;
 };
 
-#define FM10K_STAT_FIELDS(_type, _name, _stat) { \
-	.stat_string = _name, \
-	.sizeof_stat = sizeof_field(_type, _stat), \
-	.stat_offset = offsetof(_type, _stat) \
+#define FM10K_NETDEV_STAT(_net_stat) { \
+	.stat_string = #_net_stat, \
+	.sizeof_stat = FIELD_SIZEOF(struct net_device_stats, _net_stat), \
+	.stat_offset = offsetof(struct net_device_stats, _net_stat) \
 }
-
-/* netdevice statistics */
-#define FM10K_NETDEV_STAT(_net_stat) \
-	FM10K_STAT_FIELDS(struct net_device_stats, __stringify(_net_stat), \
-			  _net_stat)
 
 static const struct fm10k_stats fm10k_gstrings_net_stats[] = {
 	FM10K_NETDEV_STAT(tx_packets),
@@ -45,9 +52,11 @@ static const struct fm10k_stats fm10k_gstrings_net_stats[] = {
 
 #define FM10K_NETDEV_STATS_LEN	ARRAY_SIZE(fm10k_gstrings_net_stats)
 
-/* General interface statistics */
-#define FM10K_STAT(_name, _stat) \
-	FM10K_STAT_FIELDS(struct fm10k_intfc, _name, _stat)
+#define FM10K_STAT(_name, _stat) { \
+	.stat_string = _name, \
+	.sizeof_stat = FIELD_SIZEOF(struct fm10k_intfc, _stat), \
+	.stat_offset = offsetof(struct fm10k_intfc, _stat) \
+}
 
 static const struct fm10k_stats fm10k_gstrings_global_stats[] = {
 	FM10K_STAT("tx_restart_queue", restart_queue),
@@ -84,9 +93,11 @@ static const struct fm10k_stats fm10k_gstrings_pf_stats[] = {
 	FM10K_STAT("nodesc_drop", stats.nodesc_drop.count),
 };
 
-/* mailbox statistics */
-#define FM10K_MBX_STAT(_name, _stat) \
-	FM10K_STAT_FIELDS(struct fm10k_mbx_info, _name, _stat)
+#define FM10K_MBX_STAT(_name, _stat) { \
+	.stat_string = _name, \
+	.sizeof_stat = FIELD_SIZEOF(struct fm10k_mbx_info, _stat), \
+	.stat_offset = offsetof(struct fm10k_mbx_info, _stat) \
+}
 
 static const struct fm10k_stats fm10k_gstrings_mbx_stats[] = {
 	FM10K_MBX_STAT("mbx_tx_busy", tx_busy),
@@ -100,13 +111,15 @@ static const struct fm10k_stats fm10k_gstrings_mbx_stats[] = {
 	FM10K_MBX_STAT("mbx_rx_mbmem_pushed", rx_mbmem_pushed),
 };
 
-/* per-queue ring statistics */
-#define FM10K_QUEUE_STAT(_name, _stat) \
-	FM10K_STAT_FIELDS(struct fm10k_ring, _name, _stat)
+#define FM10K_QUEUE_STAT(_name, _stat) { \
+	.stat_string = _name, \
+	.sizeof_stat = FIELD_SIZEOF(struct fm10k_ring, _stat), \
+	.stat_offset = offsetof(struct fm10k_ring, _stat) \
+}
 
 static const struct fm10k_stats fm10k_gstrings_queue_stats[] = {
-	FM10K_QUEUE_STAT("%s_queue_%u_packets", stats.packets),
-	FM10K_QUEUE_STAT("%s_queue_%u_bytes", stats.bytes),
+	FM10K_QUEUE_STAT("packets", stats.packets),
+	FM10K_QUEUE_STAT("bytes", stats.bytes),
 };
 
 #define FM10K_GLOBAL_STATS_LEN ARRAY_SIZE(fm10k_gstrings_global_stats)
@@ -136,44 +149,49 @@ enum {
 static const char fm10k_prv_flags[FM10K_PRV_FLAG_LEN][ETH_GSTRING_LEN] = {
 };
 
-static void __fm10k_add_stat_strings(u8 **p, const struct fm10k_stats stats[],
-				     const unsigned int size, ...)
+static void fm10k_add_stat_strings(u8 **p, const char *prefix,
+				   const struct fm10k_stats stats[],
+				   const unsigned int size)
 {
 	unsigned int i;
 
 	for (i = 0; i < size; i++) {
-		va_list args;
-
-		va_start(args, size);
-		vsnprintf(*p, ETH_GSTRING_LEN, stats[i].stat_string, args);
+		snprintf(*p, ETH_GSTRING_LEN, "%s%s",
+			 prefix, stats[i].stat_string);
 		*p += ETH_GSTRING_LEN;
-		va_end(args);
 	}
 }
-
-#define fm10k_add_stat_strings(p, stats, ...) \
-	__fm10k_add_stat_strings(p, stats, ARRAY_SIZE(stats), ## __VA_ARGS__)
 
 static void fm10k_get_stat_strings(struct net_device *dev, u8 *data)
 {
 	struct fm10k_intfc *interface = netdev_priv(dev);
 	unsigned int i;
 
-	fm10k_add_stat_strings(&data, fm10k_gstrings_net_stats);
+	fm10k_add_stat_strings(&data, "", fm10k_gstrings_net_stats,
+			       FM10K_NETDEV_STATS_LEN);
 
-	fm10k_add_stat_strings(&data, fm10k_gstrings_global_stats);
+	fm10k_add_stat_strings(&data, "", fm10k_gstrings_global_stats,
+			       FM10K_GLOBAL_STATS_LEN);
 
-	fm10k_add_stat_strings(&data, fm10k_gstrings_mbx_stats);
+	fm10k_add_stat_strings(&data, "", fm10k_gstrings_mbx_stats,
+			       FM10K_MBX_STATS_LEN);
 
 	if (interface->hw.mac.type != fm10k_mac_vf)
-		fm10k_add_stat_strings(&data, fm10k_gstrings_pf_stats);
+		fm10k_add_stat_strings(&data, "", fm10k_gstrings_pf_stats,
+				       FM10K_PF_STATS_LEN);
 
 	for (i = 0; i < interface->hw.mac.max_queues; i++) {
-		fm10k_add_stat_strings(&data, fm10k_gstrings_queue_stats,
-				       "tx", i);
+		char prefix[ETH_GSTRING_LEN];
 
-		fm10k_add_stat_strings(&data, fm10k_gstrings_queue_stats,
-				       "rx", i);
+		snprintf(prefix, ETH_GSTRING_LEN, "tx_queue_%u_", i);
+		fm10k_add_stat_strings(&data, prefix,
+				       fm10k_gstrings_queue_stats,
+				       FM10K_QUEUE_STATS_LEN);
+
+		snprintf(prefix, ETH_GSTRING_LEN, "rx_queue_%u_", i);
+		fm10k_add_stat_strings(&data, prefix,
+				       fm10k_gstrings_queue_stats,
+				       FM10K_QUEUE_STATS_LEN);
 	}
 }
 
@@ -218,11 +236,12 @@ static int fm10k_get_sset_count(struct net_device *dev, int sset)
 	}
 }
 
-static void __fm10k_add_ethtool_stats(u64 **data, void *pointer,
-				      const struct fm10k_stats stats[],
-				      const unsigned int size)
+static void fm10k_add_ethtool_stats(u64 **data, void *pointer,
+				    const struct fm10k_stats stats[],
+				    const unsigned int size)
 {
 	unsigned int i;
+	char *p;
 
 	if (!pointer) {
 		/* memory is not zero allocated so we have to clear it */
@@ -232,7 +251,7 @@ static void __fm10k_add_ethtool_stats(u64 **data, void *pointer,
 	}
 
 	for (i = 0; i < size; i++) {
-		char *p = (char *)pointer + stats[i].stat_offset;
+		p = (char *)pointer + stats[i].stat_offset;
 
 		switch (stats[i].sizeof_stat) {
 		case sizeof(u64):
@@ -248,15 +267,10 @@ static void __fm10k_add_ethtool_stats(u64 **data, void *pointer,
 			*((*data)++) = *(u8 *)p;
 			break;
 		default:
-			WARN_ONCE(1, "unexpected stat size for %s",
-				  stats[i].stat_string);
 			*((*data)++) = 0;
 		}
 	}
 }
-
-#define fm10k_add_ethtool_stats(data, pointer, stats) \
-	__fm10k_add_ethtool_stats(data, pointer, stats, ARRAY_SIZE(stats))
 
 static void fm10k_get_ethtool_stats(struct net_device *netdev,
 				    struct ethtool_stats __always_unused *stats,
@@ -268,16 +282,20 @@ static void fm10k_get_ethtool_stats(struct net_device *netdev,
 
 	fm10k_update_stats(interface);
 
-	fm10k_add_ethtool_stats(&data, net_stats, fm10k_gstrings_net_stats);
+	fm10k_add_ethtool_stats(&data, net_stats, fm10k_gstrings_net_stats,
+				FM10K_NETDEV_STATS_LEN);
 
-	fm10k_add_ethtool_stats(&data, interface, fm10k_gstrings_global_stats);
+	fm10k_add_ethtool_stats(&data, interface, fm10k_gstrings_global_stats,
+				FM10K_GLOBAL_STATS_LEN);
 
 	fm10k_add_ethtool_stats(&data, &interface->hw.mbx,
-				fm10k_gstrings_mbx_stats);
+				fm10k_gstrings_mbx_stats,
+				FM10K_MBX_STATS_LEN);
 
 	if (interface->hw.mac.type != fm10k_mac_vf) {
 		fm10k_add_ethtool_stats(&data, interface,
-					fm10k_gstrings_pf_stats);
+					fm10k_gstrings_pf_stats,
+					FM10K_PF_STATS_LEN);
 	}
 
 	for (i = 0; i < interface->hw.mac.max_queues; i++) {
@@ -285,11 +303,13 @@ static void fm10k_get_ethtool_stats(struct net_device *netdev,
 
 		ring = interface->tx_ring[i];
 		fm10k_add_ethtool_stats(&data, ring,
-					fm10k_gstrings_queue_stats);
+					fm10k_gstrings_queue_stats,
+					FM10K_QUEUE_STATS_LEN);
 
 		ring = interface->rx_ring[i];
 		fm10k_add_ethtool_stats(&data, ring,
-					fm10k_gstrings_queue_stats);
+					fm10k_gstrings_queue_stats,
+					FM10K_QUEUE_STATS_LEN);
 	}
 }
 
@@ -450,6 +470,8 @@ static void fm10k_get_drvinfo(struct net_device *dev,
 
 	strncpy(info->driver, fm10k_driver_name,
 		sizeof(info->driver) - 1);
+	strncpy(info->version, fm10k_driver_version,
+		sizeof(info->version) - 1);
 	strncpy(info->bus_info, pci_name(interface->pdev),
 		sizeof(info->bus_info) - 1);
 }
@@ -502,9 +524,7 @@ static void fm10k_set_msglevel(struct net_device *netdev, u32 data)
 }
 
 static void fm10k_get_ringparam(struct net_device *netdev,
-				struct ethtool_ringparam *ring,
-				struct kernel_ethtool_ringparam *kernel_ring,
-				struct netlink_ext_ack *extack)
+				struct ethtool_ringparam *ring)
 {
 	struct fm10k_intfc *interface = netdev_priv(netdev);
 
@@ -519,9 +539,7 @@ static void fm10k_get_ringparam(struct net_device *netdev,
 }
 
 static int fm10k_set_ringparam(struct net_device *netdev,
-			       struct ethtool_ringparam *ring,
-			       struct kernel_ethtool_ringparam *kernel_ring,
-			       struct netlink_ext_ack *extack)
+			       struct ethtool_ringparam *ring)
 {
 	struct fm10k_intfc *interface = netdev_priv(netdev);
 	struct fm10k_ring *temp_ring;
@@ -560,7 +578,7 @@ static int fm10k_set_ringparam(struct net_device *netdev,
 
 	/* allocate temporary buffer to store rings in */
 	i = max_t(int, interface->num_tx_queues, interface->num_rx_queues);
-	temp_ring = vmalloc(array_size(i, sizeof(struct fm10k_ring)));
+	temp_ring = vmalloc(i * sizeof(struct fm10k_ring));
 
 	if (!temp_ring) {
 		err = -ENOMEM;
@@ -636,9 +654,7 @@ clear_reset:
 }
 
 static int fm10k_get_coalesce(struct net_device *dev,
-			      struct ethtool_coalesce *ec,
-			      struct kernel_ethtool_coalesce *kernel_coal,
-			      struct netlink_ext_ack *extack)
+			      struct ethtool_coalesce *ec)
 {
 	struct fm10k_intfc *interface = netdev_priv(dev);
 
@@ -652,11 +668,10 @@ static int fm10k_get_coalesce(struct net_device *dev,
 }
 
 static int fm10k_set_coalesce(struct net_device *dev,
-			      struct ethtool_coalesce *ec,
-			      struct kernel_ethtool_coalesce *kernel_coal,
-			      struct netlink_ext_ack *extack)
+			      struct ethtool_coalesce *ec)
 {
 	struct fm10k_intfc *interface = netdev_priv(dev);
+	struct fm10k_q_vector *qv;
 	u16 tx_itr, rx_itr;
 	int i;
 
@@ -682,8 +697,7 @@ static int fm10k_set_coalesce(struct net_device *dev,
 
 	/* update q_vectors */
 	for (i = 0; i < interface->num_q_vectors; i++) {
-		struct fm10k_q_vector *qv = interface->q_vector[i];
-
+		qv = interface->q_vector[i];
 		qv->tx.itr = tx_itr;
 		qv->rx.itr = rx_itr;
 	}
@@ -701,12 +715,12 @@ static int fm10k_get_rss_hash_opts(struct fm10k_intfc *interface,
 	case TCP_V4_FLOW:
 	case TCP_V6_FLOW:
 		cmd->data |= RXH_L4_B_0_1 | RXH_L4_B_2_3;
-		fallthrough;
+		/* fall through */
 	case UDP_V4_FLOW:
 		if (test_bit(FM10K_FLAG_RSS_FIELD_IPV4_UDP,
 			     interface->flags))
 			cmd->data |= RXH_L4_B_0_1 | RXH_L4_B_2_3;
-		fallthrough;
+		/* fall through */
 	case SCTP_V4_FLOW:
 	case SCTP_V6_FLOW:
 	case AH_ESP_V4_FLOW:
@@ -1121,12 +1135,13 @@ static void fm10k_get_channels(struct net_device *dev,
 			       struct ethtool_channels *ch)
 {
 	struct fm10k_intfc *interface = netdev_priv(dev);
+	struct fm10k_hw *hw = &interface->hw;
 
 	/* report maximum channels */
 	ch->max_combined = fm10k_max_channels(dev);
 
 	/* report info for other vector */
-	ch->max_other = NON_Q_VECTORS;
+	ch->max_other = NON_Q_VECTORS(hw);
 	ch->other_count = ch->max_other;
 
 	/* record RSS queues */
@@ -1138,13 +1153,14 @@ static int fm10k_set_channels(struct net_device *dev,
 {
 	struct fm10k_intfc *interface = netdev_priv(dev);
 	unsigned int count = ch->combined_count;
+	struct fm10k_hw *hw = &interface->hw;
 
 	/* verify they are not requesting separate vectors */
 	if (!count || ch->rx_count || ch->tx_count)
 		return -EINVAL;
 
 	/* verify other_count has not changed */
-	if (ch->other_count != NON_Q_VECTORS)
+	if (ch->other_count != NON_Q_VECTORS(hw))
 		return -EINVAL;
 
 	/* verify the number of channels does not exceed hardware limits */
@@ -1158,8 +1174,6 @@ static int fm10k_set_channels(struct net_device *dev,
 }
 
 static const struct ethtool_ops fm10k_ethtool_ops = {
-	.supported_coalesce_params = ETHTOOL_COALESCE_USECS |
-				     ETHTOOL_COALESCE_USE_ADAPTIVE,
 	.get_strings		= fm10k_get_strings,
 	.get_sset_count		= fm10k_get_sset_count,
 	.get_ethtool_stats      = fm10k_get_ethtool_stats,

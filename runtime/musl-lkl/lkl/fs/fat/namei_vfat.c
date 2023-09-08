@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  *  linux/fs/vfat/namei.c
  *
@@ -578,7 +577,7 @@ xlate_to_uni(const unsigned char *name, int len, unsigned char *outname,
 
 static int vfat_build_slots(struct inode *dir, const unsigned char *name,
 			    int len, int is_dir, int cluster,
-			    struct timespec64 *ts,
+			    struct timespec *ts,
 			    struct msdos_dir_slot *slots, int *nr_slots)
 {
 	struct msdos_sb_info *sbi = MSDOS_SB(dir->i_sb);
@@ -654,7 +653,7 @@ out_free:
 }
 
 static int vfat_add_entry(struct inode *dir, const struct qstr *qname,
-			  int is_dir, int cluster, struct timespec64 *ts,
+			  int is_dir, int cluster, struct timespec *ts,
 			  struct fat_slot_info *sinfo)
 {
 	struct msdos_dir_slot *slots;
@@ -665,7 +664,7 @@ static int vfat_add_entry(struct inode *dir, const struct qstr *qname,
 	if (len == 0)
 		return -ENOENT;
 
-	slots = kmalloc_array(MSDOS_SLOTS, sizeof(*slots), GFP_NOFS);
+	slots = kmalloc(sizeof(*slots) * MSDOS_SLOTS, GFP_NOFS);
 	if (slots == NULL)
 		return -ENOMEM;
 
@@ -679,7 +678,7 @@ static int vfat_add_entry(struct inode *dir, const struct qstr *qname,
 		goto cleanup;
 
 	/* update timestamp */
-	fat_truncate_time(dir, ts, S_CTIME|S_MTIME);
+	dir->i_ctime = dir->i_mtime = dir->i_atime = *ts;
 	if (IS_DIRSYNC(dir))
 		(void)fat_sync_inode(dir);
 	else
@@ -696,6 +695,15 @@ static int vfat_find(struct inode *dir, const struct qstr *qname,
 	if (len == 0)
 		return -ENOENT;
 	return fat_search_long(dir, qname->name, len, sinfo);
+}
+
+/*
+ * (nfsd's) anonymous disconnected dentry?
+ * NOTE: !IS_ROOT() is not anonymous (I.e. d_splice_alias() did the job).
+ */
+static int vfat_d_anon_disconn(struct dentry *dentry)
+{
+	return IS_ROOT(dentry) && (dentry->d_flags & DCACHE_DISCONNECTED);
 }
 
 static struct dentry *vfat_lookup(struct inode *dir, struct dentry *dentry,
@@ -730,7 +738,8 @@ static struct dentry *vfat_lookup(struct inode *dir, struct dentry *dentry,
 	 * Checking "alias->d_parent == dentry->d_parent" to make sure
 	 * FS is not corrupted (especially double linked dir).
 	 */
-	if (alias && alias->d_parent == dentry->d_parent) {
+	if (alias && alias->d_parent == dentry->d_parent &&
+	    !vfat_d_anon_disconn(alias)) {
 		/*
 		 * This inode has non anonymous-DCACHE_DISCONNECTED
 		 * dentry. This means, the user did ->lookup() by an
@@ -738,6 +747,7 @@ static struct dentry *vfat_lookup(struct inode *dir, struct dentry *dentry,
 		 *
 		 * Switch to new one for reason of locality if possible.
 		 */
+		BUG_ON(d_unhashed(alias));
 		if (!S_ISDIR(inode->i_mode))
 			d_move(alias, dentry);
 		iput(inode);
@@ -756,13 +766,13 @@ error:
 	return ERR_PTR(err);
 }
 
-static int vfat_create(struct user_namespace *mnt_userns, struct inode *dir,
-		       struct dentry *dentry, umode_t mode, bool excl)
+static int vfat_create(struct inode *dir, struct dentry *dentry, umode_t mode,
+		       bool excl)
 {
 	struct super_block *sb = dir->i_sb;
 	struct inode *inode;
 	struct fat_slot_info sinfo;
-	struct timespec64 ts;
+	struct timespec ts;
 	int err;
 
 	mutex_lock(&MSDOS_SB(sb)->s_lock);
@@ -780,6 +790,8 @@ static int vfat_create(struct user_namespace *mnt_userns, struct inode *dir,
 		goto out;
 	}
 	inode_inc_iversion(inode);
+	inode->i_mtime = inode->i_atime = inode->i_ctime = ts;
+	/* timestamp is already written, so mark_inode_dirty() is unneeded. */
 
 	d_instantiate(dentry, inode);
 out:
@@ -809,7 +821,7 @@ static int vfat_rmdir(struct inode *dir, struct dentry *dentry)
 	drop_nlink(dir);
 
 	clear_nlink(inode);
-	fat_truncate_time(inode, NULL, S_ATIME|S_MTIME);
+	inode->i_mtime = inode->i_atime = current_time(inode);
 	fat_detach(inode);
 	vfat_d_version_set(dentry, inode_query_iversion(dir));
 out:
@@ -835,7 +847,7 @@ static int vfat_unlink(struct inode *dir, struct dentry *dentry)
 	if (err)
 		goto out;
 	clear_nlink(inode);
-	fat_truncate_time(inode, NULL, S_ATIME|S_MTIME);
+	inode->i_mtime = inode->i_atime = current_time(inode);
 	fat_detach(inode);
 	vfat_d_version_set(dentry, inode_query_iversion(dir));
 out:
@@ -844,13 +856,12 @@ out:
 	return err;
 }
 
-static int vfat_mkdir(struct user_namespace *mnt_userns, struct inode *dir,
-		      struct dentry *dentry, umode_t mode)
+static int vfat_mkdir(struct inode *dir, struct dentry *dentry, umode_t mode)
 {
 	struct super_block *sb = dir->i_sb;
 	struct inode *inode;
 	struct fat_slot_info sinfo;
-	struct timespec64 ts;
+	struct timespec ts;
 	int err, cluster;
 
 	mutex_lock(&MSDOS_SB(sb)->s_lock);
@@ -876,6 +887,8 @@ static int vfat_mkdir(struct user_namespace *mnt_userns, struct inode *dir,
 	}
 	inode_inc_iversion(inode);
 	set_nlink(inode, 2);
+	inode->i_mtime = inode->i_atime = inode->i_ctime = ts;
+	/* timestamp is already written, so mark_inode_dirty() is unneeded. */
 
 	d_instantiate(dentry, inode);
 
@@ -889,56 +902,21 @@ out:
 	return err;
 }
 
-static int vfat_get_dotdot_de(struct inode *inode, struct buffer_head **bh,
-			      struct msdos_dir_entry **de)
-{
-	if (S_ISDIR(inode->i_mode)) {
-		if (fat_get_dotdot_entry(inode, bh, de))
-			return -EIO;
-	}
-	return 0;
-}
-
-static int vfat_sync_ipos(struct inode *dir, struct inode *inode)
-{
-	if (IS_DIRSYNC(dir))
-		return fat_sync_inode(inode);
-	mark_inode_dirty(inode);
-	return 0;
-}
-
-static int vfat_update_dotdot_de(struct inode *dir, struct inode *inode,
-				 struct buffer_head *dotdot_bh,
-				 struct msdos_dir_entry *dotdot_de)
-{
-	fat_set_start(dotdot_de, MSDOS_I(dir)->i_logstart);
-	mark_buffer_dirty_inode(dotdot_bh, inode);
-	if (IS_DIRSYNC(dir))
-		return sync_dirty_buffer(dotdot_bh);
-	return 0;
-}
-
-static void vfat_update_dir_metadata(struct inode *dir, struct timespec64 *ts)
-{
-	inode_inc_iversion(dir);
-	fat_truncate_time(dir, ts, S_CTIME | S_MTIME);
-	if (IS_DIRSYNC(dir))
-		(void)fat_sync_inode(dir);
-	else
-		mark_inode_dirty(dir);
-}
-
 static int vfat_rename(struct inode *old_dir, struct dentry *old_dentry,
-		       struct inode *new_dir, struct dentry *new_dentry)
+		       struct inode *new_dir, struct dentry *new_dentry,
+		       unsigned int flags)
 {
 	struct buffer_head *dotdot_bh;
-	struct msdos_dir_entry *dotdot_de = NULL;
+	struct msdos_dir_entry *dotdot_de;
 	struct inode *old_inode, *new_inode;
 	struct fat_slot_info old_sinfo, sinfo;
-	struct timespec64 ts;
+	struct timespec ts;
 	loff_t new_i_pos;
-	int err, is_dir, corrupt = 0;
+	int err, is_dir, update_dotdot, corrupt = 0;
 	struct super_block *sb = old_dir->i_sb;
+
+	if (flags & ~RENAME_NOREPLACE)
+		return -EINVAL;
 
 	old_sinfo.bh = sinfo.bh = dotdot_bh = NULL;
 	old_inode = d_inode(old_dentry);
@@ -948,13 +926,15 @@ static int vfat_rename(struct inode *old_dir, struct dentry *old_dentry,
 	if (err)
 		goto out;
 
-	if (old_dir != new_dir) {
-		err = vfat_get_dotdot_de(old_inode, &dotdot_bh, &dotdot_de);
-		if (err)
+	is_dir = S_ISDIR(old_inode->i_mode);
+	update_dotdot = (is_dir && old_dir != new_dir);
+	if (update_dotdot) {
+		if (fat_get_dotdot_entry(old_inode, &dotdot_bh, &dotdot_de)) {
+			err = -EIO;
 			goto out;
+		}
 	}
 
-	is_dir = S_ISDIR(old_inode->i_mode);
 	ts = current_time(old_dir);
 	if (new_inode) {
 		if (is_dir) {
@@ -975,15 +955,21 @@ static int vfat_rename(struct inode *old_dir, struct dentry *old_dentry,
 
 	fat_detach(old_inode);
 	fat_attach(old_inode, new_i_pos);
-	err = vfat_sync_ipos(new_dir, old_inode);
-	if (err)
-		goto error_inode;
-
-	if (dotdot_de) {
-		err = vfat_update_dotdot_de(new_dir, old_inode, dotdot_bh,
-					    dotdot_de);
+	if (IS_DIRSYNC(new_dir)) {
+		err = fat_sync_inode(old_inode);
 		if (err)
-			goto error_dotdot;
+			goto error_inode;
+	} else
+		mark_inode_dirty(old_inode);
+
+	if (update_dotdot) {
+		fat_set_start(dotdot_de, MSDOS_I(new_dir)->i_logstart);
+		mark_buffer_dirty_inode(dotdot_bh, old_inode);
+		if (IS_DIRSYNC(new_dir)) {
+			err = sync_dirty_buffer(dotdot_bh);
+			if (err)
+				goto error_dotdot;
+		}
 		drop_nlink(old_dir);
 		if (!new_inode)
  			inc_nlink(new_dir);
@@ -993,13 +979,18 @@ static int vfat_rename(struct inode *old_dir, struct dentry *old_dentry,
 	old_sinfo.bh = NULL;
 	if (err)
 		goto error_dotdot;
-	vfat_update_dir_metadata(old_dir, &ts);
+	inode_inc_iversion(old_dir);
+	old_dir->i_ctime = old_dir->i_mtime = ts;
+	if (IS_DIRSYNC(old_dir))
+		(void)fat_sync_inode(old_dir);
+	else
+		mark_inode_dirty(old_dir);
 
 	if (new_inode) {
 		drop_nlink(new_inode);
 		if (is_dir)
 			drop_nlink(new_inode);
-		fat_truncate_time(new_inode, &ts, S_CTIME);
+		new_inode->i_ctime = ts;
 	}
 out:
 	brelse(sinfo.bh);
@@ -1013,9 +1004,10 @@ error_dotdot:
 	/* data cluster is shared, serious corruption */
 	corrupt = 1;
 
-	if (dotdot_de) {
-		corrupt |= vfat_update_dotdot_de(old_dir, old_inode, dotdot_bh,
-						 dotdot_de);
+	if (update_dotdot) {
+		fat_set_start(dotdot_de, MSDOS_I(old_dir)->i_logstart);
+		mark_buffer_dirty_inode(dotdot_bh, old_inode);
+		corrupt |= sync_dirty_buffer(dotdot_bh);
 	}
 error_inode:
 	fat_detach(old_inode);
@@ -1042,148 +1034,15 @@ error_inode:
 	goto out;
 }
 
-static void vfat_exchange_ipos(struct inode *old_inode, struct inode *new_inode,
-			       loff_t old_i_pos, loff_t new_i_pos)
-{
-	fat_detach(old_inode);
-	fat_detach(new_inode);
-	fat_attach(old_inode, new_i_pos);
-	fat_attach(new_inode, old_i_pos);
-}
-
-static void vfat_move_nlink(struct inode *src, struct inode *dst)
-{
-	drop_nlink(src);
-	inc_nlink(dst);
-}
-
-static int vfat_rename_exchange(struct inode *old_dir, struct dentry *old_dentry,
-				struct inode *new_dir, struct dentry *new_dentry)
-{
-	struct buffer_head *old_dotdot_bh = NULL, *new_dotdot_bh = NULL;
-	struct msdos_dir_entry *old_dotdot_de = NULL, *new_dotdot_de = NULL;
-	struct inode *old_inode, *new_inode;
-	struct timespec64 ts = current_time(old_dir);
-	loff_t old_i_pos, new_i_pos;
-	int err, corrupt = 0;
-	struct super_block *sb = old_dir->i_sb;
-
-	old_inode = d_inode(old_dentry);
-	new_inode = d_inode(new_dentry);
-
-	/* Acquire super block lock for the operation to be atomic */
-	mutex_lock(&MSDOS_SB(sb)->s_lock);
-
-	/* if directories are not the same, get ".." info to update */
-	if (old_dir != new_dir) {
-		err = vfat_get_dotdot_de(old_inode, &old_dotdot_bh,
-					 &old_dotdot_de);
-		if (err)
-			goto out;
-
-		err = vfat_get_dotdot_de(new_inode, &new_dotdot_bh,
-					 &new_dotdot_de);
-		if (err)
-			goto out;
-	}
-
-	old_i_pos = MSDOS_I(old_inode)->i_pos;
-	new_i_pos = MSDOS_I(new_inode)->i_pos;
-
-	vfat_exchange_ipos(old_inode, new_inode, old_i_pos, new_i_pos);
-
-	err = vfat_sync_ipos(old_dir, new_inode);
-	if (err)
-		goto error_exchange;
-	err = vfat_sync_ipos(new_dir, old_inode);
-	if (err)
-		goto error_exchange;
-
-	/* update ".." directory entry info */
-	if (old_dotdot_de) {
-		err = vfat_update_dotdot_de(new_dir, old_inode, old_dotdot_bh,
-					    old_dotdot_de);
-		if (err)
-			goto error_old_dotdot;
-	}
-	if (new_dotdot_de) {
-		err = vfat_update_dotdot_de(old_dir, new_inode, new_dotdot_bh,
-					    new_dotdot_de);
-		if (err)
-			goto error_new_dotdot;
-	}
-
-	/* if cross directory and only one is a directory, adjust nlink */
-	if (!old_dotdot_de != !new_dotdot_de) {
-		if (old_dotdot_de)
-			vfat_move_nlink(old_dir, new_dir);
-		else
-			vfat_move_nlink(new_dir, old_dir);
-	}
-
-	vfat_update_dir_metadata(old_dir, &ts);
-	/* if directories are not the same, update new_dir as well */
-	if (old_dir != new_dir)
-		vfat_update_dir_metadata(new_dir, &ts);
-
-out:
-	brelse(old_dotdot_bh);
-	brelse(new_dotdot_bh);
-	mutex_unlock(&MSDOS_SB(sb)->s_lock);
-
-	return err;
-
-error_new_dotdot:
-	if (new_dotdot_de) {
-		corrupt |= vfat_update_dotdot_de(new_dir, new_inode,
-						 new_dotdot_bh, new_dotdot_de);
-	}
-
-error_old_dotdot:
-	if (old_dotdot_de) {
-		corrupt |= vfat_update_dotdot_de(old_dir, old_inode,
-						 old_dotdot_bh, old_dotdot_de);
-	}
-
-error_exchange:
-	vfat_exchange_ipos(old_inode, new_inode, new_i_pos, old_i_pos);
-	corrupt |= vfat_sync_ipos(new_dir, new_inode);
-	corrupt |= vfat_sync_ipos(old_dir, old_inode);
-
-	if (corrupt < 0) {
-		fat_fs_error(new_dir->i_sb,
-			     "%s: Filesystem corrupted (i_pos %lld, %lld)",
-			     __func__, old_i_pos, new_i_pos);
-	}
-	goto out;
-}
-
-static int vfat_rename2(struct user_namespace *mnt_userns, struct inode *old_dir,
-			struct dentry *old_dentry, struct inode *new_dir,
-			struct dentry *new_dentry, unsigned int flags)
-{
-	if (flags & ~(RENAME_NOREPLACE | RENAME_EXCHANGE))
-		return -EINVAL;
-
-	if (flags & RENAME_EXCHANGE) {
-		return vfat_rename_exchange(old_dir, old_dentry,
-					    new_dir, new_dentry);
-	}
-
-	/* VFS already handled RENAME_NOREPLACE, handle it as a normal rename */
-	return vfat_rename(old_dir, old_dentry, new_dir, new_dentry);
-}
-
 static const struct inode_operations vfat_dir_inode_operations = {
 	.create		= vfat_create,
 	.lookup		= vfat_lookup,
 	.unlink		= vfat_unlink,
 	.mkdir		= vfat_mkdir,
 	.rmdir		= vfat_rmdir,
-	.rename		= vfat_rename2,
+	.rename		= vfat_rename,
 	.setattr	= fat_setattr,
 	.getattr	= fat_getattr,
-	.update_time	= fat_update_time,
 };
 
 static void setup(struct super_block *sb)
@@ -1212,7 +1071,7 @@ static struct file_system_type vfat_fs_type = {
 	.name		= "vfat",
 	.mount		= vfat_mount,
 	.kill_sb	= kill_block_super,
-	.fs_flags	= FS_REQUIRES_DEV | FS_ALLOW_IDMAP,
+	.fs_flags	= FS_REQUIRES_DEV,
 };
 MODULE_ALIAS_FS("vfat");
 

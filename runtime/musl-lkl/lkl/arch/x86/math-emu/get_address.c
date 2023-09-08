@@ -153,7 +153,7 @@ static long pm_address(u_char FPU_modrm, u_char segment,
 	switch (segment) {
 	case PREFIX_GS_ - 1:
 		/* user gs handling can be lazy, use special accessors */
-		savesegment(gs, addr->selector);
+		addr->selector = get_user_gs(FPU_info->regs);
 		break;
 	default:
 		addr->selector = PM_REG_(segment);

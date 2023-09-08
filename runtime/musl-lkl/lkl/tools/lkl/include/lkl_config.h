@@ -1,8 +1,6 @@
 #ifndef _LKL_LIB_CONFIG_H
 #define _LKL_LIB_CONFIG_H
 
-#include "lkl_autoconf.h"
-
 #define LKL_CONFIG_JSON_TOKEN_MAX 300
 
 struct lkl_config_iface {
@@ -50,20 +48,11 @@ struct lkl_config {
 	char *boot_cmdline;
 	char *dump;
 	char *delay_main;
-	char *nameserver;
 };
 
-#ifdef LKL_HOST_CONFIG_JSMN
-int lkl_load_config_json(struct lkl_config *cfg, const char *jstr);
-#else
-static inline int lkl_load_config_json(struct lkl_config *cfg,
-				const char *jstr)
-{
-	return -1;
-}
-#endif
+int lkl_load_config_json(struct lkl_config *cfg, char *jstr);
 int lkl_load_config_env(struct lkl_config *cfg);
-void lkl_show_config(struct lkl_config *cfg);
+void show_config(struct lkl_config *cfg);
 int lkl_load_config_pre(struct lkl_config *cfg);
 int lkl_load_config_post(struct lkl_config *cfg);
 int lkl_unload_config(struct lkl_config *cfg);

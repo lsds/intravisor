@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Linux VM pressure
  *
@@ -7,6 +6,10 @@
  *
  * Based on ideas from Andrew Morton, David Rientjes, KOSAKI Motohiro,
  * Leonid Moiseichuk, Mel Gorman, Minchan Kim and Pekka Enberg.
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License version 2 as published
+ * by the Free Software Foundation.
  */
 
 #include <linux/cgroup.h>
@@ -74,7 +77,8 @@ static struct vmpressure *work_to_vmpressure(struct work_struct *work)
 
 static struct vmpressure *vmpressure_parent(struct vmpressure *vmpr)
 {
-	struct mem_cgroup *memcg = vmpressure_to_memcg(vmpr);
+	struct cgroup_subsys_state *css = vmpressure_to_css(vmpr);
+	struct mem_cgroup *memcg = mem_cgroup_from_css(css);
 
 	memcg = parent_mem_cgroup(memcg);
 	if (!memcg)
@@ -239,12 +243,7 @@ static void vmpressure_work_fn(struct work_struct *work)
 void vmpressure(gfp_t gfp, struct mem_cgroup *memcg, bool tree,
 		unsigned long scanned, unsigned long reclaimed)
 {
-	struct vmpressure *vmpr;
-
-	if (mem_cgroup_disabled())
-		return;
-
-	vmpr = memcg_to_vmpressure(memcg);
+	struct vmpressure *vmpr = memcg_to_vmpressure(memcg);
 
 	/*
 	 * Here we only want to account pressure that userland is able to
@@ -284,7 +283,7 @@ void vmpressure(gfp_t gfp, struct mem_cgroup *memcg, bool tree,
 		enum vmpressure_levels level;
 
 		/* For now, no users for root-level efficiency */
-		if (!memcg || mem_cgroup_is_root(memcg))
+		if (!memcg || memcg == root_mem_cgroup)
 			return;
 
 		spin_lock(&vmpr->sr_lock);
@@ -308,7 +307,7 @@ void vmpressure(gfp_t gfp, struct mem_cgroup *memcg, bool tree,
 			 * asserted for a second in which subsequent
 			 * pressure events can occur.
 			 */
-			WRITE_ONCE(memcg->socket_pressure, jiffies + HZ);
+			memcg->socket_pressure = jiffies + HZ;
 		}
 	}
 }
@@ -343,6 +342,26 @@ void vmpressure_prio(gfp_t gfp, struct mem_cgroup *memcg, int prio)
 	vmpressure(gfp, memcg, true, vmpressure_win, 0);
 }
 
+static enum vmpressure_levels str_to_level(const char *arg)
+{
+	enum vmpressure_levels level;
+
+	for (level = 0; level < VMPRESSURE_NUM_LEVELS; level++)
+		if (!strcmp(vmpressure_str_levels[level], arg))
+			return level;
+	return -1;
+}
+
+static enum vmpressure_modes str_to_mode(const char *arg)
+{
+	enum vmpressure_modes mode;
+
+	for (mode = 0; mode < VMPRESSURE_NUM_MODES; mode++)
+		if (!strcmp(vmpressure_str_modes[mode], arg))
+			return mode;
+	return -1;
+}
+
 #define MAX_VMPRESSURE_ARGS_LEN	(strlen("critical") + strlen("hierarchy") + 2)
 
 /**
@@ -359,9 +378,6 @@ void vmpressure_prio(gfp_t gfp, struct mem_cgroup *memcg, int prio)
  * "hierarchy" or "local").
  *
  * To be used as memcg event method.
- *
- * Return: 0 on success, -ENOMEM on memory failure or -EINVAL if @args could
- * not be parsed.
  */
 int vmpressure_register_event(struct mem_cgroup *memcg,
 			      struct eventfd_ctx *eventfd, const char *args)
@@ -369,29 +385,34 @@ int vmpressure_register_event(struct mem_cgroup *memcg,
 	struct vmpressure *vmpr = memcg_to_vmpressure(memcg);
 	struct vmpressure_event *ev;
 	enum vmpressure_modes mode = VMPRESSURE_NO_PASSTHROUGH;
-	enum vmpressure_levels level;
+	enum vmpressure_levels level = -1;
 	char *spec, *spec_orig;
 	char *token;
 	int ret = 0;
 
-	spec_orig = spec = kstrndup(args, MAX_VMPRESSURE_ARGS_LEN, GFP_KERNEL);
-	if (!spec)
-		return -ENOMEM;
+	spec_orig = spec = kzalloc(MAX_VMPRESSURE_ARGS_LEN + 1, GFP_KERNEL);
+	if (!spec) {
+		ret = -ENOMEM;
+		goto out;
+	}
+	strncpy(spec, args, MAX_VMPRESSURE_ARGS_LEN);
 
 	/* Find required level */
 	token = strsep(&spec, ",");
-	ret = match_string(vmpressure_str_levels, VMPRESSURE_NUM_LEVELS, token);
-	if (ret < 0)
+	level = str_to_level(token);
+	if (level == -1) {
+		ret = -EINVAL;
 		goto out;
-	level = ret;
+	}
 
 	/* Find optional mode */
 	token = strsep(&spec, ",");
 	if (token) {
-		ret = match_string(vmpressure_str_modes, VMPRESSURE_NUM_MODES, token);
-		if (ret < 0)
+		mode = str_to_mode(token);
+		if (mode == -1) {
+			ret = -EINVAL;
 			goto out;
-		mode = ret;
+		}
 	}
 
 	ev = kzalloc(sizeof(*ev), GFP_KERNEL);
@@ -407,7 +428,6 @@ int vmpressure_register_event(struct mem_cgroup *memcg,
 	mutex_lock(&vmpr->events_lock);
 	list_add(&ev->node, &vmpr->events);
 	mutex_unlock(&vmpr->events_lock);
-	ret = 0;
 out:
 	kfree(spec_orig);
 	return ret;

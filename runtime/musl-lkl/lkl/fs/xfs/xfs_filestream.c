@@ -1,24 +1,36 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (c) 2006-2007 Silicon Graphics, Inc.
  * Copyright (c) 2014 Christoph Hellwig.
  * All Rights Reserved.
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License as
+ * published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it would be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write the Free Software Foundation,
+ * Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
  */
 #include "xfs.h"
-#include "xfs_shared.h"
 #include "xfs_format.h"
 #include "xfs_log_format.h"
 #include "xfs_trans_resv.h"
+#include "xfs_sb.h"
 #include "xfs_mount.h"
+#include "xfs_defer.h"
 #include "xfs_inode.h"
 #include "xfs_bmap.h"
+#include "xfs_bmap_util.h"
 #include "xfs_alloc.h"
 #include "xfs_mru_cache.h"
-#include "xfs_trace.h"
-#include "xfs_ag.h"
-#include "xfs_ag_resv.h"
-#include "xfs_trans.h"
 #include "xfs_filestream.h"
+#include "xfs_trace.h"
+#include "xfs_ag_resv.h"
 
 struct xfs_fstrm_item {
 	struct xfs_mru_cache_elem	mru;
@@ -33,7 +45,39 @@ enum xfs_fstrm_alloc {
 /*
  * Allocation group filestream associations are tracked with per-ag atomic
  * counters.  These counters allow xfs_filestream_pick_ag() to tell whether a
- * particular AG already has active filestreams associated with it.
+ * particular AG already has active filestreams associated with it. The mount
+ * point's m_peraglock is used to protect these counters from per-ag array
+ * re-allocation during a growfs operation.  When xfs_growfs_data_private() is
+ * about to reallocate the array, it calls xfs_filestream_flush() with the
+ * m_peraglock held in write mode.
+ *
+ * Since xfs_mru_cache_flush() guarantees that all the free functions for all
+ * the cache elements have finished executing before it returns, it's safe for
+ * the free functions to use the atomic counters without m_peraglock protection.
+ * This allows the implementation of xfs_fstrm_free_func() to be agnostic about
+ * whether it was called with the m_peraglock held in read mode, write mode or
+ * not held at all.  The race condition this addresses is the following:
+ *
+ *  - The work queue scheduler fires and pulls a filestream directory cache
+ *    element off the LRU end of the cache for deletion, then gets pre-empted.
+ *  - A growfs operation grabs the m_peraglock in write mode, flushes all the
+ *    remaining items from the cache and reallocates the mount point's per-ag
+ *    array, resetting all the counters to zero.
+ *  - The work queue thread resumes and calls the free function for the element
+ *    it started cleaning up earlier.  In the process it decrements the
+ *    filestreams counter for an AG that now has no references.
+ *
+ * With a shrinkfs feature, the above scenario could panic the system.
+ *
+ * All other uses of the following macros should be protected by either the
+ * m_peraglock held in read mode, or the cache's internal locking exposed by the
+ * interval between a call to xfs_mru_cache_lookup() and a call to
+ * xfs_mru_cache_done().  In addition, the m_peraglock must be held in read mode
+ * when new elements are added to the cache.
+ *
+ * Combined, these locking rules ensure that no associations will ever exist in
+ * the cache that reference per-ag array elements that have since been
+ * reallocated.
  */
 int
 xfs_filestream_peek_ag(
@@ -126,16 +170,16 @@ xfs_filestream_pick_ag(
 		pag = xfs_perag_get(mp, ag);
 
 		if (!pag->pagf_init) {
-			err = xfs_alloc_read_agf(pag, NULL, trylock, NULL);
-			if (err) {
-				if (err != -EAGAIN) {
-					xfs_perag_put(pag);
-					return err;
-				}
-				/* Couldn't lock the AGF, skip this AG. */
-				goto next_ag;
+			err = xfs_alloc_pagf_init(mp, NULL, ag, trylock);
+			if (err && !trylock) {
+				xfs_perag_put(pag);
+				return err;
 			}
 		}
+
+		/* Might fail sometimes during the 1st pass with trylock set. */
+		if (!pag->pagf_init)
+			goto next_ag;
 
 		/* Keep track of the AG with the most free blocks. */
 		if (pag->pagf_freeblks > maxfree) {
@@ -181,7 +225,7 @@ next_ag:
 		if (ag != startag)
 			continue;
 
-		/* Allow sleeping in xfs_alloc_read_agf() on the 2nd pass. */
+		/* Allow sleeping in xfs_alloc_pagf_init() on the 2nd pass. */
 		if (trylock != 0) {
 			trylock = 0;
 			continue;
@@ -296,7 +340,7 @@ xfs_filestream_lookup_ag(
 	 * Set the starting AG using the rotor for inode32, otherwise
 	 * use the directory inode's AG.
 	 */
-	if (xfs_is_inode32(mp)) {
+	if (mp->m_flags & XFS_MOUNT_32BITINODES) {
 		xfs_agnumber_t	 rotorstep = xfs_rotorstep;
 		startag = (mp->m_agfrotor / rotorstep) % mp->m_sb.sb_agcount;
 		mp->m_agfrotor = (mp->m_agfrotor + 1) %
@@ -307,7 +351,7 @@ xfs_filestream_lookup_ag(
 	if (xfs_filestream_pick_ag(pip, startag, &ag, 0, 0))
 		ag = NULLAGNUMBER;
 out:
-	xfs_irele(pip);
+	IRELE(pip);
 	return ag;
 }
 
@@ -343,9 +387,9 @@ xfs_filestream_new_ag(
 		startag = (item->ag + 1) % mp->m_sb.sb_agcount;
 	}
 
-	if (ap->datatype & XFS_ALLOC_USERDATA)
+	if (xfs_alloc_is_userdata(ap->datatype))
 		flags |= XFS_PICK_USERDATA;
-	if (ap->tp->t_flags & XFS_TRANS_LOWMODE)
+	if (ap->dfops->dop_low)
 		flags |= XFS_PICK_LOWSPACE;
 
 	err = xfs_filestream_pick_ag(pip, startag, agp, flags, minlen);
@@ -356,7 +400,7 @@ xfs_filestream_new_ag(
 	if (mru)
 		xfs_fstrm_free_func(mp, mru);
 
-	xfs_irele(pip);
+	IRELE(pip);
 exit:
 	if (*agp == NULLAGNUMBER)
 		*agp = 0;

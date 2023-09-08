@@ -1,9 +1,13 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * wm9712.c  --  ALSA Soc WM9712 codec support
  *
  * Copyright 2006-12 Wolfson Microelectronics PLC.
  * Author: Liam Girdwood <lrg@slimlogic.co.uk>
+ *
+ *  This program is free software; you can redistribute  it and/or modify it
+ *  under  the terms of  the GNU General  Public License as published by the
+ *  Free Software Foundation;  either version 2 of the  License, or (at your
+ *  option) any later version.
  */
 
 #include <linux/init.h>
@@ -634,13 +638,13 @@ static int wm9712_soc_probe(struct snd_soc_component *component)
 {
 	struct wm9712_priv *wm9712 = snd_soc_component_get_drvdata(component);
 	struct regmap *regmap;
+	int ret;
 
 	if (wm9712->mfd_pdata) {
 		wm9712->ac97 = wm9712->mfd_pdata->ac97;
 		regmap = wm9712->mfd_pdata->regmap;
-	} else if (IS_ENABLED(CONFIG_SND_SOC_AC97_BUS)) {
-		int ret;
-
+	} else {
+#ifdef CONFIG_SND_SOC_AC97_BUS
 		wm9712->ac97 = snd_soc_new_ac97_component(component, WM9712_VENDOR_ID,
 						      WM9712_VENDOR_ID_MASK);
 		if (IS_ERR(wm9712->ac97)) {
@@ -655,8 +659,7 @@ static int wm9712_soc_probe(struct snd_soc_component *component)
 			snd_soc_free_ac97_component(wm9712->ac97);
 			return PTR_ERR(regmap);
 		}
-	} else {
-		return -ENXIO;
+#endif
 	}
 
 	snd_soc_component_init_regmap(component, regmap);
@@ -669,12 +672,14 @@ static int wm9712_soc_probe(struct snd_soc_component *component)
 
 static void wm9712_soc_remove(struct snd_soc_component *component)
 {
+#ifdef CONFIG_SND_SOC_AC97_BUS
 	struct wm9712_priv *wm9712 = snd_soc_component_get_drvdata(component);
 
-	if (IS_ENABLED(CONFIG_SND_SOC_AC97_BUS) && !wm9712->mfd_pdata) {
+	if (!wm9712->mfd_pdata) {
 		snd_soc_component_exit_regmap(component);
 		snd_soc_free_ac97_component(wm9712->ac97);
 	}
+#endif
 }
 
 static const struct snd_soc_component_driver soc_component_dev_wm9712 = {
@@ -692,6 +697,7 @@ static const struct snd_soc_component_driver soc_component_dev_wm9712 = {
 	.idle_bias_on		= 1,
 	.use_pmdown_time	= 1,
 	.endianness		= 1,
+	.non_legacy_dai_naming	= 1,
 };
 
 static int wm9712_probe(struct platform_device *pdev)
@@ -713,7 +719,7 @@ static int wm9712_probe(struct platform_device *pdev)
 
 static struct platform_driver wm9712_component_driver = {
 	.driver = {
-		.name = "wm9712-codec",
+		.name = "wm9712-component",
 	},
 
 	.probe = wm9712_probe,

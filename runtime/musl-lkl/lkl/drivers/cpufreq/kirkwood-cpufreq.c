@@ -1,8 +1,12 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  *	kirkwood_freq.c: cpufreq driver for the Marvell kirkwood
  *
  *	Copyright (C) 2013 Andrew Lunn <andrew@lunn.ch>
+ *
+ *	This program is free software; you can redistribute it and/or
+ *	modify it under the terms of the GNU General Public License
+ *	as published by the Free Software Foundation; either version
+ *	2 of the License, or (at your option) any later version.
  */
 
 #include <linux/kernel.h>
@@ -85,8 +89,7 @@ static int kirkwood_cpufreq_target(struct cpufreq_policy *policy,
 /* Module init and exit code */
 static int kirkwood_cpufreq_cpu_init(struct cpufreq_policy *policy)
 {
-	cpufreq_generic_init(policy, kirkwood_freq_table, 5000);
-	return 0;
+	return cpufreq_generic_init(policy, kirkwood_freq_table, 5000);
 }
 
 static struct cpufreq_driver kirkwood_cpufreq_driver = {
@@ -102,11 +105,13 @@ static struct cpufreq_driver kirkwood_cpufreq_driver = {
 static int kirkwood_cpufreq_probe(struct platform_device *pdev)
 {
 	struct device_node *np;
+	struct resource *res;
 	int err;
 
 	priv.dev = &pdev->dev;
 
-	priv.base = devm_platform_ioremap_resource(pdev, 0);
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	priv.base = devm_ioremap_resource(&pdev->dev, res);
 	if (IS_ERR(priv.base))
 		return PTR_ERR(priv.base);
 
@@ -119,14 +124,13 @@ static int kirkwood_cpufreq_probe(struct platform_device *pdev)
 	priv.cpu_clk = of_clk_get_by_name(np, "cpu_clk");
 	if (IS_ERR(priv.cpu_clk)) {
 		dev_err(priv.dev, "Unable to get cpuclk\n");
-		err = PTR_ERR(priv.cpu_clk);
-		goto out_node;
+		return PTR_ERR(priv.cpu_clk);
 	}
 
 	err = clk_prepare_enable(priv.cpu_clk);
 	if (err) {
 		dev_err(priv.dev, "Unable to prepare cpuclk\n");
-		goto out_node;
+		return err;
 	}
 
 	kirkwood_freq_table[0].frequency = clk_get_rate(priv.cpu_clk) / 1000;
@@ -157,22 +161,20 @@ static int kirkwood_cpufreq_probe(struct platform_device *pdev)
 		goto out_ddr;
 	}
 
-	err = cpufreq_register_driver(&kirkwood_cpufreq_driver);
-	if (err) {
-		dev_err(priv.dev, "Failed to register cpufreq driver\n");
-		goto out_powersave;
-	}
-
 	of_node_put(np);
-	return 0;
+	np = NULL;
 
-out_powersave:
+	err = cpufreq_register_driver(&kirkwood_cpufreq_driver);
+	if (!err)
+		return 0;
+
+	dev_err(priv.dev, "Failed to register cpufreq driver\n");
+
 	clk_disable_unprepare(priv.powersave_clk);
 out_ddr:
 	clk_disable_unprepare(priv.ddr_clk);
 out_cpu:
 	clk_disable_unprepare(priv.cpu_clk);
-out_node:
 	of_node_put(np);
 
 	return err;

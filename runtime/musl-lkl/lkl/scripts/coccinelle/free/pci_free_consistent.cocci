@@ -1,9 +1,8 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /// Find missing pci_free_consistent for every pci_alloc_consistent.
 ///
 // Confidence: Moderate
-// Copyright: (C) 2013 Petr Strnad.
-// URL: https://coccinelle.gitlabpages.inria.fr/website
+// Copyright: (C) 2013 Petr Strnad.  GPLv2.
+// URL: http://coccinelle.lip6.fr/
 // Keywords: pci_free_consistent, pci_alloc_consistent
 // Options: --no-includes --include-headers
 

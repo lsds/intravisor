@@ -1,8 +1,16 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * (c) Copyright 2002-2010, Ralink Technology, Inc.
  * Copyright (C) 2014 Felix Fietkau <nbd@openwrt.org>
  * Copyright (C) 2015 Jakub Kicinski <kubakici@wp.pl>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2
+ * as published by the Free Software Foundation
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
  */
 
 #include "mt7601u.h"
@@ -213,7 +221,7 @@ int mt7601u_wait_bbp_ready(struct mt7601u_dev *dev)
 
 	do {
 		val = mt7601u_bbp_rr(dev, MT_BBP_REG_VERSION);
-		if (val && val != 0xff)
+		if (val && ~val)
 			break;
 	} while (--i);
 
@@ -586,9 +594,6 @@ static void mt7601u_rxdc_cal(struct mt7601u_dev *dev)
 
 void mt7601u_phy_recalibrate_after_assoc(struct mt7601u_dev *dev)
 {
-	if (test_bit(MT7601U_STATE_REMOVED, &dev->state))
-		return;
-
 	mt7601u_mcu_calibrate(dev, MCU_CAL_DPD, dev->curr_temp);
 
 	mt7601u_rxdc_cal(dev);
@@ -790,7 +795,6 @@ mt7601u_phy_rf_pa_mode_val(struct mt7601u_dev *dev, int phy_mode, int tx_rate)
 	switch (phy_mode) {
 	case MT_PHY_TYPE_OFDM:
 		tx_rate += 4;
-		fallthrough;
 	case MT_PHY_TYPE_CCK:
 		reg = dev->rf_pa_mode[0];
 		break;
@@ -970,7 +974,6 @@ void mt7601u_agc_restore(struct mt7601u_dev *dev)
 static void mt7601u_agc_tune(struct mt7601u_dev *dev)
 {
 	u8 val = mt7601u_agc_default(dev);
-	long avg_rssi;
 
 	if (test_bit(MT7601U_STATE_SCANNING, &dev->state))
 		return;
@@ -980,16 +983,11 @@ static void mt7601u_agc_tune(struct mt7601u_dev *dev)
 	 *	 Rssi updates are only on beacons and U2M so should work...
 	 */
 	spin_lock_bh(&dev->con_mon_lock);
-	avg_rssi = ewma_rssi_read(&dev->avg_rssi);
-	spin_unlock_bh(&dev->con_mon_lock);
-	if (avg_rssi == 0)
-		return;
-
-	avg_rssi = -avg_rssi;
-	if (avg_rssi <= -70)
+	if (dev->avg_rssi <= -70)
 		val -= 0x20;
-	else if (avg_rssi <= -60)
+	else if (dev->avg_rssi <= -60)
 		val -= 0x10;
+	spin_unlock_bh(&dev->con_mon_lock);
 
 	if (val != mt7601u_bbp_rr(dev, 66))
 		mt7601u_bbp_wr(dev, 66, val);
@@ -1097,24 +1095,21 @@ static void mt7601u_phy_freq_cal(struct work_struct *work)
 void mt7601u_phy_con_cal_onoff(struct mt7601u_dev *dev,
 			       struct ieee80211_bss_conf *info)
 {
-	struct ieee80211_vif *vif = container_of(info, struct ieee80211_vif,
-						 bss_conf);
-
-	if (!vif->cfg.assoc)
+	if (!info->assoc)
 		cancel_delayed_work_sync(&dev->freq_cal.work);
 
 	/* Start/stop collecting beacon data */
 	spin_lock_bh(&dev->con_mon_lock);
 	ether_addr_copy(dev->ap_bssid, info->bssid);
-	ewma_rssi_init(&dev->avg_rssi);
+	dev->avg_rssi = 0;
 	dev->bcn_freq_off = MT_FREQ_OFFSET_INVALID;
 	spin_unlock_bh(&dev->con_mon_lock);
 
 	dev->freq_cal.freq = dev->ee->rf_freq_off;
-	dev->freq_cal.enabled = vif->cfg.assoc;
+	dev->freq_cal.enabled = info->assoc;
 	dev->freq_cal.adjusting = false;
 
-	if (vif->cfg.assoc)
+	if (info->assoc)
 		ieee80211_queue_delayed_work(dev->hw, &dev->freq_cal.work,
 					     MT_FREQ_CAL_INIT_DELAY);
 }
@@ -1216,7 +1211,7 @@ void mt7601u_set_rx_path(struct mt7601u_dev *dev, u8 path)
 /**
  * mt7601u_set_tx_dac - set which tx DAC to use
  * @dev:	pointer to adapter structure
- * @dac:	DAC index, values are 0-based
+ * @path:	DAC index, values are 0-based
  */
 void mt7601u_set_tx_dac(struct mt7601u_dev *dev, u8 dac)
 {

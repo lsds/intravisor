@@ -1,17 +1,14 @@
-#include "dso.h"
+// SPDX-License-Identifier: GPL-2.0
 #include "symbol.h"
-#include "symsrc.h"
+#include "util.h"
 
 #include <errno.h>
-#include <unistd.h>
 #include <stdio.h>
 #include <fcntl.h>
 #include <string.h>
-#include <stdlib.h>
 #include <byteswap.h>
 #include <sys/stat.h>
-#include <linux/zalloc.h>
-#include <internal/lib.h>
+
 
 static bool check_need_swap(int file_endian)
 {
@@ -31,10 +28,9 @@ static bool check_need_swap(int file_endian)
 
 #define NT_GNU_BUILD_ID	3
 
-static int read_build_id(void *note_data, size_t note_len, struct build_id *bid,
-			 bool need_swap)
+static int read_build_id(void *note_data, size_t note_len, void *bf,
+			 size_t size, bool need_swap)
 {
-	size_t size = sizeof(bid->data);
 	struct {
 		u32 n_namesz;
 		u32 n_descsz;
@@ -64,9 +60,8 @@ static int read_build_id(void *note_data, size_t note_len, struct build_id *bid,
 		    nhdr->n_namesz == sizeof("GNU")) {
 			if (memcmp(name, "GNU", sizeof("GNU")) == 0) {
 				size_t sz = min(size, descsz);
-				memcpy(bid->data, ptr, sz);
-				memset(bid->data + sz, 0, size - sz);
-				bid->size = sz;
+				memcpy(bf, ptr, sz);
+				memset(bf + sz, 0, size - sz);
 				return 0;
 			}
 		}
@@ -86,7 +81,7 @@ int filename__read_debuglink(const char *filename __maybe_unused,
 /*
  * Just try PT_NOTE header otherwise fails
  */
-int filename__read_build_id(const char *filename, struct build_id *bid)
+int filename__read_build_id(const char *filename, void *bf, size_t size)
 {
 	FILE *fp;
 	int ret = -1;
@@ -158,9 +153,9 @@ int filename__read_build_id(const char *filename, struct build_id *bid)
 			if (fread(buf, buf_size, 1, fp) != 1)
 				goto out_free;
 
-			ret = read_build_id(buf, buf_size, bid, need_swap);
+			ret = read_build_id(buf, buf_size, bf, size, need_swap);
 			if (ret == 0)
-				ret = bid->size;
+				ret = size;
 			break;
 		}
 	} else {
@@ -209,9 +204,9 @@ int filename__read_build_id(const char *filename, struct build_id *bid)
 			if (fread(buf, buf_size, 1, fp) != 1)
 				goto out_free;
 
-			ret = read_build_id(buf, buf_size, bid, need_swap);
+			ret = read_build_id(buf, buf_size, bf, size, need_swap);
 			if (ret == 0)
-				ret = bid->size;
+				ret = size;
 			break;
 		}
 	}
@@ -222,7 +217,7 @@ out:
 	return ret;
 }
 
-int sysfs__read_build_id(const char *filename, struct build_id *bid)
+int sysfs__read_build_id(const char *filename, void *build_id, size_t size)
 {
 	int fd;
 	int ret = -1;
@@ -245,7 +240,7 @@ int sysfs__read_build_id(const char *filename, struct build_id *bid)
 	if (read(fd, buf, buf_size) != (ssize_t) buf_size)
 		goto out_free;
 
-	ret = read_build_id(buf, buf_size, bid, false);
+	ret = read_build_id(buf, buf_size, build_id, size, false);
 out_free:
 	free(buf);
 out:
@@ -293,7 +288,8 @@ void symsrc__destroy(struct symsrc *ss)
 }
 
 int dso__synthesize_plt_symbols(struct dso *dso __maybe_unused,
-				struct symsrc *ss __maybe_unused)
+				struct symsrc *ss __maybe_unused,
+				struct map *map __maybe_unused)
 {
 	return 0;
 }
@@ -341,15 +337,16 @@ int dso__load_sym(struct dso *dso, struct map *map __maybe_unused,
 		  struct symsrc *runtime_ss __maybe_unused,
 		  int kmodule __maybe_unused)
 {
-	struct build_id bid;
+	unsigned char build_id[BUILD_ID_SIZE];
 	int ret;
 
 	ret = fd__is_64_bit(ss->fd);
 	if (ret >= 0)
 		dso->is_64_bit = ret;
 
-	if (filename__read_build_id(ss->name, &bid) > 0)
-		dso__set_build_id(dso, &bid);
+	if (filename__read_build_id(ss->name, build_id, BUILD_ID_SIZE) > 0) {
+		dso__set_build_id(dso, build_id);
+	}
 	return 0;
 }
 

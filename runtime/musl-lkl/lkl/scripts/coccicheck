@@ -16,6 +16,7 @@ if [ ! -x "$SPATCH" ]; then
 fi
 
 SPATCH_VERSION=$($SPATCH --version | head -1 | awk '{print $3}')
+SPATCH_VERSION_NUM=$(echo $SPATCH_VERSION | ${DIR}/scripts/ld-version.sh)
 
 USE_JOBS="no"
 $SPATCH --help | grep "\-\-jobs" > /dev/null && USE_JOBS="yes"
@@ -60,18 +61,6 @@ COCCIINCLUDE=${COCCIINCLUDE// -include/ --include}
 if [ "$C" = "1" -o "$C" = "2" ]; then
     ONLINE=1
 
-    if [[ $# -le 0 ]]; then
-	    echo ''
-	    echo 'Specifying both the variable "C" and rule "coccicheck" in the make
-command results in a shift count error.'
-	    echo ''
-	    echo 'Try specifying "scripts/coccicheck" as a value for the CHECK variable instead.'
-	    echo ''
-	    echo 'Example:	make C=2 CHECK=scripts/coccicheck drivers/net/ethernet/ethoc.o'
-	    echo ''
-	    exit 1
-    fi
-
     # Take only the last argument, which is the C file to test
     shift $(( $# - 1 ))
     OPTIONS="$COCCIINCLUDE $1"
@@ -86,13 +75,8 @@ else
         OPTIONS="--dir $KBUILD_EXTMOD $COCCIINCLUDE"
     fi
 
-    # Use only one thread per core by default if hyperthreading is enabled
-    THREADS_PER_CORE=$(LANG=C lscpu | grep "Thread(s) per core: " | tr -cd "[:digit:]")
     if [ -z "$J" ]; then
         NPROC=$(getconf _NPROCESSORS_ONLN)
-	if [ $THREADS_PER_CORE -gt 1 -a $NPROC -gt 4 ] ; then
-		NPROC=$((NPROC/2))
-	fi
     else
         NPROC="$J"
     fi
@@ -115,7 +99,7 @@ fi
 if [ "$MODE" = "" ] ; then
     if [ "$ONLINE" = "0" ] ; then
 	echo 'You have not explicitly specified the mode to use. Using default "report" mode.'
-	echo 'Available modes are the following: patch, report, context, org, chain'
+	echo 'Available modes are the following: patch, report, context, org'
 	echo 'You can specify the mode with "make coccicheck MODE=<mode>"'
 	echo 'Note however that some modes are not implemented by some semantic patches.'
     fi
@@ -142,18 +126,11 @@ run_cmd_parmap() {
 	if [ $VERBOSE -ne 0 ] ; then
 		echo "Running ($NPROC in parallel): $@"
 	fi
-	if [ "$DEBUG_FILE" != "/dev/null" -a "$DEBUG_FILE" != "" ]; then
-                echo $@>>$DEBUG_FILE
-                $@ 2>>$DEBUG_FILE
-        else
-                echo $@
-                $@ 2>&1
-	fi
-
-	err=$?
-	if [[ $err -ne 0 ]]; then
+	echo $@ >>$DEBUG_FILE
+	$@ 2>>$DEBUG_FILE
+	if [[ $? -ne 0 ]]; then
 		echo "coccicheck failed"
-		exit $err
+		exit $?
 	fi
 }
 
@@ -197,11 +174,14 @@ coccinelle () {
 
     OPT=`grep "Options:" $COCCI | cut -d':' -f2`
     REQ=`grep "Requires:" $COCCI | cut -d':' -f2 | sed "s| ||"`
-    if [ -n "$REQ" ] && ! { echo "$REQ"; echo "$SPATCH_VERSION"; } | sort -CV ; then
-	    echo "Skipping coccinelle SmPL patch: $COCCI"
-	    echo "You have coccinelle:           $SPATCH_VERSION"
-	    echo "This SmPL patch requires:      $REQ"
-	    return
+    REQ_NUM=$(echo $REQ | ${DIR}/scripts/ld-version.sh)
+    if [ "$REQ_NUM" != "0" ] ; then
+	    if [ "$SPATCH_VERSION_NUM" -lt "$REQ_NUM" ] ; then
+		    echo "Skipping coccinelle SmPL patch: $COCCI"
+		    echo "You have coccinelle:           $SPATCH_VERSION"
+		    echo "This SmPL patch requires:      $REQ"
+		    return
+	    fi
     fi
 
 #   The option '--parse-cocci' can be used to syntactically check the SmPL files.

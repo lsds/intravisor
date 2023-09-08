@@ -1,6 +1,10 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  *	Watchdog for the 7101 PMU version found in the ALi M1535 chipsets
+ *
+ *	This program is free software; you can redistribute it and/or
+ *	modify it under the terms of the GNU General Public License
+ *	as published by the Free Software Foundation; either version
+ *	2 of the License, or (at your option) any later version.
  */
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
@@ -220,7 +224,7 @@ static long ali_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 			return -EINVAL;
 		ali_keepalive();
 	}
-		fallthrough;
+		/* fall through */
 	case WDIOC_GETTIMEOUT:
 		return put_user(timeout, p);
 	default:
@@ -245,7 +249,7 @@ static int ali_open(struct inode *inode, struct file *file)
 
 	/* Activate */
 	ali_start();
-	return stream_open(inode, file);
+	return nonseekable_open(inode, file);
 }
 
 /*
@@ -362,7 +366,6 @@ static const struct file_operations ali_fops = {
 	.llseek		=	no_llseek,
 	.write		=	ali_write,
 	.unlocked_ioctl =	ali_ioctl,
-	.compat_ioctl	= 	compat_ptr_ioctl,
 	.open		=	ali_open,
 	.release	=	ali_release,
 };

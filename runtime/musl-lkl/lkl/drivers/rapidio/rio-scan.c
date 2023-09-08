@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * RapidIO enumeration and discovery support
  *
@@ -12,6 +11,11 @@
  * Copyright 2009 Sysgo AG
  * Thomas Moll <thomas.moll@sysgo.com>
  * - Added Input- Output- enable functionality, to allow full communication
+ *
+ * This program is free software; you can redistribute  it and/or modify it
+ * under  the terms of  the GNU General  Public License as published by the
+ * Free Software Foundation;  either version 2 of the  License, or (at your
+ * option) any later version.
  */
 
 #include <linux/types.h>
@@ -39,7 +43,7 @@ struct rio_id_table {
 	u16 start;	/* logical minimal id */
 	u32 max;	/* max number of IDs in table */
 	spinlock_t lock;
-	unsigned long table[];
+	unsigned long table[0];
 };
 
 static int next_destid = 0;
@@ -330,7 +334,7 @@ static struct rio_dev *rio_setup_device(struct rio_net *net,
 	size_t size;
 	u32 swpinfo = 0;
 
-	size = sizeof(*rdev);
+	size = sizeof(struct rio_dev);
 	if (rio_mport_read_config_32(port, destid, hopcount,
 				     RIO_PEF_CAR, &result))
 		return NULL;
@@ -338,8 +342,10 @@ static struct rio_dev *rio_setup_device(struct rio_net *net,
 	if (result & (RIO_PEF_SWITCH | RIO_PEF_MULTIPORT)) {
 		rio_mport_read_config_32(port, destid, hopcount,
 					 RIO_SWP_INFO_CAR, &swpinfo);
-		if (result & RIO_PEF_SWITCH)
-			size += struct_size(rswitch, nextdev, RIO_GET_TOTAL_PORTS(swpinfo));
+		if (result & RIO_PEF_SWITCH) {
+			size += (RIO_GET_TOTAL_PORTS(swpinfo) *
+				sizeof(rswitch->nextdev[0])) + sizeof(*rswitch);
+		}
 	}
 
 	rdev = kzalloc(size, GFP_KERNEL);
@@ -419,9 +425,9 @@ static struct rio_dev *rio_setup_device(struct rio_net *net,
 		rswitch = rdev->rswitch;
 		rswitch->port_ok = 0;
 		spin_lock_init(&rswitch->lock);
-		rswitch->route_table =
-			kzalloc(RIO_MAX_ROUTE_ENTRIES(port->sys_size),
-				GFP_KERNEL);
+		rswitch->route_table = kzalloc(sizeof(u8)*
+					RIO_MAX_ROUTE_ENTRIES(port->sys_size),
+					GFP_KERNEL);
 		if (!rswitch->route_table)
 			goto cleanup;
 		/* Initialize switch route table */

@@ -1,7 +1,10 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright © 2009 - Maxim Levitsky
  * Common routines & support for xD format
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 #include <linux/kernel.h>
 #include <linux/mtd/rawnand.h>
@@ -52,7 +55,7 @@ static const struct mtd_ooblayout_ops oob_sm_ops = {
 	.free = oob_sm_ooblayout_free,
 };
 
-/* NOTE: This layout is not compatabable with SmartMedia, */
+/* NOTE: This layout is is not compatabable with SmartMedia, */
 /* because the 256 byte devices have page depenent oob layout */
 /* However it does preserve the bad block markers */
 /* If you use smftl, it will bypass this and work correctly */
@@ -96,10 +99,9 @@ static const struct mtd_ooblayout_ops oob_sm_small_ops = {
 	.free = oob_sm_small_ooblayout_free,
 };
 
-static int sm_block_markbad(struct nand_chip *chip, loff_t ofs)
+static int sm_block_markbad(struct mtd_info *mtd, loff_t ofs)
 {
-	struct mtd_info *mtd = nand_to_mtd(chip);
-	struct mtd_oob_ops ops = { };
+	struct mtd_oob_ops ops;
 	struct sm_oob oob;
 	int ret;
 
@@ -158,14 +160,24 @@ static struct nand_flash_dev nand_xd_flash_ids[] = {
 	{NULL}
 };
 
-static int sm_attach_chip(struct nand_chip *chip)
+int sm_register_device(struct mtd_info *mtd, int smartmedia)
 {
-	struct mtd_info *mtd = nand_to_mtd(chip);
+	struct nand_chip *chip = mtd_to_nand(mtd);
+	int ret;
+
+	chip->options |= NAND_SKIP_BBTSCAN;
+
+	/* Scan for card properties */
+	ret = nand_scan_ident(mtd, 1, smartmedia ?
+		nand_smartmedia_flash_ids : nand_xd_flash_ids);
+
+	if (ret)
+		return ret;
 
 	/* Bad block marker position */
 	chip->badblockpos = 0x05;
 	chip->badblockbits = 7;
-	chip->legacy.block_markbad = sm_block_markbad;
+	chip->block_markbad = sm_block_markbad;
 
 	/* ECC layout */
 	if (mtd->writesize == SM_SECTOR_SIZE)
@@ -175,33 +187,12 @@ static int sm_attach_chip(struct nand_chip *chip)
 	else
 		return -ENODEV;
 
-	return 0;
-}
+	ret = nand_scan_tail(mtd);
 
-static const struct nand_controller_ops sm_controller_ops = {
-	.attach_chip = sm_attach_chip,
-};
-
-int sm_register_device(struct mtd_info *mtd, int smartmedia)
-{
-	struct nand_chip *chip = mtd_to_nand(mtd);
-	struct nand_flash_dev *flash_ids;
-	int ret;
-
-	chip->options |= NAND_SKIP_BBTSCAN;
-
-	/* Scan for card properties */
-	chip->legacy.dummy_controller.ops = &sm_controller_ops;
-	flash_ids = smartmedia ? nand_smartmedia_flash_ids : nand_xd_flash_ids;
-	ret = nand_scan_with_ids(chip, 1, flash_ids);
 	if (ret)
 		return ret;
 
-	ret = mtd_device_register(mtd, NULL, 0);
-	if (ret)
-		nand_cleanup(chip);
-
-	return ret;
+	return mtd_device_register(mtd, NULL, 0);
 }
 EXPORT_SYMBOL_GPL(sm_register_device);
 

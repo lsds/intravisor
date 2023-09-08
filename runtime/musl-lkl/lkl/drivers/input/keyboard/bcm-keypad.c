@@ -1,5 +1,15 @@
-// SPDX-License-Identifier: GPL-2.0-only
-// Copyright (C) 2014 Broadcom Corporation
+/*
+ * Copyright (C) 2014 Broadcom Corporation
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License as
+ * published by the Free Software Foundation version 2.
+ *
+ * This program is distributed "as is" WITHOUT ANY WARRANTY of any
+ * kind, whether express or implied; without even the implied warranty
+ * of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ */
 
 #include <linux/bitops.h>
 #include <linux/clk.h>
@@ -173,7 +183,8 @@ static void bcm_kp_stop(const struct bcm_kp *kp)
 	writel(0xFFFFFFFF, kp->base + KPICR0_OFFSET);
 	writel(0xFFFFFFFF, kp->base + KPICR1_OFFSET);
 
-	clk_disable_unprepare(kp->clk);
+	if (kp->clk)
+		clk_disable_unprepare(kp->clk);
 }
 
 static int bcm_kp_open(struct input_dev *dev)
@@ -402,8 +413,10 @@ static int bcm_kp_probe(struct platform_device *pdev)
 	bcm_kp_stop(kp);
 
 	kp->irq = platform_get_irq(pdev, 0);
-	if (kp->irq < 0)
+	if (kp->irq < 0) {
+		dev_err(&pdev->dev, "no IRQ specified\n");
 		return -EINVAL;
+	}
 
 	error = devm_request_threaded_irq(&pdev->dev, kp->irq,
 					  NULL, bcm_kp_isr_thread,

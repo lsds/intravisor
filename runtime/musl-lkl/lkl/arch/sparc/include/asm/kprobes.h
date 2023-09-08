@@ -24,7 +24,7 @@ do { 	flushi(&(p)->ainsn.insn[0]);	\
 	flushi(&(p)->ainsn.insn[1]);	\
 } while (0)
 
-void __kretprobe_trampoline(void);
+void kretprobe_trampoline(void);
 
 /* Architecture specific copy of original instruction*/
 struct arch_specific_insn {
@@ -44,6 +44,7 @@ struct kprobe_ctlblk {
 	unsigned long kprobe_status;
 	unsigned long kprobe_orig_tnpc;
 	unsigned long kprobe_orig_tstate_pil;
+	struct pt_regs jprobe_saved_regs;
 	struct prev_kprobe prev_kprobe;
 };
 

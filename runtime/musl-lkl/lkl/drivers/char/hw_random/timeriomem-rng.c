@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * drivers/char/hw_random/timeriomem-rng.c
  *
@@ -7,6 +6,10 @@
  * Derived from drivers/char/hw_random/omap-rng.c
  *   Copyright 2005 (c) MontaVista Software, Inc.
  *   Author: Deepak Saxena <dsaxena@plexity.net>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  *
  * Overview:
  *   This driver is useful for platforms that have an IO range that provides
@@ -69,7 +72,7 @@ static int timeriomem_rng_read(struct hwrng *hwrng, void *data,
 		 */
 		if (retval > 0)
 			usleep_range(period_us,
-					period_us + max(1, period_us / 100));
+					period_us + min(1, period_us / 100));
 
 		*(u32 *)data = readl(priv->io_base);
 		retval += sizeof(u32);
@@ -117,9 +120,9 @@ static int timeriomem_rng_probe(struct platform_device *pdev)
 	if (!res)
 		return -ENXIO;
 
-	if (res->start % 4 != 0 || resource_size(res) < 4) {
+	if (res->start % 4 != 0 || resource_size(res) != 4) {
 		dev_err(&pdev->dev,
-			"address must be at least four bytes wide and 32-bit aligned\n");
+			"address must be four bytes wide and aligned\n");
 		return -EINVAL;
 	}
 
@@ -169,7 +172,7 @@ static int timeriomem_rng_probe(struct platform_device *pdev)
 	priv->present = 1;
 	complete(&priv->completion);
 
-	err = devm_hwrng_register(&pdev->dev, &priv->rng_ops);
+	err = hwrng_register(&priv->rng_ops);
 	if (err) {
 		dev_err(&pdev->dev, "problem registering\n");
 		return err;
@@ -185,6 +188,7 @@ static int timeriomem_rng_remove(struct platform_device *pdev)
 {
 	struct timeriomem_rng_private *priv = platform_get_drvdata(pdev);
 
+	hwrng_unregister(&priv->rng_ops);
 	hrtimer_cancel(&priv->timer);
 
 	return 0;

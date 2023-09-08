@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * wm8985.c  --  WM8985 / WM8758 ALSA SoC Audio driver
  *
@@ -8,6 +7,10 @@
  * WM8758 support:
  * Copyright: 2016 Barix AG
  * Author: Petr Kulhavy <petr@barix.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  *
  * TODO:
  *  o Add OUT3/OUT4 mixer controls.
@@ -592,7 +595,7 @@ static int eqmode_get(struct snd_kcontrol *kcontrol,
 	struct snd_soc_component *component = snd_soc_kcontrol_component(kcontrol);
 	unsigned int reg;
 
-	reg = snd_soc_component_read(component, WM8985_EQ1_LOW_SHELF);
+	reg = snd_soc_component_read32(component, WM8985_EQ1_LOW_SHELF);
 	if (reg & WM8985_EQ3DMODE)
 		ucontrol->value.enumerated.item[0] = 1;
 	else
@@ -612,7 +615,7 @@ static int eqmode_put(struct snd_kcontrol *kcontrol,
 			&& ucontrol->value.enumerated.item[0] != 1)
 		return -EINVAL;
 
-	reg_eq = snd_soc_component_read(component, WM8985_EQ1_LOW_SHELF);
+	reg_eq = snd_soc_component_read32(component, WM8985_EQ1_LOW_SHELF);
 	switch ((reg_eq & WM8985_EQ3DMODE) >> WM8985_EQ3DMODE_SHIFT) {
 	case 0:
 		if (!ucontrol->value.enumerated.item[0])
@@ -624,8 +627,8 @@ static int eqmode_put(struct snd_kcontrol *kcontrol,
 		break;
 	}
 
-	regpwr2 = snd_soc_component_read(component, WM8985_POWER_MANAGEMENT_2);
-	regpwr3 = snd_soc_component_read(component, WM8985_POWER_MANAGEMENT_3);
+	regpwr2 = snd_soc_component_read32(component, WM8985_POWER_MANAGEMENT_2);
+	regpwr3 = snd_soc_component_read32(component, WM8985_POWER_MANAGEMENT_3);
 	/* disable the DACs and ADCs */
 	snd_soc_component_update_bits(component, WM8985_POWER_MANAGEMENT_2,
 			    WM8985_ADCENR_MASK | WM8985_ADCENL_MASK, 0);
@@ -649,7 +652,7 @@ static int wm8985_reset(struct snd_soc_component *component)
 	return snd_soc_component_write(component, WM8985_SOFTWARE_RESET, 0x0);
 }
 
-static int wm8985_dac_mute(struct snd_soc_dai *dai, int mute, int direction)
+static int wm8985_dac_mute(struct snd_soc_dai *dai, int mute)
 {
 	struct snd_soc_component *component = dai->component;
 
@@ -1072,12 +1075,11 @@ err_reg_enable:
 }
 
 static const struct snd_soc_dai_ops wm8985_dai_ops = {
-	.mute_stream = wm8985_dac_mute,
+	.digital_mute = wm8985_dac_mute,
 	.hw_params = wm8985_hw_params,
 	.set_fmt = wm8985_set_fmt,
 	.set_sysclk = wm8985_set_sysclk,
-	.set_pll = wm8985_set_pll,
-	.no_capture_mute = 1,
+	.set_pll = wm8985_set_pll
 };
 
 #define WM8985_FORMATS (SNDRV_PCM_FMTBIT_S16_LE | SNDRV_PCM_FMTBIT_S20_3LE | \
@@ -1100,7 +1102,7 @@ static struct snd_soc_dai_driver wm8985_dai = {
 		.formats = WM8985_FORMATS,
 	},
 	.ops = &wm8985_dai_ops,
-	.symmetric_rate = 1
+	.symmetric_rates = 1
 };
 
 static const struct snd_soc_component_driver soc_component_dev_wm8985 = {
@@ -1116,6 +1118,7 @@ static const struct snd_soc_component_driver soc_component_dev_wm8985 = {
 	.idle_bias_on		= 1,
 	.use_pmdown_time	= 1,
 	.endianness		= 1,
+	.non_legacy_dai_naming	= 1,
 };
 
 static const struct regmap_config wm8985_regmap = {
@@ -1166,12 +1169,10 @@ static struct spi_driver wm8985_spi_driver = {
 #endif
 
 #if IS_ENABLED(CONFIG_I2C)
-static const struct i2c_device_id wm8985_i2c_id[];
-
-static int wm8985_i2c_probe(struct i2c_client *i2c)
+static int wm8985_i2c_probe(struct i2c_client *i2c,
+			    const struct i2c_device_id *id)
 {
 	struct wm8985_priv *wm8985;
-	const struct i2c_device_id *id = i2c_match_id(wm8985_i2c_id, i2c);
 	int ret;
 
 	wm8985 = devm_kzalloc(&i2c->dev, sizeof *wm8985, GFP_KERNEL);
@@ -1206,7 +1207,7 @@ static struct i2c_driver wm8985_i2c_driver = {
 	.driver = {
 		.name = "wm8985",
 	},
-	.probe_new = wm8985_i2c_probe,
+	.probe = wm8985_i2c_probe,
 	.id_table = wm8985_i2c_id
 };
 #endif

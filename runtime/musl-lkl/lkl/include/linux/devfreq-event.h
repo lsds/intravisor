@@ -1,9 +1,12 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * devfreq-event: a framework to provide raw data and events of devfreq devices
  *
  * Copyright (C) 2014 Samsung Electronics
  * Author: Chanwoo Choi <cw00.choi@samsung.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 
 #ifndef __LINUX_DEVFREQ_EVENT_H__
@@ -78,20 +81,14 @@ struct devfreq_event_ops {
  * struct devfreq_event_desc - the descriptor of devfreq-event device
  *
  * @name	: the name of devfreq-event device.
- * @event_type	: the type of the event determined and used by driver
  * @driver_data	: the private data for devfreq-event driver.
  * @ops		: the operation to control devfreq-event device.
  *
  * Each devfreq-event device is described with a this structure.
  * This structure contains the various data for devfreq-event device.
- * The event_type describes what is going to be counted in the register.
- * It might choose to count e.g. read requests, write data in bytes, etc.
- * The full supported list of types is present in specyfic header in:
- * include/dt-bindings/pmu/.
  */
 struct devfreq_event_desc {
 	const char *name;
-	u32 event_type;
 	void *driver_data;
 
 	const struct devfreq_event_ops *ops;
@@ -106,11 +103,8 @@ extern int devfreq_event_get_event(struct devfreq_event_dev *edev,
 				struct devfreq_event_data *edata);
 extern int devfreq_event_reset_event(struct devfreq_event_dev *edev);
 extern struct devfreq_event_dev *devfreq_event_get_edev_by_phandle(
-				struct device *dev,
-				const char *phandle_name,
-				int index);
-extern int devfreq_event_get_edev_count(struct device *dev,
-				const char *phandle_name);
+				struct device *dev, int index);
+extern int devfreq_event_get_edev_count(struct device *dev);
 extern struct devfreq_event_dev *devfreq_event_add_edev(struct device *dev,
 				struct devfreq_event_desc *desc);
 extern int devfreq_event_remove_edev(struct devfreq_event_dev *edev);
@@ -155,15 +149,12 @@ static inline int devfreq_event_reset_event(struct devfreq_event_dev *edev)
 }
 
 static inline struct devfreq_event_dev *devfreq_event_get_edev_by_phandle(
-					struct device *dev,
-					const char *phandle_name,
-					int index)
+					struct device *dev, int index)
 {
 	return ERR_PTR(-EINVAL);
 }
 
-static inline int devfreq_event_get_edev_count(struct device *dev,
-					const char *phandle_name)
+static inline int devfreq_event_get_edev_count(struct device *dev)
 {
 	return -EINVAL;
 }

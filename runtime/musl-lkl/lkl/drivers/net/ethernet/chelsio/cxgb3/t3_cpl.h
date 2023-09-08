@@ -1448,7 +1448,7 @@ struct cpl_rdma_terminate {
 #endif
 	__be32 msn;
 	__be32 mo;
-	__u8 data[];
+	__u8 data[0];
 };
 
 /* cpl_rdma_terminate.tid_len fields */

@@ -42,7 +42,8 @@ int nvidia_probe_of_connector(struct fb_info *info, int conn, u8 **out_edid)
 		const char *pname;
 		int len;
 
-		for_each_child_of_node(parent, dp) {
+		for (dp = NULL;
+		     (dp = of_get_next_child(parent, dp)) != NULL;) {
 			pname = of_get_property(dp, "name", NULL);
 			if (!pname)
 				continue;

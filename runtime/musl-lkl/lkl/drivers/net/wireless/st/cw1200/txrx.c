@@ -1,9 +1,12 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Datapath implementation for ST-Ericsson CW1200 mac80211 drivers
  *
  * Copyright (c) 2010, ST-Ericsson
  * Author: Dmitry Tarnyagin <dmitry.tarnyagin@lockless.no>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 
 #include <net/mac80211.h>
@@ -621,9 +624,9 @@ cw1200_tx_h_bt(struct cw1200_common *priv,
 			priority = WSM_EPTA_PRIORITY_ACTION;
 		else if (ieee80211_is_mgmt(t->hdr->frame_control))
 			priority = WSM_EPTA_PRIORITY_MGT;
-		else if (wsm->queue_id == WSM_QUEUE_VOICE)
+		else if ((wsm->queue_id == WSM_QUEUE_VOICE))
 			priority = WSM_EPTA_PRIORITY_VOICE;
-		else if (wsm->queue_id == WSM_QUEUE_VIDEO)
+		else if ((wsm->queue_id == WSM_QUEUE_VIDEO))
 			priority = WSM_EPTA_PRIORITY_VIDEO;
 		else
 			priority = WSM_EPTA_PRIORITY_DATA;
@@ -650,7 +653,7 @@ cw1200_tx_h_rate_policy(struct cw1200_common *priv,
 	wsm->flags |= t->txpriv.rate_id << 4;
 
 	t->rate = cw1200_get_tx_rate(priv,
-		&t->tx_info->control.rates[0]);
+		&t->tx_info->control.rates[0]),
 	wsm->max_tx_rate = t->rate->hw_value;
 	if (t->rate->flags & IEEE80211_TX_RC_MCS) {
 		if (cw1200_ht_greenfield(&priv->ht_info))
@@ -715,7 +718,7 @@ void cw1200_tx(struct ieee80211_hw *dev,
 	};
 	struct ieee80211_sta *sta;
 	struct wsm_tx *wsm;
-	bool tid_update = false;
+	bool tid_update = 0;
 	u8 flags = 0;
 	int ret;
 
@@ -762,7 +765,8 @@ void cw1200_tx(struct ieee80211_hw *dev,
 	if (ret)
 		goto drop;
 
-	sta = t.sta;
+	rcu_read_lock();
+	sta = rcu_dereference(t.sta);
 
 	spin_lock_bh(&priv->ps_state_lock);
 	{
@@ -774,6 +778,8 @@ void cw1200_tx(struct ieee80211_hw *dev,
 
 	if (tid_update && sta)
 		ieee80211_sta_set_buffered(sta, t.txpriv.tid, true);
+
+	rcu_read_unlock();
 
 	cw1200_bh_wakeup(priv);
 
@@ -1063,7 +1069,7 @@ void cw1200_rx_cb(struct cw1200_common *priv,
 	}
 
 	if (skb->len < sizeof(struct ieee80211_pspoll)) {
-		wiphy_warn(priv->hw->wiphy, "Malformed SDU rx'ed. Size is lesser than IEEE header.\n");
+		wiphy_warn(priv->hw->wiphy, "Mailformed SDU rx'ed. Size is lesser than IEEE header.\n");
 		goto drop;
 	}
 
@@ -1142,7 +1148,8 @@ void cw1200_rx_cb(struct cw1200_common *priv,
 
 	/* Remove TSF from the end of frame */
 	if (arg->flags & WSM_RX_STATUS_TSF_INCLUDED) {
-		hdr->mactime = get_unaligned_le64(skb->data + skb->len - 8);
+		memcpy(&hdr->mactime, skb->data + skb->len - 8, 8);
+		hdr->mactime = le64_to_cpu(hdr->mactime);
 		if (skb->len >= 8)
 			skb_trim(skb, skb->len - 8);
 	} else {
@@ -1179,8 +1186,8 @@ void cw1200_rx_cb(struct cw1200_common *priv,
 
 		/* Disable beacon filter once we're associated... */
 		if (priv->disable_beacon_filter &&
-		    (priv->vif->cfg.assoc ||
-		     priv->vif->cfg.ibss_joined)) {
+		    (priv->vif->bss_conf.assoc ||
+		     priv->vif->bss_conf.ibss_joined)) {
 			priv->disable_beacon_filter = false;
 			queue_work(priv->workqueue,
 				   &priv->update_filtering_work);

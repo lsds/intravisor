@@ -1,5 +1,15 @@
-// SPDX-License-Identifier: GPL-2.0-only
-// Copyright (C) 2015 Broadcom Corporation
+/*
+ * Copyright (C) 2015 Broadcom Corporation
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License as
+ * published by the Free Software Foundation version 2.
+ *
+ * This program is distributed "as is" WITHOUT ANY WARRANTY of any
+ * kind, whether express or implied; without even the implied warranty
+ * of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ */
 
 #include <linux/delay.h>
 #include <linux/io.h>
@@ -116,6 +126,7 @@ static int cygnus_pcie_phy_probe(struct platform_device *pdev)
 	struct device_node *node = dev->of_node, *child;
 	struct cygnus_pcie_phy_core *core;
 	struct phy_provider *provider;
+	struct resource *res;
 	unsigned cnt = 0;
 	int ret;
 
@@ -130,7 +141,8 @@ static int cygnus_pcie_phy_probe(struct platform_device *pdev)
 
 	core->dev = dev;
 
-	core->base = devm_platform_ioremap_resource(pdev, 0);
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	core->base = devm_ioremap_resource(dev, res);
 	if (IS_ERR(core->base))
 		return PTR_ERR(core->base);
 
@@ -141,8 +153,8 @@ static int cygnus_pcie_phy_probe(struct platform_device *pdev)
 		struct cygnus_pcie_phy *p;
 
 		if (of_property_read_u32(child, "reg", &id)) {
-			dev_err(dev, "missing reg property for %pOFn\n",
-				child);
+			dev_err(dev, "missing reg property for %s\n",
+				child->name);
 			ret = -EINVAL;
 			goto put_child;
 		}

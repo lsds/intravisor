@@ -21,19 +21,10 @@ struct fdarray {
 	int	       nr_alloc;
 	int	       nr_autogrow;
 	struct pollfd *entries;
-	struct priv {
-		union {
-			int    idx;
-			void   *ptr;
-		};
-		unsigned int flags;
+	union {
+		int    idx;
+		void   *ptr;
 	} *priv;
-};
-
-enum fdarray_flags {
-	fdarray_flag__default		= 0x00000000,
-	fdarray_flag__nonfilterable	= 0x00000001,
-	fdarray_flag__non_perf_event	= 0x00000002,
 };
 
 void fdarray__init(struct fdarray *fda, int nr_autogrow);
@@ -42,8 +33,7 @@ void fdarray__exit(struct fdarray *fda);
 struct fdarray *fdarray__new(int nr_alloc, int nr_autogrow);
 void fdarray__delete(struct fdarray *fda);
 
-int fdarray__add(struct fdarray *fda, int fd, short revents, enum fdarray_flags flags);
-int fdarray__dup_entry_from(struct fdarray *fda, int pos, struct fdarray *from);
+int fdarray__add(struct fdarray *fda, int fd, short revents);
 int fdarray__poll(struct fdarray *fda, int timeout);
 int fdarray__filter(struct fdarray *fda, short revents,
 		    void (*entry_destructor)(struct fdarray *fda, int fd, void *arg),

@@ -1,8 +1,12 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  *  arch/arm/include/debug/icedcc.S
  *
  *  Copyright (C) 1994-1999 Russell King
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ *
  */
 
 		@@ debug using ARM EmbeddedICE DCC channel
@@ -23,10 +27,7 @@
 		beq	1001b
 		.endm
 
-		.macro	waituartcts, rd, rx
-		.endm
-
-		.macro	waituarttxrdy, rd, rx
+		.macro	waituart, rd, rx
 		mov	\rd, #0x2000000
 1001:
 		subs	\rd, \rd, #1
@@ -50,10 +51,7 @@
 		beq	1001b
 		.endm
 
-		.macro	waituartcts, rd, rx
-		.endm
-
-		.macro	waituarttxrdy, rd, rx
+		.macro	waituart, rd, rx
 		mov	\rd, #0x10000000
 1001:
 		subs	\rd, \rd, #1
@@ -78,10 +76,7 @@
 
 		.endm
 
-		.macro	waituartcts, rd, rx
-		.endm
-
-		.macro	waituarttxrdy, rd, rx
+		.macro	waituart, rd, rx
 		mov	\rd, #0x2000000
 1001:
 		subs	\rd, \rd, #1

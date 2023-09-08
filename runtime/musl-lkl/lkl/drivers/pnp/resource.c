@@ -17,7 +17,6 @@
 #include <asm/dma.h>
 #include <asm/irq.h>
 #include <linux/pci.h>
-#include <linux/libata.h>
 #include <linux/ioport.h>
 #include <linux/init.h>
 
@@ -323,8 +322,8 @@ static int pci_dev_uses_irq(struct pnp_dev *pnp, struct pci_dev *pci,
 		 * treat the compatibility IRQs as busy.
 		 */
 		if ((progif & 0x5) != 0x5)
-			if (ATA_PRIMARY_IRQ(pci) == irq ||
-			    ATA_SECONDARY_IRQ(pci) == irq) {
+			if (pci_get_legacy_ide_irq(pci, 0) == irq ||
+			    pci_get_legacy_ide_irq(pci, 1) == irq) {
 				pnp_dbg(&pnp->dev, "  legacy IDE device %s "
 					"using irq %d\n", pci_name(pci), irq);
 				return 1;
@@ -541,7 +540,7 @@ struct pnp_resource *pnp_add_irq_resource(struct pnp_dev *dev, int irq,
 	res->start = irq;
 	res->end = irq;
 
-	dev_dbg(&dev->dev, "%pR\n", res);
+	dev_printk(KERN_DEBUG, &dev->dev, "%pR\n", res);
 	return pnp_res;
 }
 

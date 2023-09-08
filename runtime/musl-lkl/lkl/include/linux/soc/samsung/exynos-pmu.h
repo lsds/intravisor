@@ -3,7 +3,7 @@
  * Copyright (c) 2014 Samsung Electronics Co., Ltd.
  *		http://www.samsung.com
  *
- * Header for Exynos PMU Driver support
+ * Header for EXYNOS PMU Driver support
  */
 
 #ifndef __LINUX_SOC_EXYNOS_PMU_H

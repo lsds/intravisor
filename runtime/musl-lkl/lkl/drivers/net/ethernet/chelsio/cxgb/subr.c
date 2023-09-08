@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*****************************************************************************
  *                                                                           *
  * File: subr.c                                                              *
@@ -8,6 +7,16 @@
  *  Various subroutines (intr,pio,etc.) used by Chelsio 10G Ethernet driver. *
  *  part of the Chelsio 10Gb Ethernet Driver.                                *
  *                                                                           *
+ * This program is free software; you can redistribute it and/or modify      *
+ * it under the terms of the GNU General Public License, version 2, as       *
+ * published by the Free Software Foundation.                                *
+ *                                                                           *
+ * You should have received a copy of the GNU General Public License along   *
+ * with this program; if not, see <http://www.gnu.org/licenses/>.            *
+ *                                                                           *
+ * THIS SOFTWARE IS PROVIDED ``AS IS'' AND WITHOUT ANY EXPRESS OR IMPLIED    *
+ * WARRANTIES, INCLUDING, WITHOUT LIMITATION, THE IMPLIED WARRANTIES OF      *
+ * MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE.                     *
  *                                                                           *
  * http://www.chelsio.com                                                    *
  *                                                                           *
@@ -161,7 +170,7 @@ void t1_link_changed(adapter_t *adapter, int port_id)
 	t1_link_negotiated(adapter, port_id, link_ok, speed, duplex, fc);
 }
 
-static bool t1_pci_intr_handler(adapter_t *adapter)
+static int t1_pci_intr_handler(adapter_t *adapter)
 {
 	u32 pcix_cause;
 
@@ -170,13 +179,9 @@ static bool t1_pci_intr_handler(adapter_t *adapter)
 	if (pcix_cause) {
 		pci_write_config_dword(adapter->pdev, A_PCICFG_INTR_CAUSE,
 				       pcix_cause);
-		/* PCI errors are fatal */
-		t1_interrupts_disable(adapter);
-		adapter->pending_thread_intr |= F_PL_INTR_SGE_ERR;
-		pr_alert("%s: PCI error encountered.\n", adapter->name);
-		return true;
+		t1_fatal_err(adapter);    /* PCI errors are fatal */
 	}
-	return false;
+	return 0;
 }
 
 #ifdef CONFIG_CHELSIO_T1_1G
@@ -205,16 +210,13 @@ static int fpga_phy_intr_handler(adapter_t *adapter)
 /*
  * Slow path interrupt handler for FPGAs.
  */
-static irqreturn_t fpga_slow_intr(adapter_t *adapter)
+static int fpga_slow_intr(adapter_t *adapter)
 {
 	u32 cause = readl(adapter->regs + A_PL_CAUSE);
-	irqreturn_t ret = IRQ_NONE;
 
 	cause &= ~F_PL_INTR_SGE_DATA;
-	if (cause & F_PL_INTR_SGE_ERR) {
-		if (t1_sge_intr_error_handler(adapter->sge))
-			ret = IRQ_WAKE_THREAD;
-	}
+	if (cause & F_PL_INTR_SGE_ERR)
+		t1_sge_intr_error_handler(adapter->sge);
 
 	if (cause & FPGA_PCIX_INTERRUPT_GMAC)
 		fpga_phy_intr_handler(adapter);
@@ -229,19 +231,14 @@ static irqreturn_t fpga_slow_intr(adapter_t *adapter)
 		/* Clear TP interrupt */
 		writel(tp_cause, adapter->regs + FPGA_TP_ADDR_INTERRUPT_CAUSE);
 	}
-	if (cause & FPGA_PCIX_INTERRUPT_PCIX) {
-		if (t1_pci_intr_handler(adapter))
-			ret = IRQ_WAKE_THREAD;
-	}
+	if (cause & FPGA_PCIX_INTERRUPT_PCIX)
+		t1_pci_intr_handler(adapter);
 
 	/* Clear the interrupts just processed. */
 	if (cause)
 		writel(cause, adapter->regs + A_PL_CAUSE);
 
-	if (ret != IRQ_NONE)
-		return ret;
-
-	return cause == 0 ? IRQ_NONE : IRQ_HANDLED;
+	return cause != 0;
 }
 #endif
 
@@ -845,45 +842,31 @@ void t1_interrupts_clear(adapter_t* adapter)
 /*
  * Slow path interrupt handler for ASICs.
  */
-static irqreturn_t asic_slow_intr(adapter_t *adapter)
+static int asic_slow_intr(adapter_t *adapter)
 {
 	u32 cause = readl(adapter->regs + A_PL_CAUSE);
-	irqreturn_t ret = IRQ_HANDLED;
 
 	cause &= adapter->slow_intr_mask;
 	if (!cause)
-		return IRQ_NONE;
-	if (cause & F_PL_INTR_SGE_ERR) {
-		if (t1_sge_intr_error_handler(adapter->sge))
-			ret = IRQ_WAKE_THREAD;
-	}
+		return 0;
+	if (cause & F_PL_INTR_SGE_ERR)
+		t1_sge_intr_error_handler(adapter->sge);
 	if (cause & F_PL_INTR_TP)
 		t1_tp_intr_handler(adapter->tp);
 	if (cause & F_PL_INTR_ESPI)
 		t1_espi_intr_handler(adapter->espi);
-	if (cause & F_PL_INTR_PCIX) {
-		if (t1_pci_intr_handler(adapter))
-			ret = IRQ_WAKE_THREAD;
-	}
-	if (cause & F_PL_INTR_EXT) {
-		/* Wake the threaded interrupt to handle external interrupts as
-		 * we require a process context. We disable EXT interrupts in
-		 * the interim and let the thread reenable them when it's done.
-		 */
-		adapter->pending_thread_intr |= F_PL_INTR_EXT;
-		adapter->slow_intr_mask &= ~F_PL_INTR_EXT;
-		writel(adapter->slow_intr_mask | F_PL_INTR_SGE_DATA,
-		       adapter->regs + A_PL_ENABLE);
-		ret = IRQ_WAKE_THREAD;
-	}
+	if (cause & F_PL_INTR_PCIX)
+		t1_pci_intr_handler(adapter);
+	if (cause & F_PL_INTR_EXT)
+		t1_elmer0_ext_intr(adapter);
 
 	/* Clear the interrupts just processed. */
 	writel(cause, adapter->regs + A_PL_CAUSE);
 	readl(adapter->regs + A_PL_CAUSE); /* flush writes */
-	return ret;
+	return 1;
 }
 
-irqreturn_t t1_slow_intr_handler(adapter_t *adapter)
+int t1_slow_intr_handler(adapter_t *adapter)
 {
 #ifdef CONFIG_CHELSIO_T1_1G
 	if (!t1_is_asic(adapter))
@@ -1131,7 +1114,7 @@ int t1_init_sw_modules(adapter_t *adapter, const struct board_info *bi)
 			       adapter->port[i].dev->name);
 			goto error;
 		}
-		eth_hw_addr_set(adapter->port[i].dev, hw_addr);
+		memcpy(adapter->port[i].dev->dev_addr, hw_addr, ETH_ALEN);
 		init_link_config(&adapter->port[i].link_config, bi);
 	}
 

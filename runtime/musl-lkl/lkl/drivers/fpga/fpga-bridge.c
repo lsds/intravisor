@@ -1,9 +1,20 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * FPGA Bridge Framework Driver
  *
  *  Copyright (C) 2013-2016 Altera Corporation, All Rights Reserved.
  *  Copyright (C) 2017 Intel Corporation
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms and conditions of the GNU General Public License,
+ * version 2, as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+ * more details.
+ *
+ * You should have received a copy of the GNU General Public License along with
+ * this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 #include <linux/fpga/fpga-bridge.h>
 #include <linux/idr.h>
@@ -17,7 +28,12 @@ static DEFINE_IDA(fpga_bridge_ida);
 static struct class *fpga_bridge_class;
 
 /* Lock for adding/removing bridges to linked lists*/
-static DEFINE_SPINLOCK(bridge_list_lock);
+static spinlock_t bridge_list_lock;
+
+static int fpga_bridge_of_node_match(struct device *dev, const void *data)
+{
+	return dev->of_node == data;
+}
 
 /**
  * fpga_bridge_enable - Enable transactions on the bridge
@@ -85,21 +101,22 @@ err_dev:
 }
 
 /**
- * of_fpga_bridge_get - get an exclusive reference to an fpga bridge
+ * of_fpga_bridge_get - get an exclusive reference to a fpga bridge
  *
- * @np: node pointer of an FPGA bridge
+ * @np: node pointer of a FPGA bridge
  * @info: fpga image specific information
  *
  * Return fpga_bridge struct if successful.
  * Return -EBUSY if someone already has a reference to the bridge.
- * Return -ENODEV if @np is not an FPGA Bridge.
+ * Return -ENODEV if @np is not a FPGA Bridge.
  */
 struct fpga_bridge *of_fpga_bridge_get(struct device_node *np,
 				       struct fpga_image_info *info)
 {
 	struct device *dev;
 
-	dev = class_find_device_by_of_node(fpga_bridge_class, np);
+	dev = class_find_device(fpga_bridge_class, NULL, np,
+				fpga_bridge_of_node_match);
 	if (!dev)
 		return ERR_PTR(-ENODEV);
 
@@ -113,13 +130,12 @@ static int fpga_bridge_dev_match(struct device *dev, const void *data)
 }
 
 /**
- * fpga_bridge_get - get an exclusive reference to an fpga bridge
+ * fpga_bridge_get - get an exclusive reference to a fpga bridge
  * @dev:	parent device that fpga bridge was registered with
- * @info:	fpga manager info
  *
- * Given a device, get an exclusive reference to an fpga bridge.
+ * Given a device, get an exclusive reference to a fpga bridge.
  *
- * Return: fpga bridge struct or IS_ERR() condition containing error code.
+ * Return: fpga manager struct or IS_ERR() condition containing error code.
  */
 struct fpga_bridge *fpga_bridge_get(struct device *dev,
 				    struct fpga_image_info *info)
@@ -224,13 +240,13 @@ EXPORT_SYMBOL_GPL(fpga_bridges_put);
 /**
  * of_fpga_bridge_get_to_list - get a bridge, add it to a list
  *
- * @np: node pointer of an FPGA bridge
+ * @np: node pointer of a FPGA bridge
  * @info: fpga image specific information
  * @bridge_list: list of FPGA bridges
  *
- * Get an exclusive reference to the bridge and it to the list.
+ * Get an exclusive reference to the bridge and and it to the list.
  *
- * Return 0 for success, error code from of_fpga_bridge_get() otherwise.
+ * Return 0 for success, error code from of_fpga_bridge_get() othewise.
  */
 int of_fpga_bridge_get_to_list(struct device_node *np,
 			       struct fpga_image_info *info,
@@ -258,9 +274,9 @@ EXPORT_SYMBOL_GPL(of_fpga_bridge_get_to_list);
  * @info: fpga image specific information
  * @bridge_list: list of FPGA bridges
  *
- * Get an exclusive reference to the bridge and it to the list.
+ * Get an exclusive reference to the bridge and and it to the list.
  *
- * Return 0 for success, error code from fpga_bridge_get() otherwise.
+ * Return 0 for success, error code from fpga_bridge_get() othewise.
  */
 int fpga_bridge_get_to_list(struct device *dev,
 			    struct fpga_image_info *info,
@@ -312,37 +328,30 @@ static struct attribute *fpga_bridge_attrs[] = {
 ATTRIBUTE_GROUPS(fpga_bridge);
 
 /**
- * fpga_bridge_register - create and register an FPGA Bridge device
- * @parent:	FPGA bridge device from pdev
+ * fpga_bridge_register - register a fpga bridge driver
+ * @dev:	FPGA bridge device from pdev
  * @name:	FPGA bridge name
  * @br_ops:	pointer to structure of fpga bridge ops
  * @priv:	FPGA bridge private data
  *
- * Return: struct fpga_bridge pointer or ERR_PTR()
+ * Return: 0 for success, error code otherwise.
  */
-struct fpga_bridge *
-fpga_bridge_register(struct device *parent, const char *name,
-		     const struct fpga_bridge_ops *br_ops,
-		     void *priv)
+int fpga_bridge_register(struct device *dev, const char *name,
+			 const struct fpga_bridge_ops *br_ops, void *priv)
 {
 	struct fpga_bridge *bridge;
-	int id, ret;
-
-	if (!br_ops) {
-		dev_err(parent, "Attempt to register without fpga_bridge_ops\n");
-		return ERR_PTR(-EINVAL);
-	}
+	int id, ret = 0;
 
 	if (!name || !strlen(name)) {
-		dev_err(parent, "Attempt to register with no name!\n");
-		return ERR_PTR(-EINVAL);
+		dev_err(dev, "Attempt to register with no name!\n");
+		return -EINVAL;
 	}
 
 	bridge = kzalloc(sizeof(*bridge), GFP_KERNEL);
 	if (!bridge)
-		return ERR_PTR(-ENOMEM);
+		return -ENOMEM;
 
-	id = ida_alloc(&fpga_bridge_ida, GFP_KERNEL);
+	id = ida_simple_get(&fpga_bridge_ida, 0, 0, GFP_KERNEL);
 	if (id < 0) {
 		ret = id;
 		goto error_kfree;
@@ -355,43 +364,46 @@ fpga_bridge_register(struct device *parent, const char *name,
 	bridge->br_ops = br_ops;
 	bridge->priv = priv;
 
+	device_initialize(&bridge->dev);
 	bridge->dev.groups = br_ops->groups;
 	bridge->dev.class = fpga_bridge_class;
-	bridge->dev.parent = parent;
-	bridge->dev.of_node = parent->of_node;
+	bridge->dev.parent = dev;
+	bridge->dev.of_node = dev->of_node;
 	bridge->dev.id = id;
-	of_platform_populate(bridge->dev.of_node, NULL, NULL, &bridge->dev);
+	dev_set_drvdata(dev, bridge);
 
 	ret = dev_set_name(&bridge->dev, "br%d", id);
 	if (ret)
 		goto error_device;
 
-	ret = device_register(&bridge->dev);
-	if (ret) {
-		put_device(&bridge->dev);
-		return ERR_PTR(ret);
-	}
+	ret = device_add(&bridge->dev);
+	if (ret)
+		goto error_device;
 
-	return bridge;
+	of_platform_populate(dev->of_node, NULL, NULL, dev);
+
+	dev_info(bridge->dev.parent, "fpga bridge [%s] registered\n",
+		 bridge->name);
+
+	return 0;
 
 error_device:
-	ida_free(&fpga_bridge_ida, id);
+	ida_simple_remove(&fpga_bridge_ida, id);
 error_kfree:
 	kfree(bridge);
 
-	return ERR_PTR(ret);
+	return ret;
 }
 EXPORT_SYMBOL_GPL(fpga_bridge_register);
 
 /**
- * fpga_bridge_unregister - unregister an FPGA bridge
- *
- * @bridge: FPGA bridge struct
- *
- * This function is intended for use in an FPGA bridge driver's remove function.
+ * fpga_bridge_unregister - unregister a fpga bridge driver
+ * @dev: FPGA bridge device from pdev
  */
-void fpga_bridge_unregister(struct fpga_bridge *bridge)
+void fpga_bridge_unregister(struct device *dev)
 {
+	struct fpga_bridge *bridge = dev_get_drvdata(dev);
+
 	/*
 	 * If the low level driver provides a method for putting bridge into
 	 * a desired state upon unregister, do it.
@@ -407,12 +419,14 @@ static void fpga_bridge_dev_release(struct device *dev)
 {
 	struct fpga_bridge *bridge = to_fpga_bridge(dev);
 
-	ida_free(&fpga_bridge_ida, bridge->dev.id);
+	ida_simple_remove(&fpga_bridge_ida, bridge->dev.id);
 	kfree(bridge);
 }
 
 static int __init fpga_bridge_dev_init(void)
 {
+	spin_lock_init(&bridge_list_lock);
+
 	fpga_bridge_class = class_create(THIS_MODULE, "fpga_bridge");
 	if (IS_ERR(fpga_bridge_class))
 		return PTR_ERR(fpga_bridge_class);

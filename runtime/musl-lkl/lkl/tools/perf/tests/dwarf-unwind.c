@@ -1,9 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0
 #include <linux/compiler.h>
 #include <linux/types.h>
-#include <linux/zalloc.h>
 #include <inttypes.h>
-#include <limits.h>
 #include <unistd.h>
 #include "tests.h"
 #include "debug.h"
@@ -12,30 +10,15 @@
 #include "../util/unwind.h"
 #include "perf_regs.h"
 #include "map.h"
-#include "symbol.h"
 #include "thread.h"
 #include "callchain.h"
-#include "util/synthetic-events.h"
+
+#if defined (__x86_64__) || defined (__i386__) || defined (__powerpc__)
+#include "arch-tests.h"
+#endif
 
 /* For bsearch. We try to unwind functions in shared object. */
 #include <stdlib.h>
-
-/*
- * The test will assert frames are on the stack but tail call optimizations lose
- * the frame of the caller. Clang can disable this optimization on a called
- * function but GCC currently (11/2020) lacks this attribute. The barrier is
- * used to inhibit tail calls in these cases.
- */
-#ifdef __has_attribute
-#if __has_attribute(disable_tail_calls)
-#define NO_TAIL_CALL_ATTRIBUTE __attribute__((disable_tail_calls))
-#define NO_TAIL_CALL_BARRIER
-#endif
-#endif
-#ifndef NO_TAIL_CALL_ATTRIBUTE
-#define NO_TAIL_CALL_ATTRIBUTE
-#define NO_TAIL_CALL_BARRIER __asm__ __volatile__("" : : : "memory");
-#endif
 
 static int mmap_handler(struct perf_tool *tool __maybe_unused,
 			union perf_event *event,
@@ -50,9 +33,8 @@ static int init_live_machine(struct machine *machine)
 	union perf_event event;
 	pid_t pid = getpid();
 
-	memset(&event, 0, sizeof(event));
 	return perf_event__synthesize_mmap_events(NULL, &event, pid, pid,
-						  mmap_handler, machine, true);
+						  mmap_handler, machine, true, 500);
 }
 
 /*
@@ -73,7 +55,7 @@ int test_dwarf_unwind__krava_1(struct thread *thread);
 static int unwind_entry(struct unwind_entry *entry, void *arg)
 {
 	unsigned long *cnt = (unsigned long *) arg;
-	char *symbol = entry->ms.sym ? entry->ms.sym->name : NULL;
+	char *symbol = entry->sym ? entry->sym->name : NULL;
 	static const char *funcs[MAX_STACK] = {
 		"test__arch_unwind_sample",
 		"test_dwarf_unwind__thread",
@@ -108,7 +90,7 @@ static int unwind_entry(struct unwind_entry *entry, void *arg)
 	return strcmp((const char *) symbol, funcs[idx]);
 }
 
-NO_TAIL_CALL_ATTRIBUTE noinline int test_dwarf_unwind__thread(struct thread *thread)
+noinline int test_dwarf_unwind__thread(struct thread *thread)
 {
 	struct perf_sample sample;
 	unsigned long cnt = 0;
@@ -122,7 +104,7 @@ NO_TAIL_CALL_ATTRIBUTE noinline int test_dwarf_unwind__thread(struct thread *thr
 	}
 
 	err = unwind__get_entries(unwind_entry, &cnt, thread,
-				  &sample, MAX_STACK, false);
+				  &sample, MAX_STACK);
 	if (err)
 		pr_debug("unwind failed\n");
 	else if (cnt != MAX_STACK) {
@@ -132,14 +114,14 @@ NO_TAIL_CALL_ATTRIBUTE noinline int test_dwarf_unwind__thread(struct thread *thr
 	}
 
  out:
-	zfree(&sample.user_stack.data);
-	zfree(&sample.user_regs.regs);
+	free(sample.user_stack.data);
+	free(sample.user_regs.regs);
 	return err;
 }
 
 static int global_unwind_retval = -INT_MAX;
 
-NO_TAIL_CALL_ATTRIBUTE noinline int test_dwarf_unwind__compare(void *p1, void *p2)
+noinline int test_dwarf_unwind__compare(void *p1, void *p2)
 {
 	/* Any possible value should be 'thread' */
 	struct thread *thread = *(struct thread **)p1;
@@ -158,7 +140,7 @@ NO_TAIL_CALL_ATTRIBUTE noinline int test_dwarf_unwind__compare(void *p1, void *p
 	return p1 - p2;
 }
 
-NO_TAIL_CALL_ATTRIBUTE noinline int test_dwarf_unwind__krava_3(struct thread *thread)
+noinline int test_dwarf_unwind__krava_3(struct thread *thread)
 {
 	struct thread *array[2] = {thread, thread};
 	void *fp = &bsearch;
@@ -177,26 +159,17 @@ NO_TAIL_CALL_ATTRIBUTE noinline int test_dwarf_unwind__krava_3(struct thread *th
 	return global_unwind_retval;
 }
 
-NO_TAIL_CALL_ATTRIBUTE noinline int test_dwarf_unwind__krava_2(struct thread *thread)
+noinline int test_dwarf_unwind__krava_2(struct thread *thread)
 {
-	int ret;
-
-	ret =  test_dwarf_unwind__krava_3(thread);
-	NO_TAIL_CALL_BARRIER;
-	return ret;
+	return test_dwarf_unwind__krava_3(thread);
 }
 
-NO_TAIL_CALL_ATTRIBUTE noinline int test_dwarf_unwind__krava_1(struct thread *thread)
+noinline int test_dwarf_unwind__krava_1(struct thread *thread)
 {
-	int ret;
-
-	ret =  test_dwarf_unwind__krava_2(thread);
-	NO_TAIL_CALL_BARRIER;
-	return ret;
+	return test_dwarf_unwind__krava_2(thread);
 }
 
-static int test__dwarf_unwind(struct test_suite *test __maybe_unused,
-			      int subtest __maybe_unused)
+int test__dwarf_unwind(struct test *test __maybe_unused, int subtest __maybe_unused)
 {
 	struct machine *machine;
 	struct thread *thread;
@@ -238,5 +211,3 @@ static int test__dwarf_unwind(struct test_suite *test __maybe_unused,
 	machine__delete(machine);
 	return err;
 }
-
-DEFINE_SUITE("Test dwarf unwind", dwarf_unwind);

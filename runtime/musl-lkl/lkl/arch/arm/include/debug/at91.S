@@ -1,8 +1,12 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  *  Copyright (C) 2003-2005 SAN People
  *
  * Debugging macro include header
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ *
 */
 
 #define AT91_DBGU_SR		(0x14)	/* Status Register */
@@ -19,13 +23,10 @@
 	strb	\rd, [\rx, #(AT91_DBGU_THR)]		@ Write to Transmitter Holding Register
 	.endm
 
-	.macro	waituarttxrdy,rd,rx
+	.macro	waituart,rd,rx
 1001:	ldr	\rd, [\rx, #(AT91_DBGU_SR)]		@ Read Status Register
 	tst	\rd, #AT91_DBGU_TXRDY			@ DBGU_TXRDY = 1 when ready to transmit
 	beq	1001b
-	.endm
-
-	.macro	waituartcts,rd,rx
 	.endm
 
 	.macro	busyuart,rd,rx

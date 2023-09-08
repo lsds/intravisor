@@ -1,13 +1,17 @@
-// SPDX-License-Identifier: GPL-2.0
-//
-// ak4642.c  --  AK4642/AK4643 ALSA Soc Audio driver
-//
-// Copyright (C) 2009 Renesas Solutions Corp.
-// Kuninori Morimoto <morimoto.kuninori@renesas.com>
-//
-// Based on wm8731.c by Richard Purdie
-// Based on ak4535.c by Richard Purdie
-// Based on wm8753.c by Liam Girdwood
+/*
+ * ak4642.c  --  AK4642/AK4643 ALSA Soc Audio driver
+ *
+ * Copyright (C) 2009 Renesas Solutions Corp.
+ * Kuninori Morimoto <morimoto.kuninori@renesas.com>
+ *
+ * Based on wm8731.c by Richard Purdie
+ * Based on ak4535.c by Richard Purdie
+ * Based on wm8753.c by Liam Girdwood
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ */
 
 /* ** CAUTION **
  *
@@ -392,13 +396,13 @@ static int ak4642_dai_set_fmt(struct snd_soc_dai *dai, unsigned int fmt)
 	data = MCKO | PMPLL; /* use MCKO */
 	bcko = 0;
 
-	/* set clocking for audio interface */
-	switch (fmt & SND_SOC_DAIFMT_CLOCK_PROVIDER_MASK) {
-	case SND_SOC_DAIFMT_CBP_CFP:
+	/* set master/slave audio interface */
+	switch (fmt & SND_SOC_DAIFMT_MASTER_MASK) {
+	case SND_SOC_DAIFMT_CBM_CFM:
 		data |= MS;
 		bcko = BCKO_64;
 		break;
-	case SND_SOC_DAIFMT_CBC_CFC:
+	case SND_SOC_DAIFMT_CBS_CFS:
 		break;
 	default:
 		return -EINVAL;
@@ -516,7 +520,7 @@ static struct snd_soc_dai_driver ak4642_dai = {
 		.rates = SNDRV_PCM_RATE_8000_48000,
 		.formats = SNDRV_PCM_FMTBIT_S16_LE },
 	.ops = &ak4642_dai_ops,
-	.symmetric_rate = 1,
+	.symmetric_rates = 1,
 };
 
 static int ak4642_suspend(struct snd_soc_component *component)
@@ -559,6 +563,7 @@ static const struct snd_soc_component_driver soc_component_dev_ak4642 = {
 	.num_dapm_routes	= ARRAY_SIZE(ak4642_intercon),
 	.idle_bias_on		= 1,
 	.endianness		= 1,
+	.non_legacy_dai_naming	= 1,
 };
 
 static const struct regmap_config ak4642_regmap = {
@@ -629,8 +634,8 @@ static struct clk *ak4642_of_parse_mcko(struct device *dev)
 #endif
 
 static const struct of_device_id ak4642_of_match[];
-static const struct i2c_device_id ak4642_i2c_id[];
-static int ak4642_i2c_probe(struct i2c_client *i2c)
+static int ak4642_i2c_probe(struct i2c_client *i2c,
+			    const struct i2c_device_id *id)
 {
 	struct device *dev = &i2c->dev;
 	struct device_node *np = dev->of_node;
@@ -650,8 +655,6 @@ static int ak4642_i2c_probe(struct i2c_client *i2c)
 		if (of_id)
 			drvdata = of_id->data;
 	} else {
-		const struct i2c_device_id *id =
-			i2c_match_id(ak4642_i2c_id, i2c);
 		drvdata = (const struct ak4642_drvdata *)id->driver_data;
 	}
 
@@ -698,7 +701,7 @@ static struct i2c_driver ak4642_i2c_driver = {
 		.name = "ak4642-codec",
 		.of_match_table = ak4642_of_match,
 	},
-	.probe_new	= ak4642_i2c_probe,
+	.probe		= ak4642_i2c_probe,
 	.id_table	= ak4642_i2c_id,
 };
 
@@ -706,4 +709,4 @@ module_i2c_driver(ak4642_i2c_driver);
 
 MODULE_DESCRIPTION("Soc AK4642 driver");
 MODULE_AUTHOR("Kuninori Morimoto <morimoto.kuninori@renesas.com>");
-MODULE_LICENSE("GPL v2");
+MODULE_LICENSE("GPL");

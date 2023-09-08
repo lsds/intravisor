@@ -1,8 +1,9 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * This header provides macros for at91 dma bindings.
  *
  * Copyright (C) 2013 Ludovic Desroches <ludovic.desroches@atmel.com>
+ *
+ * GPLv2 only
  */
 
 #ifndef __DT_BINDINGS_AT91_DMA_H__

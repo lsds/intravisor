@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * SCSI low-level driver for the 53c94 SCSI bus adaptor found
  * on Power Macintosh computers, controlling the external SCSI chain.
@@ -20,9 +19,9 @@
 #include <linux/interrupt.h>
 #include <linux/module.h>
 #include <linux/pci.h>
-#include <linux/pgtable.h>
 #include <asm/dbdma.h>
 #include <asm/io.h>
+#include <asm/pgtable.h>
 #include <asm/prom.h>
 #include <asm/macio.h>
 
@@ -66,7 +65,8 @@ static irqreturn_t do_mac53c94_interrupt(int, void *);
 static void cmd_done(struct fsc_state *, int result);
 static void set_dma_cmds(struct fsc_state *, struct scsi_cmnd *);
 
-static int mac53c94_queue_lck(struct scsi_cmnd *cmd)
+
+static int mac53c94_queue_lck(struct scsi_cmnd *cmd, void (*done)(struct scsi_cmnd *))
 {
 	struct fsc_state *state;
 
@@ -82,6 +82,7 @@ static int mac53c94_queue_lck(struct scsi_cmnd *cmd)
 	}
 #endif
 
+	cmd->scsi_done = done;
 	cmd->host_scribble = NULL;
 
 	state = (struct fsc_state *) cmd->device->host->hostdata;
@@ -125,6 +126,7 @@ static void mac53c94_init(struct fsc_state *state)
 {
 	struct mac53c94_regs __iomem *regs = state->regs;
 	struct dbdma_regs __iomem *dma = state->dma;
+	int x;
 
 	writeb(state->host->this_id | CF1_PAR_ENABLE, &regs->config1);
 	writeb(TIMO_VAL(250), &regs->sel_timeout);	/* 250ms */
@@ -133,7 +135,7 @@ static void mac53c94_init(struct fsc_state *state)
 	writeb(0, &regs->config3);
 	writeb(0, &regs->sync_period);
 	writeb(0, &regs->sync_offset);
-	(void)readb(&regs->interrupt);
+	x = readb(&regs->interrupt);
 	writel((RUN|PAUSE|FLUSH|WAKE) << 16, &dma->control);
 }
 
@@ -193,8 +195,7 @@ static void mac53c94_interrupt(int irq, void *dev_id)
 	struct fsc_state *state = (struct fsc_state *) dev_id;
 	struct mac53c94_regs __iomem *regs = state->regs;
 	struct dbdma_regs __iomem *dma = state->dma;
-	struct scsi_cmnd *const cmd = state->current_req;
-	struct mac53c94_cmd_priv *const mcmd = mac53c94_priv(cmd);
+	struct scsi_cmnd *cmd = state->current_req;
 	int nb, stat, seq, intr;
 	static int mac53c94_errors;
 
@@ -234,7 +235,7 @@ static void mac53c94_interrupt(int irq, void *dev_id)
 		++mac53c94_errors;
 		writeb(CMD_NOP + CMD_DMA_MODE, &regs->command);
 	}
-	if (!cmd) {
+	if (cmd == 0) {
 		printk(KERN_DEBUG "53c94: interrupt with no command active?\n");
 		return;
 	}
@@ -264,10 +265,10 @@ static void mac53c94_interrupt(int irq, void *dev_id)
 		/* set DMA controller going if any data to transfer */
 		if ((stat & (STAT_MSG|STAT_CD)) == 0
 		    && (scsi_sg_count(cmd) > 0 || scsi_bufflen(cmd))) {
-			nb = mcmd->this_residual;
+			nb = cmd->SCp.this_residual;
 			if (nb > 0xfff0)
 				nb = 0xfff0;
-			mcmd->this_residual -= nb;
+			cmd->SCp.this_residual -= nb;
 			writeb(nb, &regs->count_lo);
 			writeb(nb >> 8, &regs->count_mid);
 			writeb(CMD_DMA_MODE + CMD_NOP, &regs->command);
@@ -294,13 +295,13 @@ static void mac53c94_interrupt(int irq, void *dev_id)
 			cmd_done(state, DID_ERROR << 16);
 			return;
 		}
-		if (mcmd->this_residual != 0
+		if (cmd->SCp.this_residual != 0
 		    && (stat & (STAT_MSG|STAT_CD)) == 0) {
 			/* Set up the count regs to transfer more */
-			nb = mcmd->this_residual;
+			nb = cmd->SCp.this_residual;
 			if (nb > 0xfff0)
 				nb = 0xfff0;
-			mcmd->this_residual -= nb;
+			cmd->SCp.this_residual -= nb;
 			writeb(nb, &regs->count_lo);
 			writeb(nb >> 8, &regs->count_mid);
 			writeb(CMD_DMA_MODE + CMD_NOP, &regs->command);
@@ -322,8 +323,9 @@ static void mac53c94_interrupt(int irq, void *dev_id)
 			cmd_done(state, DID_ERROR << 16);
 			return;
 		}
-		mcmd->status = readb(&regs->fifo);
-		mcmd->message = readb(&regs->fifo);
+		cmd->SCp.Status = readb(&regs->fifo);
+		cmd->SCp.Message = readb(&regs->fifo);
+		cmd->result = CMD_ACCEPT_MSG;
 		writeb(CMD_ACCEPT_MSG, &regs->command);
 		state->phase = busfreeing;
 		break;
@@ -331,7 +333,8 @@ static void mac53c94_interrupt(int irq, void *dev_id)
 		if (intr != INTR_DISCONNECT) {
 			printk(KERN_DEBUG "got intr %x when expected disconnect\n", intr);
 		}
-		cmd_done(state, (DID_OK << 16) + (mcmd->message << 8) + mcmd->status);
+		cmd_done(state, (DID_OK << 16) + (cmd->SCp.Message << 8)
+			 + cmd->SCp.Status);
 		break;
 	default:
 		printk(KERN_DEBUG "don't know about phase %d\n", state->phase);
@@ -343,9 +346,9 @@ static void cmd_done(struct fsc_state *state, int result)
 	struct scsi_cmnd *cmd;
 
 	cmd = state->current_req;
-	if (cmd) {
+	if (cmd != 0) {
 		cmd->result = result;
-		scsi_done(cmd);
+		(*cmd->scsi_done)(cmd);
 		state->current_req = NULL;
 	}
 	state->phase = idle;
@@ -389,7 +392,7 @@ static void set_dma_cmds(struct fsc_state *state, struct scsi_cmnd *cmd)
 	dma_cmd += OUTPUT_LAST - OUTPUT_MORE;
 	dcmds[-1].command = cpu_to_le16(dma_cmd);
 	dcmds->command = cpu_to_le16(DBDMA_STOP);
-	mac53c94_priv(cmd)->this_residual = total;
+	cmd->SCp.this_residual = total;
 }
 
 static struct scsi_host_template mac53c94_template = {
@@ -400,8 +403,7 @@ static struct scsi_host_template mac53c94_template = {
 	.can_queue	= 1,
 	.this_id	= 7,
 	.sg_tablesize	= SG_ALL,
-	.max_segment_size = 65535,
-	.cmd_size	= sizeof(struct mac53c94_cmd_priv),
+	.use_clustering	= DISABLE_CLUSTERING,
 };
 
 static int mac53c94_probe(struct macio_dev *mdev, const struct of_device_id *match)
@@ -462,16 +464,14 @@ static int mac53c94_probe(struct macio_dev *mdev, const struct of_device_id *mat
        	 * +1 to allow for aligning.
 	 * XXX FIXME: Use DMA consistent routines
 	 */
-       	dma_cmd_space = kmalloc_array(host->sg_tablesize + 2,
-					     sizeof(struct dbdma_cmd),
-					     GFP_KERNEL);
-	if (!dma_cmd_space) {
-		printk(KERN_ERR "mac53c94: couldn't allocate dma "
-		       "command space for %pOF\n", node);
+       	dma_cmd_space = kmalloc((host->sg_tablesize + 2) *
+       				sizeof(struct dbdma_cmd), GFP_KERNEL);
+       	if (dma_cmd_space == 0) {
+       		printk(KERN_ERR "mac53c94: couldn't allocate dma "
+       		       "command space for %pOF\n", node);
 		rc = -ENOMEM;
-		goto out_free;
-	}
-
+       		goto out_free;
+       	}
 	state->dma_cmds = (struct dbdma_cmd *)DBDMA_ALIGN(dma_cmd_space);
 	memset(state->dma_cmds, 0, (host->sg_tablesize + 1)
 	       * sizeof(struct dbdma_cmd));

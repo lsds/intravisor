@@ -1,9 +1,12 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * mmp factor clock operation source file
  *
  * Copyright (C) 2012 Marvell
  * Chao Xie <xiechao.mail@gmail.com>
+ *
+ * This file is licensed under the terms of the GNU General Public
+ * License version 2. This program is licensed "as is" without any
+ * warranty of any kind, whether express or implied.
  */
 
 #include <linux/clk-provider.h>
@@ -25,15 +28,13 @@ static long clk_factor_round_rate(struct clk_hw *hw, unsigned long drate,
 		unsigned long *prate)
 {
 	struct mmp_clk_factor *factor = to_clk_factor(hw);
-	u64 rate = 0, prev_rate;
+	unsigned long rate = 0, prev_rate;
 	int i;
 
 	for (i = 0; i < factor->ftbl_cnt; i++) {
 		prev_rate = rate;
-		rate = *prate;
-		rate *= factor->ftbl[i].den;
-		do_div(rate, factor->ftbl[i].num * factor->masks->factor);
-
+		rate = (((*prate / 10000) * factor->ftbl[i].den) /
+			(factor->ftbl[i].num * factor->masks->factor)) * 10000;
 		if (rate > drate)
 			break;
 	}
@@ -53,7 +54,6 @@ static unsigned long clk_factor_recalc_rate(struct clk_hw *hw,
 	struct mmp_clk_factor *factor = to_clk_factor(hw);
 	struct mmp_clk_factor_masks *masks = factor->masks;
 	unsigned int val, num, den;
-	u64 rate;
 
 	val = readl_relaxed(factor->base);
 
@@ -66,11 +66,8 @@ static unsigned long clk_factor_recalc_rate(struct clk_hw *hw,
 	if (!den)
 		return 0;
 
-	rate = parent_rate;
-	rate *= den;
-	do_div(rate, num * factor->masks->factor);
-
-	return rate;
+	return (((parent_rate / 10000)  * den) /
+			(num * factor->masks->factor)) * 10000;
 }
 
 /* Configures new clock rate*/
@@ -81,14 +78,13 @@ static int clk_factor_set_rate(struct clk_hw *hw, unsigned long drate,
 	struct mmp_clk_factor_masks *masks = factor->masks;
 	int i;
 	unsigned long val;
+	unsigned long prev_rate, rate = 0;
 	unsigned long flags = 0;
-	u64 rate = 0;
 
 	for (i = 0; i < factor->ftbl_cnt; i++) {
-		rate = prate;
-		rate *= factor->ftbl[i].den;
-		do_div(rate, factor->ftbl[i].num * factor->masks->factor);
-
+		prev_rate = rate;
+		rate = (((prate / 10000) * factor->ftbl[i].den) /
+			(factor->ftbl[i].num * factor->masks->factor)) * 10000;
 		if (rate > drate)
 			break;
 	}
@@ -114,7 +110,7 @@ static int clk_factor_set_rate(struct clk_hw *hw, unsigned long drate,
 	return 0;
 }
 
-static int clk_factor_init(struct clk_hw *hw)
+static void clk_factor_init(struct clk_hw *hw)
 {
 	struct mmp_clk_factor *factor = to_clk_factor(hw);
 	struct mmp_clk_factor_masks *masks = factor->masks;
@@ -145,17 +141,12 @@ static int clk_factor_init(struct clk_hw *hw)
 		val &= ~(masks->den_mask << masks->den_shift);
 		val |= (factor->ftbl[0].den & masks->den_mask) <<
 			masks->den_shift;
-	}
 
-	if (!(val & masks->enable_mask) || i >= factor->ftbl_cnt) {
-		val |= masks->enable_mask;
 		writel(val, factor->base);
 	}
 
 	if (factor->lock)
 		spin_unlock_irqrestore(factor->lock, flags);
-
-	return 0;
 }
 
 static const struct clk_ops clk_factor_ops = {

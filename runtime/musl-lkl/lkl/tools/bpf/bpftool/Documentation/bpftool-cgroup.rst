@@ -1,5 +1,3 @@
-.. SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
-
 ================
 bpftool-cgroup
 ================
@@ -9,65 +7,35 @@ tool for inspection and simple manipulation of eBPF progs
 
 :Manual section: 8
 
-.. include:: substitutions.rst
-
 SYNOPSIS
 ========
 
 	**bpftool** [*OPTIONS*] **cgroup** *COMMAND*
 
-	*OPTIONS* := { |COMMON_OPTIONS| | { **-f** | **--bpffs** } }
+	*OPTIONS* := { { **-j** | **--json** } [{ **-p** | **--pretty** }] | { **-f** | **--bpffs** } }
 
 	*COMMANDS* :=
-	{ **show** | **list** | **tree** | **attach** | **detach** | **help** }
+	{ **show** | **list** | **attach** | **detach** | **help** }
 
-CGROUP COMMANDS
-===============
+MAP COMMANDS
+=============
 
-|	**bpftool** **cgroup** { **show** | **list** } *CGROUP* [**effective**]
-|	**bpftool** **cgroup tree** [*CGROUP_ROOT*] [**effective**]
+|	**bpftool** **cgroup { show | list }** *CGROUP*
 |	**bpftool** **cgroup attach** *CGROUP* *ATTACH_TYPE* *PROG* [*ATTACH_FLAGS*]
 |	**bpftool** **cgroup detach** *CGROUP* *ATTACH_TYPE* *PROG*
 |	**bpftool** **cgroup help**
 |
 |	*PROG* := { **id** *PROG_ID* | **pinned** *FILE* | **tag** *PROG_TAG* }
-|	*ATTACH_TYPE* := { **cgroup_inet_ingress** | **cgroup_inet_egress** |
-|		**cgroup_inet_sock_create** | **cgroup_sock_ops** |
-|		**cgroup_device** | **cgroup_inet4_bind** | **cgroup_inet6_bind** |
-|		**cgroup_inet4_post_bind** | **cgroup_inet6_post_bind** |
-|		**cgroup_inet4_connect** | **cgroup_inet6_connect** |
-|		**cgroup_inet4_getpeername** | **cgroup_inet6_getpeername** |
-|		**cgroup_inet4_getsockname** | **cgroup_inet6_getsockname** |
-|		**cgroup_udp4_sendmsg** | **cgroup_udp6_sendmsg** |
-|		**cgroup_udp4_recvmsg** | **cgroup_udp6_recvmsg** |
-|		**cgroup_sysctl** | **cgroup_getsockopt** | **cgroup_setsockopt** |
-|		**cgroup_inet_sock_release** }
+|	*ATTACH_TYPE* := { **ingress** | **egress** | **sock_create** | **sock_ops** | **device** }
 |	*ATTACH_FLAGS* := { **multi** | **override** }
 
 DESCRIPTION
 ===========
-	**bpftool cgroup { show | list }** *CGROUP* [**effective**]
+	**bpftool cgroup { show | list }** *CGROUP*
 		  List all programs attached to the cgroup *CGROUP*.
 
 		  Output will start with program ID followed by attach type,
 		  attach flags and program name.
-
-		  If **effective** is specified retrieve effective programs that
-		  will execute for events within a cgroup. This includes
-		  inherited along with attached ones.
-
-	**bpftool cgroup tree** [*CGROUP_ROOT*] [**effective**]
-		  Iterate over all cgroups in *CGROUP_ROOT* and list all
-		  attached programs. If *CGROUP_ROOT* is not specified,
-		  bpftool uses cgroup v2 mountpoint.
-
-		  The output is similar to the output of cgroup show/list
-		  commands: it starts with absolute cgroup path, followed by
-		  program ID, attach type, attach flags and program name.
-
-		  If **effective** is specified retrieve effective programs that
-		  will execute for events within a cgroup. This includes
-		  inherited along with attached ones.
 
 	**bpftool cgroup attach** *CGROUP* *ATTACH_TYPE* *PROG* [*ATTACH_FLAGS*]
 		  Attach program *PROG* to the cgroup *CGROUP* with attach type
@@ -95,29 +63,7 @@ DESCRIPTION
 		  **egress** egress path of the inet socket (since 4.10);
 		  **sock_create** opening of an inet socket (since 4.10);
 		  **sock_ops** various socket operations (since 4.12);
-		  **device** device access (since 4.15);
-		  **bind4** call to bind(2) for an inet4 socket (since 4.17);
-		  **bind6** call to bind(2) for an inet6 socket (since 4.17);
-		  **post_bind4** return from bind(2) for an inet4 socket (since 4.17);
-		  **post_bind6** return from bind(2) for an inet6 socket (since 4.17);
-		  **connect4** call to connect(2) for an inet4 socket (since 4.17);
-		  **connect6** call to connect(2) for an inet6 socket (since 4.17);
-		  **sendmsg4** call to sendto(2), sendmsg(2), sendmmsg(2) for an
-		  unconnected udp4 socket (since 4.18);
-		  **sendmsg6** call to sendto(2), sendmsg(2), sendmmsg(2) for an
-		  unconnected udp6 socket (since 4.18);
-		  **recvmsg4** call to recvfrom(2), recvmsg(2), recvmmsg(2) for
-		  an unconnected udp4 socket (since 5.2);
-		  **recvmsg6** call to recvfrom(2), recvmsg(2), recvmmsg(2) for
-		  an unconnected udp6 socket (since 5.2);
-		  **sysctl** sysctl access (since 5.2);
-		  **getsockopt** call to getsockopt (since 5.3);
-		  **setsockopt** call to setsockopt (since 5.3);
-		  **getpeername4** call to getpeername(2) for an inet4 socket (since 5.8);
-		  **getpeername6** call to getpeername(2) for an inet6 socket (since 5.8);
-		  **getsockname4** call to getsockname(2) for an inet4 socket (since 5.8);
-		  **getsockname6** call to getsockname(2) for an inet6 socket (since 5.8).
-		  **sock_release** closing an userspace inet socket (since 5.9).
+		  **device** device access (since 4.15).
 
 	**bpftool cgroup detach** *CGROUP* *ATTACH_TYPE* *PROG*
 		  Detach *PROG* from the cgroup *CGROUP* and attach type
@@ -128,7 +74,18 @@ DESCRIPTION
 
 OPTIONS
 =======
-	.. include:: common_options.rst
+	-h, --help
+		  Print short generic help message (similar to **bpftool help**).
+
+	-v, --version
+		  Print version number (similar to **bpftool version**).
+
+	-j, --json
+		  Generate JSON output. For commands that cannot produce JSON, this
+		  option has no effect.
+
+	-p, --pretty
+		  Generate human-readable JSON output. Implies **-j**.
 
 	-f, --bpffs
 		  Show file names of pinned programs.
@@ -155,3 +112,7 @@ EXAMPLES
 ::
 
     ID       AttachType      AttachFlags     Name
+
+SEE ALSO
+========
+	**bpftool**\ (8), **bpftool-prog**\ (8), **bpftool-map**\ (8)

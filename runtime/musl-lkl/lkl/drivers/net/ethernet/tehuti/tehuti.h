@@ -1,7 +1,11 @@
-/* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
  * Tehuti Networks(R) Network Driver
  * Copyright (C) 2007 Tehuti Networks Ltd. All rights reserved
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
  */
 
 #ifndef _TEHUTI_H
@@ -330,7 +334,7 @@ struct txd_desc {
 	u16 length;
 	u32 va_lo;
 	u32 va_hi;
-	struct pbl pbl[];	/* Fragments */
+	struct pbl pbl[0];	/* Fragments */
 } __packed;
 
 /* Register region size */

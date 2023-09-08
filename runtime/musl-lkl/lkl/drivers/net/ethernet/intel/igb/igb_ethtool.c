@@ -1,5 +1,26 @@
 // SPDX-License-Identifier: GPL-2.0
-/* Copyright(c) 2007 - 2018 Intel Corporation. */
+/* Intel(R) Gigabit Ethernet Linux driver
+ * Copyright(c) 2007-2014 Intel Corporation.
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms and conditions of the GNU General Public License,
+ * version 2, as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+ * more details.
+ *
+ * You should have received a copy of the GNU General Public License along with
+ * this program; if not, see <http://www.gnu.org/licenses/>.
+ *
+ * The full GNU General Public License is included in this distribution in
+ * the file called "COPYING".
+ *
+ * Contact Information:
+ * e1000-devel Mailing List <e1000-devel@lists.sourceforge.net>
+ * Intel Corporation, 5200 N.E. Elam Young Parkway, Hillsboro, OR 97124-6497
+ */
 
 /* ethtool support for igb */
 
@@ -26,7 +47,7 @@ struct igb_stats {
 
 #define IGB_STAT(_name, _stat) { \
 	.stat_string = _name, \
-	.sizeof_stat = sizeof_field(struct igb_adapter, _stat), \
+	.sizeof_stat = FIELD_SIZEOF(struct igb_adapter, _stat), \
 	.stat_offset = offsetof(struct igb_adapter, _stat) \
 }
 static const struct igb_stats igb_gstrings_stats[] = {
@@ -76,7 +97,7 @@ static const struct igb_stats igb_gstrings_stats[] = {
 
 #define IGB_NETDEV_STAT(_net_stat) { \
 	.stat_string = __stringify(_net_stat), \
-	.sizeof_stat = sizeof_field(struct rtnl_link_stats64, _net_stat), \
+	.sizeof_stat = FIELD_SIZEOF(struct rtnl_link_stats64, _net_stat), \
 	.stat_offset = offsetof(struct rtnl_link_stats64, _net_stat) \
 }
 static const struct igb_stats igb_gstrings_net_stats[] = {
@@ -143,8 +164,7 @@ static int igb_get_link_ksettings(struct net_device *netdev,
 	u32 speed;
 	u32 supported, advertising;
 
-	status = pm_runtime_suspended(&adapter->pdev->dev) ?
-		 0 : rd32(E1000_STATUS);
+	status = rd32(E1000_STATUS);
 	if (hw->phy.media_type == e1000_media_type_copper) {
 
 		supported = (SUPPORTED_10baseT_Half |
@@ -182,7 +202,7 @@ static int igb_get_link_ksettings(struct net_device *netdev,
 				advertising &= ~ADVERTISED_1000baseKX_Full;
 			}
 		}
-		if (eth_flags->e100_base_fx || eth_flags->e100_base_lx) {
+		if (eth_flags->e100_base_fx) {
 			supported |= SUPPORTED_100baseT_Full;
 			advertising |= ADVERTISED_100baseT_Full;
 		}
@@ -397,7 +417,6 @@ static int igb_set_pauseparam(struct net_device *netdev,
 	struct igb_adapter *adapter = netdev_priv(netdev);
 	struct e1000_hw *hw = &adapter->hw;
 	int retval = 0;
-	int i;
 
 	/* 100basefx does not support setting link flow control */
 	if (hw->dev_spec._82575.eth_flags.e100_base_fx)
@@ -430,13 +449,6 @@ static int igb_set_pauseparam(struct net_device *netdev,
 
 		retval = ((hw->phy.media_type == e1000_media_type_copper) ?
 			  igb_force_mac_fc(hw) : igb_setup_link(hw));
-
-		/* Make sure SRRCTL considers new fc settings for each ring */
-		for (i = 0; i < adapter->num_rx_queues; i++) {
-			struct igb_ring *ring = adapter->rx_ring[i];
-
-			igb_setup_srrctl(adapter, ring);
-		}
 	}
 
 	clear_bit(__IGB_RESETTING, &adapter->state);
@@ -457,7 +469,7 @@ static void igb_set_msglevel(struct net_device *netdev, u32 data)
 
 static int igb_get_regs_len(struct net_device *netdev)
 {
-#define IGB_REGS_LEN 740
+#define IGB_REGS_LEN 739
 	return IGB_REGS_LEN * sizeof(u32);
 }
 
@@ -684,44 +696,41 @@ static void igb_get_regs(struct net_device *netdev,
 		regs_buff[554] = adapter->stats.b2ogprc;
 	}
 
-	if (hw->mac.type == e1000_82576) {
-		for (i = 0; i < 12; i++)
-			regs_buff[555 + i] = rd32(E1000_SRRCTL(i + 4));
-		for (i = 0; i < 4; i++)
-			regs_buff[567 + i] = rd32(E1000_PSRTYPE(i + 4));
-		for (i = 0; i < 12; i++)
-			regs_buff[571 + i] = rd32(E1000_RDBAL(i + 4));
-		for (i = 0; i < 12; i++)
-			regs_buff[583 + i] = rd32(E1000_RDBAH(i + 4));
-		for (i = 0; i < 12; i++)
-			regs_buff[595 + i] = rd32(E1000_RDLEN(i + 4));
-		for (i = 0; i < 12; i++)
-			regs_buff[607 + i] = rd32(E1000_RDH(i + 4));
-		for (i = 0; i < 12; i++)
-			regs_buff[619 + i] = rd32(E1000_RDT(i + 4));
-		for (i = 0; i < 12; i++)
-			regs_buff[631 + i] = rd32(E1000_RXDCTL(i + 4));
+	if (hw->mac.type != e1000_82576)
+		return;
+	for (i = 0; i < 12; i++)
+		regs_buff[555 + i] = rd32(E1000_SRRCTL(i + 4));
+	for (i = 0; i < 4; i++)
+		regs_buff[567 + i] = rd32(E1000_PSRTYPE(i + 4));
+	for (i = 0; i < 12; i++)
+		regs_buff[571 + i] = rd32(E1000_RDBAL(i + 4));
+	for (i = 0; i < 12; i++)
+		regs_buff[583 + i] = rd32(E1000_RDBAH(i + 4));
+	for (i = 0; i < 12; i++)
+		regs_buff[595 + i] = rd32(E1000_RDLEN(i + 4));
+	for (i = 0; i < 12; i++)
+		regs_buff[607 + i] = rd32(E1000_RDH(i + 4));
+	for (i = 0; i < 12; i++)
+		regs_buff[619 + i] = rd32(E1000_RDT(i + 4));
+	for (i = 0; i < 12; i++)
+		regs_buff[631 + i] = rd32(E1000_RXDCTL(i + 4));
 
-		for (i = 0; i < 12; i++)
-			regs_buff[643 + i] = rd32(E1000_TDBAL(i + 4));
-		for (i = 0; i < 12; i++)
-			regs_buff[655 + i] = rd32(E1000_TDBAH(i + 4));
-		for (i = 0; i < 12; i++)
-			regs_buff[667 + i] = rd32(E1000_TDLEN(i + 4));
-		for (i = 0; i < 12; i++)
-			regs_buff[679 + i] = rd32(E1000_TDH(i + 4));
-		for (i = 0; i < 12; i++)
-			regs_buff[691 + i] = rd32(E1000_TDT(i + 4));
-		for (i = 0; i < 12; i++)
-			regs_buff[703 + i] = rd32(E1000_TXDCTL(i + 4));
-		for (i = 0; i < 12; i++)
-			regs_buff[715 + i] = rd32(E1000_TDWBAL(i + 4));
-		for (i = 0; i < 12; i++)
-			regs_buff[727 + i] = rd32(E1000_TDWBAH(i + 4));
-	}
-
-	if (hw->mac.type == e1000_i210 || hw->mac.type == e1000_i211)
-		regs_buff[739] = rd32(E1000_I210_RR2DCDELAY);
+	for (i = 0; i < 12; i++)
+		regs_buff[643 + i] = rd32(E1000_TDBAL(i + 4));
+	for (i = 0; i < 12; i++)
+		regs_buff[655 + i] = rd32(E1000_TDBAH(i + 4));
+	for (i = 0; i < 12; i++)
+		regs_buff[667 + i] = rd32(E1000_TDLEN(i + 4));
+	for (i = 0; i < 12; i++)
+		regs_buff[679 + i] = rd32(E1000_TDH(i + 4));
+	for (i = 0; i < 12; i++)
+		regs_buff[691 + i] = rd32(E1000_TDT(i + 4));
+	for (i = 0; i < 12; i++)
+		regs_buff[703 + i] = rd32(E1000_TXDCTL(i + 4));
+	for (i = 0; i < 12; i++)
+		regs_buff[715 + i] = rd32(E1000_TDWBAL(i + 4));
+	for (i = 0; i < 12; i++)
+		regs_buff[727 + i] = rd32(E1000_TDWBAH(i + 4));
 }
 
 static int igb_get_eeprom_len(struct net_device *netdev)
@@ -748,8 +757,8 @@ static int igb_get_eeprom(struct net_device *netdev,
 	first_word = eeprom->offset >> 1;
 	last_word = (eeprom->offset + eeprom->len - 1) >> 1;
 
-	eeprom_buff = kmalloc_array(last_word - first_word + 1, sizeof(u16),
-				    GFP_KERNEL);
+	eeprom_buff = kmalloc(sizeof(u16) *
+			(last_word - first_word + 1), GFP_KERNEL);
 	if (!eeprom_buff)
 		return -ENOMEM;
 
@@ -831,7 +840,7 @@ static int igb_set_eeprom(struct net_device *netdev,
 	memcpy(ptr, bytes, eeprom->len);
 
 	for (i = 0; i < last_word - first_word + 1; i++)
-		cpu_to_le16s(&eeprom_buff[i]);
+		eeprom_buff[i] = cpu_to_le16(eeprom_buff[i]);
 
 	ret_val = hw->nvm.ops.write(hw, first_word,
 				    last_word - first_word + 1, eeprom_buff);
@@ -850,23 +859,22 @@ static void igb_get_drvinfo(struct net_device *netdev,
 {
 	struct igb_adapter *adapter = netdev_priv(netdev);
 
-	strscpy(drvinfo->driver,  igb_driver_name, sizeof(drvinfo->driver));
+	strlcpy(drvinfo->driver,  igb_driver_name, sizeof(drvinfo->driver));
+	strlcpy(drvinfo->version, igb_driver_version, sizeof(drvinfo->version));
 
 	/* EEPROM image version # is reported as firmware version # for
 	 * 82575 controllers
 	 */
-	strscpy(drvinfo->fw_version, adapter->fw_version,
+	strlcpy(drvinfo->fw_version, adapter->fw_version,
 		sizeof(drvinfo->fw_version));
-	strscpy(drvinfo->bus_info, pci_name(adapter->pdev),
+	strlcpy(drvinfo->bus_info, pci_name(adapter->pdev),
 		sizeof(drvinfo->bus_info));
 
 	drvinfo->n_priv_flags = IGB_PRIV_FLAGS_STR_LEN;
 }
 
 static void igb_get_ringparam(struct net_device *netdev,
-			      struct ethtool_ringparam *ring,
-			      struct kernel_ethtool_ringparam *kernel_ring,
-			      struct netlink_ext_ack *extack)
+			      struct ethtool_ringparam *ring)
 {
 	struct igb_adapter *adapter = netdev_priv(netdev);
 
@@ -877,9 +885,7 @@ static void igb_get_ringparam(struct net_device *netdev,
 }
 
 static int igb_set_ringparam(struct net_device *netdev,
-			     struct ethtool_ringparam *ring,
-			     struct kernel_ethtool_ringparam *kernel_ring,
-			     struct netlink_ext_ack *extack)
+			     struct ethtool_ringparam *ring)
 {
 	struct igb_adapter *adapter = netdev_priv(netdev);
 	struct igb_ring *temp_ring;
@@ -917,11 +923,11 @@ static int igb_set_ringparam(struct net_device *netdev,
 	}
 
 	if (adapter->num_tx_queues > adapter->num_rx_queues)
-		temp_ring = vmalloc(array_size(sizeof(struct igb_ring),
-					       adapter->num_tx_queues));
+		temp_ring = vmalloc(adapter->num_tx_queues *
+				    sizeof(struct igb_ring));
 	else
-		temp_ring = vmalloc(array_size(sizeof(struct igb_ring),
-					       adapter->num_rx_queues));
+		temp_ring = vmalloc(adapter->num_rx_queues *
+				    sizeof(struct igb_ring));
 
 	if (!temp_ring) {
 		err = -ENOMEM;
@@ -1413,8 +1419,6 @@ static int igb_intr_test(struct igb_adapter *adapter, u64 *data)
 			*data = 1;
 			return -1;
 		}
-		wr32(E1000_IVAR_MISC, E1000_IVAR_VALID << 8);
-		wr32(E1000_EIMS, BIT(0));
 	} else if (adapter->flags & IGB_FLAG_HAS_MSI) {
 		shared_int = false;
 		if (request_irq(irq,
@@ -1666,7 +1670,7 @@ static int igb_integrated_phy_loopback(struct igb_adapter *adapter)
 	if (hw->phy.type == e1000_phy_m88)
 		igb_phy_disable_receiver(adapter);
 
-	msleep(500);
+	mdelay(500);
 	return 0;
 }
 
@@ -1788,8 +1792,8 @@ static void igb_create_lbtest_frame(struct sk_buff *skb,
 	memset(skb->data, 0xFF, frame_size);
 	frame_size /= 2;
 	memset(&skb->data[frame_size], 0xAA, frame_size - 1);
-	skb->data[frame_size + 10] = 0xBE;
-	skb->data[frame_size + 12] = 0xAF;
+	memset(&skb->data[frame_size + 10], 0xBE, 1);
+	memset(&skb->data[frame_size + 12], 0xAF, 1);
 }
 
 static int igb_check_lbtest_frame(struct igb_rx_buffer *rx_buffer,
@@ -1800,14 +1804,14 @@ static int igb_check_lbtest_frame(struct igb_rx_buffer *rx_buffer,
 
 	frame_size >>= 1;
 
-	data = kmap_local_page(rx_buffer->page);
+	data = kmap(rx_buffer->page);
 
 	if (data[3] != 0xFF ||
 	    data[frame_size + 10] != 0xBE ||
 	    data[frame_size + 12] != 0xAF)
 		match = false;
 
-	kunmap_local(data);
+	kunmap(rx_buffer->page);
 
 	return match;
 }
@@ -2130,7 +2134,7 @@ static int igb_set_wol(struct net_device *netdev, struct ethtool_wolinfo *wol)
 {
 	struct igb_adapter *adapter = netdev_priv(netdev);
 
-	if (wol->wolopts & (WAKE_ARP | WAKE_MAGICSECURE | WAKE_FILTER))
+	if (wol->wolopts & (WAKE_ARP | WAKE_MAGICSECURE))
 		return -EOPNOTSUPP;
 
 	if (!(adapter->flags & IGB_FLAG_WOL_SUPPORTED))
@@ -2184,12 +2188,31 @@ static int igb_set_phys_id(struct net_device *netdev,
 }
 
 static int igb_set_coalesce(struct net_device *netdev,
-			    struct ethtool_coalesce *ec,
-			    struct kernel_ethtool_coalesce *kernel_coal,
-			    struct netlink_ext_ack *extack)
+			    struct ethtool_coalesce *ec)
 {
 	struct igb_adapter *adapter = netdev_priv(netdev);
 	int i;
+
+	if (ec->rx_max_coalesced_frames ||
+	    ec->rx_coalesce_usecs_irq ||
+	    ec->rx_max_coalesced_frames_irq ||
+	    ec->tx_max_coalesced_frames ||
+	    ec->tx_coalesce_usecs_irq ||
+	    ec->stats_block_coalesce_usecs ||
+	    ec->use_adaptive_rx_coalesce ||
+	    ec->use_adaptive_tx_coalesce ||
+	    ec->pkt_rate_low ||
+	    ec->rx_coalesce_usecs_low ||
+	    ec->rx_max_coalesced_frames_low ||
+	    ec->tx_coalesce_usecs_low ||
+	    ec->tx_max_coalesced_frames_low ||
+	    ec->pkt_rate_high ||
+	    ec->rx_coalesce_usecs_high ||
+	    ec->rx_max_coalesced_frames_high ||
+	    ec->tx_coalesce_usecs_high ||
+	    ec->tx_max_coalesced_frames_high ||
+	    ec->rate_sample_interval)
+		return -ENOTSUPP;
 
 	if ((ec->rx_coalesce_usecs > IGB_MAX_ITR_USECS) ||
 	    ((ec->rx_coalesce_usecs > 3) &&
@@ -2242,9 +2265,7 @@ static int igb_set_coalesce(struct net_device *netdev,
 }
 
 static int igb_get_coalesce(struct net_device *netdev,
-			    struct ethtool_coalesce *ec,
-			    struct kernel_ethtool_coalesce *kernel_coal,
-			    struct netlink_ext_ack *extack)
+			    struct ethtool_coalesce *ec)
 {
 	struct igb_adapter *adapter = netdev_priv(netdev);
 
@@ -2349,26 +2370,39 @@ static void igb_get_strings(struct net_device *netdev, u32 stringset, u8 *data)
 
 	switch (stringset) {
 	case ETH_SS_TEST:
-		memcpy(data, igb_gstrings_test, sizeof(igb_gstrings_test));
+		memcpy(data, *igb_gstrings_test,
+			IGB_TEST_LEN*ETH_GSTRING_LEN);
 		break;
 	case ETH_SS_STATS:
-		for (i = 0; i < IGB_GLOBAL_STATS_LEN; i++)
-			ethtool_sprintf(&p,
-					igb_gstrings_stats[i].stat_string);
-		for (i = 0; i < IGB_NETDEV_STATS_LEN; i++)
-			ethtool_sprintf(&p,
-					igb_gstrings_net_stats[i].stat_string);
+		for (i = 0; i < IGB_GLOBAL_STATS_LEN; i++) {
+			memcpy(p, igb_gstrings_stats[i].stat_string,
+			       ETH_GSTRING_LEN);
+			p += ETH_GSTRING_LEN;
+		}
+		for (i = 0; i < IGB_NETDEV_STATS_LEN; i++) {
+			memcpy(p, igb_gstrings_net_stats[i].stat_string,
+			       ETH_GSTRING_LEN);
+			p += ETH_GSTRING_LEN;
+		}
 		for (i = 0; i < adapter->num_tx_queues; i++) {
-			ethtool_sprintf(&p, "tx_queue_%u_packets", i);
-			ethtool_sprintf(&p, "tx_queue_%u_bytes", i);
-			ethtool_sprintf(&p, "tx_queue_%u_restart", i);
+			sprintf(p, "tx_queue_%u_packets", i);
+			p += ETH_GSTRING_LEN;
+			sprintf(p, "tx_queue_%u_bytes", i);
+			p += ETH_GSTRING_LEN;
+			sprintf(p, "tx_queue_%u_restart", i);
+			p += ETH_GSTRING_LEN;
 		}
 		for (i = 0; i < adapter->num_rx_queues; i++) {
-			ethtool_sprintf(&p, "rx_queue_%u_packets", i);
-			ethtool_sprintf(&p, "rx_queue_%u_bytes", i);
-			ethtool_sprintf(&p, "rx_queue_%u_drops", i);
-			ethtool_sprintf(&p, "rx_queue_%u_csum_err", i);
-			ethtool_sprintf(&p, "rx_queue_%u_alloc_failed", i);
+			sprintf(p, "rx_queue_%u_packets", i);
+			p += ETH_GSTRING_LEN;
+			sprintf(p, "rx_queue_%u_bytes", i);
+			p += ETH_GSTRING_LEN;
+			sprintf(p, "rx_queue_%u_drops", i);
+			p += ETH_GSTRING_LEN;
+			sprintf(p, "rx_queue_%u_csum_err", i);
+			p += ETH_GSTRING_LEN;
+			sprintf(p, "rx_queue_%u_alloc_failed", i);
+			p += ETH_GSTRING_LEN;
 		}
 		/* BUG_ON(p - data != IGB_STATS_LEN * ETH_GSTRING_LEN); */
 		break;
@@ -2461,23 +2495,6 @@ static int igb_get_ethtool_nfc_entry(struct igb_adapter *adapter,
 			fsp->h_ext.vlan_tci = rule->filter.vlan_tci;
 			fsp->m_ext.vlan_tci = htons(VLAN_PRIO_MASK);
 		}
-		if (rule->filter.match_flags & IGB_FILTER_FLAG_DST_MAC_ADDR) {
-			ether_addr_copy(fsp->h_u.ether_spec.h_dest,
-					rule->filter.dst_addr);
-			/* As we only support matching by the full
-			 * mask, return the mask to userspace
-			 */
-			eth_broadcast_addr(fsp->m_u.ether_spec.h_dest);
-		}
-		if (rule->filter.match_flags & IGB_FILTER_FLAG_SRC_MAC_ADDR) {
-			ether_addr_copy(fsp->h_u.ether_spec.h_source,
-					rule->filter.src_addr);
-			/* As we only support matching by the full
-			 * mask, return the mask to userspace
-			 */
-			eth_broadcast_addr(fsp->m_u.ether_spec.h_source);
-		}
-
 		return 0;
 	}
 	return -EINVAL;
@@ -2514,11 +2531,11 @@ static int igb_get_rss_hash_opts(struct igb_adapter *adapter,
 	switch (cmd->flow_type) {
 	case TCP_V4_FLOW:
 		cmd->data |= RXH_L4_B_0_1 | RXH_L4_B_2_3;
-		fallthrough;
+		/* Fall through */
 	case UDP_V4_FLOW:
 		if (adapter->flags & IGB_FLAG_RSS_FIELD_IPV4_UDP)
 			cmd->data |= RXH_L4_B_0_1 | RXH_L4_B_2_3;
-		fallthrough;
+		/* Fall through */
 	case SCTP_V4_FLOW:
 	case AH_ESP_V4_FLOW:
 	case AH_V4_FLOW:
@@ -2528,11 +2545,11 @@ static int igb_get_rss_hash_opts(struct igb_adapter *adapter,
 		break;
 	case TCP_V6_FLOW:
 		cmd->data |= RXH_L4_B_0_1 | RXH_L4_B_2_3;
-		fallthrough;
+		/* Fall through */
 	case UDP_V6_FLOW:
 		if (adapter->flags & IGB_FLAG_RSS_FIELD_IPV6_UDP)
 			cmd->data |= RXH_L4_B_0_1 | RXH_L4_B_2_3;
-		fallthrough;
+		/* Fall through */
 	case SCTP_V6_FLOW:
 	case AH_ESP_V6_FLOW:
 	case AH_V6_FLOW:
@@ -2751,37 +2768,10 @@ static int igb_rxnfc_write_vlan_prio_filter(struct igb_adapter *adapter,
 
 int igb_add_filter(struct igb_adapter *adapter, struct igb_nfc_filter *input)
 {
-	struct e1000_hw *hw = &adapter->hw;
 	int err = -EINVAL;
-
-	if (hw->mac.type == e1000_i210 &&
-	    !(input->filter.match_flags & ~IGB_FILTER_FLAG_SRC_MAC_ADDR)) {
-		dev_err(&adapter->pdev->dev,
-			"i210 doesn't support flow classification rules specifying only source addresses.\n");
-		return -EOPNOTSUPP;
-	}
 
 	if (input->filter.match_flags & IGB_FILTER_FLAG_ETHER_TYPE) {
 		err = igb_rxnfc_write_etype_filter(adapter, input);
-		if (err)
-			return err;
-	}
-
-	if (input->filter.match_flags & IGB_FILTER_FLAG_DST_MAC_ADDR) {
-		err = igb_add_mac_steering_filter(adapter,
-						  input->filter.dst_addr,
-						  input->action, 0);
-		err = min_t(int, err, 0);
-		if (err)
-			return err;
-	}
-
-	if (input->filter.match_flags & IGB_FILTER_FLAG_SRC_MAC_ADDR) {
-		err = igb_add_mac_steering_filter(adapter,
-						  input->filter.src_addr,
-						  input->action,
-						  IGB_MAC_STATE_SRC_ADDR);
-		err = min_t(int, err, 0);
 		if (err)
 			return err;
 	}
@@ -2834,15 +2824,6 @@ int igb_erase_filter(struct igb_adapter *adapter, struct igb_nfc_filter *input)
 		igb_clear_vlan_prio_filter(adapter,
 					   ntohs(input->filter.vlan_tci));
 
-	if (input->filter.match_flags & IGB_FILTER_FLAG_SRC_MAC_ADDR)
-		igb_del_mac_steering_filter(adapter, input->filter.src_addr,
-					    input->action,
-					    IGB_MAC_STATE_SRC_ADDR);
-
-	if (input->filter.match_flags & IGB_FILTER_FLAG_DST_MAC_ADDR)
-		igb_del_mac_steering_filter(adapter, input->filter.dst_addr,
-					    input->action, 0);
-
 	return 0;
 }
 
@@ -2884,7 +2865,7 @@ static int igb_update_ethtool_nfc_entry(struct igb_adapter *adapter,
 
 	/* add filter to the list */
 	if (parent)
-		hlist_add_behind(&input->nfc_node, &parent->nfc_node);
+		hlist_add_behind(&parent->nfc_node, &input->nfc_node);
 	else
 		hlist_add_head(&input->nfc_node, &adapter->nfc_filter_list);
 
@@ -2924,6 +2905,10 @@ static int igb_add_ethtool_nfc_entry(struct igb_adapter *adapter,
 	if ((fsp->flow_type & ~FLOW_EXT) != ETHER_FLOW)
 		return -EINVAL;
 
+	if (fsp->m_u.ether_spec.h_proto != ETHER_TYPE_FULL_MASK &&
+	    fsp->m_ext.vlan_tci != htons(VLAN_PRIO_MASK))
+		return -EINVAL;
+
 	input = kzalloc(sizeof(*input), GFP_KERNEL);
 	if (!input)
 		return -ENOMEM;
@@ -2931,20 +2916,6 @@ static int igb_add_ethtool_nfc_entry(struct igb_adapter *adapter,
 	if (fsp->m_u.ether_spec.h_proto == ETHER_TYPE_FULL_MASK) {
 		input->filter.etype = fsp->h_u.ether_spec.h_proto;
 		input->filter.match_flags = IGB_FILTER_FLAG_ETHER_TYPE;
-	}
-
-	/* Only support matching addresses by the full mask */
-	if (is_broadcast_ether_addr(fsp->m_u.ether_spec.h_source)) {
-		input->filter.match_flags |= IGB_FILTER_FLAG_SRC_MAC_ADDR;
-		ether_addr_copy(input->filter.src_addr,
-				fsp->h_u.ether_spec.h_source);
-	}
-
-	/* Only support matching addresses by the full mask */
-	if (is_broadcast_ether_addr(fsp->m_u.ether_spec.h_dest)) {
-		input->filter.match_flags |= IGB_FILTER_FLAG_DST_MAC_ADDR;
-		ether_addr_copy(input->filter.dst_addr,
-				fsp->h_u.ether_spec.h_dest);
 	}
 
 	if ((fsp->flow_type & FLOW_EXT) && fsp->m_ext.vlan_tci) {
@@ -3015,7 +2986,6 @@ static int igb_set_rxnfc(struct net_device *dev, struct ethtool_rxnfc *cmd)
 		break;
 	case ETHTOOL_SRXCLSRLDEL:
 		ret = igb_del_ethtool_nfc_entry(adapter, cmd);
-		break;
 	default:
 		break;
 	}
@@ -3146,8 +3116,8 @@ static int igb_set_eee(struct net_device *netdev,
 	} else if (!edata->eee_enabled) {
 		dev_err(&adapter->pdev->dev,
 			"Setting EEE options are not supported with EEE disabled\n");
-		return -EINVAL;
-	}
+			return -EINVAL;
+		}
 
 	adapter->eee_advert = ethtool_adv_to_mmd_eee_adv_t(edata->advertised);
 	if (hw->dev_spec._82575.eee_disable != !edata->eee_enabled) {
@@ -3233,8 +3203,8 @@ static int igb_get_module_eeprom(struct net_device *netdev,
 	first_word = ee->offset >> 1;
 	last_word = (ee->offset + ee->len - 1) >> 1;
 
-	dataword = kmalloc_array(last_word - first_word + 1, sizeof(u16),
-				 GFP_KERNEL);
+	dataword = kmalloc(sizeof(u16) * (last_word - first_word + 1),
+			   GFP_KERNEL);
 	if (!dataword)
 		return -ENOMEM;
 
@@ -3454,7 +3424,6 @@ static int igb_set_priv_flags(struct net_device *netdev, u32 priv_flags)
 }
 
 static const struct ethtool_ops igb_ethtool_ops = {
-	.supported_coalesce_params = ETHTOOL_COALESCE_USECS,
 	.get_drvinfo		= igb_get_drvinfo,
 	.get_regs_len		= igb_get_regs_len,
 	.get_regs		= igb_get_regs,

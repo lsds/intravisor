@@ -1,9 +1,12 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * NAU85L40 ALSA SoC audio driver
  *
  * Copyright 2016 Nuvoton Technology Corp.
  * Author: John Hsu <KCHSU0@nuvoton.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 
 #include <linux/module.h>
@@ -357,32 +360,20 @@ static const struct snd_soc_dapm_route nau8540_dapm_routes[] = {
 	{"AIFTX", NULL, "Digital CH4 Mux"},
 };
 
-static const struct nau8540_osr_attr *
-nau8540_get_osr(struct nau8540 *nau8540)
+static int nau8540_clock_check(struct nau8540 *nau8540, int rate, int osr)
 {
-	unsigned int osr;
+	int osrate;
 
-	regmap_read(nau8540->regmap, NAU8540_REG_ADC_SAMPLE_RATE, &osr);
-	osr &= NAU8540_ADC_OSR_MASK;
 	if (osr >= ARRAY_SIZE(osr_adc_sel))
-		return NULL;
-	return &osr_adc_sel[osr];
-}
-
-static int nau8540_dai_startup(struct snd_pcm_substream *substream,
-			       struct snd_soc_dai *dai)
-{
-	struct snd_soc_component *component = dai->component;
-	struct nau8540 *nau8540 = snd_soc_component_get_drvdata(component);
-	const struct nau8540_osr_attr *osr;
-
-	osr = nau8540_get_osr(nau8540);
-	if (!osr || !osr->osr)
 		return -EINVAL;
+	osrate = osr_adc_sel[osr].osr;
 
-	return snd_pcm_hw_constraint_minmax(substream->runtime,
-					    SNDRV_PCM_HW_PARAM_RATE,
-					    0, CLK_ADC_MAX / osr->osr);
+	if (rate * osr > CLK_ADC_MAX) {
+		dev_err(nau8540->dev, "exceed the maximum frequency of CLK_ADC\n");
+		return -EINVAL;
+	}
+
+	return 0;
 }
 
 static int nau8540_hw_params(struct snd_pcm_substream *substream,
@@ -390,8 +381,7 @@ static int nau8540_hw_params(struct snd_pcm_substream *substream,
 {
 	struct snd_soc_component *component = dai->component;
 	struct nau8540 *nau8540 = snd_soc_component_get_drvdata(component);
-	unsigned int val_len = 0;
-	const struct nau8540_osr_attr *osr;
+	unsigned int val_len = 0, osr;
 
 	/* CLK_ADC = OSR * FS
 	 * ADC clock frequency is defined as Over Sampling Rate (OSR)
@@ -399,14 +389,13 @@ static int nau8540_hw_params(struct snd_pcm_substream *substream,
 	 * values must be selected such that the maximum frequency is less
 	 * than 6.144 MHz.
 	 */
-	osr = nau8540_get_osr(nau8540);
-	if (!osr || !osr->osr)
-		return -EINVAL;
-	if (params_rate(params) * osr->osr > CLK_ADC_MAX)
+	regmap_read(nau8540->regmap, NAU8540_REG_ADC_SAMPLE_RATE, &osr);
+	osr &= NAU8540_ADC_OSR_MASK;
+	if (nau8540_clock_check(nau8540, params_rate(params), osr))
 		return -EINVAL;
 	regmap_update_bits(nau8540->regmap, NAU8540_REG_CLOCK_SRC,
 		NAU8540_CLK_ADC_SRC_MASK,
-		osr->clk_src << NAU8540_CLK_ADC_SRC_SFT);
+		osr_adc_sel[osr].clk_src << NAU8540_CLK_ADC_SRC_SFT);
 
 	switch (params_width(params)) {
 	case 16:
@@ -532,7 +521,6 @@ static int nau8540_set_tdm_slot(struct snd_soc_dai *dai,
 
 
 static const struct snd_soc_dai_ops nau8540_dai_ops = {
-	.startup = nau8540_dai_startup,
 	.hw_params = nau8540_hw_params,
 	.set_fmt = nau8540_set_fmt,
 	.set_tdm_slot = nau8540_set_tdm_slot,
@@ -600,7 +588,7 @@ static int nau8540_calc_fll_param(unsigned int fll_in,
 	fvco_max = 0;
 	fvco_sel = ARRAY_SIZE(mclk_src_scaling);
 	for (i = 0; i < ARRAY_SIZE(mclk_src_scaling); i++) {
-		fvco = 256ULL * fs * 2 * mclk_src_scaling[i].param;
+		fvco = 256 * fs * 2 * mclk_src_scaling[i].param;
 		if (fvco > NAU_FVCO_MIN && fvco < NAU_FVCO_MAX &&
 			fvco_max < fvco) {
 			fvco_max = fvco;
@@ -824,6 +812,7 @@ static const struct snd_soc_component_driver nau8540_component_driver = {
 	.idle_bias_on		= 1,
 	.use_pmdown_time	= 1,
 	.endianness		= 1,
+	.non_legacy_dai_naming	= 1,
 };
 
 static const struct regmap_config nau8540_regmap_config = {
@@ -840,7 +829,8 @@ static const struct regmap_config nau8540_regmap_config = {
 	.num_reg_defaults = ARRAY_SIZE(nau8540_reg_defaults),
 };
 
-static int nau8540_i2c_probe(struct i2c_client *i2c)
+static int nau8540_i2c_probe(struct i2c_client *i2c,
+	const struct i2c_device_id *id)
 {
 	struct device *dev = &i2c->dev;
 	struct nau8540 *nau8540 = dev_get_platdata(dev);
@@ -890,7 +880,7 @@ static struct i2c_driver nau8540_i2c_driver = {
 		.name = "nau8540",
 		.of_match_table = of_match_ptr(nau8540_of_ids),
 	},
-	.probe_new = nau8540_i2c_probe,
+	.probe = nau8540_i2c_probe,
 	.id_table = nau8540_i2c_ids,
 };
 module_i2c_driver(nau8540_i2c_driver);

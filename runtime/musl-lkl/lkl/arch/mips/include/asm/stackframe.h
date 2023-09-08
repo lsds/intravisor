@@ -42,7 +42,7 @@
 	cfi_restore \reg \offset \docfi
 	.endm
 
-#if defined(CONFIG_CPU_R3000)
+#if defined(CONFIG_CPU_R3000) || defined(CONFIG_CPU_TX39XX)
 #define STATMASK 0x3f
 #else
 #define STATMASK 0x1f
@@ -349,7 +349,7 @@
 		cfi_ld	sp, PT_R29, \docfi
 		.endm
 
-#if defined(CONFIG_CPU_R3000)
+#if defined(CONFIG_CPU_R3000) || defined(CONFIG_CPU_TX39XX)
 
 		.macro	RESTORE_SOME docfi=0
 		.set	push
@@ -424,13 +424,12 @@
 
 		.macro	RESTORE_SP_AND_RET docfi=0
 		RESTORE_SP \docfi
-#if defined(CONFIG_CPU_MIPSR5) || defined(CONFIG_CPU_MIPSR6)
+#ifdef CONFIG_CPU_MIPSR6
 		eretnc
 #else
-		.set	push
 		.set	arch=r4000
 		eret
-		.set	pop
+		.set	mips0
 #endif
 		.endm
 
@@ -450,7 +449,7 @@
  */
 		.macro	CLI
 		mfc0	t0, CP0_STATUS
-		li	t1, ST0_KERNEL_CUMASK | STATMASK
+		li	t1, ST0_CU0 | STATMASK
 		or	t0, t1
 		xori	t0, STATMASK
 		mtc0	t0, CP0_STATUS
@@ -463,7 +462,7 @@
  */
 		.macro	STI
 		mfc0	t0, CP0_STATUS
-		li	t1, ST0_KERNEL_CUMASK | STATMASK
+		li	t1, ST0_CU0 | STATMASK
 		or	t0, t1
 		xori	t0, STATMASK & ~1
 		mtc0	t0, CP0_STATUS
@@ -477,8 +476,8 @@
  */
 		.macro	KMODE
 		mfc0	t0, CP0_STATUS
-		li	t1, ST0_KERNEL_CUMASK | (STATMASK & ~1)
-#if defined(CONFIG_CPU_R3000)
+		li	t1, ST0_CU0 | (STATMASK & ~1)
+#if defined(CONFIG_CPU_R3000) || defined(CONFIG_CPU_TX39XX)
 		andi	t2, t0, ST0_IEP
 		srl	t2, 2
 		or	t0, t2

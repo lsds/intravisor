@@ -107,15 +107,11 @@ example below:
 		},
 	};
 
-	static const struct property_entry rotary_encoder_properties[] = {
+	static const struct property_entry rotary_encoder_properties[] __initconst = {
 		PROPERTY_ENTRY_U32("rotary-encoder,steps-per-period", 24),
 		PROPERTY_ENTRY_U32("linux,axis",		      ABS_X),
 		PROPERTY_ENTRY_U32("rotary-encoder,relative_axis",    0),
 		{ },
-	};
-
-	static const struct software_node rotary_encoder_node = {
-		.properties = rotary_encoder_properties,
 	};
 
 	static struct platform_device rotary_encoder_device = {
@@ -126,7 +122,7 @@ example below:
 	...
 
 	gpiod_add_lookup_table(&rotary_encoder_gpios);
-	device_add_software_node(&rotary_encoder_device.dev, &rotary_encoder_node);
+	device_add_properties(&rotary_encoder_device, rotary_encoder_properties);
 	platform_device_register(&rotary_encoder_device);
 
 	...

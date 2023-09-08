@@ -3,7 +3,6 @@
 #include <linux/linkage.h>
 #include <asm/asm-offsets.h>
 #include <asm/assembler.h>
-#include <asm/smp.h>
 
 	.text
 /*
@@ -28,7 +27,7 @@
  *	aff0 = mpidr_masked & 0xff;
  *	aff1 = mpidr_masked & 0xff00;
  *	aff2 = mpidr_masked & 0xff0000;
- *	aff3 = mpidr_masked & 0xff00000000;
+ *	aff2 = mpidr_masked & 0xff00000000;
  *	dst = (aff0 >> rs0 | aff1 >> rs1 | aff2 >> rs2 | aff3 >> rs3);
  *}
  * Input registers: rs0, rs1, rs2, rs3, mpidr, mask
@@ -62,7 +61,7 @@
  *
  *  x0 = struct sleep_stack_data area
  */
-SYM_FUNC_START(__cpu_suspend_enter)
+ENTRY(__cpu_suspend_enter)
 	stp	x29, lr, [x0, #SLEEP_STACK_DATA_CALLEE_REGS]
 	stp	x19, x20, [x0,#SLEEP_STACK_DATA_CALLEE_REGS+16]
 	stp	x21, x22, [x0,#SLEEP_STACK_DATA_CALLEE_REGS+32]
@@ -95,27 +94,21 @@ SYM_FUNC_START(__cpu_suspend_enter)
 	ldp	x29, lr, [sp], #16
 	mov	x0, #1
 	ret
-SYM_FUNC_END(__cpu_suspend_enter)
+ENDPROC(__cpu_suspend_enter)
 
 	.pushsection ".idmap.text", "awx"
-SYM_CODE_START(cpu_resume)
-	bl	init_kernel_el
-	bl	finalise_el2
-#if VA_BITS > 48
-	ldr_l	x0, vabits_actual
-#endif
+ENTRY(cpu_resume)
+	bl	el2_setup		// if in EL2 drop to EL1 cleanly
 	bl	__cpu_setup
 	/* enable the MMU early - so we can access sleep_save_stash by va */
-	adrp	x1, swapper_pg_dir
-	adrp	x2, idmap_pg_dir
 	bl	__enable_mmu
 	ldr	x8, =_cpu_resume
 	br	x8
-SYM_CODE_END(cpu_resume)
+ENDPROC(cpu_resume)
 	.ltorg
 	.popsection
 
-SYM_FUNC_START(_cpu_resume)
+ENTRY(_cpu_resume)
 	mrs	x1, mpidr_el1
 	adr_l	x8, mpidr_hash		// x8 = struct mpidr_hash virt address
 
@@ -138,7 +131,7 @@ SYM_FUNC_START(_cpu_resume)
 	 */
 	bl	cpu_do_resume
 
-#if defined(CONFIG_KASAN) && defined(CONFIG_KASAN_STACK)
+#ifdef CONFIG_KASAN
 	mov	x0, sp
 	bl	kasan_unpoison_task_stack_below
 #endif
@@ -151,4 +144,4 @@ SYM_FUNC_START(_cpu_resume)
 	ldp	x29, lr, [x29]
 	mov	x0, #0
 	ret
-SYM_FUNC_END(_cpu_resume)
+ENDPROC(_cpu_resume)

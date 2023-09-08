@@ -31,6 +31,12 @@
 #undef DEBUG /* Don't want a garbled console */
 #endif
 
+#ifdef DEBUG
+#define DPRINTK(stuff...) printk (stuff)
+#else
+#define DPRINTK(stuff...)
+#endif
+
 /* Make parport_wait_peripheral wake up.
  * It will be useful to call this from an interrupt handler. */
 static void parport_ieee1284_wakeup (struct parport *port)
@@ -252,15 +258,16 @@ static void parport_ieee1284_terminate (struct parport *port)
 						     PARPORT_STATUS_PAPEROUT,
 						     PARPORT_STATUS_PAPEROUT);
 			if (r)
-				pr_debug("%s: Timeout at event 49\n",
+				DPRINTK (KERN_INFO "%s: Timeout at event 49\n",
 					 port->name);
 
 			parport_data_forward (port);
-			pr_debug("%s: ECP direction: forward\n", port->name);
+			DPRINTK (KERN_DEBUG "%s: ECP direction: forward\n",
+				 port->name);
 			port->ieee1284.phase = IEEE1284_PH_FWD_IDLE;
 		}
 
-		fallthrough;
+		/* fall-though.. */
 
 	default:
 		/* Terminate from all other modes. */
@@ -274,7 +281,8 @@ static void parport_ieee1284_terminate (struct parport *port)
 		/* Event 24: nAck goes low */
 		r = parport_wait_peripheral (port, PARPORT_STATUS_ACK, 0);
 		if (r)
-			pr_debug("%s: Timeout at event 24\n", port->name);
+			DPRINTK (KERN_INFO "%s: Timeout at event 24\n",
+				 port->name);
 
 		/* Event 25: Set nAutoFd low */
 		parport_frob_control (port,
@@ -286,7 +294,8 @@ static void parport_ieee1284_terminate (struct parport *port)
 					     PARPORT_STATUS_ACK, 
 					     PARPORT_STATUS_ACK);
 		if (r)
-			pr_debug("%s: Timeout at event 27\n", port->name);
+			DPRINTK (KERN_INFO "%s: Timeout at event 27\n",
+				 port->name);
 
 		/* Event 29: Set nAutoFd high */
 		parport_frob_control (port, PARPORT_CONTROL_AUTOFD, 0);
@@ -295,7 +304,8 @@ static void parport_ieee1284_terminate (struct parport *port)
 	port->ieee1284.mode = IEEE1284_MODE_COMPAT;
 	port->ieee1284.phase = IEEE1284_PH_FWD_IDLE;
 
-	pr_debug("%s: In compatibility (forward idle) mode\n", port->name);
+	DPRINTK (KERN_DEBUG "%s: In compatibility (forward idle) mode\n",
+		 port->name);
 }		
 #endif /* IEEE1284 support */
 
@@ -319,7 +329,7 @@ int parport_negotiate (struct parport *port, int mode)
 #ifndef CONFIG_PARPORT_1284
 	if (mode == IEEE1284_MODE_COMPAT)
 		return 0;
-	pr_err("parport: IEEE1284 not supported in this kernel\n");
+	printk (KERN_ERR "parport: IEEE1284 not supported in this kernel\n");
 	return -1;
 #else
 	int m = mode & ~IEEE1284_ADDR;
@@ -396,7 +406,8 @@ int parport_negotiate (struct parport *port, int mode)
 				      PARPORT_CONTROL_SELECT
 				      | PARPORT_CONTROL_AUTOFD,
 				      PARPORT_CONTROL_SELECT);
-		pr_debug("%s: Peripheral not IEEE1284 compliant (0x%02X)\n",
+		DPRINTK (KERN_DEBUG
+			 "%s: Peripheral not IEEE1284 compliant (0x%02X)\n",
 			 port->name, parport_read_status (port));
 		port->ieee1284.phase = IEEE1284_PH_FWD_IDLE;
 		return -1; /* Not IEEE1284 compliant */
@@ -419,7 +430,8 @@ int parport_negotiate (struct parport *port, int mode)
 				     PARPORT_STATUS_ACK,
 				     PARPORT_STATUS_ACK)) {
 		/* This shouldn't really happen with a compliant device. */
-		pr_debug("%s: Mode 0x%02x not supported? (0x%02x)\n",
+		DPRINTK (KERN_DEBUG
+			 "%s: Mode 0x%02x not supported? (0x%02x)\n",
 			 port->name, mode, port->ops->read_status (port));
 		parport_ieee1284_terminate (port);
 		return 1;
@@ -430,7 +442,7 @@ int parport_negotiate (struct parport *port, int mode)
 	/* xflag should be high for all modes other than nibble (0). */
 	if (mode && !xflag) {
 		/* Mode not supported. */
-		pr_debug("%s: Mode 0x%02x rejected by peripheral\n",
+		DPRINTK (KERN_DEBUG "%s: Mode 0x%02x rejected by peripheral\n",
 			 port->name, mode);
 		parport_ieee1284_terminate (port);
 		return 1;
@@ -451,7 +463,9 @@ int parport_negotiate (struct parport *port, int mode)
 		/* Event 52: nAck goes low */
 		if (parport_wait_peripheral (port, PARPORT_STATUS_ACK, 0)) {
 			/* This peripheral is _very_ slow. */
-			pr_debug("%s: Event 52 didn't happen\n", port->name);
+			DPRINTK (KERN_DEBUG
+				 "%s: Event 52 didn't happen\n",
+				 port->name);
 			parport_ieee1284_terminate (port);
 			return 1;
 		}
@@ -467,9 +481,10 @@ int parport_negotiate (struct parport *port, int mode)
 					     PARPORT_STATUS_ACK)) {
 			/* This shouldn't really happen with a compliant
 			 * device. */
-			pr_debug("%s: Mode 0x%02x not supported? (0x%02x)\n",
+			DPRINTK (KERN_DEBUG
+				 "%s: Mode 0x%02x not supported? (0x%02x)\n",
 				 port->name, mode,
-				 port->ops->read_status(port));
+				 port->ops->read_status (port));
 			parport_ieee1284_terminate (port);
 			return 1;
 		}
@@ -480,8 +495,8 @@ int parport_negotiate (struct parport *port, int mode)
 		/* xflag should be high. */
 		if (!xflag) {
 			/* Extended mode not supported. */
-			pr_debug("%s: Extended mode 0x%02x not supported\n",
-				 port->name, mode);
+			DPRINTK (KERN_DEBUG "%s: Extended mode 0x%02x not "
+				 "supported\n", port->name, mode);
 			parport_ieee1284_terminate (port);
 			return 1;
 		}
@@ -490,7 +505,7 @@ int parport_negotiate (struct parport *port, int mode)
 	}
 
 	/* Mode is supported */
-	pr_debug("%s: In mode 0x%02x\n", port->name, mode);
+	DPRINTK (KERN_DEBUG "%s: In mode 0x%02x\n", port->name, mode);
 	port->ieee1284.mode = mode;
 
 	/* But ECP is special */
@@ -507,11 +522,13 @@ int parport_negotiate (struct parport *port, int mode)
 					     PARPORT_STATUS_PAPEROUT,
 					     PARPORT_STATUS_PAPEROUT);
 		if (r) {
-			pr_debug("%s: Timeout at event 31\n", port->name);
+			DPRINTK (KERN_INFO "%s: Timeout at event 31\n",
+				port->name);
 		}
 
 		port->ieee1284.phase = IEEE1284_PH_FWD_IDLE;
-		pr_debug("%s: ECP direction: forward\n", port->name);
+		DPRINTK (KERN_DEBUG "%s: ECP direction: forward\n",
+			 port->name);
 	} else switch (mode) {
 	case IEEE1284_MODE_NIBBLE:
 	case IEEE1284_MODE_BYTE:
@@ -556,7 +573,7 @@ void parport_ieee1284_interrupt (void *handle)
 	if (port->ieee1284.phase == IEEE1284_PH_REV_IDLE) {
 		/* An interrupt in this phase means that data
 		 * is now available. */
-		pr_debug("%s: Data available\n", port->name);
+		DPRINTK (KERN_DEBUG "%s: Data available\n", port->name);
 		parport_ieee1284_ack_data_avail (port);
 	}
 #endif /* IEEE1284 support */
@@ -598,14 +615,14 @@ ssize_t parport_write (struct parport *port, const void *buffer, size_t len)
 	case IEEE1284_MODE_NIBBLE:
 	case IEEE1284_MODE_BYTE:
 		parport_negotiate (port, IEEE1284_MODE_COMPAT);
-		fallthrough;
 	case IEEE1284_MODE_COMPAT:
-		pr_debug("%s: Using compatibility mode\n", port->name);
+		DPRINTK (KERN_DEBUG "%s: Using compatibility mode\n",
+			 port->name);
 		fn = port->ops->compat_write_data;
 		break;
 
 	case IEEE1284_MODE_EPP:
-		pr_debug("%s: Using EPP mode\n", port->name);
+		DPRINTK (KERN_DEBUG "%s: Using EPP mode\n", port->name);
 		if (addr) {
 			fn = port->ops->epp_write_addr;
 		} else {
@@ -613,7 +630,8 @@ ssize_t parport_write (struct parport *port, const void *buffer, size_t len)
 		}
 		break;
 	case IEEE1284_MODE_EPPSWE:
-		pr_debug("%s: Using software-emulated EPP mode\n", port->name);
+		DPRINTK (KERN_DEBUG "%s: Using software-emulated EPP mode\n",
+			port->name);
 		if (addr) {
 			fn = parport_ieee1284_epp_write_addr;
 		} else {
@@ -622,7 +640,7 @@ ssize_t parport_write (struct parport *port, const void *buffer, size_t len)
 		break;
 	case IEEE1284_MODE_ECP:
 	case IEEE1284_MODE_ECPRLE:
-		pr_debug("%s: Using ECP mode\n", port->name);
+		DPRINTK (KERN_DEBUG "%s: Using ECP mode\n", port->name);
 		if (addr) {
 			fn = port->ops->ecp_write_addr;
 		} else {
@@ -631,7 +649,8 @@ ssize_t parport_write (struct parport *port, const void *buffer, size_t len)
 		break;
 
 	case IEEE1284_MODE_ECPSWE:
-		pr_debug("%s: Using software-emulated ECP mode\n", port->name);
+		DPRINTK (KERN_DEBUG "%s: Using software-emulated ECP mode\n",
+			 port->name);
 		/* The caller has specified that it must be emulated,
 		 * even if we have ECP hardware! */
 		if (addr) {
@@ -642,13 +661,13 @@ ssize_t parport_write (struct parport *port, const void *buffer, size_t len)
 		break;
 
 	default:
-		pr_debug("%s: Unknown mode 0x%02x\n",
-			 port->name, port->ieee1284.mode);
+		DPRINTK (KERN_DEBUG "%s: Unknown mode 0x%02x\n", port->name,
+			port->ieee1284.mode);
 		return -ENOSYS;
 	}
 
 	retval = (*fn) (port, buffer, len, 0);
-	pr_debug("%s: wrote %zd/%zu bytes\n", port->name, retval, len);
+	DPRINTK (KERN_DEBUG "%s: wrote %d/%d bytes\n", port->name, retval, len);
 	return retval;
 #endif /* IEEE1284 support */
 }
@@ -674,7 +693,7 @@ ssize_t parport_write (struct parport *port, const void *buffer, size_t len)
 ssize_t parport_read (struct parport *port, void *buffer, size_t len)
 {
 #ifndef CONFIG_PARPORT_1284
-	pr_err("parport: IEEE1284 not supported in this kernel\n");
+	printk (KERN_ERR "parport: IEEE1284 not supported in this kernel\n");
 	return -ENODEV;
 #else
 	int mode = port->physport->ieee1284.mode;
@@ -695,26 +714,26 @@ ssize_t parport_read (struct parport *port, void *buffer, size_t len)
 		if ((port->physport->modes & PARPORT_MODE_TRISTATE) &&
 		    !parport_negotiate (port, IEEE1284_MODE_BYTE)) {
 			/* got into BYTE mode OK */
-			pr_debug("%s: Using byte mode\n", port->name);
+			DPRINTK (KERN_DEBUG "%s: Using byte mode\n", port->name);
 			fn = port->ops->byte_read_data;
 			break;
 		}
 		if (parport_negotiate (port, IEEE1284_MODE_NIBBLE)) {
 			return -EIO;
 		}
-		fallthrough;	/* to NIBBLE */
+		/* fall through to NIBBLE */
 	case IEEE1284_MODE_NIBBLE:
-		pr_debug("%s: Using nibble mode\n", port->name);
+		DPRINTK (KERN_DEBUG "%s: Using nibble mode\n", port->name);
 		fn = port->ops->nibble_read_data;
 		break;
 
 	case IEEE1284_MODE_BYTE:
-		pr_debug("%s: Using byte mode\n", port->name);
+		DPRINTK (KERN_DEBUG "%s: Using byte mode\n", port->name);
 		fn = port->ops->byte_read_data;
 		break;
 
 	case IEEE1284_MODE_EPP:
-		pr_debug("%s: Using EPP mode\n", port->name);
+		DPRINTK (KERN_DEBUG "%s: Using EPP mode\n", port->name);
 		if (addr) {
 			fn = port->ops->epp_read_addr;
 		} else {
@@ -722,7 +741,8 @@ ssize_t parport_read (struct parport *port, void *buffer, size_t len)
 		}
 		break;
 	case IEEE1284_MODE_EPPSWE:
-		pr_debug("%s: Using software-emulated EPP mode\n", port->name);
+		DPRINTK (KERN_DEBUG "%s: Using software-emulated EPP mode\n",
+			port->name);
 		if (addr) {
 			fn = parport_ieee1284_epp_read_addr;
 		} else {
@@ -731,18 +751,19 @@ ssize_t parport_read (struct parport *port, void *buffer, size_t len)
 		break;
 	case IEEE1284_MODE_ECP:
 	case IEEE1284_MODE_ECPRLE:
-		pr_debug("%s: Using ECP mode\n", port->name);
+		DPRINTK (KERN_DEBUG "%s: Using ECP mode\n", port->name);
 		fn = port->ops->ecp_read_data;
 		break;
 
 	case IEEE1284_MODE_ECPSWE:
-		pr_debug("%s: Using software-emulated ECP mode\n", port->name);
+		DPRINTK (KERN_DEBUG "%s: Using software-emulated ECP mode\n",
+			 port->name);
 		fn = parport_ieee1284_ecp_read_data;
 		break;
 
 	default:
-		pr_debug("%s: Unknown mode 0x%02x\n",
-			 port->name, port->physport->ieee1284.mode);
+		DPRINTK (KERN_DEBUG "%s: Unknown mode 0x%02x\n", port->name,
+			 port->physport->ieee1284.mode);
 		return -ENOSYS;
 	}
 

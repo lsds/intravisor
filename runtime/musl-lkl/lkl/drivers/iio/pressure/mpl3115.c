@@ -1,8 +1,11 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * mpl3115.c - Support for Freescale MPL3115A2 pressure/temperature sensor
  *
  * Copyright (c) 2013 Peter Meerwald <pmeerw@pmeerw.net>
+ *
+ * This file is subject to the terms and conditions of version 2 of
+ * the GNU General Public License.  See the file COPYING in the main
+ * directory of this archive for more details.
  *
  * (7-bit I2C slave address 0x60)
  *
@@ -74,6 +77,7 @@ static int mpl3115_read_raw(struct iio_dev *indio_dev,
 			    int *val, int *val2, long mask)
 {
 	struct mpl3115_data *data = iio_priv(indio_dev);
+	__be32 tmp = 0;
 	int ret;
 
 	switch (mask) {
@@ -83,9 +87,7 @@ static int mpl3115_read_raw(struct iio_dev *indio_dev,
 			return ret;
 
 		switch (chan->type) {
-		case IIO_PRESSURE: { /* in 0.25 pascal / LSB */
-			__be32 tmp = 0;
-
+		case IIO_PRESSURE: /* in 0.25 pascal / LSB */
 			mutex_lock(&data->lock);
 			ret = mpl3115_request(data);
 			if (ret < 0) {
@@ -97,13 +99,10 @@ static int mpl3115_read_raw(struct iio_dev *indio_dev,
 			mutex_unlock(&data->lock);
 			if (ret < 0)
 				break;
-			*val = be32_to_cpu(tmp) >> chan->scan_type.shift;
+			*val = be32_to_cpu(tmp) >> 12;
 			ret = IIO_VAL_INT;
 			break;
-		}
-		case IIO_TEMP: { /* in 0.0625 celsius / LSB */
-			__be16 tmp;
-
+		case IIO_TEMP: /* in 0.0625 celsius / LSB */
 			mutex_lock(&data->lock);
 			ret = mpl3115_request(data);
 			if (ret < 0) {
@@ -115,11 +114,9 @@ static int mpl3115_read_raw(struct iio_dev *indio_dev,
 			mutex_unlock(&data->lock);
 			if (ret < 0)
 				break;
-			*val = sign_extend32(be16_to_cpu(tmp) >> chan->scan_type.shift,
-					     chan->scan_type.realbits - 1);
+			*val = sign_extend32(be32_to_cpu(tmp) >> 20, 11);
 			ret = IIO_VAL_INT;
 			break;
-		}
 		default:
 			ret = -EINVAL;
 			break;
@@ -150,14 +147,7 @@ static irqreturn_t mpl3115_trigger_handler(int irq, void *p)
 	struct iio_poll_func *pf = p;
 	struct iio_dev *indio_dev = pf->indio_dev;
 	struct mpl3115_data *data = iio_priv(indio_dev);
-	/*
-	 * 32-bit channel + 16-bit channel + padding + ts
-	 * Note that it is possible for only one of the first 2
-	 * channels to be enabled. If that happens, the first element
-	 * of the buffer may be either 16 or 32-bits.  As such we cannot
-	 * use a simple structure definition to express this data layout.
-	 */
-	u8 buffer[16] __aligned(8);
+	u8 buffer[16]; /* 32-bit channel + 16-bit channel + padding + ts */
 	int ret, pos = 0;
 
 	mutex_lock(&data->lock);
@@ -254,6 +244,7 @@ static int mpl3115_probe(struct i2c_client *client,
 	i2c_set_clientdata(client, indio_dev);
 	indio_dev->info = &mpl3115_info;
 	indio_dev->name = id->name;
+	indio_dev->dev.parent = &client->dev;
 	indio_dev->modes = INDIO_DIRECT_MODE;
 	indio_dev->channels = mpl3115_channels;
 	indio_dev->num_channels = ARRAY_SIZE(mpl3115_channels);
@@ -290,15 +281,18 @@ static int mpl3115_standby(struct mpl3115_data *data)
 		data->ctrl_reg1 & ~MPL3115_CTRL_ACTIVE);
 }
 
-static void mpl3115_remove(struct i2c_client *client)
+static int mpl3115_remove(struct i2c_client *client)
 {
 	struct iio_dev *indio_dev = i2c_get_clientdata(client);
 
 	iio_device_unregister(indio_dev);
 	iio_triggered_buffer_cleanup(indio_dev);
 	mpl3115_standby(iio_priv(indio_dev));
+
+	return 0;
 }
 
+#ifdef CONFIG_PM_SLEEP
 static int mpl3115_suspend(struct device *dev)
 {
 	return mpl3115_standby(iio_priv(i2c_get_clientdata(
@@ -314,8 +308,11 @@ static int mpl3115_resume(struct device *dev)
 		data->ctrl_reg1);
 }
 
-static DEFINE_SIMPLE_DEV_PM_OPS(mpl3115_pm_ops, mpl3115_suspend,
-				mpl3115_resume);
+static SIMPLE_DEV_PM_OPS(mpl3115_pm_ops, mpl3115_suspend, mpl3115_resume);
+#define MPL3115_PM_OPS (&mpl3115_pm_ops)
+#else
+#define MPL3115_PM_OPS NULL
+#endif
 
 static const struct i2c_device_id mpl3115_id[] = {
 	{ "mpl3115", 0 },
@@ -333,7 +330,7 @@ static struct i2c_driver mpl3115_driver = {
 	.driver = {
 		.name	= "mpl3115",
 		.of_match_table = mpl3115_of_match,
-		.pm	= pm_sleep_ptr(&mpl3115_pm_ops),
+		.pm	= MPL3115_PM_OPS,
 	},
 	.probe = mpl3115_probe,
 	.remove = mpl3115_remove,

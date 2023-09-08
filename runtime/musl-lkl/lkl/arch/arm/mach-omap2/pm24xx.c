@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * OMAP2 Power Management Routines
  *
@@ -13,9 +12,12 @@
  * Igor Stoppa <igor.stoppa@nokia.com>
  *
  * Based on pm.c for omap1
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 
-#include <linux/cpu_pm.h>
 #include <linux/suspend.h>
 #include <linux/sched.h>
 #include <linux/proc_fs.h>
@@ -27,6 +29,8 @@
 #include <linux/clk-provider.h>
 #include <linux/irq.h>
 #include <linux/time.h>
+#include <linux/gpio.h>
+#include <linux/platform_data/gpio-omap.h>
 
 #include <asm/fncpy.h>
 
@@ -83,6 +87,8 @@ static int omap2_enter_full_retention(void)
 	l = omap_ctrl_readl(OMAP2_CONTROL_DEVCONF0) | OMAP24XX_USBSTANDBYCTRL;
 	omap_ctrl_writel(l, OMAP2_CONTROL_DEVCONF0);
 
+	omap2_gpio_prepare_for_idle(0);
+
 	/* One last check for pending IRQs to avoid extra latency due
 	 * to sleeping unnecessarily. */
 	if (omap_irq_pending())
@@ -94,6 +100,8 @@ static int omap2_enter_full_retention(void)
 			   OMAP_SDRC_REGADDR(SDRC_POWER));
 
 no_sleep:
+	omap2_gpio_resume_after_idle();
+
 	clk_enable(osc_ck);
 
 	/* clear CORE wake-up events */
@@ -158,27 +166,25 @@ static int omap2_can_sleep(void)
 		return 0;
 	if (__clk_is_enabled(osc_ck))
 		return 0;
+	if (omap_dma_running())
+		return 0;
 
 	return 1;
 }
 
 static void omap2_pm_idle(void)
 {
-	int error;
+	if (!omap2_can_sleep()) {
+		if (omap_irq_pending())
+			return;
+		omap2_enter_mpu_retention();
+		return;
+	}
 
 	if (omap_irq_pending())
 		return;
 
-	error = cpu_cluster_pm_enter();
-	if (error || !omap2_can_sleep()) {
-		omap2_enter_mpu_retention();
-		goto out_cpu_cluster_pm;
-	}
-
 	omap2_enter_full_retention();
-
-out_cpu_cluster_pm:
-	cpu_cluster_pm_exit();
 }
 
 static void __init prcm_setup_regs(void)

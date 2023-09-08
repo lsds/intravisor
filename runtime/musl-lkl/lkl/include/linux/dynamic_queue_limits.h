@@ -38,8 +38,6 @@
 
 #ifdef __KERNEL__
 
-#include <asm/bug.h>
-
 struct dql {
 	/* Fields accessed in enqueue path (dql_queued) */
 	unsigned int	num_queued;		/* Total ever queued */

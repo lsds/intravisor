@@ -1,8 +1,11 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Mapping of DWARF debug register numbers into register names.
  *
  * Copyright (C) 2010 Will Deacon, ARM Ltd.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 
 #include <errno.h>
@@ -11,6 +14,7 @@
 #include <dwarf-regs.h>
 #include <linux/ptrace.h> /* for struct user_pt_regs */
 #include <linux/stringify.h>
+#include "util.h"
 
 struct pt_regs_dwarfnum {
 	const char *name;

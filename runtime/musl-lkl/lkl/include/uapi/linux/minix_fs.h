@@ -97,11 +97,11 @@ struct minix3_super_block {
 
 struct minix_dir_entry {
 	__u16 inode;
-	char name[];
+	char name[0];
 };
 
 struct minix3_dir_entry {
 	__u32 inode;
-	char name[];
+	char name[0];
 };
 #endif

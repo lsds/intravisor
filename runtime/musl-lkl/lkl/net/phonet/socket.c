@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * File: socket.c
  *
@@ -8,6 +7,20 @@
  *
  * Authors: Sakari Ailus <sakari.ailus@nokia.com>
  *          Rémi Denis-Courmont
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * version 2 as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
+ * 02110-1301 USA
  */
 
 #include <linux/gfp.h>
@@ -338,9 +351,9 @@ static __poll_t pn_socket_poll(struct file *file, struct socket *sock,
 
 	if (sk->sk_state == TCP_CLOSE)
 		return EPOLLERR;
-	if (!skb_queue_empty_lockless(&sk->sk_receive_queue))
+	if (!skb_queue_empty(&sk->sk_receive_queue))
 		mask |= EPOLLIN | EPOLLRDNORM;
-	if (!skb_queue_empty_lockless(&pn->ctrlreq_queue))
+	if (!skb_queue_empty(&pn->ctrlreq_queue))
 		mask |= EPOLLPRI;
 	if (!mask && sk->sk_state == TCP_CLOSE_WAIT)
 		return EPOLLHUP;
@@ -379,7 +392,8 @@ static int pn_socket_ioctl(struct socket *sock, unsigned int cmd,
 			saddr = PN_NO_ADDR;
 		release_sock(sk);
 
-		dev_put(dev);
+		if (dev)
+			dev_put(dev);
 		if (saddr == PN_NO_ADDR)
 			return -EHOSTUNREACH;
 
@@ -438,6 +452,12 @@ const struct proto_ops phonet_dgram_ops = {
 	.ioctl		= pn_socket_ioctl,
 	.listen		= sock_no_listen,
 	.shutdown	= sock_no_shutdown,
+	.setsockopt	= sock_no_setsockopt,
+	.getsockopt	= sock_no_getsockopt,
+#ifdef CONFIG_COMPAT
+	.compat_setsockopt = sock_no_setsockopt,
+	.compat_getsockopt = sock_no_getsockopt,
+#endif
 	.sendmsg	= pn_socket_sendmsg,
 	.recvmsg	= sock_common_recvmsg,
 	.mmap		= sock_no_mmap,
@@ -459,6 +479,10 @@ const struct proto_ops phonet_stream_ops = {
 	.shutdown	= sock_no_shutdown,
 	.setsockopt	= sock_common_setsockopt,
 	.getsockopt	= sock_common_getsockopt,
+#ifdef CONFIG_COMPAT
+	.compat_setsockopt = compat_sock_common_setsockopt,
+	.compat_getsockopt = compat_sock_common_getsockopt,
+#endif
 	.sendmsg	= pn_socket_sendmsg,
 	.recvmsg	= sock_common_recvmsg,
 	.mmap		= sock_no_mmap,
@@ -583,7 +607,7 @@ static int pn_sock_seq_show(struct seq_file *seq, void *v)
 		struct pn_sock *pn = pn_sk(sk);
 
 		seq_printf(seq, "%2d %04X:%04X:%02X %02X %08X:%08X %5d %lu "
-			"%d %pK %u",
+			"%d %pK %d",
 			sk->sk_protocol, pn->sobject, pn->dobject,
 			pn->resource, sk->sk_state,
 			sk_wmem_alloc_get(sk), sk_rmem_alloc_get(sk),
@@ -596,11 +620,24 @@ static int pn_sock_seq_show(struct seq_file *seq, void *v)
 	return 0;
 }
 
-const struct seq_operations pn_sock_seq_ops = {
+static const struct seq_operations pn_sock_seq_ops = {
 	.start = pn_sock_seq_start,
 	.next = pn_sock_seq_next,
 	.stop = pn_sock_seq_stop,
 	.show = pn_sock_seq_show,
+};
+
+static int pn_sock_open(struct inode *inode, struct file *file)
+{
+	return seq_open_net(inode, file, &pn_sock_seq_ops,
+				sizeof(struct seq_net_private));
+}
+
+const struct file_operations pn_sock_seq_fops = {
+	.open = pn_sock_open,
+	.read = seq_read,
+	.llseek = seq_lseek,
+	.release = seq_release_net,
 };
 #endif
 
@@ -765,10 +802,23 @@ static int pn_res_seq_show(struct seq_file *seq, void *v)
 	return 0;
 }
 
-const struct seq_operations pn_res_seq_ops = {
+static const struct seq_operations pn_res_seq_ops = {
 	.start = pn_res_seq_start,
 	.next = pn_res_seq_next,
 	.stop = pn_res_seq_stop,
 	.show = pn_res_seq_show,
+};
+
+static int pn_res_open(struct inode *inode, struct file *file)
+{
+	return seq_open_net(inode, file, &pn_res_seq_ops,
+				sizeof(struct seq_net_private));
+}
+
+const struct file_operations pn_res_seq_fops = {
+	.open = pn_res_open,
+	.read = seq_read,
+	.llseek = seq_lseek,
+	.release = seq_release_net,
 };
 #endif

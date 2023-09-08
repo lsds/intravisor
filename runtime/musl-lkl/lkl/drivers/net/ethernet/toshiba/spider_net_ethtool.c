@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Network device driver for Cell Processor-Based Blade
  *
@@ -6,6 +5,20 @@
  *
  * Authors : Utz Bacher <utz.bacher@de.ibm.com>
  *           Jens Osterkamp <Jens.Osterkamp@de.ibm.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2, or (at your option)
+ * any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
 #include <linux/netdevice.h>
@@ -63,12 +76,12 @@ spider_net_ethtool_get_drvinfo(struct net_device *netdev,
 	card = netdev_priv(netdev);
 
 	/* clear and fill out info */
-	strscpy(drvinfo->driver, spider_net_driver_name,
+	strlcpy(drvinfo->driver, spider_net_driver_name,
 		sizeof(drvinfo->driver));
-	strscpy(drvinfo->version, VERSION, sizeof(drvinfo->version));
-	strscpy(drvinfo->fw_version, "no information",
+	strlcpy(drvinfo->version, VERSION, sizeof(drvinfo->version));
+	strlcpy(drvinfo->fw_version, "no information",
 		sizeof(drvinfo->fw_version));
-	strscpy(drvinfo->bus_info, pci_name(card->pdev),
+	strlcpy(drvinfo->bus_info, pci_name(card->pdev),
 		sizeof(drvinfo->bus_info));
 }
 
@@ -110,9 +123,7 @@ spider_net_ethtool_nway_reset(struct net_device *netdev)
 
 static void
 spider_net_ethtool_get_ringparam(struct net_device *netdev,
-				 struct ethtool_ringparam *ering,
-				 struct kernel_ethtool_ringparam *kernel_ering,
-				 struct netlink_ext_ack *extack)
+				 struct ethtool_ringparam *ering)
 {
 	struct spider_net_card *card = netdev_priv(netdev);
 

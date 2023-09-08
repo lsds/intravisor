@@ -1,7 +1,20 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * emc2103.c - Support for SMSC EMC2103
  * Copyright (c) 2010 SMSC
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
 #include <linux/module.h>
@@ -172,7 +185,7 @@ static struct emc2103_data *emc2103_update_device(struct device *dev)
 }
 
 static ssize_t
-temp_show(struct device *dev, struct device_attribute *da, char *buf)
+show_temp(struct device *dev, struct device_attribute *da, char *buf)
 {
 	int nr = to_sensor_dev_attr(da)->index;
 	struct emc2103_data *data = emc2103_update_device(dev);
@@ -182,7 +195,7 @@ temp_show(struct device *dev, struct device_attribute *da, char *buf)
 }
 
 static ssize_t
-temp_min_show(struct device *dev, struct device_attribute *da, char *buf)
+show_temp_min(struct device *dev, struct device_attribute *da, char *buf)
 {
 	int nr = to_sensor_dev_attr(da)->index;
 	struct emc2103_data *data = emc2103_update_device(dev);
@@ -191,7 +204,7 @@ temp_min_show(struct device *dev, struct device_attribute *da, char *buf)
 }
 
 static ssize_t
-temp_max_show(struct device *dev, struct device_attribute *da, char *buf)
+show_temp_max(struct device *dev, struct device_attribute *da, char *buf)
 {
 	int nr = to_sensor_dev_attr(da)->index;
 	struct emc2103_data *data = emc2103_update_device(dev);
@@ -200,7 +213,7 @@ temp_max_show(struct device *dev, struct device_attribute *da, char *buf)
 }
 
 static ssize_t
-temp_fault_show(struct device *dev, struct device_attribute *da, char *buf)
+show_temp_fault(struct device *dev, struct device_attribute *da, char *buf)
 {
 	int nr = to_sensor_dev_attr(da)->index;
 	struct emc2103_data *data = emc2103_update_device(dev);
@@ -209,8 +222,7 @@ temp_fault_show(struct device *dev, struct device_attribute *da, char *buf)
 }
 
 static ssize_t
-temp_min_alarm_show(struct device *dev, struct device_attribute *da,
-		    char *buf)
+show_temp_min_alarm(struct device *dev, struct device_attribute *da, char *buf)
 {
 	int nr = to_sensor_dev_attr(da)->index;
 	struct emc2103_data *data = emc2103_update_device(dev);
@@ -219,8 +231,7 @@ temp_min_alarm_show(struct device *dev, struct device_attribute *da,
 }
 
 static ssize_t
-temp_max_alarm_show(struct device *dev, struct device_attribute *da,
-		    char *buf)
+show_temp_max_alarm(struct device *dev, struct device_attribute *da, char *buf)
 {
 	int nr = to_sensor_dev_attr(da)->index;
 	struct emc2103_data *data = emc2103_update_device(dev);
@@ -228,8 +239,8 @@ temp_max_alarm_show(struct device *dev, struct device_attribute *da,
 	return sprintf(buf, "%d\n", alarm ? 1 : 0);
 }
 
-static ssize_t temp_min_store(struct device *dev, struct device_attribute *da,
-			      const char *buf, size_t count)
+static ssize_t set_temp_min(struct device *dev, struct device_attribute *da,
+			    const char *buf, size_t count)
 {
 	int nr = to_sensor_dev_attr(da)->index;
 	struct emc2103_data *data = dev_get_drvdata(dev);
@@ -250,8 +261,8 @@ static ssize_t temp_min_store(struct device *dev, struct device_attribute *da,
 	return count;
 }
 
-static ssize_t temp_max_store(struct device *dev, struct device_attribute *da,
-			      const char *buf, size_t count)
+static ssize_t set_temp_max(struct device *dev, struct device_attribute *da,
+			    const char *buf, size_t count)
 {
 	int nr = to_sensor_dev_attr(da)->index;
 	struct emc2103_data *data = dev_get_drvdata(dev);
@@ -443,7 +454,7 @@ static ssize_t pwm1_enable_store(struct device *dev,
 	}
 
 	result = read_u8_from_i2c(client, REG_FAN_CONF1, &conf_reg);
-	if (result < 0) {
+	if (result) {
 		count = result;
 		goto err;
 	}
@@ -459,33 +470,49 @@ err:
 	return count;
 }
 
-static SENSOR_DEVICE_ATTR_RO(temp1_input, temp, 0);
-static SENSOR_DEVICE_ATTR_RW(temp1_min, temp_min, 0);
-static SENSOR_DEVICE_ATTR_RW(temp1_max, temp_max, 0);
-static SENSOR_DEVICE_ATTR_RO(temp1_fault, temp_fault, 0);
-static SENSOR_DEVICE_ATTR_RO(temp1_min_alarm, temp_min_alarm, 0);
-static SENSOR_DEVICE_ATTR_RO(temp1_max_alarm, temp_max_alarm, 0);
+static SENSOR_DEVICE_ATTR(temp1_input, S_IRUGO, show_temp, NULL, 0);
+static SENSOR_DEVICE_ATTR(temp1_min, S_IRUGO | S_IWUSR, show_temp_min,
+	set_temp_min, 0);
+static SENSOR_DEVICE_ATTR(temp1_max, S_IRUGO | S_IWUSR, show_temp_max,
+	set_temp_max, 0);
+static SENSOR_DEVICE_ATTR(temp1_fault, S_IRUGO, show_temp_fault, NULL, 0);
+static SENSOR_DEVICE_ATTR(temp1_min_alarm, S_IRUGO, show_temp_min_alarm,
+	NULL, 0);
+static SENSOR_DEVICE_ATTR(temp1_max_alarm, S_IRUGO, show_temp_max_alarm,
+	NULL, 0);
 
-static SENSOR_DEVICE_ATTR_RO(temp2_input, temp, 1);
-static SENSOR_DEVICE_ATTR_RW(temp2_min, temp_min, 1);
-static SENSOR_DEVICE_ATTR_RW(temp2_max, temp_max, 1);
-static SENSOR_DEVICE_ATTR_RO(temp2_fault, temp_fault, 1);
-static SENSOR_DEVICE_ATTR_RO(temp2_min_alarm, temp_min_alarm, 1);
-static SENSOR_DEVICE_ATTR_RO(temp2_max_alarm, temp_max_alarm, 1);
+static SENSOR_DEVICE_ATTR(temp2_input, S_IRUGO, show_temp, NULL, 1);
+static SENSOR_DEVICE_ATTR(temp2_min, S_IRUGO | S_IWUSR, show_temp_min,
+	set_temp_min, 1);
+static SENSOR_DEVICE_ATTR(temp2_max, S_IRUGO | S_IWUSR, show_temp_max,
+	set_temp_max, 1);
+static SENSOR_DEVICE_ATTR(temp2_fault, S_IRUGO, show_temp_fault, NULL, 1);
+static SENSOR_DEVICE_ATTR(temp2_min_alarm, S_IRUGO, show_temp_min_alarm,
+	NULL, 1);
+static SENSOR_DEVICE_ATTR(temp2_max_alarm, S_IRUGO, show_temp_max_alarm,
+	NULL, 1);
 
-static SENSOR_DEVICE_ATTR_RO(temp3_input, temp, 2);
-static SENSOR_DEVICE_ATTR_RW(temp3_min, temp_min, 2);
-static SENSOR_DEVICE_ATTR_RW(temp3_max, temp_max, 2);
-static SENSOR_DEVICE_ATTR_RO(temp3_fault, temp_fault, 2);
-static SENSOR_DEVICE_ATTR_RO(temp3_min_alarm, temp_min_alarm, 2);
-static SENSOR_DEVICE_ATTR_RO(temp3_max_alarm, temp_max_alarm, 2);
+static SENSOR_DEVICE_ATTR(temp3_input, S_IRUGO, show_temp, NULL, 2);
+static SENSOR_DEVICE_ATTR(temp3_min, S_IRUGO | S_IWUSR, show_temp_min,
+	set_temp_min, 2);
+static SENSOR_DEVICE_ATTR(temp3_max, S_IRUGO | S_IWUSR, show_temp_max,
+	set_temp_max, 2);
+static SENSOR_DEVICE_ATTR(temp3_fault, S_IRUGO, show_temp_fault, NULL, 2);
+static SENSOR_DEVICE_ATTR(temp3_min_alarm, S_IRUGO, show_temp_min_alarm,
+	NULL, 2);
+static SENSOR_DEVICE_ATTR(temp3_max_alarm, S_IRUGO, show_temp_max_alarm,
+	NULL, 2);
 
-static SENSOR_DEVICE_ATTR_RO(temp4_input, temp, 3);
-static SENSOR_DEVICE_ATTR_RW(temp4_min, temp_min, 3);
-static SENSOR_DEVICE_ATTR_RW(temp4_max, temp_max, 3);
-static SENSOR_DEVICE_ATTR_RO(temp4_fault, temp_fault, 3);
-static SENSOR_DEVICE_ATTR_RO(temp4_min_alarm, temp_min_alarm, 3);
-static SENSOR_DEVICE_ATTR_RO(temp4_max_alarm, temp_max_alarm, 3);
+static SENSOR_DEVICE_ATTR(temp4_input, S_IRUGO, show_temp, NULL, 3);
+static SENSOR_DEVICE_ATTR(temp4_min, S_IRUGO | S_IWUSR, show_temp_min,
+	set_temp_min, 3);
+static SENSOR_DEVICE_ATTR(temp4_max, S_IRUGO | S_IWUSR, show_temp_max,
+	set_temp_max, 3);
+static SENSOR_DEVICE_ATTR(temp4_fault, S_IRUGO, show_temp_fault, NULL, 3);
+static SENSOR_DEVICE_ATTR(temp4_min_alarm, S_IRUGO, show_temp_min_alarm,
+	NULL, 3);
+static SENSOR_DEVICE_ATTR(temp4_max_alarm, S_IRUGO, show_temp_max_alarm,
+	NULL, 3);
 
 static DEVICE_ATTR_RO(fan1_input);
 static DEVICE_ATTR_RW(fan1_div);
@@ -551,7 +578,7 @@ static const struct attribute_group emc2103_temp4_group = {
 };
 
 static int
-emc2103_probe(struct i2c_client *client)
+emc2103_probe(struct i2c_client *client, const struct i2c_device_id *id)
 {
 	struct emc2103_data *data;
 	struct device *hwmon_dev;
@@ -643,7 +670,7 @@ emc2103_detect(struct i2c_client *new_client, struct i2c_board_info *info)
 	if ((product != 0x24) && (product != 0x26))
 		return -ENODEV;
 
-	strscpy(info->type, "emc2103", I2C_NAME_SIZE);
+	strlcpy(info->type, "emc2103", I2C_NAME_SIZE);
 
 	return 0;
 }
@@ -653,7 +680,7 @@ static struct i2c_driver emc2103_driver = {
 	.driver = {
 		.name	= "emc2103",
 	},
-	.probe_new	= emc2103_probe,
+	.probe		= emc2103_probe,
 	.id_table	= emc2103_ids,
 	.detect		= emc2103_detect,
 	.address_list	= normal_i2c,

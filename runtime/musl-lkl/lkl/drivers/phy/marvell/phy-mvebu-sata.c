@@ -1,12 +1,16 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  *	phy-mvebu-sata.c: SATA Phy driver for the Marvell mvebu SoCs.
  *
  *	Copyright (C) 2013 Andrew Lunn <andrew@lunn.ch>
+ *
+ *	This program is free software; you can redistribute it and/or
+ *	modify it under the terms of the GNU General Public License
+ *	as published by the Free Software Foundation; either version
+ *	2 of the License, or (at your option) any later version.
  */
 
 #include <linux/kernel.h>
-#include <linux/init.h>
+#include <linux/module.h>
 #include <linux/clk.h>
 #include <linux/phy/phy.h>
 #include <linux/io.h>
@@ -80,6 +84,7 @@ static const struct phy_ops phy_mvebu_sata_ops = {
 static int phy_mvebu_sata_probe(struct platform_device *pdev)
 {
 	struct phy_provider *phy_provider;
+	struct resource *res;
 	struct priv *priv;
 	struct phy *phy;
 
@@ -87,7 +92,8 @@ static int phy_mvebu_sata_probe(struct platform_device *pdev)
 	if (!priv)
 		return -ENOMEM;
 
-	priv->base = devm_platform_ioremap_resource(pdev, 0);
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	priv->base = devm_ioremap_resource(&pdev->dev, res);
 	if (IS_ERR(priv->base))
 		return PTR_ERR(priv->base);
 
@@ -116,6 +122,7 @@ static const struct of_device_id phy_mvebu_sata_of_match[] = {
 	{ .compatible = "marvell,mvebu-sata-phy" },
 	{ },
 };
+MODULE_DEVICE_TABLE(of, phy_mvebu_sata_of_match);
 
 static struct platform_driver phy_mvebu_sata_driver = {
 	.probe	= phy_mvebu_sata_probe,
@@ -124,4 +131,8 @@ static struct platform_driver phy_mvebu_sata_driver = {
 		.of_match_table	= phy_mvebu_sata_of_match,
 	}
 };
-builtin_platform_driver(phy_mvebu_sata_driver);
+module_platform_driver(phy_mvebu_sata_driver);
+
+MODULE_AUTHOR("Andrew Lunn <andrew@lunn.ch>");
+MODULE_DESCRIPTION("Marvell MVEBU SATA PHY driver");
+MODULE_LICENSE("GPL v2");

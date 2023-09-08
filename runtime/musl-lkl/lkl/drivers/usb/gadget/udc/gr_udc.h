@@ -8,7 +8,7 @@
  * GRLIB VHDL IP core library.
  *
  * Full documentation of the GRUSBDC core can be found here:
- * https://www.gaisler.com/products/grlib/grip.pdf
+ * http://www.gaisler.com/products/grlib/grip.pdf
  *
  * Contributors:
  * - Andreas Larsson <andreas@gaisler.com>
@@ -215,6 +215,9 @@ struct gr_udc {
 	struct list_head ep_list;
 
 	spinlock_t lock; /* General lock, a.k.a. "dev->lock" in comments */
+
+	struct dentry *dfs_root;
+	struct dentry *dfs_state;
 };
 
 #define to_gr_udc(gadget)	(container_of((gadget), struct gr_udc, gadget))

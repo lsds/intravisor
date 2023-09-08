@@ -1,6 +1,11 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
+ *  linux/fs/partitions/acorn.c
+ *
  *  Copyright (c) 1996-2000 Russell King.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  *
  *  Scan ADFS partitions on hard disk drives.  Unfortunately, there
  *  isn't a standard for partitioning drives on Acorn machines, so
@@ -11,6 +16,7 @@
 #include <linux/adfs_fs.h>
 
 #include "check.h"
+#include "acorn.h"
 
 /*
  * Partition types. (Oh for reusability)
@@ -275,20 +281,20 @@ int adfspart_check_ADFS(struct parsed_partitions *state)
 	/*
 	 * Work out start of non-adfs partition.
 	 */
-	nr_sects = get_capacity(state->disk) - start_sect;
+	nr_sects = (state->bdev->bd_inode->i_size >> 9) - start_sect;
 
 	if (start_sect) {
 		switch (id) {
 #ifdef CONFIG_ACORN_PARTITION_RISCIX
 		case PARTITION_RISCIX_SCSI:
 		case PARTITION_RISCIX_MFM:
-			riscix_partition(state, start_sect, slot,
+			slot = riscix_partition(state, start_sect, slot,
 						nr_sects);
 			break;
 #endif
 
 		case PARTITION_LINUX:
-			linux_partition(state, start_sect, slot,
+			slot = linux_partition(state, start_sect, slot,
 					       nr_sects);
 			break;
 		}
@@ -540,7 +546,7 @@ int adfspart_check_EESOX(struct parsed_partitions *state)
 	if (i != 0) {
 		sector_t size;
 
-		size = get_capacity(state->disk);
+		size = get_capacity(state->bdev->bd_disk);
 		put_partition(state, slot++, start, size - start);
 		strlcat(state->pp_buf, "\n", PAGE_SIZE);
 	}

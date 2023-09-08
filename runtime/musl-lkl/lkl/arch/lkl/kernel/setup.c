@@ -1,3 +1,4 @@
+#include <linux/moduleloader.h>
 #include <linux/binfmts.h>
 #include <linux/init.h>
 #include <linux/init_task.h>
@@ -6,7 +7,9 @@
 #include <linux/fs.h>
 #include <linux/start_kernel.h>
 #include <linux/syscalls.h>
+#include <linux/platform_device.h>
 #include <linux/tick.h>
+#include <linux/virtio_console.h>
 #include <asm/host_ops.h>
 #include <asm/irq.h>
 #include <asm/unistd.h>
@@ -19,6 +22,30 @@ static void *init_sem;
 static int is_running;
 void (*pm_power_off)(void) = NULL;
 static unsigned long mem_size = 64 * 1024 * 1024;
+
+#ifdef CONFIG_VIRTIO_CONSOLE
+/* In the early stage of bootup when virtio console driver is not ready
+ * then arch needs to provide a mechanism for printing the early console
+ * messages. LKL will use the print (callback) registered during bootup.
+ * Check description of print cb provided by host for detailed information
+ */
+static int lkl_early_put_chars(u32 vtermno, const char *buf, int count)
+{
+	if (lkl_ops->print)
+		lkl_ops->print(buf, count);
+	return 0;
+}
+#endif
+
+/* Default DMA mask, this will be updated during initialization */
+static u64 _lkl_dma_mask = 0xffffffffUL;
+
+/* Assign memory for dma_mask. Overide weak interface defined
+ * in the base platfrom driver */
+void arch_setup_pdev_archdata(struct platform_device *pdev)
+{
+    pdev->dev.dma_mask = &_lkl_dma_mask;
+}
 
 long lkl_panic_blink(int state)
 {
@@ -48,47 +75,21 @@ static void __init lkl_run_kernel(void *arg)
 	start_kernel();
 }
 
-static char *cmd_line_ptr __initdata = boot_command_line;
-static int cmd_line_len __initdata = COMMAND_LINE_SIZE;
-
-static __init void cmd_line_append_va(const char *fmt, va_list ap)
-{
-	int ret;
-
-	ret = vsnprintf(cmd_line_ptr, cmd_line_len, fmt, ap);
-
-	if (ret > 0) {
-		cmd_line_ptr += ret;
-		cmd_line_len -= ret;
-	}
-}
-
-static inline __init void cmd_line_append(const char *fmt, ...)
-{
-	va_list ap;
-
-	va_start(ap, fmt);
-	cmd_line_append_va(fmt, ap);
-	va_end(ap);
-}
-
 int __init lkl_start_kernel(struct lkl_host_operations *ops,
 			const char *fmt, ...)
 {
+	va_list ap;
 	int ret;
 
 	lkl_ops = ops;
 
-	va_list ap;
-
-	cmd_line_append("%s ", CONFIG_BUILTIN_CMDLINE);
-
 	va_start(ap, fmt);
-	cmd_line_append_va(fmt, ap);
+	ret = vsnprintf(boot_command_line, COMMAND_LINE_SIZE, fmt, ap);
 	va_end(ap);
 
-	if (lkl_ops->virtio_devices)
-		cmd_line_append("%s", lkl_ops->virtio_devices);
+	if (ops->virtio_devices)
+		strscpy(boot_command_line + ret, ops->virtio_devices,
+			COMMAND_LINE_SIZE - ret);
 
 	memcpy(cmd_line, boot_command_line, COMMAND_LINE_SIZE);
 
@@ -100,6 +101,10 @@ int __init lkl_start_kernel(struct lkl_host_operations *ops,
 	if (ret)
 		goto out_free_init_sem;
 
+#ifdef CONFIG_VIRTIO_CONSOLE
+	virtio_cons_early_init(lkl_early_put_chars);
+#endif
+
 	ret = lkl_ops->thread_create(lkl_run_kernel, NULL);
 	if (!ret) {
 		ret = -ENOMEM;
@@ -110,6 +115,9 @@ int __init lkl_start_kernel(struct lkl_host_operations *ops,
 	lkl_ops->sem_free(init_sem);
 	current_thread_info()->tid = lkl_ops->thread_self();
 	lkl_cpu_change_owner(current_thread_info()->tid);
+
+	/* Create parent host task for system calls with new pid */
+	host0_init();
 
 	lkl_cpu_put();
 	is_running = 1;
@@ -129,6 +137,11 @@ int lkl_is_running(void)
 
 void machine_halt(void)
 {
+	/* 
+	 * All lkl_cpu_shutdown does is set cpu.shutdown_gate to MAX_THREADS
+	 * as a flag. It does return and so machine_halt will return too.
+	 */
+	
 	lkl_cpu_shutdown();
 }
 
@@ -149,22 +162,39 @@ long lkl_sys_halt(void)
 		LINUX_REBOOT_MAGIC2, LINUX_REBOOT_CMD_RESTART, };
 
 	err = lkl_syscall(__NR_reboot, params);
-	if (err < 0)
+
+	/*
+		This code does get run even though machine_halt (above)
+		is called.
+	*/
+
+	if (err < 0) {
+		LKL_TRACE("sys_reboot failed (err=%i)\n", err);
 		return err;
+	}
 
 	is_running = false;
 
-	lkl_cpu_wait_shutdown();
+	/**
+	 * TODO: We may have cloned host threads that did not terminate,
+	 * and prevent us from shutting down the LKL CPU.
+	 *
+	 * As a workaround, we do not shutdown all threads.
+	 */
 
-	syscalls_cleanup();
-	threads_cleanup();
+	//lkl_cpu_wait_shutdown();
+
+	//syscalls_cleanup();
+
+	// threads_cleanup();
 	/* Shutdown the clockevents source. */
-	tick_suspend_local();
-	free_mem();
-	lkl_ops->thread_join(current_thread_info()->tid);
+	//tick_suspend_local();
+	//free_mem();
+	//lkl_ops->thread_join(current_thread_info()->tid);
 
 	return 0;
 }
+
 
 static int lkl_run_init(struct linux_binprm *bprm);
 
@@ -180,11 +210,12 @@ static int lkl_run_init(struct linux_binprm *bprm)
 	if (strcmp("/init", bprm->filename) != 0)
 		return -EINVAL;
 
-	ret = begin_new_exec(bprm);
+	ret = flush_old_exec(bprm);
 	if (ret)
 		return ret;
 	set_personality(PER_LINUX);
 	setup_new_exec(bprm);
+	install_exec_creds(bprm);
 
 	set_binfmt(&lkl_run_init_binfmt);
 
@@ -204,11 +235,7 @@ static int __init fs_setup(void)
 {
 	int fd;
 
-	// Pad '/init' to make sure it's 8 bytes, otherwise KASan would
-	// emit an error. The kernel's strncpy implementation attempts to read
-	// 8 bytes at once and, thus, triggers KASan violation for the 6-byte
-	// string.
-	fd = sys_open("/init\0\0", O_CREAT, 0700);
+	fd = sys_open("/init", O_CREAT, 0700);
 	WARN_ON(fd < 0);
 	sys_close(fd);
 

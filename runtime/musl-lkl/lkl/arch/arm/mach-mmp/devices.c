@@ -1,6 +1,9 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * linux/arch/arm/mach-mmp/devices.c
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 
 #include <linux/init.h>
@@ -11,10 +14,10 @@
 #include <asm/irq.h>
 #include "irqs.h"
 #include "devices.h"
-#include <linux/soc/mmp/cputype.h>
+#include "cputype.h"
 #include "regs-usb.h"
 
-int __init mmp_register_device(struct mmp_device_desc *desc,
+int __init pxa_register_device(struct pxa_device_desc *desc,
 				void *data, size_t size)
 {
 	struct platform_device *pdev;
@@ -237,29 +240,8 @@ void pxa_usb_phy_deinit(void __iomem *phy_reg)
 #if IS_ENABLED(CONFIG_USB_SUPPORT)
 static u64 __maybe_unused usb_dma_mask = ~(u32)0;
 
-#if IS_ENABLED(CONFIG_PHY_PXA_USB)
-static struct resource pxa168_usb_phy_resources[] = {
-	[0] = {
-		.start	= PXA168_U2O_PHYBASE,
-		.end	= PXA168_U2O_PHYBASE + USB_PHY_RANGE,
-		.flags	= IORESOURCE_MEM,
-	},
-};
-
-struct platform_device pxa168_device_usb_phy = {
-	.name		= "pxa-usb-phy",
-	.id		= -1,
-	.resource	= pxa168_usb_phy_resources,
-	.num_resources	= ARRAY_SIZE(pxa168_usb_phy_resources),
-	.dev		=  {
-		.dma_mask	= &usb_dma_mask,
-		.coherent_dma_mask = 0xffffffff,
-	}
-};
-#endif /* CONFIG_PHY_PXA_USB */
-
 #if IS_ENABLED(CONFIG_USB_MV_UDC)
-static struct resource pxa168_u2o_resources[] = {
+struct resource pxa168_u2o_resources[] = {
 	/* regbase */
 	[0] = {
 		.start	= PXA168_U2O_REGBASE + U2x_CAPREGS_OFFSET,
@@ -294,13 +276,22 @@ struct platform_device pxa168_device_u2o = {
 #endif /* CONFIG_USB_MV_UDC */
 
 #if IS_ENABLED(CONFIG_USB_EHCI_MV_U2O)
-static struct resource pxa168_u2oehci_resources[] = {
+struct resource pxa168_u2oehci_resources[] = {
+	/* regbase */
 	[0] = {
-		.start	= PXA168_U2O_REGBASE,
+		.start	= PXA168_U2O_REGBASE + U2x_CAPREGS_OFFSET,
 		.end	= PXA168_U2O_REGBASE + USB_REG_RANGE,
 		.flags	= IORESOURCE_MEM,
+		.name	= "capregs",
 	},
+	/* phybase */
 	[1] = {
+		.start	= PXA168_U2O_PHYBASE,
+		.end	= PXA168_U2O_PHYBASE + USB_PHY_RANGE,
+		.flags	= IORESOURCE_MEM,
+		.name	= "phyregs",
+	},
+	[2] = {
 		.start	= IRQ_PXA168_USB1,
 		.end	= IRQ_PXA168_USB1,
 		.flags	= IORESOURCE_IRQ,
@@ -321,7 +312,7 @@ struct platform_device pxa168_device_u2oehci = {
 #endif
 
 #if IS_ENABLED(CONFIG_USB_MV_OTG)
-static struct resource pxa168_u2ootg_resources[] = {
+struct resource pxa168_u2ootg_resources[] = {
 	/* regbase */
 	[0] = {
 		.start	= PXA168_U2O_REGBASE + U2x_CAPREGS_OFFSET,

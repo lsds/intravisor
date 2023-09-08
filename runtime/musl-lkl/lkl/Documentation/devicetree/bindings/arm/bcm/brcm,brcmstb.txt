@@ -187,8 +187,11 @@ Required properties:
 Sequencer DRAM parameters and control registers. Used for Self-Refresh
 Power-Down (SRPD), among other things.
 
-See Documentation/devicetree/bindings/memory-controllers/brcm,brcmstb-memc-ddr.yaml for a
-full list of supported compatible strings and properties.
+Required properties:
+- compatible     : should contain one of these
+	"brcm,brcmstb-memc-ddr-rev-b.2.2"
+	"brcm,brcmstb-memc-ddr"
+- reg            : the MEMC DDR register range
 
 Example:
 

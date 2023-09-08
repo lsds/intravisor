@@ -3,9 +3,9 @@
 #define _NF_NAT_HELPER_H
 /* NAT protocol helper routines. */
 
-#include <linux/skbuff.h>
 #include <net/netfilter/nf_conntrack.h>
-#include <net/netfilter/nf_conntrack_expect.h>
+
+struct sk_buff;
 
 /* These return true or false. */
 bool __nf_nat_mangle_tcp_packet(struct sk_buff *skb, struct nf_conn *ct,
@@ -38,5 +38,4 @@ bool nf_nat_mangle_udp_packet(struct sk_buff *skb, struct nf_conn *ct,
  * to port ct->master->saved_proto. */
 void nf_nat_follow_master(struct nf_conn *ct, struct nf_conntrack_expect *this);
 
-u16 nf_nat_exp_find_port(struct nf_conntrack_expect *exp, u16 port);
 #endif

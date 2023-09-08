@@ -2,10 +2,6 @@
 #ifndef _NET_MRP_H
 #define _NET_MRP_H
 
-#include <linux/netdevice.h>
-#include <linux/skbuff.h>
-#include <linux/types.h>
-
 #define MRP_END_MARK		0x0
 
 struct mrp_pdu_hdr {
@@ -43,7 +39,7 @@ struct mrp_skb_cb {
 static inline struct mrp_skb_cb *mrp_cb(struct sk_buff *skb)
 {
 	BUILD_BUG_ON(sizeof(struct mrp_skb_cb) >
-		     sizeof_field(struct sk_buff, cb));
+		     FIELD_SIZEOF(struct sk_buff, cb));
 	return (struct mrp_skb_cb *)skb->cb;
 }
 

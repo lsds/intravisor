@@ -10,7 +10,10 @@
  *
  */
 
+#include "../perf.h"
+#include "../util/util.h"
 #include <subcmd/parse-options.h>
+#include "../builtin.h"
 #include "bench.h"
 
 /* Test groups of 20 processes spraying to 20 receivers */
@@ -40,7 +43,7 @@ struct sender_context {
 	unsigned int num_fds;
 	int ready_out;
 	int wakefd;
-	int out_fds[];
+	int out_fds[0];
 };
 
 struct receiver_context {
@@ -66,10 +69,11 @@ static void fdpair(int fds[2])
 /* Block until we're ready to go */
 static void ready(int ready_out, int wakefd)
 {
+	char dummy;
 	struct pollfd pollfd = { .fd = wakefd, .events = POLLIN };
 
 	/* Tell them we're ready. */
-	if (write(ready_out, "R", 1) != 1)
+	if (write(ready_out, &dummy, 1) != 1)
 		err(EXIT_FAILURE, "CLIENT: ready write");
 
 	/* Wait for "GO" signal */
@@ -84,7 +88,6 @@ static void *sender(struct sender_context *ctx)
 	unsigned int i, j;
 
 	ready(ctx->ready_out, ctx->wakefd);
-	memset(data, 'S', sizeof(data));
 
 	/* Now pump to every receiver. */
 	for (i = 0; i < nr_loops; i++) {
@@ -309,11 +312,11 @@ int bench_sched_messaging(int argc, const char **argv)
 		       num_groups, num_groups * 2 * num_fds,
 		       thread_mode ? "threads" : "processes");
 		printf(" %14s: %lu.%03lu [sec]\n", "Total time",
-		       (unsigned long) diff.tv_sec,
+		       diff.tv_sec,
 		       (unsigned long) (diff.tv_usec / USEC_PER_MSEC));
 		break;
 	case BENCH_FORMAT_SIMPLE:
-		printf("%lu.%03lu\n", (unsigned long) diff.tv_sec,
+		printf("%lu.%03lu\n", diff.tv_sec,
 		       (unsigned long) (diff.tv_usec / USEC_PER_MSEC));
 		break;
 	default:

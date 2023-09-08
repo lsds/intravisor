@@ -353,7 +353,7 @@ fail_ctrl_tx:
 	return status;
 }
 
-netdev_tx_t ath6kl_data_tx(struct sk_buff *skb, struct net_device *dev)
+int ath6kl_data_tx(struct sk_buff *skb, struct net_device *dev)
 {
 	struct ath6kl *ar = ath6kl_priv(dev);
 	struct ath6kl_cookie *cookie = NULL;
@@ -839,7 +839,7 @@ static void ath6kl_deliver_frames_to_nw_stack(struct net_device *dev,
 
 	skb->protocol = eth_type_trans(skb, skb->dev);
 
-	netif_rx(skb);
+	netif_rx_ni(skb);
 }
 
 static void ath6kl_alloc_netbufs(struct sk_buff_head *q, u16 num)
@@ -1701,6 +1701,7 @@ void aggr_recv_addba_req_evt(struct ath6kl_vif *vif, u8 tid_mux, u16 seq_no,
 	struct ath6kl_sta *sta;
 	struct aggr_info_conn *aggr_conn = NULL;
 	struct rxtid *rxtid;
+	struct rxtid_stats *stats;
 	u16 hold_q_size;
 	u8 tid, aid;
 
@@ -1721,6 +1722,7 @@ void aggr_recv_addba_req_evt(struct ath6kl_vif *vif, u8 tid_mux, u16 seq_no,
 		return;
 
 	rxtid = &aggr_conn->rx_tid[tid];
+	stats = &aggr_conn->stat[tid];
 
 	if (win_sz < AGGR_WIN_SZ_MIN || win_sz > AGGR_WIN_SZ_MAX)
 		ath6kl_dbg(ATH6KL_DBG_WLAN_RX, "%s: win_sz %d, tid %d\n",

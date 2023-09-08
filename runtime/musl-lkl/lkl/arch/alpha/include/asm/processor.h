@@ -11,6 +11,12 @@
 #include <linux/personality.h>	/* for ADDR_LIMIT_32BIT */
 
 /*
+ * Returns current instruction pointer ("program counter").
+ */
+#define current_text_addr() \
+  ({ void *__pc; __asm__ ("br %0,.+4" : "=r"(__pc)); __pc; })
+
+/*
  * We have a 42-bit user address space: 4TB user VM...
  */
 #define TASK_SIZE (0x40000000000UL)
@@ -26,6 +32,10 @@
 #define TASK_UNMAPPED_BASE \
   ((current->personality & ADDR_LIMIT_32BIT) ? 0x40000000 : TASK_SIZE / 2)
 
+typedef struct {
+	unsigned long seg;
+} mm_segment_t;
+
 /* This is dead.  Everything has been moved to thread_info.  */
 struct thread_struct { };
 #define INIT_THREAD  { }
@@ -36,7 +46,9 @@ extern void start_thread(struct pt_regs *, unsigned long, unsigned long);
 
 /* Free all resources held by a thread. */
 struct task_struct;
-unsigned long __get_wchan(struct task_struct *p);
+extern void release_thread(struct task_struct *);
+
+unsigned long get_wchan(struct task_struct *p);
 
 #define KSTK_EIP(tsk) (task_pt_regs(tsk)->pc)
 

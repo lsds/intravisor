@@ -1,6 +1,10 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Copyright 2007, Michael Ellerman, IBM Corporation.
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version
+ * 2 of the License, or (at your option) any later version.
  */
 
 
@@ -12,11 +16,11 @@
 #include <linux/export.h>
 #include <linux/of_platform.h>
 #include <linux/slab.h>
-#include <linux/debugfs.h>
-#include <linux/of_irq.h>
 
+#include <asm/debugfs.h>
 #include <asm/dcr.h>
 #include <asm/machdep.h>
+#include <asm/prom.h>
 
 #include "cell.h"
 
@@ -199,6 +203,7 @@ out_error:
 static int setup_msi_msg_address(struct pci_dev *dev, struct msi_msg *msg)
 {
 	struct device_node *dn;
+	struct msi_desc *entry;
 	int len;
 	const u32 *prop;
 
@@ -208,8 +213,10 @@ static int setup_msi_msg_address(struct pci_dev *dev, struct msi_msg *msg)
 		return -ENODEV;
 	}
 
+	entry = first_pci_msi_entry(dev);
+
 	for (; dn; dn = of_get_next_parent(dn)) {
-		if (!dev->no_64bit_msi) {
+		if (entry->msi_attrib.is_64) {
 			prop = of_get_property(dn, "msi-address-64", &len);
 			if (prop)
 				break;
@@ -223,7 +230,6 @@ static int setup_msi_msg_address(struct pci_dev *dev, struct msi_msg *msg)
 	if (!prop) {
 		dev_dbg(&dev->dev,
 			"axon_msi: no msi-address-(32|64) properties found\n");
-		of_node_put(dn);
 		return -ENOENT;
 	}
 
@@ -263,7 +269,7 @@ static int axon_msi_setup_msi_irqs(struct pci_dev *dev, int nvec, int type)
 	if (rc)
 		return rc;
 
-	msi_for_each_desc(entry, &dev->dev, MSI_DESC_NOTASSOCIATED) {
+	for_each_pci_msi_entry(entry, dev) {
 		virq = irq_create_direct_mapping(msic->irq_domain);
 		if (!virq) {
 			dev_warn(&dev->dev,
@@ -286,7 +292,10 @@ static void axon_msi_teardown_msi_irqs(struct pci_dev *dev)
 
 	dev_dbg(&dev->dev, "axon_msi: tearing down msi irqs\n");
 
-	msi_for_each_desc(entry, &dev->dev, MSI_DESC_ASSOCIATED) {
+	for_each_pci_msi_entry(entry, dev) {
+		if (!entry->irq)
+			continue;
+
 		irq_set_msi_desc(entry->irq, NULL);
 		irq_dispose_mapping(entry->irq);
 	}
@@ -475,6 +484,10 @@ void axon_msi_debug_setup(struct device_node *dn, struct axon_msic *msic)
 
 	snprintf(name, sizeof(name), "msic_%d", of_node_to_nid(dn));
 
-	debugfs_create_file(name, 0600, arch_debugfs_dir, msic, &fops_msic);
+	if (!debugfs_create_file(name, 0600, powerpc_debugfs_root,
+				 msic, &fops_msic)) {
+		pr_devel("axon_msi: debugfs_create_file failed!\n");
+		return;
+	}
 }
 #endif /* DEBUG */

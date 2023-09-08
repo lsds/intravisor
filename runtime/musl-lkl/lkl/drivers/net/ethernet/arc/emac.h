@@ -130,6 +130,7 @@ struct arc_emac_mdio_bus_data {
  */
 struct arc_emac_priv {
 	const char *drv_name;
+	const char *drv_version;
 	void (*set_mac_speed)(void *priv, unsigned int speed);
 
 	/* Devices */

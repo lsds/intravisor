@@ -9,11 +9,11 @@
     |       alpha: | TODO |
     |         arc: |  ..  |
     |         arm: |  ..  |
-    |       arm64: |  ok  |
-    |        csky: |  ..  |
+    |       arm64: |  ..  |
+    |         c6x: |  ..  |
+    |       h8300: |  ..  |
     |     hexagon: |  ..  |
     |        ia64: | TODO |
-    |       loong: |  ok  |
     |        m68k: |  ..  |
     |  microblaze: |  ..  |
     |        mips: | TODO |
@@ -21,11 +21,11 @@
     |    openrisc: |  ..  |
     |      parisc: |  ..  |
     |     powerpc: |  ok  |
-    |       riscv: |  ok  |
-    |        s390: |  ok  |
+    |        s390: |  ..  |
     |          sh: |  ..  |
     |       sparc: | TODO |
     |          um: |  ..  |
+    |   unicore32: |  ..  |
     |         x86: |  ok  |
     |      xtensa: |  ..  |
     -----------------------

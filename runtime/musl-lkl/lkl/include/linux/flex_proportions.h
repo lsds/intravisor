@@ -83,10 +83,9 @@ struct fprop_local_percpu {
 
 int fprop_local_init_percpu(struct fprop_local_percpu *pl, gfp_t gfp);
 void fprop_local_destroy_percpu(struct fprop_local_percpu *pl);
-void __fprop_add_percpu(struct fprop_global *p, struct fprop_local_percpu *pl,
-		long nr);
-void __fprop_add_percpu_max(struct fprop_global *p,
-		struct fprop_local_percpu *pl, int max_frac, long nr);
+void __fprop_inc_percpu(struct fprop_global *p, struct fprop_local_percpu *pl);
+void __fprop_inc_percpu_max(struct fprop_global *p, struct fprop_local_percpu *pl,
+			    int max_frac);
 void fprop_fraction_percpu(struct fprop_global *p,
 	struct fprop_local_percpu *pl, unsigned long *numerator,
 	unsigned long *denominator);
@@ -97,7 +96,7 @@ void fprop_inc_percpu(struct fprop_global *p, struct fprop_local_percpu *pl)
 	unsigned long flags;
 
 	local_irq_save(flags);
-	__fprop_add_percpu(p, pl, 1);
+	__fprop_inc_percpu(p, pl);
 	local_irq_restore(flags);
 }
 

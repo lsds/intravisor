@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
  * This file contains low-level cache management functions
  * used for sleep and CPU speed changes on Apple machines.
@@ -7,12 +6,17 @@
  *
  *    Copyright (C) 2004 Paul Mackerras (paulus@samba.org) and
  *                       Benjamin Herrenschmidt (benh@kernel.crashing.org)
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version
+ * 2 of the License, or (at your option) any later version.
+ *
  */
 
 #include <asm/processor.h>
 #include <asm/ppc_asm.h>
 #include <asm/cputable.h>
-#include <asm/feature-fixups.h>
 
 /*
  * Flush and disable all data caches (dL1, L2, L3). This is used
@@ -23,7 +27,7 @@
  */
 
 _GLOBAL(flush_disable_caches)
-#ifndef CONFIG_PPC_BOOK3S_32
+#ifndef CONFIG_6xx
 	blr
 #else
 BEGIN_FTR_SECTION
@@ -48,7 +52,7 @@ flush_disable_75x:
 
 	/* Stop DST streams */
 BEGIN_FTR_SECTION
-	PPC_DSSALL
+	DSSALL
 	sync
 END_FTR_SECTION_IFSET(CPU_FTR_ALTIVEC)
 
@@ -184,7 +188,6 @@ END_FTR_SECTION_IFSET(CPU_FTR_ALTIVEC)
 
 	mtlr	r10
 	blr
-_ASM_NOKPROBE_SYMBOL(flush_disable_75x)
 
 /* This code is for 745x processors */
 flush_disable_745x:
@@ -197,7 +200,7 @@ flush_disable_745x:
 	isync
 
 	/* Stop prefetch streams */
-	PPC_DSSALL
+	DSSALL
 	sync
 
 	/* Disable L2 prefetching */
@@ -352,5 +355,4 @@ END_FTR_SECTION_IFSET(CPU_FTR_L3CR)
 	mtmsr	r11		/* restore DR and EE */
 	isync
 	blr
-_ASM_NOKPROBE_SYMBOL(flush_disable_745x)
-#endif	/* CONFIG_PPC_BOOK3S_32 */
+#endif	/* CONFIG_6xx */

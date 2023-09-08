@@ -1,10 +1,13 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Pistachio internal dac driver
  *
  * Copyright (C) 2015 Imagination Technologies Ltd.
  *
  * Author: Damien Horsley <Damien.Horsley@imgtec.com>
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms and conditions of the GNU General Public License,
+ * version 2, as published by the Free Software Foundation.
  */
 
 #include <linux/clk.h>
@@ -138,6 +141,7 @@ static const struct snd_soc_component_driver pistachio_internal_dac_driver = {
 	.num_dapm_routes	= ARRAY_SIZE(pistachio_internal_dac_routes),
 	.use_pmdown_time	= 1,
 	.endianness		= 1,
+	.non_legacy_dai_naming	= 1,
 };
 
 static int pistachio_internal_dac_probe(struct platform_device *pdev)
@@ -160,9 +164,12 @@ static int pistachio_internal_dac_probe(struct platform_device *pdev)
 		return PTR_ERR(dac->regmap);
 
 	dac->supply = devm_regulator_get(dev, "VDD");
-	if (IS_ERR(dac->supply))
-		return dev_err_probe(dev, PTR_ERR(dac->supply),
-				     "failed to acquire supply 'VDD-supply'\n");
+	if (IS_ERR(dac->supply)) {
+		ret = PTR_ERR(dac->supply);
+		if (ret != -EPROBE_DEFER)
+			dev_err(dev, "failed to acquire supply 'VDD-supply': %d\n", ret);
+		return ret;
+	}
 
 	ret = regulator_enable(dac->supply);
 	if (ret) {

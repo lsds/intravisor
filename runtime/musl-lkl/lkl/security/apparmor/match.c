@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * AppArmor security module
  *
@@ -6,6 +5,11 @@
  *
  * Copyright (C) 1998-2008 Novell/SUSE
  * Copyright 2009-2012 Canonical Ltd.
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License as
+ * published by the Free Software Foundation, version 2 of the
+ * License.
  */
 
 #include <linux/errno.h>
@@ -97,9 +101,6 @@ static struct table_header *unpack_table(char *blob, size_t bsize)
 	      th.td_flags == YYTD_DATA8))
 		goto out;
 
-	/* if we have a table it must have some entries */
-	if (th.td_lolen == 0)
-		goto out;
 	tsize = table_size(th.td_lolen, th.td_flags);
 	if (bsize < tsize)
 		goto out;
@@ -201,32 +202,10 @@ static int verify_dfa(struct aa_dfa *dfa)
 
 	state_count = dfa->tables[YYTD_ID_BASE]->td_lolen;
 	trans_count = dfa->tables[YYTD_ID_NXT]->td_lolen;
-	if (state_count == 0)
-		goto out;
 	for (i = 0; i < state_count; i++) {
 		if (!(BASE_TABLE(dfa)[i] & MATCH_FLAG_DIFF_ENCODE) &&
 		    (DEFAULT_TABLE(dfa)[i] >= state_count))
 			goto out;
-		if (BASE_TABLE(dfa)[i] & MATCH_FLAGS_INVALID) {
-			pr_err("AppArmor DFA state with invalid match flags");
-			goto out;
-		}
-		if ((BASE_TABLE(dfa)[i] & MATCH_FLAG_DIFF_ENCODE)) {
-			if (!(dfa->flags & YYTH_FLAG_DIFF_ENCODE)) {
-				pr_err("AppArmor DFA diff encoded transition state without header flag");
-				goto out;
-			}
-		}
-		if ((BASE_TABLE(dfa)[i] & MATCH_FLAG_OOB_TRANSITION)) {
-			if (base_idx(BASE_TABLE(dfa)[i]) < dfa->max_oob) {
-				pr_err("AppArmor DFA out of bad transition out of range");
-				goto out;
-			}
-			if (!(dfa->flags & YYTH_FLAG_OOB_TRANS)) {
-				pr_err("AppArmor DFA out of bad transition state without header flag");
-				goto out;
-			}
-		}
 		if (base_idx(BASE_TABLE(dfa)[i]) + 255 >= trans_count) {
 			pr_err("AppArmor DFA next/check upper bounds error\n");
 			goto out;
@@ -329,22 +308,8 @@ struct aa_dfa *aa_dfa_unpack(void *blob, size_t size, int flags)
 		goto fail;
 
 	dfa->flags = ntohs(*(__be16 *) (data + 12));
-	if (dfa->flags & ~(YYTH_FLAGS))
+	if (dfa->flags != 0 && dfa->flags != YYTH_FLAG_DIFF_ENCODE)
 		goto fail;
-
-	/*
-	 * TODO: needed for dfa to support more than 1 oob
-	 * if (dfa->flags & YYTH_FLAGS_OOB_TRANS) {
-	 *	if (hsize < 16 + 4)
-	 *		goto fail;
-	 *	dfa->max_oob = ntol(*(__be32 *) (data + 16));
-	 *	if (dfa->max <= MAX_OOB_SUPPORTED) {
-	 *		pr_err("AppArmor DFA OOB greater than supported\n");
-	 *		goto fail;
-	 *	}
-	 * }
-	 */
-	dfa->max_oob = 1;
 
 	data += hsize;
 	size -= hsize;
@@ -507,7 +472,7 @@ unsigned int aa_dfa_match(struct aa_dfa *dfa, unsigned int start,
 
 /**
  * aa_dfa_next - step one character to the next state in the dfa
- * @dfa: the dfa to traverse (NOT NULL)
+ * @dfa: the dfa to tranverse (NOT NULL)
  * @state: the state to start in
  * @c: the input character to transition on
  *
@@ -530,23 +495,6 @@ unsigned int aa_dfa_next(struct aa_dfa *dfa, unsigned int state,
 		match_char(state, def, base, next, check, equiv[(u8) c]);
 	} else
 		match_char(state, def, base, next, check, (u8) c);
-
-	return state;
-}
-
-unsigned int aa_dfa_outofband_transition(struct aa_dfa *dfa, unsigned int state)
-{
-	u16 *def = DEFAULT_TABLE(dfa);
-	u32 *base = BASE_TABLE(dfa);
-	u16 *next = NEXT_TABLE(dfa);
-	u16 *check = CHECK_TABLE(dfa);
-	u32 b = (base)[(state)];
-
-	if (!(b & MATCH_FLAG_OOB_TRANSITION))
-		return DFA_NOMATCH;
-
-	/* No Equivalence class remapping for outofband transitions */
-	match_char(state, def, base, next, check, -1);
 
 	return state;
 }
@@ -672,8 +620,8 @@ unsigned int aa_dfa_matchn_until(struct aa_dfa *dfa, unsigned int start,
 
 #define inc_wb_pos(wb)						\
 do {								\
-	wb->pos = (wb->pos + 1) & (WB_HISTORY_SIZE - 1);		\
-	wb->len = (wb->len + 1) & (WB_HISTORY_SIZE - 1);		\
+	wb->pos = (wb->pos + 1) & (wb->size - 1);		\
+	wb->len = (wb->len + 1) & (wb->size - 1);		\
 } while (0)
 
 /* For DFAs that don't support extended tagging of states */
@@ -692,7 +640,7 @@ static bool is_loop(struct match_workbuf *wb, unsigned int state,
 			return true;
 		}
 		if (pos == 0)
-			pos = WB_HISTORY_SIZE;
+			pos = wb->size;
 		pos--;
 	}
 

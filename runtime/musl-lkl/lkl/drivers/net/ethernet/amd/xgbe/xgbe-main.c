@@ -127,6 +127,7 @@
 
 MODULE_AUTHOR("Tom Lendacky <thomas.lendacky@amd.com>");
 MODULE_LICENSE("Dual BSD/GPL");
+MODULE_VERSION(XGBE_DRV_VERSION);
 MODULE_DESCRIPTION(XGBE_DRV_DESC);
 
 static int debug = -1;
@@ -192,6 +193,7 @@ struct xgbe_prv_data *xgbe_alloc_pdata(struct device *dev)
 	mutex_init(&pdata->i2c_mutex);
 	init_completion(&pdata->i2c_complete);
 	init_completion(&pdata->mdio_complete);
+	INIT_LIST_HEAD(&pdata->vxlan_ports);
 
 	pdata->msg_enable = netif_msg_init(debug, default_msg_level);
 
@@ -263,11 +265,12 @@ int xgbe_config_netdev(struct xgbe_prv_data *pdata)
 {
 	struct net_device *netdev = pdata->netdev;
 	struct device *dev = pdata->dev;
+	unsigned int i;
 	int ret;
 
 	netdev->irq = pdata->dev_irq;
 	netdev->base_addr = (unsigned long)pdata->xgmac_regs;
-	eth_hw_addr_set(netdev, pdata->mac_addr);
+	memcpy(netdev->dev_addr, pdata->mac_addr, netdev->addr_len);
 
 	/* Initialize ECC timestamps */
 	pdata->tx_sec_period = jiffies;
@@ -321,8 +324,25 @@ int xgbe_config_netdev(struct xgbe_prv_data *pdata)
 				pdata->tx_ring_count, pdata->rx_ring_count);
 	}
 
-	/* Initialize RSS hash key */
+	/* Set the number of queues */
+	ret = netif_set_real_num_tx_queues(netdev, pdata->tx_ring_count);
+	if (ret) {
+		dev_err(dev, "error setting real tx queue count\n");
+		return ret;
+	}
+
+	ret = netif_set_real_num_rx_queues(netdev, pdata->rx_ring_count);
+	if (ret) {
+		dev_err(dev, "error setting real rx queue count\n");
+		return ret;
+	}
+
+	/* Initialize RSS hash key and lookup table */
 	netdev_rss_key_fill(pdata->rss_key, sizeof(pdata->rss_key));
+
+	for (i = 0; i < XGBE_RSS_MAX_TABLE_SIZE; i++)
+		XGMAC_SET_BITS(pdata->rss_table[i], MAC_RSSDR, DMCH,
+			       i % pdata->rx_ring_count);
 
 	XGMAC_SET_BITS(pdata->rss_options, MAC_RSSCR, IP2TE, 1);
 	XGMAC_SET_BITS(pdata->rss_options, MAC_RSSCR, TCP4TE, 1);
@@ -365,12 +385,17 @@ int xgbe_config_netdev(struct xgbe_prv_data *pdata)
 					  NETIF_F_TSO6 |
 					  NETIF_F_GRO |
 					  NETIF_F_GSO_UDP_TUNNEL |
-					  NETIF_F_GSO_UDP_TUNNEL_CSUM;
+					  NETIF_F_GSO_UDP_TUNNEL_CSUM |
+					  NETIF_F_RX_UDP_TUNNEL_PORT;
 
 		netdev->hw_features |= NETIF_F_GSO_UDP_TUNNEL |
-				       NETIF_F_GSO_UDP_TUNNEL_CSUM;
+				       NETIF_F_GSO_UDP_TUNNEL_CSUM |
+				       NETIF_F_RX_UDP_TUNNEL_PORT;
 
-		netdev->udp_tunnel_nic_info = xgbe_get_udp_tunnel_info();
+		pdata->vxlan_offloads_set = 1;
+		pdata->vxlan_features = NETIF_F_GSO_UDP_TUNNEL |
+					NETIF_F_GSO_UDP_TUNNEL_CSUM |
+					NETIF_F_RX_UDP_TUNNEL_PORT;
 	}
 
 	netdev->vlan_features |= NETIF_F_SG |
@@ -462,19 +487,13 @@ static int __init xgbe_mod_init(void)
 
 	ret = xgbe_platform_init();
 	if (ret)
-		goto err_platform_init;
+		return ret;
 
 	ret = xgbe_pci_init();
 	if (ret)
-		goto err_pci_init;
+		return ret;
 
 	return 0;
-
-err_pci_init:
-	xgbe_platform_exit();
-err_platform_init:
-	unregister_netdevice_notifier(&xgbe_netdev_notifier);
-	return ret;
 }
 
 static void __exit xgbe_mod_exit(void)

@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Keymile kmcent2 Device Tree Source, based on T1040RDB DTS
  *
@@ -6,6 +5,11 @@
  * Valentin Longchamp, Keymile AG, valentin.longchamp@keymile.com
  *
  * Copyright 2014 - 2015 Freescale Semiconductor Inc.
+ *
+ * This program is free software; you can redistribute  it and/or modify it
+ * under  the terms of  the GNU General  Public License as published by the
+ * Free Software Foundation;  either version 2 of the  License, or (at your
+ * option) any later version.
  */
 
 /include/ "t104xsi-pre.dtsi"
@@ -126,7 +130,7 @@
 					#size-cells = <0>;
 
 					eeprom@54 {
-						compatible = "atmel,24c02";
+						compatible = "24c02";
 						reg = <0x54>;
 						pagesize = <2>;
 						read-only;
@@ -210,19 +214,13 @@
 
 		fman@400000 {
 			ethernet@e0000 {
-				phy-mode = "sgmii";
-				fixed-link {
-					speed = <1000>;
-					full-duplex;
-				};
+				fixed-link = <0 1 1000 0 0>;
+				phy-connection-type = "sgmii";
 			};
 
 			ethernet@e2000 {
-				phy-mode = "sgmii";
-				fixed-link {
-					speed = <1000>;
-					full-duplex;
-				};
+				fixed-link = <1 1 1000 0 0>;
+				phy-connection-type = "sgmii";
 			};
 
 			ethernet@e4000 {
@@ -235,7 +233,7 @@
 
 			ethernet@e8000 {
 				phy-handle = <&front_phy>;
-				phy-mode = "rgmii-id";
+				phy-connection-type = "rgmii";
 			};
 
 			mdio0: mdio@fc000 {
@@ -264,50 +262,14 @@
 
 	pci1: pcie@ffe250000 {
 		status = "disabled";
-		reg = <0xf 0xfe250000 0 0x10000>;
-		ranges = <0x02000000 0 0xe0000000 0xc 0x10000000 0 0x10000000
-			  0x01000000 0 0 0xf 0xf8010000 0 0x00010000>;
-		pcie@0 {
-			ranges = <0x02000000 0 0xe0000000
-				  0x02000000 0 0xe0000000
-				  0 0x10000000
-
-				  0x01000000 0 0x00000000
-				  0x01000000 0 0x00000000
-				  0 0x00010000>;
-		};
 	};
 
 	pci2: pcie@ffe260000 {
 		status = "disabled";
-		reg = <0xf 0xfe260000 0 0x10000>;
-		ranges = <0x02000000 0 0xe0000000 0xc 0x20000000 0 0x10000000
-			  0x01000000 0 0x00000000 0xf 0xf8020000 0 0x00010000>;
-		pcie@0 {
-			ranges = <0x02000000 0 0xe0000000
-				  0x02000000 0 0xe0000000
-				  0 0x10000000
-
-				  0x01000000 0 0x00000000
-				  0x01000000 0 0x00000000
-				  0 0x00010000>;
-		};
 	};
 
 	pci3: pcie@ffe270000 {
 		status = "disabled";
-		reg = <0xf 0xfe270000 0 0x10000>;
-		ranges = <0x02000000 0 0xe0000000 0xc 0x30000000 0 0x10000000
-			  0x01000000 0 0x00000000 0xf 0xf8030000 0 0x00010000>;
-		pcie@0 {
-			ranges = <0x02000000 0 0xe0000000
-				  0x02000000 0 0xe0000000
-				  0 0x10000000
-
-				  0x01000000 0 0x00000000
-				  0x01000000 0 0x00000000
-				  0 0x00010000>;
-		};
 	};
 
 	qe: qe@ffe140000 {

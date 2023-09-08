@@ -1,6 +1,10 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Copyright (c) 2014-2015 Hisilicon Limited.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
  */
 
 #include <linux/acpi.h>
@@ -108,26 +112,6 @@ int hns_mac_get_port_info(struct hns_mac_cb *mac_cb,
 		*duplex = info.duplex;
 
 	return 0;
-}
-
-/**
- *hns_mac_need_adjust_link - check is need change mac speed and duplex register
- *@mac_cb: mac device
- *@speed: phy device speed
- *@duplex:phy device duplex
- *
- */
-bool hns_mac_need_adjust_link(struct hns_mac_cb *mac_cb, int speed, int duplex)
-{
-	struct mac_driver *mac_ctrl_drv;
-
-	mac_ctrl_drv = (struct mac_driver *)(mac_cb->priv.mac);
-
-	if (mac_ctrl_drv->need_adjust_link)
-		return mac_ctrl_drv->need_adjust_link(mac_ctrl_drv,
-			(enum mac_speed)speed, duplex);
-	else
-		return true;
 }
 
 void hns_mac_adjust_link(struct hns_mac_cb *mac_cb, int speed, int duplex)
@@ -240,7 +224,7 @@ int hns_mac_get_inner_port_num(struct hns_mac_cb *mac_cb, u8 vmid, u8 *port_num)
  *@addr:mac address
  */
 int hns_mac_change_vf_addr(struct hns_mac_cb *mac_cb,
-			   u32 vmid, const char *addr)
+			   u32 vmid, char *addr)
 {
 	int ret;
 	struct mac_driver *mac_ctrl_drv = hns_mac_get_drv(mac_cb);
@@ -366,7 +350,7 @@ int hns_mac_clr_multicast(struct hns_mac_cb *mac_cb, int vfn)
 static void hns_mac_param_get(struct mac_params *param,
 			      struct hns_mac_cb *mac_cb)
 {
-	param->vaddr = mac_cb->vaddr;
+	param->vaddr = (void *)mac_cb->vaddr;
 	param->mac_mode = hns_get_enet_interface(mac_cb);
 	ether_addr_copy(param->addr, mac_cb->addr_entry_idx[0].addr);
 	param->mac_id = mac_cb->mac_id;
@@ -374,12 +358,11 @@ static void hns_mac_param_get(struct mac_params *param,
 }
 
 /**
- * hns_mac_port_config_bc_en - set broadcast rx&tx enable
- * @mac_cb: mac device
- * @port_num: queue number
- * @vlan_id: vlan id`
- * @enable: enable
- * return 0 - success , negative --fail
+ *hns_mac_queue_config_bc_en - set broadcast rx&tx enable
+ *@mac_cb: mac device
+ *@queue: queue number
+ *@en:enable
+ *retuen 0 - success , negative --fail
  */
 static int hns_mac_port_config_bc_en(struct hns_mac_cb *mac_cb,
 				     u32 port_num, u16 vlan_id, bool enable)
@@ -409,11 +392,11 @@ static int hns_mac_port_config_bc_en(struct hns_mac_cb *mac_cb,
 }
 
 /**
- * hns_mac_vm_config_bc_en - set broadcast rx&tx enable
- * @mac_cb: mac device
- * @vmid: vm id
- * @enable: enable
- * return 0 - success , negative --fail
+ *hns_mac_vm_config_bc_en - set broadcast rx&tx enable
+ *@mac_cb: mac device
+ *@vmid: vm id
+ *@en:enable
+ *retuen 0 - success , negative --fail
  */
 int hns_mac_vm_config_bc_en(struct hns_mac_cb *mac_cb, u32 vmid, bool enable)
 {
@@ -447,16 +430,6 @@ int hns_mac_vm_config_bc_en(struct hns_mac_cb *mac_cb, u32 vmid, bool enable)
 	return 0;
 }
 
-int hns_mac_wait_fifo_clean(struct hns_mac_cb *mac_cb)
-{
-	struct mac_driver *drv = hns_mac_get_drv(mac_cb);
-
-	if (drv->wait_fifo_clean)
-		return drv->wait_fifo_clean(drv);
-
-	return 0;
-}
-
 void hns_mac_reset(struct hns_mac_cb *mac_cb)
 {
 	struct mac_driver *drv = hns_mac_get_drv(mac_cb);
@@ -485,6 +458,11 @@ int hns_mac_set_mtu(struct hns_mac_cb *mac_cb, u32 new_mtu, u32 buf_size)
 {
 	struct mac_driver *drv = hns_mac_get_drv(mac_cb);
 	u32 new_frm = new_mtu + ETH_HLEN + ETH_FCS_LEN + VLAN_HLEN;
+	u32 max_frm = AE_IS_VER1(mac_cb->dsaf_dev->dsaf_ver) ?
+			MAC_MAX_MTU : MAC_MAX_MTU_V2;
+
+	if (mac_cb->mac_type == HNAE_PORT_DEBUG)
+		max_frm = MAC_MAX_MTU_DBG;
 
 	if (new_frm > HNS_RCB_RING_MAX_BD_PER_PKT * buf_size)
 		return -EINVAL;
@@ -543,8 +521,8 @@ void hns_mac_stop(struct hns_mac_cb *mac_cb)
 /**
  * hns_mac_get_autoneg - get auto autonegotiation
  * @mac_cb: mac control block
- * @auto_neg: output pointer to autoneg result
- * return 0 - success , negative --fail
+ * @enable: enable or not
+ * retuen 0 - success , negative --fail
  */
 void hns_mac_get_autoneg(struct hns_mac_cb *mac_cb, u32 *auto_neg)
 {
@@ -561,7 +539,7 @@ void hns_mac_get_autoneg(struct hns_mac_cb *mac_cb, u32 *auto_neg)
  * @mac_cb: mac control block
  * @rx_en: rx enable status
  * @tx_en: tx enable status
- * return 0 - success , negative --fail
+ * retuen 0 - success , negative --fail
  */
 void hns_mac_get_pauseparam(struct hns_mac_cb *mac_cb, u32 *rx_en, u32 *tx_en)
 {
@@ -579,7 +557,7 @@ void hns_mac_get_pauseparam(struct hns_mac_cb *mac_cb, u32 *rx_en, u32 *tx_en)
  * hns_mac_set_autoneg - set auto autonegotiation
  * @mac_cb: mac control block
  * @enable: enable or not
- * return 0 - success , negative --fail
+ * retuen 0 - success , negative --fail
  */
 int hns_mac_set_autoneg(struct hns_mac_cb *mac_cb, u8 enable)
 {
@@ -597,7 +575,7 @@ int hns_mac_set_autoneg(struct hns_mac_cb *mac_cb, u8 enable)
 }
 
 /**
- * hns_mac_set_pauseparam - set rx & tx pause parameter
+ * hns_mac_set_autoneg - set rx & tx pause parameter
  * @mac_cb: mac control block
  * @rx_en: rx enable or not
  * @tx_en: tx enable or not
@@ -624,7 +602,7 @@ int hns_mac_set_pauseparam(struct hns_mac_cb *mac_cb, u32 rx_en, u32 tx_en)
 /**
  * hns_mac_init_ex - mac init
  * @mac_cb: mac control block
- * return 0 - success , negative --fail
+ * retuen 0 - success , negative --fail
  */
 static int hns_mac_init_ex(struct hns_mac_cb *mac_cb)
 {
@@ -698,9 +676,9 @@ hns_mac_register_phydev(struct mii_bus *mdio, struct hns_mac_cb *mac_cb,
 		return rc;
 
 	if (!strcmp(phy_type, phy_modes(PHY_INTERFACE_MODE_XGMII)))
-		is_c45 = true;
+		is_c45 = 1;
 	else if (!strcmp(phy_type, phy_modes(PHY_INTERFACE_MODE_SGMII)))
-		is_c45 = false;
+		is_c45 = 0;
 	else
 		return -ENODATA;
 
@@ -730,7 +708,7 @@ hns_mac_register_phydev(struct mii_bus *mdio, struct hns_mac_cb *mac_cb,
 
 static int hns_mac_register_phy(struct hns_mac_cb *mac_cb)
 {
-	struct fwnode_reference_args args;
+	struct acpi_reference_args args;
 	struct platform_device *pdev;
 	struct mii_bus *mii_bus;
 	int rc;
@@ -744,15 +722,13 @@ static int hns_mac_register_phy(struct hns_mac_cb *mac_cb)
 			mac_cb->fw_port, "mdio-node", 0, &args);
 	if (rc)
 		return rc;
-	if (!is_acpi_device_node(args.fwnode))
-		return -EINVAL;
 
 	addr = hns_mac_phy_parse_addr(mac_cb->dev, mac_cb->fw_port);
 	if (addr < 0)
 		return addr;
 
 	/* dev address in adev */
-	pdev = hns_dsaf_find_platform_device(args.fwnode);
+	pdev = hns_dsaf_find_platform_device(acpi_fwnode_handle(args.adev));
 	if (!pdev) {
 		dev_err(mac_cb->dev, "mac%d mdio pdev is NULL\n",
 			mac_cb->mac_id);
@@ -775,17 +751,6 @@ static int hns_mac_register_phy(struct hns_mac_cb *mac_cb)
 	return rc;
 }
 
-static void hns_mac_remove_phydev(struct hns_mac_cb *mac_cb)
-{
-	if (!to_acpi_device_node(mac_cb->fw_port) || !mac_cb->phy_dev)
-		return;
-
-	phy_device_remove(mac_cb->phy_dev);
-	phy_device_free(mac_cb->phy_dev);
-
-	mac_cb->phy_dev = NULL;
-}
-
 #define MAC_MEDIA_TYPE_MAX_LEN		16
 
 static const struct {
@@ -801,6 +766,7 @@ static const struct {
 /**
  *hns_mac_get_info  - get mac information from device node
  *@mac_cb: mac device
+ *@np:device node
  * return: 0 --success, negative --fail
  */
 static int hns_mac_get_info(struct hns_mac_cb *mac_cb)
@@ -844,8 +810,8 @@ static int hns_mac_get_info(struct hns_mac_cb *mac_cb)
 			 */
 			put_device(&mac_cb->phy_dev->mdio.dev);
 
-			dev_dbg(mac_cb->dev, "mac%d phy_node: %pOFn\n",
-				mac_cb->mac_id, np);
+			dev_dbg(mac_cb->dev, "mac%d phy_node: %s\n",
+				mac_cb->mac_id, np->name);
 		}
 		of_node_put(np);
 
@@ -862,8 +828,8 @@ static int hns_mac_get_info(struct hns_mac_cb *mac_cb)
 			 * if the phy_dev is found
 			 */
 			put_device(&mac_cb->phy_dev->mdio.dev);
-			dev_dbg(mac_cb->dev, "mac%d phy_node: %pOFn\n",
-				mac_cb->mac_id, np);
+			dev_dbg(mac_cb->dev, "mac%d phy_node: %s\n",
+				mac_cb->mac_id, np->name);
 		}
 		of_node_put(np);
 
@@ -914,7 +880,8 @@ static int hns_mac_get_info(struct hns_mac_cb *mac_cb)
 		}
 	} else if (is_acpi_node(mac_cb->fw_port)) {
 		ret = hns_mac_register_phy(mac_cb);
-		/* Mac can work well if there is phy or not.If the port don't
+		/*
+		 * Mac can work well if there is phy or not.If the port don't
 		 * connect with phy, the return value will be ignored. Only
 		 * when there is phy but can't find mdio bus, the return value
 		 * will be handled.
@@ -950,7 +917,7 @@ static int hns_mac_get_info(struct hns_mac_cb *mac_cb)
 /**
  * hns_mac_get_mode - get mac mode
  * @phy_if: phy interface
- * return 0 - gmac, 1 - xgmac , negative --fail
+ * retuen 0 - gmac, 1 - xgmac , negative --fail
  */
 static int hns_mac_get_mode(phy_interface_t phy_if)
 {
@@ -964,9 +931,8 @@ static int hns_mac_get_mode(phy_interface_t phy_if)
 	}
 }
 
-static u8 __iomem *
-hns_mac_get_vaddr(struct dsaf_device *dsaf_dev,
-		  struct hns_mac_cb *mac_cb, u32 mac_mode_idx)
+u8 __iomem *hns_mac_get_vaddr(struct dsaf_device *dsaf_dev,
+			      struct hns_mac_cb *mac_cb, u32 mac_mode_idx)
 {
 	u8 __iomem *base = dsaf_dev->io_base;
 	int mac_id = mac_cb->mac_id;
@@ -984,8 +950,7 @@ hns_mac_get_vaddr(struct dsaf_device *dsaf_dev,
  * @mac_cb: mac control block
  * return 0 - success , negative --fail
  */
-static int
-hns_mac_get_cfg(struct dsaf_device *dsaf_dev, struct hns_mac_cb *mac_cb)
+int hns_mac_get_cfg(struct dsaf_device *dsaf_dev, struct hns_mac_cb *mac_cb)
 {
 	int ret;
 	u32 mac_mode_idx;
@@ -1034,20 +999,6 @@ static int hns_mac_get_max_port_num(struct dsaf_device *dsaf_dev)
 		return  DSAF_MAX_PORT_NUM;
 }
 
-void hns_mac_enable(struct hns_mac_cb *mac_cb, enum mac_commom_mode mode)
-{
-	struct mac_driver *mac_ctrl_drv = hns_mac_get_drv(mac_cb);
-
-	mac_ctrl_drv->mac_enable(mac_cb->priv.mac, mode);
-}
-
-void hns_mac_disable(struct hns_mac_cb *mac_cb, enum mac_commom_mode mode)
-{
-	struct mac_driver *mac_ctrl_drv = hns_mac_get_drv(mac_cb);
-
-	mac_ctrl_drv->mac_disable(mac_cb->priv.mac, mode);
-}
-
 /**
  * hns_mac_init - init mac
  * @dsaf_dev: dsa fabric device struct pointer
@@ -1065,23 +1016,19 @@ int hns_mac_init(struct dsaf_device *dsaf_dev)
 	device_for_each_child_node(dsaf_dev->dev, child) {
 		ret = fwnode_property_read_u32(child, "reg", &port_id);
 		if (ret) {
-			fwnode_handle_put(child);
 			dev_err(dsaf_dev->dev,
 				"get reg fail, ret=%d!\n", ret);
 			return ret;
 		}
 		if (port_id >= max_port_num) {
-			fwnode_handle_put(child);
 			dev_err(dsaf_dev->dev,
 				"reg(%u) out of range!\n", port_id);
 			return -EINVAL;
 		}
 		mac_cb = devm_kzalloc(dsaf_dev->dev, sizeof(*mac_cb),
 				      GFP_KERNEL);
-		if (!mac_cb) {
-			fwnode_handle_put(child);
+		if (!mac_cb)
 			return -ENOMEM;
-		}
 		mac_cb->fw_port = child;
 		mac_cb->mac_id = (u8)port_id;
 		dsaf_dev->mac_cb[port_id] = mac_cb;
@@ -1127,11 +1074,7 @@ void hns_mac_uninit(struct dsaf_device *dsaf_dev)
 	int max_port_num = hns_mac_get_max_port_num(dsaf_dev);
 
 	for (i = 0; i < max_port_num; i++) {
-		if (!dsaf_dev->mac_cb[i])
-			continue;
-
 		dsaf_dev->misc_op->cpld_reset_led(dsaf_dev->mac_cb[i]);
-		hns_mac_remove_phydev(dsaf_dev->mac_cb[i]);
 		dsaf_dev->mac_cb[i] = NULL;
 	}
 }
@@ -1205,7 +1148,7 @@ void hns_mac_get_regs(struct hns_mac_cb *mac_cb, void *data)
 
 void hns_set_led_opt(struct hns_mac_cb *mac_cb)
 {
-	int nic_data;
+	int nic_data = 0;
 	int txpkts, rxpkts;
 
 	txpkts = mac_cb->txpkt_for_led - mac_cb->hw_stats.tx_good_pkts;

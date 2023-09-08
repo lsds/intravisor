@@ -30,8 +30,8 @@ struct slabinfo {
 	int alias;
 	int refs;
 	int aliases, align, cache_dma, cpu_slabs, destroy_by_rcu;
-	unsigned int hwcache_align, object_size, objs_per_slab;
-	unsigned int sanity_checks, slab_size, store_user, trace;
+	int hwcache_align, object_size, objs_per_slab;
+	int sanity_checks, slab_size, store_user, trace;
 	int order, poison, reclaim_account, red_zone;
 	unsigned long partial, objects, slabs, objects_partial, objects_total;
 	unsigned long alloc_fastpath, alloc_slowpath;
@@ -79,7 +79,6 @@ int sort_size;
 int sort_active;
 int set_debug;
 int show_ops;
-int sort_partial;
 int show_activity;
 int output_lines = -1;
 int sort_loss;
@@ -111,45 +110,39 @@ static void fatal(const char *x, ...)
 static void usage(void)
 {
 	printf("slabinfo 4/15/2011. (c) 2007 sgi/(c) 2011 Linux Foundation.\n\n"
-		"slabinfo [-aABDefhilLnoPrsStTUvXz1] [N=K] [-dafzput] [slab-regexp]\n"
+		"slabinfo [-ahnpvtsz] [-d debugopts] [slab-regexp]\n"
 		"-a|--aliases           Show aliases\n"
 		"-A|--activity          Most active slabs first\n"
-		"-B|--Bytes             Show size in bytes\n"
+		"-d<options>|--debug=<options> Set/Clear Debug options\n"
 		"-D|--display-active    Switch line format to activity\n"
 		"-e|--empty             Show empty slabs\n"
 		"-f|--first-alias       Show first alias\n"
 		"-h|--help              Show usage information\n"
 		"-i|--inverted          Inverted list\n"
 		"-l|--slabs             Show slabs\n"
-		"-L|--Loss              Sort by loss\n"
 		"-n|--numa              Show NUMA information\n"
-		"-N|--lines=K           Show the first K slabs\n"
-		"-o|--ops               Show kmem_cache_ops\n"
-		"-P|--partial           Sort by number of partial slabs\n"
-		"-r|--report            Detailed report on single slabs\n"
+		"-o|--ops		Show kmem_cache_ops\n"
 		"-s|--shrink            Shrink slabs\n"
+		"-r|--report		Detailed report on single slabs\n"
 		"-S|--Size              Sort by size\n"
 		"-t|--tracking          Show alloc/free information\n"
 		"-T|--Totals            Show summary information\n"
-		"-U|--Unreclaim         Show unreclaimable slabs only\n"
 		"-v|--validate          Validate slabs\n"
-		"-X|--Xtotals           Show extended summary information\n"
 		"-z|--zero              Include empty slabs\n"
 		"-1|--1ref              Single reference\n"
-
-		"\n"
-		"-d  | --debug          Switch off all debug options\n"
-		"-da | --debug=a        Switch on all debug options (--debug=FZPU)\n"
-
-		"\n"
-		"-d[afzput] | --debug=[afzput]\n"
-		"    f | F              Sanity Checks (SLAB_CONSISTENCY_CHECKS)\n"
-		"    z | Z              Redzoning\n"
-		"    p | P              Poisoning\n"
-		"    u | U              Tracking\n"
-		"    t | T              Tracing\n"
-
-		"\nSorting options (--Loss, --Size, --Partial) are mutually exclusive\n"
+		"-N|--lines=K           Show the first K slabs\n"
+		"-L|--Loss              Sort by loss\n"
+		"-X|--Xtotals           Show extended summary information\n"
+		"-B|--Bytes             Show size in bytes\n"
+		"-U|--Unreclaim		Show unreclaimable slabs only\n"
+		"\nValid debug options (FZPUT may be combined)\n"
+		"a / A          Switch on all debug options (=FZUP)\n"
+		"-              Switch off all debug options\n"
+		"f / F          Sanity Checks (SLAB_CONSISTENCY_CHECKS)\n"
+		"z / Z          Redzoning\n"
+		"p / P          Poisoning\n"
+		"u / U          Tracking\n"
+		"t / T          Tracing\n"
 	);
 }
 
@@ -233,24 +226,6 @@ static unsigned long read_slab_obj(struct slabinfo *s, const char *name)
 	return l;
 }
 
-static unsigned long read_debug_slab_obj(struct slabinfo *s, const char *name)
-{
-	char x[128];
-	FILE *f;
-	size_t l;
-
-	snprintf(x, 128, "/sys/kernel/debug/slab/%s/%s", s->name, name);
-	f = fopen(x, "r");
-	if (!f) {
-		buffer[0] = 0;
-		l = 0;
-	} else {
-		l = fread(buffer, 1, sizeof(buffer), f);
-		buffer[l] = 0;
-		fclose(f);
-	}
-	return l;
-}
 
 /*
  * Put a size string together
@@ -427,18 +402,14 @@ static void show_tracking(struct slabinfo *s)
 {
 	printf("\n%s: Kernel object allocation\n", s->name);
 	printf("-----------------------------------------------------------------------\n");
-	if (read_debug_slab_obj(s, "alloc_traces"))
-		printf("%s", buffer);
-	else if (read_slab_obj(s, "alloc_calls"))
+	if (read_slab_obj(s, "alloc_calls"))
 		printf("%s", buffer);
 	else
 		printf("No Data\n");
 
 	printf("\n%s: Kernel object freeing\n", s->name);
 	printf("------------------------------------------------------------------------\n");
-	if (read_debug_slab_obj(s, "free_traces"))
-		printf("%s", buffer);
-	else if (read_slab_obj(s, "free_calls"))
+	if (read_slab_obj(s, "free_calls"))
 		printf("%s", buffer);
 	else
 		printf("No Data\n");
@@ -742,11 +713,11 @@ static void slab_debug(struct slabinfo *s)
 		return;
 
 	if (sanity && !s->sanity_checks) {
-		set_obj(s, "sanity_checks", 1);
+		set_obj(s, "sanity", 1);
 	}
 	if (!sanity && s->sanity_checks) {
 		if (slab_empty(s))
-			set_obj(s, "sanity_checks", 0);
+			set_obj(s, "sanity", 0);
 		else
 			fprintf(stderr, "%s not empty cannot disable sanity checks\n", s->name);
 	}
@@ -1067,27 +1038,13 @@ static void sort_slabs(void)
 		for (s2 = s1 + 1; s2 < slabinfo + slabs; s2++) {
 			int result;
 
-			if (sort_size) {
-				if (slab_size(s1) == slab_size(s2))
-					result = strcasecmp(s1->name, s2->name);
-				else
-					result = slab_size(s1) < slab_size(s2);
-			} else if (sort_active) {
-				if (slab_activity(s1) == slab_activity(s2))
-					result = strcasecmp(s1->name, s2->name);
-				else
-					result = slab_activity(s1) < slab_activity(s2);
-			} else if (sort_loss) {
-				if (slab_waste(s1) == slab_waste(s2))
-					result = strcasecmp(s1->name, s2->name);
-				else
-					result = slab_waste(s1) < slab_waste(s2);
-			} else if (sort_partial) {
-				if (s1->partial == s2->partial)
-					result = strcasecmp(s1->name, s2->name);
-				else
-					result = s1->partial < s2->partial;
-			} else
+			if (sort_size)
+				result = slab_size(s1) < slab_size(s2);
+			else if (sort_active)
+				result = slab_activity(s1) < slab_activity(s2);
+			else if (sort_loss)
+				result = slab_waste(s1) < slab_waste(s2);
+			else
 				result = strcasecmp(s1->name, s2->name);
 
 			if (show_inverted)
@@ -1347,46 +1304,33 @@ static void output_slabs(void)
 	}
 }
 
-static void _xtotals(char *heading, char *underline,
-		     int loss, int size, int partial)
-{
-	printf("%s%s", heading, underline);
-	line = 0;
-	sort_loss = loss;
-	sort_size = size;
-	sort_partial = partial;
-	sort_slabs();
-	output_slabs();
-}
-
 static void xtotals(void)
 {
-	char *heading, *underline;
-
 	totals();
 
 	link_slabs();
 	rename_slabs();
 
-	heading = "\nSlabs sorted by size\n";
-	underline = "--------------------\n";
-	_xtotals(heading, underline, 0, 1, 0);
+	printf("\nSlabs sorted by size\n");
+	printf("--------------------\n");
+	sort_loss = 0;
+	sort_size = 1;
+	sort_slabs();
+	output_slabs();
 
-	heading = "\nSlabs sorted by loss\n";
-	underline = "--------------------\n";
-	_xtotals(heading, underline, 1, 0, 0);
-
-	heading = "\nSlabs sorted by number of partial slabs\n";
-	underline = "---------------------------------------\n";
-	_xtotals(heading, underline, 0, 0, 1);
-
+	printf("\nSlabs sorted by loss\n");
+	printf("--------------------\n");
+	line = 0;
+	sort_loss = 1;
+	sort_size = 0;
+	sort_slabs();
+	output_slabs();
 	printf("\n");
 }
 
 struct option opts[] = {
 	{ "aliases", no_argument, NULL, 'a' },
 	{ "activity", no_argument, NULL, 'A' },
-	{ "Bytes", no_argument, NULL, 'B'},
 	{ "debug", optional_argument, NULL, 'd' },
 	{ "display-activity", no_argument, NULL, 'D' },
 	{ "empty", no_argument, NULL, 'e' },
@@ -1394,21 +1338,21 @@ struct option opts[] = {
 	{ "help", no_argument, NULL, 'h' },
 	{ "inverted", no_argument, NULL, 'i'},
 	{ "slabs", no_argument, NULL, 'l' },
-	{ "Loss", no_argument, NULL, 'L'},
 	{ "numa", no_argument, NULL, 'n' },
-	{ "lines", required_argument, NULL, 'N'},
 	{ "ops", no_argument, NULL, 'o' },
-	{ "partial", no_argument, NULL, 'p'},
-	{ "report", no_argument, NULL, 'r' },
 	{ "shrink", no_argument, NULL, 's' },
+	{ "report", no_argument, NULL, 'r' },
 	{ "Size", no_argument, NULL, 'S'},
 	{ "tracking", no_argument, NULL, 't'},
 	{ "Totals", no_argument, NULL, 'T'},
-	{ "Unreclaim", no_argument, NULL, 'U'},
 	{ "validate", no_argument, NULL, 'v' },
-	{ "Xtotals", no_argument, NULL, 'X'},
 	{ "zero", no_argument, NULL, 'z' },
 	{ "1ref", no_argument, NULL, '1'},
+	{ "lines", required_argument, NULL, 'N'},
+	{ "Loss", no_argument, NULL, 'L'},
+	{ "Xtotals", no_argument, NULL, 'X'},
+	{ "Bytes", no_argument, NULL, 'B'},
+	{ "Unreclaim", no_argument, NULL, 'U'},
 	{ NULL, 0, NULL, 0 }
 };
 
@@ -1420,17 +1364,17 @@ int main(int argc, char *argv[])
 
 	page_size = getpagesize();
 
-	while ((c = getopt_long(argc, argv, "aABd::DefhilLnN:oPrsStTUvXz1",
+	while ((c = getopt_long(argc, argv, "aAd::Defhil1noprstvzTSN:LXBU",
 						opts, NULL)) != -1)
 		switch (c) {
+		case '1':
+			show_single_ref = 1;
+			break;
 		case 'a':
 			show_alias = 1;
 			break;
 		case 'A':
 			sort_active = 1;
-			break;
-		case 'B':
-			show_bytes = 1;
 			break;
 		case 'd':
 			set_debug = 1;
@@ -1452,14 +1396,35 @@ int main(int argc, char *argv[])
 		case 'i':
 			show_inverted = 1;
 			break;
+		case 'n':
+			show_numa = 1;
+			break;
+		case 'o':
+			show_ops = 1;
+			break;
+		case 'r':
+			show_report = 1;
+			break;
+		case 's':
+			shrink = 1;
+			break;
 		case 'l':
 			show_slab = 1;
 			break;
-		case 'L':
-			sort_loss = 1;
+		case 't':
+			show_track = 1;
 			break;
-		case 'n':
-			show_numa = 1;
+		case 'v':
+			validate = 1;
+			break;
+		case 'z':
+			skip_zero = 0;
+			break;
+		case 'T':
+			show_totals = 1;
+			break;
+		case 'S':
+			sort_size = 1;
 			break;
 		case 'N':
 			if (optarg) {
@@ -1468,32 +1433,8 @@ int main(int argc, char *argv[])
 					output_lines = 1;
 			}
 			break;
-		case 'o':
-			show_ops = 1;
-			break;
-		case 'r':
-			show_report = 1;
-			break;
-		case 'P':
-			sort_partial = 1;
-			break;
-		case 's':
-			shrink = 1;
-			break;
-		case 'S':
-			sort_size = 1;
-			break;
-		case 't':
-			show_track = 1;
-			break;
-		case 'T':
-			show_totals = 1;
-			break;
-		case 'U':
-			unreclaim_only = 1;
-			break;
-		case 'v':
-			validate = 1;
+		case 'L':
+			sort_loss = 1;
 			break;
 		case 'X':
 			if (output_lines == -1)
@@ -1501,11 +1442,11 @@ int main(int argc, char *argv[])
 			extended_totals = 1;
 			show_bytes = 1;
 			break;
-		case 'z':
-			skip_zero = 0;
+		case 'B':
+			show_bytes = 1;
 			break;
-		case '1':
-			show_single_ref = 1;
+		case 'U':
+			unreclaim_only = 1;
 			break;
 		default:
 			fatal("%s: Invalid option '%c'\n", argv[0], optopt);

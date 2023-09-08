@@ -1,10 +1,13 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  *
  * Toshiba T7L66XB core mfd support
  *
  * Copyright (c) 2005, 2007, 2008 Ian Molton
  * Copyright (c) 2008 Dmitry Baryshkov
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  *
  * T7L66 features:
  *
@@ -37,8 +40,16 @@ enum {
 };
 
 static const struct resource t7l66xb_mmc_resources[] = {
-	DEFINE_RES_MEM(0x800, 0x200),
-	DEFINE_RES_IRQ(IRQ_T7L66XB_MMC)
+	{
+		.start = 0x800,
+		.end	= 0x9ff,
+		.flags = IORESOURCE_MEM,
+	},
+	{
+		.start = IRQ_T7L66XB_MMC,
+		.end	= IRQ_T7L66XB_MMC,
+		.flags = IORESOURCE_IRQ,
+	},
 };
 
 #define SCR_REVID	0x08		/* b Revision ID	*/
@@ -71,7 +82,8 @@ struct t7l66xb {
 
 static int t7l66xb_mmc_enable(struct platform_device *mmc)
 {
-	struct t7l66xb *t7l66xb = dev_get_drvdata(mmc->dev.parent);
+	struct platform_device *dev = to_platform_device(mmc->dev.parent);
+	struct t7l66xb *t7l66xb = platform_get_drvdata(dev);
 	unsigned long flags;
 	u8 dev_ctl;
 	int ret;
@@ -96,7 +108,8 @@ static int t7l66xb_mmc_enable(struct platform_device *mmc)
 
 static int t7l66xb_mmc_disable(struct platform_device *mmc)
 {
-	struct t7l66xb *t7l66xb = dev_get_drvdata(mmc->dev.parent);
+	struct platform_device *dev = to_platform_device(mmc->dev.parent);
+	struct t7l66xb *t7l66xb = platform_get_drvdata(dev);
 	unsigned long flags;
 	u8 dev_ctl;
 
@@ -115,14 +128,16 @@ static int t7l66xb_mmc_disable(struct platform_device *mmc)
 
 static void t7l66xb_mmc_pwr(struct platform_device *mmc, int state)
 {
-	struct t7l66xb *t7l66xb = dev_get_drvdata(mmc->dev.parent);
+	struct platform_device *dev = to_platform_device(mmc->dev.parent);
+	struct t7l66xb *t7l66xb = platform_get_drvdata(dev);
 
 	tmio_core_mmc_pwr(t7l66xb->scr + 0x200, 0, state);
 }
 
 static void t7l66xb_mmc_clk_div(struct platform_device *mmc, int state)
 {
-	struct t7l66xb *t7l66xb = dev_get_drvdata(mmc->dev.parent);
+	struct platform_device *dev = to_platform_device(mmc->dev.parent);
+	struct t7l66xb *t7l66xb = platform_get_drvdata(dev);
 
 	tmio_core_mmc_clk_div(t7l66xb->scr + 0x200, 0, state);
 }
@@ -397,8 +412,11 @@ err_noirq:
 
 static int t7l66xb_remove(struct platform_device *dev)
 {
+	struct t7l66xb_platform_data *pdata = dev_get_platdata(&dev->dev);
 	struct t7l66xb *t7l66xb = platform_get_drvdata(dev);
+	int ret;
 
+	ret = pdata->disable(dev);
 	clk_disable_unprepare(t7l66xb->clk48m);
 	clk_put(t7l66xb->clk48m);
 	clk_disable_unprepare(t7l66xb->clk32k);
@@ -409,7 +427,8 @@ static int t7l66xb_remove(struct platform_device *dev)
 	mfd_remove_devices(&dev->dev);
 	kfree(t7l66xb);
 
-	return 0;
+	return ret;
+
 }
 
 static struct platform_driver t7l66xb_platform_driver = {

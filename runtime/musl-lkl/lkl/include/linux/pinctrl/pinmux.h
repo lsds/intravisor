@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Interface the pinmux subsystem
  *
@@ -7,6 +6,8 @@
  * Based on bits of regulator core, gpio core and clk core
  *
  * Author: Linus Walleij <linus.walleij@linaro.org>
+ *
+ * License terms: GNU General Public License (GPL) version 2
  */
 #ifndef __LINUX_PINCTRL_PINMUX_H
 #define __LINUX_PINCTRL_PINMUX_H
@@ -14,6 +15,8 @@
 #include <linux/list.h>
 #include <linux/seq_file.h>
 #include <linux/pinctrl/pinctrl.h>
+
+#ifdef CONFIG_PINMUX
 
 struct pinctrl_dev;
 
@@ -81,5 +84,7 @@ struct pinmux_ops {
 				   bool input);
 	bool strict;
 };
+
+#endif /* CONFIG_PINMUX */
 
 #endif /* __LINUX_PINCTRL_PINMUX_H */

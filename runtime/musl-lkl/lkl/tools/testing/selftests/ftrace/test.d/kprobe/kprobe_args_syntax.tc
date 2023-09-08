@@ -1,7 +1,13 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-2.0
 # description: Kprobe event argument syntax
-# requires: kprobe_events "x8/16/32/64":README
+
+[ -f kprobe_events ] || exit_unsupported # this is configurable
+
+grep "x8/16/32/64" README > /dev/null || exit_unsupported # version issue
+
+echo 0 > events/enable
+echo > kprobe_events
 
 PROBEFUNC="vfs_read"
 GOODREG=
@@ -28,21 +34,6 @@ arm*)
   GOODREG=%r0
   BADREG=%ax
 ;;
-ppc*)
-  GOODREG=%r3
-  BADREG=%msr
-;;
-s390*)
-  GOODREG=%r2
-  BADREG=%s2
-;;
-mips*)
-  GOODREG=%r4
-  BADREG=%r12
-;;
-*)
-  echo "Please implement other architecture here"
-  exit_untested
 esac
 
 test_goodarg() # Good-args
@@ -80,11 +71,8 @@ test_badarg "\$stackp" "\$stack0+10" "\$stack1-10"
 echo "r ${PROBEFUNC} \$retval" > kprobe_events
 ! echo "p ${PROBEFUNC} \$retval" > kprobe_events
 
-# $comm was introduced in 4.8, older kernels reject it.
-if grep -A1 "fetcharg:" README | grep -q '\$comm' ; then
 : "Comm access"
 test_goodarg "\$comm"
-fi
 
 : "Indirect memory access"
 test_goodarg "+0(${GOODREG})" "-0(${GOODREG})" "+10(\$stack)" \
@@ -105,3 +93,5 @@ test_badarg "${GOODREG}::${GOODTYPE}" "${GOODREG}:${BADTYPE}" \
 
 test_goodarg "\$comm:string" "+0(\$stack):string"
 test_badarg "\$comm:x64" "\$stack:string" "${GOODREG}:string"
+
+echo > kprobe_events

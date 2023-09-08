@@ -63,7 +63,10 @@ do {								\
 } while (0)
 
 /* Rotate right one 64 bit number as a 56 bit number */
-#define ror56_64(k, n) (k = (k >> n) | ((k & ((1 << n) - 1)) << (56 - n)))
+#define ror56_64(k, n)						\
+do {								\
+	k = (k >> n) | ((k & ((1 << n) - 1)) << (56 - n));	\
+} while (0)
 
 /*
  * Sboxes for Feistel network derived from
@@ -388,11 +391,11 @@ static int fcrypt_setkey(struct crypto_tfm *tfm, const u8 *key, unsigned int key
 
 static struct crypto_alg fcrypt_alg = {
 	.cra_name		=	"fcrypt",
-	.cra_driver_name	=	"fcrypt-generic",
 	.cra_flags		=	CRYPTO_ALG_TYPE_CIPHER,
 	.cra_blocksize		=	8,
 	.cra_ctxsize		=	sizeof(struct fcrypt_ctx),
 	.cra_module		=	THIS_MODULE,
+	.cra_alignmask		=	3,
 	.cra_u			=	{ .cipher = {
 	.cia_min_keysize	=	8,
 	.cia_max_keysize	=	8,
@@ -411,7 +414,7 @@ static void __exit fcrypt_mod_fini(void)
 	crypto_unregister_alg(&fcrypt_alg);
 }
 
-subsys_initcall(fcrypt_mod_init);
+module_init(fcrypt_mod_init);
 module_exit(fcrypt_mod_fini);
 
 MODULE_LICENSE("Dual BSD/GPL");

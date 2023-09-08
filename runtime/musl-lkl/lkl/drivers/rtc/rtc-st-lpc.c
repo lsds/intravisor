@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * rtc-st-lpc.c - ST's LPC RTC, powered by the Low Power Timer
  *
@@ -8,6 +7,11 @@
  *         Lee Jones <lee.jones@linaro.org> for STMicroelectronics
  *
  * Based on the original driver written by Stuart Menefy.
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public Licence
+ * as published by the Free Software Foundation; either version
+ * 2 of the Licence, or (at your option) any later version.
  */
 
 #include <linux/clk.h>
@@ -41,6 +45,7 @@
 struct st_rtc {
 	struct rtc_device *rtc_dev;
 	struct rtc_wkalrm alarm;
+	struct resource *res;
 	struct clk *clk;
 	unsigned long clkrate;
 	void __iomem *ioaddr;
@@ -161,6 +166,10 @@ static int st_rtc_set_alarm(struct device *dev, struct rtc_wkalrm *t)
 	now_secs = rtc_tm_to_time64(&now);
 	alarm_secs = rtc_tm_to_time64(&t->time);
 
+	/* Invalid alarm time */
+	if (now_secs > alarm_secs)
+		return -EINVAL;
+
 	memcpy(&rtc->alarm, t, sizeof(struct rtc_wkalrm));
 
 	/* Now many secs to fire */
@@ -173,7 +182,7 @@ static int st_rtc_set_alarm(struct device *dev, struct rtc_wkalrm *t)
 	return 0;
 }
 
-static const struct rtc_class_ops st_rtc_ops = {
+static struct rtc_class_ops st_rtc_ops = {
 	.read_time		= st_rtc_read_time,
 	.set_time		= st_rtc_set_time,
 	.read_alarm		= st_rtc_read_alarm,
@@ -185,6 +194,7 @@ static int st_rtc_probe(struct platform_device *pdev)
 {
 	struct device_node *np = pdev->dev.of_node;
 	struct st_rtc *rtc;
+	struct resource *res;
 	uint32_t mode;
 	int ret = 0;
 
@@ -202,13 +212,10 @@ static int st_rtc_probe(struct platform_device *pdev)
 	if (!rtc)
 		return -ENOMEM;
 
-	rtc->rtc_dev = devm_rtc_allocate_device(&pdev->dev);
-	if (IS_ERR(rtc->rtc_dev))
-		return PTR_ERR(rtc->rtc_dev);
-
 	spin_lock_init(&rtc->lock);
 
-	rtc->ioaddr = devm_platform_ioremap_resource(pdev, 0);
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	rtc->ioaddr = devm_ioremap_resource(&pdev->dev, res);
 	if (IS_ERR(rtc->ioaddr))
 		return PTR_ERR(rtc->ioaddr);
 
@@ -246,15 +253,22 @@ static int st_rtc_probe(struct platform_device *pdev)
 
 	platform_set_drvdata(pdev, rtc);
 
-	rtc->rtc_dev->ops = &st_rtc_ops;
-	rtc->rtc_dev->range_max = U64_MAX;
-	do_div(rtc->rtc_dev->range_max, rtc->clkrate);
-
-	ret = devm_rtc_register_device(rtc->rtc_dev);
-	if (ret) {
+	rtc->rtc_dev = rtc_device_register("st-lpc-rtc", &pdev->dev,
+					   &st_rtc_ops, THIS_MODULE);
+	if (IS_ERR(rtc->rtc_dev)) {
 		clk_disable_unprepare(rtc->clk);
-		return ret;
+		return PTR_ERR(rtc->rtc_dev);
 	}
+
+	return 0;
+}
+
+static int st_rtc_remove(struct platform_device *pdev)
+{
+	struct st_rtc *rtc = platform_get_drvdata(pdev);
+
+	if (likely(rtc->rtc_dev))
+		rtc_device_unregister(rtc->rtc_dev);
 
 	return 0;
 }
@@ -311,6 +325,7 @@ static struct platform_driver st_rtc_platform_driver = {
 		.of_match_table = st_rtc_match,
 	},
 	.probe = st_rtc_probe,
+	.remove = st_rtc_remove,
 };
 
 module_platform_driver(st_rtc_platform_driver);

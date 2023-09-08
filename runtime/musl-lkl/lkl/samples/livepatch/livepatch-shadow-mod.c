@@ -1,6 +1,18 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Copyright (C) 2017 Joe Lawrence <joe.lawrence@redhat.com>
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version 2
+ * of the License, or (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, see <http://www.gnu.org/licenses/>.
  */
 
 /*
@@ -84,18 +96,18 @@ MODULE_DESCRIPTION("Buggy module for shadow variable demo");
  * Keep a list of all the dummies so we can clean up any residual ones
  * on module exit
  */
-static LIST_HEAD(dummy_list);
-static DEFINE_MUTEX(dummy_list_mutex);
+LIST_HEAD(dummy_list);
+DEFINE_MUTEX(dummy_list_mutex);
 
 struct dummy {
 	struct list_head list;
 	unsigned long jiffies_expire;
 };
 
-static __used noinline struct dummy *dummy_alloc(void)
+noinline struct dummy *dummy_alloc(void)
 {
 	struct dummy *d;
-	int *leak;
+	void *leak;
 
 	d = kzalloc(sizeof(*d), GFP_KERNEL);
 	if (!d)
@@ -105,11 +117,7 @@ static __used noinline struct dummy *dummy_alloc(void)
 		msecs_to_jiffies(1000 * EXPIRE_PERIOD);
 
 	/* Oops, forgot to save leak! */
-	leak = kzalloc(sizeof(*leak), GFP_KERNEL);
-	if (!leak) {
-		kfree(d);
-		return NULL;
-	}
+	leak = kzalloc(sizeof(int), GFP_KERNEL);
 
 	pr_info("%s: dummy @ %p, expires @ %lx\n",
 		__func__, d, d->jiffies_expire);
@@ -117,7 +125,7 @@ static __used noinline struct dummy *dummy_alloc(void)
 	return d;
 }
 
-static __used noinline void dummy_free(struct dummy *d)
+noinline void dummy_free(struct dummy *d)
 {
 	pr_info("%s: dummy @ %p, expired = %lx\n",
 		__func__, d, d->jiffies_expire);
@@ -125,8 +133,7 @@ static __used noinline void dummy_free(struct dummy *d)
 	kfree(d);
 }
 
-static __used noinline bool dummy_check(struct dummy *d,
-					   unsigned long jiffies)
+noinline bool dummy_check(struct dummy *d, unsigned long jiffies)
 {
 	return time_after(jiffies, d->jiffies_expire);
 }

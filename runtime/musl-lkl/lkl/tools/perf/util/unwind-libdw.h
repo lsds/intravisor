@@ -20,7 +20,6 @@ struct unwind_info {
 	void			*arg;
 	int			max_stack;
 	int			idx;
-	bool			best_effort;
 	struct unwind_entry	entries[];
 };
 

@@ -221,6 +221,7 @@ static ssize_t cm4040_read(struct file *filp, char __user *buf,
 	unsigned long i;
 	size_t min_bytes_to_read;
 	int rc;
+	unsigned char uc;
 
 	DEBUGP(2, dev, "-> cm4040_read(%s,%d)\n", current->comm, current->pid);
 
@@ -307,7 +308,7 @@ static ssize_t cm4040_read(struct file *filp, char __user *buf,
 			return -EIO;
 	}
 
-	xinb(iobase + REG_OFFSET_BULK_IN);
+	uc = xinb(iobase + REG_OFFSET_BULK_IN);
 
 	DEBUGP(2, dev, "<- cm4040_read (successfully)\n");
 	return min_bytes_to_read;
@@ -504,7 +505,7 @@ static void cm4040_reader_release(struct pcmcia_device *link)
 
 	DEBUGP(3, dev, "-> cm4040_reader_release\n");
 	while (link->open) {
-		DEBUGP(3, dev, MODULE_NAME ": delaying release "
+		DEBUGP(3, dev, KERN_INFO MODULE_NAME ": delaying release "
 		       "until process has terminated\n");
  		wait_event(dev->devq, (link->open == 0));
 	}

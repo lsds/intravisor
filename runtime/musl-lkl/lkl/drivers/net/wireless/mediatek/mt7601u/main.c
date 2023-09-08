@@ -1,7 +1,15 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (C) 2014 Felix Fietkau <nbd@openwrt.org>
  * Copyright (C) 2015 Jakub Kicinski <kubakici@wp.pl>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2
+ * as published by the Free Software Foundation
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
  */
 
 #include "mt7601u.h"
@@ -132,7 +140,7 @@ mt76_configure_filter(struct ieee80211_hw *hw, unsigned int changed_flags,
 
 static void
 mt7601u_bss_info_changed(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
-			 struct ieee80211_bss_conf *info, u64 changed)
+			 struct ieee80211_bss_conf *info, u32 changed)
 {
 	struct mt7601u_dev *dev = hw->priv;
 
@@ -280,12 +288,6 @@ mt7601u_sw_scan_complete(struct ieee80211_hw *hw,
 
 	mt7601u_agc_restore(dev);
 	clear_bit(MT7601U_STATE_SCANNING, &dev->state);
-
-	ieee80211_queue_delayed_work(dev->hw, &dev->cal_work,
-				     MT_CALIBRATE_INTERVAL);
-	if (dev->freq_cal.enabled)
-		ieee80211_queue_delayed_work(dev->hw, &dev->freq_cal.work,
-					     MT_FREQ_CAL_INIT_DELAY);
 }
 
 static int
@@ -299,17 +301,6 @@ mt7601u_set_key(struct ieee80211_hw *hw, enum set_key_cmd cmd,
 	struct mt76_wcid *wcid = msta ? &msta->wcid : &mvif->group_wcid;
 	int idx = key->keyidx;
 	int ret;
-
-	/* fall back to sw encryption for unsupported ciphers */
-	switch (key->cipher) {
-	case WLAN_CIPHER_SUITE_WEP40:
-	case WLAN_CIPHER_SUITE_WEP104:
-	case WLAN_CIPHER_SUITE_TKIP:
-	case WLAN_CIPHER_SUITE_CCMP:
-		break;
-	default:
-		return -EOPNOTSUPP;
-	}
 
 	if (cmd == SET_KEY) {
 		key->hw_key_idx = wcid->idx;
@@ -351,7 +342,7 @@ mt76_ampdu_action(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
 	struct ieee80211_sta *sta = params->sta;
 	enum ieee80211_ampdu_mlme_action action = params->action;
 	u16 tid = params->tid;
-	u16 ssn = params->ssn;
+	u16 *ssn = &params->ssn;
 	struct mt76_sta *msta = (struct mt76_sta *) sta->drv_priv;
 
 	WARN_ON(msta->wcid.idx > GROUP_WCID(0));
@@ -371,8 +362,9 @@ mt76_ampdu_action(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
 	case IEEE80211_AMPDU_TX_STOP_FLUSH_CONT:
 		break;
 	case IEEE80211_AMPDU_TX_START:
-		msta->agg_ssn[tid] = ssn << 4;
-		return IEEE80211_AMPDU_TX_START_IMMEDIATE;
+		msta->agg_ssn[tid] = *ssn << 4;
+		ieee80211_start_tx_ba_cb_irqsafe(vif, sta->addr, tid);
+		break;
 	case IEEE80211_AMPDU_TX_STOP_CONT:
 		ieee80211_stop_tx_ba_cb_irqsafe(vif, sta->addr, tid);
 		break;

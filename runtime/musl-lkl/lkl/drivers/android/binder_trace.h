@@ -1,6 +1,15 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (C) 2012 Google, Inc.
+ *
+ * This software is licensed under the terms of the GNU General Public
+ * License version 2, as published by the Free Software Foundation, and
+ * may be copied, distributed, and modified under those terms.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
  */
 
 #undef TRACE_SYSTEM
@@ -93,35 +102,6 @@ TRACE_EVENT(binder_wait_for_work,
 	TP_printk("proc_work=%d transaction_stack=%d thread_todo=%d",
 		  __entry->proc_work, __entry->transaction_stack,
 		  __entry->thread_todo)
-);
-
-TRACE_EVENT(binder_txn_latency_free,
-	TP_PROTO(struct binder_transaction *t,
-		 int from_proc, int from_thread,
-		 int to_proc, int to_thread),
-	TP_ARGS(t, from_proc, from_thread, to_proc, to_thread),
-	TP_STRUCT__entry(
-		__field(int, debug_id)
-		__field(int, from_proc)
-		__field(int, from_thread)
-		__field(int, to_proc)
-		__field(int, to_thread)
-		__field(unsigned int, code)
-		__field(unsigned int, flags)
-	),
-	TP_fast_assign(
-		__entry->debug_id = t->debug_id;
-		__entry->from_proc = from_proc;
-		__entry->from_thread = from_thread;
-		__entry->to_proc = to_proc;
-		__entry->to_thread = to_thread;
-		__entry->code = t->code;
-		__entry->flags = t->flags;
-	),
-	TP_printk("transaction=%d from %d:%d to %d:%d flags=0x%x code=0x%x",
-		  __entry->debug_id, __entry->from_proc, __entry->from_thread,
-		  __entry->to_proc, __entry->to_thread, __entry->code,
-		  __entry->flags)
 );
 
 TRACE_EVENT(binder_transaction,
@@ -243,40 +223,22 @@ TRACE_EVENT(binder_transaction_ref_to_ref,
 		  __entry->dest_ref_debug_id, __entry->dest_ref_desc)
 );
 
-TRACE_EVENT(binder_transaction_fd_send,
-	TP_PROTO(struct binder_transaction *t, int fd, size_t offset),
-	TP_ARGS(t, fd, offset),
+TRACE_EVENT(binder_transaction_fd,
+	TP_PROTO(struct binder_transaction *t, int src_fd, int dest_fd),
+	TP_ARGS(t, src_fd, dest_fd),
 
 	TP_STRUCT__entry(
 		__field(int, debug_id)
-		__field(int, fd)
-		__field(size_t, offset)
+		__field(int, src_fd)
+		__field(int, dest_fd)
 	),
 	TP_fast_assign(
 		__entry->debug_id = t->debug_id;
-		__entry->fd = fd;
-		__entry->offset = offset;
+		__entry->src_fd = src_fd;
+		__entry->dest_fd = dest_fd;
 	),
-	TP_printk("transaction=%d src_fd=%d offset=%zu",
-		  __entry->debug_id, __entry->fd, __entry->offset)
-);
-
-TRACE_EVENT(binder_transaction_fd_recv,
-	TP_PROTO(struct binder_transaction *t, int fd, size_t offset),
-	TP_ARGS(t, fd, offset),
-
-	TP_STRUCT__entry(
-		__field(int, debug_id)
-		__field(int, fd)
-		__field(size_t, offset)
-	),
-	TP_fast_assign(
-		__entry->debug_id = t->debug_id;
-		__entry->fd = fd;
-		__entry->offset = offset;
-	),
-	TP_printk("transaction=%d dest_fd=%d offset=%zu",
-		  __entry->debug_id, __entry->fd, __entry->offset)
+	TP_printk("transaction=%d src_fd=%d ==> dest_fd=%d",
+		  __entry->debug_id, __entry->src_fd, __entry->dest_fd)
 );
 
 DECLARE_EVENT_CLASS(binder_buffer_class,
@@ -286,17 +248,14 @@ DECLARE_EVENT_CLASS(binder_buffer_class,
 		__field(int, debug_id)
 		__field(size_t, data_size)
 		__field(size_t, offsets_size)
-		__field(size_t, extra_buffers_size)
 	),
 	TP_fast_assign(
 		__entry->debug_id = buf->debug_id;
 		__entry->data_size = buf->data_size;
 		__entry->offsets_size = buf->offsets_size;
-		__entry->extra_buffers_size = buf->extra_buffers_size;
 	),
-	TP_printk("transaction=%d data_size=%zd offsets_size=%zd extra_buffers_size=%zd",
-		  __entry->debug_id, __entry->data_size, __entry->offsets_size,
-		  __entry->extra_buffers_size)
+	TP_printk("transaction=%d data_size=%zd offsets_size=%zd",
+		  __entry->debug_id, __entry->data_size, __entry->offsets_size)
 );
 
 DEFINE_EVENT(binder_buffer_class, binder_transaction_alloc_buf,
@@ -311,13 +270,9 @@ DEFINE_EVENT(binder_buffer_class, binder_transaction_failed_buffer_release,
 	TP_PROTO(struct binder_buffer *buffer),
 	TP_ARGS(buffer));
 
-DEFINE_EVENT(binder_buffer_class, binder_transaction_update_buffer_release,
-	     TP_PROTO(struct binder_buffer *buffer),
-	     TP_ARGS(buffer));
-
 TRACE_EVENT(binder_update_page_range,
 	TP_PROTO(struct binder_alloc *alloc, bool allocate,
-		 void __user *start, void __user *end),
+		 void *start, void *end),
 	TP_ARGS(alloc, allocate, start, end),
 	TP_STRUCT__entry(
 		__field(int, proc)

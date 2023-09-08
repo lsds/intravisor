@@ -63,7 +63,7 @@ struct proc_dir_entry *	rpc_proc_register(struct net *,struct rpc_stat *);
 void			rpc_proc_unregister(struct net *,const char *);
 void			rpc_proc_zero(const struct rpc_program *);
 struct proc_dir_entry *	svc_proc_register(struct net *, struct svc_stat *,
-					  const struct proc_ops *);
+					  const struct file_operations *);
 void			svc_proc_unregister(struct net *, const char *);
 
 void			svc_seq_show(struct seq_file *,
@@ -75,7 +75,7 @@ static inline void rpc_proc_unregister(struct net *net, const char *p) {}
 static inline void rpc_proc_zero(const struct rpc_program *p) {}
 
 static inline struct proc_dir_entry *svc_proc_register(struct net *net, struct svc_stat *s,
-						       const struct proc_ops *proc_ops) { return NULL; }
+						       const struct file_operations *f) { return NULL; }
 static inline void svc_proc_unregister(struct net *net, const char *p) {}
 
 static inline void svc_seq_show(struct seq_file *seq,

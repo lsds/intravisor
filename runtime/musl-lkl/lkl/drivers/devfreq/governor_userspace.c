@@ -1,9 +1,12 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  *  linux/drivers/devfreq/governor_userspace.c
  *
  *  Copyright (C) 2011 Samsung Electronics
  *	MyungJoo Ham <myungjoo.ham@samsung.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 
 #include <linux/slab.h>
@@ -23,16 +26,24 @@ static int devfreq_userspace_func(struct devfreq *df, unsigned long *freq)
 {
 	struct userspace_data *data = df->data;
 
-	if (data->valid)
-		*freq = data->user_frequency;
-	else
-		*freq = df->previous_freq; /* No user freq specified yet */
+	if (data->valid) {
+		unsigned long adjusted_freq = data->user_frequency;
 
+		if (df->max_freq && adjusted_freq > df->max_freq)
+			adjusted_freq = df->max_freq;
+
+		if (df->min_freq && adjusted_freq < df->min_freq)
+			adjusted_freq = df->min_freq;
+
+		*freq = adjusted_freq;
+	} else {
+		*freq = df->previous_freq; /* No user freq specified yet */
+	}
 	return 0;
 }
 
-static ssize_t set_freq_store(struct device *dev, struct device_attribute *attr,
-			      const char *buf, size_t count)
+static ssize_t store_freq(struct device *dev, struct device_attribute *attr,
+			  const char *buf, size_t count)
 {
 	struct devfreq *devfreq = to_devfreq(dev);
 	struct userspace_data *data;
@@ -52,8 +63,8 @@ static ssize_t set_freq_store(struct device *dev, struct device_attribute *attr,
 	return err;
 }
 
-static ssize_t set_freq_show(struct device *dev,
-			     struct device_attribute *attr, char *buf)
+static ssize_t show_freq(struct device *dev, struct device_attribute *attr,
+			 char *buf)
 {
 	struct devfreq *devfreq = to_devfreq(dev);
 	struct userspace_data *data;
@@ -70,7 +81,7 @@ static ssize_t set_freq_show(struct device *dev,
 	return err;
 }
 
-static DEVICE_ATTR_RW(set_freq);
+static DEVICE_ATTR(set_freq, 0644, show_freq, store_freq);
 static struct attribute *dev_entries[] = {
 	&dev_attr_set_freq.attr,
 	NULL,
@@ -131,7 +142,7 @@ static int devfreq_userspace_handler(struct devfreq *devfreq,
 }
 
 static struct devfreq_governor devfreq_userspace = {
-	.name = DEVFREQ_GOV_USERSPACE,
+	.name = "userspace",
 	.get_target_freq = devfreq_userspace_func,
 	.event_handler = devfreq_userspace_handler,
 };

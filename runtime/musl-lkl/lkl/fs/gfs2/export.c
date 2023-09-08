@@ -1,7 +1,10 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (C) Sistina Software, Inc.  1997-2003 All rights reserved.
  * Copyright (C) 2004-2006 Red Hat, Inc.  All rights reserved.
+ *
+ * This copyrighted material is made available to anyone wishing to use,
+ * modify, copy, or redistribute it subject to the terms and conditions
+ * of the GNU General Public License version 2.
  */
 
 #include <linux/spinlock.h>
@@ -66,7 +69,7 @@ struct get_name_filldir {
 	char *name;
 };
 
-static bool get_name_filldir(struct dir_context *ctx, const char *name,
+static int get_name_filldir(struct dir_context *ctx, const char *name,
 			    int length, loff_t offset, u64 inum,
 			    unsigned int type)
 {
@@ -74,12 +77,12 @@ static bool get_name_filldir(struct dir_context *ctx, const char *name,
 		container_of(ctx, struct get_name_filldir, ctx);
 
 	if (inum != gnfd->inum.no_addr)
-		return true;
+		return 0;
 
 	memcpy(gnfd->name, name, length);
 	gnfd->name[length] = 0;
 
-	return false;
+	return 1;
 }
 
 static int gfs2_get_name(struct dentry *parent, char *name,
@@ -134,9 +137,7 @@ static struct dentry *gfs2_get_dentry(struct super_block *sb,
 	struct gfs2_sbd *sdp = sb->s_fs_info;
 	struct inode *inode;
 
-	if (!inum->no_formal_ino)
-		return ERR_PTR(-ESTALE);
-	inode = gfs2_lookup_by_inum(sdp, inum->no_addr, inum->no_formal_ino,
+	inode = gfs2_lookup_by_inum(sdp, inum->no_addr, &inum->no_formal_ino,
 				    GFS2_BLKST_DINODE);
 	if (IS_ERR(inode))
 		return ERR_CAST(inode);

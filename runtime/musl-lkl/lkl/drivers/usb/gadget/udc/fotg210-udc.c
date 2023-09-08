@@ -326,7 +326,6 @@ dma_reset:
 static void fotg210_start_dma(struct fotg210_ep *ep,
 			struct fotg210_request *req)
 {
-	struct device *dev = &ep->fotg210->gadget.dev;
 	dma_addr_t d;
 	u8 *buffer;
 	u32 length;
@@ -338,25 +337,28 @@ static void fotg210_start_dma(struct fotg210_ep *ep,
 		} else {
 			buffer = req->req.buf + req->req.actual;
 			length = ioread32(ep->fotg210->reg +
-					FOTG210_FIBCR(ep->epnum - 1)) & FIBCR_BCFX;
-			if (length > req->req.length - req->req.actual)
-				length = req->req.length - req->req.actual;
+					FOTG210_FIBCR(ep->epnum - 1));
+			length &= FIBCR_BCFX;
 		}
 	} else {
 		buffer = req->req.buf + req->req.actual;
 		if (req->req.length - req->req.actual > ep->ep.maxpacket)
 			length = ep->ep.maxpacket;
 		else
-			length = req->req.length - req->req.actual;
+			length = req->req.length;
 	}
 
-	d = dma_map_single(dev, buffer, length,
+	d = dma_map_single(NULL, buffer, length,
 			ep->dir_in ? DMA_TO_DEVICE : DMA_FROM_DEVICE);
 
-	if (dma_mapping_error(dev, d)) {
+	if (dma_mapping_error(NULL, d)) {
 		pr_err("dma_mapping_error\n");
 		return;
 	}
+
+	dma_sync_single_for_device(NULL, d, length,
+				   ep->dir_in ? DMA_TO_DEVICE :
+					DMA_FROM_DEVICE);
 
 	fotg210_enable_dma(ep, d, length);
 
@@ -368,7 +370,7 @@ static void fotg210_start_dma(struct fotg210_ep *ep,
 	/* update actual transfer length */
 	req->req.actual += length;
 
-	dma_unmap_single(dev, d, length, DMA_TO_DEVICE);
+	dma_unmap_single(NULL, d, length, DMA_TO_DEVICE);
 }
 
 static void fotg210_ep0_queue(struct fotg210_ep *ep,
@@ -380,7 +382,8 @@ static void fotg210_ep0_queue(struct fotg210_ep *ep,
 	}
 	if (ep->dir_in) { /* if IN */
 		fotg210_start_dma(ep, req);
-		if (req->req.length == req->req.actual)
+		if ((req->req.length == req->req.actual) ||
+		    (req->req.actual < ep->ep.maxpacket))
 			fotg210_done(ep, req, 0);
 	} else { /* OUT */
 		u32 value = ioread32(ep->fotg210->reg + FOTG210_DMISGR0);
@@ -481,6 +484,7 @@ static int fotg210_set_halt_and_wedge(struct usb_ep *_ep, int value, int wedge)
 	struct fotg210_ep *ep;
 	struct fotg210_udc *fotg210;
 	unsigned long flags;
+	int ret = 0;
 
 	ep = container_of(_ep, struct fotg210_ep, ep);
 
@@ -503,7 +507,7 @@ static int fotg210_set_halt_and_wedge(struct usb_ep *_ep, int value, int wedge)
 	}
 
 	spin_unlock_irqrestore(&ep->fotg210->lock, flags);
-	return 0;
+	return ret;
 }
 
 static int fotg210_ep_set_halt(struct usb_ep *_ep, int value)
@@ -737,7 +741,7 @@ static void fotg210_get_status(struct fotg210_udc *fotg210,
 	fotg210->ep0_req->length = 2;
 
 	spin_unlock(&fotg210->lock);
-	fotg210_ep_queue(fotg210->gadget.ep0, fotg210->ep0_req, GFP_ATOMIC);
+	fotg210_ep_queue(fotg210->gadget.ep0, fotg210->ep0_req, GFP_KERNEL);
 	spin_lock(&fotg210->lock);
 }
 
@@ -820,7 +824,7 @@ static void fotg210_ep0in(struct fotg210_udc *fotg210)
 		if (req->req.length)
 			fotg210_start_dma(ep, req);
 
-		if (req->req.actual == req->req.length)
+		if ((req->req.length - req->req.actual) < ep->ep.maxpacket)
 			fotg210_done(ep, req, 0);
 	} else {
 		fotg210_set_cxdone(fotg210);
@@ -849,16 +853,12 @@ static void fotg210_out_fifo_handler(struct fotg210_ep *ep)
 {
 	struct fotg210_request *req = list_entry(ep->queue.next,
 						 struct fotg210_request, queue);
-	int disgr1 = ioread32(ep->fotg210->reg + FOTG210_DISGR1);
 
 	fotg210_start_dma(ep, req);
 
-	/* Complete the request when it's full or a short packet arrived.
-	 * Like other drivers, short_not_ok isn't handled.
-	 */
-
+	/* finish out transfer */
 	if (req->req.length == req->req.actual ||
-	    (disgr1 & DISGR1_SPK_INT(ep->epnum - 1)))
+	    req->req.actual < ep->ep.maxpacket)
 		fotg210_done(ep, req, 0);
 }
 
@@ -881,8 +881,6 @@ static irqreturn_t fotg210_irq(int irq, void *_fotg210)
 		int_grp2 &= ~int_msk2;
 
 		if (int_grp2 & DISGR2_USBRST_INT) {
-			usb_gadget_udc_reset(&fotg210->gadget,
-					     fotg210->driver);
 			value = ioread32(reg);
 			value &= ~DISGR2_USBRST_INT;
 			iowrite32(value, reg);
@@ -1033,12 +1031,6 @@ static void fotg210_init(struct fotg210_udc *fotg210)
 	value &= ~DMCR_GLINT_EN;
 	iowrite32(value, fotg210->reg + FOTG210_DMCR);
 
-	/* enable only grp2 irqs we handle */
-	iowrite32(~(DISGR2_DMA_ERROR | DISGR2_RX0BYTE_INT | DISGR2_TX0BYTE_INT
-		    | DISGR2_ISO_SEQ_ABORT_INT | DISGR2_ISO_SEQ_ERR_INT
-		    | DISGR2_RESM_INT | DISGR2_SUSP_INT | DISGR2_USBRST_INT),
-		  fotg210->reg + FOTG210_DMISGR2);
-
 	/* disable all fifo interrupt */
 	iowrite32(~(u32)0, fotg210->reg + FOTG210_DMISGR1);
 
@@ -1071,15 +1063,12 @@ static const struct usb_gadget_ops fotg210_gadget_ops = {
 static int fotg210_udc_remove(struct platform_device *pdev)
 {
 	struct fotg210_udc *fotg210 = platform_get_drvdata(pdev);
-	int i;
 
 	usb_del_gadget_udc(&fotg210->gadget);
 	iounmap(fotg210->reg);
 	free_irq(platform_get_irq(pdev, 0), fotg210);
 
 	fotg210_ep_free_request(&fotg210->ep[0]->ep, fotg210->ep0_req);
-	for (i = 0; i < FOTG210_MAX_NUM_EP; i++)
-		kfree(fotg210->ep[i]);
 	kfree(fotg210);
 
 	return 0;
@@ -1110,7 +1099,7 @@ static int fotg210_udc_probe(struct platform_device *pdev)
 	/* initialize udc */
 	fotg210 = kzalloc(sizeof(struct fotg210_udc), GFP_KERNEL);
 	if (fotg210 == NULL)
-		goto err;
+		goto err_alloc;
 
 	for (i = 0; i < FOTG210_MAX_NUM_EP; i++) {
 		_ep[i] = kzalloc(sizeof(struct fotg210_ep), GFP_KERNEL);
@@ -1122,7 +1111,7 @@ static int fotg210_udc_probe(struct platform_device *pdev)
 	fotg210->reg = ioremap(res->start, resource_size(res));
 	if (fotg210->reg == NULL) {
 		pr_err("ioremap error.\n");
-		goto err_alloc;
+		goto err_map;
 	}
 
 	spin_lock_init(&fotg210->lock);
@@ -1170,7 +1159,7 @@ static int fotg210_udc_probe(struct platform_device *pdev)
 	fotg210->ep0_req = fotg210_ep_alloc_request(&fotg210->ep[0]->ep,
 				GFP_KERNEL);
 	if (fotg210->ep0_req == NULL)
-		goto err_map;
+		goto err_req;
 
 	fotg210_init(fotg210);
 
@@ -1198,20 +1187,18 @@ err_req:
 	fotg210_ep_free_request(&fotg210->ep[0]->ep, fotg210->ep0_req);
 
 err_map:
-	iounmap(fotg210->reg);
+	if (fotg210->reg)
+		iounmap(fotg210->reg);
 
 err_alloc:
-	for (i = 0; i < FOTG210_MAX_NUM_EP; i++)
-		kfree(fotg210->ep[i]);
 	kfree(fotg210);
 
-err:
 	return ret;
 }
 
 static struct platform_driver fotg210_driver = {
 	.driver		= {
-		.name =	udc_name,
+		.name =	(char *)udc_name,
 	},
 	.probe		= fotg210_udc_probe,
 	.remove		= fotg210_udc_remove,

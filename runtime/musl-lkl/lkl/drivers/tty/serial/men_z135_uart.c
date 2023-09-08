@@ -173,7 +173,7 @@ static void men_z135_reg_clr(struct men_z135_port *uart,
 
 /**
  * men_z135_handle_modem_status() - Handle change of modem status
- * @uart: The UART port
+ * @port: The UART port
  *
  * Handle change of modem status register. This is done by reading the "delta"
  * versions of DCD (Data Carrier Detect) and CTS (Clear To Send).
@@ -236,7 +236,7 @@ static u16 get_rx_fifo_content(struct men_z135_port *uart)
 
 /**
  * men_z135_handle_rx() - RX tasklet routine
- * @uart: Pointer to struct men_z135_port
+ * @arg: Pointer to struct men_z135_port
  *
  * Copy from RX FIFO and acknowledge number of bytes copied.
  */
@@ -287,7 +287,7 @@ static void men_z135_handle_rx(struct men_z135_port *uart)
 
 /**
  * men_z135_handle_tx() - TX tasklet routine
- * @uart: Pointer to struct men_z135_port
+ * @arg: Pointer to struct men_z135_port
  *
  */
 static void men_z135_handle_tx(struct men_z135_port *uart)
@@ -353,6 +353,7 @@ static void men_z135_handle_tx(struct men_z135_port *uart)
 
 	memcpy_toio(port->membase + MEN_Z135_TX_RAM, &xmit->buf[xmit->tail], n);
 	xmit->tail = (xmit->tail + n) & (UART_XMIT_SIZE - 1);
+	mmiowb();
 
 	iowrite32(n & 0x3ff, port->membase + MEN_Z135_TX_CTRL);
 
@@ -596,7 +597,7 @@ static void men_z135_stop_rx(struct uart_port *port)
 
 /**
  * men_z135_enable_ms() - Enable Modem Status
- * @port: the port
+ * port:
  *
  * Enable Modem Status IRQ.
  */
@@ -646,8 +647,8 @@ static void men_z135_shutdown(struct uart_port *port)
 }
 
 static void men_z135_set_termios(struct uart_port *port,
-				 struct ktermios *termios,
-				 const struct ktermios *old)
+				struct ktermios *termios,
+				struct ktermios *old)
 {
 	struct men_z135_port *uart = to_men_z135(port);
 	unsigned int baud;
@@ -833,6 +834,7 @@ static int men_z135_probe(struct mcb_device *mdev,
 	uart->port.iotype = UPIO_MEM;
 	uart->port.ops = &men_z135_ops;
 	uart->port.irq = mcb_get_irq(mdev);
+	uart->port.iotype = UPIO_MEM;
 	uart->port.flags = UPF_BOOT_AUTOCONF | UPF_IOREMAP;
 	uart->port.line = line++;
 	uart->port.dev = dev;
@@ -929,4 +931,3 @@ MODULE_AUTHOR("Johannes Thumshirn <johannes.thumshirn@men.de>");
 MODULE_LICENSE("GPL v2");
 MODULE_DESCRIPTION("MEN 16z135 High Speed UART");
 MODULE_ALIAS("mcb:16z135");
-MODULE_IMPORT_NS(MCB);

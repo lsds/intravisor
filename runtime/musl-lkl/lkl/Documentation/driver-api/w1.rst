@@ -7,6 +7,9 @@ W1: Dallas' 1-wire bus
 W1 API internal to the kernel
 =============================
 
+W1 API internal to the kernel
+-----------------------------
+
 include/linux/w1.h
 ~~~~~~~~~~~~~~~~~~
 

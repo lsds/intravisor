@@ -36,21 +36,20 @@
 
 / {
 	model = "NorthStar SVK (BCM953012K)";
-	compatible = "brcm,bcm953012k", "brcm,bcm53012", "brcm,bcm4708";
+	compatible = "brcm,bcm953012k", "brcm,brcm53012", "brcm,bcm4708";
 
 	aliases {
 		serial0 = &uart0;
 		serial1 = &uart1;
 	};
 
-	memory@80000000 {
-		device_type = "memory";
+	memory {
 		reg = <0x80000000 0x10000000>;
 	};
 };
 
-&nand_controller {
-	nand@0 {
+&nand {
+	nandcs@0 {
 		compatible = "brcm,nandcs";
 		reg = <0>;
 		nand-on-flash-bbt;
@@ -112,9 +111,5 @@
 };
 
 &uart1 {
-	status = "okay";
-};
-
-&usb3_phy {
 	status = "okay";
 };

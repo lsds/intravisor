@@ -1,8 +1,19 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * GNU linker script for the VDSO library.
 *
  * Copyright (C) 2012 ARM Limited
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  *
  * Author: Will Deacon <will.deacon@arm.com>
  * Heavily based on the vDSO linker scripts for other archs.
@@ -11,17 +22,13 @@
 #include <linux/const.h>
 #include <asm/page.h>
 #include <asm/vdso.h>
-#include <asm-generic/vmlinux.lds.h>
 
 OUTPUT_FORMAT("elf64-littleaarch64", "elf64-bigaarch64", "elf64-littleaarch64")
 OUTPUT_ARCH(aarch64)
 
 SECTIONS
 {
-	PROVIDE(_vdso_data = . - __VVAR_PAGES * PAGE_SIZE);
-#ifdef CONFIG_TIME_NS
-	PROVIDE(_timens_data = _vdso_data + PAGE_SIZE);
-#endif
+	PROVIDE(_vdso_data = . - PAGE_SIZE);
 	. = VDSO_LBASE + SIZEOF_HEADERS;
 
 	.hash		: { *(.hash) }			:text
@@ -32,13 +39,6 @@ SECTIONS
 	.gnu.version_d	: { *(.gnu.version_d) }
 	.gnu.version_r	: { *(.gnu.version_r) }
 
-	/*
-	 * Discard .note.gnu.property sections which are unused and have
-	 * different alignment requirement from vDSO note sections.
-	 */
-	/DISCARD/	: {
-		*(.note.GNU-stack .note.gnu.property)
-	}
 	.note		: { *(.note.*) }		:text	:note
 
 	. = ALIGN(16);
@@ -48,37 +48,20 @@ SECTIONS
 	PROVIDE (_etext = .);
 	PROVIDE (etext = .);
 
-	. = ALIGN(4);
-	.altinstructions : {
-		__alt_instructions = .;
-		*(.altinstructions)
-		__alt_instructions_end = .;
-	}
+	.eh_frame_hdr	: { *(.eh_frame_hdr) }		:text	:eh_frame_hdr
+	.eh_frame	: { KEEP (*(.eh_frame)) }	:text
 
 	.dynamic	: { *(.dynamic) }		:text	:dynamic
 
-	.rela.dyn	: ALIGN(8) { *(.rela .rela*) }
-
-	.rodata		: {
-		*(.rodata*)
-		*(.got)
-		*(.got.plt)
-		*(.plt)
-		*(.plt.*)
-		*(.iplt)
-		*(.igot .igot.plt)
-	}						:text
+	.rodata		: { *(.rodata*) }		:text
 
 	_end = .;
 	PROVIDE(end = .);
 
-	DWARF_DEBUG
-	ELF_DETAILS
-
 	/DISCARD/	: {
+		*(.note.GNU-stack)
 		*(.data .data.* .gnu.linkonce.d.* .sdata*)
 		*(.bss .sbss .dynbss .dynsbss)
-		*(.eh_frame .eh_frame_hdr)
 	}
 }
 
@@ -91,6 +74,7 @@ PHDRS
 	text		PT_LOAD		FLAGS(5) FILEHDR PHDRS; /* PF_R|PF_X */
 	dynamic		PT_DYNAMIC	FLAGS(4);		/* PF_R */
 	note		PT_NOTE		FLAGS(4);		/* PF_R */
+	eh_frame_hdr	PT_GNU_EH_FRAME;
 }
 
 /*

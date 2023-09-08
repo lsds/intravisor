@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 import re, os, sys, argparse, multiprocessing, fnmatch
 
 srctree = os.environ["srctree"]
@@ -112,9 +112,6 @@ def replace(h):
         tmp += w
     content = tmp
     for s in structs:
-        # XXX: cleaner way?
-        if s == 'TAG':
-            continue
         search_str = "(\W?struct\s+)" + s + "(\W)"
         replace_str = "\\1" + lkl_prefix(s) + "\\2"
         content = re.sub(search_str, replace_str, content, flags = re.MULTILINE)
@@ -131,8 +128,6 @@ args = parser.parse_args()
 
 find_headers("arch/lkl/include/uapi/asm/syscalls.h")
 headers.add("arch/lkl/include/uapi/asm/host_ops.h")
-find_headers("include/uapi/linux/uhid.h")
-find_headers("include/uapi/linux/input-event-codes.h")
 
 if 'LKL_INSTALL_ADDITIONAL_HEADERS' in os.environ:
     with open(os.environ['LKL_INSTALL_ADDITIONAL_HEADERS'], 'rU') as f:
@@ -145,14 +140,15 @@ new_headers = set()
 
 for h in headers:
     dir = os.path.dirname(h)
+    copyfromdir = os.path.dirname(relpath2abspath(h))
     out_dir = args.path + "/" + re.sub("(arch/lkl/include/uapi/|arch/lkl/include/generated/uapi/|include/uapi/|include/generated/uapi/|include/generated)(.*)", "lkl/\\2", dir)
     try:
         os.makedirs(out_dir)
     except:
         pass
     print("  INSTALL\t%s" % (out_dir + "/" + os.path.basename(h)))
-    os.system(srctree+"/scripts/headers_install.sh %s %s" % (os.path.abspath(h),
-                                                       out_dir + "/" + os.path.basename(h)))
+    os.system(srctree+"/scripts/headers_install.sh %s %s %s" % (out_dir, copyfromdir,
+                                                       os.path.basename(h)))
     new_headers.add(out_dir + "/" + os.path.basename(h))
 
 headers = new_headers
@@ -181,9 +177,6 @@ find_symbols(p, defines)
 p = re.compile("enum\s+(\w*)\s*{([^}]*)}", re.M|re.S)
 q = re.compile("(\w+)\s*(,|=[^,]*|$)", re.M|re.S)
 find_enums(p, q, defines)
-
-# needed for i386
-defines.add("__NR_stime")
 
 def process_header(h):
     print("  REPLACE\t%s" % (out_dir + "/" + os.path.basename(h)))

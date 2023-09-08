@@ -13,7 +13,7 @@
 #include <linux/kernel.h>
 #include <linux/ptrace.h>
 #include <linux/delay.h>
-#include <linux/memblock.h>
+#include <linux/bootmem.h>
 #include <linux/bitops.h>
 #include <linux/module.h>
 #include <linux/sched/mm.h>
@@ -22,7 +22,9 @@
 #include <asm/traps.h>
 #include <linux/uaccess.h>
 #include <asm/page.h>
+#include <asm/pgtable.h>
 #include <asm/sun3mmu.h>
+#include <asm/segment.h>
 #include <asm/oplib.h>
 #include <asm/mmu_context.h>
 #include <asm/dvma.h>
@@ -190,13 +192,14 @@ void __init mmu_emu_init(unsigned long bootmem_end)
 	for(seg = 0; seg < PAGE_OFFSET; seg += SUN3_PMEG_SIZE)
 		sun3_put_segmap(seg, SUN3_INVALID_PMEG);
 
-	set_fc(3);
+	set_fs(MAKE_MM_SEG(3));
 	for(seg = 0; seg < 0x10000000; seg += SUN3_PMEG_SIZE) {
 		i = sun3_get_segmap(seg);
 		for(j = 1; j < CONTEXTS_NUM; j++)
 			(*(romvec->pv_setctxt))(j, (void *)seg, i);
 	}
-	set_fc(USER_DATA);
+	set_fs(KERNEL_DS);
+
 }
 
 /* erase the mappings for a dead context.  Uses the pg_dir for hints
@@ -211,7 +214,7 @@ void clear_context(unsigned long context)
 
      if(context) {
 	     if(!ctx_alloc[context])
-		     panic("%s: context not allocated\n", __func__);
+		     panic("clear_context: context not allocated\n");
 
 	     ctx_alloc[context]->context = SUN3_INVALID_CONTEXT;
 	     ctx_alloc[context] = (struct mm_struct *)0;
@@ -261,7 +264,7 @@ unsigned long get_free_context(struct mm_struct *mm)
 		}
 		// check to make sure one was really free...
 		if(new == CONTEXTS_NUM)
-			panic("%s: failed to find free context", __func__);
+			panic("get_free_context: failed to find free context");
 	}
 
 	ctx_alloc[new] = mm;
@@ -369,15 +372,16 @@ int mmu_emu_handle_fault (unsigned long vaddr, int read_flag, int kernel_fault)
 	}
 
 #ifdef DEBUG_MMU_EMU
-	pr_info("%s: vaddr=%lx type=%s crp=%p\n", __func__, vaddr,
-		read_flag ? "read" : "write", crp);
+	pr_info("mmu_emu_handle_fault: vaddr=%lx type=%s crp=%p\n",
+		vaddr, read_flag ? "read" : "write", crp);
 #endif
 
 	segment = (vaddr >> SUN3_PMEG_SIZE_BITS) & 0x7FF;
 	offset  = (vaddr >> SUN3_PTE_SIZE_BITS) & 0xF;
 
 #ifdef DEBUG_MMU_EMU
-	pr_info("%s: segment=%lx offset=%lx\n", __func__, segment, offset);
+	pr_info("mmu_emu_handle_fault: segment=%lx offset=%lx\n", segment,
+		offset);
 #endif
 
 	pte = (pte_t *) pgd_val (*(crp + segment));

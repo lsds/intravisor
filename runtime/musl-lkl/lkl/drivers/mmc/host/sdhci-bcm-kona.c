@@ -1,5 +1,15 @@
-// SPDX-License-Identifier: GPL-2.0-only
-// Copyright (C) 2013 Broadcom Corporation
+/*
+ * Copyright (C) 2013 Broadcom Corporation
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License as
+ * published by the Free Software Foundation version 2.
+ *
+ * This program is distributed "as is" WITHOUT ANY WARRANTY of any
+ * kind, whether express or implied; without even the implied warranty
+ * of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ */
 
 #include <linux/kernel.h>
 #include <linux/module.h>
@@ -8,10 +18,12 @@
 #include <linux/platform_device.h>
 #include <linux/mmc/host.h>
 #include <linux/io.h>
+#include <linux/gpio.h>
 #include <linux/clk.h>
 #include <linux/regulator/consumer.h>
 #include <linux/of.h>
 #include <linux/of_device.h>
+#include <linux/of_gpio.h>
 #include <linux/mmc/slot-gpio.h>
 
 #include "sdhci-pltfm.h"
@@ -272,8 +284,10 @@ static int sdhci_bcm_kona_probe(struct platform_device *pdev)
 	sdhci_bcm_kona_sd_init(host);
 
 	ret = sdhci_add_host(host);
-	if (ret)
+	if (ret) {
+		dev_err(dev, "Failed sdhci_add_host\n");
 		goto err_reset;
+	}
 
 	/* if device is eMMC, emulate card insert right here */
 	if (!mmc_card_is_removable(host->mmc)) {
@@ -314,7 +328,6 @@ err_pltfm_free:
 static struct platform_driver sdhci_bcm_kona_driver = {
 	.driver		= {
 		.name	= "sdhci-kona",
-		.probe_type = PROBE_PREFER_ASYNCHRONOUS,
 		.pm	= &sdhci_pltfm_pmops,
 		.of_match_table = sdhci_bcm_kona_of_match,
 	},

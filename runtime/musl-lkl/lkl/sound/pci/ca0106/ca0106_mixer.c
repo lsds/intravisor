@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  *  Copyright (c) 2004 James Courtier-Dutton <James@superbug.demon.co.uk>
  *  Driver CA0106 chips. e.g. Sound Blaster Audigy LS and Live 24bit
@@ -45,6 +44,21 @@
  *
  *  This code was initially based on code from ALSA's emu10k1x.c which is:
  *  Copyright (c) by Francisco Moraes <fmoraes@nc.rr.com>
+ *
+ *   This program is free software; you can redistribute it and/or modify
+ *   it under the terms of the GNU General Public License as published by
+ *   the Free Software Foundation; either version 2 of the License, or
+ *   (at your option) any later version.
+ *
+ *   This program is distributed in the hope that it will be useful,
+ *   but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *   GNU General Public License for more details.
+ *
+ *   You should have received a copy of the GNU General Public License
+ *   along with this program; if not, write to the Free Software
+ *   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307 USA
+ *
  */
 #include <linux/delay.h>
 #include <linux/init.h>
@@ -70,8 +84,8 @@ static void ca0106_spdif_enable(struct snd_ca0106 *emu)
 		snd_ca0106_ptr_write(emu, SPDIF_SELECT2, 0, 0x0b000000);
 		val = snd_ca0106_ptr_read(emu, CAPTURE_CONTROL, 0) & ~0x1000;
 		snd_ca0106_ptr_write(emu, CAPTURE_CONTROL, 0, val);
-		val = inl(emu->port + CA0106_GPIO) & ~0x101;
-		outl(val, emu->port + CA0106_GPIO);
+		val = inl(emu->port + GPIO) & ~0x101;
+		outl(val, emu->port + GPIO);
 
 	} else {
 		/* Analog */
@@ -79,8 +93,8 @@ static void ca0106_spdif_enable(struct snd_ca0106 *emu)
 		snd_ca0106_ptr_write(emu, SPDIF_SELECT2, 0, 0x000f0000);
 		val = snd_ca0106_ptr_read(emu, CAPTURE_CONTROL, 0) | 0x1000;
 		snd_ca0106_ptr_write(emu, CAPTURE_CONTROL, 0, val);
-		val = inl(emu->port + CA0106_GPIO) | 0x101;
-		outl(val, emu->port + CA0106_GPIO);
+		val = inl(emu->port + GPIO) | 0x101;
+		outl(val, emu->port + GPIO);
 	}
 }
 
@@ -119,14 +133,14 @@ static void ca0106_set_capture_mic_line_in(struct snd_ca0106 *emu)
 
 	if (emu->capture_mic_line_in) {
 		/* snd_ca0106_i2c_write(emu, ADC_MUX, 0); */ /* Mute input */
-		tmp = inl(emu->port + CA0106_GPIO) & ~0x400;
+		tmp = inl(emu->port+GPIO) & ~0x400;
 		tmp = tmp | 0x400;
-		outl(tmp, emu->port + CA0106_GPIO);
+		outl(tmp, emu->port+GPIO);
 		/* snd_ca0106_i2c_write(emu, ADC_MUX, ADC_MUX_MIC); */
 	} else {
 		/* snd_ca0106_i2c_write(emu, ADC_MUX, 0); */ /* Mute input */
-		tmp = inl(emu->port + CA0106_GPIO) & ~0x400;
-		outl(tmp, emu->port + CA0106_GPIO);
+		tmp = inl(emu->port+GPIO) & ~0x400;
+		outl(tmp, emu->port+GPIO);
 		/* snd_ca0106_i2c_write(emu, ADC_MUX, ADC_MUX_LINEIN); */
 	}
 }
@@ -550,7 +564,7 @@ static int spi_mute_put(struct snd_kcontrol *kcontrol,
 	.private_value = ((chid) << 8) | (reg)			\
 }
 
-static const struct snd_kcontrol_new snd_ca0106_volume_ctls[] = {
+static struct snd_kcontrol_new snd_ca0106_volume_ctls[] = {
 	CA_VOLUME("Analog Front Playback Volume",
 		  CONTROL_FRONT_CHANNEL, PLAYBACK_VOLUME2),
         CA_VOLUME("Analog Rear Playback Volume",
@@ -631,7 +645,7 @@ static const struct snd_kcontrol_new snd_ca0106_volume_ctls[] = {
 	.private_value = chid					\
 }
 
-static const struct snd_kcontrol_new snd_ca0106_volume_i2c_adc_ctls[] = {
+static struct snd_kcontrol_new snd_ca0106_volume_i2c_adc_ctls[] = {
         I2C_VOLUME("Phone Capture Volume", 0),
         I2C_VOLUME("Mic Capture Volume", 1),
         I2C_VOLUME("Line in Capture Volume", 2),
@@ -654,7 +668,7 @@ static const int spi_dmute_bit[] = {
 };
 
 static struct snd_kcontrol_new
-snd_ca0106_volume_spi_dac_ctl(const struct snd_ca0106_details *details,
+snd_ca0106_volume_spi_dac_ctl(struct snd_ca0106_details *details,
 			      int channel_id)
 {
 	struct snd_kcontrol_new spi_switch = {0};
@@ -720,7 +734,7 @@ static int rename_ctl(struct snd_card *card, const char *src, const char *dst)
 {
 	struct snd_kcontrol *kctl = ctl_find(card, src);
 	if (kctl) {
-		snd_ctl_rename(card, kctl, dst);
+		strcpy(kctl->id.name, dst);
 		return 0;
 	}
 	return -ENOENT;
@@ -739,7 +753,7 @@ static int rename_ctl(struct snd_card *card, const char *src, const char *dst)
 static
 DECLARE_TLV_DB_SCALE(snd_ca0106_master_db_scale, -6375, 25, 1);
 
-static const char * const follower_vols[] = {
+static char *slave_vols[] = {
 	"Analog Front Playback Volume",
         "Analog Rear Playback Volume",
 	"Analog Center/LFE Playback Volume",
@@ -752,7 +766,7 @@ static const char * const follower_vols[] = {
 	NULL
 };
 
-static const char * const follower_sws[] = {
+static char *slave_sws[] = {
 	"Analog Front Playback Switch",
 	"Analog Rear Playback Switch",
 	"Analog Center/LFE Playback Switch",
@@ -761,13 +775,13 @@ static const char * const follower_sws[] = {
 	NULL
 };
 
-static void add_followers(struct snd_card *card,
-			  struct snd_kcontrol *master, const char * const *list)
+static void add_slaves(struct snd_card *card,
+				 struct snd_kcontrol *master, char **list)
 {
 	for (; *list; list++) {
-		struct snd_kcontrol *follower = ctl_find(card, *list);
-		if (follower)
-			snd_ctl_add_follower(master, follower);
+		struct snd_kcontrol *slave = ctl_find(card, *list);
+		if (slave)
+			snd_ctl_add_slave(master, slave);
 	}
 }
 
@@ -775,9 +789,9 @@ int snd_ca0106_mixer(struct snd_ca0106 *emu)
 {
 	int err;
         struct snd_card *card = emu->card;
-	const char * const *c;
+	char **c;
 	struct snd_kcontrol *vmaster;
-	static const char * const ca0106_remove_ctls[] = {
+	static char *ca0106_remove_ctls[] = {
 		"Master Mono Playback Switch",
 		"Master Mono Playback Volume",
 		"3D Control - Switch",
@@ -801,7 +815,7 @@ int snd_ca0106_mixer(struct snd_ca0106 *emu)
 		"Surround Phase Inversion Playback Switch",
 		NULL
 	};
-	static const char * const ca0106_rename_ctls[] = {
+	static char *ca0106_rename_ctls[] = {
 		"Master Playback Switch", "Capture Switch",
 		"Master Playback Volume", "Capture Volume",
 		"Line Playback Switch", "AC97 Line Capture Switch",
@@ -852,7 +866,7 @@ int snd_ca0106_mixer(struct snd_ca0106 *emu)
 	err = snd_ctl_add(card, vmaster);
 	if (err < 0)
 		return err;
-	add_followers(card, vmaster, follower_vols);
+	add_slaves(card, vmaster, slave_vols);
 
 	if (emu->details->spi_dac) {
 		vmaster = snd_ctl_make_virtual_master("Master Playback Switch",
@@ -862,7 +876,7 @@ int snd_ca0106_mixer(struct snd_ca0106 *emu)
 		err = snd_ctl_add(card, vmaster);
 		if (err < 0)
 			return err;
-		add_followers(card, vmaster, follower_sws);
+		add_slaves(card, vmaster, slave_sws);
 	}
 
 	strcpy(card->mixername, "CA0106");
@@ -875,7 +889,7 @@ struct ca0106_vol_tbl {
 	unsigned int reg;
 };
 
-static const struct ca0106_vol_tbl saved_volumes[NUM_SAVED_VOLUMES] = {
+static struct ca0106_vol_tbl saved_volumes[NUM_SAVED_VOLUMES] = {
 	{ CONTROL_FRONT_CHANNEL, PLAYBACK_VOLUME2 },
 	{ CONTROL_REAR_CHANNEL, PLAYBACK_VOLUME2 },
 	{ CONTROL_CENTER_LFE_CHANNEL, PLAYBACK_VOLUME2 },

@@ -1,13 +1,16 @@
-/* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
  * Network device features.
+ *
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version
+ * 2 of the License, or (at your option) any later version.
  */
 #ifndef _LINUX_NETDEV_FEATURES_H
 #define _LINUX_NETDEV_FEATURES_H
 
 #include <linux/types.h>
-#include <linux/bitops.h>
-#include <asm/byteorder.h>
 
 typedef u64 netdev_features_t;
 
@@ -52,10 +55,8 @@ enum {
 	NETIF_F_GSO_SCTP_BIT,		/* ... SCTP fragmentation */
 	NETIF_F_GSO_ESP_BIT,		/* ... ESP with TSO */
 	NETIF_F_GSO_UDP_BIT,		/* ... UFO, deprecated except tuntap */
-	NETIF_F_GSO_UDP_L4_BIT,		/* ... UDP payload GSO (not UFO) */
-	NETIF_F_GSO_FRAGLIST_BIT,		/* ... Fraglist GSO */
 	/**/NETIF_F_GSO_LAST =		/* last bit, see GSO_MASK */
-		NETIF_F_GSO_FRAGLIST_BIT,
+		NETIF_F_GSO_UDP_BIT,
 
 	NETIF_F_FCOE_CRC_BIT,		/* FCoE CRC32 */
 	NETIF_F_SCTP_CRC_BIT,		/* SCTP checksum offload */
@@ -76,26 +77,15 @@ enum {
 	NETIF_F_HW_ESP_BIT,		/* Hardware ESP transformation offload */
 	NETIF_F_HW_ESP_TX_CSUM_BIT,	/* ESP with TX checksum offload */
 	NETIF_F_RX_UDP_TUNNEL_PORT_BIT, /* Offload of RX port for UDP tunnels */
-	NETIF_F_HW_TLS_TX_BIT,		/* Hardware TLS TX offload */
-	NETIF_F_HW_TLS_RX_BIT,		/* Hardware TLS RX offload */
 
 	NETIF_F_GRO_HW_BIT,		/* Hardware Generic receive offload */
 	NETIF_F_HW_TLS_RECORD_BIT,	/* Offload TLS record */
-	NETIF_F_GRO_FRAGLIST_BIT,	/* Fraglist GRO */
-
-	NETIF_F_HW_MACSEC_BIT,		/* Offload MACsec operations */
-	NETIF_F_GRO_UDP_FWD_BIT,	/* Allow UDP GRO for forwarding */
-
-	NETIF_F_HW_HSR_TAG_INS_BIT,	/* Offload HSR tag insertion */
-	NETIF_F_HW_HSR_TAG_RM_BIT,	/* Offload HSR tag removal */
-	NETIF_F_HW_HSR_FWD_BIT,		/* Offload HSR forwarding */
-	NETIF_F_HW_HSR_DUP_BIT,		/* Offload HSR duplication */
 
 	/*
 	 * Add your fresh new feature above and remember to update
-	 * netdev_features_strings[] in net/ethtool/common.c and maybe
+	 * netdev_features_strings[] in net/core/ethtool.c and maybe
 	 * some feature mask #defines below. Please also describe it
-	 * in Documentation/networking/netdev-features.rst.
+	 * in Documentation/networking/netdev-features.txt.
 	 */
 
 	/**/NETDEV_FEATURE_COUNT
@@ -157,38 +147,9 @@ enum {
 #define NETIF_F_HW_ESP_TX_CSUM	__NETIF_F(HW_ESP_TX_CSUM)
 #define	NETIF_F_RX_UDP_TUNNEL_PORT  __NETIF_F(RX_UDP_TUNNEL_PORT)
 #define NETIF_F_HW_TLS_RECORD	__NETIF_F(HW_TLS_RECORD)
-#define NETIF_F_GSO_UDP_L4	__NETIF_F(GSO_UDP_L4)
-#define NETIF_F_HW_TLS_TX	__NETIF_F(HW_TLS_TX)
-#define NETIF_F_HW_TLS_RX	__NETIF_F(HW_TLS_RX)
-#define NETIF_F_GRO_FRAGLIST	__NETIF_F(GRO_FRAGLIST)
-#define NETIF_F_GSO_FRAGLIST	__NETIF_F(GSO_FRAGLIST)
-#define NETIF_F_HW_MACSEC	__NETIF_F(HW_MACSEC)
-#define NETIF_F_GRO_UDP_FWD	__NETIF_F(GRO_UDP_FWD)
-#define NETIF_F_HW_HSR_TAG_INS	__NETIF_F(HW_HSR_TAG_INS)
-#define NETIF_F_HW_HSR_TAG_RM	__NETIF_F(HW_HSR_TAG_RM)
-#define NETIF_F_HW_HSR_FWD	__NETIF_F(HW_HSR_FWD)
-#define NETIF_F_HW_HSR_DUP	__NETIF_F(HW_HSR_DUP)
 
-/* Finds the next feature with the highest number of the range of start-1 till 0.
- */
-static inline int find_next_netdev_feature(u64 feature, unsigned long start)
-{
-	/* like BITMAP_LAST_WORD_MASK() for u64
-	 * this sets the most significant 64 - start to 0.
-	 */
-	feature &= ~0ULL >> (-start & ((sizeof(feature) * 8) - 1));
-
-	return fls64(feature) - 1;
-}
-
-/* This goes for the MSB to the LSB through the set feature bits,
- * mask_addr should be a u64 and bit an int
- */
-#define for_each_netdev_feature(mask_addr, bit)				\
-	for ((bit) = find_next_netdev_feature((mask_addr),		\
-					      NETDEV_FEATURE_COUNT);	\
-	     (bit) >= 0;						\
-	     (bit) = find_next_netdev_feature((mask_addr), (bit)))
+#define for_each_netdev_feature(mask_addr, bit)	\
+	for_each_set_bit(bit, (unsigned long *)mask_addr, NETDEV_FEATURE_COUNT)
 
 /* Features valid for ethtool to change */
 /* = all defined minus driver/device-class-related */
@@ -204,7 +165,7 @@ static inline int find_next_netdev_feature(u64 feature, unsigned long start)
 #define NETIF_F_GSO_MASK	(__NETIF_F_BIT(NETIF_F_GSO_LAST + 1) - \
 		__NETIF_F_BIT(NETIF_F_GSO_SHIFT))
 
-/* List of IP checksum features. Note that NETIF_F_HW_CSUM should not be
+/* List of IP checksum features. Note that NETIF_F_ HW_CSUM should not be
  * set in features when NETIF_F_IP_CSUM or NETIF_F_IPV6_CSUM are set--
  * this would be contradictory
  */
@@ -218,8 +179,8 @@ static inline int find_next_netdev_feature(u64 feature, unsigned long start)
 				 NETIF_F_FSO)
 
 /* List of features with software fallbacks. */
-#define NETIF_F_GSO_SOFTWARE	(NETIF_F_ALL_TSO | NETIF_F_GSO_SCTP |	     \
-				 NETIF_F_GSO_UDP_L4 | NETIF_F_GSO_FRAGLIST)
+#define NETIF_F_GSO_SOFTWARE	(NETIF_F_ALL_TSO | \
+				 NETIF_F_GSO_SCTP)
 
 /*
  * If one device supports one of these features, then enable them
@@ -243,9 +204,6 @@ static inline int find_next_netdev_feature(u64 feature, unsigned long start)
 
 /* changeable features with no special hardware requirements */
 #define NETIF_F_SOFT_FEATURES	(NETIF_F_GSO | NETIF_F_GRO)
-
-/* Changeable features with no special hardware requirements that defaults to off. */
-#define NETIF_F_SOFT_FEATURES_OFF	(NETIF_F_GRO_FRAGLIST | NETIF_F_GRO_UDP_FWD)
 
 #define NETIF_F_VLAN_FEATURES	(NETIF_F_HW_VLAN_CTAG_FILTER | \
 				 NETIF_F_HW_VLAN_CTAG_RX | \

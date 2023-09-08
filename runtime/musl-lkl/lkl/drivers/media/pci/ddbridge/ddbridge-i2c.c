@@ -1,10 +1,19 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * ddbridge-i2c.c: Digital Devices bridge i2c driver
  *
  * Copyright (C) 2010-2017 Digital Devices GmbH
  *                         Ralph Metzler <rjkm@metzlerbros.de>
  *                         Marcus Metzler <mocm@metzlerbros.de>
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * version 2 only, as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
  */
 
 #include <linux/module.h>
@@ -64,10 +73,7 @@ static int ddb_i2c_cmd(struct ddb_i2c *i2c, u32 adr, u32 cmd)
 		}
 		return -EIO;
 	}
-	val &= 0x70000;
-	if (val == 0x20000)
-		dev_err(dev->dev, "I2C bus error\n");
-	if (val)
+	if (val & 0x70000)
 		return -EIO;
 	return 0;
 }
@@ -141,7 +147,7 @@ void ddb_i2c_release(struct ddb *dev)
 	}
 }
 
-static void i2c_handler(void *priv)
+static void i2c_handler(unsigned long priv)
 {
 	struct ddb_i2c *i2c = (struct ddb_i2c *)priv;
 
@@ -204,7 +210,8 @@ int ddb_i2c_init(struct ddb *dev)
 			if (!(dev->link[l].info->i2c_mask & (1 << i)))
 				continue;
 			i2c = &dev->i2c[num];
-			ddb_irq_set(dev, l, i + base, i2c_handler, i2c);
+			dev->handler_data[l][i + base] = (unsigned long)i2c;
+			dev->handler[l][i + base] = i2c_handler;
 			stat = ddb_i2c_add(dev, i2c, regmap, l, i, num);
 			if (stat)
 				break;

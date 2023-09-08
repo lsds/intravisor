@@ -1,7 +1,15 @@
-// SPDX-License-Identifier: LGPL-2.1
 /*
  * Copyright IBM Corporation, 2010
  * Author Aneesh Kumar K.V <aneesh.kumar@linux.vnet.ibm.com>
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of version 2.1 of the GNU Lesser General Public License
+ * as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it would be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+ *
  */
 
 #include <linux/module.h>
@@ -89,12 +97,9 @@ static struct posix_acl *v9fs_get_cached_acl(struct inode *inode, int type)
 	return acl;
 }
 
-struct posix_acl *v9fs_iop_get_acl(struct inode *inode, int type, bool rcu)
+struct posix_acl *v9fs_iop_get_acl(struct inode *inode, int type)
 {
 	struct v9fs_session_info *v9ses;
-
-	if (rcu)
-		return ERR_PTR(-ECHILD);
 
 	v9ses = v9fs_inode2v9ses(inode);
 	if (((v9ses->flags & V9FS_ACCESS_MASK) != V9FS_ACCESS_CLIENT) ||
@@ -115,7 +120,6 @@ static int v9fs_set_acl(struct p9_fid *fid, int type, struct posix_acl *acl)
 	char *name;
 	size_t size;
 	void *buffer;
-
 	if (!acl)
 		return 0;
 
@@ -235,7 +239,6 @@ static int v9fs_xattr_get_acl(const struct xattr_handler *handler,
 }
 
 static int v9fs_xattr_set_acl(const struct xattr_handler *handler,
-			      struct user_namespace *mnt_userns,
 			      struct dentry *dentry, struct inode *inode,
 			      const char *name, const void *value,
 			      size_t size, int flags)
@@ -255,7 +258,7 @@ static int v9fs_xattr_set_acl(const struct xattr_handler *handler,
 
 	if (S_ISLNK(inode->i_mode))
 		return -EOPNOTSUPP;
-	if (!inode_owner_or_capable(&init_user_ns, inode))
+	if (!inode_owner_or_capable(inode))
 		return -EPERM;
 	if (value) {
 		/* update the cached acl value */
@@ -273,11 +276,10 @@ static int v9fs_xattr_set_acl(const struct xattr_handler *handler,
 	switch (handler->flags) {
 	case ACL_TYPE_ACCESS:
 		if (acl) {
-			struct iattr iattr = { 0 };
+			struct iattr iattr;
 			struct posix_acl *old_acl = acl;
 
-			retval = posix_acl_update_mode(&init_user_ns, inode,
-						       &iattr.ia_mode, &acl);
+			retval = posix_acl_update_mode(inode, &iattr.ia_mode, &acl);
 			if (retval)
 				goto err_out;
 			if (!acl) {
@@ -295,7 +297,7 @@ static int v9fs_xattr_set_acl(const struct xattr_handler *handler,
 			 * What is the following setxattr update the
 			 * mode ?
 			 */
-			v9fs_vfs_setattr_dotl(&init_user_ns, dentry, &iattr);
+			v9fs_vfs_setattr_dotl(dentry, &iattr);
 		}
 		break;
 	case ACL_TYPE_DEFAULT:

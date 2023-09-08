@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * linux/drivers/video/omap2/dss/dss.c
  *
@@ -7,6 +6,18 @@
  *
  * Some code and ideas taken from drivers/video/omap/ driver
  * by Imre Deak.
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License version 2 as published by
+ * the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+ * more details.
+ *
+ * You should have received a copy of the GNU General Public License along with
+ * this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
 #define DSS_SUBSYS_NAME "DSS"
@@ -767,10 +778,9 @@ int dss_runtime_get(void)
 
 	DSSDBG("dss_runtime_get\n");
 
-	r = pm_runtime_resume_and_get(&dss.pdev->dev);
-	if (WARN_ON(r < 0))
-		return r;
-	return 0;
+	r = pm_runtime_get_sync(&dss.pdev->dev);
+	WARN_ON(r < 0);
+	return r < 0 ? r : 0;
 }
 
 void dss_runtime_put(void)
@@ -834,7 +844,7 @@ static const struct dss_features omap34xx_dss_feats = {
 };
 
 static const struct dss_features omap3630_dss_feats = {
-	.fck_div_max		=	31,
+	.fck_div_max		=	32,
 	.dss_fck_multiplier	=	1,
 	.parent_clk_name	=	"dpll4_ck",
 	.dpi_select_source	=	&dss_dpi_select_source_omap2_omap3,
@@ -1191,6 +1201,12 @@ static const struct component_master_ops dss_component_ops = {
 	.unbind = dss_unbind,
 };
 
+static int dss_component_compare(struct device *dev, void *data)
+{
+	struct device *child = data;
+	return dev == child;
+}
+
 static int dss_add_child_component(struct device *dev, void *data)
 {
 	struct component_match **match = data;
@@ -1204,7 +1220,7 @@ static int dss_add_child_component(struct device *dev, void *data)
 	if (strstr(dev_name(dev), "rfbi"))
 		return 0;
 
-	component_match_add(dev->parent, match, component_compare_dev, dev);
+	component_match_add(dev->parent, match, dss_component_compare, dev);
 
 	return 0;
 }

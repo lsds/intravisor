@@ -277,21 +277,6 @@ int usbhs_pipe_is_accessible(struct usbhs_pipe *pipe)
 	return -EBUSY;
 }
 
-bool usbhs_pipe_contains_transmittable_data(struct usbhs_pipe *pipe)
-{
-	u16 val;
-
-	/* Do not support for DCP pipe */
-	if (usbhs_pipe_is_dcp(pipe))
-		return false;
-
-	val = usbhsp_pipectrl_get(pipe);
-	if (val & INBUFM)
-		return true;
-
-	return false;
-}
-
 /*
  *		PID ctrl
  */
@@ -308,7 +293,7 @@ static void __usbhsp_pid_try_nak_if_stall(struct usbhs_pipe *pipe)
 	switch (pid) {
 	case PID_STALL11:
 		usbhsp_pipectrl_set(pipe, PID_MASK, PID_STALL10);
-		fallthrough;
+		/* fall-through */
 	case PID_STALL10:
 		usbhsp_pipectrl_set(pipe, PID_MASK, PID_NAK);
 	}
@@ -746,8 +731,6 @@ struct usbhs_pipe *usbhs_pipe_malloc(struct usbhs_priv *priv,
 
 void usbhs_pipe_free(struct usbhs_pipe *pipe)
 {
-	usbhsp_pipe_select(pipe);
-	usbhsp_pipe_cfg_set(pipe, 0xFFFF, 0);
 	usbhsp_put_pipe(pipe);
 }
 
@@ -820,8 +803,7 @@ int usbhs_pipe_probe(struct usbhs_priv *priv)
 		return -EINVAL;
 	}
 
-	info->pipe = kcalloc(pipe_size, sizeof(struct usbhs_pipe),
-			     GFP_KERNEL);
+	info->pipe = kzalloc(sizeof(struct usbhs_pipe) * pipe_size, GFP_KERNEL);
 	if (!info->pipe)
 		return -ENOMEM;
 

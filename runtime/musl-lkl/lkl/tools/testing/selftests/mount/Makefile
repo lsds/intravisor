@@ -3,7 +3,15 @@
 CFLAGS = -Wall \
          -O2
 
-TEST_PROGS := run_unprivileged_remount.sh run_nosymfollow.sh
-TEST_GEN_FILES := unprivileged-remount-test nosymfollow-test
+TEST_GEN_PROGS := unprivileged-remount-test
 
 include ../lib.mk
+
+override RUN_TESTS := if [ -f /proc/self/uid_map ] ; \
+		      then	\
+				./unprivileged-remount-test ; \
+		      else	\
+				echo "WARN: No /proc/self/uid_map exist, test skipped." ; \
+		      fi
+override EMIT_TESTS := echo "$(RUN_TESTS)"
+

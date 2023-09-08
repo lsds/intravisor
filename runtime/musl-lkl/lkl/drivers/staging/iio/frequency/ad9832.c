@@ -1,28 +1,26 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * AD9832 SPI DDS driver
  *
  * Copyright 2011 Analog Devices Inc.
+ *
+ * Licensed under the GPL-2.
  */
 
-#include <asm/div64.h>
-
-#include <linux/clk.h>
 #include <linux/device.h>
-#include <linux/err.h>
 #include <linux/kernel.h>
-#include <linux/module.h>
-#include <linux/regulator/consumer.h>
 #include <linux/slab.h>
-#include <linux/spi/spi.h>
 #include <linux/sysfs.h>
+#include <linux/spi/spi.h>
+#include <linux/regulator/consumer.h>
+#include <linux/err.h>
+#include <linux/module.h>
+#include <asm/div64.h>
 
 #include <linux/iio/iio.h>
 #include <linux/iio/sysfs.h>
+#include "dds.h"
 
 #include "ad9832.h"
-
-#include "dds.h"
 
 /* Registers */
 
@@ -86,7 +84,7 @@
  * @freq_msg:		tuning word spi message
  * @phase_xfer:		tuning word spi transfer
  * @phase_msg:		tuning word spi message
- * @lock:		protect sensor state
+ * @lock		protect sensor state
  * @data:		spi transmit buffer
  * @phase_data:		tuning word spi transmit buffer
  * @freq_data:		tuning word spi transmit buffer
@@ -96,7 +94,7 @@ struct ad9832_state {
 	struct spi_device		*spi;
 	struct regulator		*avdd;
 	struct regulator		*dvdd;
-	struct clk			*mclk;
+	unsigned long			mclk;
 	unsigned short			ctrl_fp;
 	unsigned short			ctrl_ss;
 	unsigned short			ctrl_src;
@@ -112,10 +110,10 @@ struct ad9832_state {
 	 * transfer buffers to live in their own cache lines.
 	 */
 	union {
-		__be16			freq_data[4];
+		__be16			freq_data[4]____cacheline_aligned;
 		__be16			phase_data[2];
 		__be16			data;
-	} __aligned(IIO_DMA_MINALIGN);
+	};
 };
 
 static unsigned long ad9832_calc_freqreg(unsigned long mclk, unsigned long fout)
@@ -131,10 +129,10 @@ static int ad9832_write_frequency(struct ad9832_state *st,
 {
 	unsigned long regval;
 
-	if (fout > (clk_get_rate(st->mclk) / 2))
+	if (fout > (st->mclk / 2))
 		return -EINVAL;
 
-	regval = ad9832_calc_freqreg(clk_get_rate(st->mclk), fout);
+	regval = ad9832_calc_freqreg(st->mclk, fout);
 
 	st->freq_data[0] = cpu_to_be16((AD9832_CMD_FRE8BITSW << CMD_SHIFT) |
 					(addr << ADD_SHIFT) |
@@ -248,7 +246,7 @@ error_ret:
 	return ret ? ret : len;
 }
 
-/*
+/**
  * see dds.h for further information
  */
 
@@ -294,16 +292,6 @@ static const struct iio_info ad9832_info = {
 	.attrs = &ad9832_attribute_group,
 };
 
-static void ad9832_reg_disable(void *reg)
-{
-	regulator_disable(reg);
-}
-
-static void ad9832_clk_disable(void *clk)
-{
-	clk_disable_unprepare(clk);
-}
-
 static int ad9832_probe(struct spi_device *spi)
 {
 	struct ad9832_platform_data *pdata = dev_get_platdata(&spi->dev);
@@ -320,6 +308,7 @@ static int ad9832_probe(struct spi_device *spi)
 	if (!indio_dev)
 		return -ENOMEM;
 
+	spi_set_drvdata(spi, indio_dev);
 	st = iio_priv(indio_dev);
 
 	st->avdd = devm_regulator_get(&spi->dev, "avdd");
@@ -332,39 +321,23 @@ static int ad9832_probe(struct spi_device *spi)
 		return ret;
 	}
 
-	ret = devm_add_action_or_reset(&spi->dev, ad9832_reg_disable, st->avdd);
-	if (ret)
-		return ret;
-
 	st->dvdd = devm_regulator_get(&spi->dev, "dvdd");
-	if (IS_ERR(st->dvdd))
-		return PTR_ERR(st->dvdd);
+	if (IS_ERR(st->dvdd)) {
+		ret = PTR_ERR(st->dvdd);
+		goto error_disable_avdd;
+	}
 
 	ret = regulator_enable(st->dvdd);
 	if (ret) {
 		dev_err(&spi->dev, "Failed to enable specified DVDD supply\n");
-		return ret;
+		goto error_disable_avdd;
 	}
 
-	ret = devm_add_action_or_reset(&spi->dev, ad9832_reg_disable, st->dvdd);
-	if (ret)
-		return ret;
-
-	st->mclk = devm_clk_get(&spi->dev, "mclk");
-	if (IS_ERR(st->mclk))
-		return PTR_ERR(st->mclk);
-
-	ret = clk_prepare_enable(st->mclk);
-	if (ret < 0)
-		return ret;
-
-	ret = devm_add_action_or_reset(&spi->dev, ad9832_clk_disable, st->mclk);
-	if (ret)
-		return ret;
-
+	st->mclk = pdata->mclk;
 	st->spi = spi;
 	mutex_init(&st->lock);
 
+	indio_dev->dev.parent = &spi->dev;
 	indio_dev->name = spi_get_device_id(spi)->name;
 	indio_dev->info = &ad9832_info;
 	indio_dev->modes = INDIO_DIRECT_MODE;
@@ -411,34 +384,57 @@ static int ad9832_probe(struct spi_device *spi)
 	ret = spi_sync(st->spi, &st->msg);
 	if (ret) {
 		dev_err(&spi->dev, "device init failed\n");
-		return ret;
+		goto error_disable_dvdd;
 	}
 
 	ret = ad9832_write_frequency(st, AD9832_FREQ0HM, pdata->freq0);
 	if (ret)
-		return ret;
+		goto error_disable_dvdd;
 
 	ret = ad9832_write_frequency(st, AD9832_FREQ1HM, pdata->freq1);
 	if (ret)
-		return ret;
+		goto error_disable_dvdd;
 
 	ret = ad9832_write_phase(st, AD9832_PHASE0H, pdata->phase0);
 	if (ret)
-		return ret;
+		goto error_disable_dvdd;
 
 	ret = ad9832_write_phase(st, AD9832_PHASE1H, pdata->phase1);
 	if (ret)
-		return ret;
+		goto error_disable_dvdd;
 
 	ret = ad9832_write_phase(st, AD9832_PHASE2H, pdata->phase2);
 	if (ret)
-		return ret;
+		goto error_disable_dvdd;
 
 	ret = ad9832_write_phase(st, AD9832_PHASE3H, pdata->phase3);
 	if (ret)
-		return ret;
+		goto error_disable_dvdd;
 
-	return devm_iio_device_register(&spi->dev, indio_dev);
+	ret = iio_device_register(indio_dev);
+	if (ret)
+		goto error_disable_dvdd;
+
+	return 0;
+
+error_disable_dvdd:
+	regulator_disable(st->dvdd);
+error_disable_avdd:
+	regulator_disable(st->avdd);
+
+	return ret;
+}
+
+static int ad9832_remove(struct spi_device *spi)
+{
+	struct iio_dev *indio_dev = spi_get_drvdata(spi);
+	struct ad9832_state *st = iio_priv(indio_dev);
+
+	iio_device_unregister(indio_dev);
+	regulator_disable(st->dvdd);
+	regulator_disable(st->avdd);
+
+	return 0;
 }
 
 static const struct spi_device_id ad9832_id[] = {
@@ -453,10 +449,11 @@ static struct spi_driver ad9832_driver = {
 		.name	= "ad9832",
 	},
 	.probe		= ad9832_probe,
+	.remove		= ad9832_remove,
 	.id_table	= ad9832_id,
 };
 module_spi_driver(ad9832_driver);
 
-MODULE_AUTHOR("Michael Hennerich <michael.hennerich@analog.com>");
+MODULE_AUTHOR("Michael Hennerich <hennerich@blackfin.uclinux.org>");
 MODULE_DESCRIPTION("Analog Devices AD9832/AD9835 DDS");
 MODULE_LICENSE("GPL v2");

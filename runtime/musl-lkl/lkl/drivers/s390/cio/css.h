@@ -34,14 +34,6 @@
 #define SNID_STATE3_MULTI_PATH	   1
 #define SNID_STATE3_SINGLE_PATH	   0
 
-/*
- * Conditions used to specify which subchannels need evaluation
- */
-enum css_eval_cond {
-	CSS_EVAL_UNREG,		/* unregistered subchannels */
-	CSS_EVAL_NOT_ONLINE	/* sch without an online-device */
-};
-
 struct path_state {
 	__u8  state1 : 2;	/* path state value 1 */
 	__u8  state2 : 2;	/* path state value 2 */
@@ -80,6 +72,11 @@ struct chp_link;
  * @probe: function called on probe
  * @remove: function called on remove
  * @shutdown: called at device shutdown
+ * @prepare: prepare for pm state transition
+ * @complete: undo work done in @prepare
+ * @freeze: callback for freezing during hibernation snapshotting
+ * @thaw: undo work done in @freeze
+ * @restore: callback for restoring after hibernation
  * @settle: wait for asynchronous work to finish
  */
 struct css_driver {
@@ -89,8 +86,13 @@ struct css_driver {
 	int (*chp_event)(struct subchannel *, struct chp_link *, int);
 	int (*sch_event)(struct subchannel *, int);
 	int (*probe)(struct subchannel *);
-	void (*remove)(struct subchannel *);
+	int (*remove)(struct subchannel *);
 	void (*shutdown)(struct subchannel *);
+	int (*prepare) (struct subchannel *);
+	void (*complete) (struct subchannel *);
+	int (*freeze)(struct subchannel *);
+	int (*thaw) (struct subchannel *);
+	int (*restore)(struct subchannel *);
 	int (*settle)(void);
 };
 
@@ -101,8 +103,7 @@ extern void css_driver_unregister(struct css_driver *);
 
 extern void css_sch_device_unregister(struct subchannel *);
 extern int css_register_subchannel(struct subchannel *);
-extern struct subchannel *css_alloc_subchannel(struct subchannel_id,
-					       struct schib *schib);
+extern struct subchannel *css_alloc_subchannel(struct subchannel_id);
 extern struct subchannel *get_subchannel_by_schid(struct subchannel_id);
 extern int css_init_done;
 extern int max_ssid;
@@ -113,9 +114,7 @@ extern int for_each_subchannel(int(*fn)(struct subchannel_id, void *), void *);
 void css_update_ssd_info(struct subchannel *sch);
 
 struct channel_subsystem {
-	u8 cssid;
-	u8 iid;
-	bool id_valid; /* cssid,iid */
+	int cssid;
 	struct channel_path *chps[__MAX_CHPID + 1];
 	struct device device;
 	struct pgid global_pgid;
@@ -144,7 +143,7 @@ static inline struct channel_subsystem *css_by_id(u8 cssid)
 /* Helper functions to build lists for the slow path. */
 void css_schedule_eval(struct subchannel_id schid);
 void css_schedule_eval_all(void);
-void css_schedule_eval_cond(enum css_eval_cond, unsigned long delay);
+void css_schedule_eval_all_unreg(unsigned long delay);
 int css_complete_work(void);
 
 int sch_is_pseudo_sch(struct subchannel *);

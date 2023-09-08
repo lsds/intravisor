@@ -1,10 +1,13 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /* DVB USB framework compliant Linux driver for the HanfTek UMT-010 USB2.0
  * DVB-T receiver.
  *
  * Copyright (C) 2004-5 Patrick Boettcher (patrick.boettcher@posteo.de)
  *
- * see Documentation/driver-api/media/drivers/dvb-usb.rst for more information
+ *	This program is free software; you can redistribute it and/or modify it
+ *	under the terms of the GNU General Public License as published by the Free
+ *	Software Foundation, version 2.
+ *
+ * see Documentation/dvb/README.dvb-usb for more information
  */
 #include "dibusb.h"
 
@@ -81,17 +84,11 @@ static int umt_probe(struct usb_interface *intf,
 }
 
 /* do not change the order of the ID table */
-enum {
-	HANFTEK_UMT_010_COLD,
-	HANFTEK_UMT_010_WARM,
+static struct usb_device_id umt_table [] = {
+/* 00 */	{ USB_DEVICE(USB_VID_HANFTEK, USB_PID_HANFTEK_UMT_010_COLD) },
+/* 01 */	{ USB_DEVICE(USB_VID_HANFTEK, USB_PID_HANFTEK_UMT_010_WARM) },
+			{ }		/* Terminating entry */
 };
-
-static struct usb_device_id umt_table[] = {
-	DVB_USB_DEV(HANFTEK, HANFTEK_UMT_010_COLD),
-	DVB_USB_DEV(HANFTEK, HANFTEK_UMT_010_WARM),
-	{ }
-};
-
 MODULE_DEVICE_TABLE (usb, umt_table);
 
 static struct dvb_usb_device_properties umt_properties = {
@@ -133,8 +130,8 @@ static struct dvb_usb_device_properties umt_properties = {
 	.num_device_descs = 1,
 	.devices = {
 		{	"Hanftek UMT-010 DVB-T USB2.0",
-			{ &umt_table[HANFTEK_UMT_010_COLD], NULL },
-			{ &umt_table[HANFTEK_UMT_010_WARM], NULL },
+			{ &umt_table[0], NULL },
+			{ &umt_table[1], NULL },
 		},
 	}
 };

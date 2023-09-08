@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0 */
 /*
- * This is the infamous ld script for the 64 bits vdso
+ * This is the infamous ld script for the 32 bits vdso
  * library
  */
 
@@ -13,11 +13,7 @@ ENTRY(_start)
 
 SECTIONS
 {
-	PROVIDE(_vdso_data = . - __VVAR_PAGES * PAGE_SIZE);
-#ifdef CONFIG_TIME_NS
-	PROVIDE(_timens_data = _vdso_data + PAGE_SIZE);
-#endif
-	. = VDSO_LBASE + SIZEOF_HEADERS;
+	. = VDSO32_LBASE + SIZEOF_HEADERS;
 
 	.hash		: { *(.hash) }			:text
 	.gnu.hash	: { *(.gnu.hash) }
@@ -51,7 +47,6 @@ SECTIONS
 
 	.rela.dyn ALIGN(8) : { *(.rela.dyn) }
 	.got ALIGN(8)	: { *(.got .toc) }
-	.got.plt ALIGN(8) : { *(.got.plt) }
 
 	_end = .;
 	PROVIDE(end = .);
@@ -99,6 +94,9 @@ SECTIONS
 	.debug_ranges	0 : { *(.debug_ranges) }
 	.gnu.attributes 0 : { KEEP (*(.gnu.attributes)) }
 
+	. = ALIGN(PAGE_SIZE);
+	PROVIDE(_vdso_data = .);
+
 	/DISCARD/	: {
 		*(.note.GNU-stack)
 		*(.branch_lt)
@@ -134,9 +132,11 @@ VERSION
 		/*
 		 * Has to be there for the kernel to find
 		 */
-		__kernel_compat_restart_syscall;
-		__kernel_compat_rt_sigreturn;
-		__kernel_compat_sigreturn;
+		__kernel_gettimeofday;
+		__kernel_clock_gettime;
+		__kernel_clock_getres;
+		__kernel_getcpu;
+
 	local: *;
 	};
 }

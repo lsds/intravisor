@@ -23,8 +23,8 @@
 
 #define PLOCK	1
 
-extern int copy_from_cap(void *dst, void *src_cap_location, int len);
-extern int copy_to_cap(void *src_cap_location, void *src, int len);
+extern copy_from_cap(void *dst, void *src_cap_location, int len);
+extern copy_to_cap(void *src_cap_location, void *src, int len);
 
 
 extern int read_cap(void *dst, int unused, int len);

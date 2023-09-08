@@ -12,6 +12,7 @@
 
 #include <asm/bcache.h>
 #include <asm/page.h>
+#include <asm/pgtable.h>
 #include <asm/bootinfo.h>
 #include <asm/sgi/ip22.h>
 #include <asm/sgi/mc.h>

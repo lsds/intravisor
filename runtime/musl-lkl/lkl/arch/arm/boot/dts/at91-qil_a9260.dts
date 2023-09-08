@@ -1,8 +1,9 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * at91-qil_a9260.dts - Device Tree file for Calao QIL A9260 board
  *
  * Copyright (C) 2011-2013 Jean-Christophe PLAGNIOL-VILLARD <plagnioj@jcrosoft.com>
+ *
+ * Licensed under GPLv2.
  */
 /dts-v1/;
 #include "at91sam9260.dtsi"
@@ -14,7 +15,7 @@
 		bootargs = "console=ttyS0,115200";
 	};
 
-	memory@20000000 {
+	memory {
 		reg = <0x20000000 0x4000000>;
 	};
 
@@ -52,7 +53,6 @@
 					&pinctrl_mmc0_clk
 					&pinctrl_mmc0_slot0_cmd_dat0
 					&pinctrl_mmc0_slot0_dat1_3>;
-				pinctrl-names = "default";
 				status = "okay";
 				slot@0 {
 					reg = <0>;
@@ -198,8 +198,10 @@
 
 	gpio_keys {
 		compatible = "gpio-keys";
+		#address-cells = <1>;
+		#size-cells = <0>;
 
-		button-user {
+		user_pb {
 			label = "user_pb";
 			gpios = <&pioB 10 GPIO_ACTIVE_LOW>;
 			linux,code = <28>;

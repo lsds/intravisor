@@ -52,7 +52,6 @@
 #include <linux/kref.h>
 #include <linux/sched.h>
 #include <linux/kthread.h>
-#include <linux/xarray.h>
 #include <rdma/ib_hdrs.h>
 #include <rdma/rdma_vt.h>
 
@@ -196,7 +195,7 @@ struct qib_ctxtdata {
 	pid_t pid;
 	pid_t subpid[QLOGIC_IB_MAX_SUBCTXT];
 	/* same size as task_struct .comm[], command that opened context */
-	char comm[TASK_COMM_LEN];
+	char comm[16];
 	/* pkeys set by this use of this ctxt */
 	u16 pkeys[4];
 	/* so file ops can get at unit */
@@ -321,7 +320,7 @@ struct qib_verbs_txreq {
  * These 7 values (SDR, DDR, and QDR may be ORed for auto-speed
  * negotiation) are used for the 3rd argument to path_f_set_ib_cfg
  * with cmd QIB_IB_CFG_SPD_ENB, by direct calls or via sysfs.  They
- * are also the possible values for qib_link_speed_enabled and active
+ * are also the the possible values for qib_link_speed_enabled and active
  * The values were chosen to match values used within the IB spec.
  */
 #define QIB_IB_SDR 1
@@ -521,6 +520,10 @@ struct qib_pportdata {
 
 	struct qib_devdata *dd;
 	struct qib_chippport_specific *cpspec; /* chip-specific per-port */
+	struct kobject pport_kobj;
+	struct kobject pport_cc_kobj;
+	struct kobject sl2vl_kobj;
+	struct kobject diagc_kobj;
 
 	/* GUID for this interface, in network order */
 	__be64 guid;
@@ -615,18 +618,18 @@ struct qib_pportdata {
 	/* LID mask control */
 	u8 lmc;
 	u8 link_width_supported;
-	u16 link_speed_supported;
+	u8 link_speed_supported;
 	u8 link_width_enabled;
-	u16 link_speed_enabled;
+	u8 link_speed_enabled;
 	u8 link_width_active;
-	u16 link_speed_active;
+	u8 link_speed_active;
 	u8 vls_supported;
 	u8 vls_operational;
 	/* Rx Polarity inversion (compensate for ~tx on partner) */
 	u8 rx_pol_inv;
 
 	u8 hw_pidx;     /* physical port index */
-	u32 port;        /* IB port number and index into dd->pports - 1 */
+	u8 port;        /* IB port number and index into dd->pports - 1 */
 
 	u8 delay_mult;
 
@@ -678,7 +681,7 @@ struct qib_pportdata {
 /* Observers. Not to be taken lightly, possibly not to ship. */
 /*
  * If a diag read or write is to (bottom <= offset <= top),
- * the "hook" is called, allowing, e.g. shadows to be
+ * the "hoook" is called, allowing, e.g. shadows to be
  * updated in sync with the driver. struct diag_observer
  * is the "visible" part.
  */
@@ -1102,7 +1105,8 @@ struct qib_filedata {
 	int rec_cpu_num; /* for cpu affinity; -1 if none */
 };
 
-extern struct xarray qib_dev_table;
+extern struct list_head qib_dev_list;
+extern spinlock_t qib_devs_lock;
 extern struct qib_devdata *qib_lookup(int unit);
 extern u32 qib_cpulist_count;
 extern unsigned long *qib_cpulist;
@@ -1196,10 +1200,10 @@ static inline struct qib_pportdata *ppd_from_ibp(struct qib_ibport *ibp)
 	return container_of(ibp, struct qib_pportdata, ibport_data);
 }
 
-static inline struct qib_ibport *to_iport(struct ib_device *ibdev, u32 port)
+static inline struct qib_ibport *to_iport(struct ib_device *ibdev, u8 port)
 {
 	struct qib_devdata *dd = dd_from_ibdev(ibdev);
-	u32 pidx = port - 1; /* IB number port from 1, hdw from 0 */
+	unsigned pidx = port - 1; /* IB number port from 1, hdw from 0 */
 
 	WARN_ON(pidx >= dd->num_pports);
 	return &dd->pport[pidx].ibport_data;
@@ -1224,7 +1228,6 @@ static inline struct qib_ibport *to_iport(struct ib_device *ibdev, u32 port)
 #define QIB_BADINTR           0x8000 /* severe interrupt problems */
 #define QIB_DCA_ENABLED       0x10000 /* Direct Cache Access enabled */
 #define QIB_HAS_QSFP          0x20000 /* device (card instance) has QSFP */
-#define QIB_SHUTDOWN          0x40000 /* device is shutting down */
 
 /*
  * values for ppd->lflags (_ib_port_ related flags)
@@ -1299,6 +1302,11 @@ int qib_sdma_verbs_send(struct qib_pportdata *, struct rvt_sge_state *,
 /* ppd->sdma_lock should be locked before calling this. */
 int qib_sdma_make_progress(struct qib_pportdata *dd);
 
+static inline int qib_sdma_empty(const struct qib_pportdata *ppd)
+{
+	return ppd->sdma_descq_added == ppd->sdma_descq_removed;
+}
+
 /* must be called under qib_sdma_lock */
 static inline u16 qib_sdma_descq_freecnt(const struct qib_pportdata *ppd)
 {
@@ -1355,17 +1363,40 @@ static inline u32 qib_get_rcvhdrtail(const struct qib_ctxtdata *rcd)
 		*((volatile __le64 *)rcd->rcvhdrtail_kvaddr)); /* DMA'ed */
 }
 
+static inline u32 qib_get_hdrqtail(const struct qib_ctxtdata *rcd)
+{
+	const struct qib_devdata *dd = rcd->dd;
+	u32 hdrqtail;
+
+	if (dd->flags & QIB_NODMA_RTAIL) {
+		__le32 *rhf_addr;
+		u32 seq;
+
+		rhf_addr = (__le32 *) rcd->rcvhdrq +
+			rcd->head + dd->rhf_offset;
+		seq = qib_hdrget_seq(rhf_addr);
+		hdrqtail = rcd->head;
+		if (seq == rcd->seq_cnt)
+			hdrqtail++;
+	} else
+		hdrqtail = qib_get_rcvhdrtail(rcd);
+
+	return hdrqtail;
+}
+
 /*
  * sysfs interface.
  */
 
 extern const char ib_qib_version[];
-extern const struct attribute_group qib_attr_group;
-extern const struct attribute_group *qib_attr_port_groups[];
 
 int qib_device_create(struct qib_devdata *);
 void qib_device_remove(struct qib_devdata *);
 
+int qib_create_port_files(struct ib_device *ibdev, u8 port_num,
+			  struct kobject *kobj);
+int qib_verbs_register_sysfs(struct qib_devdata *);
+void qib_verbs_unregister_sysfs(struct qib_devdata *);
 /* Hook for sysfs read of QSFP */
 extern int qib_qsfp_dump(struct qib_pportdata *ppd, char *buf, int len);
 
@@ -1392,7 +1423,8 @@ u64 qib_sps_ints(void);
 /*
  * dma_addr wrappers - all 0's invalid for hw
  */
-int qib_map_page(struct pci_dev *d, struct page *p, dma_addr_t *daddr);
+dma_addr_t qib_map_page(struct pci_dev *, struct page *, unsigned long,
+			  size_t, int);
 struct pci_dev *qib_get_pci_dev(struct rvt_dev_info *rdi);
 
 /*

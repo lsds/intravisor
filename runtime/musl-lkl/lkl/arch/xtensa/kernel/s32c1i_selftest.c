@@ -40,13 +40,14 @@ static inline int probed_compare_swap(int *v, int cmp, int set)
 
 /* Handle probed exception */
 
-static void __init do_probed_exception(struct pt_regs *regs)
+static void __init do_probed_exception(struct pt_regs *regs,
+				       unsigned long exccause)
 {
 	if (regs->pc == rcw_probe_pc) {	/* exception on s32c1i ? */
 		regs->pc += 3;		/* skip the s32c1i instruction */
-		rcw_exc = regs->exccause;
+		rcw_exc = exccause;
 	} else {
-		do_unhandled(regs);
+		do_unhandled(regs, exccause);
 	}
 }
 

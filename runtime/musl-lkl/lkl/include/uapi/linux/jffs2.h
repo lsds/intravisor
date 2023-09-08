@@ -77,6 +77,11 @@
 
 #define JFFS2_ACL_VERSION		0x0001
 
+// Maybe later...
+//#define JFFS2_NODETYPE_CHECKPOINT (JFFS2_FEATURE_RWCOMPAT_DELETE | JFFS2_NODE_ACCURATE | 3)
+//#define JFFS2_NODETYPE_OPTIONS (JFFS2_FEATURE_RWCOMPAT_COPY | JFFS2_NODE_ACCURATE | 4)
+
+
 #define JFFS2_INO_FLAG_PREREAD	  1	/* Do read_inode() for this one at
 					   mount time, don't wait for it to
 					   happen later */
@@ -123,7 +128,7 @@ struct jffs2_raw_dirent
 	__u8 unused[2];
 	jint32_t node_crc;
 	jint32_t name_crc;
-	__u8 name[];
+	__u8 name[0];
 };
 
 /* The JFFS2 raw inode structure: Used for storage on physical media.  */
@@ -155,7 +160,7 @@ struct jffs2_raw_inode
 	jint16_t flags;	     /* See JFFS2_INO_FLAG_* */
 	jint32_t data_crc;   /* CRC for the (compressed) data.  */
 	jint32_t node_crc;   /* CRC for the raw inode (excluding data)  */
-	__u8 data[];
+	__u8 data[0];
 };
 
 struct jffs2_raw_xattr {
@@ -170,7 +175,7 @@ struct jffs2_raw_xattr {
 	jint16_t value_len;
 	jint32_t data_crc;
 	jint32_t node_crc;
-	__u8 data[];
+	__u8 data[0];
 } __attribute__((packed));
 
 struct jffs2_raw_xref
@@ -196,7 +201,7 @@ struct jffs2_raw_summary
 	jint32_t padded;	/* sum of the size of padding nodes */
 	jint32_t sum_crc;	/* summary information crc */
 	jint32_t node_crc; 	/* node crc */
-	jint32_t sum[]; 	/* inode summary info */
+	jint32_t sum[0]; 	/* inode summary info */
 };
 
 union jffs2_node_union

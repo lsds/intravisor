@@ -8,7 +8,7 @@ struct spi_bitbang {
 	struct mutex		lock;
 	u8			busy;
 	u8			use_dma;
-	u16			flags;		/* extra spi->mode support */
+	u8			flags;		/* extra spi->mode support */
 
 	struct spi_master	*master;
 
@@ -30,8 +30,7 @@ struct spi_bitbang {
 	/* txrx_word[SPI_MODE_*]() just looks like a shift register */
 	u32	(*txrx_word[4])(struct spi_device *spi,
 			unsigned nsecs,
-			u32 word, u8 bits, unsigned flags);
-	int	(*set_line_direction)(struct spi_device *spi, bool output);
+			u32 word, u8 bits);
 };
 
 /* you can call these default bitbang->master methods from your custom
@@ -44,7 +43,6 @@ extern int spi_bitbang_setup_transfer(struct spi_device *spi,
 
 /* start or stop queue processing */
 extern int spi_bitbang_start(struct spi_bitbang *spi);
-extern int spi_bitbang_init(struct spi_bitbang *spi);
 extern void spi_bitbang_stop(struct spi_bitbang *spi);
 
 #endif	/* __SPI_BITBANG_H */

@@ -66,15 +66,12 @@ struct llc_sap {
 	int sk_count;
 	struct hlist_nulls_head sk_laddr_hash[LLC_SK_LADDR_HASH_ENTRIES];
 	struct hlist_head sk_dev_hash[LLC_SK_DEV_HASH_ENTRIES];
-	struct rcu_head rcu;
 };
 
 static inline
 struct hlist_head *llc_sk_dev_hash(struct llc_sap *sap, int ifindex)
 {
-	u32 bucket = hash_32(ifindex, LLC_SK_DEV_HASH_BITS);
-
-	return &sap->sk_dev_hash[bucket];
+	return &sap->sk_dev_hash[ifindex % LLC_SK_DEV_HASH_ENTRIES];
 }
 
 static inline
@@ -119,11 +116,6 @@ static inline void llc_sap_hold(struct llc_sap *sap)
 	refcount_inc(&sap->refcnt);
 }
 
-static inline bool llc_sap_hold_safe(struct llc_sap *sap)
-{
-	return refcount_inc_not_zero(&sap->refcnt);
-}
-
 void llc_sap_close(struct llc_sap *sap);
 
 static inline void llc_sap_put(struct llc_sap *sap)
@@ -135,7 +127,7 @@ static inline void llc_sap_put(struct llc_sap *sap)
 struct llc_sap *llc_sap_find(unsigned char sap_value);
 
 int llc_build_and_send_ui_pkt(struct llc_sap *sap, struct sk_buff *skb,
-			      const unsigned char *dmac, unsigned char dsap);
+			      unsigned char *dmac, unsigned char dsap);
 
 void llc_sap_handler(struct llc_sap *sap, struct sk_buff *skb);
 void llc_conn_handler(struct llc_sap *sap, struct sk_buff *skb);

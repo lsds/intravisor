@@ -6,12 +6,7 @@
  */
 
 #include "check.h"
-
-#define SGI_LABEL_MAGIC 0x0be5a941
-
-enum {
-	LINUX_RAID_PARTITION = 0xfd,	/* autodetect RAID partition */
-};
+#include "sgi.h"
 
 struct sgi_disklabel {
 	__be32 magic_mushroom;		/* Big fat spliff... */
@@ -43,6 +38,7 @@ int sgi_partition(struct parsed_partitions *state)
 	Sector sect;
 	struct sgi_disklabel *label;
 	struct sgi_partition *p;
+	char b[BDEVNAME_SIZE];
 
 	label = read_part_sector(state, 0, &sect);
 	if (!label)
@@ -51,7 +47,7 @@ int sgi_partition(struct parsed_partitions *state)
 	magic = label->magic_mushroom;
 	if(be32_to_cpu(magic) != SGI_LABEL_MAGIC) {
 		/*printk("Dev %s SGI disklabel: bad magic %08x\n",
-		       state->disk->disk_name, be32_to_cpu(magic));*/
+		       bdevname(bdev, b), be32_to_cpu(magic));*/
 		put_dev_sector(sect);
 		return 0;
 	}
@@ -62,7 +58,7 @@ int sgi_partition(struct parsed_partitions *state)
 	}
 	if(csum) {
 		printk(KERN_WARNING "Dev %s SGI disklabel: csum bad, label corrupted\n",
-		       state->disk->disk_name);
+		       bdevname(state->bdev, b));
 		put_dev_sector(sect);
 		return 0;
 	}

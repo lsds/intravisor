@@ -30,11 +30,6 @@ struct f_eem {
 	u8				ctrl_id;
 };
 
-struct in_context {
-	struct sk_buff	*skb;
-	struct usb_ep	*ep;
-};
-
 static inline struct f_eem *func_to_eem(struct usb_function *f)
 {
 	return container_of(f, struct f_eem, port.func);
@@ -171,6 +166,7 @@ static struct usb_gadget_strings *eem_strings[] = {
 static int eem_setup(struct usb_function *f, const struct usb_ctrlrequest *ctrl)
 {
 	struct usb_composite_dev *cdev = f->config->cdev;
+	int			value = -EOPNOTSUPP;
 	u16			w_index = le16_to_cpu(ctrl->wIndex);
 	u16			w_value = le16_to_cpu(ctrl->wValue);
 	u16			w_length = le16_to_cpu(ctrl->wLength);
@@ -180,7 +176,7 @@ static int eem_setup(struct usb_function *f, const struct usb_ctrlrequest *ctrl)
 		w_value, w_index, w_length);
 
 	/* device either stalls (value < 0) or reports success */
-	return -EOPNOTSUPP;
+	return value;
 }
 
 
@@ -296,6 +292,8 @@ static int eem_bind(struct usb_configuration *c, struct usb_function *f)
 		goto fail;
 	eem->port.out_ep = ep;
 
+	status = -ENOMEM;
+
 	/* support all relevant hardware speeds... we expect that when
 	 * hardware is dual speed, all bulk-capable endpoints work at
 	 * both speeds
@@ -307,7 +305,7 @@ static int eem_bind(struct usb_configuration *c, struct usb_function *f)
 	eem_ss_out_desc.bEndpointAddress = eem_fs_out_desc.bEndpointAddress;
 
 	status = usb_assign_descriptors(f, eem_fs_function, eem_hs_function,
-			eem_ss_function, eem_ss_function);
+			eem_ss_function, NULL);
 	if (status)
 		goto fail;
 
@@ -325,12 +323,9 @@ fail:
 
 static void eem_cmd_complete(struct usb_ep *ep, struct usb_request *req)
 {
-	struct in_context *ctx = req->context;
+	struct sk_buff *skb = (struct sk_buff *)req->context;
 
-	dev_kfree_skb_any(ctx->skb);
-	kfree(req->buf);
-	usb_ep_free_request(ctx->ep, req);
-	kfree(ctx);
+	dev_kfree_skb_any(skb);
 }
 
 /*
@@ -418,9 +413,7 @@ static int eem_unwrap(struct gether *port,
 		 * b15:		bmType (0 == data, 1 == command)
 		 */
 		if (header & BIT(15)) {
-			struct usb_request	*req;
-			struct in_context	*ctx;
-			struct usb_ep		*ep;
+			struct usb_request	*req = cdev->req;
 			u16			bmEEMCmd;
 
 			/* EEM command packet format:
@@ -449,36 +442,11 @@ static int eem_unwrap(struct gether *port,
 				skb_trim(skb2, len);
 				put_unaligned_le16(BIT(15) | BIT(11) | len,
 							skb_push(skb2, 2));
-
-				ep = port->in_ep;
-				req = usb_ep_alloc_request(ep, GFP_ATOMIC);
-				if (!req) {
-					dev_kfree_skb_any(skb2);
-					goto next;
-				}
-
-				req->buf = kmalloc(skb2->len, GFP_KERNEL);
-				if (!req->buf) {
-					usb_ep_free_request(ep, req);
-					dev_kfree_skb_any(skb2);
-					goto next;
-				}
-
-				ctx = kmalloc(sizeof(*ctx), GFP_KERNEL);
-				if (!ctx) {
-					kfree(req->buf);
-					usb_ep_free_request(ep, req);
-					dev_kfree_skb_any(skb2);
-					goto next;
-				}
-				ctx->skb = skb2;
-				ctx->ep = ep;
-
 				skb_copy_bits(skb2, 0, req->buf, skb2->len);
 				req->length = skb2->len;
 				req->complete = eem_cmd_complete;
 				req->zero = 1;
-				req->context = ctx;
+				req->context = skb2;
 				if (usb_ep_queue(port->in_ep, req, GFP_ATOMIC))
 					DBG(cdev, "echo response queue fail\n");
 				break;
@@ -530,7 +498,7 @@ static int eem_unwrap(struct gether *port,
 			skb2 = skb_clone(skb, GFP_ATOMIC);
 			if (unlikely(!skb2)) {
 				DBG(cdev, "unable to unframe EEM packet\n");
-				goto next;
+				continue;
 			}
 			skb_trim(skb2, len - ETH_FCS_LEN);
 
@@ -540,7 +508,7 @@ static int eem_unwrap(struct gether *port,
 						GFP_ATOMIC);
 			if (unlikely(!skb3)) {
 				dev_kfree_skb_any(skb2);
-				goto next;
+				continue;
 			}
 			dev_kfree_skb_any(skb2);
 			skb_queue_tail(list, skb3);

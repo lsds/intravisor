@@ -1,6 +1,10 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * net/sched/em_nbyte.c	N-Byte ematch
+ *
+ *		This program is free software; you can redistribute it and/or
+ *		modify it under the terms of the GNU General Public License
+ *		as published by the Free Software Foundation; either version
+ *		2 of the License, or (at your option) any later version.
  *
  * Authors:	Thomas Graf <tgraf@suug.ch>
  */
@@ -16,7 +20,7 @@
 
 struct nbyte_data {
 	struct tcf_em_nbyte	hdr;
-	char			pattern[];
+	char			pattern[0];
 };
 
 static int em_nbyte_change(struct net *net, void *data, int data_len,
@@ -31,7 +35,7 @@ static int em_nbyte_change(struct net *net, void *data, int data_len,
 	em->datalen = sizeof(*nbyte) + nbyte->len;
 	em->data = (unsigned long)kmemdup(data, em->datalen, GFP_KERNEL);
 	if (em->data == 0UL)
-		return -ENOMEM;
+		return -ENOBUFS;
 
 	return 0;
 }

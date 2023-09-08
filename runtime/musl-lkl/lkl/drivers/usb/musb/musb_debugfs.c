@@ -168,11 +168,6 @@ static ssize_t musb_test_mode_write(struct file *file,
 	u8			test;
 	char			buf[24];
 
-	memset(buf, 0x00, sizeof(buf));
-
-	if (copy_from_user(buf, ubuf, min_t(size_t, sizeof(buf) - 1, count)))
-		return -EFAULT;
-
 	pm_runtime_get_sync(musb->controller);
 	test = musb_readb(musb->mregs, MUSB_TESTMODE);
 	if (test) {
@@ -180,6 +175,11 @@ static ssize_t musb_test_mode_write(struct file *file,
 			"Please do USB Bus Reset to start a new test.\n");
 		goto ret;
 	}
+
+	memset(buf, 0x00, sizeof(buf));
+
+	if (copy_from_user(buf, ubuf, min_t(size_t, sizeof(buf) - 1, count)))
+		return -EFAULT;
 
 	if (strstarts(buf, "force host full-speed"))
 		test = MUSB_TEST_FORCE_HOST | MUSB_TEST_FORCE_FS;
@@ -321,18 +321,48 @@ static const struct file_operations musb_softconnect_fops = {
 	.release		= single_release,
 };
 
-void musb_init_debugfs(struct musb *musb)
+int musb_init_debugfs(struct musb *musb)
 {
-	struct dentry *root;
+	struct dentry		*root;
+	struct dentry		*file;
+	int			ret;
 
-	root = debugfs_create_dir(dev_name(musb->controller), usb_debug_root);
+	root = debugfs_create_dir(dev_name(musb->controller), NULL);
+	if (!root) {
+		ret = -ENOMEM;
+		goto err0;
+	}
+
+	file = debugfs_create_file("regdump", S_IRUGO, root, musb,
+			&musb_regdump_fops);
+	if (!file) {
+		ret = -ENOMEM;
+		goto err1;
+	}
+
+	file = debugfs_create_file("testmode", S_IRUGO | S_IWUSR,
+			root, musb, &musb_test_mode_fops);
+	if (!file) {
+		ret = -ENOMEM;
+		goto err1;
+	}
+
+	file = debugfs_create_file("softconnect", S_IRUGO | S_IWUSR,
+			root, musb, &musb_softconnect_fops);
+	if (!file) {
+		ret = -ENOMEM;
+		goto err1;
+	}
+
 	musb->debugfs_root = root;
 
-	debugfs_create_file("regdump", S_IRUGO, root, musb, &musb_regdump_fops);
-	debugfs_create_file("testmode", S_IRUGO | S_IWUSR, root, musb,
-			    &musb_test_mode_fops);
-	debugfs_create_file("softconnect", S_IRUGO | S_IWUSR, root, musb,
-			    &musb_softconnect_fops);
+	return 0;
+
+err1:
+	debugfs_remove_recursive(root);
+
+err0:
+	return ret;
 }
 
 void /* __init_or_exit */ musb_exit_debugfs(struct musb *musb)

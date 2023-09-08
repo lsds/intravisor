@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Handle extern requests for shutdown, reboot and sysrq
  */
@@ -141,14 +140,14 @@ static void do_suspend(void)
 
 	raw_notifier_call_chain(&xen_resume_notifier, 0, NULL);
 
-	xen_arch_resume();
-
 	dpm_resume_start(si.cancelled ? PMSG_THAW : PMSG_RESTORE);
 
 	if (err) {
 		pr_err("failed to start xen_suspend: %d\n", err);
 		si.cancelled = 1;
 	}
+
+	xen_arch_resume();
 
 out_resume:
 	if (!si.cancelled)
@@ -179,7 +178,6 @@ static int poweroff_nb(struct notifier_block *cb, unsigned long code, void *unus
 	case SYS_HALT:
 	case SYS_POWER_OFF:
 		shutting_down = SHUTDOWN_POWEROFF;
-		break;
 	default:
 		break;
 	}
@@ -205,7 +203,7 @@ static void do_poweroff(void)
 static void do_reboot(void)
 {
 	shutting_down = SHUTDOWN_POWEROFF; /* ? */
-	orderly_reboot();
+	ctrl_alt_del();
 }
 
 static struct shutdown_handler shutdown_handlers[] = {
@@ -282,26 +280,17 @@ static void sysrq_handler(struct xenbus_watch *watch, const char *path,
 		/*
 		 * The Xenstore watch fires directly after registering it and
 		 * after a suspend/resume cycle. So ENOENT is no error but
-		 * might happen in those cases. ERANGE is observed when we get
-		 * an empty value (''), this happens when we acknowledge the
-		 * request by writing '\0' below.
+		 * might happen in those cases.
 		 */
-		if (err != -ENOENT && err != -ERANGE)
+		if (err != -ENOENT)
 			pr_err("Error %d reading sysrq code in control/sysrq\n",
 			       err);
 		xenbus_transaction_end(xbt, 1);
 		return;
 	}
 
-	if (sysrq_key != '\0') {
-		err = xenbus_printf(xbt, "control", "sysrq", "%c", '\0');
-		if (err) {
-			pr_err("%s: Error %d writing sysrq in control/sysrq\n",
-			       __func__, err);
-			xenbus_transaction_end(xbt, 1);
-			return;
-		}
-	}
+	if (sysrq_key != '\0')
+		xenbus_printf(xbt, "control", "sysrq", "%c", '\0');
 
 	err = xenbus_transaction_end(xbt, 0);
 	if (err == -EAGAIN)
@@ -353,12 +342,7 @@ static int setup_shutdown_watcher(void)
 			continue;
 		snprintf(node, FEATURE_PATH_SIZE, "feature-%s",
 			 shutdown_handlers[idx].command);
-		err = xenbus_printf(XBT_NIL, "control", node, "%u", 1);
-		if (err) {
-			pr_err("%s: Error %d writing %s\n", __func__,
-				err, node);
-			return err;
-		}
+		xenbus_printf(XBT_NIL, "control", node, "%u", 1);
 	}
 
 	return 0;

@@ -1,6 +1,18 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (C) 2006-2008 Nokia Corporation
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License version 2 as published by
+ * the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for
+ * more details.
+ *
+ * You should have received a copy of the GNU General Public License along with
+ * this program; see the file COPYING. If not, write to the Free Software
+ * Foundation, 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
  *
  * Test random reads, writes and erases on MTD device.
  *
@@ -45,8 +57,9 @@ static int rand_eb(void)
 	unsigned int eb;
 
 again:
+	eb = prandom_u32();
 	/* Read or write up 2 eraseblocks at a time - hence 'ebcnt - 1' */
-	eb = prandom_u32_max(ebcnt - 1);
+	eb %= (ebcnt - 1);
 	if (bbt[eb])
 		goto again;
 	return eb;
@@ -54,12 +67,20 @@ again:
 
 static int rand_offs(void)
 {
-	return prandom_u32_max(bufsize);
+	unsigned int offs;
+
+	offs = prandom_u32();
+	offs %= bufsize;
+	return offs;
 }
 
 static int rand_len(int offs)
 {
-	return prandom_u32_max(bufsize - offs);
+	unsigned int len;
+
+	len = prandom_u32();
+	len %= (bufsize - offs);
+	return len;
 }
 
 static int do_read(void)
@@ -118,7 +139,7 @@ static int do_write(void)
 
 static int do_operation(void)
 {
-	if (prandom_u32_max(2))
+	if (prandom_u32() & 1)
 		return do_read();
 	else
 		return do_write();
@@ -178,12 +199,12 @@ static int __init mtd_stresstest_init(void)
 	err = -ENOMEM;
 	readbuf = vmalloc(bufsize);
 	writebuf = vmalloc(bufsize);
-	offsets = kmalloc_array(ebcnt, sizeof(int), GFP_KERNEL);
+	offsets = kmalloc(ebcnt * sizeof(int), GFP_KERNEL);
 	if (!readbuf || !writebuf || !offsets)
 		goto out;
 	for (i = 0; i < ebcnt; i++)
 		offsets[i] = mtd->erasesize;
-	get_random_bytes(writebuf, bufsize);
+	prandom_bytes(writebuf, bufsize);
 
 	bbt = kzalloc(ebcnt, GFP_KERNEL);
 	if (!bbt)

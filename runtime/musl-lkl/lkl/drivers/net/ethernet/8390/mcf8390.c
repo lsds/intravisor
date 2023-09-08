@@ -374,7 +374,8 @@ static int mcf8390_init(struct net_device *dev)
 	if (ret)
 		return ret;
 
-	eth_hw_addr_set(dev, SA_prom);
+	for (i = 0; i < ETH_ALEN; i++)
+		dev->dev_addr[i] = SA_prom[i];
 
 	netdev_dbg(dev, "Found ethernet address: %pM\n", dev->dev_addr);
 
@@ -405,13 +406,15 @@ static int mcf8390_init(struct net_device *dev)
 static int mcf8390_probe(struct platform_device *pdev)
 {
 	struct net_device *dev;
-	struct resource *mem;
+	struct resource *mem, *irq;
 	resource_size_t msize;
-	int ret, irq;
+	int ret;
 
-	irq = platform_get_irq(pdev, 0);
-	if (irq < 0)
+	irq = platform_get_resource(pdev, IORESOURCE_IRQ, 0);
+	if (irq == NULL) {
+		dev_err(&pdev->dev, "no IRQ specified?\n");
 		return -ENXIO;
+	}
 
 	mem = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	if (mem == NULL) {
@@ -431,7 +434,7 @@ static int mcf8390_probe(struct platform_device *pdev)
 	SET_NETDEV_DEV(dev, &pdev->dev);
 	platform_set_drvdata(pdev, dev);
 
-	dev->irq = irq;
+	dev->irq = irq->start;
 	dev->base_addr = mem->start;
 
 	ret = mcf8390_init(dev);
@@ -450,7 +453,8 @@ static int mcf8390_remove(struct platform_device *pdev)
 
 	unregister_netdev(dev);
 	mem = platform_get_resource(pdev, IORESOURCE_MEM, 0);
-	release_mem_region(mem->start, resource_size(mem));
+	if (mem)
+		release_mem_region(mem->start, resource_size(mem));
 	free_netdev(dev);
 	return 0;
 }

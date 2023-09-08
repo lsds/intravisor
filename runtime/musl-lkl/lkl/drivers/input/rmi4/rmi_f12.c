@@ -1,6 +1,9 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2012-2016 Synaptics Incorporated
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License version 2 as published by
+ * the Free Software Foundation.
  */
 #include <linux/input.h>
 #include <linux/input/mt.h>
@@ -55,9 +58,6 @@ struct f12_data {
 
 	const struct rmi_register_desc_item *data15;
 	u16 data15_offset;
-
-	unsigned long *abs_mask;
-	unsigned long *rel_mask;
 };
 
 static int rmi_f12_read_sensor_tuning(struct f12_data *f12)
@@ -73,6 +73,7 @@ static int rmi_f12_read_sensor_tuning(struct f12_data *f12)
 	int pitch_y = 0;
 	int rx_receivers = 0;
 	int tx_receivers = 0;
+	int sensor_flags = 0;
 
 	item = rmi_get_register_desc_item(&f12->control_reg_desc, 8);
 	if (!item) {
@@ -128,9 +129,10 @@ static int rmi_f12_read_sensor_tuning(struct f12_data *f12)
 		offset += 2;
 	}
 
-	/* Skip over sensor flags */
-	if (rmi_register_desc_has_subpacket(item, 4))
+	if (rmi_register_desc_has_subpacket(item, 4)) {
+		sensor_flags = buf[offset];
 		offset += 1;
+	}
 
 	sensor->x_mm = (pitch_x * rx_receivers) >> 12;
 	sensor->y_mm = (pitch_y * tx_receivers) >> 12;
@@ -195,10 +197,10 @@ static void rmi_f12_process_objects(struct f12_data *f12, u8 *data1, int size)
 		rmi_2d_sensor_abs_report(sensor, &sensor->objs[i], i);
 }
 
-static irqreturn_t rmi_f12_attention(int irq, void *ctx)
+static int rmi_f12_attention(struct rmi_function *fn,
+			     unsigned long *irq_nr_regs)
 {
 	int retval;
-	struct rmi_function *fn = ctx;
 	struct rmi_device *rmi_dev = fn->rmi_dev;
 	struct rmi_driver_data *drvdata = dev_get_drvdata(&rmi_dev->dev);
 	struct f12_data *f12 = dev_get_drvdata(&fn->dev);
@@ -212,15 +214,15 @@ static irqreturn_t rmi_f12_attention(int irq, void *ctx)
 			valid_bytes = sensor->attn_size;
 		memcpy(sensor->data_pkt, drvdata->attn_data.data,
 			valid_bytes);
-		drvdata->attn_data.data += valid_bytes;
-		drvdata->attn_data.size -= valid_bytes;
+		drvdata->attn_data.data += sensor->attn_size;
+		drvdata->attn_data.size -= sensor->attn_size;
 	} else {
 		retval = rmi_read_block(rmi_dev, f12->data_addr,
 					sensor->data_pkt, sensor->pkt_size);
 		if (retval < 0) {
 			dev_err(&fn->dev, "Failed to read object data. Code: %d.\n",
 				retval);
-			return IRQ_RETVAL(retval);
+			return retval;
 		}
 	}
 
@@ -230,7 +232,7 @@ static irqreturn_t rmi_f12_attention(int irq, void *ctx)
 
 	input_mt_sync_frame(sensor->input);
 
-	return IRQ_HANDLED;
+	return 0;
 }
 
 static int rmi_f12_write_control_regs(struct rmi_function *fn)
@@ -294,18 +296,9 @@ static int rmi_f12_write_control_regs(struct rmi_function *fn)
 static int rmi_f12_config(struct rmi_function *fn)
 {
 	struct rmi_driver *drv = fn->rmi_dev->driver;
-	struct f12_data *f12 = dev_get_drvdata(&fn->dev);
-	struct rmi_2d_sensor *sensor;
 	int ret;
 
-	sensor = &f12->sensor;
-
-	if (!sensor->report_abs)
-		drv->clear_irq_bits(fn->rmi_dev, f12->abs_mask);
-	else
-		drv->set_irq_bits(fn->rmi_dev, f12->abs_mask);
-
-	drv->clear_irq_bits(fn->rmi_dev, f12->rel_mask);
+	drv->set_irq_bits(fn->rmi_dev, fn->irq_mask);
 
 	ret = rmi_f12_write_control_regs(fn);
 	if (ret)
@@ -327,11 +320,8 @@ static int rmi_f12_probe(struct rmi_function *fn)
 	struct rmi_device_platform_data *pdata = rmi_get_platform_data(rmi_dev);
 	struct rmi_driver_data *drvdata = dev_get_drvdata(&rmi_dev->dev);
 	u16 data_offset = 0;
-	int mask_size;
 
 	rmi_dbg(RMI_DEBUG_FN, &fn->dev, "%s\n", __func__);
-
-	mask_size = BITS_TO_LONGS(drvdata->irq_count) * sizeof(unsigned long);
 
 	ret = rmi_read(fn->rmi_dev, query_addr, &buf);
 	if (ret < 0) {
@@ -347,18 +337,9 @@ static int rmi_f12_probe(struct rmi_function *fn)
 		return -ENODEV;
 	}
 
-	f12 = devm_kzalloc(&fn->dev, sizeof(struct f12_data) + mask_size * 2,
-			GFP_KERNEL);
+	f12 = devm_kzalloc(&fn->dev, sizeof(struct f12_data), GFP_KERNEL);
 	if (!f12)
 		return -ENOMEM;
-
-	f12->abs_mask = (unsigned long *)((char *)f12
-			+ sizeof(struct f12_data));
-	f12->rel_mask = (unsigned long *)((char *)f12
-			+ sizeof(struct f12_data) + mask_size);
-
-	set_bit(fn->irq_pos, f12->abs_mask);
-	set_bit(fn->irq_pos + 1, f12->rel_mask);
 
 	f12->has_dribble = !!(buf & BIT(3));
 
@@ -521,15 +502,14 @@ static int rmi_f12_probe(struct rmi_function *fn)
 	}
 
 	/* allocate the in-kernel tracking buffers */
-	sensor->tracking_pos = devm_kcalloc(&fn->dev,
-			sensor->nbr_fingers, sizeof(struct input_mt_pos),
+	sensor->tracking_pos = devm_kzalloc(&fn->dev,
+			sizeof(struct input_mt_pos) * sensor->nbr_fingers,
 			GFP_KERNEL);
-	sensor->tracking_slots = devm_kcalloc(&fn->dev,
-			sensor->nbr_fingers, sizeof(int), GFP_KERNEL);
-	sensor->objs = devm_kcalloc(&fn->dev,
-			sensor->nbr_fingers,
-			sizeof(struct rmi_2d_sensor_abs_object),
-			GFP_KERNEL);
+	sensor->tracking_slots = devm_kzalloc(&fn->dev,
+			sizeof(int) * sensor->nbr_fingers, GFP_KERNEL);
+	sensor->objs = devm_kzalloc(&fn->dev,
+			sizeof(struct rmi_2d_sensor_abs_object)
+			* sensor->nbr_fingers, GFP_KERNEL);
 	if (!sensor->tracking_pos || !sensor->tracking_slots || !sensor->objs)
 		return -ENOMEM;
 

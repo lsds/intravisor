@@ -292,6 +292,12 @@ static int mthca_cmd_post(struct mthca_dev *dev,
 		err = mthca_cmd_post_hcr(dev, in_param, out_param, in_modifier,
 					 op_modifier, op, token, event);
 
+	/*
+	 * Make sure that our HCR writes don't get mixed in with
+	 * writes from another CPU starting a FW command.
+	 */
+	mmiowb();
+
 	mutex_unlock(&dev->cmd.hcr_mutex);
 	return err;
 }
@@ -559,9 +565,9 @@ int mthca_cmd_use_events(struct mthca_dev *dev)
 {
 	int i;
 
-	dev->cmd.context = kmalloc_array(dev->cmd.max_cmds,
-					 sizeof(struct mthca_cmd_context),
-					 GFP_KERNEL);
+	dev->cmd.context = kmalloc(dev->cmd.max_cmds *
+				   sizeof (struct mthca_cmd_context),
+				   GFP_KERNEL);
 	if (!dev->cmd.context)
 		return -ENOMEM;
 
@@ -1252,7 +1258,7 @@ static void get_board_id(void *vsd, char *board_id)
 
 	if (be16_to_cpup(vsd + VSD_OFFSET_SIG1) == VSD_SIGNATURE_TOPSPIN &&
 	    be16_to_cpup(vsd + VSD_OFFSET_SIG2) == VSD_SIGNATURE_TOPSPIN) {
-		strscpy(board_id, vsd + VSD_OFFSET_TS_BOARD_ID, MTHCA_BOARD_ID_LEN);
+		strlcpy(board_id, vsd + VSD_OFFSET_TS_BOARD_ID, MTHCA_BOARD_ID_LEN);
 	} else {
 		/*
 		 * The board ID is a string but the firmware byte

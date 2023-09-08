@@ -1,5 +1,30 @@
-// SPDX-License-Identifier: GPL-2.0
-/* Copyright(c) 1999 - 2008 Intel Corporation. */
+/*******************************************************************************
+
+  Intel PRO/10GbE Linux driver
+  Copyright(c) 1999 - 2008 Intel Corporation.
+
+  This program is free software; you can redistribute it and/or modify it
+  under the terms and conditions of the GNU General Public License,
+  version 2, as published by the Free Software Foundation.
+
+  This program is distributed in the hope it will be useful, but WITHOUT
+  ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+  FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+  more details.
+
+  You should have received a copy of the GNU General Public License along with
+  this program; if not, write to the Free Software Foundation, Inc.,
+  51 Franklin St - Fifth Floor, Boston, MA 02110-1301 USA.
+
+  The full GNU General Public License is included in this distribution in
+  the file called "COPYING".
+
+  Contact Information:
+  Linux NICS <linux.nics@intel.com>
+  e1000-devel Mailing List <e1000-devel@lists.sourceforge.net>
+  Intel Corporation, 5200 N.E. Elam Young Parkway, Hillsboro, OR 97124-6497
+
+*******************************************************************************/
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
@@ -9,6 +34,9 @@
 char ixgb_driver_name[] = "ixgb";
 static char ixgb_driver_string[] = "Intel(R) PRO/10GbE Network Driver";
 
+#define DRIVERNAPI "-NAPI"
+#define DRV_VERSION "1.0.135-k2" DRIVERNAPI
+const char ixgb_driver_version[] = DRV_VERSION;
 static const char ixgb_copyright[] = "Copyright (c) 1999-2008 Intel Corporation.";
 
 #define IXGB_CB_LENGTH 256
@@ -67,7 +95,7 @@ static int ixgb_clean(struct napi_struct *, int);
 static bool ixgb_clean_rx_irq(struct ixgb_adapter *, int *, int);
 static void ixgb_alloc_rx_buffers(struct ixgb_adapter *, int);
 
-static void ixgb_tx_timeout(struct net_device *dev, unsigned int txqueue);
+static void ixgb_tx_timeout(struct net_device *dev);
 static void ixgb_tx_timeout_task(struct work_struct *work);
 
 static void ixgb_vlan_strip_enable(struct ixgb_adapter *adapter);
@@ -78,8 +106,13 @@ static int ixgb_vlan_rx_kill_vid(struct net_device *netdev,
 				 __be16 proto, u16 vid);
 static void ixgb_restore_vlan(struct ixgb_adapter *adapter);
 
+#ifdef CONFIG_NET_POLL_CONTROLLER
+/* for netdump / net console */
+static void ixgb_netpoll(struct net_device *dev);
+#endif
+
 static pci_ers_result_t ixgb_io_error_detected (struct pci_dev *pdev,
-                             pci_channel_state_t state);
+                             enum pci_channel_state state);
 static pci_ers_result_t ixgb_io_slot_reset (struct pci_dev *pdev);
 static void ixgb_io_resume (struct pci_dev *pdev);
 
@@ -99,7 +132,8 @@ static struct pci_driver ixgb_driver = {
 
 MODULE_AUTHOR("Intel Corporation, <linux.nics@intel.com>");
 MODULE_DESCRIPTION("Intel(R) PRO/10GbE Network Driver");
-MODULE_LICENSE("GPL v2");
+MODULE_LICENSE("GPL");
+MODULE_VERSION(DRV_VERSION);
 
 #define DEFAULT_MSG_ENABLE (NETIF_MSG_DRV|NETIF_MSG_PROBE|NETIF_MSG_LINK)
 static int debug = -1;
@@ -116,7 +150,7 @@ MODULE_PARM_DESC(debug, "Debug level (0=none,...,16=all)");
 static int __init
 ixgb_init_module(void)
 {
-	pr_info("%s\n", ixgb_driver_string);
+	pr_info("%s - version %s\n", ixgb_driver_string, ixgb_driver_version);
 	pr_info("%s\n", ixgb_copyright);
 
 	return pci_register_driver(&ixgb_driver);
@@ -339,6 +373,9 @@ static const struct net_device_ops ixgb_netdev_ops = {
 	.ndo_tx_timeout		= ixgb_tx_timeout,
 	.ndo_vlan_rx_add_vid	= ixgb_vlan_rx_add_vid,
 	.ndo_vlan_rx_kill_vid	= ixgb_vlan_rx_kill_vid,
+#ifdef CONFIG_NET_POLL_CONTROLLER
+	.ndo_poll_controller	= ixgb_netpoll,
+#endif
 	.ndo_fix_features       = ixgb_fix_features,
 	.ndo_set_features       = ixgb_set_features,
 };
@@ -361,7 +398,7 @@ ixgb_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	struct net_device *netdev = NULL;
 	struct ixgb_adapter *adapter;
 	static int cards_found = 0;
-	u8 addr[ETH_ALEN];
+	int pci_using_dac;
 	int i;
 	int err;
 
@@ -369,10 +406,16 @@ ixgb_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	if (err)
 		return err;
 
+	pci_using_dac = 0;
 	err = dma_set_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(64));
-	if (err) {
-		pr_err("No usable DMA configuration, aborting\n");
-		goto err_dma_mask;
+	if (!err) {
+		pci_using_dac = 1;
+	} else {
+		err = dma_set_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(32));
+		if (err) {
+			pr_err("No usable DMA configuration, aborting\n");
+			goto err_dma_mask;
+		}
 	}
 
 	err = pci_request_regions(pdev, ixgb_driver_name);
@@ -402,7 +445,7 @@ ixgb_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 		goto err_ioremap;
 	}
 
-	for (i = BAR_1; i < PCI_STD_NUM_BARS; i++) {
+	for (i = BAR_1; i <= BAR_5; i++) {
 		if (pci_resource_len(pdev, i) == 0)
 			continue;
 		if (pci_resource_flags(pdev, i) & IORESOURCE_IO) {
@@ -414,7 +457,7 @@ ixgb_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	netdev->netdev_ops = &ixgb_netdev_ops;
 	ixgb_set_ethtool_ops(netdev);
 	netdev->watchdog_timeo = 5 * HZ;
-	netif_napi_add(netdev, &adapter->napi, ixgb_clean);
+	netif_napi_add(netdev, &adapter->napi, ixgb_clean, 64);
 
 	strncpy(netdev->name, pci_name(pdev), sizeof(netdev->name) - 1);
 
@@ -437,8 +480,10 @@ ixgb_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 			   NETIF_F_HW_VLAN_CTAG_FILTER;
 	netdev->hw_features |= NETIF_F_RXCSUM;
 
-	netdev->features |= NETIF_F_HIGHDMA;
-	netdev->vlan_features |= NETIF_F_HIGHDMA;
+	if (pci_using_dac) {
+		netdev->features |= NETIF_F_HIGHDMA;
+		netdev->vlan_features |= NETIF_F_HIGHDMA;
+	}
 
 	/* MTU range: 68 - 16114 */
 	netdev->min_mtu = ETH_MIN_MTU;
@@ -453,8 +498,7 @@ ixgb_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 		goto err_eeprom;
 	}
 
-	ixgb_get_ee_mac_addr(&adapter->hw, addr);
-	eth_hw_addr_set(netdev, addr);
+	ixgb_get_ee_mac_addr(&adapter->hw, netdev->dev_addr);
 
 	if (!is_valid_ether_addr(netdev->dev_addr)) {
 		netif_err(adapter, probe, adapter->netdev, "Invalid MAC Address\n");
@@ -669,8 +713,8 @@ ixgb_setup_tx_resources(struct ixgb_adapter *adapter)
 	txdr->size = txdr->count * sizeof(struct ixgb_tx_desc);
 	txdr->size = ALIGN(txdr->size, 4096);
 
-	txdr->desc = dma_alloc_coherent(&pdev->dev, txdr->size, &txdr->dma,
-					GFP_KERNEL);
+	txdr->desc = dma_zalloc_coherent(&pdev->dev, txdr->size, &txdr->dma,
+					 GFP_KERNEL);
 	if (!txdr->desc) {
 		vfree(txdr->buffer_info);
 		return -ENOMEM;
@@ -759,6 +803,7 @@ ixgb_setup_rx_resources(struct ixgb_adapter *adapter)
 		vfree(rxdr->buffer_info);
 		return -ENOMEM;
 	}
+	memset(rxdr->desc, 0, rxdr->size);
 
 	rxdr->next_to_clean = 0;
 	rxdr->next_to_use = 0;
@@ -1023,7 +1068,7 @@ ixgb_set_mac(struct net_device *netdev, void *p)
 	if (!is_valid_ether_addr(addr->sa_data))
 		return -EADDRNOTAVAIL;
 
-	eth_hw_addr_set(netdev, addr->sa_data);
+	memcpy(netdev->dev_addr, addr->sa_data, netdev->addr_len);
 
 	ixgb_rar_set(&adapter->hw, addr->sa_data, 0);
 
@@ -1073,9 +1118,8 @@ ixgb_set_multi(struct net_device *netdev)
 		rctl |= IXGB_RCTL_MPE;
 		IXGB_WRITE_REG(hw, RCTL, rctl);
 	} else {
-		u8 *mta = kmalloc_array(ETH_ALEN,
-				        IXGB_MAX_NUM_MULTICAST_ADDRESSES,
-				        GFP_ATOMIC);
+		u8 *mta = kmalloc(IXGB_MAX_NUM_MULTICAST_ADDRESSES *
+			      ETH_ALEN, GFP_ATOMIC);
 		u8 *addr;
 		if (!mta)
 			goto alloc_failed;
@@ -1102,7 +1146,7 @@ alloc_failed:
 
 /**
  * ixgb_watchdog - Timer Call-back
- * @t: pointer to timer_list containing our private info pointer
+ * @data: pointer to netdev cast into an unsigned long
  **/
 
 static void
@@ -1187,7 +1231,7 @@ ixgb_tso(struct ixgb_adapter *adapter, struct sk_buff *skb)
 		if (err < 0)
 			return err;
 
-		hdr_len = skb_tcp_all_headers(skb);
+		hdr_len = skb_transport_offset(skb) + tcp_hdrlen(skb);
 		mss = skb_shinfo(skb)->gso_size;
 		iph = ip_hdr(skb);
 		iph->tot_len = 0;
@@ -1320,7 +1364,9 @@ ixgb_tx_map(struct ixgb_adapter *adapter, struct sk_buff *skb,
 	}
 
 	for (f = 0; f < nr_frags; f++) {
-		const skb_frag_t *frag = &skb_shinfo(skb)->frags[f];
+		const struct skb_frag_struct *frag;
+
+		frag = &skb_shinfo(skb)->frags[f];
 		len = skb_frag_size(frag);
 		offset = 0;
 
@@ -1524,11 +1570,10 @@ ixgb_xmit_frame(struct sk_buff *skb, struct net_device *netdev)
 /**
  * ixgb_tx_timeout - Respond to a Tx Hang
  * @netdev: network interface device structure
- * @txqueue: queue hanging (unused)
  **/
 
 static void
-ixgb_tx_timeout(struct net_device *netdev, unsigned int __always_unused txqueue)
+ixgb_tx_timeout(struct net_device *netdev)
 {
 	struct ixgb_adapter *adapter = netdev_priv(netdev);
 
@@ -1704,6 +1749,7 @@ ixgb_update_stats(struct ixgb_adapter *adapter)
 	netdev->stats.tx_window_errors = 0;
 }
 
+#define IXGB_MAX_INTR 10
 /**
  * ixgb_intr - Interrupt Handler
  * @irq: interrupt number
@@ -1739,8 +1785,7 @@ ixgb_intr(int irq, void *data)
 
 /**
  * ixgb_clean - NAPI Rx polling callback
- * @napi: napi struct pointer
- * @budget: max number of receives to clean
+ * @adapter: board private structure
  **/
 
 static int
@@ -1859,7 +1904,7 @@ ixgb_clean_tx_irq(struct ixgb_adapter *adapter)
  * ixgb_rx_checksum - Receive Checksum Offload for 82597.
  * @adapter: board private structure
  * @rx_desc: receive descriptor
- * @skb: socket buffer with received data
+ * @sk_buff: socket buffer with received data
  **/
 
 static void
@@ -1917,8 +1962,6 @@ static void ixgb_check_copybreak(struct napi_struct *napi,
 /**
  * ixgb_clean_rx_irq - Send received data up the network stack,
  * @adapter: board private structure
- * @work_done: output pointer to amount of packets cleaned
- * @work_to_do: how much work we can complete
  **/
 
 static bool
@@ -2038,7 +2081,6 @@ rxdesc_done:
 /**
  * ixgb_alloc_rx_buffers - Replace used receive buffers
  * @adapter: address of board private structure
- * @cleaned_count: how many buffers to allocate
  **/
 
 static void
@@ -2178,6 +2220,23 @@ ixgb_restore_vlan(struct ixgb_adapter *adapter)
 		ixgb_vlan_rx_add_vid(adapter->netdev, htons(ETH_P_8021Q), vid);
 }
 
+#ifdef CONFIG_NET_POLL_CONTROLLER
+/*
+ * Polling 'interrupt' - used by things like netconsole to send skbs
+ * without having to re-enable interrupts. It's not called while
+ * the interrupt routine is executing.
+ */
+
+static void ixgb_netpoll(struct net_device *dev)
+{
+	struct ixgb_adapter *adapter = netdev_priv(dev);
+
+	disable_irq(adapter->pdev->irq);
+	ixgb_intr(adapter->pdev->irq, dev);
+	enable_irq(adapter->pdev->irq);
+}
+#endif
+
 /**
  * ixgb_io_error_detected - called when PCI error is detected
  * @pdev:    pointer to pci device with error
@@ -2187,7 +2246,7 @@ ixgb_restore_vlan(struct ixgb_adapter *adapter)
  * a PCI bus error is detected.
  */
 static pci_ers_result_t ixgb_io_error_detected(struct pci_dev *pdev,
-                                               pci_channel_state_t state)
+                                               enum pci_channel_state state)
 {
 	struct net_device *netdev = pci_get_drvdata(pdev);
 	struct ixgb_adapter *adapter = netdev_priv(netdev);
@@ -2208,7 +2267,7 @@ static pci_ers_result_t ixgb_io_error_detected(struct pci_dev *pdev,
 
 /**
  * ixgb_io_slot_reset - called after the pci bus has been reset.
- * @pdev: pointer to pci device with error
+ * @pdev    pointer to pci device with error
  *
  * This callback is called after the PCI bus has been reset.
  * Basically, this tries to restart the card from scratch.
@@ -2219,7 +2278,6 @@ static pci_ers_result_t ixgb_io_slot_reset(struct pci_dev *pdev)
 {
 	struct net_device *netdev = pci_get_drvdata(pdev);
 	struct ixgb_adapter *adapter = netdev_priv(netdev);
-	u8 addr[ETH_ALEN];
 
 	if (pci_enable_device(pdev)) {
 		netif_err(adapter, probe, adapter->netdev,
@@ -2243,8 +2301,7 @@ static pci_ers_result_t ixgb_io_slot_reset(struct pci_dev *pdev)
 			  "After reset, the EEPROM checksum is not valid\n");
 		return PCI_ERS_RESULT_DISCONNECT;
 	}
-	ixgb_get_ee_mac_addr(&adapter->hw, addr);
-	eth_hw_addr_set(netdev, addr);
+	ixgb_get_ee_mac_addr(&adapter->hw, netdev->dev_addr);
 	memcpy(netdev->perm_addr, netdev->dev_addr, netdev->addr_len);
 
 	if (!is_valid_ether_addr(netdev->perm_addr)) {
@@ -2258,7 +2315,7 @@ static pci_ers_result_t ixgb_io_slot_reset(struct pci_dev *pdev)
 
 /**
  * ixgb_io_resume - called when its OK to resume normal operations
- * @pdev: pointer to pci device with error
+ * @pdev    pointer to pci device with error
  *
  * The error recovery driver tells us that its OK to resume
  * normal operation. Implementation resembles the second-half

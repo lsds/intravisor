@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * arch/arm/plat-spear/restart.c
  *
@@ -6,12 +5,16 @@
  *
  * Copyright (C) 2009 ST Microelectronics
  * Viresh Kumar <vireshk@kernel.org>
+ *
+ * This file is licensed under the terms of the GNU General Public
+ * License version 2. This program is licensed "as is" without any
+ * warranty of any kind, whether express or implied.
  */
 #include <linux/io.h>
 #include <linux/amba/sp810.h>
 #include <linux/reboot.h>
 #include <asm/system_misc.h>
-#include "spear.h"
+#include <mach/spear.h>
 #include "generic.h"
 
 #define SPEAR13XX_SYS_SW_RES			(VA_MISC_BASE + 0x204)

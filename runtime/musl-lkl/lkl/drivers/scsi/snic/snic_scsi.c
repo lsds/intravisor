@@ -1,5 +1,19 @@
-// SPDX-License-Identifier: GPL-2.0-only
-// Copyright 2014 Cisco Systems, Inc.  All rights reserved.
+/*
+ * Copyright 2014 Cisco Systems, Inc.  All rights reserved.
+ *
+ * This program is free software; you may redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; version 2 of the License.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+ * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+ * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS
+ * BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
+ * ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+ * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ */
 
 #include <linux/mempool.h>
 #include <linux/errno.h>
@@ -19,7 +33,7 @@
 #include "snic_io.h"
 #include "snic.h"
 
-#define snic_cmd_tag(sc)	(scsi_cmd_to_rq(sc)->tag)
+#define snic_cmd_tag(sc)	(((struct scsi_cmnd *) sc)->request->tag)
 
 const char *snic_state_str[] = {
 	[SNIC_INIT]	= "SNIC_INIT",
@@ -33,10 +47,10 @@ static const char * const snic_req_state_str[] = {
 	[SNIC_IOREQ_NOT_INITED]	= "SNIC_IOREQ_NOT_INITED",
 	[SNIC_IOREQ_PENDING]	= "SNIC_IOREQ_PENDING",
 	[SNIC_IOREQ_ABTS_PENDING] = "SNIC_IOREQ_ABTS_PENDING",
-	[SNIC_IOREQ_ABTS_COMPLETE] = "SNIC_IOREQ_ABTS_COMPLETE",
+	[SNIC_IOREQ_ABTS_COMPLETE] = "SNIC_IOREQ_ABTS_COMPELTE",
 	[SNIC_IOREQ_LR_PENDING]	= "SNIC_IOREQ_LR_PENDING",
-	[SNIC_IOREQ_LR_COMPLETE] = "SNIC_IOREQ_LR_COMPLETE",
-	[SNIC_IOREQ_COMPLETE]	= "SNIC_IOREQ_CMD_COMPLETE",
+	[SNIC_IOREQ_LR_COMPLETE] = "SNIC_IOREQ_LR_COMPELTE",
+	[SNIC_IOREQ_COMPLETE]	= "SNIC_IOREQ_CMD_COMPELTE",
 };
 
 /* snic cmd status strings */
@@ -132,10 +146,10 @@ snic_release_req_buf(struct snic *snic,
 		      CMD_FLAGS(sc));
 
 	if (req->u.icmnd.sense_addr)
-		dma_unmap_single(&snic->pdev->dev,
+		pci_unmap_single(snic->pdev,
 				 le64_to_cpu(req->u.icmnd.sense_addr),
 				 SCSI_SENSE_BUFFERSIZE,
-				 DMA_FROM_DEVICE);
+				 PCI_DMA_FROMDEVICE);
 
 	scsi_dma_unmap(sc);
 
@@ -171,11 +185,12 @@ snic_queue_icmnd_req(struct snic *snic,
 		}
 	}
 
-	pa = dma_map_single(&snic->pdev->dev,
+	pa = pci_map_single(snic->pdev,
 			    sc->sense_buffer,
 			    SCSI_SENSE_BUFFERSIZE,
-			    DMA_FROM_DEVICE);
-	if (dma_mapping_error(&snic->pdev->dev, pa)) {
+			    PCI_DMA_FROMDEVICE);
+
+	if (pci_dma_mapping_error(snic->pdev, pa)) {
 		SNIC_HOST_ERR(snic->shost,
 			      "QIcmnd:PCI Map Failed for sns buf %p tag %x\n",
 			      sc->sense_buffer, snic_cmd_tag(sc));
@@ -328,7 +343,7 @@ snic_queuecommand(struct Scsi_Host *shost, struct scsi_cmnd *sc)
 		SNIC_HOST_ERR(shost, "Tgt %p id %d Not Ready.\n", tgt, tgt->id);
 		atomic64_inc(&snic->s_stats.misc.tgt_not_rdy);
 		sc->result = ret;
-		scsi_done(sc);
+		sc->scsi_done(sc);
 
 		return 0;
 	}
@@ -662,7 +677,8 @@ snic_icmnd_cmpl_handler(struct snic *snic, struct snic_fw_req *fwreq)
 		 SNIC_TRC_CMD(sc), SNIC_TRC_CMD_STATE_FLAGS(sc));
 
 
-	scsi_done(sc);
+	if (sc->scsi_done)
+		sc->scsi_done(sc);
 
 	snic_stats_update_io_cmpl(&snic->s_stats);
 } /* end of snic_icmnd_cmpl_handler */
@@ -840,12 +856,14 @@ snic_process_itmf_cmpl(struct snic *snic,
 
 		snic_release_req_buf(snic, rqi, sc);
 
-		SNIC_TRC(snic->shost->host_no, cmnd_id, (ulong) sc,
-			 jiffies_to_msecs(jiffies - start_time),
-			 (ulong) fwreq, SNIC_TRC_CMD(sc),
-			 SNIC_TRC_CMD_STATE_FLAGS(sc));
+		if (sc->scsi_done) {
+			SNIC_TRC(snic->shost->host_no, cmnd_id, (ulong) sc,
+				 jiffies_to_msecs(jiffies - start_time),
+				 (ulong) fwreq, SNIC_TRC_CMD(sc),
+				 SNIC_TRC_CMD_STATE_FLAGS(sc));
 
-		scsi_done(sc);
+			sc->scsi_done(sc);
+		}
 
 		break;
 
@@ -1370,15 +1388,19 @@ snic_issue_tm_req(struct snic *snic,
 	}
 
 	ret = snic_queue_itmf_req(snic, tmreq, sc, tmf, req_id);
+	if (ret)
+		goto tmreq_err;
+
+	ret = 0;
 
 tmreq_err:
 	if (ret) {
 		SNIC_HOST_ERR(snic->shost,
-			      "issu_tmreq: Queueing ITMF(%d) Req, sc %p rqi %p req_id %d tag %x fails err = %d\n",
+			      "issu_tmreq: Queing ITMF(%d) Req, sc %p rqi %p req_id %d tag %x fails err = %d\n",
 			      tmf, sc, rqi, req_id, tag, ret);
 	} else {
 		SNIC_SCSI_DBG(snic->shost,
-			      "issu_tmreq: Queueing ITMF(%d) Req, sc %p, rqi %p, req_id %d tag %x - Success.\n",
+			      "issu_tmreq: Queuing ITMF(%d) Req, sc %p, rqi %p, req_id %d tag %x - Success.\n",
 			      tmf, sc, rqi, req_id, tag);
 	}
 
@@ -1458,7 +1480,7 @@ snic_abort_finish(struct snic *snic, struct scsi_cmnd *sc)
 		 * Call scsi_done to complete the IO.
 		 */
 		sc->result = (DID_ERROR << 16);
-		scsi_done(sc);
+		sc->scsi_done(sc);
 		break;
 
 	default:
@@ -1619,7 +1641,7 @@ snic_abort_cmd(struct scsi_cmnd *sc)
 	u32 start_time = jiffies;
 
 	SNIC_SCSI_DBG(snic->shost, "abt_cmd:sc %p :0x%x :req = %p :tag = %d\n",
-		       sc, sc->cmnd[0], scsi_cmd_to_rq(sc), tag);
+		       sc, sc->cmnd[0], sc->request, tag);
 
 	if (unlikely(snic_get_state(snic) != SNIC_ONLINE)) {
 		SNIC_HOST_ERR(snic->shost,
@@ -1838,7 +1860,7 @@ snic_dr_clean_single_req(struct snic *snic,
 	snic_release_req_buf(snic, rqi, sc);
 
 	sc->result = (DID_ERROR << 16);
-	scsi_done(sc);
+	sc->scsi_done(sc);
 
 	ret = 0;
 
@@ -1979,7 +2001,7 @@ snic_dr_finish(struct snic *snic, struct scsi_cmnd *sc)
 	}
 
 dr_failed:
-	lockdep_assert_held(io_lock);
+	SNIC_BUG_ON(!spin_is_locked(io_lock));
 	if (rqi)
 		CMD_SP(sc) = NULL;
 	spin_unlock_irqrestore(io_lock, flags);
@@ -2135,7 +2157,7 @@ snic_device_reset(struct scsi_cmnd *sc)
 	int dr_supp = 0;
 
 	SNIC_SCSI_DBG(shost, "dev_reset:sc %p :0x%x :req = %p :tag = %d\n",
-		      sc, sc->cmnd[0], scsi_cmd_to_rq(sc),
+		      sc, sc->cmnd[0], sc->request,
 		      snic_cmd_tag(sc));
 	dr_supp = snic_dev_reset_supported(sc->device);
 	if (!dr_supp) {
@@ -2318,7 +2340,7 @@ snic_reset(struct Scsi_Host *shost, struct scsi_cmnd *sc)
 	spin_lock_irqsave(&snic->snic_lock, flags);
 	if (snic_get_state(snic) == SNIC_FWRESET) {
 		spin_unlock_irqrestore(&snic->snic_lock, flags);
-		SNIC_HOST_INFO(shost, "reset:prev reset is in progress\n");
+		SNIC_HOST_INFO(shost, "reset:prev reset is in progres\n");
 
 		msleep(SNIC_HOST_RESET_TIMEOUT);
 		ret = SUCCESS;
@@ -2366,11 +2388,11 @@ snic_host_reset(struct scsi_cmnd *sc)
 {
 	struct Scsi_Host *shost = sc->device->host;
 	u32 start_time  = jiffies;
-	int ret;
+	int ret = FAILED;
 
 	SNIC_SCSI_DBG(shost,
 		      "host reset:sc %p sc_cmd 0x%x req %p tag %d flags 0x%llx\n",
-		      sc, sc->cmnd[0], scsi_cmd_to_rq(sc),
+		      sc, sc->cmnd[0], sc->request,
 		      snic_cmd_tag(sc), CMD_FLAGS(sc));
 
 	ret = snic_reset(shost, sc);
@@ -2477,18 +2499,20 @@ cleanup:
 		sc->result = DID_TRANSPORT_DISRUPTED << 16;
 		SNIC_HOST_INFO(snic->shost,
 			       "sc_clean: DID_TRANSPORT_DISRUPTED for sc %p, Tag %d flags 0x%llx rqi %p duration %u msecs\n",
-			       sc, scsi_cmd_to_rq(sc)->tag, CMD_FLAGS(sc), rqi,
+			       sc, sc->request->tag, CMD_FLAGS(sc), rqi,
 			       jiffies_to_msecs(jiffies - st_time));
 
 		/* Update IO stats */
 		snic_stats_update_io_cmpl(&snic->s_stats);
 
-		SNIC_TRC(snic->shost->host_no, tag, (ulong) sc,
-			 jiffies_to_msecs(jiffies - st_time), 0,
-			 SNIC_TRC_CMD(sc),
-			 SNIC_TRC_CMD_STATE_FLAGS(sc));
+		if (sc->scsi_done) {
+			SNIC_TRC(snic->shost->host_no, tag, (ulong) sc,
+				 jiffies_to_msecs(jiffies - st_time), 0,
+				 SNIC_TRC_CMD(sc),
+				 SNIC_TRC_CMD_STATE_FLAGS(sc));
 
-		scsi_done(sc);
+			sc->scsi_done(sc);
+		}
 	}
 } /* end of snic_scsi_cleanup */
 
@@ -2580,7 +2604,7 @@ snic_internal_abort_io(struct snic *snic, struct scsi_cmnd *sc, int tmf)
 	ret = SUCCESS;
 
 skip_internal_abts:
-	lockdep_assert_held(io_lock);
+	SNIC_BUG_ON(!spin_is_locked(io_lock));
 	spin_unlock_irqrestore(io_lock, flags);
 
 	return ret;

@@ -1,15 +1,15 @@
+// SPDX-License-Identifier: GPL-2.0
 #include <errno.h>
 #include <signal.h>
 #include <stdbool.h>
-#include <stdlib.h>
-#include <unistd.h>
 #include <linux/kernel.h>
 #ifdef HAVE_BACKTRACE_SUPPORT
 #include <execinfo.h>
 #endif
 
+#include "../../util/cache.h"
 #include "../../util/debug.h"
-#include "../../perf.h"
+#include "../../util/util.h"
 #include "../browser.h"
 #include "../helpline.h"
 #include "../ui.h"
@@ -29,10 +29,10 @@ void ui__refresh_dimensions(bool force)
 {
 	if (force || ui__need_resize) {
 		ui__need_resize = 0;
-		mutex_lock(&ui__lock);
+		pthread_mutex_lock(&ui__lock);
 		SLtt_get_screen_size();
 		SLsmg_reinit_smg();
-		mutex_unlock(&ui__lock);
+		pthread_mutex_unlock(&ui__lock);
 	}
 }
 
@@ -170,11 +170,9 @@ void ui__exit(bool wait_for_ok)
 				    "Press any key...", 0);
 
 	SLtt_set_cursor_visibility(1);
-	if (mutex_trylock(&ui__lock)) {
-		SLsmg_refresh();
-		SLsmg_reset_smg();
-		mutex_unlock(&ui__lock);
-	}
+	SLsmg_refresh();
+	SLsmg_reset_smg();
 	SLang_reset_tty();
+
 	perf_error__unregister(&perf_tui_eops);
 }

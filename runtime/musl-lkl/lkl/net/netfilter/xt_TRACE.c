@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /* This is a module which is used to mark packets for tracing.
  */
 #include <linux/module.h>
@@ -52,4 +51,3 @@ static void __exit trace_tg_exit(void)
 
 module_init(trace_tg_init);
 module_exit(trace_tg_exit);
-MODULE_SOFTDEP("pre: nf_log_syslog");

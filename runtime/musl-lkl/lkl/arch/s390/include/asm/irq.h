@@ -47,6 +47,7 @@ enum interruption_class {
 	IRQEXT_CMC,
 	IRQEXT_FTP,
 	IRQIO_CIO,
+	IRQIO_QAI,
 	IRQIO_DAS,
 	IRQIO_C15,
 	IRQIO_C70,
@@ -54,16 +55,13 @@ enum interruption_class {
 	IRQIO_VMR,
 	IRQIO_LCS,
 	IRQIO_CTC,
+	IRQIO_APB,
 	IRQIO_ADM,
 	IRQIO_CSC,
-	IRQIO_VIR,
-	IRQIO_QAI,
-	IRQIO_APB,
-	IRQIO_PCF,
-	IRQIO_PCD,
+	IRQIO_PCI,
 	IRQIO_MSI,
+	IRQIO_VIR,
 	IRQIO_VAI,
-	IRQIO_GAL,
 	NMI_NMI,
 	CPU_RST,
 	NR_ARCH_IRQS
@@ -81,13 +79,8 @@ static __always_inline void inc_irq_stat(enum interruption_class irq)
 }
 
 struct ext_code {
-	union {
-		struct {
-			unsigned short subcode;
-			unsigned short code;
-		};
-		unsigned int int_code;
-	};
+	unsigned short subcode;
+	unsigned short code;
 };
 
 typedef void (*ext_int_handler_t)(struct ext_code, unsigned int, unsigned long);

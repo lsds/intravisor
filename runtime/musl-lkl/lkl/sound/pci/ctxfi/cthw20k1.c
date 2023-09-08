@@ -1,6 +1,9 @@
-// SPDX-License-Identifier: GPL-2.0-only
-/*
+/**
  * Copyright (C) 2008, Creative Technology Ltd. All Rights Reserved.
+ *
+ * This source file is released under GPL v2 license (no other versions).
+ * See the COPYING file included in the main directory of this source
+ * distribution for the license terms and conditions.
  *
  * @File	cthw20k1.c
  *
@@ -9,6 +12,7 @@
  *
  * @Author	Liu Chun
  * @Date 	Jun 24 2008
+ *
  */
 
 #include <linux/types.h>
@@ -168,7 +172,7 @@ static int src_get_rsc_ctrl_blk(void **rblk)
 
 static int src_put_rsc_ctrl_blk(void *blk)
 {
-	kfree(blk);
+	kfree((struct src_rsc_ctrl_blk *)blk);
 
 	return 0;
 }
@@ -494,7 +498,7 @@ static int src_mgr_get_ctrl_blk(void **rblk)
 
 static int src_mgr_put_ctrl_blk(void *blk)
 {
-	kfree(blk);
+	kfree((struct src_mgr_ctrl_blk *)blk);
 
 	return 0;
 }
@@ -515,7 +519,7 @@ static int srcimp_mgr_get_ctrl_blk(void **rblk)
 
 static int srcimp_mgr_put_ctrl_blk(void *blk)
 {
-	kfree(blk);
+	kfree((struct srcimp_mgr_ctrl_blk *)blk);
 
 	return 0;
 }
@@ -702,7 +706,7 @@ static int amixer_rsc_get_ctrl_blk(void **rblk)
 
 static int amixer_rsc_put_ctrl_blk(void *blk)
 {
-	kfree(blk);
+	kfree((struct amixer_rsc_ctrl_blk *)blk);
 
 	return 0;
 }
@@ -909,7 +913,7 @@ static int dai_get_ctrl_blk(void **rblk)
 
 static int dai_put_ctrl_blk(void *blk)
 {
-	kfree(blk);
+	kfree((struct dai_ctrl_blk *)blk);
 
 	return 0;
 }
@@ -958,7 +962,7 @@ static int dao_get_ctrl_blk(void **rblk)
 
 static int dao_put_ctrl_blk(void *blk)
 {
-	kfree(blk);
+	kfree((struct dao_ctrl_blk *)blk);
 
 	return 0;
 }
@@ -1156,7 +1160,7 @@ static int daio_mgr_get_ctrl_blk(struct hw *hw, void **rblk)
 
 static int daio_mgr_put_ctrl_blk(void *blk)
 {
-	kfree(blk);
+	kfree((struct daio_mgr_ctrl_blk *)blk);
 
 	return 0;
 }
@@ -1315,7 +1319,7 @@ static int hw_pll_init(struct hw *hw, unsigned int rsr)
 			break;
 
 		hw_write_20kx(hw, PLLCTL, pllctl);
-		msleep(40);
+		mdelay(40);
 	}
 	if (i >= 3) {
 		dev_alert(hw->card->dev, "PLL initialization failed!!!\n");
@@ -1403,7 +1407,7 @@ static int hw_reset_dac(struct hw *hw)
 	/* To be effective, need to reset the DAC twice. */
 	for (i = 0; i < 2;  i++) {
 		/* set gpio */
-		msleep(100);
+		mdelay(100);
 		gpioorg = (u16)hw_read_20kx(hw, GPIO);
 		gpioorg &= 0xfffd;
 		hw_write_20kx(hw, GPIO, gpioorg);
@@ -1901,8 +1905,12 @@ static int hw_card_start(struct hw *hw)
 		return err;
 
 	/* Set DMA transfer mask */
-	if (dma_set_mask_and_coherent(&pci->dev, DMA_BIT_MASK(dma_bits)))
-		dma_set_mask_and_coherent(&pci->dev, DMA_BIT_MASK(32));
+	if (!dma_set_mask(&pci->dev, DMA_BIT_MASK(dma_bits))) {
+		dma_set_coherent_mask(&pci->dev, DMA_BIT_MASK(dma_bits));
+	} else {
+		dma_set_mask(&pci->dev, DMA_BIT_MASK(32));
+		dma_set_coherent_mask(&pci->dev, DMA_BIT_MASK(32));
+	}
 
 	if (!hw->io_base) {
 		err = pci_request_regions(pci, "XFi");
@@ -1916,7 +1924,7 @@ static int hw_card_start(struct hw *hw)
 
 	}
 
-	/* Switch to X-Fi mode from UAA mode if needed */
+	/* Switch to X-Fi mode from UAA mode if neeeded */
 	if (hw->model == CTUAA) {
 		err = uaa_to_xfi(pci);
 		if (err)
@@ -1933,7 +1941,6 @@ static int hw_card_start(struct hw *hw)
 			goto error2;
 		}
 		hw->irq = pci->irq;
-		hw->card->sync_irq = hw->irq;
 	}
 
 	pci_set_master(pci);
@@ -1959,6 +1966,9 @@ static int hw_card_stop(struct hw *hw)
 	data = hw_read_20kx(hw, PLLCTL);
 	hw_write_20kx(hw, PLLCTL, (data & (~(0x0F<<12))));
 
+	/* TODO: Disable interrupt and so on... */
+	if (hw->irq >= 0)
+		synchronize_irq(hw->irq);
 	return 0;
 }
 
@@ -2020,7 +2030,7 @@ static int hw_card_init(struct hw *hw, struct card_conf *info)
 	hw_write_20kx(hw, GIE, 0);
 	/* Reset all SRC pending interrupts */
 	hw_write_20kx(hw, SRCIP, 0);
-	msleep(30);
+	mdelay(30);
 
 	/* Detect the card ID and configure GPIO accordingly. */
 	switch (hw->model) {

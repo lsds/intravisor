@@ -52,7 +52,7 @@ struct iwcm_id_private {
 	wait_queue_head_t connect_wait;
 	struct list_head work_list;
 	spinlock_t lock;
-	refcount_t refcount;
+	atomic_t refcount;
 	struct list_head work_free_list;
 };
 

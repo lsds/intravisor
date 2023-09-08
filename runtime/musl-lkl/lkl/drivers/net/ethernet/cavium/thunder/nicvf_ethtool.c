@@ -1,11 +1,13 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (C) 2015 Cavium, Inc.
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of version 2 of the GNU General Public License
+ * as published by the Free Software Foundation.
  */
 
 /* ETHTOOL Support for VNIC_VF Device*/
 
-#include <linux/ethtool.h>
 #include <linux/pci.h>
 #include <linux/net_tstamp.h>
 
@@ -17,6 +19,7 @@
 #include "../common/cavium_ptp.h"
 
 #define DRV_NAME	"nicvf"
+#define DRV_VERSION     "1.0"
 
 struct nicvf_stat {
 	char name[ETH_GSTRING_LEN];
@@ -191,8 +194,9 @@ static void nicvf_get_drvinfo(struct net_device *netdev,
 {
 	struct nicvf *nic = netdev_priv(netdev);
 
-	strscpy(info->driver, DRV_NAME, sizeof(info->driver));
-	strscpy(info->bus_info, pci_name(nic->pdev), sizeof(info->bus_info));
+	strlcpy(info->driver, DRV_NAME, sizeof(info->driver));
+	strlcpy(info->version, DRV_VERSION, sizeof(info->version));
+	strlcpy(info->bus_info, pci_name(nic->pdev), sizeof(info->bus_info));
 }
 
 static u32 nicvf_get_msglevel(struct net_device *netdev)
@@ -456,9 +460,7 @@ static void nicvf_get_regs(struct net_device *dev,
 }
 
 static int nicvf_get_coalesce(struct net_device *netdev,
-			      struct ethtool_coalesce *cmd,
-			      struct kernel_ethtool_coalesce *kernel_coal,
-			      struct netlink_ext_ack *extack)
+			      struct ethtool_coalesce *cmd)
 {
 	struct nicvf *nic = netdev_priv(netdev);
 
@@ -467,9 +469,7 @@ static int nicvf_get_coalesce(struct net_device *netdev,
 }
 
 static void nicvf_get_ringparam(struct net_device *netdev,
-				struct ethtool_ringparam *ring,
-				struct kernel_ethtool_ringparam *kernel_ring,
-				struct netlink_ext_ack *extack)
+				struct ethtool_ringparam *ring)
 {
 	struct nicvf *nic = netdev_priv(netdev);
 	struct queue_set *qs = nic->qs;
@@ -481,9 +481,7 @@ static void nicvf_get_ringparam(struct net_device *netdev,
 }
 
 static int nicvf_set_ringparam(struct net_device *netdev,
-			       struct ethtool_ringparam *ring,
-			       struct kernel_ethtool_ringparam *kernel_ring,
-			       struct netlink_ext_ack *extack)
+			       struct ethtool_ringparam *ring)
 {
 	struct nicvf *nic = netdev_priv(netdev);
 	struct queue_set *qs = nic->qs;
@@ -529,7 +527,6 @@ static int nicvf_get_rss_hash_opts(struct nicvf *nic,
 	case SCTP_V4_FLOW:
 	case SCTP_V6_FLOW:
 		info->data |= RXH_L4_B_0_1 | RXH_L4_B_2_3;
-		fallthrough;
 	case IPV4_FLOW:
 	case IPV6_FLOW:
 		info->data |= RXH_IP_SRC | RXH_IP_DST;

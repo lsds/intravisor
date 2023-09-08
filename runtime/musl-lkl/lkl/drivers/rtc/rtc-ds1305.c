@@ -1,8 +1,12 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * rtc-ds1305.c -- driver for DS1305 and DS1306 SPI RTC chips
  *
  * Copyright (C) 2008 David Brownell
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ *
  */
 #include <linux/kernel.h>
 #include <linux/init.h>
@@ -325,13 +329,17 @@ static int ds1305_set_alarm(struct device *dev, struct rtc_wkalrm *alm)
 	u8		buf[1 + DS1305_ALM_LEN];
 
 	/* convert desired alarm to time_t */
-	later = rtc_tm_to_time64(&alm->time);
+	status = rtc_tm_to_time(&alm->time, &later);
+	if (status < 0)
+		return status;
 
 	/* Read current time as time_t */
 	status = ds1305_get_time(dev, &tm);
 	if (status < 0)
 		return status;
-	now = rtc_tm_to_time64(&tm);
+	status = rtc_tm_to_time(&tm, &now);
+	if (status < 0)
+		return status;
 
 	/* make sure alarm fires within the next 24 hours */
 	if (later <= now)
@@ -435,12 +443,13 @@ static const struct rtc_class_ops ds1305_ops = {
 static void ds1305_work(struct work_struct *work)
 {
 	struct ds1305	*ds1305 = container_of(work, struct ds1305, work);
+	struct mutex	*lock = &ds1305->rtc->ops_lock;
 	struct spi_device *spi = ds1305->spi;
 	u8		buf[3];
 	int		status;
 
 	/* lock to protect ds1305->ctrl */
-	rtc_lock(ds1305->rtc);
+	mutex_lock(lock);
 
 	/* Disable the IRQ, and clear its status ... for now, we "know"
 	 * that if more than one alarm is active, they're in sync.
@@ -458,7 +467,7 @@ static void ds1305_work(struct work_struct *work)
 	if (status < 0)
 		dev_dbg(&spi->dev, "clear irq --> %d\n", status);
 
-	rtc_unlock(ds1305->rtc);
+	mutex_unlock(lock);
 
 	if (!test_bit(FLAG_EXITING, &ds1305->flags))
 		enable_irq(spi->irq);
@@ -685,19 +694,21 @@ static int ds1305_probe(struct spi_device *spi)
 
 	/* register RTC ... from here on, ds1305->ctrl needs locking */
 	ds1305->rtc = devm_rtc_allocate_device(&spi->dev);
-	if (IS_ERR(ds1305->rtc))
+	if (IS_ERR(ds1305->rtc)) {
 		return PTR_ERR(ds1305->rtc);
+	}
 
 	ds1305->rtc->ops = &ds1305_ops;
-	ds1305->rtc->range_min = RTC_TIMESTAMP_BEGIN_2000;
-	ds1305->rtc->range_max = RTC_TIMESTAMP_END_2099;
 
 	ds1305_nvmem_cfg.priv = ds1305;
-	status = devm_rtc_register_device(ds1305->rtc);
-	if (status)
+	ds1305->rtc->nvram_old_abi = true;
+	status = rtc_register_device(ds1305->rtc);
+	if (status) {
+		dev_dbg(&spi->dev, "register rtc --> %d\n", status);
 		return status;
+	}
 
-	devm_rtc_nvmem_register(ds1305->rtc, &ds1305_nvmem_cfg);
+	rtc_nvmem_register(ds1305->rtc, &ds1305_nvmem_cfg);
 
 	/* Maybe set up alarm IRQ; be ready to handle it triggering right
 	 * away.  NOTE that we don't share this.  The signal is active low,
@@ -720,7 +731,7 @@ static int ds1305_probe(struct spi_device *spi)
 	return 0;
 }
 
-static void ds1305_remove(struct spi_device *spi)
+static int ds1305_remove(struct spi_device *spi)
 {
 	struct ds1305 *ds1305 = spi_get_drvdata(spi);
 
@@ -730,6 +741,8 @@ static void ds1305_remove(struct spi_device *spi)
 		devm_free_irq(&spi->dev, spi->irq, ds1305);
 		cancel_work_sync(&ds1305->work);
 	}
+
+	return 0;
 }
 
 static struct spi_driver ds1305_driver = {

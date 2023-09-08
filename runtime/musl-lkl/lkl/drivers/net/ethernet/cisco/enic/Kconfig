@@ -1,4 +1,3 @@
-# SPDX-License-Identifier: GPL-2.0-only
 #
 # Cisco device configuration
 #
@@ -6,5 +5,5 @@
 config ENIC
 	tristate "Cisco VIC Ethernet NIC Support"
 	depends on PCI
-	help
+	---help---
 	  This enables the support for the Cisco VIC Ethernet card.

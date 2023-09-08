@@ -1,8 +1,12 @@
-// SPDX-License-Identifier: GPL-2.0+
 /*
  * Driver for Analog Devices ADV748X CSI-2 Transmitter
  *
  * Copyright (C) 2017 Renesas Electronics Corp.
+ *
+ * This program is free software; you can redistribute  it and/or modify it
+ * under  the terms of  the GNU General  Public License as published by the
+ * Free Software Foundation;  either version 2 of the  License, or (at your
+ * option) any later version.
  */
 
 #include <linux/module.h>
@@ -14,7 +18,13 @@
 
 #include "adv748x.h"
 
-int adv748x_csi2_set_virtual_channel(struct adv748x_csi2 *tx, unsigned int vc)
+static bool is_txa(struct adv748x_csi2 *tx)
+{
+	return tx == &tx->state->txa;
+}
+
+static int adv748x_csi2_set_virtual_channel(struct adv748x_csi2 *tx,
+					    unsigned int vc)
 {
 	return tx_write(tx, ADV748X_CSI_VC_REF, vc << ADV748X_CSI_VC_REF_SHIFT);
 }
@@ -26,7 +36,6 @@ int adv748x_csi2_set_virtual_channel(struct adv748x_csi2 *tx, unsigned int vc)
  * @v4l2_dev: Video registration device
  * @src: Source subdevice to establish link
  * @src_pad: Pad number of source to link to this @tx
- * @enable: Link enabled flag
  *
  * Ensure that the subdevice is registered against the v4l2_device, and link the
  * source pad to the sink pad of the CSI2 bus entity.
@@ -34,10 +43,16 @@ int adv748x_csi2_set_virtual_channel(struct adv748x_csi2 *tx, unsigned int vc)
 static int adv748x_csi2_register_link(struct adv748x_csi2 *tx,
 				      struct v4l2_device *v4l2_dev,
 				      struct v4l2_subdev *src,
-				      unsigned int src_pad,
-				      bool enable)
+				      unsigned int src_pad)
 {
+	int enabled = MEDIA_LNK_FL_ENABLED;
 	int ret;
+
+	/*
+	 * Dynamic linking of the AFE is not supported.
+	 * Register the links as immutable.
+	 */
+	enabled |= MEDIA_LNK_FL_IMMUTABLE;
 
 	if (!src->v4l2_dev) {
 		ret = v4l2_device_register_subdev(v4l2_dev, src);
@@ -45,16 +60,9 @@ static int adv748x_csi2_register_link(struct adv748x_csi2 *tx,
 			return ret;
 	}
 
-	ret = media_create_pad_link(&src->entity, src_pad,
-				    &tx->sd.entity, ADV748X_CSI2_SINK,
-				    enable ? MEDIA_LNK_FL_ENABLED : 0);
-	if (ret)
-		return ret;
-
-	if (enable)
-		tx->src = src;
-
-	return 0;
+	return media_create_pad_link(&src->entity, src_pad,
+				     &tx->sd.entity, ADV748X_CSI2_SINK,
+				     enabled);
 }
 
 /* -----------------------------------------------------------------------------
@@ -69,43 +77,25 @@ static int adv748x_csi2_registered(struct v4l2_subdev *sd)
 {
 	struct adv748x_csi2 *tx = adv748x_sd_to_csi2(sd);
 	struct adv748x_state *state = tx->state;
-	int ret;
 
 	adv_dbg(state, "Registered %s (%s)", is_txa(tx) ? "TXA":"TXB",
 			sd->name);
 
 	/*
-	 * Link TXA to AFE and HDMI, and TXB to AFE only as TXB cannot output
-	 * HDMI.
+	 * The adv748x hardware allows the AFE to route through the TXA, however
+	 * this is not currently supported in this driver.
 	 *
-	 * The HDMI->TXA link is enabled by default, as is the AFE->TXB one.
+	 * Link HDMI->TXA, and AFE->TXB directly.
 	 */
-	if (is_afe_enabled(state)) {
-		ret = adv748x_csi2_register_link(tx, sd->v4l2_dev,
-						 &state->afe.sd,
-						 ADV748X_AFE_SOURCE,
-						 is_txb(tx));
-		if (ret)
-			return ret;
-
-		/* TXB can output AFE signals only. */
-		if (is_txb(tx))
-			state->afe.tx = tx;
+	if (is_txa(tx)) {
+		return adv748x_csi2_register_link(tx, sd->v4l2_dev,
+						  &state->hdmi.sd,
+						  ADV748X_HDMI_SOURCE);
+	} else {
+		return adv748x_csi2_register_link(tx, sd->v4l2_dev,
+						  &state->afe.sd,
+						  ADV748X_AFE_SOURCE);
 	}
-
-	/* Register link to HDMI for TXA only. */
-	if (is_txb(tx) || !is_hdmi_enabled(state))
-		return 0;
-
-	ret = adv748x_csi2_register_link(tx, sd->v4l2_dev, &state->hdmi.sd,
-					 ADV748X_HDMI_SOURCE, true);
-	if (ret)
-		return ret;
-
-	/* The default HDMI output is TXA. */
-	state->hdmi.tx = tx;
-
-	return 0;
 }
 
 static const struct v4l2_subdev_internal_ops adv748x_csi2_internal_ops = {
@@ -141,26 +131,26 @@ static const struct v4l2_subdev_video_ops adv748x_csi2_video_ops = {
 
 static struct v4l2_mbus_framefmt *
 adv748x_csi2_get_pad_format(struct v4l2_subdev *sd,
-			    struct v4l2_subdev_state *sd_state,
+			    struct v4l2_subdev_pad_config *cfg,
 			    unsigned int pad, u32 which)
 {
 	struct adv748x_csi2 *tx = adv748x_sd_to_csi2(sd);
 
 	if (which == V4L2_SUBDEV_FORMAT_TRY)
-		return v4l2_subdev_get_try_format(sd, sd_state, pad);
+		return v4l2_subdev_get_try_format(sd, cfg, pad);
 
 	return &tx->format;
 }
 
 static int adv748x_csi2_get_format(struct v4l2_subdev *sd,
-				   struct v4l2_subdev_state *sd_state,
+				   struct v4l2_subdev_pad_config *cfg,
 				   struct v4l2_subdev_format *sdformat)
 {
 	struct adv748x_csi2 *tx = adv748x_sd_to_csi2(sd);
 	struct adv748x_state *state = tx->state;
 	struct v4l2_mbus_framefmt *mbusformat;
 
-	mbusformat = adv748x_csi2_get_pad_format(sd, sd_state, sdformat->pad,
+	mbusformat = adv748x_csi2_get_pad_format(sd, cfg, sdformat->pad,
 						 sdformat->which);
 	if (!mbusformat)
 		return -EINVAL;
@@ -175,7 +165,7 @@ static int adv748x_csi2_get_format(struct v4l2_subdev *sd,
 }
 
 static int adv748x_csi2_set_format(struct v4l2_subdev *sd,
-				   struct v4l2_subdev_state *sd_state,
+				   struct v4l2_subdev_pad_config *cfg,
 				   struct v4l2_subdev_format *sdformat)
 {
 	struct adv748x_csi2 *tx = adv748x_sd_to_csi2(sd);
@@ -183,7 +173,7 @@ static int adv748x_csi2_set_format(struct v4l2_subdev *sd,
 	struct v4l2_mbus_framefmt *mbusformat;
 	int ret = 0;
 
-	mbusformat = adv748x_csi2_get_pad_format(sd, sd_state, sdformat->pad,
+	mbusformat = adv748x_csi2_get_pad_format(sd, cfg, sdformat->pad,
 						 sdformat->which);
 	if (!mbusformat)
 		return -EINVAL;
@@ -193,7 +183,7 @@ static int adv748x_csi2_set_format(struct v4l2_subdev *sd,
 	if (sdformat->pad == ADV748X_CSI2_SOURCE) {
 		const struct v4l2_mbus_framefmt *sink_fmt;
 
-		sink_fmt = adv748x_csi2_get_pad_format(sd, sd_state,
+		sink_fmt = adv748x_csi2_get_pad_format(sd, cfg,
 						       ADV748X_CSI2_SINK,
 						       sdformat->which);
 
@@ -213,24 +203,9 @@ unlock:
 	return ret;
 }
 
-static int adv748x_csi2_get_mbus_config(struct v4l2_subdev *sd, unsigned int pad,
-					struct v4l2_mbus_config *config)
-{
-	struct adv748x_csi2 *tx = adv748x_sd_to_csi2(sd);
-
-	if (pad != ADV748X_CSI2_SOURCE)
-		return -EINVAL;
-
-	config->type = V4L2_MBUS_CSI2_DPHY;
-	config->bus.mipi_csi2.num_data_lanes = tx->active_lanes;
-
-	return 0;
-}
-
 static const struct v4l2_subdev_pad_ops adv748x_csi2_pad_ops = {
 	.get_fmt = adv748x_csi2_get_format,
 	.set_fmt = adv748x_csi2_set_format,
-	.get_mbus_config = adv748x_csi2_get_mbus_config,
 };
 
 /* -----------------------------------------------------------------------------
@@ -291,17 +266,29 @@ static int adv748x_csi2_init_controls(struct adv748x_csi2 *tx)
 
 int adv748x_csi2_init(struct adv748x_state *state, struct adv748x_csi2 *tx)
 {
+	struct device_node *ep;
 	int ret;
 
-	if (!is_tx_enabled(tx))
-		return 0;
+	/* We can not use container_of to get back to the state with two TXs */
+	tx->state = state;
+	tx->page = is_txa(tx) ? ADV748X_PAGE_TXA : ADV748X_PAGE_TXB;
+
+	ep = state->endpoints[is_txa(tx) ? ADV748X_PORT_TXA : ADV748X_PORT_TXB];
+	if (!ep) {
+		adv_err(state, "No endpoint found for %s\n",
+				is_txa(tx) ? "txa" : "txb");
+		return -ENODEV;
+	}
+
+	/* Initialise the virtual channel */
+	adv748x_csi2_set_virtual_channel(tx, 0);
 
 	adv748x_subdev_init(&tx->sd, state, &adv748x_csi2_ops,
-			    MEDIA_ENT_F_VID_IF_BRIDGE,
+			    MEDIA_ENT_F_UNKNOWN,
 			    is_txa(tx) ? "txa" : "txb");
 
 	/* Ensure that matching is based upon the endpoint fwnodes */
-	tx->sd.fwnode = of_fwnode_handle(state->endpoints[tx->port]);
+	tx->sd.fwnode = of_fwnode_handle(ep);
 
 	/* Register internal ops for incremental subdev registration */
 	tx->sd.internal_ops = &adv748x_csi2_internal_ops;
@@ -334,9 +321,6 @@ err_free_media:
 
 void adv748x_csi2_cleanup(struct adv748x_csi2 *tx)
 {
-	if (!is_tx_enabled(tx))
-		return;
-
 	v4l2_async_unregister_subdev(&tx->sd);
 	media_entity_cleanup(&tx->sd.entity);
 	v4l2_ctrl_handler_free(&tx->ctrl_hdl);

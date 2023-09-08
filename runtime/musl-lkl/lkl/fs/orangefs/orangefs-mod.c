@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * (C) 2001 Clemson University and The University of Chicago
  *
@@ -31,7 +30,6 @@ static ulong module_parm_debug_mask;
 __u64 orangefs_gossip_debug_mask;
 int op_timeout_secs = ORANGEFS_DEFAULT_OP_TIMEOUT_SECS;
 int slot_timeout_secs = ORANGEFS_DEFAULT_SLOT_TIMEOUT_SECS;
-int orangefs_cache_timeout_msecs = 500;
 int orangefs_dcache_timeout_msecs = 50;
 int orangefs_getattr_timeout_msecs = 50;
 
@@ -79,7 +77,7 @@ DECLARE_WAIT_QUEUE_HEAD(orangefs_request_list_waitq);
 
 static int __init orangefs_init(void)
 {
-	int ret;
+	int ret = -1;
 	__u32 i = 0;
 
 	if (op_timeout_secs < 0)
@@ -129,7 +127,9 @@ static int __init orangefs_init(void)
 	if (ret)
 		goto cleanup_key_table;
 
-	orangefs_debugfs_init(module_parm_debug_mask);
+	ret = orangefs_debugfs_init(module_parm_debug_mask);
+	if (ret)
+		goto debugfs_init_failed;
 
 	ret = orangefs_sysfs_init();
 	if (ret)
@@ -149,6 +149,7 @@ static int __init orangefs_init(void)
 		pr_info("%s: module version %s loaded\n",
 			__func__,
 			ORANGEFS_VERSION);
+		ret = 0;
 		goto out;
 	}
 
@@ -158,6 +159,8 @@ cleanup_device:
 	orangefs_dev_cleanup();
 
 sysfs_init_failed:
+
+debugfs_init_failed:
 	orangefs_debugfs_cleanup();
 
 cleanup_key_table:

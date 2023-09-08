@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * linux/drivers/pcmcia/sa1111_generic.c
  *
@@ -17,6 +16,7 @@
 
 #include <pcmcia/ss.h>
 
+#include <mach/hardware.h>
 #include <asm/hardware/sa1111.h>
 #include <asm/mach-types.h>
 #include <asm/irq.h>
@@ -237,7 +237,7 @@ static int pcmcia_probe(struct sa1111_dev *dev)
 	return ret;
 }
 
-static void pcmcia_remove(struct sa1111_dev *dev)
+static int pcmcia_remove(struct sa1111_dev *dev)
 {
 	struct sa1111_pcmcia_socket *next, *s = dev_get_drvdata(&dev->dev);
 
@@ -251,6 +251,7 @@ static void pcmcia_remove(struct sa1111_dev *dev)
 
 	release_mem_region(dev->res.start, 512);
 	sa1111_disable_device(dev);
+	return 0;
 }
 
 static struct sa1111_driver pcmcia_driver = {

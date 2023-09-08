@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * tps65217_bl.c
  *
@@ -6,6 +5,15 @@
  *
  * Copyright (C) 2012 Matthias Kaehlcke
  * Author: Matthias Kaehlcke <matthias@kaehlcke.net>
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License as
+ * published by the Free Software Foundation version 2.
+ *
+ * This program is distributed "as is" WITHOUT ANY WARRANTY of any
+ * kind, whether express or implied; without even the implied warranty
+ * of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
  */
 
 #include <linux/kernel.h>
@@ -69,7 +77,15 @@ static int tps65217_bl_update_status(struct backlight_device *bl)
 {
 	struct tps65217_bl *tps65217_bl = bl_get_data(bl);
 	int rc;
-	int brightness = backlight_get_brightness(bl);
+	int brightness = bl->props.brightness;
+
+	if (bl->props.state & BL_CORE_SUSPENDED)
+		brightness = 0;
+
+	if ((bl->props.power != FB_BLANK_UNBLANK) ||
+		(bl->props.fb_blank != FB_BLANK_UNBLANK))
+		/* framebuffer in low power mode or blanking active */
+		brightness = 0;
 
 	if (brightness > 0) {
 		rc = tps65217_reg_write(tps65217_bl->tps,
@@ -168,11 +184,11 @@ static struct tps65217_bl_pdata *
 tps65217_bl_parse_dt(struct platform_device *pdev)
 {
 	struct tps65217 *tps = dev_get_drvdata(pdev->dev.parent);
-	struct device_node *node;
+	struct device_node *node = of_node_get(tps->dev->of_node);
 	struct tps65217_bl_pdata *pdata, *err;
 	u32 val;
 
-	node = of_get_child_by_name(tps->dev->of_node, "backlight");
+	node = of_find_node_by_name(node, "backlight");
 	if (!node)
 		return ERR_PTR(-ENODEV);
 

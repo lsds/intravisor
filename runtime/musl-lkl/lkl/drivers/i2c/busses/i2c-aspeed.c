@@ -1,10 +1,13 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  *  Aspeed 24XX/25XX I2C Controller.
  *
  *  Copyright (C) 2012-2017 ASPEED Technology Inc.
  *  Copyright 2017 IBM Corporation
  *  Copyright 2017 Google, Inc.
+ *
+ *  This program is free software; you can redistribute it and/or modify
+ *  it under the terms of the GNU General Public License version 2 as
+ *  published by the Free Software Foundation.
  */
 
 #include <linux/clk.h>
@@ -16,6 +19,8 @@
 #include <linux/interrupt.h>
 #include <linux/io.h>
 #include <linux/irq.h>
+#include <linux/irqchip/chained_irq.h>
+#include <linux/irqdomain.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/of_address.h>
@@ -67,7 +72,6 @@
  * These share bit definitions, so use the same values for the enable &
  * status bits.
  */
-#define ASPEED_I2CD_INTR_RECV_MASK			0xf000ffff
 #define ASPEED_I2CD_INTR_SDA_DL_TIMEOUT			BIT(14)
 #define ASPEED_I2CD_INTR_BUS_RECOVER_DONE		BIT(13)
 #define ASPEED_I2CD_INTR_SLAVE_MATCH			BIT(7)
@@ -78,11 +82,6 @@
 #define ASPEED_I2CD_INTR_RX_DONE			BIT(2)
 #define ASPEED_I2CD_INTR_TX_NAK				BIT(1)
 #define ASPEED_I2CD_INTR_TX_ACK				BIT(0)
-#define ASPEED_I2CD_INTR_MASTER_ERRORS					       \
-		(ASPEED_I2CD_INTR_SDA_DL_TIMEOUT |			       \
-		 ASPEED_I2CD_INTR_SCL_TIMEOUT |				       \
-		 ASPEED_I2CD_INTR_ABNORMAL |				       \
-		 ASPEED_I2CD_INTR_ARBIT_LOSS)
 #define ASPEED_I2CD_INTR_ALL						       \
 		(ASPEED_I2CD_INTR_SDA_DL_TIMEOUT |			       \
 		 ASPEED_I2CD_INTR_BUS_RECOVER_DONE |			       \
@@ -107,29 +106,21 @@
 #define ASPEED_I2CD_S_TX_CMD				BIT(2)
 #define ASPEED_I2CD_M_TX_CMD				BIT(1)
 #define ASPEED_I2CD_M_START_CMD				BIT(0)
-#define ASPEED_I2CD_MASTER_CMDS_MASK					       \
-		(ASPEED_I2CD_M_STOP_CMD |				       \
-		 ASPEED_I2CD_M_S_RX_CMD_LAST |				       \
-		 ASPEED_I2CD_M_RX_CMD |					       \
-		 ASPEED_I2CD_M_TX_CMD |					       \
-		 ASPEED_I2CD_M_START_CMD)
 
 /* 0x18 : I2CD Slave Device Address Register   */
 #define ASPEED_I2CD_DEV_ADDR_MASK			GENMASK(6, 0)
 
 enum aspeed_i2c_master_state {
-	ASPEED_I2C_MASTER_INACTIVE,
-	ASPEED_I2C_MASTER_PENDING,
 	ASPEED_I2C_MASTER_START,
 	ASPEED_I2C_MASTER_TX_FIRST,
 	ASPEED_I2C_MASTER_TX,
 	ASPEED_I2C_MASTER_RX_FIRST,
 	ASPEED_I2C_MASTER_RX,
 	ASPEED_I2C_MASTER_STOP,
+	ASPEED_I2C_MASTER_INACTIVE,
 };
 
 enum aspeed_i2c_slave_state {
-	ASPEED_I2C_SLAVE_INACTIVE,
 	ASPEED_I2C_SLAVE_START,
 	ASPEED_I2C_SLAVE_READ_REQUESTED,
 	ASPEED_I2C_SLAVE_READ_PROCESSED,
@@ -146,8 +137,7 @@ struct aspeed_i2c_bus {
 	/* Synchronizes I/O mem access to base. */
 	spinlock_t			lock;
 	struct completion		cmd_complete;
-	u32				(*get_clk_reg_val)(struct device *dev,
-							   u32 divisor);
+	u32				(*get_clk_reg_val)(u32 divisor);
 	unsigned long			parent_clk_frequency;
 	u32				bus_frequency;
 	/* Transaction state. */
@@ -160,8 +150,6 @@ struct aspeed_i2c_bus {
 	int				cmd_err;
 	/* Protected only by i2c_lock_bus */
 	int				master_xfer_result;
-	/* Multi-master */
-	bool				multi_master;
 #if IS_ENABLED(CONFIG_I2C_SLAVE)
 	struct i2c_client		*slave;
 	enum aspeed_i2c_slave_state	slave_state;
@@ -239,27 +227,33 @@ reset_out:
 }
 
 #if IS_ENABLED(CONFIG_I2C_SLAVE)
-static u32 aspeed_i2c_slave_irq(struct aspeed_i2c_bus *bus, u32 irq_status)
+static bool aspeed_i2c_slave_irq(struct aspeed_i2c_bus *bus)
 {
-	u32 command, irq_handled = 0;
+	u32 command, irq_status, status_ack = 0;
 	struct i2c_client *slave = bus->slave;
+	bool irq_handled = true;
 	u8 value;
-	int ret;
 
-	if (!slave)
-		return 0;
+	spin_lock(&bus->lock);
+	if (!slave) {
+		irq_handled = false;
+		goto out;
+	}
 
 	command = readl(bus->base + ASPEED_I2C_CMD_REG);
+	irq_status = readl(bus->base + ASPEED_I2C_INTR_STS_REG);
 
 	/* Slave was requested, restart state machine. */
 	if (irq_status & ASPEED_I2CD_INTR_SLAVE_MATCH) {
-		irq_handled |= ASPEED_I2CD_INTR_SLAVE_MATCH;
+		status_ack |= ASPEED_I2CD_INTR_SLAVE_MATCH;
 		bus->slave_state = ASPEED_I2C_SLAVE_START;
 	}
 
 	/* Slave is not currently active, irq was for someone else. */
-	if (bus->slave_state == ASPEED_I2C_SLAVE_INACTIVE)
-		return irq_handled;
+	if (bus->slave_state == ASPEED_I2C_SLAVE_STOP) {
+		irq_handled = false;
+		goto out;
+	}
 
 	dev_dbg(bus->dev, "slave irq status 0x%08x, cmd 0x%08x\n",
 		irq_status, command);
@@ -276,67 +270,62 @@ static u32 aspeed_i2c_slave_irq(struct aspeed_i2c_bus *bus, u32 irq_status)
 				bus->slave_state =
 						ASPEED_I2C_SLAVE_WRITE_REQUESTED;
 		}
-		irq_handled |= ASPEED_I2CD_INTR_RX_DONE;
+		status_ack |= ASPEED_I2CD_INTR_RX_DONE;
 	}
 
 	/* Slave was asked to stop. */
 	if (irq_status & ASPEED_I2CD_INTR_NORMAL_STOP) {
-		irq_handled |= ASPEED_I2CD_INTR_NORMAL_STOP;
+		status_ack |= ASPEED_I2CD_INTR_NORMAL_STOP;
 		bus->slave_state = ASPEED_I2C_SLAVE_STOP;
 	}
-	if (irq_status & ASPEED_I2CD_INTR_TX_NAK &&
-	    bus->slave_state == ASPEED_I2C_SLAVE_READ_PROCESSED) {
-		irq_handled |= ASPEED_I2CD_INTR_TX_NAK;
+	if (irq_status & ASPEED_I2CD_INTR_TX_NAK) {
+		status_ack |= ASPEED_I2CD_INTR_TX_NAK;
 		bus->slave_state = ASPEED_I2C_SLAVE_STOP;
 	}
 
 	switch (bus->slave_state) {
 	case ASPEED_I2C_SLAVE_READ_REQUESTED:
-		if (unlikely(irq_status & ASPEED_I2CD_INTR_TX_ACK))
+		if (irq_status & ASPEED_I2CD_INTR_TX_ACK)
 			dev_err(bus->dev, "Unexpected ACK on read request.\n");
 		bus->slave_state = ASPEED_I2C_SLAVE_READ_PROCESSED;
+
 		i2c_slave_event(slave, I2C_SLAVE_READ_REQUESTED, &value);
 		writel(value, bus->base + ASPEED_I2C_BYTE_BUF_REG);
 		writel(ASPEED_I2CD_S_TX_CMD, bus->base + ASPEED_I2C_CMD_REG);
 		break;
 	case ASPEED_I2C_SLAVE_READ_PROCESSED:
-		if (unlikely(!(irq_status & ASPEED_I2CD_INTR_TX_ACK))) {
+		status_ack |= ASPEED_I2CD_INTR_TX_ACK;
+		if (!(irq_status & ASPEED_I2CD_INTR_TX_ACK))
 			dev_err(bus->dev,
 				"Expected ACK after processed read.\n");
-			break;
-		}
-		irq_handled |= ASPEED_I2CD_INTR_TX_ACK;
 		i2c_slave_event(slave, I2C_SLAVE_READ_PROCESSED, &value);
 		writel(value, bus->base + ASPEED_I2C_BYTE_BUF_REG);
 		writel(ASPEED_I2CD_S_TX_CMD, bus->base + ASPEED_I2C_CMD_REG);
 		break;
 	case ASPEED_I2C_SLAVE_WRITE_REQUESTED:
 		bus->slave_state = ASPEED_I2C_SLAVE_WRITE_RECEIVED;
-		ret = i2c_slave_event(slave, I2C_SLAVE_WRITE_REQUESTED, &value);
-		/*
-		 * Slave ACK's on this address phase already but as the backend driver
-		 * returns an errno, the bus driver should nack the next incoming byte.
-		 */
-		if (ret < 0)
-			writel(ASPEED_I2CD_M_S_RX_CMD_LAST, bus->base + ASPEED_I2C_CMD_REG);
+		i2c_slave_event(slave, I2C_SLAVE_WRITE_REQUESTED, &value);
 		break;
 	case ASPEED_I2C_SLAVE_WRITE_RECEIVED:
 		i2c_slave_event(slave, I2C_SLAVE_WRITE_RECEIVED, &value);
 		break;
 	case ASPEED_I2C_SLAVE_STOP:
 		i2c_slave_event(slave, I2C_SLAVE_STOP, &value);
-		bus->slave_state = ASPEED_I2C_SLAVE_INACTIVE;
-		break;
-	case ASPEED_I2C_SLAVE_START:
-		/* Slave was just started. Waiting for the next event. */;
 		break;
 	default:
-		dev_err(bus->dev, "unknown slave_state: %d\n",
+		dev_err(bus->dev, "unhandled slave_state: %d\n",
 			bus->slave_state);
-		bus->slave_state = ASPEED_I2C_SLAVE_INACTIVE;
 		break;
 	}
 
+	if (status_ack != irq_status)
+		dev_err(bus->dev,
+			"irq handled != irq. expected %x, but was %x\n",
+			irq_status, status_ack);
+	writel(status_ack, bus->base + ASPEED_I2C_INTR_STS_REG);
+
+out:
+	spin_unlock(&bus->lock);
 	return irq_handled;
 }
 #endif /* CONFIG_I2C_SLAVE */
@@ -346,24 +335,13 @@ static void aspeed_i2c_do_start(struct aspeed_i2c_bus *bus)
 {
 	u32 command = ASPEED_I2CD_M_START_CMD | ASPEED_I2CD_M_TX_CMD;
 	struct i2c_msg *msg = &bus->msgs[bus->msgs_index];
-	u8 slave_addr = i2c_8bit_addr_from_msg(msg);
-
-#if IS_ENABLED(CONFIG_I2C_SLAVE)
-	/*
-	 * If it's requested in the middle of a slave session, set the master
-	 * state to 'pending' then H/W will continue handling this master
-	 * command when the bus comes back to the idle state.
-	 */
-	if (bus->slave_state != ASPEED_I2C_SLAVE_INACTIVE) {
-		bus->master_state = ASPEED_I2C_MASTER_PENDING;
-		return;
-	}
-#endif /* CONFIG_I2C_SLAVE */
+	u8 slave_addr = msg->addr << 1;
 
 	bus->master_state = ASPEED_I2C_MASTER_START;
 	bus->buf_index = 0;
 
 	if (msg->flags & I2C_M_RD) {
+		slave_addr |= 1;
 		command |= ASPEED_I2CD_M_RX_CMD;
 		/* Need to let the hardware know to NACK after RX. */
 		if (msg->len == 1 && !(msg->flags & I2C_M_RECV_LEN))
@@ -405,16 +383,21 @@ static int aspeed_i2c_is_irq_error(u32 irq_status)
 	return 0;
 }
 
-static u32 aspeed_i2c_master_irq(struct aspeed_i2c_bus *bus, u32 irq_status)
+static bool aspeed_i2c_master_irq(struct aspeed_i2c_bus *bus)
 {
-	u32 irq_handled = 0, command = 0;
+	u32 irq_status, status_ack = 0, command = 0;
 	struct i2c_msg *msg;
 	u8 recv_byte;
 	int ret;
 
+	spin_lock(&bus->lock);
+	irq_status = readl(bus->base + ASPEED_I2C_INTR_STS_REG);
+	/* Ack all interrupt bits. */
+	writel(irq_status, bus->base + ASPEED_I2C_INTR_STS_REG);
+
 	if (irq_status & ASPEED_I2CD_INTR_BUS_RECOVER_DONE) {
 		bus->master_state = ASPEED_I2C_MASTER_INACTIVE;
-		irq_handled |= ASPEED_I2CD_INTR_BUS_RECOVER_DONE;
+		status_ack |= ASPEED_I2CD_INTR_BUS_RECOVER_DONE;
 		goto out_complete;
 	}
 
@@ -424,29 +407,19 @@ static u32 aspeed_i2c_master_irq(struct aspeed_i2c_bus *bus, u32 irq_status)
 	 * INACTIVE state.
 	 */
 	ret = aspeed_i2c_is_irq_error(irq_status);
-	if (ret) {
-		dev_dbg(bus->dev, "received error interrupt: 0x%08x\n",
+	if (ret < 0) {
+		dev_dbg(bus->dev, "received error interrupt: 0x%08x",
 			irq_status);
-		irq_handled |= (irq_status & ASPEED_I2CD_INTR_MASTER_ERRORS);
-		if (bus->master_state != ASPEED_I2C_MASTER_INACTIVE) {
-			bus->cmd_err = ret;
-			bus->master_state = ASPEED_I2C_MASTER_INACTIVE;
-			goto out_complete;
-		}
+		bus->cmd_err = ret;
+		bus->master_state = ASPEED_I2C_MASTER_INACTIVE;
+		goto out_complete;
 	}
-
-	/* Master is not currently active, irq was for someone else. */
-	if (bus->master_state == ASPEED_I2C_MASTER_INACTIVE ||
-	    bus->master_state == ASPEED_I2C_MASTER_PENDING)
-		goto out_no_complete;
 
 	/* We are in an invalid state; reset bus to a known state. */
 	if (!bus->msgs) {
-		dev_err(bus->dev, "bus in unknown state. irq_status: 0x%x\n",
-			irq_status);
+		dev_err(bus->dev, "bus in unknown state");
 		bus->cmd_err = -EIO;
-		if (bus->master_state != ASPEED_I2C_MASTER_STOP &&
-		    bus->master_state != ASPEED_I2C_MASTER_INACTIVE)
+		if (bus->master_state != ASPEED_I2C_MASTER_STOP)
 			aspeed_i2c_do_stop(bus);
 		goto out_no_complete;
 	}
@@ -458,37 +431,14 @@ static u32 aspeed_i2c_master_irq(struct aspeed_i2c_bus *bus, u32 irq_status)
 	 * then update the state and handle the new state below.
 	 */
 	if (bus->master_state == ASPEED_I2C_MASTER_START) {
-#if IS_ENABLED(CONFIG_I2C_SLAVE)
-		/*
-		 * If a peer master starts a xfer immediately after it queues a
-		 * master command, clear the queued master command and change
-		 * its state to 'pending'. To simplify handling of pending
-		 * cases, it uses S/W solution instead of H/W command queue
-		 * handling.
-		 */
-		if (unlikely(irq_status & ASPEED_I2CD_INTR_SLAVE_MATCH)) {
-			writel(readl(bus->base + ASPEED_I2C_CMD_REG) &
-				~ASPEED_I2CD_MASTER_CMDS_MASK,
-			       bus->base + ASPEED_I2C_CMD_REG);
-			bus->master_state = ASPEED_I2C_MASTER_PENDING;
-			dev_dbg(bus->dev,
-				"master goes pending due to a slave start\n");
-			goto out_no_complete;
-		}
-#endif /* CONFIG_I2C_SLAVE */
 		if (unlikely(!(irq_status & ASPEED_I2CD_INTR_TX_ACK))) {
-			if (unlikely(!(irq_status & ASPEED_I2CD_INTR_TX_NAK))) {
-				bus->cmd_err = -ENXIO;
-				bus->master_state = ASPEED_I2C_MASTER_INACTIVE;
-				goto out_complete;
-			}
-			pr_devel("no slave present at %02x\n", msg->addr);
-			irq_handled |= ASPEED_I2CD_INTR_TX_NAK;
+			pr_devel("no slave present at %02x", msg->addr);
+			status_ack |= ASPEED_I2CD_INTR_TX_NAK;
 			bus->cmd_err = -ENXIO;
 			aspeed_i2c_do_stop(bus);
 			goto out_no_complete;
 		}
-		irq_handled |= ASPEED_I2CD_INTR_TX_ACK;
+		status_ack |= ASPEED_I2CD_INTR_TX_ACK;
 		if (msg->len == 0) { /* SMBUS_QUICK */
 			aspeed_i2c_do_stop(bus);
 			goto out_no_complete;
@@ -502,15 +452,15 @@ static u32 aspeed_i2c_master_irq(struct aspeed_i2c_bus *bus, u32 irq_status)
 	switch (bus->master_state) {
 	case ASPEED_I2C_MASTER_TX:
 		if (unlikely(irq_status & ASPEED_I2CD_INTR_TX_NAK)) {
-			dev_dbg(bus->dev, "slave NACKed TX\n");
-			irq_handled |= ASPEED_I2CD_INTR_TX_NAK;
+			dev_dbg(bus->dev, "slave NACKed TX");
+			status_ack |= ASPEED_I2CD_INTR_TX_NAK;
 			goto error_and_stop;
 		} else if (unlikely(!(irq_status & ASPEED_I2CD_INTR_TX_ACK))) {
-			dev_err(bus->dev, "slave failed to ACK TX\n");
+			dev_err(bus->dev, "slave failed to ACK TX");
 			goto error_and_stop;
 		}
-		irq_handled |= ASPEED_I2CD_INTR_TX_ACK;
-		fallthrough;
+		status_ack |= ASPEED_I2CD_INTR_TX_ACK;
+		/* fallthrough intended */
 	case ASPEED_I2C_MASTER_TX_FIRST:
 		if (bus->buf_index < msg->len) {
 			bus->master_state = ASPEED_I2C_MASTER_TX;
@@ -526,13 +476,13 @@ static u32 aspeed_i2c_master_irq(struct aspeed_i2c_bus *bus, u32 irq_status)
 		/* RX may not have completed yet (only address cycle) */
 		if (!(irq_status & ASPEED_I2CD_INTR_RX_DONE))
 			goto out_no_complete;
-		fallthrough;
+		/* fallthrough intended */
 	case ASPEED_I2C_MASTER_RX:
 		if (unlikely(!(irq_status & ASPEED_I2CD_INTR_RX_DONE))) {
-			dev_err(bus->dev, "master failed to RX\n");
+			dev_err(bus->dev, "master failed to RX");
 			goto error_and_stop;
 		}
-		irq_handled |= ASPEED_I2CD_INTR_RX_DONE;
+		status_ack |= ASPEED_I2CD_INTR_RX_DONE;
 
 		recv_byte = readl(bus->base + ASPEED_I2C_BYTE_BUF_REG) >> 8;
 		msg->buf[bus->buf_index++] = recv_byte;
@@ -560,20 +510,18 @@ static u32 aspeed_i2c_master_irq(struct aspeed_i2c_bus *bus, u32 irq_status)
 		goto out_no_complete;
 	case ASPEED_I2C_MASTER_STOP:
 		if (unlikely(!(irq_status & ASPEED_I2CD_INTR_NORMAL_STOP))) {
-			dev_err(bus->dev,
-				"master failed to STOP. irq_status:0x%x\n",
-				irq_status);
+			dev_err(bus->dev, "master failed to STOP");
 			bus->cmd_err = -EIO;
 			/* Do not STOP as we have already tried. */
 		} else {
-			irq_handled |= ASPEED_I2CD_INTR_NORMAL_STOP;
+			status_ack |= ASPEED_I2CD_INTR_NORMAL_STOP;
 		}
 
 		bus->master_state = ASPEED_I2C_MASTER_INACTIVE;
 		goto out_complete;
 	case ASPEED_I2C_MASTER_INACTIVE:
 		dev_err(bus->dev,
-			"master received interrupt 0x%08x, but is inactive\n",
+			"master received interrupt 0x%08x, but is inactive",
 			irq_status);
 		bus->cmd_err = -EIO;
 		/* Do not STOP as we should be inactive. */
@@ -596,70 +544,26 @@ out_complete:
 		bus->master_xfer_result = bus->msgs_index + 1;
 	complete(&bus->cmd_complete);
 out_no_complete:
-	return irq_handled;
+	if (irq_status != status_ack)
+		dev_err(bus->dev,
+			"irq handled != irq. expected 0x%08x, but was 0x%08x\n",
+			irq_status, status_ack);
+	spin_unlock(&bus->lock);
+	return !!irq_status;
 }
 
 static irqreturn_t aspeed_i2c_bus_irq(int irq, void *dev_id)
 {
 	struct aspeed_i2c_bus *bus = dev_id;
-	u32 irq_received, irq_remaining, irq_handled;
-
-	spin_lock(&bus->lock);
-	irq_received = readl(bus->base + ASPEED_I2C_INTR_STS_REG);
-	/* Ack all interrupts except for Rx done */
-	writel(irq_received & ~ASPEED_I2CD_INTR_RX_DONE,
-	       bus->base + ASPEED_I2C_INTR_STS_REG);
-	readl(bus->base + ASPEED_I2C_INTR_STS_REG);
-	irq_received &= ASPEED_I2CD_INTR_RECV_MASK;
-	irq_remaining = irq_received;
 
 #if IS_ENABLED(CONFIG_I2C_SLAVE)
-	/*
-	 * In most cases, interrupt bits will be set one by one, although
-	 * multiple interrupt bits could be set at the same time. It's also
-	 * possible that master interrupt bits could be set along with slave
-	 * interrupt bits. Each case needs to be handled using corresponding
-	 * handlers depending on the current state.
-	 */
-	if (bus->master_state != ASPEED_I2C_MASTER_INACTIVE &&
-	    bus->master_state != ASPEED_I2C_MASTER_PENDING) {
-		irq_handled = aspeed_i2c_master_irq(bus, irq_remaining);
-		irq_remaining &= ~irq_handled;
-		if (irq_remaining)
-			irq_handled |= aspeed_i2c_slave_irq(bus, irq_remaining);
-	} else {
-		irq_handled = aspeed_i2c_slave_irq(bus, irq_remaining);
-		irq_remaining &= ~irq_handled;
-		if (irq_remaining)
-			irq_handled |= aspeed_i2c_master_irq(bus,
-							     irq_remaining);
+	if (aspeed_i2c_slave_irq(bus)) {
+		dev_dbg(bus->dev, "irq handled by slave.\n");
+		return IRQ_HANDLED;
 	}
-
-	/*
-	 * Start a pending master command at here if a slave operation is
-	 * completed.
-	 */
-	if (bus->master_state == ASPEED_I2C_MASTER_PENDING &&
-	    bus->slave_state == ASPEED_I2C_SLAVE_INACTIVE)
-		aspeed_i2c_do_start(bus);
-#else
-	irq_handled = aspeed_i2c_master_irq(bus, irq_remaining);
 #endif /* CONFIG_I2C_SLAVE */
 
-	irq_remaining &= ~irq_handled;
-	if (irq_remaining)
-		dev_err(bus->dev,
-			"irq handled != irq. expected 0x%08x, but was 0x%08x\n",
-			irq_received, irq_handled);
-
-	/* Ack Rx done */
-	if (irq_received & ASPEED_I2CD_INTR_RX_DONE) {
-		writel(ASPEED_I2CD_INTR_RX_DONE,
-		       bus->base + ASPEED_I2C_INTR_STS_REG);
-		readl(bus->base + ASPEED_I2C_INTR_STS_REG);
-	}
-	spin_unlock(&bus->lock);
-	return irq_remaining ? IRQ_NONE : IRQ_HANDLED;
+	return aspeed_i2c_master_irq(bus) ? IRQ_HANDLED : IRQ_NONE;
 }
 
 static int aspeed_i2c_master_xfer(struct i2c_adapter *adap,
@@ -667,16 +571,15 @@ static int aspeed_i2c_master_xfer(struct i2c_adapter *adap,
 {
 	struct aspeed_i2c_bus *bus = i2c_get_adapdata(adap);
 	unsigned long time_left, flags;
+	int ret = 0;
 
 	spin_lock_irqsave(&bus->lock, flags);
 	bus->cmd_err = 0;
 
-	/* If bus is busy in a single master environment, attempt recovery. */
-	if (!bus->multi_master &&
-	    (readl(bus->base + ASPEED_I2C_CMD_REG) &
-	     ASPEED_I2CD_BUS_BUSY_STS)) {
-		int ret;
-
+	/* If bus is busy, attempt recovery. We assume a single master
+	 * environment.
+	 */
+	if (readl(bus->base + ASPEED_I2C_CMD_REG) & ASPEED_I2CD_BUS_BUSY_STS) {
 		spin_unlock_irqrestore(&bus->lock, flags);
 		ret = aspeed_i2c_recover_bus(bus);
 		if (ret)
@@ -696,29 +599,10 @@ static int aspeed_i2c_master_xfer(struct i2c_adapter *adap,
 	time_left = wait_for_completion_timeout(&bus->cmd_complete,
 						bus->adap.timeout);
 
-	if (time_left == 0) {
-		/*
-		 * If timed out and bus is still busy in a multi master
-		 * environment, attempt recovery at here.
-		 */
-		if (bus->multi_master &&
-		    (readl(bus->base + ASPEED_I2C_CMD_REG) &
-		     ASPEED_I2CD_BUS_BUSY_STS))
-			aspeed_i2c_recover_bus(bus);
-
-		/*
-		 * If timed out and the state is still pending, drop the pending
-		 * master command.
-		 */
-		spin_lock_irqsave(&bus->lock, flags);
-		if (bus->master_state == ASPEED_I2C_MASTER_PENDING)
-			bus->master_state = ASPEED_I2C_MASTER_INACTIVE;
-		spin_unlock_irqrestore(&bus->lock, flags);
-
+	if (time_left == 0)
 		return -ETIMEDOUT;
-	}
-
-	return bus->master_xfer_result;
+	else
+		return bus->master_xfer_result;
 }
 
 static u32 aspeed_i2c_functionality(struct i2c_adapter *adap)
@@ -732,14 +616,10 @@ static void __aspeed_i2c_reg_slave(struct aspeed_i2c_bus *bus, u16 slave_addr)
 {
 	u32 addr_reg_val, func_ctrl_reg_val;
 
-	/*
-	 * Set slave addr.  Reserved bits can all safely be written with zeros
-	 * on all of ast2[456]00, so zero everything else to ensure we only
-	 * enable a single slave address (ast2500 has two, ast2600 has three,
-	 * the enable bits for which are also in this register) so that we don't
-	 * end up with additional phantom devices responding on the bus.
-	 */
-	addr_reg_val = slave_addr & ASPEED_I2CD_DEV_ADDR_MASK;
+	/* Set slave addr. */
+	addr_reg_val = readl(bus->base + ASPEED_I2C_DEV_ADDR_REG);
+	addr_reg_val &= ~ASPEED_I2CD_DEV_ADDR_MASK;
+	addr_reg_val |= slave_addr & ASPEED_I2CD_DEV_ADDR_MASK;
 	writel(addr_reg_val, bus->base + ASPEED_I2C_DEV_ADDR_REG);
 
 	/* Turn on slave mode. */
@@ -762,7 +642,7 @@ static int aspeed_i2c_reg_slave(struct i2c_client *client)
 	__aspeed_i2c_reg_slave(bus, client->addr);
 
 	bus->slave = client;
-	bus->slave_state = ASPEED_I2C_SLAVE_INACTIVE;
+	bus->slave_state = ASPEED_I2C_SLAVE_STOP;
 	spin_unlock_irqrestore(&bus->lock, flags);
 
 	return 0;
@@ -801,27 +681,16 @@ static const struct i2c_algorithm aspeed_i2c_algo = {
 #endif /* CONFIG_I2C_SLAVE */
 };
 
-static u32 aspeed_i2c_get_clk_reg_val(struct device *dev,
-				      u32 clk_high_low_mask,
-				      u32 divisor)
+static u32 aspeed_i2c_get_clk_reg_val(u32 clk_high_low_max, u32 divisor)
 {
-	u32 base_clk_divisor, clk_high_low_max, clk_high, clk_low, tmp;
-
-	/*
-	 * SCL_high and SCL_low represent a value 1 greater than what is stored
-	 * since a zero divider is meaningless. Thus, the max value each can
-	 * store is every bit set + 1. Since SCL_high and SCL_low are added
-	 * together (see below), the max value of both is the max value of one
-	 * them times two.
-	 */
-	clk_high_low_max = (clk_high_low_mask + 1) * 2;
+	u32 base_clk, clk_high, clk_low, tmp;
 
 	/*
 	 * The actual clock frequency of SCL is:
 	 *	SCL_freq = APB_freq / (base_freq * (SCL_high + SCL_low))
 	 *		 = APB_freq / divisor
 	 * where base_freq is a programmable clock divider; its value is
-	 *	base_freq = 1 << base_clk_divisor
+	 *	base_freq = 1 << base_clk
 	 * SCL_high is the number of base_freq clock cycles that SCL stays high
 	 * and SCL_low is the number of base_freq clock cycles that SCL stays
 	 * low for a period of SCL.
@@ -831,59 +700,47 @@ static u32 aspeed_i2c_get_clk_reg_val(struct device *dev,
 	 *	SCL_low	 = clk_low + 1
 	 * Thus,
 	 *	SCL_freq = APB_freq /
-	 *		((1 << base_clk_divisor) * (clk_high + 1 + clk_low + 1))
+	 *		((1 << base_clk) * (clk_high + 1 + clk_low + 1))
 	 * The documentation recommends clk_high >= clk_high_max / 2 and
 	 * clk_low >= clk_low_max / 2 - 1 when possible; this last constraint
 	 * gives us the following solution:
 	 */
-	base_clk_divisor = divisor > clk_high_low_max ?
+	base_clk = divisor > clk_high_low_max ?
 			ilog2((divisor - 1) / clk_high_low_max) + 1 : 0;
+	tmp = (divisor + (1 << base_clk) - 1) >> base_clk;
+	clk_low = tmp / 2;
+	clk_high = tmp - clk_low;
 
-	if (base_clk_divisor > ASPEED_I2CD_TIME_BASE_DIVISOR_MASK) {
-		base_clk_divisor = ASPEED_I2CD_TIME_BASE_DIVISOR_MASK;
-		clk_low = clk_high_low_mask;
-		clk_high = clk_high_low_mask;
-		dev_err(dev,
-			"clamping clock divider: divider requested, %u, is greater than largest possible divider, %u.\n",
-			divisor, (1 << base_clk_divisor) * clk_high_low_max);
-	} else {
-		tmp = (divisor + (1 << base_clk_divisor) - 1)
-				>> base_clk_divisor;
-		clk_low = tmp / 2;
-		clk_high = tmp - clk_low;
+	if (clk_high)
+		clk_high--;
 
-		if (clk_high)
-			clk_high--;
-
-		if (clk_low)
-			clk_low--;
-	}
+	if (clk_low)
+		clk_low--;
 
 
 	return ((clk_high << ASPEED_I2CD_TIME_SCL_HIGH_SHIFT)
 		& ASPEED_I2CD_TIME_SCL_HIGH_MASK)
 			| ((clk_low << ASPEED_I2CD_TIME_SCL_LOW_SHIFT)
 			   & ASPEED_I2CD_TIME_SCL_LOW_MASK)
-			| (base_clk_divisor
-			   & ASPEED_I2CD_TIME_BASE_DIVISOR_MASK);
+			| (base_clk & ASPEED_I2CD_TIME_BASE_DIVISOR_MASK);
 }
 
-static u32 aspeed_i2c_24xx_get_clk_reg_val(struct device *dev, u32 divisor)
+static u32 aspeed_i2c_24xx_get_clk_reg_val(u32 divisor)
 {
 	/*
 	 * clk_high and clk_low are each 3 bits wide, so each can hold a max
 	 * value of 8 giving a clk_high_low_max of 16.
 	 */
-	return aspeed_i2c_get_clk_reg_val(dev, GENMASK(2, 0), divisor);
+	return aspeed_i2c_get_clk_reg_val(16, divisor);
 }
 
-static u32 aspeed_i2c_25xx_get_clk_reg_val(struct device *dev, u32 divisor)
+static u32 aspeed_i2c_25xx_get_clk_reg_val(u32 divisor)
 {
 	/*
 	 * clk_high and clk_low are each 4 bits wide, so each can hold a max
 	 * value of 16 giving a clk_high_low_max of 32.
 	 */
-	return aspeed_i2c_get_clk_reg_val(dev, GENMASK(3, 0), divisor);
+	return aspeed_i2c_get_clk_reg_val(32, divisor);
 }
 
 /* precondition: bus.lock has been acquired. */
@@ -896,7 +753,7 @@ static int aspeed_i2c_init_clk(struct aspeed_i2c_bus *bus)
 	clk_reg_val &= (ASPEED_I2CD_TIME_TBUF_MASK |
 			ASPEED_I2CD_TIME_THDSTA_MASK |
 			ASPEED_I2CD_TIME_TACST_MASK);
-	clk_reg_val |= bus->get_clk_reg_val(bus->dev, divisor);
+	clk_reg_val |= bus->get_clk_reg_val(divisor);
 	writel(clk_reg_val, bus->base + ASPEED_I2C_AC_TIMING_REG1);
 	writel(ASPEED_NO_TIMEOUT_CTRL, bus->base + ASPEED_I2C_AC_TIMING_REG2);
 
@@ -917,9 +774,7 @@ static int aspeed_i2c_init(struct aspeed_i2c_bus *bus,
 	if (ret < 0)
 		return ret;
 
-	if (of_property_read_bool(pdev->dev.of_node, "multi-master"))
-		bus->multi_master = true;
-	else
+	if (!of_property_read_bool(pdev->dev.of_node, "multi-master"))
 		fun_ctrl_reg |= ASPEED_I2CD_MULTI_MASTER_DIS;
 
 	/* Enable Master Mode */
@@ -966,10 +821,6 @@ static const struct of_device_id aspeed_i2c_bus_of_table[] = {
 		.compatible = "aspeed,ast2500-i2c-bus",
 		.data = aspeed_i2c_25xx_get_clk_reg_val,
 	},
-	{
-		.compatible = "aspeed,ast2600-i2c-bus",
-		.data = aspeed_i2c_25xx_get_clk_reg_val,
-	},
 	{ },
 };
 MODULE_DEVICE_TABLE(of, aspeed_i2c_bus_of_table);
@@ -1001,7 +852,7 @@ static int aspeed_i2c_probe_bus(struct platform_device *pdev)
 	bus->rst = devm_reset_control_get_shared(&pdev->dev, NULL);
 	if (IS_ERR(bus->rst)) {
 		dev_err(&pdev->dev,
-			"missing or invalid reset controller device tree entry\n");
+			"missing or invalid reset controller device tree entry");
 		return PTR_ERR(bus->rst);
 	}
 	reset_control_deassert(bus->rst);
@@ -1011,25 +862,25 @@ static int aspeed_i2c_probe_bus(struct platform_device *pdev)
 	if (ret < 0) {
 		dev_err(&pdev->dev,
 			"Could not read bus-frequency property\n");
-		bus->bus_frequency = I2C_MAX_STANDARD_MODE_FREQ;
+		bus->bus_frequency = 100000;
 	}
 
 	match = of_match_node(aspeed_i2c_bus_of_table, pdev->dev.of_node);
 	if (!match)
 		bus->get_clk_reg_val = aspeed_i2c_24xx_get_clk_reg_val;
 	else
-		bus->get_clk_reg_val = (u32 (*)(struct device *, u32))
-				match->data;
+		bus->get_clk_reg_val = match->data;
 
 	/* Initialize the I2C adapter */
 	spin_lock_init(&bus->lock);
 	init_completion(&bus->cmd_complete);
 	bus->adap.owner = THIS_MODULE;
 	bus->adap.retries = 0;
+	bus->adap.timeout = 5 * HZ;
 	bus->adap.algo = &aspeed_i2c_algo;
 	bus->adap.dev.parent = &pdev->dev;
 	bus->adap.dev.of_node = pdev->dev.of_node;
-	strscpy(bus->adap.name, pdev->name, sizeof(bus->adap.name));
+	strlcpy(bus->adap.name, pdev->name, sizeof(bus->adap.name));
 	i2c_set_adapdata(&bus->adap, bus);
 
 	bus->dev = &pdev->dev;

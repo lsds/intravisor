@@ -1,4 +1,7 @@
 # SPDX-License-Identifier: GPL-2.0
+menu "Kernel hacking"
+
+source "lib/Kconfig.debug"
 
 config DEBUG_TLB_SANITY
 	bool "Debug TLB sanity"
@@ -32,9 +35,4 @@ config S32C1I_SELFTEST
 
 	  Say 'N' on stable hardware.
 
-config PRINT_STACK_DEPTH
-	int "Stack depth to print" if DEBUG_KERNEL
-	default 64
-	help
-	  This option allows you to set the stack depth that the kernel
-	  prints in stack traces.
+endmenu

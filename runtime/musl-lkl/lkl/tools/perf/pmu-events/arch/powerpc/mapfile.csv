@@ -15,4 +15,3 @@
 # Power8 entries
 004[bcd][[:xdigit:]]{4},1,power8,core
 004e[[:xdigit:]]{4},1,power9,core
-0080[[:xdigit:]]{4},1,power10,core

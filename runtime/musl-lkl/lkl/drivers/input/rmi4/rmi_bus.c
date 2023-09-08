@@ -1,13 +1,14 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2011-2016 Synaptics Incorporated
  * Copyright (c) 2011 Unixphere
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License version 2 as published by
+ * the Free Software Foundation.
  */
 
 #include <linux/kernel.h>
 #include <linux/device.h>
-#include <linux/irq.h>
-#include <linux/irqdomain.h>
 #include <linux/list.h>
 #include <linux/pm.h>
 #include <linux/rmi.h>
@@ -90,7 +91,6 @@ int rmi_register_transport_device(struct rmi_transport_dev *xport)
 
 	rmi_dev->dev.bus = &rmi_bus_type;
 	rmi_dev->dev.type = &rmi_device_type;
-	rmi_dev->dev.parent = xport->dev;
 
 	xport->rmi_dev = rmi_dev;
 
@@ -167,39 +167,6 @@ static inline void rmi_function_of_probe(struct rmi_function *fn)
 {}
 #endif
 
-static struct irq_chip rmi_irq_chip = {
-	.name = "rmi4",
-};
-
-static int rmi_create_function_irq(struct rmi_function *fn,
-				   struct rmi_function_handler *handler)
-{
-	struct rmi_driver_data *drvdata = dev_get_drvdata(&fn->rmi_dev->dev);
-	int i, error;
-
-	for (i = 0; i < fn->num_of_irqs; i++) {
-		set_bit(fn->irq_pos + i, fn->irq_mask);
-
-		fn->irq[i] = irq_create_mapping(drvdata->irqdomain,
-						fn->irq_pos + i);
-
-		irq_set_chip_data(fn->irq[i], fn);
-		irq_set_chip_and_handler(fn->irq[i], &rmi_irq_chip,
-					 handle_simple_irq);
-		irq_set_nested_thread(fn->irq[i], 1);
-
-		error = devm_request_threaded_irq(&fn->dev, fn->irq[i], NULL,
-					handler->attention, IRQF_ONESHOT,
-					dev_name(&fn->dev), fn);
-		if (error) {
-			dev_err(&fn->dev, "Error %d registering IRQ\n", error);
-			return error;
-		}
-	}
-
-	return 0;
-}
-
 static int rmi_function_probe(struct device *dev)
 {
 	struct rmi_function *fn = to_rmi_function(dev);
@@ -211,14 +178,7 @@ static int rmi_function_probe(struct device *dev)
 
 	if (handler->probe) {
 		error = handler->probe(fn);
-		if (error)
-			return error;
-	}
-
-	if (fn->num_of_irqs && handler->attention) {
-		error = rmi_create_function_irq(fn, handler);
-		if (error)
-			return error;
+		return error;
 	}
 
 	return 0;
@@ -270,24 +230,18 @@ err_put_device:
 
 void rmi_unregister_function(struct rmi_function *fn)
 {
-	int i;
-
 	rmi_dbg(RMI_DEBUG_CORE, &fn->dev, "Unregistering F%02X.\n",
 			fn->fd.function_number);
 
 	device_del(&fn->dev);
 	of_node_put(fn->dev.of_node);
 	put_device(&fn->dev);
-
-	for (i = 0; i < fn->num_of_irqs; i++)
-		irq_dispose_mapping(fn->irq[i]);
-
 }
 
 /**
  * rmi_register_function_handler - register a handler for an RMI function
  * @handler: RMI handler that should be registered.
- * @owner: pointer to module that implements the handler
+ * @module: pointer to module that implements the handler
  * @mod_name: name of the module implementing the handler
  *
  * This function performs additional setup of RMI function handler and
@@ -365,9 +319,6 @@ static struct rmi_function_handler *fn_handlers[] = {
 #endif
 #ifdef CONFIG_RMI4_F34
 	&rmi_f34_handler,
-#endif
-#ifdef CONFIG_RMI4_F3A
-	&rmi_f3a_handler,
 #endif
 #ifdef CONFIG_RMI4_F54
 	&rmi_f54_handler,

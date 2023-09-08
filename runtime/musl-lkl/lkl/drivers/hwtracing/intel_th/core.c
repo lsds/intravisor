@@ -95,23 +95,21 @@ out_pm:
 
 static void intel_th_device_remove(struct intel_th_device *thdev);
 
-static void intel_th_remove(struct device *dev)
+static int intel_th_remove(struct device *dev)
 {
 	struct intel_th_driver *thdrv = to_intel_th_driver(dev->driver);
 	struct intel_th_device *thdev = to_intel_th_device(dev);
 	struct intel_th_device *hub = to_intel_th_hub(thdev);
+	int err;
 
 	if (thdev->type == INTEL_TH_SWITCH) {
 		struct intel_th *th = to_intel_th(hub);
 		int i, lowest;
 
-		/*
-		 * disconnect outputs
-		 *
-		 * intel_th_child_remove returns 0 unconditionally, so there is
-		 * no need to check the return value of device_for_each_child.
-		 */
-		device_for_each_child(dev, thdev, intel_th_child_remove);
+		/* disconnect outputs */
+		err = device_for_each_child(dev, thdev, intel_th_child_remove);
+		if (err)
+			return err;
 
 		/*
 		 * Remove outputs, that is, hub's children: they are created
@@ -141,8 +139,7 @@ static void intel_th_remove(struct device *dev)
 			th->thdev[i] = NULL;
 		}
 
-		if (lowest >= 0)
-			th->num_thdevs = lowest;
+		th->num_thdevs = lowest;
 	}
 
 	if (thdrv->attr_group)
@@ -164,6 +161,8 @@ static void intel_th_remove(struct device *dev)
 	pm_runtime_disable(dev);
 	pm_runtime_set_active(dev);
 	pm_runtime_enable(dev);
+
+	return 0;
 }
 
 static struct bus_type intel_th_bus = {
@@ -215,22 +214,6 @@ static ssize_t port_show(struct device *dev, struct device_attribute *attr,
 
 static DEVICE_ATTR_RO(port);
 
-static void intel_th_trace_prepare(struct intel_th_device *thdev)
-{
-	struct intel_th_device *hub = to_intel_th_hub(thdev);
-	struct intel_th_driver *hubdrv = to_intel_th_driver(hub->dev.driver);
-
-	if (hub->type != INTEL_TH_SWITCH)
-		return;
-
-	if (thdev->type != INTEL_TH_OUTPUT)
-		return;
-
-	pm_runtime_get_sync(&thdev->dev);
-	hubdrv->prepare(hub, &thdev->output);
-	pm_runtime_put(&thdev->dev);
-}
-
 static int intel_th_output_activate(struct intel_th_device *thdev)
 {
 	struct intel_th_driver *thdrv =
@@ -251,7 +234,6 @@ static int intel_th_output_activate(struct intel_th_device *thdev)
 	if (ret)
 		goto fail_put;
 
-	intel_th_trace_prepare(thdev);
 	if (thdrv->activate)
 		ret = thdrv->activate(thdev);
 	else
@@ -439,7 +421,6 @@ static const struct intel_th_subdevice {
 	unsigned		nres;
 	unsigned		type;
 	unsigned		otype;
-	bool			mknode;
 	unsigned		scrpd;
 	int			id;
 } intel_th_subdevices[] = {
@@ -447,9 +428,9 @@ static const struct intel_th_subdevice {
 		.nres	= 1,
 		.res	= {
 			{
-				/* Handle TSCU and CTS from GTH driver */
+				/* Handle TSCU from GTH driver */
 				.start	= REG_GTH_OFFSET,
-				.end	= REG_CTS_OFFSET + REG_CTS_LENGTH - 1,
+				.end	= REG_TSCU_OFFSET + REG_TSCU_LENGTH - 1,
 				.flags	= IORESOURCE_MEM,
 			},
 		},
@@ -474,7 +455,6 @@ static const struct intel_th_subdevice {
 		.name	= "msc",
 		.id	= 0,
 		.type	= INTEL_TH_OUTPUT,
-		.mknode	= true,
 		.otype	= GTH_MSU,
 		.scrpd	= SCRPD_MEM_IS_PRIM_DEST | SCRPD_MSC0_IS_ENABLED,
 	},
@@ -495,7 +475,6 @@ static const struct intel_th_subdevice {
 		.name	= "msc",
 		.id	= 1,
 		.type	= INTEL_TH_OUTPUT,
-		.mknode	= true,
 		.otype	= GTH_MSU,
 		.scrpd	= SCRPD_MEM_IS_PRIM_DEST | SCRPD_MSC1_IS_ENABLED,
 	},
@@ -515,24 +494,6 @@ static const struct intel_th_subdevice {
 		},
 		.id	= -1,
 		.name	= "sth",
-		.type	= INTEL_TH_SOURCE,
-	},
-	{
-		.nres	= 2,
-		.res	= {
-			{
-				.start	= REG_STH_OFFSET,
-				.end	= REG_STH_OFFSET + REG_STH_LENGTH - 1,
-				.flags	= IORESOURCE_MEM,
-			},
-			{
-				.start	= TH_MMIO_RTIT,
-				.end	= 0,
-				.flags	= IORESOURCE_MEM,
-			},
-		},
-		.id	= -1,
-		.name	= "rtit",
 		.type	= INTEL_TH_SOURCE,
 	},
 	{
@@ -642,9 +603,6 @@ intel_th_subdevice_alloc(struct intel_th *th,
 		 */
 		if (!res[r].end && res[r].flags == IORESOURCE_MEM) {
 			bar = res[r].start;
-			err = -ENODEV;
-			if (bar >= th->num_resources)
-				goto fail_put_device;
 			res[r].start = 0;
 			res[r].end = resource_size(&devres[bar]) - 1;
 		}
@@ -656,22 +614,18 @@ intel_th_subdevice_alloc(struct intel_th *th,
 			dev_dbg(th->dev, "%s:%d @ %pR\n",
 				subdev->name, r, &res[r]);
 		} else if (res[r].flags & IORESOURCE_IRQ) {
-			/*
-			 * Only pass on the IRQ if we have useful interrupts:
-			 * the ones that can be configured via MINTCTL.
-			 */
-			if (INTEL_TH_CAP(th, has_mintctl) && th->irq != -1)
-				res[r].start = th->irq;
+			res[r].start	= th->irq;
 		}
 	}
 
 	err = intel_th_device_add_resources(thdev, res, subdev->nres);
-	if (err)
+	if (err) {
+		put_device(&thdev->dev);
 		goto fail_put_device;
+	}
 
 	if (subdev->type == INTEL_TH_OUTPUT) {
-		if (subdev->mknode)
-			thdev->dev.devt = MKDEV(th->major, th->num_thdevs);
+		thdev->dev.devt = MKDEV(th->major, th->num_thdevs);
 		thdev->output.type = subdev->otype;
 		thdev->output.port = -1;
 		thdev->output.scratchpad = subdev->scrpd;
@@ -682,8 +636,10 @@ intel_th_subdevice_alloc(struct intel_th *th,
 	}
 
 	err = device_add(&thdev->dev);
-	if (err)
+	if (err) {
+		put_device(&thdev->dev);
 		goto fail_free_res;
+	}
 
 	/* need switch driver to be loaded to enumerate the rest */
 	if (subdev->type == INTEL_TH_SWITCH && !req) {
@@ -788,18 +744,20 @@ static int intel_th_populate(struct intel_th *th)
 
 		thdev = intel_th_subdevice_alloc(th, subdev);
 		/* note: caller should free subdevices from th::thdev[] */
-		if (IS_ERR(thdev)) {
-			/* ENODEV for individual subdevices is allowed */
-			if (PTR_ERR(thdev) == -ENODEV)
-				continue;
-
+		if (IS_ERR(thdev))
 			return PTR_ERR(thdev);
-		}
 
 		th->thdev[th->num_thdevs++] = thdev;
 	}
 
 	return 0;
+}
+
+static int match_devt(struct device *dev, void *data)
+{
+	dev_t devt = (dev_t)(unsigned long)data;
+
+	return dev->devt == devt;
 }
 
 static int intel_th_output_open(struct inode *inode, struct file *file)
@@ -809,7 +767,9 @@ static int intel_th_output_open(struct inode *inode, struct file *file)
 	struct device *dev;
 	int err;
 
-	dev = bus_find_device_by_devt(&intel_th_bus, inode->i_rdev);
+	dev = bus_find_device(&intel_th_bus, NULL,
+			      (void *)(unsigned long)inode->i_rdev,
+			      match_devt);
 	if (!dev || !dev->driver)
 		return -ENODEV;
 
@@ -835,37 +795,26 @@ static const struct file_operations intel_th_output_fops = {
 	.llseek	= noop_llseek,
 };
 
-static irqreturn_t intel_th_irq(int irq, void *data)
-{
-	struct intel_th *th = data;
-	irqreturn_t ret = IRQ_NONE;
-	struct intel_th_driver *d;
-	int i;
-
-	for (i = 0; i < th->num_thdevs; i++) {
-		if (th->thdev[i]->type != INTEL_TH_OUTPUT)
-			continue;
-
-		d = to_intel_th_driver(th->thdev[i]->dev.driver);
-		if (d && d->irq)
-			ret |= d->irq(th->thdev[i]);
-	}
-
-	return ret;
-}
-
 /**
  * intel_th_alloc() - allocate a new Intel TH device and its subdevices
  * @dev:	parent device
- * @devres:	resources indexed by th_mmio_idx
+ * @devres:	parent's resources
+ * @ndevres:	number of resources
  * @irq:	irq number
  */
 struct intel_th *
-intel_th_alloc(struct device *dev, const struct intel_th_drvdata *drvdata,
-	       struct resource *devres, unsigned int ndevres)
+intel_th_alloc(struct device *dev, struct intel_th_drvdata *drvdata,
+	       struct resource *devres, unsigned int ndevres, int irq)
 {
-	int err, r, nr_mmios = 0;
 	struct intel_th *th;
+	int err, r;
+
+	if (irq == -1)
+		for (r = 0; r < ndevres; r++)
+			if (devres[r].flags & IORESOURCE_IRQ) {
+				irq = devres[r].start;
+				break;
+			}
 
 	th = kzalloc(sizeof(*th), GFP_KERNEL);
 	if (!th)
@@ -883,33 +832,12 @@ intel_th_alloc(struct device *dev, const struct intel_th_drvdata *drvdata,
 		err = th->major;
 		goto err_ida;
 	}
-	th->irq = -1;
 	th->dev = dev;
 	th->drvdata = drvdata;
 
-	for (r = 0; r < ndevres; r++)
-		switch (devres[r].flags & IORESOURCE_TYPE_BITS) {
-		case IORESOURCE_MEM:
-			th->resource[nr_mmios++] = devres[r];
-			break;
-		case IORESOURCE_IRQ:
-			err = devm_request_irq(dev, devres[r].start,
-					       intel_th_irq, IRQF_SHARED,
-					       dev_name(dev), th);
-			if (err)
-				goto err_chrdev;
-
-			if (th->irq == -1)
-				th->irq = devres[r].start;
-			th->num_irqs++;
-			break;
-		default:
-			dev_warn(dev, "Unknown resource type %lx\n",
-				 devres[r].flags);
-			break;
-		}
-
-	th->num_resources = nr_mmios;
+	th->resource = devres;
+	th->num_resources = ndevres;
+	th->irq = irq;
 
 	dev_set_drvdata(dev, th);
 
@@ -925,10 +853,6 @@ intel_th_alloc(struct device *dev, const struct intel_th_drvdata *drvdata,
 	}
 
 	return th;
-
-err_chrdev:
-	__unregister_chrdev(th->major, 0, TH_POSSIBLE_OUTPUTS,
-			    "intel_th/output");
 
 err_ida:
 	ida_simple_remove(&intel_th_ida, th->id);
@@ -954,9 +878,6 @@ void intel_th_free(struct intel_th *th)
 	}
 
 	th->num_thdevs = 0;
-
-	for (i = 0; i < th->num_irqs; i++)
-		devm_free_irq(th->dev, th->irq + i, th);
 
 	pm_runtime_get_sync(th->dev);
 	pm_runtime_forbid(th->dev);
@@ -993,27 +914,6 @@ int intel_th_trace_enable(struct intel_th_device *thdev)
 EXPORT_SYMBOL_GPL(intel_th_trace_enable);
 
 /**
- * intel_th_trace_switch() - execute a switch sequence
- * @thdev:	output device that requests tracing switch
- */
-int intel_th_trace_switch(struct intel_th_device *thdev)
-{
-	struct intel_th_device *hub = to_intel_th_device(thdev->dev.parent);
-	struct intel_th_driver *hubdrv = to_intel_th_driver(hub->dev.driver);
-
-	if (WARN_ON_ONCE(hub->type != INTEL_TH_SWITCH))
-		return -EINVAL;
-
-	if (WARN_ON_ONCE(thdev->type != INTEL_TH_OUTPUT))
-		return -EINVAL;
-
-	hubdrv->trig_switch(hub, &thdev->output);
-
-	return 0;
-}
-EXPORT_SYMBOL_GPL(intel_th_trace_switch);
-
-/**
  * intel_th_trace_disable() - disable tracing for an output device
  * @thdev:	output device that requests tracing be disabled
  */
@@ -1038,30 +938,15 @@ int intel_th_set_output(struct intel_th_device *thdev,
 {
 	struct intel_th_device *hub = to_intel_th_hub(thdev);
 	struct intel_th_driver *hubdrv = to_intel_th_driver(hub->dev.driver);
-	int ret;
 
 	/* In host mode, this is up to the external debugger, do nothing. */
 	if (hub->host_mode)
 		return 0;
 
-	/*
-	 * hub is instantiated together with the source device that
-	 * calls here, so guaranteed to be present.
-	 */
-	hubdrv = to_intel_th_driver(hub->dev.driver);
-	if (!hubdrv || !try_module_get(hubdrv->driver.owner))
-		return -EINVAL;
+	if (!hubdrv->set_output)
+		return -ENOTSUPP;
 
-	if (!hubdrv->set_output) {
-		ret = -ENOTSUPP;
-		goto out;
-	}
-
-	ret = hubdrv->set_output(hub, master);
-
-out:
-	module_put(hubdrv->driver.owner);
-	return ret;
+	return hubdrv->set_output(hub, master);
 }
 EXPORT_SYMBOL_GPL(intel_th_set_output);
 

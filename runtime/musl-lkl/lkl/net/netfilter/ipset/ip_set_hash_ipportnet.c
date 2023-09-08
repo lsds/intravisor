@@ -1,5 +1,9 @@
-// SPDX-License-Identifier: GPL-2.0-only
-/* Copyright (C) 2003-2013 Jozsef Kadlecsik <kadlec@netfilter.org> */
+/* Copyright (C) 2003-2013 Jozsef Kadlecsik <kadlec@blackhole.kfki.hu>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ */
 
 /* Kernel module implementing an IP set type: the hash:ip,port,net type */
 
@@ -27,11 +31,10 @@
 /*				4    Counters support added */
 /*				5    Comments support added */
 /*				6    Forceadd support added */
-/*				7    skbinfo support added */
-#define IPSET_TYPE_REV_MAX	8 /* bucketsize, initval support added */
+#define IPSET_TYPE_REV_MAX	7 /* skbinfo support added */
 
 MODULE_LICENSE("GPL");
-MODULE_AUTHOR("Jozsef Kadlecsik <kadlec@netfilter.org>");
+MODULE_AUTHOR("Jozsef Kadlecsik <kadlec@blackhole.kfki.hu>");
 IP_SET_MODULE_DESC("hash:ip,port,net", IPSET_TYPE_REV_MIN, IPSET_TYPE_REV_MAX);
 MODULE_ALIAS("ip_set_hash:ip,port,net");
 
@@ -60,7 +63,7 @@ struct hash_ipportnet4_elem {
 
 /* Common functions */
 
-static bool
+static inline bool
 hash_ipportnet4_data_equal(const struct hash_ipportnet4_elem *ip1,
 			   const struct hash_ipportnet4_elem *ip2,
 			   u32 *multi)
@@ -72,25 +75,25 @@ hash_ipportnet4_data_equal(const struct hash_ipportnet4_elem *ip1,
 	       ip1->proto == ip2->proto;
 }
 
-static int
+static inline int
 hash_ipportnet4_do_data_match(const struct hash_ipportnet4_elem *elem)
 {
 	return elem->nomatch ? -ENOTEMPTY : 1;
 }
 
-static void
+static inline void
 hash_ipportnet4_data_set_flags(struct hash_ipportnet4_elem *elem, u32 flags)
 {
 	elem->nomatch = !!((flags >> 16) & IPSET_FLAG_NOMATCH);
 }
 
-static void
+static inline void
 hash_ipportnet4_data_reset_flags(struct hash_ipportnet4_elem *elem, u8 *flags)
 {
 	swap(*flags, elem->nomatch);
 }
 
-static void
+static inline void
 hash_ipportnet4_data_netmask(struct hash_ipportnet4_elem *elem, u8 cidr)
 {
 	elem->ip2 &= ip_set_netmask(cidr);
@@ -117,7 +120,7 @@ nla_put_failure:
 	return true;
 }
 
-static void
+static inline void
 hash_ipportnet4_data_next(struct hash_ipportnet4_elem *next,
 			  const struct hash_ipportnet4_elem *d)
 {
@@ -253,9 +256,6 @@ hash_ipportnet4_uadt(struct ip_set *set, struct nlattr *tb[],
 			swap(port, port_to);
 	}
 
-	if (((u64)ip_to - ip + 1)*(port_to - port + 1) > IPSET_MAX_RANGE)
-		return -ERANGE;
-
 	ip2_to = ip2_from;
 	if (tb[IPSET_ATTR_IP2_TO]) {
 		ret = ip_set_get_hostipaddr4(tb[IPSET_ATTR_IP2_TO], &ip2_to);
@@ -312,7 +312,7 @@ struct hash_ipportnet6_elem {
 
 /* Common functions */
 
-static bool
+static inline bool
 hash_ipportnet6_data_equal(const struct hash_ipportnet6_elem *ip1,
 			   const struct hash_ipportnet6_elem *ip2,
 			   u32 *multi)
@@ -324,25 +324,25 @@ hash_ipportnet6_data_equal(const struct hash_ipportnet6_elem *ip1,
 	       ip1->proto == ip2->proto;
 }
 
-static int
+static inline int
 hash_ipportnet6_do_data_match(const struct hash_ipportnet6_elem *elem)
 {
 	return elem->nomatch ? -ENOTEMPTY : 1;
 }
 
-static void
+static inline void
 hash_ipportnet6_data_set_flags(struct hash_ipportnet6_elem *elem, u32 flags)
 {
 	elem->nomatch = !!((flags >> 16) & IPSET_FLAG_NOMATCH);
 }
 
-static void
+static inline void
 hash_ipportnet6_data_reset_flags(struct hash_ipportnet6_elem *elem, u8 *flags)
 {
 	swap(*flags, elem->nomatch);
 }
 
-static void
+static inline void
 hash_ipportnet6_data_netmask(struct hash_ipportnet6_elem *elem, u8 cidr)
 {
 	ip6_netmask(&elem->ip2, cidr);
@@ -369,7 +369,7 @@ nla_put_failure:
 	return true;
 }
 
-static void
+static inline void
 hash_ipportnet6_data_next(struct hash_ipportnet6_elem *next,
 			  const struct hash_ipportnet6_elem *d)
 {
@@ -517,13 +517,11 @@ static struct ip_set_type hash_ipportnet_type __read_mostly = {
 	.family		= NFPROTO_UNSPEC,
 	.revision_min	= IPSET_TYPE_REV_MIN,
 	.revision_max	= IPSET_TYPE_REV_MAX,
-	.create_flags[IPSET_TYPE_REV_MAX] = IPSET_CREATE_FLAG_BUCKETSIZE,
 	.create		= hash_ipportnet_create,
 	.create_policy	= {
 		[IPSET_ATTR_HASHSIZE]	= { .type = NLA_U32 },
 		[IPSET_ATTR_MAXELEM]	= { .type = NLA_U32 },
-		[IPSET_ATTR_INITVAL]	= { .type = NLA_U32 },
-		[IPSET_ATTR_BUCKETSIZE]	= { .type = NLA_U8 },
+		[IPSET_ATTR_PROBES]	= { .type = NLA_U8 },
 		[IPSET_ATTR_RESIZE]	= { .type = NLA_U8  },
 		[IPSET_ATTR_TIMEOUT]	= { .type = NLA_U32 },
 		[IPSET_ATTR_CADT_FLAGS]	= { .type = NLA_U32 },

@@ -1,18 +1,26 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Partial Parity Log for closing the RAID5 write hole
  * Copyright (c) 2017, Intel Corporation.
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms and conditions of the GNU General Public License,
+ * version 2, as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+ * more details.
  */
 
 #include <linux/kernel.h>
 #include <linux/blkdev.h>
 #include <linux/slab.h>
 #include <linux/crc32c.h>
+#include <linux/flex_array.h>
 #include <linux/async_tx.h>
 #include <linux/raid/md_p.h>
 #include "md.h"
 #include "raid5.h"
-#include "raid5-log.h"
 
 /*
  * PPL consists of a 4KB header (struct ppl_header) and at least 128KB for
@@ -97,9 +105,9 @@ struct ppl_conf {
 	atomic64_t seq;		/* current log write sequence number */
 
 	struct kmem_cache *io_kc;
-	mempool_t io_pool;
-	struct bio_set bs;
-	struct bio_set flush_bs;
+	mempool_t *io_pool;
+	struct bio_set *bs;
+	struct bio_set *flush_bs;
 
 	/* used only for recovery */
 	int recovered_entries;
@@ -108,8 +116,6 @@ struct ppl_conf {
 	/* stripes to retry if failed to allocate io_unit */
 	struct list_head no_mem_stripes;
 	spinlock_t no_mem_stripes_lock;
-
-	unsigned short write_hint;
 };
 
 struct ppl_log {
@@ -159,7 +165,7 @@ ops_run_partial_parity(struct stripe_head *sh, struct raid5_percpu *percpu,
 		       struct dma_async_tx_descriptor *tx)
 {
 	int disks = sh->disks;
-	struct page **srcs = percpu->scribble;
+	struct page **srcs = flex_array_get(percpu->scribble, 0);
 	int count = 0, pd_idx = sh->pd_idx, i;
 	struct async_submit_ctl submit;
 
@@ -190,7 +196,8 @@ ops_run_partial_parity(struct stripe_head *sh, struct raid5_percpu *percpu,
 	}
 
 	init_async_submit(&submit, ASYNC_TX_FENCE|ASYNC_TX_XOR_ZERO_DST, tx,
-			  NULL, sh, (void *) (srcs + sh->disks + 2));
+			  NULL, sh, flex_array_get(percpu->scribble, 0)
+			  + sizeof(struct page *) * (sh->disks + 2));
 
 	if (count == 1)
 		tx = async_memcpy(sh->ppl_page, srcs[0], 0, 0, PAGE_SIZE,
@@ -237,7 +244,7 @@ static struct ppl_io_unit *ppl_new_iounit(struct ppl_log *log,
 	struct ppl_header *pplhdr;
 	struct page *header_page;
 
-	io = mempool_alloc(&ppl_conf->io_pool, GFP_NOWAIT);
+	io = mempool_alloc(ppl_conf->io_pool, GFP_NOWAIT);
 	if (!io)
 		return NULL;
 
@@ -250,8 +257,7 @@ static struct ppl_io_unit *ppl_new_iounit(struct ppl_log *log,
 	INIT_LIST_HEAD(&io->stripe_list);
 	atomic_set(&io->pending_stripes, 0);
 	atomic_set(&io->pending_flushes, 0);
-	bio_init(&io->bio, log->rdev->bdev, io->biovec, PPL_IO_INLINE_BVECS,
-		 REQ_OP_WRITE | REQ_FUA);
+	bio_init(&io->bio, io->biovec, PPL_IO_INLINE_BVECS);
 
 	pplhdr = page_address(io->header_page);
 	clear_page(pplhdr);
@@ -325,7 +331,7 @@ static int ppl_log_stripe(struct ppl_log *log, struct stripe_head *sh)
 		 * be just after the last logged stripe and write to the same
 		 * disks. Use bit shift and logarithm to avoid 64-bit division.
 		 */
-		if ((sh->sector == sh_last->sector + RAID5_STRIPE_SECTORS(conf)) &&
+		if ((sh->sector == sh_last->sector + STRIPE_SECTORS) &&
 		    (data_sector >> ilog2(conf->chunk_sectors) ==
 		     data_sector_last >> ilog2(conf->chunk_sectors)) &&
 		    ((data_sector - data_sector_last) * data_disks ==
@@ -417,10 +423,12 @@ static void ppl_log_endio(struct bio *bio)
 
 static void ppl_submit_iounit_bio(struct ppl_io_unit *io, struct bio *bio)
 {
-	pr_debug("%s: seq: %llu size: %u sector: %llu dev: %pg\n",
+	char b[BDEVNAME_SIZE];
+
+	pr_debug("%s: seq: %llu size: %u sector: %llu dev: %s\n",
 		 __func__, io->seq, bio->bi_iter.bi_size,
 		 (unsigned long long)bio->bi_iter.bi_sector,
-		 bio->bi_bdev);
+		 bio_devname(bio, b));
 
 	submit_bio(bio);
 }
@@ -464,6 +472,8 @@ static void ppl_submit_iounit(struct ppl_io_unit *io)
 
 
 	bio->bi_end_io = ppl_log_endio;
+	bio->bi_opf = REQ_OP_WRITE | REQ_FUA;
+	bio_set_dev(bio, log->rdev->bdev);
 	bio->bi_iter.bi_sector = log->next_io_sector;
 	bio_add_page(bio, io->header_page, PAGE_SIZE, 0);
 
@@ -492,9 +502,10 @@ static void ppl_submit_iounit(struct ppl_io_unit *io)
 		if (!bio_add_page(bio, sh->ppl_page, PAGE_SIZE, 0)) {
 			struct bio *prev = bio;
 
-			bio = bio_alloc_bioset(prev->bi_bdev, BIO_MAX_VECS,
-					       prev->bi_opf, GFP_NOIO,
-					       &ppl_conf->bs);
+			bio = bio_alloc_bioset(GFP_NOIO, BIO_MAX_PAGES,
+					       ppl_conf->bs);
+			bio->bi_opf = prev->bi_opf;
+			bio_copy_dev(bio, prev);
 			bio->bi_iter.bi_sector = bio_end_sector(prev);
 			bio_add_page(bio, sh->ppl_page, PAGE_SIZE, 0);
 
@@ -559,7 +570,7 @@ static void ppl_io_unit_finished(struct ppl_io_unit *io)
 	list_del(&io->log_sibling);
 	spin_unlock(&log->io_list_lock);
 
-	mempool_free(io, &ppl_conf->io_pool);
+	mempool_free(io, ppl_conf->io_pool);
 
 	spin_lock(&ppl_conf->no_mem_stripes_lock);
 	if (!list_empty(&ppl_conf->no_mem_stripes)) {
@@ -584,8 +595,9 @@ static void ppl_flush_endio(struct bio *bio)
 	struct ppl_log *log = io->log;
 	struct ppl_conf *ppl_conf = log->ppl_conf;
 	struct r5conf *conf = ppl_conf->mddev->private;
+	char b[BDEVNAME_SIZE];
 
-	pr_debug("%s: dev: %pg\n", __func__, bio->bi_bdev);
+	pr_debug("%s: dev: %s\n", __func__, bio_devname(bio, b));
 
 	if (bio->bi_status) {
 		struct md_rdev *rdev;
@@ -628,14 +640,16 @@ static void ppl_do_flush(struct ppl_io_unit *io)
 
 		if (bdev) {
 			struct bio *bio;
+			char b[BDEVNAME_SIZE];
 
-			bio = bio_alloc_bioset(bdev, 0,
-					       REQ_OP_WRITE | REQ_PREFLUSH,
-					       GFP_NOIO, &ppl_conf->flush_bs);
+			bio = bio_alloc_bioset(GFP_NOIO, 0, ppl_conf->flush_bs);
+			bio_set_dev(bio, bdev);
 			bio->bi_private = io;
+			bio->bi_opf = REQ_OP_WRITE | REQ_PREFLUSH;
 			bio->bi_end_io = ppl_flush_endio;
 
-			pr_debug("%s: dev: %ps\n", __func__, bio->bi_bdev);
+			pr_debug("%s: dev: %s\n", __func__,
+				 bio_devname(bio, b));
 
 			submit_bio(bio);
 			flushed_disks++;
@@ -679,7 +693,7 @@ void ppl_quiesce(struct r5conf *conf, int quiesce)
 	}
 }
 
-int ppl_handle_flush_request(struct bio *bio)
+int ppl_handle_flush_request(struct r5l_log *log, struct bio *bio)
 {
 	if (bio->bi_iter.bi_size == 0) {
 		bio_endio(bio);
@@ -798,6 +812,7 @@ static int ppl_recover_entry(struct ppl_log *log, struct ppl_header_entry *e,
 	int data_disks;
 	int i;
 	int ret = 0;
+	char b[BDEVNAME_SIZE];
 	unsigned int pp_size = le32_to_cpu(e->pp_size);
 	unsigned int data_size = le32_to_cpu(e->data_size);
 
@@ -834,9 +849,9 @@ static int ppl_recover_entry(struct ppl_log *log, struct ppl_header_entry *e,
 
 	/* if start and end is 4k aligned, use a 4k block */
 	if (block_size == 512 &&
-	    (r_sector_first & (RAID5_STRIPE_SECTORS(conf) - 1)) == 0 &&
-	    (r_sector_last & (RAID5_STRIPE_SECTORS(conf) - 1)) == 0)
-		block_size = RAID5_STRIPE_SIZE(conf);
+	    (r_sector_first & (STRIPE_SECTORS - 1)) == 0 &&
+	    (r_sector_last & (STRIPE_SECTORS - 1)) == 0)
+		block_size = STRIPE_SIZE;
 
 	/* iterate through blocks in strip */
 	for (i = 0; i < strip_sectors; i += (block_size >> 9)) {
@@ -882,9 +897,7 @@ static int ppl_recover_entry(struct ppl_log *log, struct ppl_header_entry *e,
 				 (unsigned long long)r_sector, dd_idx,
 				 (unsigned long long)sector);
 
-			/* Array has not started so rcu dereference is safe */
-			rdev = rcu_dereference_protected(
-					conf->disks[dd_idx].rdev, 1);
+			rdev = conf->disks[dd_idx].rdev;
 			if (!rdev || (!test_bit(In_sync, &rdev->flags) &&
 				      sector >= rdev->recovery_offset)) {
 				pr_debug("%s:%*s data member disk %d missing\n",
@@ -893,11 +906,11 @@ static int ppl_recover_entry(struct ppl_log *log, struct ppl_header_entry *e,
 				break;
 			}
 
-			pr_debug("%s:%*s reading data member disk %pg sector %llu\n",
-				 __func__, indent, "", rdev->bdev,
+			pr_debug("%s:%*s reading data member disk %s sector %llu\n",
+				 __func__, indent, "", bdevname(rdev->bdev, b),
 				 (unsigned long long)sector);
 			if (!sync_page_io(rdev, sector, block_size, page2,
-					REQ_OP_READ, false)) {
+					REQ_OP_READ, 0, false)) {
 				md_error(mddev, rdev);
 				pr_debug("%s:%*s read failed!\n", __func__,
 					 indent, "");
@@ -919,7 +932,7 @@ static int ppl_recover_entry(struct ppl_log *log, struct ppl_header_entry *e,
 				 (unsigned long long)(ppl_sector + i));
 			if (!sync_page_io(log->rdev,
 					ppl_sector - log->rdev->data_offset + i,
-					block_size, page2, REQ_OP_READ,
+					block_size, page2, REQ_OP_READ, 0,
 					false)) {
 				pr_debug("%s:%*s read failed!\n", __func__,
 					 indent, "");
@@ -935,18 +948,15 @@ static int ppl_recover_entry(struct ppl_log *log, struct ppl_header_entry *e,
 		parity_sector = raid5_compute_sector(conf, r_sector_first + i,
 				0, &disk, &sh);
 		BUG_ON(sh.pd_idx != le32_to_cpu(e->parity_disk));
-
-		/* Array has not started so rcu dereference is safe */
-		parity_rdev = rcu_dereference_protected(
-					conf->disks[sh.pd_idx].rdev, 1);
+		parity_rdev = conf->disks[sh.pd_idx].rdev;
 
 		BUG_ON(parity_rdev->bdev->bd_dev != log->rdev->bdev->bd_dev);
-		pr_debug("%s:%*s write parity at sector %llu, disk %pg\n",
+		pr_debug("%s:%*s write parity at sector %llu, disk %s\n",
 			 __func__, indent, "",
 			 (unsigned long long)parity_sector,
-			 parity_rdev->bdev);
+			 bdevname(parity_rdev->bdev, b));
 		if (!sync_page_io(parity_rdev, parity_sector, block_size,
-				  page1, REQ_OP_WRITE, false)) {
+				page1, REQ_OP_WRITE, 0, false)) {
 			pr_debug("%s:%*s parity write error!\n", __func__,
 				 indent, "");
 			md_error(mddev, parity_rdev);
@@ -998,7 +1008,7 @@ static int ppl_recover(struct ppl_log *log, struct ppl_header *pplhdr,
 			int s = pp_size > PAGE_SIZE ? PAGE_SIZE : pp_size;
 
 			if (!sync_page_io(rdev, sector - rdev->data_offset,
-					s, page, REQ_OP_READ, false)) {
+					s, page, REQ_OP_READ, 0, false)) {
 				md_error(mddev, rdev);
 				ret = -EIO;
 				goto out;
@@ -1032,7 +1042,7 @@ static int ppl_recover(struct ppl_log *log, struct ppl_header *pplhdr,
 	}
 
 	/* flush the disk cache after recovery if necessary */
-	ret = blkdev_issue_flush(rdev->bdev);
+	ret = blkdev_issue_flush(rdev->bdev, GFP_KERNEL, NULL);
 out:
 	__free_page(page);
 	return ret;
@@ -1062,7 +1072,7 @@ static int ppl_write_empty_header(struct ppl_log *log)
 
 	if (!sync_page_io(rdev, rdev->ppl.sector - rdev->data_offset,
 			  PPL_HEADER_SIZE, page, REQ_OP_WRITE | REQ_SYNC |
-			  REQ_FUA, false)) {
+			  REQ_FUA, 0, false)) {
 		md_error(rdev->mddev, rdev);
 		ret = -EIO;
 	}
@@ -1076,7 +1086,7 @@ static int ppl_load_distributed(struct ppl_log *log)
 	struct ppl_conf *ppl_conf = log->ppl_conf;
 	struct md_rdev *rdev = log->rdev;
 	struct mddev *mddev = rdev->mddev;
-	struct page *page, *page2;
+	struct page *page, *page2, *tmp;
 	struct ppl_header *pplhdr = NULL, *prev_pplhdr = NULL;
 	u32 crc, crc_stored;
 	u32 signature;
@@ -1100,7 +1110,7 @@ static int ppl_load_distributed(struct ppl_log *log)
 		if (!sync_page_io(rdev,
 				  rdev->ppl.sector - rdev->data_offset +
 				  pplhdr_offset, PAGE_SIZE, page, REQ_OP_READ,
-				  false)) {
+				  0, false)) {
 			md_error(mddev, rdev);
 			ret = -EIO;
 			/* if not able to read - don't recover any PPL */
@@ -1151,7 +1161,9 @@ static int ppl_load_distributed(struct ppl_log *log)
 		prev_pplhdr_offset = pplhdr_offset;
 		prev_pplhdr = pplhdr;
 
-		swap(page, page2);
+		tmp = page;
+		page = page2;
+		page2 = tmp;
 
 		/* calculate next potential ppl offset */
 		for (i = 0; i < le32_to_cpu(pplhdr->entries_count); i++)
@@ -1234,9 +1246,11 @@ static void __ppl_exit_log(struct ppl_conf *ppl_conf)
 
 	kfree(ppl_conf->child_logs);
 
-	bioset_exit(&ppl_conf->bs);
-	bioset_exit(&ppl_conf->flush_bs);
-	mempool_exit(&ppl_conf->io_pool);
+	if (ppl_conf->bs)
+		bioset_free(ppl_conf->bs);
+	if (ppl_conf->flush_bs)
+		bioset_free(ppl_conf->flush_bs);
+	mempool_destroy(ppl_conf->io_pool);
 	kmem_cache_destroy(ppl_conf->io_kc);
 
 	kfree(ppl_conf);
@@ -1254,6 +1268,7 @@ void ppl_exit_log(struct r5conf *conf)
 
 static int ppl_validate_rdev(struct md_rdev *rdev)
 {
+	char b[BDEVNAME_SIZE];
 	int ppl_data_sectors;
 	int ppl_size_new;
 
@@ -1266,12 +1281,11 @@ static int ppl_validate_rdev(struct md_rdev *rdev)
 	ppl_data_sectors = rdev->ppl.size - (PPL_HEADER_SIZE >> 9);
 
 	if (ppl_data_sectors > 0)
-		ppl_data_sectors = rounddown(ppl_data_sectors,
-				RAID5_STRIPE_SECTORS((struct r5conf *)rdev->mddev->private));
+		ppl_data_sectors = rounddown(ppl_data_sectors, STRIPE_SECTORS);
 
 	if (ppl_data_sectors <= 0) {
-		pr_warn("md/raid:%s: PPL space too small on %pg\n",
-			mdname(rdev->mddev), rdev->bdev);
+		pr_warn("md/raid:%s: PPL space too small on %s\n",
+			mdname(rdev->mddev), bdevname(rdev->bdev, b));
 		return -ENOSPC;
 	}
 
@@ -1281,16 +1295,16 @@ static int ppl_validate_rdev(struct md_rdev *rdev)
 	     rdev->ppl.sector + ppl_size_new > rdev->data_offset) ||
 	    (rdev->ppl.sector >= rdev->data_offset &&
 	     rdev->data_offset + rdev->sectors > rdev->ppl.sector)) {
-		pr_warn("md/raid:%s: PPL space overlaps with data on %pg\n",
-			mdname(rdev->mddev), rdev->bdev);
+		pr_warn("md/raid:%s: PPL space overlaps with data on %s\n",
+			mdname(rdev->mddev), bdevname(rdev->bdev, b));
 		return -EINVAL;
 	}
 
 	if (!rdev->mddev->external &&
 	    ((rdev->ppl.offset > 0 && rdev->ppl.offset < (rdev->sb_size >> 9)) ||
 	     (rdev->ppl.offset <= 0 && rdev->ppl.offset + ppl_size_new > 0))) {
-		pr_warn("md/raid:%s: PPL space overlaps with superblock on %pg\n",
-			mdname(rdev->mddev), rdev->bdev);
+		pr_warn("md/raid:%s: PPL space overlaps with superblock on %s\n",
+			mdname(rdev->mddev), bdevname(rdev->bdev, b));
 		return -EINVAL;
 	}
 
@@ -1353,7 +1367,7 @@ int ppl_init_log(struct r5conf *conf)
 		return -EINVAL;
 	}
 
-	max_disks = sizeof_field(struct ppl_log, disk_flush_bitmap) *
+	max_disks = FIELD_SIZEOF(struct ppl_log, disk_flush_bitmap) *
 		BITS_PER_BYTE;
 	if (conf->raid_disks > max_disks) {
 		pr_warn("md/raid:%s PPL doesn't support over %d disks in the array\n",
@@ -1373,18 +1387,24 @@ int ppl_init_log(struct r5conf *conf)
 		goto err;
 	}
 
-	ret = mempool_init(&ppl_conf->io_pool, conf->raid_disks, ppl_io_pool_alloc,
-			   ppl_io_pool_free, ppl_conf->io_kc);
-	if (ret)
+	ppl_conf->io_pool = mempool_create(conf->raid_disks, ppl_io_pool_alloc,
+					   ppl_io_pool_free, ppl_conf->io_kc);
+	if (!ppl_conf->io_pool) {
+		ret = -ENOMEM;
 		goto err;
+	}
 
-	ret = bioset_init(&ppl_conf->bs, conf->raid_disks, 0, BIOSET_NEED_BVECS);
-	if (ret)
+	ppl_conf->bs = bioset_create(conf->raid_disks, 0, BIOSET_NEED_BVECS);
+	if (!ppl_conf->bs) {
+		ret = -ENOMEM;
 		goto err;
+	}
 
-	ret = bioset_init(&ppl_conf->flush_bs, conf->raid_disks, 0, 0);
-	if (ret)
+	ppl_conf->flush_bs = bioset_create(conf->raid_disks, 0, 0);
+	if (!ppl_conf->flush_bs) {
+		ret = -ENOMEM;
 		goto err;
+	}
 
 	ppl_conf->count = conf->raid_disks;
 	ppl_conf->child_logs = kcalloc(ppl_conf->count, sizeof(struct ppl_log),
@@ -1407,9 +1427,7 @@ int ppl_init_log(struct r5conf *conf)
 
 	for (i = 0; i < ppl_conf->count; i++) {
 		struct ppl_log *log = &ppl_conf->child_logs[i];
-		/* Array has not started so rcu dereference is safe */
-		struct md_rdev *rdev =
-			rcu_dereference_protected(conf->disks[i].rdev, 1);
+		struct md_rdev *rdev = conf->disks[i].rdev;
 
 		mutex_init(&log->io_mutex);
 		spin_lock_init(&log->io_list_lock);
@@ -1461,13 +1479,14 @@ int ppl_modify_log(struct r5conf *conf, struct md_rdev *rdev, bool add)
 	struct ppl_conf *ppl_conf = conf->log_private;
 	struct ppl_log *log;
 	int ret = 0;
+	char b[BDEVNAME_SIZE];
 
 	if (!rdev)
 		return -EINVAL;
 
-	pr_debug("%s: disk: %d operation: %s dev: %pg\n",
+	pr_debug("%s: disk: %d operation: %s dev: %s\n",
 		 __func__, rdev->raid_disk, add ? "add" : "remove",
-		 rdev->bdev);
+		 bdevname(rdev->bdev, b));
 
 	if (rdev->raid_disk < 0)
 		return 0;
@@ -1492,41 +1511,3 @@ int ppl_modify_log(struct r5conf *conf, struct md_rdev *rdev, bool add)
 
 	return ret;
 }
-
-static ssize_t
-ppl_write_hint_show(struct mddev *mddev, char *buf)
-{
-	return sprintf(buf, "%d\n", 0);
-}
-
-static ssize_t
-ppl_write_hint_store(struct mddev *mddev, const char *page, size_t len)
-{
-	struct r5conf *conf;
-	int err = 0;
-	unsigned short new;
-
-	if (len >= PAGE_SIZE)
-		return -EINVAL;
-	if (kstrtou16(page, 10, &new))
-		return -EINVAL;
-
-	err = mddev_lock(mddev);
-	if (err)
-		return err;
-
-	conf = mddev->private;
-	if (!conf)
-		err = -ENODEV;
-	else if (!raid5_has_ppl(conf) || !conf->log_private)
-		err = -EINVAL;
-
-	mddev_unlock(mddev);
-
-	return err ?: len;
-}
-
-struct md_sysfs_entry
-ppl_write_hint = __ATTR(ppl_write_hint, S_IRUGO | S_IWUSR,
-			ppl_write_hint_show,
-			ppl_write_hint_store);

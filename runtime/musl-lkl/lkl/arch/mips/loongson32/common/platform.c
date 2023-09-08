@@ -1,6 +1,10 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Copyright (c) 2011-2016 Zhang, Keguang <keguang.zhang@gmail.com>
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License as published by the
+ * Free Software Foundation; either version 2 of the License, or (at your
+ * option) any later version.
  */
 
 #include <linux/clk.h>
@@ -77,6 +81,42 @@ struct platform_device ls1x_cpufreq_pdev = {
 	},
 };
 
+/* DMA */
+static struct resource ls1x_dma_resources[] = {
+	[0] = {
+		.start = LS1X_DMAC_BASE,
+		.end = LS1X_DMAC_BASE + SZ_4 - 1,
+		.flags = IORESOURCE_MEM,
+	},
+	[1] = {
+		.start = LS1X_DMA0_IRQ,
+		.end = LS1X_DMA0_IRQ,
+		.flags = IORESOURCE_IRQ,
+	},
+	[2] = {
+		.start = LS1X_DMA1_IRQ,
+		.end = LS1X_DMA1_IRQ,
+		.flags = IORESOURCE_IRQ,
+	},
+	[3] = {
+		.start = LS1X_DMA2_IRQ,
+		.end = LS1X_DMA2_IRQ,
+		.flags = IORESOURCE_IRQ,
+	},
+};
+
+struct platform_device ls1x_dma_pdev = {
+	.name		= "ls1x-dma",
+	.id		= -1,
+	.num_resources	= ARRAY_SIZE(ls1x_dma_resources),
+	.resource	= ls1x_dma_resources,
+};
+
+void __init ls1x_dma_set_platdata(struct plat_ls1x_dma *pdata)
+{
+	ls1x_dma_pdev.dev.platform_data = pdata;
+}
+
 /* Synopsys Ethernet GMAC */
 static struct stmmac_mdio_bus_data ls1x_mdio_bus_data = {
 	.phy_mask	= 0,
@@ -98,7 +138,7 @@ int ls1x_eth_mux_init(struct platform_device *pdev, void *priv)
 	if (plat_dat->bus_id) {
 		__raw_writel(__raw_readl(LS1X_MUX_CTRL0) | GMAC1_USE_UART1 |
 			     GMAC1_USE_UART0, LS1X_MUX_CTRL0);
-		switch (plat_dat->phy_interface) {
+		switch (plat_dat->interface) {
 		case PHY_INTERFACE_MODE_RGMII:
 			val &= ~(GMAC1_USE_TXCLK | GMAC1_USE_PWM23);
 			break;
@@ -107,12 +147,12 @@ int ls1x_eth_mux_init(struct platform_device *pdev, void *priv)
 			break;
 		default:
 			pr_err("unsupported mii mode %d\n",
-			       plat_dat->phy_interface);
+			       plat_dat->interface);
 			return -ENOTSUPP;
 		}
 		val &= ~GMAC1_SHUT;
 	} else {
-		switch (plat_dat->phy_interface) {
+		switch (plat_dat->interface) {
 		case PHY_INTERFACE_MODE_RGMII:
 			val &= ~(GMAC0_USE_TXCLK | GMAC0_USE_PWM01);
 			break;
@@ -121,7 +161,7 @@ int ls1x_eth_mux_init(struct platform_device *pdev, void *priv)
 			break;
 		default:
 			pr_err("unsupported mii mode %d\n",
-			       plat_dat->phy_interface);
+			       plat_dat->interface);
 			return -ENOTSUPP;
 		}
 		val &= ~GMAC0_SHUT;
@@ -131,7 +171,7 @@ int ls1x_eth_mux_init(struct platform_device *pdev, void *priv)
 	plat_dat = dev_get_platdata(&pdev->dev);
 
 	val &= ~PHY_INTF_SELI;
-	if (plat_dat->phy_interface == PHY_INTERFACE_MODE_RMII)
+	if (plat_dat->interface == PHY_INTERFACE_MODE_RMII)
 		val |= 0x4 << PHY_INTF_SELI_SHIFT;
 	__raw_writel(val, LS1X_MUX_CTRL1);
 
@@ -146,9 +186,9 @@ static struct plat_stmmacenet_data ls1x_eth0_pdata = {
 	.bus_id			= 0,
 	.phy_addr		= -1,
 #if defined(CONFIG_LOONGSON1_LS1B)
-	.phy_interface		= PHY_INTERFACE_MODE_MII,
+	.interface		= PHY_INTERFACE_MODE_MII,
 #elif defined(CONFIG_LOONGSON1_LS1C)
-	.phy_interface		= PHY_INTERFACE_MODE_RMII,
+	.interface		= PHY_INTERFACE_MODE_RMII,
 #endif
 	.mdio_bus_data		= &ls1x_mdio_bus_data,
 	.dma_cfg		= &ls1x_eth_dma_cfg,
@@ -186,7 +226,7 @@ struct platform_device ls1x_eth0_pdev = {
 static struct plat_stmmacenet_data ls1x_eth1_pdata = {
 	.bus_id			= 1,
 	.phy_addr		= -1,
-	.phy_interface		= PHY_INTERFACE_MODE_MII,
+	.interface		= PHY_INTERFACE_MODE_MII,
 	.mdio_bus_data		= &ls1x_mdio_bus_data,
 	.dma_cfg		= &ls1x_eth_dma_cfg,
 	.has_gmac		= 1,
@@ -250,6 +290,33 @@ struct platform_device ls1x_gpio1_pdev = {
 	.num_resources	= ARRAY_SIZE(ls1x_gpio1_resources),
 	.resource	= ls1x_gpio1_resources,
 };
+
+/* NAND Flash */
+static struct resource ls1x_nand_resources[] = {
+	[0] = {
+		.start	= LS1X_NAND_BASE,
+		.end	= LS1X_NAND_BASE + SZ_32 - 1,
+		.flags	= IORESOURCE_MEM,
+	},
+	[1] = {
+		/* DMA channel 0 is dedicated to NAND */
+		.start	= LS1X_DMA_CHANNEL0,
+		.end	= LS1X_DMA_CHANNEL0,
+		.flags	= IORESOURCE_DMA,
+	},
+};
+
+struct platform_device ls1x_nand_pdev = {
+	.name		= "ls1x-nand",
+	.id		= -1,
+	.num_resources	= ARRAY_SIZE(ls1x_nand_resources),
+	.resource	= ls1x_nand_resources,
+};
+
+void __init ls1x_nand_set_platdata(struct plat_ls1x_nand *pdata)
+{
+	ls1x_nand_pdev.dev.platform_data = pdata;
+}
 
 /* USB EHCI */
 static u64 ls1x_ehci_dmamask = DMA_BIT_MASK(32);

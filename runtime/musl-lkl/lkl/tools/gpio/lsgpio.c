@@ -1,8 +1,11 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * lsgpio - example on how to list the GPIO lines on a system
  *
  * Copyright (C) 2015 Linus Walleij
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License version 2 as published by
+ * the Free Software Foundation.
  *
  * Usage:
  *	lsgpio <-n device-name>
@@ -25,76 +28,44 @@
 
 struct gpio_flag {
 	char *name;
-	unsigned long long mask;
+	unsigned long mask;
 };
 
 struct gpio_flag flagnames[] = {
 	{
-		.name = "used",
-		.mask = GPIO_V2_LINE_FLAG_USED,
-	},
-	{
-		.name = "input",
-		.mask = GPIO_V2_LINE_FLAG_INPUT,
+		.name = "kernel",
+		.mask = GPIOLINE_FLAG_KERNEL,
 	},
 	{
 		.name = "output",
-		.mask = GPIO_V2_LINE_FLAG_OUTPUT,
+		.mask = GPIOLINE_FLAG_IS_OUT,
 	},
 	{
 		.name = "active-low",
-		.mask = GPIO_V2_LINE_FLAG_ACTIVE_LOW,
+		.mask = GPIOLINE_FLAG_ACTIVE_LOW,
 	},
 	{
 		.name = "open-drain",
-		.mask = GPIO_V2_LINE_FLAG_OPEN_DRAIN,
+		.mask = GPIOLINE_FLAG_OPEN_DRAIN,
 	},
 	{
 		.name = "open-source",
-		.mask = GPIO_V2_LINE_FLAG_OPEN_SOURCE,
-	},
-	{
-		.name = "pull-up",
-		.mask = GPIO_V2_LINE_FLAG_BIAS_PULL_UP,
-	},
-	{
-		.name = "pull-down",
-		.mask = GPIO_V2_LINE_FLAG_BIAS_PULL_DOWN,
-	},
-	{
-		.name = "bias-disabled",
-		.mask = GPIO_V2_LINE_FLAG_BIAS_DISABLED,
-	},
-	{
-		.name = "clock-realtime",
-		.mask = GPIO_V2_LINE_FLAG_EVENT_CLOCK_REALTIME,
+		.mask = GPIOLINE_FLAG_OPEN_SOURCE,
 	},
 };
 
-static void print_attributes(struct gpio_v2_line_info *info)
+void print_flags(unsigned long flags)
 {
 	int i;
-	const char *field_format = "%s";
+	int printed = 0;
 
 	for (i = 0; i < ARRAY_SIZE(flagnames); i++) {
-		if (info->flags & flagnames[i].mask) {
-			fprintf(stdout, field_format, flagnames[i].name);
-			field_format = ", %s";
+		if (flags & flagnames[i].mask) {
+			if (printed)
+				fprintf(stdout, " ");
+			fprintf(stdout, "%s", flagnames[i].name);
+			printed++;
 		}
-	}
-
-	if ((info->flags & GPIO_V2_LINE_FLAG_EDGE_RISING) &&
-	    (info->flags & GPIO_V2_LINE_FLAG_EDGE_FALLING))
-		fprintf(stdout, field_format, "both-edges");
-	else if (info->flags & GPIO_V2_LINE_FLAG_EDGE_RISING)
-		fprintf(stdout, field_format, "rising-edge");
-	else if (info->flags & GPIO_V2_LINE_FLAG_EDGE_FALLING)
-		fprintf(stdout, field_format, "falling-edge");
-
-	for (i = 0; i < info->num_attrs; i++) {
-		if (info->attrs[i].id == GPIO_V2_LINE_ATTR_ID_DEBOUNCE)
-			fprintf(stdout, ", debounce_period=%dusec",
-				info->attrs[0].debounce_period_us);
 	}
 }
 
@@ -114,7 +85,7 @@ int list_device(const char *device_name)
 	if (fd == -1) {
 		ret = -errno;
 		fprintf(stderr, "Failed to open %s\n", chrdev_name);
-		goto exit_free_name;
+		goto exit_close_error;
 	}
 
 	/* Inspect this GPIO chip */
@@ -129,18 +100,18 @@ int list_device(const char *device_name)
 
 	/* Loop over the lines and print info */
 	for (i = 0; i < cinfo.lines; i++) {
-		struct gpio_v2_line_info linfo;
+		struct gpioline_info linfo;
 
 		memset(&linfo, 0, sizeof(linfo));
-		linfo.offset = i;
+		linfo.line_offset = i;
 
-		ret = ioctl(fd, GPIO_V2_GET_LINEINFO_IOCTL, &linfo);
+		ret = ioctl(fd, GPIO_GET_LINEINFO_IOCTL, &linfo);
 		if (ret == -1) {
 			ret = -errno;
 			perror("Failed to issue LINEINFO IOCTL\n");
 			goto exit_close_error;
 		}
-		fprintf(stdout, "\tline %2d:", linfo.offset);
+		fprintf(stdout, "\tline %2d:", linfo.line_offset);
 		if (linfo.name[0])
 			fprintf(stdout, " \"%s\"", linfo.name);
 		else
@@ -151,7 +122,7 @@ int list_device(const char *device_name)
 			fprintf(stdout, " unused");
 		if (linfo.flags) {
 			fprintf(stdout, " [");
-			print_attributes(&linfo);
+			print_flags(linfo.flags);
 			fprintf(stdout, "]");
 		}
 		fprintf(stdout, "\n");
@@ -161,7 +132,6 @@ int list_device(const char *device_name)
 exit_close_error:
 	if (close(fd) == -1)
 		perror("Failed to close GPIO character device file");
-exit_free_name:
 	free(chrdev_name);
 	return ret;
 }

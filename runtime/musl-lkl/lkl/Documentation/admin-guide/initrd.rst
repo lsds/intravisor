@@ -376,7 +376,7 @@ Resources
 ---------
 
 .. [#f1] Almesberger, Werner; "Booting Linux: The History and the Future"
-    https://www.almesberger.net/cv/papers/ols2k-9.ps.gz
+    http://www.almesberger.net/cv/papers/ols2k-9.ps.gz
 .. [#f2] newlib package (experimental), with initrd example
     https://www.sourceware.org/newlib/
 .. [#f3] util-linux: Miscellaneous utilities for Linux

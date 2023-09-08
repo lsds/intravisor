@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * drivers/power/process.c - Functions for starting/stopping processes on
+ * drivers/power/process.c - Functions for starting/stopping processes on 
  *                           suspend transitions.
  *
  * Originally from swsusp.
  */
+
+
+#undef DEBUG
 
 #include <linux/interrupt.h>
 #include <linux/oom.h>
@@ -50,7 +53,8 @@ static int try_to_freeze_tasks(bool user_only)
 			if (p == current || !freeze_task(p))
 				continue;
 
-			todo++;
+			if (!freezer_should_skip(p))
+				todo++;
 		}
 		read_unlock(&tasklist_lock);
 
@@ -90,12 +94,13 @@ static int try_to_freeze_tasks(bool user_only)
 		       todo - wq_busy, wq_busy);
 
 		if (wq_busy)
-			show_all_workqueues();
+			show_workqueue_state();
 
-		if (!wakeup || pm_debug_messages_on) {
+		if (!wakeup) {
 			read_lock(&tasklist_lock);
 			for_each_process_thread(g, p) {
-				if (p != current && freezing(p) && !frozen(p))
+				if (p != current && !freezer_should_skip(p)
+				    && freezing(p) && !frozen(p))
 					sched_show_task(p);
 			}
 			read_unlock(&tasklist_lock);
@@ -127,9 +132,9 @@ int freeze_processes(void)
 	current->flags |= PF_SUSPEND_TASK;
 
 	if (!pm_freezing)
-		static_branch_inc(&freezer_active);
+		atomic_inc(&system_freezing_cnt);
 
-	pm_wakeup_clear(0);
+	pm_wakeup_clear(true);
 	pr_info("Freezing user space processes ... ");
 	pm_freezing = true;
 	error = try_to_freeze_tasks(true);
@@ -141,7 +146,7 @@ int freeze_processes(void)
 	BUG_ON(in_atomic());
 
 	/*
-	 * Now that the whole userspace is frozen we need to disable
+	 * Now that the whole userspace is frozen we need to disbale
 	 * the OOM killer to disallow any further interference with
 	 * killable tasks. There is no guarantee oom victims will
 	 * ever reach a point they go away we have to wait with a timeout.
@@ -188,7 +193,7 @@ void thaw_processes(void)
 
 	trace_suspend_resume(TPS("thaw_processes"), 0, true);
 	if (pm_freezing)
-		static_branch_dec(&freezer_active);
+		atomic_dec(&system_freezing_cnt);
 	pm_freezing = false;
 	pm_nosig_freezing = false;
 
@@ -230,7 +235,7 @@ void thaw_kernel_threads(void)
 
 	read_lock(&tasklist_lock);
 	for_each_process_thread(g, p) {
-		if (p->flags & PF_KTHREAD)
+		if (p->flags & (PF_KTHREAD | PF_WQ_WORKER))
 			__thaw_task(p);
 	}
 	read_unlock(&tasklist_lock);

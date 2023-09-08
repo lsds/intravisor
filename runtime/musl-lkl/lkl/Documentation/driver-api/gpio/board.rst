@@ -6,7 +6,7 @@ This document explains how GPIOs can be assigned to given devices and functions.
 
 Note that it only applies to the new descriptor-based interface. For a
 description of the deprecated integer-based GPIO interface please refer to
-legacy.rst (actually, there is no real mapping possible with the old
+gpio-legacy.txt (actually, there is no real mapping possible with the old
 interface; you just fetch an integer from somewhere and request the
 corresponding GPIO).
 
@@ -71,14 +71,14 @@ with the help of _DSD (Device Specific Data), introduced in ACPI 5.1::
 
 	Device (FOO) {
 		Name (_CRS, ResourceTemplate () {
-			GpioIo (Exclusive, PullUp, 0, 0, IoRestrictionOutputOnly,
-				"\\_SB.GPI0", 0, ResourceConsumer) { 15 } // red
-			GpioIo (Exclusive, PullUp, 0, 0, IoRestrictionOutputOnly,
-				"\\_SB.GPI0", 0, ResourceConsumer) { 16 } // green
-			GpioIo (Exclusive, PullUp, 0, 0, IoRestrictionOutputOnly,
-				"\\_SB.GPI0", 0, ResourceConsumer) { 17 } // blue
-			GpioIo (Exclusive, PullNone, 0, 0, IoRestrictionOutputOnly,
-				"\\_SB.GPI0", 0, ResourceConsumer) { 1 } // power
+			GpioIo (Exclusive, ..., IoRestrictionOutputOnly,
+				"\\_SB.GPI0") {15} // red
+			GpioIo (Exclusive, ..., IoRestrictionOutputOnly,
+				"\\_SB.GPI0") {16} // green
+			GpioIo (Exclusive, ..., IoRestrictionOutputOnly,
+				"\\_SB.GPI0") {17} // blue
+			GpioIo (Exclusive, ..., IoRestrictionOutputOnly,
+				"\\_SB.GPI0") {1} // power
 		})
 
 		Name (_DSD, Package () {
@@ -92,13 +92,16 @@ with the help of _DSD (Device Specific Data), introduced in ACPI 5.1::
 						^FOO, 2, 0, 1,
 					}
 				},
-				Package () { "power-gpios", Package () { ^FOO, 3, 0, 0 } },
+				Package () {
+					"power-gpios",
+					Package () {^FOO, 3, 0, 0},
+				},
 			}
 		})
 	}
 
 For more information about the ACPI GPIO bindings see
-Documentation/firmware-guide/acpi/gpio-properties.rst.
+Documentation/acpi/gpio-properties.txt.
 
 Platform Data
 -------------
@@ -110,15 +113,13 @@ files that desire to do so need to include the following header::
 GPIOs are mapped by the means of tables of lookups, containing instances of the
 gpiod_lookup structure. Two macros are defined to help declaring such mappings::
 
-	GPIO_LOOKUP(key, chip_hwnum, con_id, flags)
-	GPIO_LOOKUP_IDX(key, chip_hwnum, con_id, idx, flags)
+	GPIO_LOOKUP(chip_label, chip_hwnum, con_id, flags)
+	GPIO_LOOKUP_IDX(chip_label, chip_hwnum, con_id, idx, flags)
 
 where
 
-  - key is either the label of the gpiod_chip instance providing the GPIO, or
-    the GPIO line name
-  - chip_hwnum is the hardware number of the GPIO within the chip, or U16_MAX
-    to indicate that key is a GPIO line name
+  - chip_label is the label of the gpiod_chip instance providing the GPIO
+  - chip_hwnum is the hardware number of the GPIO within the chip
   - con_id is the name of the GPIO function from the device point of view. It
 	can be NULL, in which case it will match any function.
   - idx is the index of the GPIO within the function.
@@ -134,10 +135,7 @@ where
 
 In the future, these flags might be extended to support more properties.
 
-Note that:
-  1. GPIO line names are not guaranteed to be globally unique, so the first
-     match found will be used.
-  2. GPIO_LOOKUP() is just a shortcut to GPIO_LOOKUP_IDX() where idx = 0.
+Note that GPIO_LOOKUP() is just a shortcut to GPIO_LOOKUP_IDX() where idx = 0.
 
 A lookup table can then be defined as follows, with an empty entry defining its
 end. The 'dev_id' field of the table is the identifier of the device that will
@@ -179,44 +177,3 @@ mapping and is thus transparent to GPIO consumers.
 
 A set of functions such as gpiod_set_value() is available to work with
 the new descriptor-oriented interface.
-
-Boards using platform data can also hog GPIO lines by defining GPIO hog tables.
-
-.. code-block:: c
-
-        struct gpiod_hog gpio_hog_table[] = {
-                GPIO_HOG("gpio.0", 10, "foo", GPIO_ACTIVE_LOW, GPIOD_OUT_HIGH),
-                { }
-        };
-
-And the table can be added to the board code as follows::
-
-        gpiod_add_hogs(gpio_hog_table);
-
-The line will be hogged as soon as the gpiochip is created or - in case the
-chip was created earlier - when the hog table is registered.
-
-Arrays of pins
---------------
-In addition to requesting pins belonging to a function one by one, a device may
-also request an array of pins assigned to the function.  The way those pins are
-mapped to the device determines if the array qualifies for fast bitmap
-processing.  If yes, a bitmap is passed over get/set array functions directly
-between a caller and a respective .get/set_multiple() callback of a GPIO chip.
-
-In order to qualify for fast bitmap processing, the array must meet the
-following requirements:
-
-- pin hardware number of array member 0 must also be 0,
-- pin hardware numbers of consecutive array members which belong to the same
-  chip as member 0 does must also match their array indexes.
-
-Otherwise fast bitmap processing path is not used in order to avoid consecutive
-pins which belong to the same chip but are not in hardware order being processed
-separately.
-
-If the array applies for fast bitmap processing path, pins which belong to
-different chips than member 0 does, as well as those with indexes different from
-their hardware pin numbers, are excluded from the fast path, both input and
-output.  Moreover, open drain and open source pins are excluded from fast bitmap
-output processing.

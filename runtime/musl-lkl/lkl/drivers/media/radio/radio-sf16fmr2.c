@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /* SF16-FMR2 and SF16-FMD2 radio driver for Linux
  * Copyright (c) 2011 Ondrej Zary
  *
@@ -214,8 +213,8 @@ static int fmr2_probe(struct fmr2 *fmr2, struct device *pdev, int io)
 		if (io == fmr2_cards[i]->io)
 			return -EBUSY;
 
-	strscpy(fmr2->v4l2_dev.name, "radio-sf16fmr2",
-		sizeof(fmr2->v4l2_dev.name));
+	strlcpy(fmr2->v4l2_dev.name, "radio-sf16fmr2",
+			sizeof(fmr2->v4l2_dev.name)),
 	fmr2->io = io;
 
 	if (!request_region(fmr2->io, 2, fmr2->v4l2_dev.name)) {
@@ -235,7 +234,7 @@ static int fmr2_probe(struct fmr2 *fmr2, struct device *pdev, int io)
 	fmr2->tea.radio_nr = radio_nr[num_fmr2_cards];
 	fmr2->tea.ops = &fmr2_tea_ops;
 	fmr2->tea.ext_init = fmr2_tea_ext_init;
-	strscpy(fmr2->tea.card, card_name, sizeof(fmr2->tea.card));
+	strlcpy(fmr2->tea.card, card_name, sizeof(fmr2->tea.card));
 	snprintf(fmr2->tea.bus_info, sizeof(fmr2->tea.bus_info), "%s:%s",
 			fmr2->is_fmd2 ? "PnP" : "ISA", dev_name(pdev));
 
@@ -293,9 +292,11 @@ static void fmr2_remove(struct fmr2 *fmr2)
 	kfree(fmr2);
 }
 
-static void fmr2_isa_remove(struct device *pdev, unsigned int ndev)
+static int fmr2_isa_remove(struct device *pdev, unsigned int ndev)
 {
 	fmr2_remove(dev_get_drvdata(pdev));
+
+	return 0;
 }
 
 static void fmr2_pnp_remove(struct pnp_dev *pdev)

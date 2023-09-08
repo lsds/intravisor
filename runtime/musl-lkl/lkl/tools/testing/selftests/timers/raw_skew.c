@@ -89,7 +89,7 @@ void get_monotonic_and_raw(struct timespec *mon, struct timespec *raw)
 	}
 }
 
-int main(int argc, char **argv)
+int main(int argv, char **argc)
 {
 	struct timespec mon, raw, start, end;
 	long long delta1, delta2, interval, eppm, ppm;
@@ -112,7 +112,6 @@ int main(int argc, char **argv)
 		printf("WARNING: ADJ_OFFSET in progress, this will cause inaccurate results\n");
 
 	printf("Estimating clock drift: ");
-	fflush(stdout);
 	sleep(120);
 
 	get_monotonic_and_raw(&mon, &raw);
@@ -135,11 +134,6 @@ int main(int argc, char **argv)
 	printf(" %lld.%i(act)", ppm/1000, abs((int)(ppm%1000)));
 
 	if (llabs(eppm - ppm) > 1000) {
-		if (tx1.offset || tx2.offset ||
-		    tx1.freq != tx2.freq || tx1.tick != tx2.tick) {
-			printf("	[SKIP]\n");
-			return ksft_exit_skip("The clock was adjusted externally. Shutdown NTPd or other time sync daemons\n");
-		}
 		printf("	[FAILED]\n");
 		return ksft_exit_fail();
 	}

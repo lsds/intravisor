@@ -1,7 +1,15 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Copyright 2013 Eukréa Electromatique <eric@eukrea.com>
  * Copyright 2013 Eukréa Electromatique <denis@eukrea.com>
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version 2
+ * of the License, or (at your option) any later version.
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
  */
 
 #include <dt-bindings/input/input.h>
@@ -19,12 +27,12 @@
 		default-brightness-level = <10>;
 	};
 
-	gpio-keys-0 {
+	button-sw3 {
 		compatible = "gpio-keys";
 		pinctrl-names = "default";
 		pinctrl-0 = <&gpio_button_sw3_pins_mbmx28lc>;
 
-		switch-sw3 {
+		sw3 {
 			label = "SW3";
 			gpios = <&gpio1 21 GPIO_ACTIVE_LOW>;
 			linux,code = <BTN_MISC>;
@@ -32,12 +40,12 @@
 		};
 	};
 
-	gpio-keys-1 {
+	button-sw4 {
 		compatible = "gpio-keys";
 		pinctrl-names = "default";
 		pinctrl-0 = <&gpio_button_sw4_pins_mbmx28lc>;
 
-		switch-sw4 {
+		sw4 {
 			label = "SW4";
 			gpios = <&gpio1 20 GPIO_ACTIVE_LOW>;
 			linux,code = <BTN_MISC>;

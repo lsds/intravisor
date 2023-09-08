@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * drivers/iio/light/tsl2563.c
  *
@@ -9,11 +8,23 @@
  *
  * Converted to IIO driver
  * Amit Kucheria <amit.kucheria@verdurent.com>
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * version 2 as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
+ * 02110-1301 USA
  */
 
 #include <linux/module.h>
-#include <linux/mod_devicetable.h>
-#include <linux/property.h>
 #include <linux/i2c.h>
 #include <linux/interrupt.h>
 #include <linux/irq.h>
@@ -71,7 +82,7 @@
 #define TSL2563_TIMING_GAIN16	0x10
 #define TSL2563_TIMING_GAIN1	0x00
 
-#define TSL2563_INT_DISABLED	0x00
+#define TSL2563_INT_DISBLED	0x00
 #define TSL2563_INT_LEVEL	0x10
 #define TSL2563_INT_PERSIST(n)	((n) & 0x0F)
 
@@ -310,7 +321,7 @@ static int tsl2563_get_adc(struct tsl2563_chip *chip)
 		goto out;
 
 	if (!chip->int_enabled) {
-		cancel_delayed_work_sync(&chip->poweroff_work);
+		cancel_delayed_work(&chip->poweroff_work);
 
 		if (!tsl2563_get_power(chip)) {
 			ret = tsl2563_set_power(chip, 1);
@@ -638,7 +649,7 @@ static int tsl2563_write_interrupt_config(struct iio_dev *indio_dev,
 		chip->intr &= ~0x30;
 		chip->intr |= 0x10;
 		/* ensure the chip is actually on */
-		cancel_delayed_work_sync(&chip->poweroff_work);
+		cancel_delayed_work(&chip->poweroff_work);
 		if (!tsl2563_get_power(chip)) {
 			ret = tsl2563_set_power(chip, 1);
 			if (ret)
@@ -705,6 +716,7 @@ static int tsl2563_probe(struct i2c_client *client,
 	struct iio_dev *indio_dev;
 	struct tsl2563_chip *chip;
 	struct tsl2563_platform_data *pdata = client->dev.platform_data;
+	struct device_node *np = client->dev.of_node;
 	int err = 0;
 	u8 id = 0;
 
@@ -714,7 +726,7 @@ static int tsl2563_probe(struct i2c_client *client,
 
 	chip = iio_priv(indio_dev);
 
-	i2c_set_clientdata(client, indio_dev);
+	i2c_set_clientdata(client, chip);
 	chip->client = client;
 
 	err = tsl2563_detect(chip);
@@ -739,19 +751,19 @@ static int tsl2563_probe(struct i2c_client *client,
 	chip->calib0 = tsl2563_calib_from_sysfs(CALIB_BASE_SYSFS);
 	chip->calib1 = tsl2563_calib_from_sysfs(CALIB_BASE_SYSFS);
 
-	if (pdata) {
+	if (pdata)
 		chip->cover_comp_gain = pdata->cover_comp_gain;
-	} else {
-		err = device_property_read_u32(&client->dev, "amstaos,cover-comp-gain",
-					       &chip->cover_comp_gain);
-		if (err)
-			chip->cover_comp_gain = 1;
-	}
+	else if (np)
+		of_property_read_u32(np, "amstaos,cover-comp-gain",
+				     &chip->cover_comp_gain);
+	else
+		chip->cover_comp_gain = 1;
 
 	dev_info(&client->dev, "model %d, rev. %d\n", id >> 4, id & 0x0f);
 	indio_dev->name = client->name;
 	indio_dev->channels = tsl2563_channels;
 	indio_dev->num_channels = ARRAY_SIZE(tsl2563_channels);
+	indio_dev->dev.parent = &client->dev;
 	indio_dev->modes = INDIO_DIRECT_MODE;
 
 	if (client->irq)
@@ -796,25 +808,28 @@ fail:
 	return err;
 }
 
-static void tsl2563_remove(struct i2c_client *client)
+static int tsl2563_remove(struct i2c_client *client)
 {
-	struct iio_dev *indio_dev = i2c_get_clientdata(client);
-	struct tsl2563_chip *chip = iio_priv(indio_dev);
+	struct tsl2563_chip *chip = i2c_get_clientdata(client);
+	struct iio_dev *indio_dev = iio_priv_to_dev(chip);
 
 	iio_device_unregister(indio_dev);
 	if (!chip->int_enabled)
-		cancel_delayed_work_sync(&chip->poweroff_work);
+		cancel_delayed_work(&chip->poweroff_work);
 	/* Ensure that interrupts are disabled - then flush any bottom halves */
 	chip->intr &= ~0x30;
 	i2c_smbus_write_byte_data(chip->client, TSL2563_CMD | TSL2563_REG_INT,
 				  chip->intr);
+	flush_scheduled_work();
 	tsl2563_set_power(chip, 0);
+
+	return 0;
 }
 
+#ifdef CONFIG_PM_SLEEP
 static int tsl2563_suspend(struct device *dev)
 {
-	struct iio_dev *indio_dev = i2c_get_clientdata(to_i2c_client(dev));
-	struct tsl2563_chip *chip = iio_priv(indio_dev);
+	struct tsl2563_chip *chip = i2c_get_clientdata(to_i2c_client(dev));
 	int ret;
 
 	mutex_lock(&chip->lock);
@@ -832,8 +847,7 @@ out:
 
 static int tsl2563_resume(struct device *dev)
 {
-	struct iio_dev *indio_dev = i2c_get_clientdata(to_i2c_client(dev));
-	struct tsl2563_chip *chip = iio_priv(indio_dev);
+	struct tsl2563_chip *chip = i2c_get_clientdata(to_i2c_client(dev));
 	int ret;
 
 	mutex_lock(&chip->lock);
@@ -853,8 +867,11 @@ out:
 	return ret;
 }
 
-static DEFINE_SIMPLE_DEV_PM_OPS(tsl2563_pm_ops, tsl2563_suspend,
-				tsl2563_resume);
+static SIMPLE_DEV_PM_OPS(tsl2563_pm_ops, tsl2563_suspend, tsl2563_resume);
+#define TSL2563_PM_OPS (&tsl2563_pm_ops)
+#else
+#define TSL2563_PM_OPS NULL
+#endif
 
 static const struct i2c_device_id tsl2563_id[] = {
 	{ "tsl2560", 0 },
@@ -878,7 +895,7 @@ static struct i2c_driver tsl2563_i2c_driver = {
 	.driver = {
 		.name	 = "tsl2563",
 		.of_match_table = tsl2563_of_match,
-		.pm	= pm_sleep_ptr(&tsl2563_pm_ops),
+		.pm	= TSL2563_PM_OPS,
 	},
 	.probe		= tsl2563_probe,
 	.remove		= tsl2563_remove,

@@ -1,8 +1,22 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Handles the M-Systems DiskOnChip G3 chip
  *
  * Copyright (C) 2011 Robert Jarzmik
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ *
  */
 
 #include <linux/kernel.h>
@@ -300,7 +314,7 @@ static void doc_write_data_area(struct docg3 *docg3, const void *buf, int len)
 }
 
 /**
- * doc_set_reliable_mode - Sets the flash to normal or reliable data mode
+ * doc_set_data_mode - Sets the flash to normal or reliable data mode
  * @docg3: the device
  *
  * The reliable data mode is a bit slower than the fast mode, but less errors
@@ -442,7 +456,7 @@ static void doc_setup_writeaddr_sector(struct docg3 *docg3, int sector, int ofs)
 }
 
 /**
- * doc_read_seek - Set both flash planes to the specified block, page for reading
+ * doc_seek - Set both flash planes to the specified block, page for reading
  * @docg3: the device
  * @block0: the first plane block index
  * @block1: the second plane block index
@@ -647,7 +661,7 @@ static int doc_ecc_bch_fix_data(struct docg3 *docg3, void *buf, u8 *hwecc)
 
 	for (i = 0; i < DOC_ECC_BCH_SIZE; i++)
 		ecc[i] = bitrev8(hwecc[i]);
-	numerrs = bch_decode(docg3->cascade->bch, NULL,
+	numerrs = decode_bch(docg3->cascade->bch, NULL,
 			     DOC_ECC_BCH_COVERED_BYTES,
 			     NULL, ecc, NULL, errorpos);
 	BUG_ON(numerrs == -EINVAL);
@@ -816,7 +830,7 @@ static void doc_read_page_finish(struct docg3 *docg3)
 
 /**
  * calc_block_sector - Calculate blocks, pages and ofs.
- *
+
  * @from: offset in flash
  * @block0: first plane block index calculated
  * @block1: second plane block index calculated
@@ -871,7 +885,6 @@ static int doc_read_oob(struct mtd_info *mtd, loff_t from,
 	u8 *buf = ops->datbuf;
 	size_t len, ooblen, nbdata, nboob;
 	u8 hwecc[DOC_ECC_BCH_SIZE], eccconf1;
-	struct mtd_ecc_stats old_stats;
 	int max_bitflips = 0;
 
 	if (buf)
@@ -896,7 +909,6 @@ static int doc_read_oob(struct mtd_info *mtd, loff_t from,
 	ret = 0;
 	skip = from % DOC_LAYOUT_PAGE_SIZE;
 	mutex_lock(&docg3->cascade->lock);
-	old_stats = mtd->ecc_stats;
 	while (ret >= 0 && (len > 0 || ooblen > 0)) {
 		calc_block_sector(from - skip, &block0, &block1, &page, &ofs,
 			docg3->reliable);
@@ -968,12 +980,6 @@ static int doc_read_oob(struct mtd_info *mtd, loff_t from,
 	}
 
 out:
-	if (ops->stats) {
-		ops->stats->uncorrectable_errors +=
-			mtd->ecc_stats.failed - old_stats.failed;
-		ops->stats->corrected_bitflips +=
-			mtd->ecc_stats.corrected - old_stats.corrected;
-	}
 	mutex_unlock(&docg3->cascade->lock);
 	return ret;
 err_in_read:
@@ -1464,7 +1470,8 @@ static struct docg3 *sysfs_dev2docg3(struct device *dev,
 				     struct device_attribute *attr)
 {
 	int floor;
-	struct mtd_info **docg3_floors = dev_get_drvdata(dev);
+	struct platform_device *pdev = to_platform_device(dev);
+	struct mtd_info **docg3_floors = platform_get_drvdata(pdev);
 
 	floor = attr->attr.name[1] - '0';
 	if (floor < 0 || floor >= DOC_MAX_NBFLOORS)
@@ -1597,7 +1604,7 @@ static void doc_unregister_sysfs(struct platform_device *pdev,
 /*
  * Debug sysfs entries
  */
-static int flashcontrol_show(struct seq_file *s, void *p)
+static int dbg_flashctrl_show(struct seq_file *s, void *p)
 {
 	struct docg3 *docg3 = (struct docg3 *)s->private;
 
@@ -1617,9 +1624,9 @@ static int flashcontrol_show(struct seq_file *s, void *p)
 
 	return 0;
 }
-DEFINE_SHOW_ATTRIBUTE(flashcontrol);
+DEBUGFS_RO_ATTR(flashcontrol, dbg_flashctrl_show);
 
-static int asic_mode_show(struct seq_file *s, void *p)
+static int dbg_asicmode_show(struct seq_file *s, void *p)
 {
 	struct docg3 *docg3 = (struct docg3 *)s->private;
 
@@ -1654,9 +1661,9 @@ static int asic_mode_show(struct seq_file *s, void *p)
 	seq_puts(s, ")\n");
 	return 0;
 }
-DEFINE_SHOW_ATTRIBUTE(asic_mode);
+DEBUGFS_RO_ATTR(asic_mode, dbg_asicmode_show);
 
-static int device_id_show(struct seq_file *s, void *p)
+static int dbg_device_id_show(struct seq_file *s, void *p)
 {
 	struct docg3 *docg3 = (struct docg3 *)s->private;
 	int id;
@@ -1668,9 +1675,9 @@ static int device_id_show(struct seq_file *s, void *p)
 	seq_printf(s, "DeviceId = %d\n", id);
 	return 0;
 }
-DEFINE_SHOW_ATTRIBUTE(device_id);
+DEBUGFS_RO_ATTR(device_id, dbg_device_id_show);
 
-static int protection_show(struct seq_file *s, void *p)
+static int dbg_protection_show(struct seq_file *s, void *p)
 {
 	struct docg3 *docg3 = (struct docg3 *)s->private;
 	int protect, dps0, dps0_low, dps0_high, dps1, dps1_low, dps1_high;
@@ -1720,7 +1727,7 @@ static int protection_show(struct seq_file *s, void *p)
 		   !!(dps1 & DOC_DPS_KEY_OK));
 	return 0;
 }
-DEFINE_SHOW_ATTRIBUTE(protection);
+DEBUGFS_RO_ATTR(protection, dbg_protection_show);
 
 static void __init doc_dbg_register(struct mtd_info *floor)
 {
@@ -1761,8 +1768,8 @@ static int __init doc_set_driver_info(int chip_id, struct mtd_info *mtd)
 
 	switch (chip_id) {
 	case DOC_CHIPID_G3:
-		mtd->name = devm_kasprintf(docg3->dev, GFP_KERNEL, "docg3.%d",
-					   docg3->device_id);
+		mtd->name = kasprintf(GFP_KERNEL, "docg3.%d",
+				      docg3->device_id);
 		if (!mtd->name)
 			return -ENOMEM;
 		docg3->max_block = 2047;
@@ -1791,9 +1798,10 @@ static int __init doc_set_driver_info(int chip_id, struct mtd_info *mtd)
 
 /**
  * doc_probe_device - Check if a device is available
- * @cascade: the cascade of chips this devices will belong to
+ * @base: the io space where the device is probed
  * @floor: the floor of the probed device
  * @dev: the device
+ * @cascade: the cascade of chips this devices will belong to
  *
  * Checks whether a device at the specified IO range, and floor is available.
  *
@@ -1820,7 +1828,7 @@ doc_probe_device(struct docg3_cascade *cascade, int floor, struct device *dev)
 	mtd->dev.parent = dev;
 	bbt_nbpages = DIV_ROUND_UP(docg3->max_block + 1,
 				   8 * DOC_LAYOUT_PAGE_SIZE);
-	docg3->bbt = kcalloc(DOC_LAYOUT_PAGE_SIZE, bbt_nbpages, GFP_KERNEL);
+	docg3->bbt = kzalloc(bbt_nbpages * DOC_LAYOUT_PAGE_SIZE, GFP_KERNEL);
 	if (!docg3->bbt)
 		goto nomem3;
 
@@ -1865,7 +1873,7 @@ nomem3:
 nomem2:
 	kfree(docg3);
 nomem1:
-	return ret ? ERR_PTR(ret) : NULL;
+	return ERR_PTR(ret);
 }
 
 /**
@@ -1879,6 +1887,7 @@ static void doc_release_device(struct mtd_info *mtd)
 	mtd_device_unregister(mtd);
 	kfree(docg3->bbt);
 	kfree(docg3);
+	kfree(mtd->name);
 	kfree(mtd);
 }
 
@@ -1959,7 +1968,7 @@ static int docg3_suspend(struct platform_device *pdev, pm_message_t state)
 }
 
 /**
- * docg3_probe - Probe the IO space for a DiskOnChip G3 chip
+ * doc_probe - Probe the IO space for a DiskOnChip G3 chip
  * @pdev: platform device
  *
  * Probes for a G3 chip at the specified IO space in the platform data
@@ -1982,22 +1991,17 @@ static int __init docg3_probe(struct platform_device *pdev)
 		dev_err(dev, "No I/O memory resource defined\n");
 		return ret;
 	}
+	base = devm_ioremap(dev, ress->start, DOC_IOSPACE_SIZE);
 
 	ret = -ENOMEM;
-	base = devm_ioremap(dev, ress->start, DOC_IOSPACE_SIZE);
-	if (!base) {
-		dev_err(dev, "devm_ioremap dev failed\n");
-		return ret;
-	}
-
-	cascade = devm_kcalloc(dev, DOC_MAX_NBFLOORS, sizeof(*cascade),
+	cascade = devm_kzalloc(dev, sizeof(*cascade) * DOC_MAX_NBFLOORS,
 			       GFP_KERNEL);
 	if (!cascade)
 		return ret;
 	cascade->base = base;
 	mutex_init(&cascade->lock);
-	cascade->bch = bch_init(DOC_ECC_BCH_M, DOC_ECC_BCH_T,
-				DOC_ECC_BCH_PRIMPOLY, false);
+	cascade->bch = init_bch(DOC_ECC_BCH_M, DOC_ECC_BCH_T,
+			     DOC_ECC_BCH_PRIMPOLY);
 	if (!cascade->bch)
 		return ret;
 
@@ -2033,7 +2037,7 @@ notfound:
 	ret = -ENODEV;
 	dev_info(dev, "No supported DiskOnChip found\n");
 err_probe:
-	bch_free(cascade->bch);
+	free_bch(cascade->bch);
 	for (floor = 0; floor < DOC_MAX_NBFLOORS; floor++)
 		if (cascade->floors[floor])
 			doc_release_device(cascade->floors[floor]);
@@ -2057,7 +2061,7 @@ static int docg3_release(struct platform_device *pdev)
 		if (cascade->floors[floor])
 			doc_release_device(cascade->floors[floor]);
 
-	bch_free(docg3->cascade->bch);
+	free_bch(docg3->cascade->bch);
 	return 0;
 }
 

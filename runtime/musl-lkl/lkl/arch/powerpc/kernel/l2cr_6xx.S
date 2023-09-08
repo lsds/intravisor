@@ -1,8 +1,20 @@
-/* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
 	L2CR functions
 	Copyright © 1997-1998 by PowerLogix R & D, Inc.
 
+	This program is free software; you can redistribute it and/or modify
+	it under the terms of the GNU General Public License as published by
+	the Free Software Foundation; either version 2 of the License, or
+	(at your option) any later version.
+
+	This program is distributed in the hope that it will be useful,
+	but WITHOUT ANY WARRANTY; without even the implied warranty of
+	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+	GNU General Public License for more details.
+
+	You should have received a copy of the GNU General Public License
+	along with this program; if not, write to the Free Software
+	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 */
 /*
 	Thur, Dec. 12, 1998.
@@ -33,7 +45,6 @@
 #include <asm/ppc_asm.h>
 #include <asm/cache.h>
 #include <asm/page.h>
-#include <asm/feature-fixups.h>
 
 /* Usage:
 
@@ -96,7 +107,7 @@ END_FTR_SECTION_IFCLR(CPU_FTR_L2CR)
 
 	/* Stop DST streams */
 BEGIN_FTR_SECTION
-	PPC_DSSALL
+	DSSALL
 	sync
 END_FTR_SECTION_IFSET(CPU_FTR_ALTIVEC)
 
@@ -256,6 +267,7 @@ END_FTR_SECTION_IFSET(CPU_FTR_SPEC7450)
 	sync
 
 	/* Restore MSR (restores EE and DR bits to original state) */
+	SYNC
 	mtmsr	r7
 	isync
 
@@ -292,7 +304,7 @@ END_FTR_SECTION_IFCLR(CPU_FTR_L3CR)
 	isync
 
 	/* Stop DST streams */
-	PPC_DSSALL
+	DSSALL
 	sync
 
 	/* Get the current enable bit of the L3CR into r4 */
@@ -376,7 +388,7 @@ END_FTR_SECTION_IFCLR(CPU_FTR_L3CR)
 1:	bdnz	1b
 
 	/* Restore MSR (restores EE and DR bits to original state) */
-4:
+4:	SYNC
 	mtmsr	r7
 	isync
 	blr
@@ -401,7 +413,7 @@ END_FTR_SECTION_IFSET(CPU_FTR_L3CR)
 _GLOBAL(__flush_disable_L1)
 	/* Stop pending alitvec streams and memory accesses */
 BEGIN_FTR_SECTION
-	PPC_DSSALL
+	DSSALL
 END_FTR_SECTION_IFSET(CPU_FTR_ALTIVEC)
  	sync
 
@@ -454,6 +466,5 @@ _GLOBAL(__inval_enable_L1)
 	sync
 
  	blr
-_ASM_NOKPROBE_SYMBOL(__inval_enable_L1)
 
 

@@ -1,8 +1,9 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Windfarm PowerMac thermal control.  MAX6690 sensor.
  *
  * Copyright (C) 2005 Paul Mackerras, IBM Corp. <paulus@samba.org>
+ *
+ * Use and redistribute under the terms of the GNU GPL v2.
  */
 #include <linux/types.h>
 #include <linux/errno.h>
@@ -10,7 +11,7 @@
 #include <linux/init.h>
 #include <linux/slab.h>
 #include <linux/i2c.h>
-
+#include <asm/prom.h>
 #include <asm/pmac_low_i2c.h>
 
 #include "windfarm.h"
@@ -104,12 +105,14 @@ static int wf_max6690_probe(struct i2c_client *client,
 	return rc;
 }
 
-static void wf_max6690_remove(struct i2c_client *client)
+static int wf_max6690_remove(struct i2c_client *client)
 {
 	struct wf_6690_sensor *max = i2c_get_clientdata(client);
 
 	max->i2c = NULL;
 	wf_unregister_sensor(&max->sens);
+
+	return 0;
 }
 
 static const struct i2c_device_id wf_max6690_id[] = {
@@ -118,16 +121,9 @@ static const struct i2c_device_id wf_max6690_id[] = {
 };
 MODULE_DEVICE_TABLE(i2c, wf_max6690_id);
 
-static const struct of_device_id wf_max6690_of_id[] = {
-	{ .compatible = "max6690", },
-	{ }
-};
-MODULE_DEVICE_TABLE(of, wf_max6690_of_id);
-
 static struct i2c_driver wf_max6690_driver = {
 	.driver = {
 		.name		= "wf_max6690",
-		.of_match_table = wf_max6690_of_id,
 	},
 	.probe		= wf_max6690_probe,
 	.remove		= wf_max6690_remove,

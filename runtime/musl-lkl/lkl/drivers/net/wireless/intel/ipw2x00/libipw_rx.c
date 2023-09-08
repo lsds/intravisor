@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Original code based Host AP (software wireless LAN access point) driver
  * for Intersil Prism2/2.5/3 - hostap.o module, common routines
@@ -7,6 +6,11 @@
  * <j@w1.fi>
  * Copyright (c) 2002-2003, Jouni Malinen <j@w1.fi>
  * Copyright (c) 2004-2005, Intel Corporation
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation. See README and COPYING for
+ * more details.
  */
 
 #include <linux/compiler.h>
@@ -927,8 +931,7 @@ static u8 qos_oui[QOS_OUI_LEN] = { 0x00, 0x50, 0xF2 };
 static int libipw_verify_qos_info(struct libipw_qos_information_element
 				     *info_element, int sub_type)
 {
-	if (info_element->elementID != QOS_ELEMENT_ID)
-		return -1;
+
 	if (info_element->qui_subtype != sub_type)
 		return -1;
 	if (memcmp(info_element->qui, qos_oui, QOS_OUI_LEN))
@@ -944,45 +947,69 @@ static int libipw_verify_qos_info(struct libipw_qos_information_element
 /*
  * Parse a QoS parameter element
  */
-static int libipw_read_qos_param_element(
-			struct libipw_qos_parameter_info *element_param,
-			struct libipw_info_element *info_element)
+static int libipw_read_qos_param_element(struct libipw_qos_parameter_info
+					    *element_param, struct libipw_info_element
+					    *info_element)
 {
-	size_t size = sizeof(*element_param);
+	int ret = 0;
+	u16 size = sizeof(struct libipw_qos_parameter_info) - 2;
 
-	if (!element_param || !info_element || info_element->len != size - 2)
+	if ((info_element == NULL) || (element_param == NULL))
 		return -1;
 
-	memcpy(element_param, info_element, size);
-	return libipw_verify_qos_info(&element_param->info_element,
-				      QOS_OUI_PARAM_SUB_TYPE);
+	if (info_element->id == QOS_ELEMENT_ID && info_element->len == size) {
+		memcpy(element_param->info_element.qui, info_element->data,
+		       info_element->len);
+		element_param->info_element.elementID = info_element->id;
+		element_param->info_element.length = info_element->len;
+	} else
+		ret = -1;
+	if (ret == 0)
+		ret = libipw_verify_qos_info(&element_param->info_element,
+						QOS_OUI_PARAM_SUB_TYPE);
+	return ret;
 }
 
 /*
  * Parse a QoS information element
  */
-static int libipw_read_qos_info_element(
-			struct libipw_qos_information_element *element_info,
-			struct libipw_info_element *info_element)
+static int libipw_read_qos_info_element(struct
+					   libipw_qos_information_element
+					   *element_info, struct libipw_info_element
+					   *info_element)
 {
-	size_t size = sizeof(struct libipw_qos_information_element) - 2;
+	int ret = 0;
+	u16 size = sizeof(struct libipw_qos_information_element) - 2;
 
-	if (!element_info || !info_element || info_element->len != size - 2)
+	if (element_info == NULL)
+		return -1;
+	if (info_element == NULL)
 		return -1;
 
-	memcpy(element_info, info_element, size);
-	return libipw_verify_qos_info(element_info, QOS_OUI_INFO_SUB_TYPE);
+	if ((info_element->id == QOS_ELEMENT_ID) && (info_element->len == size)) {
+		memcpy(element_info->qui, info_element->data,
+		       info_element->len);
+		element_info->elementID = info_element->id;
+		element_info->length = info_element->len;
+	} else
+		ret = -1;
+
+	if (ret == 0)
+		ret = libipw_verify_qos_info(element_info,
+						QOS_OUI_INFO_SUB_TYPE);
+	return ret;
 }
 
 /*
  * Write QoS parameters from the ac parameters.
  */
-static void libipw_qos_convert_ac_to_parameters(struct
+static int libipw_qos_convert_ac_to_parameters(struct
 						  libipw_qos_parameter_info
 						  *param_elm, struct
 						  libipw_qos_parameters
 						  *qos_param)
 {
+	int rc = 0;
 	int i;
 	struct libipw_qos_ac_parameter *ac_params;
 	u32 txop;
@@ -1007,6 +1034,7 @@ static void libipw_qos_convert_ac_to_parameters(struct
 		txop = le16_to_cpu(ac_params->tx_op_limit) * 32;
 		qos_param->tx_op_limit[i] = cpu_to_le16(txop);
 	}
+	return rc;
 }
 
 /*
@@ -1134,7 +1162,7 @@ static int libipw_parse_info_param(struct libipw_info_element
 			for (i = 0; i < network->rates_len; i++) {
 				network->rates[i] = info_element->data[i];
 #ifdef CONFIG_LIBIPW_DEBUG
-				p += scnprintf(p, sizeof(rates_str) -
+				p += snprintf(p, sizeof(rates_str) -
 					      (p - rates_str), "%02X ",
 					      network->rates[i]);
 #endif
@@ -1161,7 +1189,7 @@ static int libipw_parse_info_param(struct libipw_info_element
 			for (i = 0; i < network->rates_ex_len; i++) {
 				network->rates_ex[i] = info_element->data[i];
 #ifdef CONFIG_LIBIPW_DEBUG
-				p += scnprintf(p, sizeof(rates_str) -
+				p += snprintf(p, sizeof(rates_str) -
 					      (p - rates_str), "%02X ",
 					      network->rates_ex[i]);
 #endif
@@ -1329,8 +1357,8 @@ static int libipw_handle_assoc_resp(struct libipw_device *ieee, struct libipw_as
 	network->wpa_ie_len = 0;
 	network->rsn_ie_len = 0;
 
-	if (libipw_parse_info_param((void *)frame->variable,
-				    stats->len - sizeof(*frame), network))
+	if (libipw_parse_info_param
+	    (frame->info_element, stats->len - sizeof(*frame), network))
 		return 1;
 
 	network->mode = 0;
@@ -1389,8 +1417,8 @@ static int libipw_network_init(struct libipw_device *ieee, struct libipw_probe_r
 	network->wpa_ie_len = 0;
 	network->rsn_ie_len = 0;
 
-	if (libipw_parse_info_param((void *)beacon->variable,
-				    stats->len - sizeof(*beacon), network))
+	if (libipw_parse_info_param
+	    (beacon->info_element, stats->len - sizeof(*beacon), network))
 		return 1;
 
 	network->mode = 0;
@@ -1510,7 +1538,7 @@ static void libipw_process_probe_response(struct libipw_device
 	struct libipw_network *target;
 	struct libipw_network *oldest = NULL;
 #ifdef CONFIG_LIBIPW_DEBUG
-	struct libipw_info_element *info_element = (void *)beacon->variable;
+	struct libipw_info_element *info_element = beacon->info_element;
 #endif
 	unsigned long flags;
 

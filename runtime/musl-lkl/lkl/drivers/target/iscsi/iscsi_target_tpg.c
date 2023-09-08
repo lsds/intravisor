@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*******************************************************************************
  * This file contains iSCSI Target Portal Group related functions.
  *
@@ -6,6 +5,15 @@
  *
  * Author: Nicholas A. Bellinger <nab@linux-iscsi.org>
  *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
  ******************************************************************************/
 
 #include <linux/slab.h>
@@ -390,11 +398,12 @@ int iscsit_tpg_disable_portal_group(struct iscsi_portal_group *tpg, int force)
 }
 
 struct iscsi_node_attrib *iscsit_tpg_get_node_attrib(
-	struct iscsit_session *sess)
+	struct iscsi_session *sess)
 {
 	struct se_session *se_sess = sess->se_sess;
 	struct se_node_acl *se_nacl = se_sess->se_node_acl;
-	struct iscsi_node_acl *acl = to_iscsi_nacl(se_nacl);
+	struct iscsi_node_acl *acl = container_of(se_nacl, struct iscsi_node_acl,
+					se_node_acl);
 
 	return &acl->node_attrib;
 }
@@ -442,9 +451,6 @@ static bool iscsit_tpg_check_network_portal(
 				break;
 		}
 		spin_unlock(&tpg->tpg_np_lock);
-
-		if (match)
-			break;
 	}
 	spin_unlock(&tiqn->tiqn_tpg_lock);
 
@@ -630,7 +636,8 @@ int iscsit_ta_authentication(struct iscsi_portal_group *tpg, u32 authentication)
 		none = strstr(buf1, NONE);
 		if (none)
 			goto out;
-		strlcat(buf1, "," NONE, sizeof(buf1));
+		strncat(buf1, ",", strlen(","));
+		strncat(buf1, NONE, strlen(NONE));
 		if (iscsi_update_param_value(param, buf1) < 0)
 			return -EINVAL;
 	}

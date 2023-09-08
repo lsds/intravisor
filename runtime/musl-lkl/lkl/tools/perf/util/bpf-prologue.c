@@ -8,12 +8,12 @@
  */
 
 #include <bpf/libbpf.h>
+#include "perf.h"
 #include "debug.h"
 #include "bpf-loader.h"
 #include "bpf-prologue.h"
 #include "probe-finder.h"
 #include <errno.h>
-#include <stdlib.h>
 #include <dwarf-regs.h>
 #include <linux/filter.h>
 
@@ -61,7 +61,7 @@ check_pos(struct bpf_insn_pos *pos)
 
 /*
  * Convert type string (u8/u16/u32/u64/s8/s16/s32/s64 ..., see
- * Documentation/trace/kprobetrace.rst) to size field of BPF_LDX_MEM
+ * Documentation/trace/kprobetrace.txt) to size field of BPF_LDX_MEM
  * instruction (BPF_{B,H,W,DW}).
  */
 static int
@@ -142,8 +142,7 @@ static int
 gen_read_mem(struct bpf_insn_pos *pos,
 	     int src_base_addr_reg,
 	     int dst_addr_reg,
-	     long offset,
-	     int probeid)
+	     long offset)
 {
 	/* mov arg3, src_base_addr_reg */
 	if (src_base_addr_reg != BPF_REG_ARG3)
@@ -160,7 +159,7 @@ gen_read_mem(struct bpf_insn_pos *pos,
 		ins(BPF_MOV64_REG(BPF_REG_ARG1, dst_addr_reg), pos);
 
 	/* Call probe_read  */
-	ins(BPF_EMIT_CALL(probeid), pos);
+	ins(BPF_EMIT_CALL(BPF_FUNC_probe_read), pos);
 	/*
 	 * Error processing: if read fail, goto error code,
 	 * will be relocated. Target should be the start of
@@ -242,7 +241,7 @@ static int
 gen_prologue_slowpath(struct bpf_insn_pos *pos,
 		      struct probe_trace_arg *args, int nargs)
 {
-	int err, i, probeid;
+	int err, i;
 
 	for (i = 0; i < nargs; i++) {
 		struct probe_trace_arg *arg = &args[i];
@@ -277,16 +276,11 @@ gen_prologue_slowpath(struct bpf_insn_pos *pos,
 				stack_offset), pos);
 
 		ref = arg->ref;
-		probeid = BPF_FUNC_probe_read_kernel;
 		while (ref) {
 			pr_debug("prologue: arg %d: offset %ld\n",
 				 i, ref->offset);
-
-			if (ref->user_access)
-				probeid = BPF_FUNC_probe_read_user;
-
 			err = gen_read_mem(pos, BPF_REG_3, BPF_REG_7,
-					   ref->offset, probeid);
+					   ref->offset);
 			if (err) {
 				pr_err("prologue: failed to generate probe_read function call\n");
 				goto errout;

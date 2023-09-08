@@ -1,19 +1,18 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * Samsung SMDK5250 board device tree source
+ * SAMSUNG SMDK5250 board device tree source
  *
  * Copyright (c) 2012 Samsung Electronics Co., Ltd.
  *		http://www.samsung.com
  */
 
 /dts-v1/;
-#include <dt-bindings/clock/maxim,max77686.h>
 #include <dt-bindings/gpio/gpio.h>
 #include <dt-bindings/interrupt-controller/irq.h>
 #include "exynos5250.dtsi"
 
 / {
-	model = "Samsung SMDK5250 board based on Exynos5250";
+	model = "SAMSUNG SMDK5250 board based on EXYNOS5250";
 	compatible = "samsung,smdk5250", "samsung,exynos5250", "samsung,exynos5";
 
 	aliases {
@@ -25,8 +24,7 @@
 	};
 
 	chosen {
-		bootargs = "root=/dev/ram0 rw ramdisk=8192 initrd=0x41000000,8M init=/linuxrc";
-		stdout-path = "serial2:115200n8";
+		bootargs = "root=/dev/ram0 rw ramdisk=8192 initrd=0x41000000,8M console=ttySAC2,115200 init=/linuxrc";
 	};
 
 	vdd: fixed-regulator-vdd {
@@ -118,9 +116,6 @@
 	status = "okay";
 	ddc = <&i2c_2>;
 	hpd-gpios = <&gpx3 7 GPIO_ACTIVE_HIGH>;
-	vdd-supply = <&ldo8_reg>;
-	vdd_osc-supply = <&ldo10_reg>;
-	vdd_pll-supply = <&ldo8_reg>;
 };
 
 &i2c_0 {
@@ -129,18 +124,17 @@
 	samsung,i2c-max-bus-freq = <20000>;
 
 	eeprom@50 {
-		compatible = "samsung,s524ad0xd1", "atmel,24c128";
+		compatible = "samsung,s524ad0xd1";
 		reg = <0x50>;
 	};
 
-	max77686: pmic@9 {
+	max77686@9 {
 		compatible = "maxim,max77686";
 		reg = <0x09>;
 		interrupt-parent = <&gpx3>;
-		interrupts = <2 IRQ_TYPE_LEVEL_LOW>;
+		interrupts = <2 IRQ_TYPE_NONE>;
 		pinctrl-names = "default";
 		pinctrl-0 = <&max77686_irq>;
-		#clock-cells = <1>;
 		wakeup-source;
 
 		voltage-regulators {
@@ -289,11 +283,11 @@
 	samsung,i2c-max-bus-freq = <20000>;
 
 	eeprom@51 {
-		compatible = "samsung,s524ad0xd1", "atmel,24c128";
+		compatible = "samsung,s524ad0xd1";
 		reg = <0x51>;
 	};
 
-	wm8994: audio-codec@1a {
+	wm8994: wm8994@1a {
 		compatible = "wlf,wm8994";
 		reg = <0x1a>;
 
@@ -329,6 +323,12 @@
 	status = "okay";
 	samsung,i2c-sda-delay = <100>;
 	samsung,i2c-max-bus-freq = <40000>;
+	samsung,i2c-slave-addr = <0x38>;
+
+	sata_phy_i2c: sata-phy@38 {
+		compatible = "samsung,exynos-sataphy-i2c";
+		reg = <0x38>;
+	};
 };
 
 &i2s0 {
@@ -367,8 +367,6 @@
 
 &rtc {
 	status = "okay";
-	clocks = <&clock CLK_RTC>, <&max77686 MAX77686_CLK_AP>;
-	clock-names = "rtc", "rtc_src";
 };
 
 &sata {
@@ -380,15 +378,11 @@
 	samsung,exynos-sataphy-i2c-phandle = <&sata_phy_i2c>;
 };
 
-&sata_phy_i2c {
-	status = "okay";
-};
-
 &spi_1 {
 	status = "okay";
 	cs-gpios = <&gpa2 5 GPIO_ACTIVE_HIGH>;
 
-	flash@0 {
+	w25q80bw@0 {
 		#address-cells = <1>;
 		#size-cells = <1>;
 		compatible = "w25x80";
@@ -413,15 +407,10 @@
 };
 
 &pinctrl_0 {
-	max77686_irq: max77686-irq-pins {
+	max77686_irq: max77686-irq {
 		samsung,pins = "gpx3-2";
 		samsung,pin-function = <EXYNOS_PIN_FUNC_F>;
 		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
 		samsung,pin-drv = <EXYNOS4_PIN_DRV_LV1>;
 	};
-};
-
-&usbdrd {
-	vdd10-supply = <&ldo15_reg>;
-	vdd33-supply = <&ldo12_reg>;
 };

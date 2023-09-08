@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * OpenRISC signal.c
  *
@@ -9,6 +8,11 @@
  * Modifications for the OpenRISC architecture:
  * Copyright (C) 2003 Matjaz Breskvar <phoenix@bsemi.com>
  * Copyright (C) 2010-2011 Jonas Bonn <jonas@southpole.se>
+ *
+ *      This program is free software; you can redistribute it and/or
+ *      modify it under the terms of the GNU General Public License
+ *      as published by the Free Software Foundation; either version
+ *      2 of the License, or (at your option) any later version.
  */
 
 #include <linux/sched.h>
@@ -21,12 +25,14 @@
 #include <linux/ptrace.h>
 #include <linux/unistd.h>
 #include <linux/stddef.h>
-#include <linux/resume_user_mode.h>
+#include <linux/tracehook.h>
 
 #include <asm/processor.h>
 #include <asm/syscall.h>
 #include <asm/ucontext.h>
 #include <linux/uaccess.h>
+
+#define DEBUG_SIG 0
 
 struct rt_sigframe {
 	struct siginfo info;
@@ -44,7 +50,7 @@ static int restore_sigcontext(struct pt_regs *regs,
 
 	/*
 	 * Restore the regs from &sc->regs.
-	 * (sc is already checked since the sigframe was
+	 * (sc is already checked for VERIFY_READ since the sigframe was
 	 *  checked in sys_sigreturn previously)
 	 */
 	err |= __copy_from_user(regs, sc->regs.gpr, 32 * sizeof(unsigned long));
@@ -66,7 +72,7 @@ static int restore_sigcontext(struct pt_regs *regs,
 
 asmlinkage long _sys_rt_sigreturn(struct pt_regs *regs)
 {
-	struct rt_sigframe __user *frame = (struct rt_sigframe __user *)regs->sp;
+	struct rt_sigframe *frame = (struct rt_sigframe __user *)regs->sp;
 	sigset_t set;
 
 	/*
@@ -74,10 +80,10 @@ asmlinkage long _sys_rt_sigreturn(struct pt_regs *regs)
 	 * then frame should be dword aligned here.  If it's
 	 * not, then the user is trying to mess with us.
 	 */
-	if (((unsigned long)frame) & 3)
+	if (((long)frame) & 3)
 		goto badframe;
 
-	if (!access_ok(frame, sizeof(*frame)))
+	if (!access_ok(VERIFY_READ, frame, sizeof(*frame)))
 		goto badframe;
 	if (__copy_from_user(&set, &frame->uc.uc_sigmask, sizeof(set)))
 		goto badframe;
@@ -93,7 +99,7 @@ asmlinkage long _sys_rt_sigreturn(struct pt_regs *regs)
 	return regs->gpr[11];
 
 badframe:
-	force_sig(SIGSEGV);
+	force_sig(SIGSEGV, current);
 	return 0;
 }
 
@@ -149,13 +155,13 @@ static inline void __user *get_sigframe(struct ksignal *ksig,
 static int setup_rt_frame(struct ksignal *ksig, sigset_t *set,
 			  struct pt_regs *regs)
 {
-	struct rt_sigframe __user *frame;
+	struct rt_sigframe *frame;
 	unsigned long return_ip;
 	int err = 0;
 
 	frame = get_sigframe(ksig, regs, sizeof(*frame));
 
-	if (!access_ok(frame, sizeof(*frame)))
+	if (!access_ok(VERIFY_WRITE, frame, sizeof(*frame)))
 		return -EFAULT;
 
 	/* Create siginfo.  */
@@ -179,10 +185,10 @@ static int setup_rt_frame(struct ksignal *ksig, sigset_t *set,
 		l.ori r11,r0,__NR_sigreturn
 		l.sys 1
 	 */
-	err |= __put_user(0xa960,             (short __user *)(frame->retcode + 0));
-	err |= __put_user(__NR_rt_sigreturn,  (short __user *)(frame->retcode + 2));
-	err |= __put_user(0x20000001, (unsigned long __user *)(frame->retcode + 4));
-	err |= __put_user(0x15000000, (unsigned long __user *)(frame->retcode + 8));
+	err |= __put_user(0xa960,             (short *)(frame->retcode + 0));
+	err |= __put_user(__NR_rt_sigreturn,  (short *)(frame->retcode + 2));
+	err |= __put_user(0x20000001, (unsigned long *)(frame->retcode + 4));
+	err |= __put_user(0x15000000, (unsigned long *)(frame->retcode + 8));
 
 	if (err)
 		return -EFAULT;
@@ -242,7 +248,7 @@ int do_signal(struct pt_regs *regs, int syscall)
 		switch (retval) {
 		case -ERESTART_RESTARTBLOCK:
 			restart = -2;
-			fallthrough;
+			/* Fall through */
 		case -ERESTARTNOHAND:
 		case -ERESTARTSYS:
 		case -ERESTARTNOINTR:
@@ -297,7 +303,7 @@ do_work_pending(struct pt_regs *regs, unsigned int thread_flags, int syscall)
 			if (unlikely(!user_mode(regs)))
 				return 0;
 			local_irq_enable();
-			if (thread_flags & (_TIF_SIGPENDING|_TIF_NOTIFY_SIGNAL)) {
+			if (thread_flags & _TIF_SIGPENDING) {
 				int restart = do_signal(regs, syscall);
 				if (unlikely(restart)) {
 					/*
@@ -309,11 +315,12 @@ do_work_pending(struct pt_regs *regs, unsigned int thread_flags, int syscall)
 				}
 				syscall = 0;
 			} else {
-				resume_user_mode_work(regs);
+				clear_thread_flag(TIF_NOTIFY_RESUME);
+				tracehook_notify_resume(regs);
 			}
 		}
 		local_irq_disable();
-		thread_flags = read_thread_flags();
+		thread_flags = current_thread_info()->flags;
 	} while (thread_flags & _TIF_WORK_MASK);
 	return 0;
 }

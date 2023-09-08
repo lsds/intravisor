@@ -1,10 +1,13 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Overlayfs NFS export support.
  *
  * Amir Goldstein <amir73il@gmail.com>
  *
  * Copyright (C) 2017-2018 CTERA Networks. All Rights Reserved.
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License version 2 as published by
+ * the Free Software Foundation.
  */
 
 #include <linux/fs.h>
@@ -30,7 +33,7 @@ static int ovl_encode_maybe_copy_up(struct dentry *dentry)
 	}
 
 	if (err) {
-		pr_warn_ratelimited("failed to copy up on encode (%pd2, err=%i)\n",
+		pr_warn_ratelimited("overlayfs: failed to copy up on encode (%pd2, err=%i)\n",
 				    dentry, err);
 	}
 
@@ -204,19 +207,17 @@ static int ovl_check_encode_origin(struct dentry *dentry)
 	 * ovl_connect_layer() will try to make origin's layer "connected" by
 	 * copying up a "connectable" ancestor.
 	 */
-	if (d_is_dir(dentry) && ovl_upper_mnt(ofs))
+	if (d_is_dir(dentry) && ofs->upper_mnt)
 		return ovl_connect_layer(dentry);
 
 	/* Lower file handle for indexed and non-upper dir/non-dir */
 	return 1;
 }
 
-static int ovl_dentry_to_fid(struct ovl_fs *ofs, struct dentry *dentry,
-			     u32 *fid, int buflen)
+static int ovl_d_to_fh(struct dentry *dentry, char *buf, int buflen)
 {
 	struct ovl_fh *fh = NULL;
 	int err, enc_lower;
-	int len;
 
 	/*
 	 * Check if we should encode a lower or upper file handle and maybe
@@ -227,51 +228,63 @@ static int ovl_dentry_to_fid(struct ovl_fs *ofs, struct dentry *dentry,
 		goto fail;
 
 	/* Encode an upper or lower file handle */
-	fh = ovl_encode_real_fh(ofs, enc_lower ? ovl_dentry_lower(dentry) :
+	fh = ovl_encode_real_fh(enc_lower ? ovl_dentry_lower(dentry) :
 				ovl_dentry_upper(dentry), !enc_lower);
+	err = PTR_ERR(fh);
 	if (IS_ERR(fh))
-		return PTR_ERR(fh);
+		goto fail;
 
-	len = OVL_FH_LEN(fh);
-	if (len <= buflen)
-		memcpy(fid, fh, len);
-	err = len;
+	err = -EOVERFLOW;
+	if (fh->len > buflen)
+		goto fail;
+
+	memcpy(buf, (char *)fh, fh->len);
+	err = fh->len;
 
 out:
 	kfree(fh);
 	return err;
 
 fail:
-	pr_warn_ratelimited("failed to encode file handle (%pd2, err=%i)\n",
-			    dentry, err);
+	pr_warn_ratelimited("overlayfs: failed to encode file handle (%pd2, err=%i, buflen=%d, len=%d, type=%d)\n",
+			    dentry, err, buflen, fh ? (int)fh->len : 0,
+			    fh ? fh->type : 0);
 	goto out;
+}
+
+static int ovl_dentry_to_fh(struct dentry *dentry, u32 *fid, int *max_len)
+{
+	int res, len = *max_len << 2;
+
+	res = ovl_d_to_fh(dentry, (char *)fid, len);
+	if (res <= 0)
+		return FILEID_INVALID;
+
+	len = res;
+
+	/* Round up to dwords */
+	*max_len = (len + 3) >> 2;
+	return OVL_FILEID;
 }
 
 static int ovl_encode_fh(struct inode *inode, u32 *fid, int *max_len,
 			 struct inode *parent)
 {
-	struct ovl_fs *ofs = OVL_FS(inode->i_sb);
 	struct dentry *dentry;
-	int bytes, buflen = *max_len << 2;
+	int type;
 
 	/* TODO: encode connectable file handles */
 	if (parent)
 		return FILEID_INVALID;
 
 	dentry = d_find_any_alias(inode);
-	if (!dentry)
+	if (WARN_ON(!dentry))
 		return FILEID_INVALID;
 
-	bytes = ovl_dentry_to_fid(ofs, dentry, fid, buflen);
+	type = ovl_dentry_to_fh(dentry, fid, max_len);
+
 	dput(dentry);
-	if (bytes <= 0)
-		return FILEID_INVALID;
-
-	*max_len = bytes >> 2;
-	if (bytes > buflen)
-		return FILEID_INVALID;
-
-	return OVL_FILEID_V1;
+	return type;
 }
 
 /*
@@ -287,56 +300,41 @@ static struct dentry *ovl_obtain_alias(struct super_block *sb,
 	struct dentry *dentry;
 	struct inode *inode;
 	struct ovl_entry *oe;
-	struct ovl_inode_params oip = {
-		.lowerpath = lowerpath,
-		.index = index,
-		.numlower = !!lower
-	};
 
 	/* We get overlay directory dentries with ovl_lookup_real() */
 	if (d_is_dir(upper ?: lower))
 		return ERR_PTR(-EIO);
 
-	oip.upperdentry = dget(upper);
-	inode = ovl_get_inode(sb, &oip);
+	inode = ovl_get_inode(sb, dget(upper), lowerpath, index, !!lower);
 	if (IS_ERR(inode)) {
 		dput(upper);
 		return ERR_CAST(inode);
 	}
 
-	if (upper)
-		ovl_set_flag(OVL_UPPERDATA, inode);
-
 	dentry = d_find_any_alias(inode);
-	if (dentry)
-		goto out_iput;
+	if (!dentry) {
+		dentry = d_alloc_anon(inode->i_sb);
+		if (!dentry)
+			goto nomem;
+		oe = ovl_alloc_entry(lower ? 1 : 0);
+		if (!oe)
+			goto nomem;
 
-	dentry = d_alloc_anon(inode->i_sb);
-	if (unlikely(!dentry))
-		goto nomem;
-	oe = ovl_alloc_entry(lower ? 1 : 0);
-	if (!oe)
-		goto nomem;
-
-	if (lower) {
-		oe->lowerstack->dentry = dget(lower);
-		oe->lowerstack->layer = lowerpath->layer;
+		if (lower) {
+			oe->lowerstack->dentry = dget(lower);
+			oe->lowerstack->layer = lowerpath->layer;
+		}
+		dentry->d_fsdata = oe;
+		if (upper_alias)
+			ovl_dentry_set_upper_alias(dentry);
 	}
-	dentry->d_fsdata = oe;
-	if (upper_alias)
-		ovl_dentry_set_upper_alias(dentry);
-
-	ovl_dentry_update_reval(dentry, upper,
-			DCACHE_OP_REVALIDATE | DCACHE_OP_WEAK_REVALIDATE);
 
 	return d_instantiate_anon(dentry, inode);
 
 nomem:
-	dput(dentry);
-	dentry = ERR_PTR(-ENOMEM);
-out_iput:
 	iput(inode);
-	return dentry;
+	dput(dentry);
+	return ERR_PTR(-ENOMEM);
 }
 
 /* Get the upper or lower dentry in stach whose on layer @idx */
@@ -364,7 +362,7 @@ static struct dentry *ovl_dentry_real_at(struct dentry *dentry, int idx)
  */
 static struct dentry *ovl_lookup_real_one(struct dentry *connected,
 					  struct dentry *real,
-					  const struct ovl_layer *layer)
+					  struct ovl_layer *layer)
 {
 	struct inode *dir = d_inode(connected);
 	struct dentry *this, *parent = NULL;
@@ -391,13 +389,7 @@ static struct dentry *ovl_lookup_real_one(struct dentry *connected,
 	 * pointer because we hold no lock on the real dentry.
 	 */
 	take_dentry_name_snapshot(&name, real);
-	/*
-	 * No mnt_userns handling here: it's an internal lookup.  Could skip
-	 * permission checking altogether, but for now just use non-mnt_userns
-	 * transformed ids.
-	 */
-	this = lookup_one_len(name.name.name, connected, name.name.len);
-	release_dentry_name_snapshot(&name);
+	this = lookup_one_len(name.name, connected, strlen(name.name));
 	err = PTR_ERR(this);
 	if (IS_ERR(this)) {
 		goto fail;
@@ -412,12 +404,13 @@ static struct dentry *ovl_lookup_real_one(struct dentry *connected,
 	}
 
 out:
+	release_dentry_name_snapshot(&name);
 	dput(parent);
 	inode_unlock(dir);
 	return this;
 
 fail:
-	pr_warn_ratelimited("failed to lookup one by real (%pd2, layer=%d, connected=%pd2, err=%i)\n",
+	pr_warn_ratelimited("overlayfs: failed to lookup one by real (%pd2, layer=%d, connected=%pd2, err=%i)\n",
 			    real, layer->idx, connected, err);
 	this = ERR_PTR(err);
 	goto out;
@@ -425,16 +418,17 @@ fail:
 
 static struct dentry *ovl_lookup_real(struct super_block *sb,
 				      struct dentry *real,
-				      const struct ovl_layer *layer);
+				      struct ovl_layer *layer);
 
 /*
  * Lookup an indexed or hashed overlay dentry by real inode.
  */
 static struct dentry *ovl_lookup_real_inode(struct super_block *sb,
 					    struct dentry *real,
-					    const struct ovl_layer *layer)
+					    struct ovl_layer *layer)
 {
 	struct ovl_fs *ofs = sb->s_fs_info;
+	struct ovl_layer upper_layer = { .mnt = ofs->upper_mnt };
 	struct dentry *index = NULL;
 	struct dentry *this = NULL;
 	struct inode *inode;
@@ -476,14 +470,14 @@ static struct dentry *ovl_lookup_real_inode(struct super_block *sb,
 		 * recursive call walks back from indexed upper to the topmost
 		 * connected/hashed upper parent (or up to root).
 		 */
-		this = ovl_lookup_real(sb, upper, &ofs->layers[0]);
+		this = ovl_lookup_real(sb, upper, &upper_layer);
 		dput(upper);
 	}
 
 	if (IS_ERR_OR_NULL(this))
 		return this;
 
-	if (ovl_dentry_real_at(this, layer->idx) != real) {
+	if (WARN_ON(ovl_dentry_real_at(this, layer->idx) != real)) {
 		dput(this);
 		this = ERR_PTR(-EIO);
 	}
@@ -497,7 +491,7 @@ static struct dentry *ovl_lookup_real_inode(struct super_block *sb,
  */
 static struct dentry *ovl_lookup_real_ancestor(struct super_block *sb,
 					       struct dentry *real,
-					       const struct ovl_layer *layer)
+					       struct ovl_layer *layer)
 {
 	struct dentry *next, *parent = NULL;
 	struct dentry *ancestor = ERR_PTR(-EIO);
@@ -550,7 +544,7 @@ static struct dentry *ovl_lookup_real_ancestor(struct super_block *sb,
  */
 static struct dentry *ovl_lookup_real(struct super_block *sb,
 				      struct dentry *real,
-				      const struct ovl_layer *layer)
+				      struct ovl_layer *layer)
 {
 	struct dentry *connected;
 	int err = 0;
@@ -641,7 +635,7 @@ static struct dentry *ovl_lookup_real(struct super_block *sb,
 	return connected;
 
 fail:
-	pr_warn_ratelimited("failed to lookup by real (%pd2, layer=%d, connected=%pd2, err=%i)\n",
+	pr_warn_ratelimited("overlayfs: failed to lookup by real (%pd2, layer=%d, connected=%pd2, err=%i)\n",
 			    real, layer->idx, connected, err);
 	dput(connected);
 	return ERR_PTR(err);
@@ -656,7 +650,8 @@ static struct dentry *ovl_get_dentry(struct super_block *sb,
 				     struct dentry *index)
 {
 	struct ovl_fs *ofs = sb->s_fs_info;
-	const struct ovl_layer *layer = upper ? &ofs->layers[0] : lowerpath->layer;
+	struct ovl_layer upper_layer = { .mnt = ofs->upper_mnt };
+	struct ovl_layer *layer = upper ? &upper_layer : lowerpath->layer;
 	struct dentry *real = upper ?: (index ?: lowerpath->dentry);
 
 	/*
@@ -684,10 +679,10 @@ static struct dentry *ovl_upper_fh_to_d(struct super_block *sb,
 	struct dentry *dentry;
 	struct dentry *upper;
 
-	if (!ovl_upper_mnt(ofs))
+	if (!ofs->upper_mnt)
 		return ERR_PTR(-EACCES);
 
-	upper = ovl_decode_real_fh(ofs, fh, ovl_upper_mnt(ofs), true);
+	upper = ovl_decode_real_fh(fh, ofs->upper_mnt, true);
 	if (IS_ERR_OR_NULL(upper))
 		return upper;
 
@@ -750,8 +745,9 @@ static struct dentry *ovl_lower_fh_to_d(struct super_block *sb,
 		goto out;
 	}
 
-	/* Find origin.dentry again with ovl_acceptable() layer check */
-	if (d_is_dir(origin.dentry)) {
+	/* Otherwise, get a connected non-upper dir or disconnected non-dir */
+	if (d_is_dir(origin.dentry) &&
+	    (origin.dentry->d_flags & DCACHE_DISCONNECTED)) {
 		dput(origin.dentry);
 		origin.dentry = NULL;
 		err = ovl_check_origin_fh(ofs, fh, true, NULL, &stack);
@@ -759,12 +755,11 @@ static struct dentry *ovl_lower_fh_to_d(struct super_block *sb,
 			goto out_err;
 	}
 	if (index) {
-		err = ovl_verify_origin(ofs, index, origin.dentry, false);
+		err = ovl_verify_origin(index, origin.dentry, false);
 		if (err)
 			goto out_err;
 	}
 
-	/* Get a connected non-upper dir or disconnected non-dir */
 	dentry = ovl_get_dentry(sb, NULL, &origin, index);
 
 out:
@@ -777,48 +772,24 @@ out_err:
 	goto out;
 }
 
-static struct ovl_fh *ovl_fid_to_fh(struct fid *fid, int buflen, int fh_type)
-{
-	struct ovl_fh *fh;
-
-	/* If on-wire inner fid is aligned - nothing to do */
-	if (fh_type == OVL_FILEID_V1)
-		return (struct ovl_fh *)fid;
-
-	if (fh_type != OVL_FILEID_V0)
-		return ERR_PTR(-EINVAL);
-
-	if (buflen <= OVL_FH_WIRE_OFFSET)
-		return ERR_PTR(-EINVAL);
-
-	fh = kzalloc(buflen, GFP_KERNEL);
-	if (!fh)
-		return ERR_PTR(-ENOMEM);
-
-	/* Copy unaligned inner fh into aligned buffer */
-	memcpy(&fh->fb, fid, buflen - OVL_FH_WIRE_OFFSET);
-	return fh;
-}
-
 static struct dentry *ovl_fh_to_dentry(struct super_block *sb, struct fid *fid,
 				       int fh_len, int fh_type)
 {
 	struct dentry *dentry = NULL;
-	struct ovl_fh *fh = NULL;
+	struct ovl_fh *fh = (struct ovl_fh *) fid;
 	int len = fh_len << 2;
 	unsigned int flags = 0;
 	int err;
 
-	fh = ovl_fid_to_fh(fid, len, fh_type);
-	err = PTR_ERR(fh);
-	if (IS_ERR(fh))
+	err = -EINVAL;
+	if (fh_type != OVL_FILEID)
 		goto out_err;
 
 	err = ovl_check_fh_len(fh, len);
 	if (err)
 		goto out_err;
 
-	flags = fh->fb.flags;
+	flags = fh->flags;
 	dentry = (flags & OVL_FH_FLAG_PATH_UPPER) ?
 		 ovl_upper_fh_to_d(sb, fh) :
 		 ovl_lower_fh_to_d(sb, fh);
@@ -826,24 +797,18 @@ static struct dentry *ovl_fh_to_dentry(struct super_block *sb, struct fid *fid,
 	if (IS_ERR(dentry) && err != -ESTALE)
 		goto out_err;
 
-out:
-	/* We may have needed to re-align OVL_FILEID_V0 */
-	if (!IS_ERR_OR_NULL(fh) && fh != (void *)fid)
-		kfree(fh);
-
 	return dentry;
 
 out_err:
-	pr_warn_ratelimited("failed to decode file handle (len=%d, type=%d, flags=%x, err=%i)\n",
-			    fh_len, fh_type, flags, err);
-	dentry = ERR_PTR(err);
-	goto out;
+	pr_warn_ratelimited("overlayfs: failed to decode file handle (len=%d, type=%d, flags=%x, err=%i)\n",
+			    len, fh_type, flags, err);
+	return ERR_PTR(err);
 }
 
 static struct dentry *ovl_fh_to_parent(struct super_block *sb, struct fid *fid,
 				       int fh_len, int fh_type)
 {
-	pr_warn_ratelimited("connectable file handles not supported; use 'no_subtree_check' exportfs option.\n");
+	pr_warn_ratelimited("overlayfs: connectable file handles not supported; use 'no_subtree_check' exportfs option.\n");
 	return ERR_PTR(-EACCES);
 }
 

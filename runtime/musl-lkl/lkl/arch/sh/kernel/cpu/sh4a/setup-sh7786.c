@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * SH7786 Setup
  *
@@ -9,6 +8,10 @@
  * Based on SH7785 Setup
  *
  *  Copyright (C) 2007  Paul Mundt
+ *
+ * This file is subject to the terms and conditions of the GNU General Public
+ * License.  See the file "COPYING" in the main directory of this archive
+ * for more details.
  */
 #include <linux/platform_device.h>
 #include <linux/init.h>
@@ -23,7 +26,6 @@
 #include <linux/usb/ohci_pdriver.h>
 #include <cpu/dma-register.h>
 #include <asm/mmzone.h>
-#include <asm/platform_early.h>
 
 static struct plat_sci_port scif0_platform_data = {
 	.scscr		= SCSCR_REIE | SCSCR_CKE1,
@@ -391,7 +393,6 @@ static struct platform_device *sh7786_early_devices[] __initdata = {
 	&tmu0_device,
 	&tmu1_device,
 	&tmu2_device,
-	&tmu3_device,
 };
 
 static struct platform_device *sh7786_devices[] __initdata = {
@@ -836,6 +837,6 @@ arch_initcall(sh7786_devices_setup);
 
 void __init plat_early_device_setup(void)
 {
-	sh_early_platform_add_devices(sh7786_early_devices,
+	early_platform_add_devices(sh7786_early_devices,
 				   ARRAY_SIZE(sh7786_early_devices));
 }

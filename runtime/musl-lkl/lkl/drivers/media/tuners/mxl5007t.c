@@ -1,8 +1,17 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  *  mxl5007t.c - driver for the MaxLinear MxL5007T silicon tuner
  *
  *  Copyright (C) 2008, 2009 Michael Krufky <mkrufky@linuxtv.org>
+ *
+ *  This program is free software; you can redistribute it and/or modify
+ *  it under the terms of the GNU General Public License as published by
+ *  the Free Software Foundation; either version 2 of the License, or
+ *  (at your option) any later version.
+ *
+ *  This program is distributed in the hope that it will be useful,
+ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *  GNU General Public License for more details.
  */
 
 #include <linux/i2c.h>
@@ -49,6 +58,8 @@ MODULE_PARM_DESC(debug, "set debug level");
 })
 
 /* ------------------------------------------------------------------------- */
+
+#define MHz 1000000
 
 enum mxl5007t_mode {
 	MxL_MODE_ISDBT     =    0,
@@ -172,6 +183,7 @@ static void set_reg_bits(struct reg_pair_t *reg_pair, u8 reg, u8 mask, u8 val)
 		i++;
 
 	}
+	return;
 }
 
 static void copy_reg_bits(struct reg_pair_t *reg_pair1,
@@ -192,6 +204,7 @@ static void copy_reg_bits(struct reg_pair_t *reg_pair1,
 		}
 		i++;
 	}
+	return;
 }
 
 /* ------------------------------------------------------------------------- */
@@ -219,6 +232,7 @@ static void mxl5007t_set_mode_bits(struct mxl5007t_state *state,
 	default:
 		mxl_fail(-EINVAL);
 	}
+	return;
 }
 
 static void mxl5007t_set_if_freq_bits(struct mxl5007t_state *state,
@@ -271,6 +285,8 @@ static void mxl5007t_set_if_freq_bits(struct mxl5007t_state *state,
 	set_reg_bits(state->tab_init, 0x02, 0x10, invert_if ? 0x10 : 0x00);
 
 	state->if_freq = if_freq;
+
+	return;
 }
 
 static void mxl5007t_set_xtal_freq_bits(struct mxl5007t_state *state,
@@ -338,6 +354,8 @@ static void mxl5007t_set_xtal_freq_bits(struct mxl5007t_state *state,
 		mxl_fail(-EINVAL);
 		return;
 	}
+
+	return;
 }
 
 static struct reg_pair_t *mxl5007t_calc_init_regs(struct mxl5007t_state *state,
@@ -391,6 +409,8 @@ static void mxl5007t_set_bw_bits(struct mxl5007t_state *state,
 		return;
 	}
 	set_reg_bits(state->tab_rftune, 0x0c, 0x3f, val);
+
+	return;
 }
 
 static struct

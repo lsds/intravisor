@@ -1,8 +1,12 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /**
  * dts file for Hisilicon D05 Development Board
  *
- * Copyright (C) 2016 HiSilicon Ltd.
+ * Copyright (C) 2016 Hisilicon Ltd.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * publishhed by the Free Software Foundation.
+ *
  */
 
 /dts-v1/;
@@ -50,41 +54,37 @@
 };
 
 &uart0 {
-	status = "okay";
-};
-
-&ipmi0 {
-	status = "okay";
+	status = "ok";
 };
 
 &usb_ohci {
-	status = "okay";
+	status = "ok";
 };
 
 &usb_ehci {
-	status = "okay";
+	status = "ok";
 };
 
 &eth0 {
-	status = "okay";
+	status = "ok";
 };
 
 &eth1 {
-	status = "okay";
+	status = "ok";
 };
 
 &eth2 {
-	status = "okay";
+	status = "ok";
 };
 
 &eth3 {
-	status = "okay";
+	status = "ok";
 };
 
 &sas1 {
-	status = "okay";
+	status = "ok";
 };
 
 &p0_pcie2_a {
-	status = "okay";
+	status = "ok";
 };

@@ -29,20 +29,18 @@ static char *gDviCtrlChipName = "Silicon Image SiI 164";
 #endif
 
 /*
- *  sii164_get_vendor_id
+ *  sii164GetVendorID
  *      This function gets the vendor ID of the DVI controller chip.
  *
  *  Output:
  *      Vendor ID
  */
-unsigned short sii164_get_vendor_id(void)
+unsigned short sii164GetVendorID(void)
 {
 	unsigned short vendorID;
 
-	vendorID = ((unsigned short)i2cReadReg(SII164_I2C_ADDRESS,
-					       SII164_VENDOR_ID_HIGH) << 8) |
-		   (unsigned short)i2cReadReg(SII164_I2C_ADDRESS,
-					      SII164_VENDOR_ID_LOW);
+	vendorID = ((unsigned short) i2cReadReg(SII164_I2C_ADDRESS, SII164_VENDOR_ID_HIGH) << 8) |
+		    (unsigned short) i2cReadReg(SII164_I2C_ADDRESS, SII164_VENDOR_ID_LOW);
 
 	return vendorID;
 }
@@ -58,76 +56,71 @@ unsigned short sii164GetDeviceID(void)
 {
 	unsigned short deviceID;
 
-	deviceID = ((unsigned short)i2cReadReg(SII164_I2C_ADDRESS,
-					       SII164_DEVICE_ID_HIGH) << 8) |
-		   (unsigned short)i2cReadReg(SII164_I2C_ADDRESS,
-					      SII164_DEVICE_ID_LOW);
+	deviceID = ((unsigned short) i2cReadReg(SII164_I2C_ADDRESS, SII164_DEVICE_ID_HIGH) << 8) |
+		    (unsigned short) i2cReadReg(SII164_I2C_ADDRESS, SII164_DEVICE_ID_LOW);
 
 	return deviceID;
 }
 
-/*
- *  DVI.C will handle all SiI164 chip stuffs and try its best to make code
- *  minimal and useful
- */
+/* DVI.C will handle all SiI164 chip stuffs and try it best to make code minimal and useful */
 
 /*
  *  sii164InitChip
  *      This function initialize and detect the DVI controller chip.
  *
  *  Input:
- *      edge_select           - Edge Select:
- *                               0 = Input data is falling edge latched (falling
- *                                   edge latched first in dual edge mode)
- *                               1 = Input data is rising edge latched (rising
- *                                   edge latched first in dual edge mode)
- *      bus_select            - Input Bus Select:
- *                               0 = Input data bus is 12-bits wide
- *                               1 = Input data bus is 24-bits wide
- *      dual_edge_clk_select  - Dual Edge Clock Select
- *                               0 = Input data is single edge latched
- *                               1 = Input data is dual edge latched
- *      hsync_enable          - Horizontal Sync Enable:
- *                               0 = HSYNC input is transmitted as fixed LOW
- *                               1 = HSYNC input is transmitted as is
- *      vsync_enable          - Vertical Sync Enable:
- *                               0 = VSYNC input is transmitted as fixed LOW
- *                               1 = VSYNC input is transmitted as is
- *      deskew_enable         - De-skewing Enable:
- *                               0 = De-skew disabled
- *                               1 = De-skew enabled
- *      deskew_setting        - De-skewing Setting (increment of 260psec)
- *                               0 = 1 step --> minimum setup / maximum hold
- *                               1 = 2 step
- *                               2 = 3 step
- *                               3 = 4 step
- *                               4 = 5 step
- *                               5 = 6 step
- *                               6 = 7 step
- *                               7 = 8 step --> maximum setup / minimum hold
- *      continuous_sync_enable- SYNC Continuous:
- *                               0 = Disable
- *                               1 = Enable
- *      pll_filter_enable     - PLL Filter Enable
- *                               0 = Disable PLL Filter
- *                               1 = Enable PLL Filter
- *      pll_filter_value      - PLL Filter characteristics:
- *                               0~7 (recommended value is 4)
+ *      edgeSelect          - Edge Select:
+ *                              0 = Input data is falling edge latched (falling edge
+ *                                  latched first in dual edge mode)
+ *                              1 = Input data is rising edge latched (rising edge
+ *                                  latched first in dual edge mode)
+ *      busSelect           - Input Bus Select:
+ *                              0 = Input data bus is 12-bits wide
+ *                              1 = Input data bus is 24-bits wide
+ *      dualEdgeClkSelect   - Dual Edge Clock Select
+ *                              0 = Input data is single edge latched
+ *                              1 = Input data is dual edge latched
+ *      hsyncEnable         - Horizontal Sync Enable:
+ *                              0 = HSYNC input is transmitted as fixed LOW
+ *                              1 = HSYNC input is transmitted as is
+ *      vsyncEnable         - Vertical Sync Enable:
+ *                              0 = VSYNC input is transmitted as fixed LOW
+ *                              1 = VSYNC input is transmitted as is
+ *      deskewEnable        - De-skewing Enable:
+ *                              0 = De-skew disabled
+ *                              1 = De-skew enabled
+ *      deskewSetting       - De-skewing Setting (increment of 260psec)
+ *                              0 = 1 step --> minimum setup / maximum hold
+ *                              1 = 2 step
+ *                              2 = 3 step
+ *                              3 = 4 step
+ *                              4 = 5 step
+ *                              5 = 6 step
+ *                              6 = 7 step
+ *                              7 = 8 step --> maximum setup / minimum hold
+ *      continuousSyncEnable- SYNC Continuous:
+ *                              0 = Disable
+ *                              1 = Enable
+ *      pllFilterEnable     - PLL Filter Enable
+ *                              0 = Disable PLL Filter
+ *                              1 = Enable PLL Filter
+ *      pllFilterValue      - PLL Filter characteristics:
+ *                              0~7 (recommended value is 4)
  *
  *  Output:
  *      0   - Success
  *     -1   - Fail.
  */
-long sii164InitChip(unsigned char edge_select,
-		    unsigned char bus_select,
-		    unsigned char dual_edge_clk_select,
-		    unsigned char hsync_enable,
-		    unsigned char vsync_enable,
-		    unsigned char deskew_enable,
-		    unsigned char deskew_setting,
-		    unsigned char continuous_sync_enable,
-		    unsigned char pll_filter_enable,
-		    unsigned char pll_filter_value)
+long sii164InitChip(unsigned char edgeSelect,
+		    unsigned char busSelect,
+		    unsigned char dualEdgeClkSelect,
+		    unsigned char hsyncEnable,
+		    unsigned char vsyncEnable,
+		    unsigned char deskewEnable,
+		    unsigned char deskewSetting,
+		    unsigned char continuousSyncEnable,
+		    unsigned char pllFilterEnable,
+		    unsigned char pllFilterValue)
 {
 	unsigned char config;
 
@@ -140,38 +133,37 @@ long sii164InitChip(unsigned char edge_select,
 #endif
 
 	/* Check if SII164 Chip exists */
-	if ((sii164_get_vendor_id() == SII164_VENDOR_ID) &&
-	    (sii164GetDeviceID() == SII164_DEVICE_ID)) {
+	if ((sii164GetVendorID() == SII164_VENDOR_ID) && (sii164GetDeviceID() == SII164_DEVICE_ID)) {
 		/*
 		 *  Initialize SII164 controller chip.
 		 */
 
 		/* Select the edge */
-		if (edge_select == 0)
+		if (edgeSelect == 0)
 			config = SII164_CONFIGURATION_LATCH_FALLING;
 		else
 			config = SII164_CONFIGURATION_LATCH_RISING;
 
 		/* Select bus wide */
-		if (bus_select == 0)
+		if (busSelect == 0)
 			config |= SII164_CONFIGURATION_BUS_12BITS;
 		else
 			config |= SII164_CONFIGURATION_BUS_24BITS;
 
 		/* Select Dual/Single Edge Clock */
-		if (dual_edge_clk_select == 0)
+		if (dualEdgeClkSelect == 0)
 			config |= SII164_CONFIGURATION_CLOCK_SINGLE;
 		else
 			config |= SII164_CONFIGURATION_CLOCK_DUAL;
 
 		/* Select HSync Enable */
-		if (hsync_enable == 0)
+		if (hsyncEnable == 0)
 			config |= SII164_CONFIGURATION_HSYNC_FORCE_LOW;
 		else
 			config |= SII164_CONFIGURATION_HSYNC_AS_IS;
 
 		/* Select VSync Enable */
-		if (vsync_enable == 0)
+		if (vsyncEnable == 0)
 			config |= SII164_CONFIGURATION_VSYNC_FORCE_LOW;
 		else
 			config |= SII164_CONFIGURATION_VSYNC_AS_IS;
@@ -183,12 +175,12 @@ long sii164InitChip(unsigned char edge_select,
 		 * This fixes some artifacts problem in some mode on board 2.2.
 		 * Somehow this fix does not affect board 2.1.
 		 */
-		if (deskew_enable == 0)
+		if (deskewEnable == 0)
 			config = SII164_DESKEW_DISABLE;
 		else
 			config = SII164_DESKEW_ENABLE;
 
-		switch (deskew_setting) {
+		switch (deskewSetting) {
 		case 0:
 			config |= SII164_DESKEW_1_STEP;
 			break;
@@ -217,19 +209,19 @@ long sii164InitChip(unsigned char edge_select,
 		i2cWriteReg(SII164_I2C_ADDRESS, SII164_DESKEW, config);
 
 		/* Enable/Disable Continuous Sync. */
-		if (continuous_sync_enable == 0)
+		if (continuousSyncEnable == 0)
 			config = SII164_PLL_FILTER_SYNC_CONTINUOUS_DISABLE;
 		else
 			config = SII164_PLL_FILTER_SYNC_CONTINUOUS_ENABLE;
 
 		/* Enable/Disable PLL Filter */
-		if (pll_filter_enable == 0)
+		if (pllFilterEnable == 0)
 			config |= SII164_PLL_FILTER_DISABLE;
 		else
 			config |= SII164_PLL_FILTER_ENABLE;
 
 		/* Set the PLL Filter value */
-		config |= ((pll_filter_value & 0x07) << 1);
+		config |= ((pllFilterValue & 0x07) << 1);
 
 		i2cWriteReg(SII164_I2C_ADDRESS, SII164_PLL, config);
 
@@ -262,9 +254,7 @@ void sii164ResetChip(void)
 
 /*
  * sii164GetChipString
- *      This function returns a char string name of the current DVI Controller
- *      chip.
- *
+ *      This function returns a char string name of the current DVI Controller chip.
  *      It's convenient for application need to display the chip name.
  */
 char *sii164GetChipString(void)
@@ -340,8 +330,8 @@ void sii164EnableHotPlugDetection(unsigned char enableHotPlug)
 
 	detectReg = i2cReadReg(SII164_I2C_ADDRESS, SII164_DETECT);
 
-	/* Depending on each DVI controller, need to enable the hot plug based
-	 * on each individual chip design.
+	/* Depending on each DVI controller, need to enable the hot plug based on each
+	 * individual chip design.
 	 */
 	if (enableHotPlug != 0)
 		sii164SelectHotPlugDetectionMode(SII164_HOTPLUG_USE_MDI);

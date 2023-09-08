@@ -14,7 +14,6 @@
 #include <linux/socket.h>
 #include <linux/in.h>
 #include <linux/in6.h>
-#include <linux/refcount.h>
 
 #include <linux/sunrpc/msg_prot.h>
 #include <linux/sunrpc/sched.h>
@@ -30,17 +29,15 @@
 #include <linux/sunrpc/xprtmultipath.h>
 
 struct rpc_inode;
-struct rpc_sysfs_client;
 
 /*
  * The high-level client handle
  */
 struct rpc_clnt {
-	refcount_t		cl_count;	/* Number of references */
+	atomic_t		cl_count;	/* Number of references */
 	unsigned int		cl_clid;	/* client id */
 	struct list_head	cl_clients;	/* Global list of clients */
 	struct list_head	cl_tasks;	/* List of tasks */
-	atomic_t		cl_pid;		/* task PID counter */
 	spinlock_t		cl_lock;	/* spinlock */
 	struct rpc_xprt __rcu *	cl_xprt;	/* transport */
 	const struct rpc_procinfo *cl_procinfo;	/* procedure info */
@@ -53,7 +50,6 @@ struct rpc_clnt {
 	struct rpc_iostats *	cl_metrics;	/* per-client statistics */
 
 	unsigned int		cl_softrtry : 1,/* soft timeouts */
-				cl_softerr  : 1,/* Timeouts return errors */
 				cl_discrtry : 1,/* disconnect before retry */
 				cl_noretranstimeo: 1,/* No retransmit timeouts */
 				cl_autobind : 1,/* use getport() */
@@ -70,20 +66,10 @@ struct rpc_clnt {
 	struct rpc_rtt		cl_rtt_default;
 	struct rpc_timeout	cl_timeout_default;
 	const struct rpc_program *cl_program;
-	const char *		cl_principal;	/* use for machine cred */
 #if IS_ENABLED(CONFIG_SUNRPC_DEBUG)
 	struct dentry		*cl_debugfs;	/* debugfs directory */
 #endif
-	struct rpc_sysfs_client *cl_sysfs;	/* sysfs directory */
-	/* cl_work is only needed after cl_xpi is no longer used,
-	 * and that are of similar size
-	 */
-	union {
-		struct rpc_xprt_iter	cl_xpi;
-		struct work_struct	cl_work;
-	};
-	const struct cred	*cl_cred;
-	unsigned int		cl_max_connect; /* max number of transports not to the same IP */
+	struct rpc_xprt_iter	cl_xpi;
 };
 
 /*
@@ -120,6 +106,8 @@ struct rpc_procinfo {
 	const char *		p_name;		/* name of procedure */
 };
 
+#ifdef __KERNEL__
+
 struct rpc_create_args {
 	struct net		*net;
 	int			protocol;
@@ -133,17 +121,14 @@ struct rpc_create_args {
 	u32			prognumber;	/* overrides program->number */
 	u32			version;
 	rpc_authflavor_t	authflavor;
-	u32			nconnect;
 	unsigned long		flags;
 	char			*client_name;
 	struct svc_xprt		*bc_xprt;	/* NFSv4.1 backchannel */
-	const struct cred	*cred;
-	unsigned int		max_connect;
 };
 
 struct rpc_add_xprt_test {
-	void (*add_xprt_test)(struct rpc_clnt *clnt,
-		struct rpc_xprt *xprt,
+	int (*add_xprt_test)(struct rpc_clnt *,
+		struct rpc_xprt *,
 		void *calldata);
 	void *data;
 };
@@ -158,9 +143,6 @@ struct rpc_add_xprt_test {
 #define RPC_CLNT_CREATE_INFINITE_SLOTS	(1UL << 7)
 #define RPC_CLNT_CREATE_NO_IDLE_TIMEOUT	(1UL << 8)
 #define RPC_CLNT_CREATE_NO_RETRANS_TIMEOUT	(1UL << 9)
-#define RPC_CLNT_CREATE_SOFTERR		(1UL << 10)
-#define RPC_CLNT_CREATE_REUSEPORT	(1UL << 11)
-#define RPC_CLNT_CREATE_CONNECTED	(1UL << 12)
 
 struct rpc_clnt *rpc_create(struct rpc_create_args *args);
 struct rpc_clnt	*rpc_bind_new_program(struct rpc_clnt *,
@@ -174,10 +156,7 @@ int		rpc_switch_client_transport(struct rpc_clnt *,
 
 void		rpc_shutdown_client(struct rpc_clnt *);
 void		rpc_release_client(struct rpc_clnt *);
-void		rpc_task_release_transport(struct rpc_task *);
 void		rpc_task_release_client(struct rpc_task *);
-struct rpc_xprt	*rpc_task_get_xprt(struct rpc_clnt *clnt,
-		struct rpc_xprt *xprt);
 
 int		rpcb_create_local(struct net *);
 void		rpcb_put_local(struct net *);
@@ -188,9 +167,6 @@ int		rpcb_v4_register(struct net *net, const u32 program,
 				 const char *netid);
 void		rpcb_getport_async(struct rpc_task *);
 
-void rpc_prepare_reply_pages(struct rpc_rqst *req, struct page **pages,
-			     unsigned int base, unsigned int len,
-			     unsigned int hdrsize);
 void		rpc_call_start(struct rpc_task *);
 int		rpc_call_async(struct rpc_clnt *clnt,
 			       const struct rpc_message *msg, int flags,
@@ -206,7 +182,6 @@ void		rpc_setbufsize(struct rpc_clnt *, unsigned int, unsigned int);
 struct net *	rpc_net_ns(struct rpc_clnt *);
 size_t		rpc_max_payload(struct rpc_clnt *);
 size_t		rpc_max_bc_payload(struct rpc_clnt *);
-unsigned int	rpc_num_bc_slots(struct rpc_clnt *);
 void		rpc_force_rebind(struct rpc_clnt *);
 size_t		rpc_peeraddr(struct rpc_clnt *, struct sockaddr *, size_t);
 const char	*rpc_peeraddr2str(struct rpc_clnt *, enum rpc_display_format_t);
@@ -234,19 +209,13 @@ int		rpc_clnt_setup_test_and_add_xprt(struct rpc_clnt *,
 			struct rpc_xprt_switch *,
 			struct rpc_xprt *,
 			void *);
-void		rpc_clnt_manage_trunked_xprts(struct rpc_clnt *);
-void		rpc_clnt_probe_trunked_xprts(struct rpc_clnt *,
-			struct rpc_add_xprt_test *);
 
 const char *rpc_proc_name(const struct rpc_task *task);
 
 void rpc_clnt_xprt_switch_put(struct rpc_clnt *);
 void rpc_clnt_xprt_switch_add_xprt(struct rpc_clnt *, struct rpc_xprt *);
-void rpc_clnt_xprt_switch_remove_xprt(struct rpc_clnt *, struct rpc_xprt *);
 bool rpc_clnt_xprt_switch_has_addr(struct rpc_clnt *clnt,
 			const struct sockaddr *sap);
-void rpc_clnt_xprt_set_online(struct rpc_clnt *clnt, struct rpc_xprt *xprt);
-void rpc_clnt_disconnect(struct rpc_clnt *clnt);
 void rpc_cleanup_clids(void);
 
 static inline int rpc_reply_expected(struct rpc_task *task)
@@ -255,9 +224,5 @@ static inline int rpc_reply_expected(struct rpc_task *task)
 		(task->tk_msg.rpc_proc->p_decode != NULL);
 }
 
-static inline void rpc_task_close_connection(struct rpc_task *task)
-{
-	if (task->tk_xprt)
-		xprt_force_disconnect(task->tk_xprt);
-}
+#endif /* __KERNEL__ */
 #endif /* _LINUX_SUNRPC_CLNT_H */

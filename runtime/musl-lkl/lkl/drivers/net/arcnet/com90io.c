@@ -34,7 +34,7 @@
 #include <linux/ioport.h>
 #include <linux/delay.h>
 #include <linux/netdevice.h>
-#include <linux/memblock.h>
+#include <linux/bootmem.h>
 #include <linux/init.h>
 #include <linux/interrupt.h>
 #include <linux/io.h>
@@ -252,7 +252,7 @@ static int __init com90io_found(struct net_device *dev)
 
 	/* get and check the station ID from offset 1 in shmem */
 
-	arcnet_set_addr(dev, get_buffer_byte(dev, 1));
+	dev->dev_addr[0] = get_buffer_byte(dev, 1);
 
 	err = register_netdev(dev);
 	if (err) {
@@ -363,10 +363,8 @@ static int __init com90io_setup(char *s)
 	switch (ints[0]) {
 	default:		/* ERROR */
 		pr_err("Too many arguments\n");
-		fallthrough;
 	case 2:		/* IRQ */
 		irq = ints[2];
-		fallthrough;
 	case 1:		/* IO address */
 		io = ints[1];
 	}
@@ -396,7 +394,7 @@ static int __init com90io_init(void)
 	err = com90io_probe(dev);
 
 	if (err) {
-		free_arcdev(dev);
+		free_netdev(dev);
 		return err;
 	}
 
@@ -419,7 +417,7 @@ static void __exit com90io_exit(void)
 
 	free_irq(dev->irq, dev);
 	release_region(dev->base_addr, ARCNET_TOTAL_SIZE);
-	free_arcdev(dev);
+	free_netdev(dev);
 }
 
 module_init(com90io_init)

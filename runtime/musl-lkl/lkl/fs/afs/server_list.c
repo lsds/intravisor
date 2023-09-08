@@ -1,8 +1,12 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /* AFS fileserver list management.
  *
  * Copyright (C) 2017 Red Hat, Inc. All Rights Reserved.
  * Written by David Howells (dhowells@redhat.com)
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version
+ * 2 of the License, or (at your option) any later version.
  */
 
 #include <linux/kernel.h>
@@ -14,9 +18,10 @@ void afs_put_serverlist(struct afs_net *net, struct afs_server_list *slist)
 	int i;
 
 	if (slist && refcount_dec_and_test(&slist->usage)) {
-		for (i = 0; i < slist->nr_servers; i++)
-			afs_unuse_server(net, slist->servers[i].server,
-					 afs_server_trace_put_slist);
+		for (i = 0; i < slist->nr_servers; i++) {
+			afs_put_cb_interest(net, slist->servers[i].cb_interest);
+			afs_put_server(net, slist->servers[i].server);
+		}
 		kfree(slist);
 	}
 }
@@ -37,23 +42,21 @@ struct afs_server_list *afs_alloc_server_list(struct afs_cell *cell,
 		if (vldb->fs_mask[i] & type_mask)
 			nr_servers++;
 
-	slist = kzalloc(struct_size(slist, servers, nr_servers), GFP_KERNEL);
+	slist = kzalloc(sizeof(struct afs_server_list) +
+			sizeof(struct afs_server_entry) * nr_servers,
+			GFP_KERNEL);
 	if (!slist)
 		goto error;
 
 	refcount_set(&slist->usage, 1);
 	rwlock_init(&slist->lock);
 
-	for (i = 0; i < AFS_MAXTYPES; i++)
-		slist->vids[i] = vldb->vid[i];
-
 	/* Make sure a records exists for each server in the list. */
 	for (i = 0; i < vldb->nr_servers; i++) {
 		if (!(vldb->fs_mask[i] & type_mask))
 			continue;
 
-		server = afs_lookup_server(cell, key, &vldb->fs_server[i],
-					   vldb->addr_version[i]);
+		server = afs_lookup_server(cell, key, &vldb->fs_server[i]);
 		if (IS_ERR(server)) {
 			ret = PTR_ERR(server);
 			if (ret == -ENOENT ||
@@ -70,8 +73,7 @@ struct afs_server_list *afs_alloc_server_list(struct afs_cell *cell,
 				break;
 		if (j < slist->nr_servers) {
 			if (slist->servers[j].server == server) {
-				afs_put_server(cell->net, server,
-					       afs_server_trace_put_slist_isort);
+				afs_put_server(cell->net, server);
 				continue;
 			}
 
@@ -116,13 +118,39 @@ bool afs_annotate_server_list(struct afs_server_list *new,
 	return false;
 
 changed:
-	/* Maintain the same preferred server as before if possible. */
-	cur = old->servers[old->preferred].server;
+	/* Maintain the same current server as before if possible. */
+	cur = old->servers[old->index].server;
 	for (j = 0; j < new->nr_servers; j++) {
 		if (new->servers[j].server == cur) {
-			new->preferred = j;
+			new->index = j;
 			break;
 		}
+	}
+
+	/* Keep the old callback interest records where possible so that we
+	 * maintain callback interception.
+	 */
+	i = 0;
+	j = 0;
+	while (i < old->nr_servers && j < new->nr_servers) {
+		if (new->servers[j].server == old->servers[i].server) {
+			struct afs_cb_interest *cbi = old->servers[i].cb_interest;
+			if (cbi) {
+				new->servers[j].cb_interest = cbi;
+				refcount_inc(&cbi->usage);
+			}
+			i++;
+			j++;
+			continue;
+		}
+
+		if (new->servers[j].server < old->servers[i].server) {
+			j++;
+			continue;
+		}
+
+		i++;
+		continue;
 	}
 
 	return true;

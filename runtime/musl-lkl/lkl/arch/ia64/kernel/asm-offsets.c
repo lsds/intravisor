@@ -50,7 +50,8 @@ void foo(void)
 
 	DEFINE(IA64_TASK_BLOCKED_OFFSET,offsetof (struct task_struct, blocked));
 	DEFINE(IA64_TASK_CLEAR_CHILD_TID_OFFSET,offsetof (struct task_struct, clear_child_tid));
-	DEFINE(IA64_TASK_THREAD_PID_OFFSET,offsetof (struct task_struct, thread_pid));
+	DEFINE(IA64_TASK_GROUP_LEADER_OFFSET, offsetof (struct task_struct, group_leader));
+	DEFINE(IA64_TASK_TGIDLINK_OFFSET, offsetof (struct task_struct, pids[PIDTYPE_PID].pid));
 	DEFINE(IA64_PID_LEVEL_OFFSET, offsetof (struct pid, level));
 	DEFINE(IA64_PID_UPID_OFFSET, offsetof (struct pid, numbers[0]));
 	DEFINE(IA64_TASK_PENDING_OFFSET,offsetof (struct task_struct, pending));
@@ -67,7 +68,6 @@ void foo(void)
 	DEFINE(IA64_SIGNAL_GROUP_STOP_COUNT_OFFSET,offsetof (struct signal_struct,
 							     group_stop_count));
 	DEFINE(IA64_SIGNAL_SHARED_PENDING_OFFSET,offsetof (struct signal_struct, shared_pending));
-	DEFINE(IA64_SIGNAL_PIDS_TGID_OFFSET, offsetof (struct signal_struct, pids[PIDTYPE_TGID]));
 
 	BLANK();
 
@@ -211,7 +211,7 @@ void foo(void)
 	       offsetof (struct cpuinfo_ia64, ptce_stride));
 	BLANK();
 	DEFINE(IA64_TIMESPEC_TV_NSEC_OFFSET,
-	       offsetof (struct __kernel_old_timespec, tv_nsec));
+	       offsetof (struct timespec, tv_nsec));
 	DEFINE(IA64_TIME_SN_SPEC_SNSEC_OFFSET,
 	       offsetof (struct time_sn_spec, snsec));
 
@@ -245,23 +245,23 @@ void foo(void)
 	BLANK();
 
 	DEFINE(IA64_PMSA_GR_OFFSET,
-	       offsetof(struct pal_min_state_area, pmsa_gr));
+	       offsetof (struct pal_min_state_area_s, pmsa_gr));
 	DEFINE(IA64_PMSA_BANK1_GR_OFFSET,
-	       offsetof(struct pal_min_state_area, pmsa_bank1_gr));
+	       offsetof (struct pal_min_state_area_s, pmsa_bank1_gr));
 	DEFINE(IA64_PMSA_PR_OFFSET,
-	       offsetof(struct pal_min_state_area, pmsa_pr));
+	       offsetof (struct pal_min_state_area_s, pmsa_pr));
 	DEFINE(IA64_PMSA_BR0_OFFSET,
-	       offsetof(struct pal_min_state_area, pmsa_br0));
+	       offsetof (struct pal_min_state_area_s, pmsa_br0));
 	DEFINE(IA64_PMSA_RSC_OFFSET,
-	       offsetof(struct pal_min_state_area, pmsa_rsc));
+	       offsetof (struct pal_min_state_area_s, pmsa_rsc));
 	DEFINE(IA64_PMSA_IIP_OFFSET,
-	       offsetof(struct pal_min_state_area, pmsa_iip));
+	       offsetof (struct pal_min_state_area_s, pmsa_iip));
 	DEFINE(IA64_PMSA_IPSR_OFFSET,
-	       offsetof(struct pal_min_state_area, pmsa_ipsr));
+	       offsetof (struct pal_min_state_area_s, pmsa_ipsr));
 	DEFINE(IA64_PMSA_IFS_OFFSET,
-	       offsetof(struct pal_min_state_area, pmsa_ifs));
+	       offsetof (struct pal_min_state_area_s, pmsa_ifs));
 	DEFINE(IA64_PMSA_XIP_OFFSET,
-	       offsetof(struct pal_min_state_area, pmsa_xip));
+	       offsetof (struct pal_min_state_area_s, pmsa_xip));
 	BLANK();
 
 	/* used by fsys_gettimeofday in arch/ia64/kernel/fsys.S */

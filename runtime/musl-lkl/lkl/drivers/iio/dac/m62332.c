@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  *  m62332.c - Support for Mitsubishi m62332 DAC
  *
@@ -6,6 +5,16 @@
  *
  *  Based on max517 driver:
  *  Copyright (C) 2010, 2011 Roland Stigge <stigge@antcom.de>
+ *
+ *  This program is free software; you can redistribute it and/or modify
+ *  it under the terms of the GNU General Public License as published by
+ *  the Free Software Foundation; either version 2 of the License, or
+ *  (at your option) any later version.
+ *
+ *  This program is distributed in the hope that it will be useful,
+ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *  GNU General Public License for more details.
  */
 
 #include <linux/module.h>
@@ -25,7 +34,9 @@ struct m62332_data {
 	struct regulator	*vcc;
 	struct mutex		mutex;
 	u8			raw[M62332_CHANNELS];
+#ifdef CONFIG_PM_SLEEP
 	u8			save[M62332_CHANNELS];
+#endif
 };
 
 static int m62332_set_value(struct iio_dev *indio_dev, u8 val, int channel)
@@ -122,6 +133,7 @@ static int m62332_write_raw(struct iio_dev *indio_dev,
 	return -EINVAL;
 }
 
+#ifdef CONFIG_PM_SLEEP
 static int m62332_suspend(struct device *dev)
 {
 	struct i2c_client *client = to_i2c_client(dev);
@@ -153,7 +165,11 @@ static int m62332_resume(struct device *dev)
 	return m62332_set_value(indio_dev, data->save[1], 1);
 }
 
-static DEFINE_SIMPLE_DEV_PM_OPS(m62332_pm_ops, m62332_suspend, m62332_resume);
+static SIMPLE_DEV_PM_OPS(m62332_pm_ops, m62332_suspend, m62332_resume);
+#define M62332_PM_OPS (&m62332_pm_ops)
+#else
+#define M62332_PM_OPS NULL
+#endif
 
 static const struct iio_info m62332_info = {
 	.read_raw = m62332_read_raw,
@@ -197,6 +213,9 @@ static int m62332_probe(struct i2c_client *client,
 	if (IS_ERR(data->vcc))
 		return PTR_ERR(data->vcc);
 
+	/* establish that the iio_dev is a child of the i2c device */
+	indio_dev->dev.parent = &client->dev;
+
 	indio_dev->num_channels = ARRAY_SIZE(m62332_channels);
 	indio_dev->channels = m62332_channels;
 	indio_dev->modes = INDIO_DIRECT_MODE;
@@ -218,7 +237,7 @@ err:
 	return ret;
 }
 
-static void m62332_remove(struct i2c_client *client)
+static int m62332_remove(struct i2c_client *client)
 {
 	struct iio_dev *indio_dev = i2c_get_clientdata(client);
 
@@ -226,6 +245,8 @@ static void m62332_remove(struct i2c_client *client)
 	iio_map_array_unregister(indio_dev);
 	m62332_set_value(indio_dev, 0, 0);
 	m62332_set_value(indio_dev, 0, 1);
+
+	return 0;
 }
 
 static const struct i2c_device_id m62332_id[] = {
@@ -237,7 +258,7 @@ MODULE_DEVICE_TABLE(i2c, m62332_id);
 static struct i2c_driver m62332_driver = {
 	.driver = {
 		.name	= "m62332",
-		.pm	= pm_sleep_ptr(&m62332_pm_ops),
+		.pm	= M62332_PM_OPS,
 	},
 	.probe		= m62332_probe,
 	.remove		= m62332_remove,

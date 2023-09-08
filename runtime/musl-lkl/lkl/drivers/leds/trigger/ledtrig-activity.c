@@ -1,17 +1,19 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Activity LED trigger
  *
  * Copyright (C) 2017 Willy Tarreau <w@1wt.eu>
  * Partially based on Atsushi Nemoto's ledtrig-heartbeat.c.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ *
  */
-
 #include <linux/init.h>
 #include <linux/kernel.h>
 #include <linux/kernel_stat.h>
 #include <linux/leds.h>
 #include <linux/module.h>
-#include <linux/panic_notifier.h>
 #include <linux/reboot.h>
 #include <linux/sched.h>
 #include <linux/slab.h>
@@ -35,6 +37,7 @@ static void led_activity_function(struct timer_list *t)
 	struct activity_data *activity_data = from_timer(activity_data, t,
 							 timer);
 	struct led_classdev *led_cdev = activity_data->led_cdev;
+	struct timespec boot_time;
 	unsigned int target;
 	unsigned int usage;
 	int delay;
@@ -54,19 +57,17 @@ static void led_activity_function(struct timer_list *t)
 		return;
 	}
 
+	get_monotonic_boottime(&boot_time);
+
 	cpus = 0;
 	curr_used = 0;
 
 	for_each_possible_cpu(i) {
-		struct kernel_cpustat kcpustat;
-
-		kcpustat_cpu_fetch(&kcpustat, i);
-
-		curr_used += kcpustat.cpustat[CPUTIME_USER]
-			  +  kcpustat.cpustat[CPUTIME_NICE]
-			  +  kcpustat.cpustat[CPUTIME_SYSTEM]
-			  +  kcpustat.cpustat[CPUTIME_SOFTIRQ]
-			  +  kcpustat.cpustat[CPUTIME_IRQ];
+		curr_used += kcpustat_cpu(i).cpustat[CPUTIME_USER]
+			  +  kcpustat_cpu(i).cpustat[CPUTIME_NICE]
+			  +  kcpustat_cpu(i).cpustat[CPUTIME_SYSTEM]
+			  +  kcpustat_cpu(i).cpustat[CPUTIME_SOFTIRQ]
+			  +  kcpustat_cpu(i).cpustat[CPUTIME_IRQ];
 		cpus++;
 	}
 
@@ -75,7 +76,7 @@ static void led_activity_function(struct timer_list *t)
 	 * down to 16us, ensuring we won't overflow 32-bit computations below
 	 * even up to 3k CPUs, while keeping divides cheap on smaller systems.
 	 */
-	curr_boot = ktime_get_boottime_ns() * cpus;
+	curr_boot = timespec_to_ns(&boot_time) * cpus;
 	diff_boot = (curr_boot - activity_data->last_boot) >> 16;
 	diff_used = (curr_used - activity_data->last_used) >> 16;
 	activity_data->last_boot = curr_boot;
@@ -154,7 +155,8 @@ static void led_activity_function(struct timer_list *t)
 static ssize_t led_invert_show(struct device *dev,
                                struct device_attribute *attr, char *buf)
 {
-	struct activity_data *activity_data = led_trigger_get_drvdata(dev);
+	struct led_classdev *led_cdev = dev_get_drvdata(dev);
+	struct activity_data *activity_data = led_cdev->trigger_data;
 
 	return sprintf(buf, "%u\n", activity_data->invert);
 }
@@ -163,7 +165,8 @@ static ssize_t led_invert_store(struct device *dev,
                                 struct device_attribute *attr,
                                 const char *buf, size_t size)
 {
-	struct activity_data *activity_data = led_trigger_get_drvdata(dev);
+	struct led_classdev *led_cdev = dev_get_drvdata(dev);
+	struct activity_data *activity_data = led_cdev->trigger_data;
 	unsigned long state;
 	int ret;
 
@@ -178,21 +181,21 @@ static ssize_t led_invert_store(struct device *dev,
 
 static DEVICE_ATTR(invert, 0644, led_invert_show, led_invert_store);
 
-static struct attribute *activity_led_attrs[] = {
-	&dev_attr_invert.attr,
-	NULL
-};
-ATTRIBUTE_GROUPS(activity_led);
-
-static int activity_activate(struct led_classdev *led_cdev)
+static void activity_activate(struct led_classdev *led_cdev)
 {
 	struct activity_data *activity_data;
+	int rc;
 
 	activity_data = kzalloc(sizeof(*activity_data), GFP_KERNEL);
 	if (!activity_data)
-		return -ENOMEM;
+		return;
 
-	led_set_trigger_data(led_cdev, activity_data);
+	led_cdev->trigger_data = activity_data;
+	rc = device_create_file(led_cdev->dev, &dev_attr_invert);
+	if (rc) {
+		kfree(led_cdev->trigger_data);
+		return;
+	}
 
 	activity_data->led_cdev = led_cdev;
 	timer_setup(&activity_data->timer, led_activity_function, 0);
@@ -200,24 +203,26 @@ static int activity_activate(struct led_classdev *led_cdev)
 		led_cdev->blink_brightness = led_cdev->max_brightness;
 	led_activity_function(&activity_data->timer);
 	set_bit(LED_BLINK_SW, &led_cdev->work_flags);
-
-	return 0;
+	led_cdev->activated = true;
 }
 
 static void activity_deactivate(struct led_classdev *led_cdev)
 {
-	struct activity_data *activity_data = led_get_trigger_data(led_cdev);
+	struct activity_data *activity_data = led_cdev->trigger_data;
 
-	del_timer_sync(&activity_data->timer);
-	kfree(activity_data);
-	clear_bit(LED_BLINK_SW, &led_cdev->work_flags);
+	if (led_cdev->activated) {
+		del_timer_sync(&activity_data->timer);
+		device_remove_file(led_cdev->dev, &dev_attr_invert);
+		kfree(activity_data);
+		clear_bit(LED_BLINK_SW, &led_cdev->work_flags);
+		led_cdev->activated = false;
+	}
 }
 
 static struct led_trigger activity_led_trigger = {
 	.name       = "activity",
 	.activate   = activity_activate,
 	.deactivate = activity_deactivate,
-	.groups     = activity_led_groups,
 };
 
 static int activity_reboot_notifier(struct notifier_block *nb,
@@ -267,4 +272,4 @@ module_exit(activity_exit);
 
 MODULE_AUTHOR("Willy Tarreau <w@1wt.eu>");
 MODULE_DESCRIPTION("Activity LED trigger");
-MODULE_LICENSE("GPL v2");
+MODULE_LICENSE("GPL");

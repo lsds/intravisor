@@ -38,13 +38,15 @@
 #include <linux/delay.h>
 #include <linux/io.h>
 #include <linux/of.h>
-#include <linux/of_address.h>
-#include <linux/of_irq.h>
 #include <linux/of_platform.h>
 #include <linux/clk.h>
 
 #include <asm/mpc52xx.h>
 #include <asm/mpc52xx_psc.h>
+
+#if defined(CONFIG_SERIAL_MPC52xx_CONSOLE) && defined(CONFIG_MAGIC_SYSRQ)
+#define SUPPORT_SYSRQ
+#endif
 
 #include <linux/serial_core.h>
 
@@ -85,11 +87,11 @@ static irqreturn_t mpc5xxx_uart_process_int(struct uart_port *port);
 
 struct psc_ops {
 	void		(*fifo_init)(struct uart_port *port);
-	unsigned int	(*raw_rx_rdy)(struct uart_port *port);
-	unsigned int	(*raw_tx_rdy)(struct uart_port *port);
-	unsigned int	(*rx_rdy)(struct uart_port *port);
-	unsigned int	(*tx_rdy)(struct uart_port *port);
-	unsigned int	(*tx_empty)(struct uart_port *port);
+	int		(*raw_rx_rdy)(struct uart_port *port);
+	int		(*raw_tx_rdy)(struct uart_port *port);
+	int		(*rx_rdy)(struct uart_port *port);
+	int		(*tx_rdy)(struct uart_port *port);
+	int		(*tx_empty)(struct uart_port *port);
 	void		(*stop_rx)(struct uart_port *port);
 	void		(*start_tx)(struct uart_port *port);
 	void		(*stop_tx)(struct uart_port *port);
@@ -101,7 +103,7 @@ struct psc_ops {
 	void		(*cw_restore_ints)(struct uart_port *port);
 	unsigned int	(*set_baudrate)(struct uart_port *port,
 					struct ktermios *new,
-					const struct ktermios *old);
+					struct ktermios *old);
 	int		(*clock_alloc)(struct uart_port *port);
 	void		(*clock_relse)(struct uart_port *port);
 	int		(*clock)(struct uart_port *port, int enable);
@@ -205,34 +207,34 @@ static void mpc52xx_psc_fifo_init(struct uart_port *port)
 	out_be16(&psc->mpc52xx_psc_imr, port->read_status_mask);
 }
 
-static unsigned int mpc52xx_psc_raw_rx_rdy(struct uart_port *port)
+static int mpc52xx_psc_raw_rx_rdy(struct uart_port *port)
 {
 	return in_be16(&PSC(port)->mpc52xx_psc_status)
 	    & MPC52xx_PSC_SR_RXRDY;
 }
 
-static unsigned int mpc52xx_psc_raw_tx_rdy(struct uart_port *port)
+static int mpc52xx_psc_raw_tx_rdy(struct uart_port *port)
 {
 	return in_be16(&PSC(port)->mpc52xx_psc_status)
 	    & MPC52xx_PSC_SR_TXRDY;
 }
 
 
-static unsigned int mpc52xx_psc_rx_rdy(struct uart_port *port)
+static int mpc52xx_psc_rx_rdy(struct uart_port *port)
 {
 	return in_be16(&PSC(port)->mpc52xx_psc_isr)
 	    & port->read_status_mask
 	    & MPC52xx_PSC_IMR_RXRDY;
 }
 
-static unsigned int mpc52xx_psc_tx_rdy(struct uart_port *port)
+static int mpc52xx_psc_tx_rdy(struct uart_port *port)
 {
 	return in_be16(&PSC(port)->mpc52xx_psc_isr)
 	    & port->read_status_mask
 	    & MPC52xx_PSC_IMR_TXRDY;
 }
 
-static unsigned int mpc52xx_psc_tx_empty(struct uart_port *port)
+static int mpc52xx_psc_tx_empty(struct uart_port *port)
 {
 	u16 sts = in_be16(&PSC(port)->mpc52xx_psc_status);
 
@@ -287,7 +289,7 @@ static void mpc52xx_psc_cw_restore_ints(struct uart_port *port)
 
 static unsigned int mpc5200_psc_set_baudrate(struct uart_port *port,
 					     struct ktermios *new,
-					     const struct ktermios *old)
+					     struct ktermios *old)
 {
 	unsigned int baud;
 	unsigned int divisor;
@@ -305,7 +307,7 @@ static unsigned int mpc5200_psc_set_baudrate(struct uart_port *port,
 
 static unsigned int mpc5200b_psc_set_baudrate(struct uart_port *port,
 					      struct ktermios *new,
-					      const struct ktermios *old)
+					      struct ktermios *old)
 {
 	unsigned int baud;
 	unsigned int divisor;
@@ -438,31 +440,31 @@ static void mpc512x_psc_fifo_init(struct uart_port *port)
 	out_be32(&FIFO_512x(port)->rximr, MPC512x_PSC_FIFO_ALARM);
 }
 
-static unsigned int mpc512x_psc_raw_rx_rdy(struct uart_port *port)
+static int mpc512x_psc_raw_rx_rdy(struct uart_port *port)
 {
 	return !(in_be32(&FIFO_512x(port)->rxsr) & MPC512x_PSC_FIFO_EMPTY);
 }
 
-static unsigned int mpc512x_psc_raw_tx_rdy(struct uart_port *port)
+static int mpc512x_psc_raw_tx_rdy(struct uart_port *port)
 {
 	return !(in_be32(&FIFO_512x(port)->txsr) & MPC512x_PSC_FIFO_FULL);
 }
 
-static unsigned int mpc512x_psc_rx_rdy(struct uart_port *port)
+static int mpc512x_psc_rx_rdy(struct uart_port *port)
 {
 	return in_be32(&FIFO_512x(port)->rxsr)
 	    & in_be32(&FIFO_512x(port)->rximr)
 	    & MPC512x_PSC_FIFO_ALARM;
 }
 
-static unsigned int mpc512x_psc_tx_rdy(struct uart_port *port)
+static int mpc512x_psc_tx_rdy(struct uart_port *port)
 {
 	return in_be32(&FIFO_512x(port)->txsr)
 	    & in_be32(&FIFO_512x(port)->tximr)
 	    & MPC512x_PSC_FIFO_ALARM;
 }
 
-static unsigned int mpc512x_psc_tx_empty(struct uart_port *port)
+static int mpc512x_psc_tx_empty(struct uart_port *port)
 {
 	return in_be32(&FIFO_512x(port)->txsr)
 	    & MPC512x_PSC_FIFO_EMPTY;
@@ -533,7 +535,7 @@ static void mpc512x_psc_cw_restore_ints(struct uart_port *port)
 
 static unsigned int mpc512x_psc_set_baudrate(struct uart_port *port,
 					     struct ktermios *new,
-					     const struct ktermios *old)
+					     struct ktermios *old)
 {
 	unsigned int baud;
 	unsigned int divisor;
@@ -756,6 +758,9 @@ static void mpc512x_psc_get_irq(struct uart_port *port, struct device_node *np)
 	port->irqflags = IRQF_SHARED;
 	port->irq = psc_fifoc_irq;
 }
+#endif
+
+#ifdef CONFIG_PPC_MPC512x
 
 #define PSC_5125(port) ((struct mpc5125_psc __iomem *)((port)->membase))
 #define FIFO_5125(port) ((struct mpc512x_psc_fifo __iomem *)(PSC_5125(port)+1))
@@ -779,29 +784,29 @@ static void mpc5125_psc_fifo_init(struct uart_port *port)
 	out_be32(&FIFO_5125(port)->rximr, MPC512x_PSC_FIFO_ALARM);
 }
 
-static unsigned int mpc5125_psc_raw_rx_rdy(struct uart_port *port)
+static int mpc5125_psc_raw_rx_rdy(struct uart_port *port)
 {
 	return !(in_be32(&FIFO_5125(port)->rxsr) & MPC512x_PSC_FIFO_EMPTY);
 }
 
-static unsigned int mpc5125_psc_raw_tx_rdy(struct uart_port *port)
+static int mpc5125_psc_raw_tx_rdy(struct uart_port *port)
 {
 	return !(in_be32(&FIFO_5125(port)->txsr) & MPC512x_PSC_FIFO_FULL);
 }
 
-static unsigned int mpc5125_psc_rx_rdy(struct uart_port *port)
+static int mpc5125_psc_rx_rdy(struct uart_port *port)
 {
 	return in_be32(&FIFO_5125(port)->rxsr) &
 	       in_be32(&FIFO_5125(port)->rximr) & MPC512x_PSC_FIFO_ALARM;
 }
 
-static unsigned int mpc5125_psc_tx_rdy(struct uart_port *port)
+static int mpc5125_psc_tx_rdy(struct uart_port *port)
 {
 	return in_be32(&FIFO_5125(port)->txsr) &
 	       in_be32(&FIFO_5125(port)->tximr) & MPC512x_PSC_FIFO_ALARM;
 }
 
-static unsigned int mpc5125_psc_tx_empty(struct uart_port *port)
+static int mpc5125_psc_tx_empty(struct uart_port *port)
 {
 	return in_be32(&FIFO_5125(port)->txsr) & MPC512x_PSC_FIFO_EMPTY;
 }
@@ -880,7 +885,7 @@ static inline void mpc5125_set_divisor(struct mpc5125_psc __iomem *psc,
 
 static unsigned int mpc5125_psc_set_baudrate(struct uart_port *port,
 					     struct ktermios *new,
-					     const struct ktermios *old)
+					     struct ktermios *old)
 {
 	unsigned int baud;
 	unsigned int divisor;
@@ -1167,7 +1172,7 @@ mpc52xx_uart_shutdown(struct uart_port *port)
 
 static void
 mpc52xx_uart_set_termios(struct uart_port *port, struct ktermios *new,
-			 const struct ktermios *old)
+			 struct ktermios *old)
 {
 	unsigned long flags;
 	unsigned char mr1, mr2;
@@ -1364,7 +1369,7 @@ static const struct uart_ops mpc52xx_uart_ops = {
 /* Interrupt handling                                                       */
 /* ======================================================================== */
 
-static inline bool
+static inline int
 mpc52xx_uart_int_rx_chars(struct uart_port *port)
 {
 	struct tty_port *tport = &port->state->port;
@@ -1377,8 +1382,12 @@ mpc52xx_uart_int_rx_chars(struct uart_port *port)
 		ch = psc_ops->read_char(port);
 
 		/* Handle sysreq char */
-		if (uart_handle_sysrq_char(port, ch))
+#ifdef SUPPORT_SYSRQ
+		if (uart_handle_sysrq_char(port, ch)) {
+			port->sysrq = 0;
 			continue;
+		}
+#endif
 
 		/* Store it */
 
@@ -1420,12 +1429,14 @@ mpc52xx_uart_int_rx_chars(struct uart_port *port)
 		}
 	}
 
+	spin_unlock(&port->lock);
 	tty_flip_buffer_push(tport);
+	spin_lock(&port->lock);
 
 	return psc_ops->raw_rx_rdy(port);
 }
 
-static inline bool
+static inline int
 mpc52xx_uart_int_tx_chars(struct uart_port *port)
 {
 	struct circ_buf *xmit = &port->state->xmit;
@@ -1435,13 +1446,13 @@ mpc52xx_uart_int_tx_chars(struct uart_port *port)
 		psc_ops->write_char(port, port->x_char);
 		port->icount.tx++;
 		port->x_char = 0;
-		return true;
+		return 1;
 	}
 
 	/* Nothing to do ? */
 	if (uart_circ_empty(xmit) || uart_tx_stopped(port)) {
 		mpc52xx_uart_stop_tx(port);
-		return false;
+		return 0;
 	}
 
 	/* Send chars */
@@ -1460,23 +1471,23 @@ mpc52xx_uart_int_tx_chars(struct uart_port *port)
 	/* Maybe we're done after all */
 	if (uart_circ_empty(xmit)) {
 		mpc52xx_uart_stop_tx(port);
-		return false;
+		return 0;
 	}
 
-	return true;
+	return 1;
 }
 
 static irqreturn_t
 mpc5xxx_uart_process_int(struct uart_port *port)
 {
 	unsigned long pass = ISR_PASS_LIMIT;
-	bool keepgoing;
+	unsigned int keepgoing;
 	u8 status;
 
 	/* While we have stuff to do, we continue */
 	do {
 		/* If we don't find anything to do, we stop */
-		keepgoing = false;
+		keepgoing = 0;
 
 		psc_ops->rx_clr_irq(port);
 		if (psc_ops->rx_rdy(port))
@@ -1495,7 +1506,7 @@ mpc5xxx_uart_process_int(struct uart_port *port)
 
 		/* Limit number of iteration */
 		if (!(--pass))
-			keepgoing = false;
+			keepgoing = 0;
 
 	} while (keepgoing);
 
@@ -1630,7 +1641,7 @@ mpc52xx_console_setup(struct console *co, char *options)
 		return ret;
 	}
 
-	uartclk = mpc5xxx_fwnode_get_bus_frequency(of_fwnode_handle(np));
+	uartclk = mpc5xxx_get_bus_frequency(np);
 	if (uartclk == 0) {
 		pr_debug("Could not find uart clock frequency!\n");
 		return -EINVAL;
@@ -1747,7 +1758,7 @@ static int mpc52xx_uart_of_probe(struct platform_device *op)
 	/* set the uart clock to the input clock of the psc, the different
 	 * prescalers are taken into account in the set_baudrate() methods
 	 * of the respective chip */
-	uartclk = mpc5xxx_get_bus_frequency(&op->dev);
+	uartclk = mpc5xxx_get_bus_frequency(op->dev.of_node);
 	if (uartclk == 0) {
 		dev_dbg(&op->dev, "Could not find uart clock frequency!\n");
 		return -EINVAL;
@@ -1759,7 +1770,6 @@ static int mpc52xx_uart_of_probe(struct platform_device *op)
 	spin_lock_init(&port->lock);
 	port->uartclk = uartclk;
 	port->fifosize	= 512;
-	port->has_sysrq = IS_ENABLED(CONFIG_SERIAL_MPC52xx_CONSOLE);
 	port->iotype	= UPIO_MEM;
 	port->flags	= UPF_BOOT_AUTOCONF |
 			  (uart_console(port) ? 0 : UPF_IOREMAP);

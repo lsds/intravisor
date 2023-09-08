@@ -21,10 +21,6 @@
 #define LOAD_OFFSET __START_KERNEL_map
 #endif
 
-#define RUNTIME_DISCARD_EXIT
-#define EMITS_PT_NOTE
-#define RO_EXCEPTION_TABLE_ALIGN	16
-
 #include <asm-generic/vmlinux.lds.h>
 #include <asm/asm-offsets.h>
 #include <asm/thread_info.h>
@@ -35,17 +31,17 @@
 
 #undef i386     /* in case the preprocessor is a 32bit one */
 
-OUTPUT_FORMAT(CONFIG_OUTPUT_FORMAT)
+OUTPUT_FORMAT(CONFIG_OUTPUT_FORMAT, CONFIG_OUTPUT_FORMAT, CONFIG_OUTPUT_FORMAT)
 
 #ifdef CONFIG_X86_32
 OUTPUT_ARCH(i386)
 ENTRY(phys_startup_32)
+jiffies = jiffies_64;
 #else
 OUTPUT_ARCH(i386:x86-64)
 ENTRY(phys_startup_64)
+jiffies_64 = jiffies;
 #endif
-
-jiffies = jiffies_64;
 
 #if defined(CONFIG_X86_64)
 /*
@@ -59,43 +55,22 @@ jiffies = jiffies_64;
  * so we can enable protection checks as well as retain 2MB large page
  * mappings for kernel text.
  */
-#define X86_ALIGN_RODATA_BEGIN	. = ALIGN(HPAGE_SIZE);
+#define X64_ALIGN_RODATA_BEGIN	. = ALIGN(HPAGE_SIZE);
 
-#define X86_ALIGN_RODATA_END					\
+#define X64_ALIGN_RODATA_END					\
 		. = ALIGN(HPAGE_SIZE);				\
-		__end_rodata_hpage_align = .;			\
-		__end_rodata_aligned = .;
+		__end_rodata_hpage_align = .;
 
 #define ALIGN_ENTRY_TEXT_BEGIN	. = ALIGN(PMD_SIZE);
 #define ALIGN_ENTRY_TEXT_END	. = ALIGN(PMD_SIZE);
 
-/*
- * This section contains data which will be mapped as decrypted. Memory
- * encryption operates on a page basis. Make this section PMD-aligned
- * to avoid splitting the pages while mapping the section early.
- *
- * Note: We use a separate section so that only this section gets
- * decrypted to avoid exposing more than we wish.
- */
-#define BSS_DECRYPTED						\
-	. = ALIGN(PMD_SIZE);					\
-	__start_bss_decrypted = .;				\
-	*(.bss..decrypted);					\
-	. = ALIGN(PAGE_SIZE);					\
-	__start_bss_decrypted_unused = .;			\
-	. = ALIGN(PMD_SIZE);					\
-	__end_bss_decrypted = .;				\
-
 #else
 
-#define X86_ALIGN_RODATA_BEGIN
-#define X86_ALIGN_RODATA_END					\
-		. = ALIGN(PAGE_SIZE);				\
-		__end_rodata_aligned = .;
+#define X64_ALIGN_RODATA_BEGIN
+#define X64_ALIGN_RODATA_END
 
 #define ALIGN_ENTRY_TEXT_BEGIN
 #define ALIGN_ENTRY_TEXT_END
-#define BSS_DECRYPTED
 
 #endif
 
@@ -134,25 +109,41 @@ SECTIONS
 		KPROBES_TEXT
 		ALIGN_ENTRY_TEXT_BEGIN
 		ENTRY_TEXT
+		IRQENTRY_TEXT
 		ALIGN_ENTRY_TEXT_END
 		SOFTIRQENTRY_TEXT
-		STATIC_CALL_TEXT
+		*(.fixup)
 		*(.gnu.warning)
+
+#ifdef CONFIG_X86_64
+		. = ALIGN(PAGE_SIZE);
+		VMLINUX_SYMBOL(__entry_trampoline_start) = .;
+		_entry_trampoline = .;
+		*(.entry_trampoline)
+		. = ALIGN(PAGE_SIZE);
+		VMLINUX_SYMBOL(__entry_trampoline_end) = .;
+		ASSERT(. - _entry_trampoline == PAGE_SIZE, "entry trampoline is too big");
+#endif
 
 #ifdef CONFIG_RETPOLINE
 		__indirect_thunk_start = .;
-		*(.text.__x86.*)
+		*(.text.__x86.indirect_thunk)
 		__indirect_thunk_end = .;
 #endif
-	} :text =0xcccc
 
-	/* End of text section, which should occupy whole number of pages */
-	_etext = .;
+		/* End of text section */
+		_etext = .;
+	} :text = 0x9090
+
+	NOTES :text :note
+
+	EXCEPTION_TABLE(16) :text = 0x9090
+
+	/* .text should occupy whole number of pages */
 	. = ALIGN(PAGE_SIZE);
-
-	X86_ALIGN_RODATA_BEGIN
+	X64_ALIGN_RODATA_BEGIN
 	RO_DATA(PAGE_SIZE)
-	X86_ALIGN_RODATA_END
+	X64_ALIGN_RODATA_END
 
 	/* Data */
 	.data : AT(ADDR(.data) - LOAD_OFFSET) {
@@ -193,10 +184,12 @@ SECTIONS
 		__vvar_beginning_hack = .;
 
 		/* Place all vvars at the offsets in asm/vvar.h. */
-#define EMIT_VVAR(name, offset)				\
+#define EMIT_VVAR(name, offset) 			\
 		. = __vvar_beginning_hack + offset;	\
 		*(.vvar_ ## name)
+#define __VVAR_KERNEL_LDS
 #include <asm/vvar.h>
+#undef __VVAR_KERNEL_LDS
 #undef EMIT_VVAR
 
 		/*
@@ -271,36 +264,6 @@ SECTIONS
 		__parainstructions_end = .;
 	}
 
-#ifdef CONFIG_RETPOLINE
-	/*
-	 * List of instructions that call/jmp/jcc to retpoline thunks
-	 * __x86_indirect_thunk_*(). These instructions can be patched along
-	 * with alternatives, after which the section can be freed.
-	 */
-	. = ALIGN(8);
-	.retpoline_sites : AT(ADDR(.retpoline_sites) - LOAD_OFFSET) {
-		__retpoline_sites = .;
-		*(.retpoline_sites)
-		__retpoline_sites_end = .;
-	}
-
-	. = ALIGN(8);
-	.return_sites : AT(ADDR(.return_sites) - LOAD_OFFSET) {
-		__return_sites = .;
-		*(.return_sites)
-		__return_sites_end = .;
-	}
-#endif
-
-#ifdef CONFIG_X86_KERNEL_IBT
-	. = ALIGN(8);
-	.ibt_endbr_seal : AT(ADDR(.ibt_endbr_seal) - LOAD_OFFSET) {
-		__ibt_endbr_seal = .;
-		*(.ibt_endbr_seal)
-		__ibt_endbr_seal_end = .;
-	}
-#endif
-
 	/*
 	 * struct alt_inst entries. From the header (alternative.h):
 	 * "Alternative instructions for different CPU types or capabilities"
@@ -322,6 +285,18 @@ SECTIONS
 		*(.altinstr_replacement)
 	}
 
+	/*
+	 * struct iommu_table_entry entries are injected in this section.
+	 * It is an array of IOMMUs which during run time gets sorted depending
+	 * on its dependency order. After rootfs_initcall is complete
+	 * this section can be safely removed.
+	 */
+	.iommu_table : AT(ADDR(.iommu_table) - LOAD_OFFSET) {
+		__iommu_table = .;
+		*(.iommu_table)
+		__iommu_table_end = .;
+	}
+
 	. = ALIGN(8);
 	.apicdrivers : AT(ADDR(.apicdrivers) - LOAD_OFFSET) {
 		__apicdrivers = .;
@@ -331,8 +306,8 @@ SECTIONS
 
 	. = ALIGN(8);
 	/*
-	 * .exit.text is discarded at runtime, not link time, to deal with
-	 *  references from .altinstructions
+	 * .exit.text is discard at runtime, not link time, to deal with
+	 *  references from .altinstructions and .eh_frame
 	 */
 	.exit.text : AT(ADDR(.exit.text) - LOAD_OFFSET) {
 		EXIT_TEXT
@@ -376,123 +351,60 @@ SECTIONS
 	.bss : AT(ADDR(.bss) - LOAD_OFFSET) {
 		__bss_start = .;
 		*(.bss..page_aligned)
-		. = ALIGN(PAGE_SIZE);
-		*(BSS_MAIN)
-		BSS_DECRYPTED
+		*(.bss)
 		. = ALIGN(PAGE_SIZE);
 		__bss_stop = .;
 	}
-
-	/*
-	 * The memory occupied from _text to here, __end_of_kernel_reserve, is
-	 * automatically reserved in setup_arch(). Anything after here must be
-	 * explicitly reserved using memblock_reserve() or it will be discarded
-	 * and treated as available memory.
-	 */
-	__end_of_kernel_reserve = .;
 
 	. = ALIGN(PAGE_SIZE);
 	.brk : AT(ADDR(.brk) - LOAD_OFFSET) {
 		__brk_base = .;
 		. += 64 * 1024;		/* 64k alignment slop space */
-		*(.bss..brk)		/* areas brk users have reserved */
+		*(.brk_reservation)	/* areas brk users have reserved */
 		__brk_limit = .;
 	}
 
 	. = ALIGN(PAGE_SIZE);		/* keep VO_INIT_SIZE page aligned */
 	_end = .;
 
-#ifdef CONFIG_AMD_MEM_ENCRYPT
-	/*
-	 * Early scratch/workarea section: Lives outside of the kernel proper
-	 * (_text - _end).
-	 *
-	 * Resides after _end because even though the .brk section is after
-	 * __end_of_kernel_reserve, the .brk section is later reserved as a
-	 * part of the kernel. Since it is located after __end_of_kernel_reserve
-	 * it will be discarded and become part of the available memory. As
-	 * such, it can only be used by very early boot code and must not be
-	 * needed afterwards.
-	 *
-	 * Currently used by SME for performing in-place encryption of the
-	 * kernel during boot. Resides on a 2MB boundary to simplify the
-	 * pagetable setup used for SME in-place encryption.
-	 */
-	. = ALIGN(HPAGE_SIZE);
-	.init.scratch : AT(ADDR(.init.scratch) - LOAD_OFFSET) {
-		__init_scratch_begin = .;
-		*(.init.scratch)
-		. = ALIGN(HPAGE_SIZE);
-		__init_scratch_end = .;
-	}
-#endif
-
 	STABS_DEBUG
 	DWARF_DEBUG
-	ELF_DETAILS
 
+	/* Sections to be discarded */
 	DISCARDS
-
-	/*
-	 * Make sure that the .got.plt is either completely empty or it
-	 * contains only the lazy dispatch entries.
-	 */
-	.got.plt (INFO) : { *(.got.plt) }
-	ASSERT(SIZEOF(.got.plt) == 0 ||
-#ifdef CONFIG_X86_64
-	       SIZEOF(.got.plt) == 0x18,
-#else
-	       SIZEOF(.got.plt) == 0xc,
-#endif
-	       "Unexpected GOT/PLT entries detected!")
-
-	/*
-	 * Sections that should stay zero sized, which is safer to
-	 * explicitly check instead of blindly discarding.
-	 */
-	.got : {
-		*(.got) *(.igot.*)
+	/DISCARD/ : {
+		*(.eh_frame)
 	}
-	ASSERT(SIZEOF(.got) == 0, "Unexpected GOT entries detected!")
-
-	.plt : {
-		*(.plt) *(.plt.*) *(.iplt)
-	}
-	ASSERT(SIZEOF(.plt) == 0, "Unexpected run-time procedure linkages detected!")
-
-	.rel.dyn : {
-		*(.rel.*) *(.rel_*)
-	}
-	ASSERT(SIZEOF(.rel.dyn) == 0, "Unexpected run-time relocations (.rel) detected!")
-
-	.rela.dyn : {
-		*(.rela.*) *(.rela_*)
-	}
-	ASSERT(SIZEOF(.rela.dyn) == 0, "Unexpected run-time relocations (.rela) detected!")
 }
 
+
+#ifdef CONFIG_X86_32
 /*
  * The ASSERT() sink to . is intentional, for binutils 2.14 compatibility:
  */
 . = ASSERT((_end - LOAD_OFFSET <= KERNEL_IMAGE_SIZE),
 	   "kernel image bigger than KERNEL_IMAGE_SIZE");
-
-#ifdef CONFIG_X86_64
+#else
 /*
  * Per-cpu symbols which need to be offset from __per_cpu_load
  * for the boot processor.
  */
-#define INIT_PER_CPU(x) init_per_cpu__##x = ABSOLUTE(x) + __per_cpu_load
+#define INIT_PER_CPU(x) init_per_cpu__##x = x + __per_cpu_load
 INIT_PER_CPU(gdt_page);
-INIT_PER_CPU(fixed_percpu_data);
-INIT_PER_CPU(irq_stack_backing_store);
+INIT_PER_CPU(irq_stack_union);
+
+/*
+ * Build-time check on the image size:
+ */
+. = ASSERT((_end - _text <= KERNEL_IMAGE_SIZE),
+	   "kernel image bigger than KERNEL_IMAGE_SIZE");
 
 #ifdef CONFIG_SMP
-. = ASSERT((fixed_percpu_data == 0),
-           "fixed_percpu_data is not at start of per-cpu area");
+. = ASSERT((irq_stack_union == 0),
+           "irq_stack_union is not at start of per-cpu area");
 #endif
 
-#endif /* CONFIG_X86_64 */
+#endif /* CONFIG_X86_32 */
 
 #ifdef CONFIG_KEXEC_CORE
 #include <asm/kexec.h>

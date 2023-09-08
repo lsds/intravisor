@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * AppArmor security module
  *
@@ -6,6 +5,11 @@
  *
  * Copyright (C) 1998-2008 Novell/SUSE
  * Copyright 2009-2010 Canonical Ltd.
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License as
+ * published by the Free Software Foundation, version 2 of the
+ * License.
  */
 
 #ifndef __AA_POLICY_H
@@ -47,10 +51,6 @@ extern const char *const aa_profile_mode_names[];
 #define KILL_MODE(_profile) PROFILE_MODE((_profile), APPARMOR_KILL)
 
 #define PROFILE_IS_HAT(_profile) ((_profile)->label.flags & FLAG_HAT)
-
-#define CHECK_DEBUG1(_profile) ((_profile)->label.flags & FLAG_DEBUG1)
-
-#define CHECK_DEBUG2(_profile) ((_profile)->label.flags & FLAG_DEBUG2)
 
 #define profile_is_stale(_profile) (label_is_stale(&(_profile)->label))
 
@@ -139,7 +139,7 @@ struct aa_profile {
 
 	const char *attach;
 	struct aa_dfa *xmatch;
-	unsigned int xmatch_len;
+	int xmatch_len;
 	enum audit_mode audit;
 	long mode;
 	u32 path_flags;
@@ -154,9 +154,6 @@ struct aa_profile {
 	char **xattrs;
 
 	struct aa_rlimit rlimits;
-
-	int secmark_count;
-	struct aa_secmark *secmark;
 
 	struct aa_loaddata *rawdata;
 	unsigned char *hash;
@@ -217,16 +214,7 @@ static inline struct aa_profile *aa_get_newest_profile(struct aa_profile *p)
 	return labels_profile(aa_get_newest_label(&p->label));
 }
 
-static inline unsigned int PROFILE_MEDIATES(struct aa_profile *profile,
-					    unsigned char class)
-{
-	if (class <= AA_CLASS_LAST)
-		return profile->policy.start[class];
-	else
-		return aa_dfa_match_len(profile->policy.dfa,
-					profile->policy.start[0], &class, 1);
-}
-
+#define PROFILE_MEDIATES(P, T)  ((P)->policy.start[(unsigned char) (T)])
 static inline unsigned int PROFILE_MEDIATES_AF(struct aa_profile *profile,
 					       u16 AF) {
 	unsigned int state = PROFILE_MEDIATES(profile, AA_CLASS_NET);
@@ -305,11 +293,9 @@ static inline int AUDIT_MODE(struct aa_profile *profile)
 	return profile->audit;
 }
 
-bool aa_policy_view_capable(struct aa_label *label, struct aa_ns *ns);
-bool aa_policy_admin_capable(struct aa_label *label, struct aa_ns *ns);
+bool policy_view_capable(struct aa_ns *ns);
+bool policy_admin_capable(struct aa_ns *ns);
 int aa_may_manage_policy(struct aa_label *label, struct aa_ns *ns,
 			 u32 mask);
-bool aa_current_policy_view_capable(struct aa_ns *ns);
-bool aa_current_policy_admin_capable(struct aa_ns *ns);
 
 #endif /* __AA_POLICY_H */

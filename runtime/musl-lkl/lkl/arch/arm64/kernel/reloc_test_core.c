@@ -1,6 +1,10 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (C) 2017 Linaro, Ltd. <ard.biesheuvel@linaro.org>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ *
  */
 
 #include <linux/module.h>
@@ -48,7 +52,7 @@ static struct {
 	{ "R_AARCH64_PREL16",		relative_data16, (u64)&sym64_rel },
 };
 
-static int __init reloc_test_init(void)
+static int reloc_test_init(void)
 {
 	int i;
 
@@ -67,7 +71,7 @@ static int __init reloc_test_init(void)
 	return 0;
 }
 
-static void __exit reloc_test_exit(void)
+static void reloc_test_exit(void)
 {
 }
 

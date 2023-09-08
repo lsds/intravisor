@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * MPC512x PSC in SPI mode driver.
  *
@@ -8,6 +7,11 @@
  *
  * Fork of mpc52xx_psc_spi.c:
  *	Copyright (C) 2006 TOPTICA Photonics AG., Dragos Carp
+ *
+ * This program is free software; you can redistribute  it and/or modify it
+ * under  the terms of  the GNU General  Public License as published by the
+ * Free Software Foundation;  either version 2 of the  License, or (at your
+ * option) any later version.
  */
 
 #include <linux/module.h>
@@ -23,6 +27,7 @@
 #include <linux/clk.h>
 #include <linux/spi/spi.h>
 #include <linux/fsl_devices.h>
+#include <linux/gpio.h>
 #include <asm/mpc52xx_psc.h>
 
 enum {
@@ -127,28 +132,17 @@ static void mpc512x_psc_spi_activate_cs(struct spi_device *spi)
 	out_be32(psc_addr(mps, ccr), ccr);
 	mps->bits_per_word = cs->bits_per_word;
 
-	if (spi->cs_gpiod) {
-		if (mps->cs_control)
-			/* boardfile override */
-			mps->cs_control(spi, (spi->mode & SPI_CS_HIGH) ? 1 : 0);
-		else
-			/* gpiolib will deal with the inversion */
-			gpiod_set_value(spi->cs_gpiod, 1);
-	}
+	if (mps->cs_control && gpio_is_valid(spi->cs_gpio))
+		mps->cs_control(spi, (spi->mode & SPI_CS_HIGH) ? 1 : 0);
 }
 
 static void mpc512x_psc_spi_deactivate_cs(struct spi_device *spi)
 {
 	struct mpc512x_psc_spi *mps = spi_master_get_devdata(spi->master);
 
-	if (spi->cs_gpiod) {
-		if (mps->cs_control)
-			/* boardfile override */
-			mps->cs_control(spi, (spi->mode & SPI_CS_HIGH) ? 0 : 1);
-		else
-			/* gpiolib will deal with the inversion */
-			gpiod_set_value(spi->cs_gpiod, 0);
-	}
+	if (mps->cs_control && gpio_is_valid(spi->cs_gpio))
+		mps->cs_control(spi, (spi->mode & SPI_CS_HIGH) ? 0 : 1);
+
 }
 
 /* extract and scale size field in txsz or rxsz */
@@ -321,7 +315,8 @@ static int mpc512x_psc_spi_msg_xfer(struct spi_master *master,
 			break;
 		m->actual_length += t->len;
 
-		spi_transfer_delay_exec(t);
+		if (t->delay_usecs)
+			udelay(t->delay_usecs);
 
 		if (cs_change)
 			mpc512x_psc_spi_deactivate_cs(spi);
@@ -373,14 +368,27 @@ static int mpc512x_psc_spi_unprep_xfer_hw(struct spi_master *master)
 static int mpc512x_psc_spi_setup(struct spi_device *spi)
 {
 	struct mpc512x_psc_spi_cs *cs = spi->controller_state;
+	int ret;
 
 	if (spi->bits_per_word % 8)
 		return -EINVAL;
 
 	if (!cs) {
-		cs = kzalloc(sizeof(*cs), GFP_KERNEL);
+		cs = kzalloc(sizeof *cs, GFP_KERNEL);
 		if (!cs)
 			return -ENOMEM;
+
+		if (gpio_is_valid(spi->cs_gpio)) {
+			ret = gpio_request(spi->cs_gpio, dev_name(&spi->dev));
+			if (ret) {
+				dev_err(&spi->dev, "can't get CS gpio: %d\n",
+					ret);
+				kfree(cs);
+				return ret;
+			}
+			gpio_direction_output(spi->cs_gpio,
+					spi->mode & SPI_CS_HIGH ? 0 : 1);
+		}
 
 		spi->controller_state = cs;
 	}
@@ -393,6 +401,8 @@ static int mpc512x_psc_spi_setup(struct spi_device *spi)
 
 static void mpc512x_psc_spi_cleanup(struct spi_device *spi)
 {
+	if (gpio_is_valid(spi->cs_gpio))
+		gpio_free(spi->cs_gpio);
 	kfree(spi->controller_state);
 }
 
@@ -471,6 +481,11 @@ static irqreturn_t mpc512x_psc_spi_isr(int irq, void *dev_id)
 	return IRQ_NONE;
 }
 
+static void mpc512x_spi_cs_control(struct spi_device *spi, bool onoff)
+{
+	gpio_set_value(spi->cs_gpio, onoff);
+}
+
 static int mpc512x_psc_spi_do_probe(struct device *dev, u32 regaddr,
 					      u32 size, unsigned int irq)
 {
@@ -481,7 +496,7 @@ static int mpc512x_psc_spi_do_probe(struct device *dev, u32 regaddr,
 	void *tempp;
 	struct clk *clk;
 
-	master = spi_alloc_master(dev, sizeof(*mps));
+	master = spi_alloc_master(dev, sizeof *mps);
 	if (master == NULL)
 		return -ENOMEM;
 
@@ -490,7 +505,9 @@ static int mpc512x_psc_spi_do_probe(struct device *dev, u32 regaddr,
 	mps->type = (int)of_device_get_match_data(dev);
 	mps->irq = irq;
 
-	if (pdata) {
+	if (pdata == NULL) {
+		mps->cs_control = mpc512x_spi_cs_control;
+	} else {
 		mps->cs_control = pdata->cs_control;
 		master->bus_num = pdata->bus_num;
 		master->num_chipselect = pdata->max_chipselect;
@@ -501,7 +518,6 @@ static int mpc512x_psc_spi_do_probe(struct device *dev, u32 regaddr,
 	master->prepare_transfer_hardware = mpc512x_psc_spi_prep_xfer_hw;
 	master->transfer_one_message = mpc512x_psc_spi_msg_xfer;
 	master->unprepare_transfer_hardware = mpc512x_psc_spi_unprep_xfer_hw;
-	master->use_gpio_descriptors = true;
 	master->cleanup = mpc512x_psc_spi_cleanup;
 	master->dev.of_node = dev->of_node;
 

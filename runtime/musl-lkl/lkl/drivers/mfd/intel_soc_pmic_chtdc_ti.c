@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * Device access for Dollar Cove TI PMIC
  *
@@ -7,6 +6,10 @@
  *
  * Cleanup and forward-ported
  *   Copyright (c) 2017 Takashi Iwai <tiwai@suse.de>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 
 #include <linux/acpi.h>
@@ -32,23 +35,23 @@ enum {
 	CHTDC_TI_CCEOCAL = 7,	/* battery */
 };
 
-static const struct resource power_button_resources[] = {
+static struct resource power_button_resources[] = {
 	DEFINE_RES_IRQ(CHTDC_TI_PWRBTN),
 };
 
-static const struct resource thermal_resources[] = {
+static struct resource thermal_resources[] = {
 	DEFINE_RES_IRQ(CHTDC_TI_DIETMPWARN),
 };
 
-static const struct resource adc_resources[] = {
+static struct resource adc_resources[] = {
 	DEFINE_RES_IRQ(CHTDC_TI_ADCCMPL),
 };
 
-static const struct resource pwrsrc_resources[] = {
+static struct resource pwrsrc_resources[] = {
 	DEFINE_RES_IRQ(CHTDC_TI_VBUSDET),
 };
 
-static const struct resource battery_resources[] = {
+static struct resource battery_resources[] = {
 	DEFINE_RES_IRQ(CHTDC_TI_VBATLOW),
 	DEFINE_RES_IRQ(CHTDC_TI_CCEOCAL),
 };
@@ -140,7 +143,7 @@ static void chtdc_ti_shutdown(struct i2c_client *i2c)
 	disable_irq(pmic->irq);
 }
 
-static int chtdc_ti_suspend(struct device *dev)
+static int __maybe_unused chtdc_ti_suspend(struct device *dev)
 {
 	struct intel_soc_pmic *pmic = dev_get_drvdata(dev);
 
@@ -149,7 +152,7 @@ static int chtdc_ti_suspend(struct device *dev)
 	return 0;
 }
 
-static int chtdc_ti_resume(struct device *dev)
+static int __maybe_unused chtdc_ti_resume(struct device *dev)
 {
 	struct intel_soc_pmic *pmic = dev_get_drvdata(dev);
 
@@ -158,7 +161,7 @@ static int chtdc_ti_resume(struct device *dev)
 	return 0;
 }
 
-static DEFINE_SIMPLE_DEV_PM_OPS(chtdc_ti_pm_ops, chtdc_ti_suspend, chtdc_ti_resume);
+static SIMPLE_DEV_PM_OPS(chtdc_ti_pm_ops, chtdc_ti_suspend, chtdc_ti_resume);
 
 static const struct acpi_device_id chtdc_ti_acpi_ids[] = {
 	{ "INT33F5" },
@@ -169,7 +172,7 @@ MODULE_DEVICE_TABLE(acpi, chtdc_ti_acpi_ids);
 static struct i2c_driver chtdc_ti_i2c_driver = {
 	.driver = {
 		.name = "intel_soc_pmic_chtdc_ti",
-		.pm = pm_sleep_ptr(&chtdc_ti_pm_ops),
+		.pm = &chtdc_ti_pm_ops,
 		.acpi_match_table = chtdc_ti_acpi_ids,
 	},
 	.probe_new = chtdc_ti_probe,

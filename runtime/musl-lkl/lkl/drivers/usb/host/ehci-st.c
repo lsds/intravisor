@@ -42,6 +42,8 @@ struct st_ehci_platform_priv {
 #define hcd_to_ehci_priv(h) \
 	((struct st_ehci_platform_priv *)hcd_to_ehci(h)->priv)
 
+static const char hcd_name[] = "ehci-st";
+
 #define EHCI_CAPS_SIZE 0x10
 #define AHB2STBUS_INSREG01 (EHCI_CAPS_SIZE + 0x84)
 
@@ -150,14 +152,17 @@ static int st_ehci_platform_probe(struct platform_device *dev)
 	struct resource *res_mem;
 	struct usb_ehci_pdata *pdata = &ehci_platform_defaults;
 	struct st_ehci_platform_priv *priv;
+	struct ehci_hcd *ehci;
 	int err, irq, clk = 0;
 
 	if (usb_disabled())
 		return -ENODEV;
 
 	irq = platform_get_irq(dev, 0);
-	if (irq < 0)
+	if (irq < 0) {
+		dev_err(&dev->dev, "no irq provided");
 		return irq;
+	}
 	res_mem = platform_get_resource(dev, IORESOURCE_MEM, 0);
 	if (!res_mem) {
 		dev_err(&dev->dev, "no memory resource provided");
@@ -172,6 +177,7 @@ static int st_ehci_platform_probe(struct platform_device *dev)
 	platform_set_drvdata(dev, hcd);
 	dev->dev.platform_data = pdata;
 	priv = hcd_to_ehci_priv(hcd);
+	ehci = hcd_to_ehci(hcd);
 
 	priv->phy = devm_phy_get(&dev->dev, "usb");
 	if (IS_ERR(priv->phy)) {
@@ -343,6 +349,8 @@ static int __init ehci_platform_init(void)
 {
 	if (usb_disabled())
 		return -ENODEV;
+
+	pr_info("%s: " DRIVER_DESC "\n", hcd_name);
 
 	ehci_init_driver(&ehci_platform_hc_driver, &platform_overrides);
 	return platform_driver_register(&ehci_platform_driver);

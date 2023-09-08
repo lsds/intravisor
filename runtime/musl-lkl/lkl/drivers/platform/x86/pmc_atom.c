@@ -1,19 +1,26 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
- * Intel Atom SoC Power Management Controller Driver
- * Copyright (c) 2014-2015,2017,2022 Intel Corporation.
+ * Intel Atom SOC Power Management Controller Driver
+ * Copyright (c) 2014, Intel Corporation.
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms and conditions of the GNU General Public License,
+ * version 2, as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+ * more details.
+ *
  */
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
 #include <linux/debugfs.h>
 #include <linux/device.h>
-#include <linux/dmi.h>
 #include <linux/init.h>
 #include <linux/io.h>
 #include <linux/platform_data/x86/clk-pmc-atom.h>
 #include <linux/platform_data/x86/pmc_atom.h>
-#include <linux/platform_data/x86/simatic-ipc.h>
 #include <linux/platform_device.h>
 #include <linux/pci.h>
 #include <linux/seq_file.h>
@@ -60,7 +67,7 @@ static const struct pmc_clk byt_clks[] = {
 		.freq = 19200000,
 		.parent_name = "xtal",
 	},
-	{}
+	{},
 };
 
 static const struct pmc_clk cht_clks[] = {
@@ -69,7 +76,7 @@ static const struct pmc_clk cht_clks[] = {
 		.freq = 19200000,
 		.parent_name = NULL,
 	},
-	{}
+	{},
 };
 
 static const struct pmc_bit_map d3_sts_0_map[] = {
@@ -105,7 +112,7 @@ static const struct pmc_bit_map d3_sts_0_map[] = {
 	{"LPSS2_F5_I2C5",	BIT_LPSS2_F5_I2C5},
 	{"LPSS2_F6_I2C6",	BIT_LPSS2_F6_I2C6},
 	{"LPSS2_F7_I2C7",	BIT_LPSS2_F7_I2C7},
-	{}
+	{},
 };
 
 static struct pmc_bit_map byt_d3_sts_1_map[] = {
@@ -113,21 +120,21 @@ static struct pmc_bit_map byt_d3_sts_1_map[] = {
 	{"OTG_SS_PHY",		BIT_OTG_SS_PHY},
 	{"USH_SS_PHY",		BIT_USH_SS_PHY},
 	{"DFX",			BIT_DFX},
-	{}
+	{},
 };
 
 static struct pmc_bit_map cht_d3_sts_1_map[] = {
 	{"SMB",			BIT_SMB},
 	{"GMM",			BIT_STS_GMM},
 	{"ISH",			BIT_STS_ISH},
-	{}
+	{},
 };
 
 static struct pmc_bit_map cht_func_dis_2_map[] = {
 	{"SMB",			BIT_SMB},
 	{"GMM",			BIT_FD_GMM},
 	{"ISH",			BIT_FD_ISH},
-	{}
+	{},
 };
 
 static const struct pmc_bit_map byt_pss_map[] = {
@@ -149,7 +156,7 @@ static const struct pmc_bit_map byt_pss_map[] = {
 	{"OTG_VCCA",		PMC_PSS_BIT_OTG_VCCA},
 	{"USB",			PMC_PSS_BIT_USB},
 	{"USB_SUS",		PMC_PSS_BIT_USB_SUS},
-	{}
+	{},
 };
 
 static const struct pmc_bit_map cht_pss_map[] = {
@@ -172,7 +179,7 @@ static const struct pmc_bit_map cht_pss_map[] = {
 	{"DFX_CLUSTER3",	PMC_PSS_BIT_CHT_DFX_CLUSTER3},
 	{"DFX_CLUSTER4",	PMC_PSS_BIT_CHT_DFX_CLUSTER4},
 	{"DFX_CLUSTER5",	PMC_PSS_BIT_CHT_DFX_CLUSTER5},
-	{}
+	{},
 };
 
 static const struct pmc_reg_map byt_reg_map = {
@@ -221,6 +228,19 @@ int pmc_atom_read(int offset, u32 *value)
 	*value = pmc_reg_read(pmc, offset);
 	return 0;
 }
+EXPORT_SYMBOL_GPL(pmc_atom_read);
+
+int pmc_atom_write(int offset, u32 value)
+{
+	struct pmc_dev *pmc = &pmc_device;
+
+	if (!pmc->init)
+		return -ENODEV;
+
+	pmc_reg_write(pmc, offset, value);
+	return 0;
+}
+EXPORT_SYMBOL_GPL(pmc_atom_write);
 
 static void pmc_power_off(void)
 {
@@ -232,7 +252,7 @@ static void pmc_power_off(void)
 	pm1_cnt_port = acpi_base_addr + PM1_CNT;
 
 	pm1_cnt_value = inl(pm1_cnt_port);
-	pm1_cnt_value &= ~SLEEP_TYPE_MASK;
+	pm1_cnt_value &= SLEEP_TYPE_MASK;
 	pm1_cnt_value |= SLEEP_TYPE_S5;
 	pm1_cnt_value |= SLEEP_ENABLE;
 
@@ -329,96 +349,47 @@ static int pmc_sleep_tmr_show(struct seq_file *s, void *unused)
 
 DEFINE_SHOW_ATTRIBUTE(pmc_sleep_tmr);
 
-static void pmc_dbgfs_register(struct pmc_dev *pmc)
+static void pmc_dbgfs_unregister(struct pmc_dev *pmc)
 {
-	struct dentry *dir;
+	debugfs_remove_recursive(pmc->dbgfs_dir);
+}
+
+static int pmc_dbgfs_register(struct pmc_dev *pmc)
+{
+	struct dentry *dir, *f;
 
 	dir = debugfs_create_dir("pmc_atom", NULL);
+	if (!dir)
+		return -ENOMEM;
 
 	pmc->dbgfs_dir = dir;
 
-	debugfs_create_file("dev_state", S_IFREG | S_IRUGO, dir, pmc,
-			    &pmc_dev_state_fops);
-	debugfs_create_file("pss_state", S_IFREG | S_IRUGO, dir, pmc,
-			    &pmc_pss_state_fops);
-	debugfs_create_file("sleep_state", S_IFREG | S_IRUGO, dir, pmc,
-			    &pmc_sleep_tmr_fops);
+	f = debugfs_create_file("dev_state", S_IFREG | S_IRUGO,
+				dir, pmc, &pmc_dev_state_fops);
+	if (!f)
+		goto err;
+
+	f = debugfs_create_file("pss_state", S_IFREG | S_IRUGO,
+				dir, pmc, &pmc_pss_state_fops);
+	if (!f)
+		goto err;
+
+	f = debugfs_create_file("sleep_state", S_IFREG | S_IRUGO,
+				dir, pmc, &pmc_sleep_tmr_fops);
+	if (!f)
+		goto err;
+
+	return 0;
+err:
+	pmc_dbgfs_unregister(pmc);
+	return -ENODEV;
 }
 #else
-static void pmc_dbgfs_register(struct pmc_dev *pmc)
+static int pmc_dbgfs_register(struct pmc_dev *pmc)
 {
+	return 0;
 }
 #endif /* CONFIG_DEBUG_FS */
-
-static bool pmc_clk_is_critical = true;
-
-static int dmi_callback(const struct dmi_system_id *d)
-{
-	pr_info("%s: PMC critical clocks quirk enabled\n", d->ident);
-
-	return 1;
-}
-
-static int dmi_callback_siemens(const struct dmi_system_id *d)
-{
-	u32 st_id;
-
-	if (dmi_walk(simatic_ipc_find_dmi_entry_helper, &st_id))
-		goto out;
-
-	if (st_id == SIMATIC_IPC_IPC227E || st_id == SIMATIC_IPC_IPC277E)
-		return dmi_callback(d);
-
-out:
-	pmc_clk_is_critical = false;
-	return 1;
-}
-
-/*
- * Some systems need one or more of their pmc_plt_clks to be
- * marked as critical.
- */
-static const struct dmi_system_id critclk_systems[] = {
-	{
-		/* pmc_plt_clk0 is used for an external HSIC USB HUB */
-		.ident = "MPL CEC1x",
-		.callback = dmi_callback,
-		.matches = {
-			DMI_MATCH(DMI_SYS_VENDOR, "MPL AG"),
-			DMI_MATCH(DMI_PRODUCT_NAME, "CEC10 Family"),
-		},
-	},
-	{
-		/*
-		 * Lex System / Lex Computech Co. makes a lot of Bay Trail
-		 * based embedded boards which often come with multiple
-		 * ethernet controllers using multiple pmc_plt_clks. See:
-		 * https://www.lex.com.tw/products/embedded-ipc-board/
-		 */
-		.ident = "Lex BayTrail",
-		.callback = dmi_callback,
-		.matches = {
-			DMI_MATCH(DMI_SYS_VENDOR, "Lex BayTrail"),
-		},
-	},
-	{
-		/* pmc_plt_clk* - are used for ethernet controllers */
-		.ident = "Beckhoff Baytrail",
-		.callback = dmi_callback,
-		.matches = {
-			DMI_MATCH(DMI_SYS_VENDOR, "Beckhoff Automation"),
-			DMI_MATCH(DMI_PRODUCT_FAMILY, "CBxx63"),
-		},
-	},
-	{
-		.ident = "SIEMENS AG",
-		.callback = dmi_callback_siemens,
-		.matches = {
-			DMI_MATCH(DMI_SYS_VENDOR, "SIEMENS AG"),
-		},
-	},
-	{}
-};
 
 static int pmc_setup_clks(struct pci_dev *pdev, void __iomem *pmc_regmap,
 			  const struct pmc_data *pmc_data)
@@ -432,8 +403,6 @@ static int pmc_setup_clks(struct pci_dev *pdev, void __iomem *pmc_regmap,
 
 	clk_data->base = pmc_regmap; /* offset is added by client */
 	clk_data->clks = pmc_data->clks;
-	if (dmi_check_system(critclk_systems))
-		clk_data->critical = pmc_clk_is_critical;
 
 	clkdev = platform_device_register_data(&pdev->dev, "clk-pmc-atom",
 					       PLATFORM_DEVID_NONE,
@@ -466,7 +435,7 @@ static int pmc_setup_dev(struct pci_dev *pdev, const struct pci_device_id *ent)
 	pci_read_config_dword(pdev, PMC_BASE_ADDR_OFFSET, &pmc->base_addr);
 	pmc->base_addr &= PMC_BASE_ADDR_MASK;
 
-	pmc->regmap = ioremap(pmc->base_addr, PMC_MMIO_REG_LEN);
+	pmc->regmap = ioremap_nocache(pmc->base_addr, PMC_MMIO_REG_LEN);
 	if (!pmc->regmap) {
 		dev_err(&pdev->dev, "error: ioremap failed\n");
 		return -ENOMEM;
@@ -477,7 +446,9 @@ static int pmc_setup_dev(struct pci_dev *pdev, const struct pci_device_id *ent)
 	/* PMC hardware registers setup */
 	pmc_hw_reg_setup(pmc);
 
-	pmc_dbgfs_register(pmc);
+	ret = pmc_dbgfs_register(pmc);
+	if (ret)
+		dev_warn(&pdev->dev, "debugfs register failed\n");
 
 	/* Register platform clocks - PMC_PLT_CLK [0..5] */
 	ret = pmc_setup_clks(pdev, pmc->regmap, data);
@@ -489,11 +460,15 @@ static int pmc_setup_dev(struct pci_dev *pdev, const struct pci_device_id *ent)
 	return ret;
 }
 
-/* Data for PCI driver interface used by pci_match_id() call below */
+/*
+ * Data for PCI driver interface
+ *
+ * used by pci_match_id() call below.
+ */
 static const struct pci_device_id pmc_pci_ids[] = {
 	{ PCI_VDEVICE(INTEL, PCI_DEVICE_ID_VLV_PMC), (kernel_ulong_t)&byt_data },
 	{ PCI_VDEVICE(INTEL, PCI_DEVICE_ID_CHT_PMC), (kernel_ulong_t)&cht_data },
-	{}
+	{ 0, },
 };
 
 static int __init pmc_atom_init(void)
@@ -501,9 +476,8 @@ static int __init pmc_atom_init(void)
 	struct pci_dev *pdev = NULL;
 	const struct pci_device_id *ent;
 
-	/*
-	 * We look for our device - PCU PMC.
-	 * We assume that there is maximum one device.
+	/* We look for our device - PCU PMC
+	 * we assume that there is max. one device.
 	 *
 	 * We can't use plain pci_driver mechanism,
 	 * as the device is really a multiple function device,
@@ -515,7 +489,7 @@ static int __init pmc_atom_init(void)
 		if (ent)
 			return pmc_setup_dev(pdev, ent);
 	}
-	/* Device not found */
+	/* Device not found. */
 	return -ENODEV;
 }
 
@@ -523,6 +497,6 @@ device_initcall(pmc_atom_init);
 
 /*
 MODULE_AUTHOR("Aubrey Li <aubrey.li@linux.intel.com>");
-MODULE_DESCRIPTION("Intel Atom SoC Power Management Controller Interface");
+MODULE_DESCRIPTION("Intel Atom SOC Power Management Controller Interface");
 MODULE_LICENSE("GPL v2");
 */

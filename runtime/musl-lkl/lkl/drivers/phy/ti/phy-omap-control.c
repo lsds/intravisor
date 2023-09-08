@@ -1,9 +1,19 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * omap-control-phy.c - The PHY part of control module.
  *
  * Copyright (C) 2013 Texas Instruments Incorporated - http://www.ti.com
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
  * Author: Kishon Vijay Abraham I <kishon@ti.com>
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
  */
 
 #include <linux/module.h>
@@ -26,7 +36,7 @@ void omap_control_pcie_pcs(struct device *dev, u8 delay)
 	u32 val;
 	struct omap_control_phy	*control_phy;
 
-	if (IS_ERR_OR_NULL(dev)) {
+	if (IS_ERR(dev) || !dev) {
 		pr_err("%s: invalid device\n", __func__);
 		return;
 	}
@@ -61,7 +71,7 @@ void omap_control_phy_power(struct device *dev, int on)
 	unsigned long rate;
 	struct omap_control_phy	*control_phy;
 
-	if (IS_ERR_OR_NULL(dev)) {
+	if (IS_ERR(dev) || !dev) {
 		pr_err("%s: invalid device\n", __func__);
 		return;
 	}
@@ -202,7 +212,7 @@ void omap_control_usb_set_mode(struct device *dev,
 {
 	struct omap_control_phy	*ctrl_phy;
 
-	if (IS_ERR_OR_NULL(dev))
+	if (IS_ERR(dev) || !dev)
 		return;
 
 	ctrl_phy = dev_get_drvdata(dev);
@@ -268,6 +278,7 @@ MODULE_DEVICE_TABLE(of, omap_control_phy_id_table);
 
 static int omap_control_phy_probe(struct platform_device *pdev)
 {
+	struct resource	*res;
 	const struct of_device_id *of_id;
 	struct omap_control_phy *control_phy;
 
@@ -284,13 +295,16 @@ static int omap_control_phy_probe(struct platform_device *pdev)
 	control_phy->type = *(enum omap_control_phy_type *)of_id->data;
 
 	if (control_phy->type == OMAP_CTRL_TYPE_OTGHS) {
-		control_phy->otghs_control =
-			devm_platform_ioremap_resource_byname(pdev, "otghs_control");
+		res = platform_get_resource_byname(pdev, IORESOURCE_MEM,
+			"otghs_control");
+		control_phy->otghs_control = devm_ioremap_resource(
+			&pdev->dev, res);
 		if (IS_ERR(control_phy->otghs_control))
 			return PTR_ERR(control_phy->otghs_control);
 	} else {
-		control_phy->power =
-			devm_platform_ioremap_resource_byname(pdev, "power");
+		res = platform_get_resource_byname(pdev, IORESOURCE_MEM,
+				"power");
+		control_phy->power = devm_ioremap_resource(&pdev->dev, res);
 		if (IS_ERR(control_phy->power)) {
 			dev_err(&pdev->dev, "Couldn't get power register\n");
 			return PTR_ERR(control_phy->power);
@@ -308,8 +322,9 @@ static int omap_control_phy_probe(struct platform_device *pdev)
 	}
 
 	if (control_phy->type == OMAP_CTRL_TYPE_PCIE) {
-		control_phy->pcie_pcs =
-			devm_platform_ioremap_resource_byname(pdev, "pcie_pcs");
+		res = platform_get_resource_byname(pdev, IORESOURCE_MEM,
+						   "pcie_pcs");
+		control_phy->pcie_pcs = devm_ioremap_resource(&pdev->dev, res);
 		if (IS_ERR(control_phy->pcie_pcs))
 			return PTR_ERR(control_phy->pcie_pcs);
 	}

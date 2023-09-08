@@ -1,8 +1,17 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * DVB USB Linux driver for Anysee E30 DVB-C & DVB-T USB2.0 receiver
  *
  * Copyright (C) 2007 Antti Palosaari <crope@iki.fi>
+ *
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
  *
  * TODO:
  * - add smart card reader support for Conditional Access (CA)
@@ -56,7 +65,7 @@ static int anysee_ctrl_msg(struct dvb_usb_device *d,
 	/* TODO FIXME: dvb_usb_generic_rw() fails rarely with error code -32
 	 * (EPIPE, Broken pipe). Function supports currently msleep() as a
 	 * parameter but I would not like to use it, since according to
-	 * Documentation/timers/timers-howto.rst it should not be used such
+	 * Documentation/timers/timers-howto.txt it should not be used such
 	 * short, under < 20ms, sleeps. Repeating failed message would be
 	 * better choice as not to add unwanted delays...
 	 * Fixing that correctly is one of those or both;
@@ -318,14 +327,14 @@ static struct tda10023_config anysee_tda10023_tda18212_config = {
 	.deltaf = 0xba02,
 };
 
-static const struct tda18212_config anysee_tda18212_config = {
+static struct tda18212_config anysee_tda18212_config = {
 	.if_dvbt_6 = 4150,
 	.if_dvbt_7 = 4150,
 	.if_dvbt_8 = 4150,
 	.if_dvbc = 5000,
 };
 
-static const struct tda18212_config anysee_tda18212_config2 = {
+static struct tda18212_config anysee_tda18212_config2 = {
 	.if_dvbt_6 = 3550,
 	.if_dvbt_7 = 3700,
 	.if_dvbt_8 = 4150,
@@ -629,7 +638,7 @@ static int anysee_add_i2c_dev(struct dvb_usb_device *d, const char *type,
 		.platform_data = platform_data,
 	};
 
-	strscpy(board_info.type, type, I2C_NAME_SIZE);
+	strlcpy(board_info.type, type, I2C_NAME_SIZE);
 
 	/* find first free client */
 	for (num = 0; num < ANYSEE_I2C_CLIENT_MAX; num++) {
@@ -649,8 +658,8 @@ static int anysee_add_i2c_dev(struct dvb_usb_device *d, const char *type,
 	request_module("%s", board_info.type);
 
 	/* register I2C device */
-	client = i2c_new_client_device(adapter, &board_info);
-	if (!i2c_client_has_driver(client)) {
+	client = i2c_new_device(adapter, &board_info);
+	if (client == NULL || client->dev.driver == NULL) {
 		ret = -ENODEV;
 		goto err;
 	}
@@ -1171,9 +1180,14 @@ static int anysee_ci_write_attribute_mem(struct dvb_ca_en50221 *ci, int slot,
 	int addr, u8 val)
 {
 	struct dvb_usb_device *d = ci->data;
+	int ret;
 	u8 buf[] = {CMD_CI, 0x03, 0x40 | addr >> 8, addr & 0xff, 0x00, 1, val};
 
-	return anysee_ctrl_msg(d, buf, sizeof(buf), NULL, 0);
+	ret = anysee_ctrl_msg(d, buf, sizeof(buf), NULL, 0);
+	if (ret)
+		return ret;
+
+	return 0;
 }
 
 static int anysee_ci_read_cam_control(struct dvb_ca_en50221 *ci, int slot,
@@ -1195,9 +1209,14 @@ static int anysee_ci_write_cam_control(struct dvb_ca_en50221 *ci, int slot,
 	u8 addr, u8 val)
 {
 	struct dvb_usb_device *d = ci->data;
+	int ret;
 	u8 buf[] = {CMD_CI, 0x05, 0x40, addr, 0x00, 1, val};
 
-	return anysee_ctrl_msg(d, buf, sizeof(buf), NULL, 0);
+	ret = anysee_ctrl_msg(d, buf, sizeof(buf), NULL, 0);
+	if (ret)
+		return ret;
+
+	return 0;
 }
 
 static int anysee_ci_slot_reset(struct dvb_ca_en50221 *ci, int slot)
@@ -1242,8 +1261,13 @@ static int anysee_ci_slot_shutdown(struct dvb_ca_en50221 *ci, int slot)
 static int anysee_ci_slot_ts_enable(struct dvb_ca_en50221 *ci, int slot)
 {
 	struct dvb_usb_device *d = ci->data;
+	int ret;
 
-	return anysee_wr_reg_mask(d, REG_IOD, (0 << 1), 0x02);
+	ret = anysee_wr_reg_mask(d, REG_IOD, (0 << 1), 0x02);
+	if (ret)
+		return ret;
+
+	return 0;
 }
 
 static int anysee_ci_poll_slot_status(struct dvb_ca_en50221 *ci, int slot,

@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
  *  This file contains the power_save function for 6xx & 7xxx CPUs
  *  rewritten in assembler
@@ -7,6 +6,11 @@
  *  it will have PLL 1 set to low speed mode (used during NAP/DOZE).
  *  if this is not the case some additional changes will have to
  *  be done to check a runtime var (a bit like powersave-nap)
+ *
+ *  This program is free software; you can redistribute it and/or
+ *  modify it under the terms of the GNU General Public License
+ *  as published by the Free Software Foundation; either version
+ *  2 of the License, or (at your option) any later version.
  */
 
 #include <linux/threads.h>
@@ -16,7 +20,6 @@
 #include <asm/thread_info.h>
 #include <asm/ppc_asm.h>
 #include <asm/asm-offsets.h>
-#include <asm/feature-fixups.h>
 
 	.text
 
@@ -129,12 +132,13 @@ BEGIN_FTR_SECTION
 END_FTR_SECTION_IFCLR(CPU_FTR_NO_DPM)
 	mtspr	SPRN_HID0,r4
 BEGIN_FTR_SECTION
-	PPC_DSSALL
+	DSSALL
 	sync
 END_FTR_SECTION_IFSET(CPU_FTR_ALTIVEC)
-	lwz	r8,TI_LOCAL_FLAGS(r2)	/* set napping bit */
+	CURRENT_THREAD_INFO(r9, r1)
+	lwz	r8,TI_LOCAL_FLAGS(r9)	/* set napping bit */
 	ori	r8,r8,_TLF_NAPPING	/* so when we take an exception */
-	stw	r8,TI_LOCAL_FLAGS(r2)	/* it will return to our caller */
+	stw	r8,TI_LOCAL_FLAGS(r9)	/* it will return to our caller */
 	mfmsr	r7
 	ori	r7,r7,MSR_EE
 	oris	r7,r7,MSR_POW@h
@@ -145,14 +149,17 @@ END_FTR_SECTION_IFSET(CPU_FTR_ALTIVEC)
 
 /*
  * Return from NAP/DOZE mode, restore some CPU specific registers,
- * R11 points to the exception frame. We have to preserve r10.
+ * we are called with DR/IR still off and r2 containing physical
+ * address of current.  R11 points to the exception frame (physical
+ * address).  We have to preserve r10.
  */
 _GLOBAL(power_save_ppc32_restore)
 	lwz	r9,_LINK(r11)		/* interrupted in ppc6xx_idle: */
 	stw	r9,_NIP(r11)		/* make it do a blr */
 
 #ifdef CONFIG_SMP
-	lwz	r11,TASK_CPU(r2)	/* get cpu number * 4 */
+	CURRENT_THREAD_INFO(r12, r11)
+	lwz	r11,TI_CPU(r12)		/* get cpu number * 4 */
 	slwi	r11,r11,2
 #else
 	li	r11,0
@@ -164,7 +171,7 @@ BEGIN_FTR_SECTION
 	mfspr	r9,SPRN_HID0
 	andis.	r9,r9,HID0_NAP@h
 	beq	1f
-	addis	r9, r11, nap_save_msscr0@ha
+	addis	r9,r11,(nap_save_msscr0-KERNELBASE)@ha
 	lwz	r9,nap_save_msscr0@l(r9)
 	mtspr	SPRN_MSSCR0, r9
 	sync
@@ -172,12 +179,11 @@ BEGIN_FTR_SECTION
 1:
 END_FTR_SECTION_IFSET(CPU_FTR_NAP_DISABLE_L2_PR)
 BEGIN_FTR_SECTION
-	addis	r9, r11, nap_save_hid1@ha
+	addis	r9,r11,(nap_save_hid1-KERNELBASE)@ha
 	lwz	r9,nap_save_hid1@l(r9)
 	mtspr	SPRN_HID1, r9
 END_FTR_SECTION_IFSET(CPU_FTR_DUAL_PLL_750FX)
-	blr
-_ASM_NOKPROBE_SYMBOL(power_save_ppc32_restore)
+	b	transfer_to_handler_cont
 
 	.data
 

@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: GPL-2.0 */
+// SPDX-License-Identifier: GPL-2.0
 /*
  * xHCI host controller driver
  *
@@ -25,12 +25,14 @@
 #include "xhci.h"
 #include "xhci-dbgcap.h"
 
+#define XHCI_MSG_MAX	500
+
 DECLARE_EVENT_CLASS(xhci_log_msg,
 	TP_PROTO(struct va_format *vaf),
 	TP_ARGS(vaf),
-	TP_STRUCT__entry(__vstring(msg, vaf->fmt, vaf->va)),
+	TP_STRUCT__entry(__dynamic_array(char, msg, XHCI_MSG_MAX)),
 	TP_fast_assign(
-		__assign_vstr(msg, vaf->fmt, vaf->va);
+		vsnprintf(__get_str(msg), XHCI_MSG_MAX, vaf->fmt, *vaf->va);
 	),
 	TP_printk("%s", __get_str(msg))
 );
@@ -120,7 +122,6 @@ DECLARE_EVENT_CLASS(xhci_log_trb,
 		__field(u32, field1)
 		__field(u32, field2)
 		__field(u32, field3)
-		__dynamic_array(char, str, XHCI_MSG_MAX)
 	),
 	TP_fast_assign(
 		__entry->type = ring->type;
@@ -130,7 +131,7 @@ DECLARE_EVENT_CLASS(xhci_log_trb,
 		__entry->field3 = le32_to_cpu(trb->field[3]);
 	),
 	TP_printk("%s: %s", xhci_ring_type_string(__entry->type),
-		  xhci_decode_trb(__get_str(str), XHCI_MSG_MAX, __entry->field0, __entry->field1,
+			xhci_decode_trb(__entry->field0, __entry->field1,
 					__entry->field2, __entry->field3)
 	)
 );
@@ -170,37 +171,6 @@ DEFINE_EVENT(xhci_log_trb, xhci_dbc_gadget_ep_queue,
 	TP_ARGS(ring, trb)
 );
 
-DECLARE_EVENT_CLASS(xhci_log_free_virt_dev,
-	TP_PROTO(struct xhci_virt_device *vdev),
-	TP_ARGS(vdev),
-	TP_STRUCT__entry(
-		__field(void *, vdev)
-		__field(unsigned long long, out_ctx)
-		__field(unsigned long long, in_ctx)
-		__field(u8, fake_port)
-		__field(u8, real_port)
-		__field(u16, current_mel)
-
-	),
-	TP_fast_assign(
-		__entry->vdev = vdev;
-		__entry->in_ctx = (unsigned long long) vdev->in_ctx->dma;
-		__entry->out_ctx = (unsigned long long) vdev->out_ctx->dma;
-		__entry->fake_port = (u8) vdev->fake_port;
-		__entry->real_port = (u8) vdev->real_port;
-		__entry->current_mel = (u16) vdev->current_mel;
-		),
-	TP_printk("vdev %p ctx %llx | %llx fake_port %d real_port %d current_mel %d",
-		__entry->vdev, __entry->in_ctx, __entry->out_ctx,
-		__entry->fake_port, __entry->real_port, __entry->current_mel
-	)
-);
-
-DEFINE_EVENT(xhci_log_free_virt_dev, xhci_free_virt_device,
-	TP_PROTO(struct xhci_virt_device *vdev),
-	TP_ARGS(vdev)
-);
-
 DECLARE_EVENT_CLASS(xhci_log_virt_dev,
 	TP_PROTO(struct xhci_virt_device *vdev),
 	TP_ARGS(vdev),
@@ -234,6 +204,11 @@ DECLARE_EVENT_CLASS(xhci_log_virt_dev,
 );
 
 DEFINE_EVENT(xhci_log_virt_dev, xhci_alloc_virt_device,
+	TP_PROTO(struct xhci_virt_device *vdev),
+	TP_ARGS(vdev)
+);
+
+DEFINE_EVENT(xhci_log_virt_dev, xhci_free_virt_device,
 	TP_PROTO(struct xhci_virt_device *vdev),
 	TP_ARGS(vdev)
 );
@@ -288,12 +263,23 @@ DECLARE_EVENT_CLASS(xhci_log_urb,
 	),
 	TP_printk("ep%d%s-%s: urb %p pipe %u slot %d length %d/%d sgs %d/%d stream %d flags %08x",
 			__entry->epnum, __entry->dir_in ? "in" : "out",
-			__print_symbolic(__entry->type,
-				   { USB_ENDPOINT_XFER_INT,	"intr" },
-				   { USB_ENDPOINT_XFER_CONTROL,	"control" },
-				   { USB_ENDPOINT_XFER_BULK,	"bulk" },
-				   { USB_ENDPOINT_XFER_ISOC,	"isoc" }),
-			__entry->urb, __entry->pipe, __entry->slot_id,
+			({ char *s;
+			switch (__entry->type) {
+			case USB_ENDPOINT_XFER_INT:
+				s = "intr";
+				break;
+			case USB_ENDPOINT_XFER_CONTROL:
+				s = "control";
+				break;
+			case USB_ENDPOINT_XFER_BULK:
+				s = "bulk";
+				break;
+			case USB_ENDPOINT_XFER_ISOC:
+				s = "isoc";
+				break;
+			default:
+				s = "UNKNOWN";
+			} s; }), __entry->urb, __entry->pipe, __entry->slot_id,
 			__entry->actual, __entry->length, __entry->num_mapped_sgs,
 			__entry->num_sgs, __entry->stream, __entry->flags
 		)
@@ -322,7 +308,6 @@ DECLARE_EVENT_CLASS(xhci_log_ep_ctx,
 		__field(u32, info2)
 		__field(u64, deq)
 		__field(u32, tx_info)
-		__dynamic_array(char, str, XHCI_MSG_MAX)
 	),
 	TP_fast_assign(
 		__entry->info = le32_to_cpu(ctx->ep_info);
@@ -330,8 +315,8 @@ DECLARE_EVENT_CLASS(xhci_log_ep_ctx,
 		__entry->deq = le64_to_cpu(ctx->deq);
 		__entry->tx_info = le32_to_cpu(ctx->tx_info);
 	),
-	TP_printk("%s", xhci_decode_ep_context(__get_str(str),
-		__entry->info, __entry->info2, __entry->deq, __entry->tx_info)
+	TP_printk("%s", xhci_decode_ep_context(__entry->info,
+		__entry->info2, __entry->deq, __entry->tx_info)
 	)
 );
 
@@ -355,11 +340,6 @@ DEFINE_EVENT(xhci_log_ep_ctx, xhci_handle_cmd_config_ep,
 	TP_ARGS(ctx)
 );
 
-DEFINE_EVENT(xhci_log_ep_ctx, xhci_add_endpoint,
-	TP_PROTO(struct xhci_ep_ctx *ctx),
-	TP_ARGS(ctx)
-);
-
 DECLARE_EVENT_CLASS(xhci_log_slot_ctx,
 	TP_PROTO(struct xhci_slot_ctx *ctx),
 	TP_ARGS(ctx),
@@ -368,7 +348,6 @@ DECLARE_EVENT_CLASS(xhci_log_slot_ctx,
 		__field(u32, info2)
 		__field(u32, tt_info)
 		__field(u32, state)
-		__dynamic_array(char, str, XHCI_MSG_MAX)
 	),
 	TP_fast_assign(
 		__entry->info = le32_to_cpu(ctx->dev_info);
@@ -376,9 +355,9 @@ DECLARE_EVENT_CLASS(xhci_log_slot_ctx,
 		__entry->tt_info = le64_to_cpu(ctx->tt_info);
 		__entry->state = le32_to_cpu(ctx->dev_state);
 	),
-	TP_printk("%s", xhci_decode_slot_context(__get_str(str),
-			__entry->info, __entry->info2,
-			__entry->tt_info, __entry->state)
+	TP_printk("%s", xhci_decode_slot_context(__entry->info,
+			__entry->info2, __entry->tt_info,
+			__entry->state)
 	)
 );
 
@@ -425,32 +404,6 @@ DEFINE_EVENT(xhci_log_slot_ctx, xhci_handle_cmd_set_deq,
 DEFINE_EVENT(xhci_log_slot_ctx, xhci_configure_endpoint,
 	TP_PROTO(struct xhci_slot_ctx *ctx),
 	TP_ARGS(ctx)
-);
-
-DECLARE_EVENT_CLASS(xhci_log_ctrl_ctx,
-	TP_PROTO(struct xhci_input_control_ctx *ctrl_ctx),
-	TP_ARGS(ctrl_ctx),
-	TP_STRUCT__entry(
-		__field(u32, drop)
-		__field(u32, add)
-		__dynamic_array(char, str, XHCI_MSG_MAX)
-	),
-	TP_fast_assign(
-		__entry->drop = le32_to_cpu(ctrl_ctx->drop_flags);
-		__entry->add = le32_to_cpu(ctrl_ctx->add_flags);
-	),
-	TP_printk("%s", xhci_decode_ctrl_ctx(__get_str(str), __entry->drop, __entry->add)
-	)
-);
-
-DEFINE_EVENT(xhci_log_ctrl_ctx, xhci_address_ctrl_ctx,
-	TP_PROTO(struct xhci_input_control_ctx *ctrl_ctx),
-	TP_ARGS(ctrl_ctx)
-);
-
-DEFINE_EVENT(xhci_log_ctrl_ctx, xhci_configure_endpoint_ctrl_ctx,
-	TP_PROTO(struct xhci_input_control_ctx *ctrl_ctx),
-	TP_ARGS(ctrl_ctx)
 );
 
 DECLARE_EVENT_CLASS(xhci_log_ring,
@@ -525,7 +478,6 @@ DECLARE_EVENT_CLASS(xhci_log_portsc,
 		    TP_STRUCT__entry(
 				     __field(u32, portnum)
 				     __field(u32, portsc)
-				     __dynamic_array(char, str, XHCI_MSG_MAX)
 				     ),
 		    TP_fast_assign(
 				   __entry->portnum = portnum;
@@ -533,7 +485,7 @@ DECLARE_EVENT_CLASS(xhci_log_portsc,
 				   ),
 		    TP_printk("port-%d: %s",
 			      __entry->portnum,
-			      xhci_decode_portsc(__get_str(str), __entry->portsc)
+			      xhci_decode_portsc(__entry->portsc)
 			      )
 );
 
@@ -550,33 +502,6 @@ DEFINE_EVENT(xhci_log_portsc, xhci_get_port_status,
 DEFINE_EVENT(xhci_log_portsc, xhci_hub_status_data,
 	     TP_PROTO(u32 portnum, u32 portsc),
 	     TP_ARGS(portnum, portsc)
-);
-
-DECLARE_EVENT_CLASS(xhci_log_doorbell,
-	TP_PROTO(u32 slot, u32 doorbell),
-	TP_ARGS(slot, doorbell),
-	TP_STRUCT__entry(
-		__field(u32, slot)
-		__field(u32, doorbell)
-		__dynamic_array(char, str, XHCI_MSG_MAX)
-	),
-	TP_fast_assign(
-		__entry->slot = slot;
-		__entry->doorbell = doorbell;
-	),
-	TP_printk("Ring doorbell for %s",
-		  xhci_decode_doorbell(__get_str(str), __entry->slot, __entry->doorbell)
-	)
-);
-
-DEFINE_EVENT(xhci_log_doorbell, xhci_ring_ep_doorbell,
-	     TP_PROTO(u32 slot, u32 doorbell),
-	     TP_ARGS(slot, doorbell)
-);
-
-DEFINE_EVENT(xhci_log_doorbell, xhci_ring_host_doorbell,
-	     TP_PROTO(u32 slot, u32 doorbell),
-	     TP_ARGS(slot, doorbell)
 );
 
 DECLARE_EVENT_CLASS(xhci_dbc_log_request,

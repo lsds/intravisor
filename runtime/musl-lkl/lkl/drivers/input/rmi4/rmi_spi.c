@@ -1,7 +1,10 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2011-2016 Synaptics Incorporated
  * Copyright (c) 2011 Unixphere
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License version 2 as published by
+ * the Free Software Foundation.
  */
 
 #include <linux/kernel.h>
@@ -66,7 +69,7 @@ static int rmi_spi_manage_pools(struct rmi_spi_xport *rmi_spi, int len)
 		buf_size = RMI_SPI_XFER_SIZE_LIMIT;
 
 	tmp = rmi_spi->rx_buf;
-	buf = devm_kcalloc(&spi->dev, buf_size, 2,
+	buf = devm_kzalloc(&spi->dev, buf_size * 2,
 				GFP_KERNEL | GFP_DMA);
 	if (!buf)
 		return -ENOMEM;
@@ -93,10 +96,9 @@ static int rmi_spi_manage_pools(struct rmi_spi_xport *rmi_spi, int len)
 	 * per byte delays.
 	 */
 	tmp = rmi_spi->rx_xfers;
-	xfer_buf = devm_kcalloc(&spi->dev,
-		rmi_spi->rx_xfer_count + rmi_spi->tx_xfer_count,
-		sizeof(struct spi_transfer),
-		GFP_KERNEL);
+	xfer_buf = devm_kzalloc(&spi->dev,
+		(rmi_spi->rx_xfer_count + rmi_spi->tx_xfer_count)
+		* sizeof(struct spi_transfer), GFP_KERNEL);
 	if (!xfer_buf)
 		return -ENOMEM;
 
@@ -188,8 +190,7 @@ static int rmi_spi_xfer(struct rmi_spi_xport *rmi_spi,
 			memset(xfer, 0,	sizeof(struct spi_transfer));
 			xfer->tx_buf = &rmi_spi->tx_buf[i];
 			xfer->len = 1;
-			xfer->delay.value = spi_data->write_delay_us;
-			xfer->delay.unit = SPI_DELAY_UNIT_USECS;
+			xfer->delay_usecs = spi_data->write_delay_us;
 			spi_message_add_tail(xfer, &msg);
 		}
 	} else {
@@ -211,8 +212,7 @@ static int rmi_spi_xfer(struct rmi_spi_xport *rmi_spi,
 				memset(xfer, 0, sizeof(struct spi_transfer));
 				xfer->rx_buf = &rmi_spi->rx_buf[i];
 				xfer->len = 1;
-				xfer->delay.value = spi_data->read_delay_us;
-				xfer->delay.unit = SPI_DELAY_UNIT_USECS;
+				xfer->delay_usecs = spi_data->read_delay_us;
 				spi_message_add_tail(xfer, &msg);
 			}
 		} else {

@@ -61,127 +61,57 @@ unsigned long wrap_sem_down(void *sem) {
 }
 
 unsigned long wrap_mutex_alloc(int count) {
-#if 0
-	int tmp = 7;
-	register long t5 __asm__("t5") = tmp;
-	register long a0 __asm__("a0") = (long) count;
-	__asm__ __volatile__("jal c_out":"=r"(a0):"r"(t5), "r"(a0):"memory");
-	return a0;
-#else
+	DEBUG_HOSTCALL();
 	return (unsigned long) c_out_3(7, count, 0, 0);
-#endif
 }
 
 unsigned long wrap_mutex_free(void *mutex) {
-#if 0
-	int tmp = 8;
-	register long t5 __asm__("t5") = tmp;
-	register long a0 __asm__("a0") = (long) mutex;
-	__asm__ __volatile__("jal c_out":"=r"(a0):"r"(t5), "r"(a0):"memory");
-	return a0;
-#else
+	DEBUG_HOSTCALL();
 	return (unsigned long) c_out_3(8, mutex, 0, 0);
-#endif
 }
 
 unsigned long wrap_mutex_lock(void *mutex) {
-#if 0
-	int tmp = 9;
-	register long t5 __asm__("t5") = tmp;
-	register long a0 __asm__("a0") = (long) mutex;
-	__asm__ __volatile__("jal c_out":"=r"(a0):"r"(t5), "r"(a0):"memory");
-	return a0;
-#else
+	DEBUG_HOSTCALL();
 	return (unsigned long) c_out_3(9, mutex, 0, 0);
-#endif
 }
 
 unsigned long wrap_mutex_unlock(void *mutex) {
-#if 0
-	int tmp = 10;
-	register long t5 __asm__("t5") = tmp;
-	register long a0 __asm__("a0") = (long) mutex;
-	__asm__ __volatile__("jal c_out":"=r"(a0):"r"(t5), "r"(a0):"memory");
-	return a0;
-#else
+	DEBUG_HOSTCALL();
 	return (unsigned long) c_out_3(10, mutex, 0, 0);
-#endif
 }
 
 unsigned long wrap_thread_create(void *f, void *arg) {
-#if 0
-	int tmp = 11;
-	register long t5 __asm__("t5") = tmp;
-	register long a0 __asm__("a0") = (long) f;
-	register long a1 __asm__("a1") = (long) arg;
-	__asm__ __volatile__("jal c_out":"=r"(a0):"r"(t5), "r"(a0), "r"(a1):"memory");
-	return a0;
-#else
+	DEBUG_HOSTCALL();
 	return (unsigned long) c_out_3(11, f, arg, 0);
-#endif
 }
 
 //12    void (*thread_detach)(void);
 void wrap_thread_detach() {
-#if 0
-	int tmp = 12;
-	register long a0 __asm__("a0");
-	register long t5 __asm__("t5") = tmp;
-	__asm__ __volatile__("jal c_out":"=r"(a0):"r"(t5):"memory");
-#else
+	DEBUG_HOSTCALL();
 	c_out_3(12, 0, 0, 0);
-#endif
 }
 
 //13    void (*thread_exit)(void);
 void wrap_thread_exit() {
-#if 0
-	int tmp = 13;
-	register long a0 __asm__("a0");
-	register long t5 __asm__("t5") = tmp;
-	__asm__ __volatile__("jal c_out":"=r"(a0):"r"(t5):"memory");
-#else
+	DEBUG_HOSTCALL();
 	c_out_3(13, 0, 0, 0);
-#endif
 }
 
 //14    int (*thread_join)(lkl_thread_t tid);
 int wrap_thread_join(long tid) {
-#if 0
-	int tmp = 14;
-	register long t5 __asm__("t5") = tmp;
-	register long a0 __asm__("a0") = (long) tid;
-	__asm__ __volatile__("jal c_out":"=r"(a0):"r"(t5), "r"(a0):"memory");
-	return (int) a0;
-#else
+	DEBUG_HOSTCALL();
 	return (int) c_out_3(14, tid, 0, 0);
-#endif
 }
 
 unsigned long wrap_thread_self() {
-#if 0
-	int tmp = 15;
-	register long a0 __asm__("a0");
-	register long t5 __asm__("t5") = tmp;
-	__asm__ __volatile__("jal c_out":"=r"(a0):"r"(t5):"memory");
-	return a0;
-#else
+	DEBUG_HOSTCALL();
 	return (unsigned long) c_out_3(15, 0, 0, 0);
-#endif
 }
 
 //16    int (*thread_equal)(lkl_thread_t a, lkl_thread_t b);
 int wrap_thread_equal(long a, long b) {
-#if 0
-	int tmp = 16;
-	register long t5 __asm__("t5") = tmp;
-	register long a0 __asm__("a0") = (long) a;
-	register long a1 __asm__("a1") = (long) b;
-	__asm__ __volatile__("jal c_out":"=r"(a0):"r"(t5), "r"(a0), "r"(a1):"memory");
-	return (int) a0;
-#else
+	DEBUG_HOSTCALL();
 	return (int) c_out_3(16, a, b, 0);
-#endif
 }
 
 //17    struct lkl_tls_key *(*tls_alloc)(void (*destructor)(void *));
@@ -939,6 +869,46 @@ ssize_t wrap_writev(int fd, const struct iovec *iov, int count) {
 #endif
 ////////
 
+wrap_cpuinfo_get(char *buffer, unsigned int buffer_len) {
+    int len;
+    unsigned int total_len = 0;
+    unsigned int current_core = 0;
+    unsigned int num_cores = 1;
+
+    for (current_core = 0; current_core < num_cores; current_core++) {
+
+        len = snprintf(buffer, buffer_len,
+	"processor	: %d\n"
+	"BogoMIPS	: 100.00\n"
+	"Features	: fp asimd evtstrm aes pmull sha1 sha2 crc32 atomics fphp asimdhp cpuid asimdrdm lrcpc dcpop asimddp ssbs\n"
+	"CPU implementer	: 0x3f\n"
+	"CPU architecture: 8\n"
+	"CPU variant	: 0x0\n"
+	"CPU part	: 0x412\n"
+	"CPU revision	: 0\n"
+	"\n",
+            current_core);
+
+        if (len < 0) {
+            // This can only happen if there is some sort of output error, which
+            // shouldn't happen for snprintf().
+            return 0;
+        }
+
+        if (len >= buffer_len) {
+            buffer = NULL;
+            buffer_len = 0;
+        } else {
+            buffer += len;
+            buffer_len -= len;
+        }
+
+        total_len += len;
+    }
+
+    return total_len;
+}
+
 /* 
 
 lkl_start_kernel receives lkl_host_operations table as an argument. howoever, internally, some code directly calls
@@ -1038,12 +1008,22 @@ void init_internal_lkl() {
 	tmp->virtio_devices = lkl_host_ops.virtio_devices;
 	tmp->gettid = lkl_host_ops.gettid;
 //// 6.0.1
-	tmp->memcpy = lkl_host_ops.memcpy;
-	tmp->memset = lkl_host_ops.memset;
+//	tmp->memcpy = lkl_host_ops.memcpy;
+//	tmp->memset = lkl_host_ops.memset;
 /////
 
-	lkl_printf("STARTING LKL, lkl_io_in = %p, disk_io = %p\n", &lkl_io_in, &disk_io_in);
-	lkl_start_kernel((struct lkl_host_operations *) &lkl_io_in, "mem=30M");
+//// 6.0.1
+	tmp->cpuinfo_get = lkl_host_ops.cpuinfo_get = wrap_cpuinfo_get;
+	tmp->cpuinfo_get = lkl_host_ops.cpuinfo_get = wrap_cpuinfo_get;
+/////
+
+
+	extern unsigned long cvm_heap_begin;
+	extern unsigned long cvm_heap_size;
+
+
+	lkl_printf("STARTING LKL, lkl_io_in = %p, disk_io = %p, heap (%lx, +%lx)\n", &lkl_io_in, &disk_io_in, cvm_heap_begin, cvm_heap_size);
+	lkl_start_kernel((struct lkl_host_operations *) &lkl_io_in, "");
 	lkl_printf("------ LKL INIT DONE, starting mount  ------- \n");
 
 	struct s_mount m_args;

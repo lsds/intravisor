@@ -55,15 +55,12 @@
 #include <linux/string.h>
 #include <linux/slab.h>
 #include <linux/miscdevice.h>
-#include <linux/workqueue.h>
 
 #include <xen/xenbus.h>
 #include <xen/xen.h>
 #include <asm/xen/hypervisor.h>
 
 #include "xenbus.h"
-
-unsigned int xb_dev_generation_id;
 
 /*
  * An element of a list of outstanding transactions, for which we're
@@ -72,7 +69,6 @@ unsigned int xb_dev_generation_id;
 struct xenbus_transaction_holder {
 	struct list_head list;
 	struct xenbus_transaction handle;
-	unsigned int generation_id;
 };
 
 /*
@@ -117,8 +113,6 @@ struct xenbus_file_priv {
 	wait_queue_head_t read_waitq;
 
 	struct kref kref;
-
-	struct work_struct wq;
 };
 
 /* Read out any raw xenbus messages queued up. */
@@ -128,7 +122,7 @@ static ssize_t xenbus_file_read(struct file *filp,
 {
 	struct xenbus_file_priv *u = filp->private_data;
 	struct read_buffer *rb;
-	ssize_t i;
+	unsigned i;
 	int ret;
 
 	mutex_lock(&u->reply_mutex);
@@ -148,7 +142,7 @@ again:
 	rb = list_entry(u->read_buffers.next, struct read_buffer, list);
 	i = 0;
 	while (i < len) {
-		size_t sz = min_t(size_t, len - i, rb->len - rb->cons);
+		unsigned sz = min((unsigned)len - i, rb->len - rb->cons);
 
 		ret = copy_to_user(ubuf + i, &rb->msg[rb->cons], sz);
 
@@ -303,14 +297,14 @@ static void watch_fired(struct xenbus_watch *watch,
 	mutex_unlock(&adap->dev_data->reply_mutex);
 }
 
-static void xenbus_worker(struct work_struct *wq)
+static void xenbus_file_free(struct kref *kref)
 {
 	struct xenbus_file_priv *u;
 	struct xenbus_transaction_holder *trans, *tmp;
 	struct watch_adapter *watch, *tmp_watch;
 	struct read_buffer *rb, *tmp_rb;
 
-	u = container_of(wq, struct xenbus_file_priv, wq);
+	u = container_of(kref, struct xenbus_file_priv, kref);
 
 	/*
 	 * No need for locking here because there are no other users,
@@ -334,18 +328,6 @@ static void xenbus_worker(struct work_struct *wq)
 		kfree(rb);
 	}
 	kfree(u);
-}
-
-static void xenbus_file_free(struct kref *kref)
-{
-	struct xenbus_file_priv *u;
-
-	/*
-	 * We might be called in xenbus_thread().
-	 * Use workqueue to avoid deadlock.
-	 */
-	u = container_of(kref, struct xenbus_file_priv, kref);
-	schedule_work(&u->wq);
 }
 
 static struct xenbus_transaction_holder *xenbus_get_transaction(
@@ -459,7 +441,6 @@ static int xenbus_write_transaction(unsigned msg_type,
 			rc = -ENOMEM;
 			goto out;
 		}
-		trans->generation_id = xb_dev_generation_id;
 		list_add(&trans->list, &u->transactions);
 	} else if (msg->hdr.tx_id != 0 &&
 		   !xenbus_get_transaction(u, msg->hdr.tx_id))
@@ -468,20 +449,6 @@ static int xenbus_write_transaction(unsigned msg_type,
 		 !(msg->hdr.len == 2 &&
 		   (!strcmp(msg->body, "T") || !strcmp(msg->body, "F"))))
 		return xenbus_command_reply(u, XS_ERROR, "EINVAL");
-	else if (msg_type == XS_TRANSACTION_END) {
-		trans = xenbus_get_transaction(u, msg->hdr.tx_id);
-		if (trans && trans->generation_id != xb_dev_generation_id) {
-			list_del(&trans->list);
-			kfree(trans);
-			if (!strcmp(msg->body, "T"))
-				return xenbus_command_reply(u, XS_ERROR,
-							    "EAGAIN");
-			else
-				return xenbus_command_reply(u,
-							    XS_TRANSACTION_END,
-							    "OK");
-		}
-	}
 
 	rc = xenbus_dev_request_and_reply(&msg->hdr, u);
 	if (rc && trans) {
@@ -498,6 +465,7 @@ static int xenbus_write_watch(unsigned msg_type, struct xenbus_file_priv *u)
 	struct watch_adapter *watch;
 	char *path, *token;
 	int err, rc;
+	LIST_HEAD(staging_q);
 
 	path = u->u.buffer + sizeof(u->u.msg);
 	token = memchr(path, 0, u->u.msg.len);
@@ -555,6 +523,7 @@ static ssize_t xenbus_file_write(struct file *filp,
 	uint32_t msg_type;
 	int rc = len;
 	int ret;
+	LIST_HEAD(staging_q);
 
 	/*
 	 * We're expecting usermode to be writing properly formed
@@ -653,7 +622,9 @@ static int xenbus_file_open(struct inode *inode, struct file *filp)
 	if (xen_store_evtchn == 0)
 		return -ENOENT;
 
-	stream_open(inode, filp);
+	nonseekable_open(inode, filp);
+
+	filp->f_mode &= ~FMODE_ATOMIC_POS; /* cdev-style semantics */
 
 	u = kzalloc(sizeof(*u), GFP_KERNEL);
 	if (u == NULL)
@@ -665,7 +636,6 @@ static int xenbus_file_open(struct inode *inode, struct file *filp)
 	INIT_LIST_HEAD(&u->watches);
 	INIT_LIST_HEAD(&u->read_buffers);
 	init_waitqueue_head(&u->read_waitq);
-	INIT_WORK(&u->wq, xenbus_worker);
 
 	mutex_init(&u->reply_mutex);
 	mutex_init(&u->msgbuffer_mutex);

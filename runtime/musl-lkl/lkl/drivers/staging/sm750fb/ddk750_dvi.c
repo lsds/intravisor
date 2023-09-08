@@ -11,50 +11,50 @@
  * function API. Please set the function pointer to NULL whenever the function
  * is not supported.
  */
-static struct dvi_ctrl_device dcft_supported_dvi_controller[] = {
+static struct dvi_ctrl_device g_dcftSupportedDviController[] = {
 #ifdef DVI_CTRL_SII164
 	{
-		.init = sii164InitChip,
-		.get_vendor_id = sii164_get_vendor_id,
-		.get_device_id = sii164GetDeviceID,
+		.pfnInit = sii164InitChip,
+		.pfnGetVendorId = sii164GetVendorID,
+		.pfnGetDeviceId = sii164GetDeviceID,
 #ifdef SII164_FULL_FUNCTIONS
-		.reset_chip = sii164ResetChip,
-		.get_chip_string = sii164GetChipString,
-		.set_power = sii164SetPower,
-		.enable_hot_plug_detection = sii164EnableHotPlugDetection,
-		.is_connected = sii164IsConnected,
-		.check_interrupt = sii164CheckInterrupt,
-		.clear_interrupt = sii164ClearInterrupt,
+		.pfnResetChip = sii164ResetChip,
+		.pfnGetChipString = sii164GetChipString,
+		.pfnSetPower = sii164SetPower,
+		.pfnEnableHotPlugDetection = sii164EnableHotPlugDetection,
+		.pfnIsConnected = sii164IsConnected,
+		.pfnCheckInterrupt = sii164CheckInterrupt,
+		.pfnClearInterrupt = sii164ClearInterrupt,
 #endif
 	},
 #endif
 };
 
-int dvi_init(unsigned char edge_select,
-	     unsigned char bus_select,
-	     unsigned char dual_edge_clk_select,
-	     unsigned char hsync_enable,
-	     unsigned char vsync_enable,
-	     unsigned char deskew_enable,
-	     unsigned char deskew_setting,
-	     unsigned char continuous_sync_enable,
-	     unsigned char pll_filter_enable,
-	     unsigned char pll_filter_value)
+int dviInit(unsigned char edgeSelect,
+	    unsigned char busSelect,
+	    unsigned char dualEdgeClkSelect,
+	    unsigned char hsyncEnable,
+	    unsigned char vsyncEnable,
+	    unsigned char deskewEnable,
+	    unsigned char deskewSetting,
+	    unsigned char continuousSyncEnable,
+	    unsigned char pllFilterEnable,
+	    unsigned char pllFilterValue)
 {
-	struct dvi_ctrl_device *current_dvi_ctrl;
+	struct dvi_ctrl_device *pCurrentDviCtrl;
 
-	current_dvi_ctrl = dcft_supported_dvi_controller;
-	if (current_dvi_ctrl->init) {
-		return current_dvi_ctrl->init(edge_select,
-					      bus_select,
-					      dual_edge_clk_select,
-					      hsync_enable,
-					      vsync_enable,
-					      deskew_enable,
-					      deskew_setting,
-					      continuous_sync_enable,
-					      pll_filter_enable,
-					      pll_filter_value);
+	pCurrentDviCtrl = g_dcftSupportedDviController;
+	if (pCurrentDviCtrl->pfnInit) {
+		return pCurrentDviCtrl->pfnInit(edgeSelect,
+						busSelect,
+						dualEdgeClkSelect,
+						hsyncEnable,
+						vsyncEnable,
+						deskewEnable,
+						deskewSetting,
+						continuousSyncEnable,
+						pllFilterEnable,
+						pllFilterValue);
 	}
 	return -1; /* error */
 }

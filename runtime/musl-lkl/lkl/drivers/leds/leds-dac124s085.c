@@ -1,7 +1,10 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright 2008
  * Guennadi Liakhovetski, DENX Software Engineering, <lg@denx.de>
+ *
+ * This file is subject to the terms and conditions of version 2 of
+ * the GNU General Public License.  See the file COPYING in the main
+ * directory of this archive for more details.
  *
  * LED driver for the DAC124S085 SPI DAC
  */
@@ -85,13 +88,15 @@ eledcr:
 	return ret;
 }
 
-static void dac124s085_remove(struct spi_device *spi)
+static int dac124s085_remove(struct spi_device *spi)
 {
 	struct dac124s085	*dac = spi_get_drvdata(spi);
 	int i;
 
 	for (i = 0; i < ARRAY_SIZE(dac->leds); i++)
 		led_classdev_unregister(&dac->leds[i].ldev);
+
+	return 0;
 }
 
 static struct spi_driver dac124s085_driver = {

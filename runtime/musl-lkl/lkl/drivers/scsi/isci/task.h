@@ -140,6 +140,10 @@ int isci_task_abort_task_set(
 	struct domain_device *d_device,
 	u8 *lun);
 
+int isci_task_clear_aca(
+	struct domain_device *d_device,
+	u8 *lun);
+
 int isci_task_clear_task_set(
 	struct domain_device *d_device,
 	u8 *lun);
@@ -177,5 +181,9 @@ void *isci_task_ssp_request_get_response_data_address(
 
 u32 isci_task_ssp_request_get_response_data_length(
 	struct isci_request *request);
+
+int isci_queuecommand(
+	struct scsi_cmnd *scsi_cmd,
+	void (*donefunc)(struct scsi_cmnd *));
 
 #endif /* !defined(_SCI_TASK_H_) */

@@ -1,9 +1,8 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (C) 2002 - 2008 Jeff Dike (jdike@{addtoit,linux.intel}.com)
+ * Licensed under the GPL
  */
 
-#include <linux/minmax.h>
 #include <unistd.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -51,7 +50,7 @@ static struct pollfds all_sigio_fds;
 
 static int write_sigio_thread(void *unused)
 {
-	struct pollfds *fds;
+	struct pollfds *fds, tmp;
 	struct pollfd *p;
 	int i, n, respond_fd;
 	char c;
@@ -78,7 +77,9 @@ static int write_sigio_thread(void *unused)
 					       "write_sigio_thread : "
 					       "read on socket failed, "
 					       "err = %d\n", errno);
-				swap(current_poll, next_poll);
+				tmp = current_poll;
+				current_poll = next_poll;
+				next_poll = tmp;
 				respond_fd = sigio_private[1];
 			}
 			else {
@@ -131,7 +132,7 @@ static void update_thread(void)
 	int n;
 	char c;
 
-	flags = um_set_signals_trace(0);
+	flags = set_signals(0);
 	CATCH_EINTR(n = write(sigio_private[0], &c, sizeof(c)));
 	if (n != sizeof(c)) {
 		printk(UM_KERN_ERR "update_thread : write failed, err = %d\n",
@@ -146,7 +147,7 @@ static void update_thread(void)
 		goto fail;
 	}
 
-	um_set_signals_trace(flags);
+	set_signals(flags);
 	return;
  fail:
 	/* Critical section start */
@@ -160,58 +161,48 @@ static void update_thread(void)
 	close(write_sigio_fds[0]);
 	close(write_sigio_fds[1]);
 	/* Critical section end */
-	um_set_signals_trace(flags);
+	set_signals(flags);
 }
 
-int __add_sigio_fd(int fd)
+int add_sigio_fd(int fd)
 {
 	struct pollfd *p;
-	int err, i, n;
+	int err = 0, i, n;
 
+	sigio_lock();
 	for (i = 0; i < all_sigio_fds.used; i++) {
 		if (all_sigio_fds.poll[i].fd == fd)
 			break;
 	}
 	if (i == all_sigio_fds.used)
-		return -ENOSPC;
+		goto out;
 
 	p = &all_sigio_fds.poll[i];
 
 	for (i = 0; i < current_poll.used; i++) {
 		if (current_poll.poll[i].fd == fd)
-			return 0;
+			goto out;
 	}
 
 	n = current_poll.used;
 	err = need_poll(&next_poll, n + 1);
 	if (err)
-		return err;
+		goto out;
 
 	memcpy(next_poll.poll, current_poll.poll,
 	       current_poll.used * sizeof(struct pollfd));
 	next_poll.poll[n] = *p;
 	next_poll.used = n + 1;
 	update_thread();
-
-	return 0;
-}
-
-
-int add_sigio_fd(int fd)
-{
-	int err;
-
-	sigio_lock();
-	err = __add_sigio_fd(fd);
+ out:
 	sigio_unlock();
-
 	return err;
 }
 
-int __ignore_sigio_fd(int fd)
+int ignore_sigio_fd(int fd)
 {
 	struct pollfd *p;
-	int err, i, n = 0;
+	int err = 0, i, n = 0;
 
 	/*
 	 * This is called from exitcalls elsewhere in UML - if
@@ -221,16 +212,17 @@ int __ignore_sigio_fd(int fd)
 	if (write_sigio_pid == -1)
 		return -EIO;
 
+	sigio_lock();
 	for (i = 0; i < current_poll.used; i++) {
 		if (current_poll.poll[i].fd == fd)
 			break;
 	}
 	if (i == current_poll.used)
-		return -ENOENT;
+		goto out;
 
 	err = need_poll(&next_poll, current_poll.used - 1);
 	if (err)
-		return err;
+		goto out;
 
 	for (i = 0; i < current_poll.used; i++) {
 		p = &current_poll.poll[i];
@@ -240,18 +232,8 @@ int __ignore_sigio_fd(int fd)
 	next_poll.used = current_poll.used - 1;
 
 	update_thread();
-
-	return 0;
-}
-
-int ignore_sigio_fd(int fd)
-{
-	int err;
-
-	sigio_lock();
-	err = __ignore_sigio_fd(fd);
+ out:
 	sigio_unlock();
-
 	return err;
 }
 
@@ -354,7 +336,7 @@ out_close1:
 	close(l_write_sigio_fds[1]);
 }
 
-void sigio_broken(int fd)
+void sigio_broken(int fd, int read)
 {
 	int err;
 
@@ -370,7 +352,7 @@ void sigio_broken(int fd)
 
 	all_sigio_fds.poll[all_sigio_fds.used++] =
 		((struct pollfd) { .fd  	= fd,
-				   .events 	= POLLIN,
+				   .events 	= read ? POLLIN : POLLOUT,
 				   .revents 	= 0 });
 out:
 	sigio_unlock();
@@ -378,16 +360,17 @@ out:
 
 /* Changed during early boot */
 static int pty_output_sigio;
+static int pty_close_sigio;
 
-void maybe_sigio_broken(int fd)
+void maybe_sigio_broken(int fd, int read)
 {
 	if (!isatty(fd))
 		return;
 
-	if (pty_output_sigio)
+	if ((read || pty_output_sigio) && (!read || pty_close_sigio))
 		return;
 
-	sigio_broken(fd);
+	sigio_broken(fd, read);
 }
 
 static void sigio_cleanup(void)
@@ -531,6 +514,19 @@ static void tty_output(int master, int slave)
 		printk(UM_KERN_CONT "tty_output : read failed, err = %d\n", n);
 }
 
+static void tty_close(int master, int slave)
+{
+	printk(UM_KERN_INFO "Checking that host ptys support SIGIO on "
+	       "close...");
+
+	close(slave);
+	if (got_sigio) {
+		printk(UM_KERN_CONT "Yes\n");
+		pty_close_sigio = 1;
+	} else
+		printk(UM_KERN_CONT "No, enabling workaround\n");
+}
+
 static void __init check_sigio(void)
 {
 	if ((access("/dev/ptmx", R_OK) < 0) &&
@@ -540,6 +536,7 @@ static void __init check_sigio(void)
 		return;
 	}
 	check_one_sigio(tty_output);
+	check_one_sigio(tty_close);
 }
 
 /* Here because it only does the SIGIO testing for now */

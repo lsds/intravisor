@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0-or-later */
 #ifndef _ASM_POWERPC_DELAY_H
 #define _ASM_POWERPC_DELAY_H
 #ifdef __KERNEL__
@@ -9,6 +8,11 @@
 /*
  * Copyright 1996, Paul Mackerras.
  * Copyright (C) 2009 Freescale Semiconductor, Inc. All rights reserved.
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version
+ * 2 of the License, or (at your option) any later version.
  *
  * PPC64 Support added by Dave Engebretsen, Todd Inglett, Mike Corrigan,
  * Anton Blanchard.
@@ -54,7 +58,7 @@ extern void udelay(unsigned long usecs);
 ({                                                                             \
 	typeof(condition) __ret;                                               \
 	unsigned long __loops = tb_ticks_per_usec * timeout;                   \
-	unsigned long __start = mftb();                                     \
+	unsigned long __start = get_tbl();                                     \
                                                                                \
 	if (delay) {                                                           \
 		while (!(__ret = (condition)) &&                               \

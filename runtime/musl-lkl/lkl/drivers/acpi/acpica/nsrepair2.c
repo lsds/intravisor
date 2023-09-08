@@ -4,7 +4,7 @@
  * Module Name: nsrepair2 - Repair for objects returned by specific
  *                          predefined methods
  *
- * Copyright (C) 2000 - 2022, Intel Corp.
+ * Copyright (C) 2000 - 2018, Intel Corp.
  *
  *****************************************************************************/
 
@@ -25,7 +25,7 @@ acpi_status (*acpi_repair_function) (struct acpi_evaluate_info * info,
 				     return_object_ptr);
 
 typedef struct acpi_repair_info {
-	char name[ACPI_NAMESEG_SIZE];
+	char name[ACPI_NAME_SIZE];
 	acpi_repair_function repair_function;
 
 } acpi_repair_info;
@@ -126,7 +126,7 @@ static const struct acpi_repair_info acpi_ns_repairable_names[] = {
 
 #define ACPI_FDE_FIELD_COUNT        5
 #define ACPI_FDE_BYTE_BUFFER_SIZE   5
-#define ACPI_FDE_DWORD_BUFFER_SIZE  (ACPI_FDE_FIELD_COUNT * (u32) sizeof (u32))
+#define ACPI_FDE_DWORD_BUFFER_SIZE  (ACPI_FDE_FIELD_COUNT * sizeof (u32))
 
 /******************************************************************************
  *
@@ -155,17 +155,15 @@ acpi_ns_complex_repairs(struct acpi_evaluate_info *info,
 	const struct acpi_repair_info *predefined;
 	acpi_status status;
 
-	ACPI_FUNCTION_TRACE(ns_complex_repairs);
-
 	/* Check if this name is in the list of repairable names */
 
 	predefined = acpi_ns_match_complex_repair(node);
 	if (!predefined) {
-		return_ACPI_STATUS(validate_status);
+		return (validate_status);
 	}
 
 	status = predefined->repair_function(info, return_object_ptr);
-	return_ACPI_STATUS(status);
+	return (status);
 }
 
 /******************************************************************************
@@ -190,7 +188,7 @@ static const struct acpi_repair_info *acpi_ns_match_complex_repair(struct
 
 	this_name = acpi_ns_repairable_names;
 	while (this_name->repair_function) {
-		if (ACPI_COMPARE_NAMESEG(node->name.ascii, this_name->name)) {
+		if (ACPI_COMPARE_NAME(node->name.ascii, this_name->name)) {
 			return (this_name);
 		}
 
@@ -346,19 +344,17 @@ acpi_ns_repair_CID(struct acpi_evaluate_info *info,
 	u16 original_ref_count;
 	u32 i;
 
-	ACPI_FUNCTION_TRACE(ns_repair_CID);
-
 	/* Check for _CID as a simple string */
 
 	if (return_object->common.type == ACPI_TYPE_STRING) {
 		status = acpi_ns_repair_HID(info, return_object_ptr);
-		return_ACPI_STATUS(status);
+		return (status);
 	}
 
 	/* Exit if not a Package */
 
 	if (return_object->common.type != ACPI_TYPE_PACKAGE) {
-		return_ACPI_STATUS(AE_OK);
+		return (AE_OK);
 	}
 
 	/* Examine each element of the _CID package */
@@ -370,7 +366,7 @@ acpi_ns_repair_CID(struct acpi_evaluate_info *info,
 
 		status = acpi_ns_repair_HID(info, element_ptr);
 		if (ACPI_FAILURE(status)) {
-			return_ACPI_STATUS(status);
+			return (status);
 		}
 
 		if (original_element != *element_ptr) {
@@ -384,7 +380,7 @@ acpi_ns_repair_CID(struct acpi_evaluate_info *info,
 		element_ptr++;
 	}
 
-	return_ACPI_STATUS(AE_OK);
+	return (AE_OK);
 }
 
 /******************************************************************************
@@ -504,7 +500,7 @@ acpi_ns_repair_HID(struct acpi_evaluate_info *info,
 	/* We only care about string _HID objects (not integers) */
 
 	if (return_object->common.type != ACPI_TYPE_STRING) {
-		return_ACPI_STATUS(AE_OK);
+		return (AE_OK);
 	}
 
 	if (return_object->string.length == 0) {
@@ -515,14 +511,14 @@ acpi_ns_repair_HID(struct acpi_evaluate_info *info,
 		/* Return AE_OK anyway, let driver handle it */
 
 		info->return_flags |= ACPI_OBJECT_REPAIRED;
-		return_ACPI_STATUS(AE_OK);
+		return (AE_OK);
 	}
 
 	/* It is simplest to always create a new string object */
 
 	new_string = acpi_ut_create_string_object(return_object->string.length);
 	if (!new_string) {
-		return_ACPI_STATUS(AE_NO_MEMORY);
+		return (AE_NO_MEMORY);
 	}
 
 	/*
@@ -555,7 +551,7 @@ acpi_ns_repair_HID(struct acpi_evaluate_info *info,
 
 	acpi_ut_remove_reference(return_object);
 	*return_object_ptr = new_string;
-	return_ACPI_STATUS(AE_OK);
+	return (AE_OK);
 }
 
 /******************************************************************************

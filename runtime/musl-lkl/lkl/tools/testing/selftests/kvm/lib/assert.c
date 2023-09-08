@@ -1,8 +1,9 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * tools/testing/selftests/kvm/lib/assert.c
  *
  * Copyright (C) 2018, Google LLC.
+ *
+ * This work is licensed under the terms of the GNU GPL, version 2.
  */
 
 #define _GNU_SOURCE /* for getline(3) and strchrnul(3)*/
@@ -12,8 +13,6 @@
 #include <execinfo.h>
 #include <sys/syscall.h>
 
-#include "kselftest.h"
-
 /* Dumps the current stack trace to stderr. */
 static void __attribute__((noinline)) test_dump_stack(void);
 static void test_dump_stack(void)
@@ -22,7 +21,7 @@ static void test_dump_stack(void)
 	 * Build and run this command:
 	 *
 	 *	addr2line -s -e /proc/$PPID/exe -fpai {backtrace addresses} | \
-	 *		cat -n 1>&2
+	 *		grep -v test_dump_stack | cat -n 1>&2
 	 *
 	 * Note that the spacing is different and there's no newline.
 	 */
@@ -36,24 +35,18 @@ static void test_dump_stack(void)
 		 n * (((sizeof(void *)) * 2) + 1) +
 		 /* Null terminator: */
 		 1];
-	char *c = cmd;
+	char *c;
 
 	n = backtrace(stack, n);
-	/*
-	 * Skip the first 2 frames, which should be test_dump_stack() and
-	 * test_assert(); both of which are declared noinline.  Bail if the
-	 * resulting stack trace would be empty. Otherwise, addr2line will block
-	 * waiting for addresses to be passed in via stdin.
-	 */
-	if (n <= 2) {
-		fputs("  (stack trace empty)\n", stderr);
-		return;
-	}
-
+	c = &cmd[0];
 	c += sprintf(c, "%s", addr2line);
+	/*
+	 * Skip the first 3 frames: backtrace, test_dump_stack, and
+	 * test_assert. We hope that backtrace isn't inlined and the other two
+	 * we've declared noinline.
+	 */
 	for (i = 2; i < n; i++)
 		c += sprintf(c, " %lx", ((unsigned long) stack[i]) - 1);
-
 	c += sprintf(c, "%s", pipeline);
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wunused-result"
@@ -61,7 +54,7 @@ static void test_dump_stack(void)
 #pragma GCC diagnostic pop
 }
 
-static pid_t _gettid(void)
+static pid_t gettid(void)
 {
 	return syscall(SYS_gettid);
 }
@@ -77,9 +70,8 @@ test_assert(bool exp, const char *exp_str,
 
 		fprintf(stderr, "==== Test Assertion Failure ====\n"
 			"  %s:%u: %s\n"
-			"  pid=%d tid=%d errno=%d - %s\n",
-			file, line, exp_str, getpid(), _gettid(),
-			errno, strerror(errno));
+			"  pid=%d tid=%d\n",
+			file, line, exp_str, getpid(), gettid());
 		test_dump_stack();
 		if (fmt) {
 			fputs("  ", stderr);
@@ -88,10 +80,6 @@ test_assert(bool exp, const char *exp_str,
 		}
 		va_end(ap);
 
-		if (errno == EACCES) {
-			print_skip("Access denied - Exiting");
-			exit(KSFT_SKIP);
-		}
 		exit(254);
 	}
 

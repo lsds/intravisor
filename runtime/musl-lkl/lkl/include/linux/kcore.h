@@ -11,6 +11,7 @@ enum kcore_type {
 	KCORE_RAM,
 	KCORE_VMEMMAP,
 	KCORE_USER,
+	KCORE_OTHER,
 };
 
 struct kcore_list {
@@ -27,16 +28,8 @@ struct vmcore {
 	loff_t offset;
 };
 
-struct vmcoredd_node {
-	struct list_head list;	/* List of dumps */
-	void *buf;		/* Buffer containing device's dump */
-	unsigned int size;	/* Size of the buffer */
-};
-
 #ifdef CONFIG_PROC_KCORE
-void __init kclist_add(struct kcore_list *, void *, size_t, int type);
-
-extern int __init register_mem_pfn_is_ram(int (*fn)(unsigned long pfn));
+extern void kclist_add(struct kcore_list *, void *, size_t, int type);
 #else
 static inline
 void kclist_add(struct kcore_list *new, void *addr, size_t size, int type)

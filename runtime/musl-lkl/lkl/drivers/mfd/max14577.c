@@ -1,12 +1,22 @@
-// SPDX-License-Identifier: GPL-2.0+
-//
-// max14577.c - mfd core driver for the Maxim 14577/77836
-//
-// Copyright (C) 2014 Samsung Electronics
-// Chanwoo Choi <cw00.choi@samsung.com>
-// Krzysztof Kozlowski <krzk@kernel.org>
-//
-// This driver is based on max8997.c
+/*
+ * max14577.c - mfd core driver for the Maxim 14577/77836
+ *
+ * Copyright (C) 2014 Samsung Electronics
+ * Chanwoo Choi <cw00.choi@samsung.com>
+ * Krzysztof Kozlowski <krzk@kernel.org>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * This driver is based on max8997.c
+ */
 
 #include <linux/err.h>
 #include <linux/module.h>
@@ -61,7 +71,7 @@ EXPORT_SYMBOL_GPL(maxim_charger_currents);
 int maxim_charger_calc_reg_current(const struct maxim_charger_current *limits,
 		unsigned int min_ua, unsigned int max_ua, u8 *dst)
 {
-	unsigned int current_bits;
+	unsigned int current_bits = 0xf;
 
 	if (min_ua > max_ua)
 		return -EINVAL;
@@ -297,11 +307,11 @@ static int max77836_init(struct max14577 *max14577)
 	int ret;
 	u8 intsrc_mask;
 
-	max14577->i2c_pmic = i2c_new_dummy_device(max14577->i2c->adapter,
+	max14577->i2c_pmic = i2c_new_dummy(max14577->i2c->adapter,
 			I2C_ADDR_PMIC);
-	if (IS_ERR(max14577->i2c_pmic)) {
+	if (!max14577->i2c_pmic) {
 		dev_err(max14577->dev, "Failed to register PMIC I2C device\n");
-		return PTR_ERR(max14577->i2c_pmic);
+		return -ENODEV;
 	}
 	i2c_set_clientdata(max14577->i2c_pmic, max14577);
 
@@ -332,7 +342,7 @@ static int max77836_init(struct max14577 *max14577)
 	}
 
 	ret = regmap_add_irq_chip(max14577->regmap_pmic, max14577->irq,
-			IRQF_ONESHOT | IRQF_SHARED,
+			IRQF_TRIGGER_FALLING | IRQF_ONESHOT | IRQF_SHARED,
 			0, &max77836_pmic_irq_chip,
 			&max14577->irq_data_pmic);
 	if (ret != 0) {
@@ -418,14 +428,14 @@ static int max14577_i2c_probe(struct i2c_client *i2c,
 		irq_chip = &max77836_muic_irq_chip;
 		mfd_devs = max77836_devs;
 		mfd_devs_size = ARRAY_SIZE(max77836_devs);
-		irq_flags = IRQF_ONESHOT | IRQF_SHARED;
+		irq_flags = IRQF_TRIGGER_FALLING | IRQF_ONESHOT | IRQF_SHARED;
 		break;
 	case MAXIM_DEVICE_TYPE_MAX14577:
 	default:
 		irq_chip = &max14577_irq_chip;
 		mfd_devs = max14577_devs;
 		mfd_devs_size = ARRAY_SIZE(max14577_devs);
-		irq_flags = IRQF_ONESHOT;
+		irq_flags = IRQF_TRIGGER_FALLING | IRQF_ONESHOT;
 		break;
 	}
 
@@ -463,7 +473,7 @@ err_max77836:
 	return ret;
 }
 
-static void max14577_i2c_remove(struct i2c_client *i2c)
+static int max14577_i2c_remove(struct i2c_client *i2c)
 {
 	struct max14577 *max14577 = i2c_get_clientdata(i2c);
 
@@ -471,6 +481,8 @@ static void max14577_i2c_remove(struct i2c_client *i2c)
 	regmap_del_irq_chip(max14577->irq, max14577->irq_data);
 	if (max14577->dev_type == MAXIM_DEVICE_TYPE_MAX77836)
 		max77836_remove(max14577);
+
+	return 0;
 }
 
 static const struct i2c_device_id max14577_i2c_id[] = {

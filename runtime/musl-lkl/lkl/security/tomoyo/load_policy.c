@@ -24,7 +24,7 @@ static const char *tomoyo_loader;
 static int __init tomoyo_loader_setup(char *str)
 {
 	tomoyo_loader = str;
-	return 1;
+	return 0;
 }
 
 __setup("TOMOYO_loader=", tomoyo_loader_setup);
@@ -37,12 +37,11 @@ __setup("TOMOYO_loader=", tomoyo_loader_setup);
 static bool tomoyo_policy_loader_exists(void)
 {
 	struct path path;
-
 	if (!tomoyo_loader)
 		tomoyo_loader = CONFIG_SECURITY_TOMOYO_POLICY_LOADER;
 	if (kern_path(tomoyo_loader, LOOKUP_FOLLOW, &path)) {
-		pr_info("Not activating Mandatory Access Control as %s does not exist.\n",
-			tomoyo_loader);
+		printk(KERN_INFO "Not activating Mandatory Access Control "
+		       "as %s does not exist.\n", tomoyo_loader);
 		return false;
 	}
 	path_put(&path);
@@ -64,7 +63,7 @@ static const char *tomoyo_trigger;
 static int __init tomoyo_trigger_setup(char *str)
 {
 	tomoyo_trigger = str;
-	return 1;
+	return 0;
 }
 
 __setup("TOMOYO_trigger=", tomoyo_trigger_setup);
@@ -97,7 +96,8 @@ void tomoyo_load_policy(const char *filename)
 	if (!tomoyo_policy_loader_exists())
 		return;
 	done = true;
-	pr_info("Calling %s to load policy. Please wait.\n", tomoyo_loader);
+	printk(KERN_INFO "Calling %s to load policy. Please wait.\n",
+	       tomoyo_loader);
 	argv[0] = (char *) tomoyo_loader;
 	argv[1] = NULL;
 	envp[0] = "HOME=/";

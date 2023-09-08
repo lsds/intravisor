@@ -3,7 +3,7 @@
  *
  * Name: actables.h - ACPI table management
  *
- * Copyright (C) 2000 - 2022, Intel Corp.
+ * Copyright (C) 2000 - 2018, Intel Corp.
  *
  *****************************************************************************/
 
@@ -35,8 +35,7 @@ acpi_tb_init_table_descriptor(struct acpi_table_desc *table_desc,
 
 acpi_status
 acpi_tb_acquire_temp_table(struct acpi_table_desc *table_desc,
-			   acpi_physical_address address,
-			   u8 flags, struct acpi_table_header *table);
+			   acpi_physical_address address, u8 flags);
 
 void acpi_tb_release_temp_table(struct acpi_table_desc *table_desc);
 
@@ -87,7 +86,6 @@ acpi_tb_release_table(struct acpi_table_header *table,
 acpi_status
 acpi_tb_install_standard_table(acpi_physical_address address,
 			       u8 flags,
-			       struct acpi_table_header *table,
 			       u8 reload, u8 override, u32 *table_index);
 
 void acpi_tb_uninstall_table(struct acpi_table_desc *table_desc);
@@ -97,9 +95,7 @@ acpi_tb_load_table(u32 table_index, struct acpi_namespace_node *parent_node);
 
 acpi_status
 acpi_tb_install_and_load_table(acpi_physical_address address,
-			       u8 flags,
-			       struct acpi_table_header *table,
-			       u8 override, u32 *table_index);
+			       u8 flags, u8 override, u32 *table_index);
 
 acpi_status acpi_tb_unload_table(u32 table_index);
 

@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  *  Copyright (c) by Jaroslav Kysela <perex@perex.cz>,
  *                   Hannu Savolainen 1993-1996,
@@ -7,6 +6,21 @@
  *  Routines for control of AdLib FM cards (OPL2/OPL3/OPL4 chips)
  *
  *  Most if code is ported from OSS/Lite.
+ *
+ *   This program is free software; you can redistribute it and/or modify
+ *   it under the terms of the GNU General Public License as published by
+ *   the Free Software Foundation; either version 2 of the License, or
+ *   (at your option) any later version.
+ *
+ *   This program is distributed in the hope that it will be useful,
+ *   but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *   GNU General Public License for more details.
+ *
+ *   You should have received a copy of the GNU General Public License
+ *   along with this program; if not, write to the Free Software
+ *   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307 USA
+ *
  */
 
 #include <sound/opl3.h>
@@ -17,11 +31,12 @@
 #include <linux/slab.h>
 #include <linux/ioport.h>
 #include <sound/minors.h>
-#include "opl3_voice.h"
 
 MODULE_AUTHOR("Jaroslav Kysela <perex@perex.cz>, Hannu Savolainen 1993-1996, Rob Hooft");
 MODULE_DESCRIPTION("Routines for control of AdLib FM cards (OPL2/OPL3/OPL4 chips)");
 MODULE_LICENSE("GPL");
+
+extern char snd_opl3_regmap[MAX_OPL2_VOICES][4];
 
 static void snd_opl2_command(struct snd_opl3 * opl3, unsigned short cmd, unsigned char val)
 {
@@ -214,7 +229,7 @@ static int snd_opl3_timer2_stop(struct snd_timer * timer)
 
  */
 
-static const struct snd_timer_hardware snd_opl3_timer1 =
+static struct snd_timer_hardware snd_opl3_timer1 =
 {
 	.flags =	SNDRV_TIMER_HW_STOP,
 	.resolution =	80000,
@@ -223,7 +238,7 @@ static const struct snd_timer_hardware snd_opl3_timer1 =
 	.stop =		snd_opl3_timer1_stop,
 };
 
-static const struct snd_timer_hardware snd_opl3_timer2 =
+static struct snd_timer_hardware snd_opl3_timer2 =
 {
 	.flags =	SNDRV_TIMER_HW_STOP,
 	.resolution =	320000,
@@ -243,8 +258,7 @@ static int snd_opl3_timer1_init(struct snd_opl3 * opl3, int timer_no)
 	tid.card = opl3->card->number;
 	tid.device = timer_no;
 	tid.subdevice = 0;
-	err = snd_timer_new(opl3->card, "AdLib timer #1", &tid, &timer);
-	if (err >= 0) {
+	if ((err = snd_timer_new(opl3->card, "AdLib timer #1", &tid, &timer)) >= 0) {
 		strcpy(timer->name, "AdLib timer #1");
 		timer->private_data = opl3;
 		timer->hw = snd_opl3_timer1;
@@ -264,8 +278,7 @@ static int snd_opl3_timer2_init(struct snd_opl3 * opl3, int timer_no)
 	tid.card = opl3->card->number;
 	tid.device = timer_no;
 	tid.subdevice = 0;
-	err = snd_timer_new(opl3->card, "AdLib timer #2", &tid, &timer);
-	if (err >= 0) {
+	if ((err = snd_timer_new(opl3->card, "AdLib timer #2", &tid, &timer)) >= 0) {
 		strcpy(timer->name, "AdLib timer #2");
 		timer->private_data = opl3;
 		timer->hw = snd_opl3_timer2;
@@ -334,7 +347,7 @@ int snd_opl3_new(struct snd_card *card,
 		 unsigned short hardware,
 		 struct snd_opl3 **ropl3)
 {
-	static const struct snd_device_ops ops = {
+	static struct snd_device_ops ops = {
 		.dev_free = snd_opl3_dev_free,
 	};
 	struct snd_opl3 *opl3;
@@ -350,8 +363,7 @@ int snd_opl3_new(struct snd_card *card,
 	spin_lock_init(&opl3->reg_lock);
 	spin_lock_init(&opl3->timer_lock);
 
-	err = snd_device_new(card, SNDRV_DEV_CODEC, opl3, &ops);
-	if (err < 0) {
+	if ((err = snd_device_new(card, SNDRV_DEV_CODEC, opl3, &ops)) < 0) {
 		snd_opl3_free(opl3);
 		return err;
 	}
@@ -399,23 +411,19 @@ int snd_opl3_create(struct snd_card *card,
 	int err;
 
 	*ropl3 = NULL;
-	err = snd_opl3_new(card, hardware, &opl3);
-	if (err < 0)
+	if ((err = snd_opl3_new(card, hardware, &opl3)) < 0)
 		return err;
 	if (! integrated) {
-		opl3->res_l_port = request_region(l_port, 2, "OPL2/3 (left)");
-		if (!opl3->res_l_port) {
+		if ((opl3->res_l_port = request_region(l_port, 2, "OPL2/3 (left)")) == NULL) {
 			snd_printk(KERN_ERR "opl3: can't grab left port 0x%lx\n", l_port);
 			snd_device_free(card, opl3);
 			return -EBUSY;
 		}
-		if (r_port != 0) {
-			opl3->res_r_port = request_region(r_port, 2, "OPL2/3 (right)");
-			if (!opl3->res_r_port) {
-				snd_printk(KERN_ERR "opl3: can't grab right port 0x%lx\n", r_port);
-				snd_device_free(card, opl3);
-				return -EBUSY;
-			}
+		if (r_port != 0 &&
+		    (opl3->res_r_port = request_region(r_port, 2, "OPL2/3 (right)")) == NULL) {
+			snd_printk(KERN_ERR "opl3: can't grab right port 0x%lx\n", r_port);
+			snd_device_free(card, opl3);
+			return -EBUSY;
 		}
 	}
 	opl3->l_port = l_port;
@@ -430,8 +438,7 @@ int snd_opl3_create(struct snd_card *card,
 		break;
 	default:
 		opl3->command = &snd_opl2_command;
-		err = snd_opl3_detect(opl3);
-		if (err < 0) {
+		if ((err = snd_opl3_detect(opl3)) < 0) {
 			snd_printd("OPL2/3 chip not detected at 0x%lx/0x%lx\n",
 				   opl3->l_port, opl3->r_port);
 			snd_device_free(card, opl3);
@@ -457,14 +464,11 @@ int snd_opl3_timer_new(struct snd_opl3 * opl3, int timer1_dev, int timer2_dev)
 {
 	int err;
 
-	if (timer1_dev >= 0) {
-		err = snd_opl3_timer1_init(opl3, timer1_dev);
-		if (err < 0)
+	if (timer1_dev >= 0)
+		if ((err = snd_opl3_timer1_init(opl3, timer1_dev)) < 0)
 			return err;
-	}
 	if (timer2_dev >= 0) {
-		err = snd_opl3_timer2_init(opl3, timer2_dev);
-		if (err < 0) {
+		if ((err = snd_opl3_timer2_init(opl3, timer2_dev)) < 0) {
 			snd_device_free(opl3->card, opl3->timer1);
 			opl3->timer1 = NULL;
 			return err;
@@ -488,8 +492,7 @@ int snd_opl3_hwdep_new(struct snd_opl3 * opl3,
 
 	/* create hardware dependent device (direct FM) */
 
-	err = snd_hwdep_new(card, "OPL2/OPL3", device, &hw);
-	if (err < 0) {
+	if ((err = snd_hwdep_new(card, "OPL2/OPL3", device, &hw)) < 0) {
 		snd_device_free(card, opl3);
 		return err;
 	}
@@ -536,3 +539,19 @@ int snd_opl3_hwdep_new(struct snd_opl3 * opl3,
 }
 
 EXPORT_SYMBOL(snd_opl3_hwdep_new);
+
+/*
+ *  INIT part
+ */
+
+static int __init alsa_opl3_init(void)
+{
+	return 0;
+}
+
+static void __exit alsa_opl3_exit(void)
+{
+}
+
+module_init(alsa_opl3_init)
+module_exit(alsa_opl3_exit)

@@ -162,6 +162,7 @@ static int bcma_host_pci_probe(struct pci_dev *dev,
 {
 	struct bcma_bus *bus;
 	int err = -ENOMEM;
+	const char *name;
 	u32 val;
 
 	/* Alloc */
@@ -174,7 +175,10 @@ static int bcma_host_pci_probe(struct pci_dev *dev,
 	if (err)
 		goto err_kfree_bus;
 
-	err = pci_request_regions(dev, "bcma-pci-bridge");
+	name = dev_name(&dev->dev);
+	if (dev->driver && dev->driver->name)
+		name = dev->driver->name;
+	err = pci_request_regions(dev, name);
 	if (err)
 		goto err_pci_disable;
 	pci_set_master(dev);
@@ -191,8 +195,6 @@ static int bcma_host_pci_probe(struct pci_dev *dev,
 		err = -ENXIO;
 		goto err_pci_release_regions;
 	}
-
-	bus->dev = &dev->dev;
 
 	/* Map MMIO */
 	err = -ENOMEM;
@@ -256,7 +258,8 @@ static void bcma_host_pci_remove(struct pci_dev *dev)
 #ifdef CONFIG_PM_SLEEP
 static int bcma_host_pci_suspend(struct device *dev)
 {
-	struct bcma_bus *bus = dev_get_drvdata(dev);
+	struct pci_dev *pdev = to_pci_dev(dev);
+	struct bcma_bus *bus = pci_get_drvdata(pdev);
 
 	bus->mapped_core = NULL;
 
@@ -265,7 +268,8 @@ static int bcma_host_pci_suspend(struct device *dev)
 
 static int bcma_host_pci_resume(struct device *dev)
 {
-	struct bcma_bus *bus = dev_get_drvdata(dev);
+	struct pci_dev *pdev = to_pci_dev(dev);
+	struct bcma_bus *bus = pci_get_drvdata(pdev);
 
 	return bcma_bus_resume(bus);
 }

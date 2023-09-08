@@ -1,7 +1,8 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (C) 2011 ST-Ericsson SA.
  * Copyright (C) 2009 Motorola, Inc.
+ *
+ * License Terms: GNU General Public License v2
  *
  * Simple driver for National Semiconductor LM3530 Backlight driver chip
  *
@@ -99,7 +100,7 @@ static struct lm3530_mode_map mode_map[] = {
  * @pdata: LM3530 platform data
  * @mode: mode of operation - manual, ALS, PWM
  * @regulator: regulator
- * @brightness: previous brightness value
+ * @brighness: previous brightness value
  * @enable: regulator is enabled
  */
 struct lm3530_data {
@@ -346,8 +347,8 @@ static void lm3530_brightness_set(struct led_classdev *led_cdev,
 	}
 }
 
-static ssize_t mode_show(struct device *dev,
-			 struct device_attribute *attr, char *buf)
+static ssize_t lm3530_mode_get(struct device *dev,
+		struct device_attribute *attr, char *buf)
 {
 	struct led_classdev *led_cdev = dev_get_drvdata(dev);
 	struct lm3530_data *drvdata;
@@ -365,8 +366,8 @@ static ssize_t mode_show(struct device *dev,
 	return len;
 }
 
-static ssize_t mode_store(struct device *dev, struct device_attribute
-			  *attr, const char *buf, size_t size)
+static ssize_t lm3530_mode_set(struct device *dev, struct device_attribute
+				   *attr, const char *buf, size_t size)
 {
 	struct led_classdev *led_cdev = dev_get_drvdata(dev);
 	struct lm3530_data *drvdata;
@@ -397,7 +398,7 @@ static ssize_t mode_store(struct device *dev, struct device_attribute
 
 	return sizeof(drvdata->mode);
 }
-static DEVICE_ATTR_RW(mode);
+static DEVICE_ATTR(mode, 0644, lm3530_mode_get, lm3530_mode_set);
 
 static struct attribute *lm3530_attrs[] = {
 	&dev_attr_mode.attr,
@@ -470,12 +471,13 @@ static int lm3530_probe(struct i2c_client *client,
 	return 0;
 }
 
-static void lm3530_remove(struct i2c_client *client)
+static int lm3530_remove(struct i2c_client *client)
 {
 	struct lm3530_data *drvdata = i2c_get_clientdata(client);
 
 	lm3530_led_disable(drvdata);
 	led_classdev_unregister(&drvdata->led_dev);
+	return 0;
 }
 
 static const struct i2c_device_id lm3530_id[] = {

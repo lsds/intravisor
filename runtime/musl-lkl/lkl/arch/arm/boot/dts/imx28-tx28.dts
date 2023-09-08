@@ -66,7 +66,6 @@
 	};
 
 	memory@40000000 {
-		device_type = "memory";
 		reg = <0x40000000 0>; /* will be filled in by U-Boot */
 	};
 
@@ -141,10 +140,15 @@
 		regulator-boot-on;
 	};
 
-	mclk: clock-mclk {
-		compatible = "fixed-clock";
-		#clock-cells = <0>;
-		clock-frequency = <26000000>;
+	clocks {
+		#address-cells = <1>;
+		#size-cells = <0>;
+		mclk: clock@0 {
+			compatible = "fixed-clock";
+			reg = <0>;
+			#clock-cells = <0>;
+			clock-frequency = <26000000>;
+		};
 	};
 
 	sound {
@@ -221,7 +225,7 @@
 		linux,no-autorepeat;
 	};
 
-	spi_gpio: spi {
+	spi_gpio: spi-gpio {
 		compatible = "spi-gpio";
 		#address-cells = <1>;
 		#size-cells = <0>;
@@ -239,6 +243,24 @@
 		>;
 		/* enable this and disable ssp3 below, if you need full duplex SPI transfer */
 		status = "disabled";
+
+		spi@0 {
+			compatible = "spidev";
+			reg = <0>;
+			spi-max-frequency = <57600000>;
+		};
+
+		spi@1 {
+			compatible = "spidev";
+			reg = <1>;
+			spi-max-frequency = <57600000>;
+		};
+
+		spi@2 {
+			compatible = "spidev";
+			reg = <2>;
+			spi-max-frequency = <57600000>;
+		};
 	};
 };
 
@@ -323,7 +345,6 @@
 		interrupts = <5 IRQ_TYPE_EDGE_FALLING>;
 		reset-gpios = <&gpio2 6 GPIO_ACTIVE_LOW>;
 		wake-gpios = <&gpio4 9 GPIO_ACTIVE_HIGH>;
-		wakeup-source;
 	};
 
 	touchscreen: tsc2007@48 {
@@ -338,7 +359,7 @@
 	};
 
 	ds1339: rtc@68 {
-		compatible = "dallas,ds1339";
+		compatible = "mxim,ds1339";
 		reg = <0x68>;
 		trickle-resistor-ohms = <250>;
 		trickle-diode-disable;
@@ -682,6 +703,24 @@
 	pinctrl-0 = <&spi3_pins_a>;
 	clock-frequency = <57600000>;
 	status = "okay";
+
+	spi@0 {
+		compatible = "spidev";
+		reg = <0>;
+		spi-max-frequency = <57600000>;
+	};
+
+	spi@1 {
+		compatible = "spidev";
+		reg = <1>;
+		spi-max-frequency = <57600000>;
+	};
+
+	spi@2 {
+		compatible = "spidev";
+		reg = <2>;
+		spi-max-frequency = <57600000>;
+	};
 };
 
 &usb0 {

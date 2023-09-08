@@ -1,8 +1,11 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Au1xxx counter0 (aka Time-Of-Year counter) RTC interface driver.
  *
  * Copyright (C) 2008 Manuel Lauss <mano@roarinelk.homelinux.net>
+ *
+ * This file is subject to the terms and conditions of the GNU General Public
+ * License.  See the file "COPYING" in the main directory of this archive
+ * for more details.
  */
 
 /* All current Au1xxx SoCs have 2 counters fed by an external 32.768 kHz
@@ -31,7 +34,7 @@ static int au1xtoy_rtc_read_time(struct device *dev, struct rtc_time *tm)
 
 	t = alchemy_rdsys(AU1000_SYS_TOYREAD);
 
-	rtc_time64_to_tm(t, tm);
+	rtc_time_to_tm(t, tm);
 
 	return 0;
 }
@@ -40,7 +43,7 @@ static int au1xtoy_rtc_set_time(struct device *dev, struct rtc_time *tm)
 {
 	unsigned long t;
 
-	t = rtc_tm_to_time64(tm);
+	rtc_tm_to_time(tm, &t);
 
 	alchemy_wrsys(t, AU1000_SYS_TOYWRITE);
 
@@ -62,12 +65,16 @@ static int au1xtoy_rtc_probe(struct platform_device *pdev)
 {
 	struct rtc_device *rtcdev;
 	unsigned long t;
+	int ret;
 
 	t = alchemy_rdsys(AU1000_SYS_CNTRCTRL);
 	if (!(t & CNTR_OK)) {
 		dev_err(&pdev->dev, "counters not working; aborting.\n");
-		return -ENODEV;
+		ret = -ENODEV;
+		goto out_err;
 	}
+
+	ret = -ETIMEDOUT;
 
 	/* set counter0 tickrate to 1Hz if necessary */
 	if (alchemy_rdsys(AU1000_SYS_TOYTRIM) != 32767) {
@@ -81,7 +88,7 @@ static int au1xtoy_rtc_probe(struct platform_device *pdev)
 			 * counters are unusable.
 			 */
 			dev_err(&pdev->dev, "timeout waiting for access\n");
-			return -ETIMEDOUT;
+			goto out_err;
 		}
 
 		/* set 1Hz TOY tick rate */
@@ -92,16 +99,19 @@ static int au1xtoy_rtc_probe(struct platform_device *pdev)
 	while (alchemy_rdsys(AU1000_SYS_CNTRCTRL) & SYS_CNTRL_C0S)
 		msleep(1);
 
-	rtcdev = devm_rtc_allocate_device(&pdev->dev);
-	if (IS_ERR(rtcdev))
-		return PTR_ERR(rtcdev);
-
-	rtcdev->ops = &au1xtoy_rtc_ops;
-	rtcdev->range_max = U32_MAX;
+	rtcdev = devm_rtc_device_register(&pdev->dev, "rtc-au1xxx",
+				     &au1xtoy_rtc_ops, THIS_MODULE);
+	if (IS_ERR(rtcdev)) {
+		ret = PTR_ERR(rtcdev);
+		goto out_err;
+	}
 
 	platform_set_drvdata(pdev, rtcdev);
 
-	return devm_rtc_register_device(rtcdev);
+	return 0;
+
+out_err:
+	return ret;
 }
 
 static struct platform_driver au1xrtc_driver = {

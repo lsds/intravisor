@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Junction temperature thermal driver for Maxim Max77620.
  *
@@ -6,6 +5,10 @@
  *
  * Author: Laxman Dewangan <ldewangan@nvidia.com>
  *	   Mallikarjun Kasoju <mkasoju@nvidia.com>
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms and conditions of the GNU General Public License,
+ * version 2, as published by the Free Software Foundation.
  */
 
 #include <linux/irq.h>
@@ -33,7 +36,7 @@ struct max77620_therm_info {
 /**
  * max77620_thermal_read_temp: Read PMIC die temperatue.
  * @data:	Device specific data.
- * @temp:	Temperature in millidegrees Celsius
+ * temp:	Temperature in millidegrees Celsius
  *
  * The actual temperature of PMIC die is not available from PMIC.
  * PMIC only tells the status if it has crossed or not the threshold level
@@ -44,9 +47,9 @@ struct max77620_therm_info {
  * Return 0 on success otherwise error number to show reason of failure.
  */
 
-static int max77620_thermal_read_temp(struct thermal_zone_device *tz, int *temp)
+static int max77620_thermal_read_temp(void *data, int *temp)
 {
-	struct max77620_therm_info *mtherm = tz->devdata;
+	struct max77620_therm_info *mtherm = data;
 	unsigned int val;
 	int ret;
 
@@ -66,7 +69,7 @@ static int max77620_thermal_read_temp(struct thermal_zone_device *tz, int *temp)
 	return 0;
 }
 
-static const struct thermal_zone_device_ops max77620_thermal_ops = {
+static const struct thermal_zone_of_device_ops max77620_thermal_ops = {
 	.get_temp = max77620_thermal_read_temp,
 };
 
@@ -114,7 +117,7 @@ static int max77620_thermal_probe(struct platform_device *pdev)
 	 */
 	device_set_of_node_from_dev(&pdev->dev, pdev->dev.parent);
 
-	mtherm->tz_device = devm_thermal_of_zone_register(&pdev->dev, 0,
+	mtherm->tz_device = devm_thermal_zone_of_sensor_register(&pdev->dev, 0,
 				mtherm, &max77620_thermal_ops);
 	if (IS_ERR(mtherm->tz_device)) {
 		ret = PTR_ERR(mtherm->tz_device);

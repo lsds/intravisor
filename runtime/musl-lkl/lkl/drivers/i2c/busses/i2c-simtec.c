@@ -1,9 +1,17 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (C) 2005 Simtec Electronics
  *	Ben Dooks <ben@simtec.co.uk>
  *
  * Simtec Generic I2C Controller
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
 */
 
 #include <linux/kernel.h>
@@ -99,7 +107,7 @@ static int simtec_i2c_probe(struct platform_device *dev)
 	pd->adap.algo_data = &pd->bit;
 	pd->adap.dev.parent = &dev->dev;
 
-	strscpy(pd->adap.name, "Simtec I2C", sizeof(pd->adap.name));
+	strlcpy(pd->adap.name, "Simtec I2C", sizeof(pd->adap.name));
 
 	pd->bit.data = pd;
 	pd->bit.setsda = simtec_i2c_setsda;

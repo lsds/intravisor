@@ -1,7 +1,8 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * QLogic qlcnic NIC Driver
  * Copyright (c) 2009-2013 QLogic Corporation
+ *
+ * See LICENSE.qlcnic for copyright and licensing details.
  */
 
 #include "qlcnic_sriov.h"
@@ -746,7 +747,7 @@ static int qlcnic_83xx_idc_unknown_state(struct qlcnic_adapter *adapter)
 }
 
 /**
- * qlcnic_83xx_idc_cold_state_handler
+ * qlcnic_83xx_idc_cold_state
  *
  * @adapter: adapter structure
  *
@@ -1027,8 +1028,9 @@ static int qlcnic_83xx_idc_check_state_validity(struct qlcnic_adapter *adapter,
 #define QLCNIC_ENABLE_INGRESS_ENCAP_PARSING 1
 #define QLCNIC_DISABLE_INGRESS_ENCAP_PARSING 0
 
-int qlcnic_set_vxlan_port(struct qlcnic_adapter *adapter, u16 port)
+static int qlcnic_set_vxlan_port(struct qlcnic_adapter *adapter)
 {
+	u16 port = adapter->ahw->vxlan_port;
 	struct qlcnic_cmd_args cmd;
 	int ret = 0;
 
@@ -1055,8 +1057,10 @@ int qlcnic_set_vxlan_port(struct qlcnic_adapter *adapter, u16 port)
 	return ret;
 }
 
-int qlcnic_set_vxlan_parsing(struct qlcnic_adapter *adapter, u16 port)
+static int qlcnic_set_vxlan_parsing(struct qlcnic_adapter *adapter,
+				    bool state)
 {
+	u16 vxlan_port = adapter->ahw->vxlan_port;
 	struct qlcnic_cmd_args cmd;
 	int ret = 0;
 
@@ -1067,18 +1071,18 @@ int qlcnic_set_vxlan_parsing(struct qlcnic_adapter *adapter, u16 port)
 	if (ret)
 		return ret;
 
-	cmd.req.arg[1] = port ? QLCNIC_ENABLE_INGRESS_ENCAP_PARSING :
-				QLCNIC_DISABLE_INGRESS_ENCAP_PARSING;
+	cmd.req.arg[1] = state ? QLCNIC_ENABLE_INGRESS_ENCAP_PARSING :
+				 QLCNIC_DISABLE_INGRESS_ENCAP_PARSING;
 
 	ret = qlcnic_issue_cmd(adapter, &cmd);
 	if (ret)
 		netdev_err(adapter->netdev,
 			   "Failed to %s VXLAN parsing for port %d\n",
-			   port ? "enable" : "disable", port);
+			   state ? "enable" : "disable", vxlan_port);
 	else
 		netdev_info(adapter->netdev,
 			    "%s VXLAN parsing for port %d\n",
-			    port ? "Enabled" : "Disabled", port);
+			    state ? "Enabled" : "Disabled", vxlan_port);
 
 	qlcnic_free_mbx_args(&cmd);
 
@@ -1089,6 +1093,22 @@ static void qlcnic_83xx_periodic_tasks(struct qlcnic_adapter *adapter)
 {
 	if (adapter->fhash.fnum)
 		qlcnic_prune_lb_filters(adapter);
+
+	if (adapter->flags & QLCNIC_ADD_VXLAN_PORT) {
+		if (qlcnic_set_vxlan_port(adapter))
+			return;
+
+		if (qlcnic_set_vxlan_parsing(adapter, true))
+			return;
+
+		adapter->flags &= ~QLCNIC_ADD_VXLAN_PORT;
+	} else if (adapter->flags & QLCNIC_DEL_VXLAN_PORT) {
+		if (qlcnic_set_vxlan_parsing(adapter, false))
+			return;
+
+		adapter->ahw->vxlan_port = 0;
+		adapter->flags &= ~QLCNIC_DEL_VXLAN_PORT;
+	}
 }
 
 /**
@@ -1354,10 +1374,10 @@ static int qlcnic_83xx_copy_fw_file(struct qlcnic_adapter *adapter)
 	struct qlc_83xx_fw_info *fw_info = adapter->ahw->fw_info;
 	const struct firmware *fw = fw_info->fw;
 	u32 dest, *p_cache, *temp;
+	int i, ret = -EIO;
 	__le32 *temp_le;
 	u8 data[16];
 	size_t size;
-	int i, ret;
 	u64 addr;
 
 	temp = vzalloc(fw->size);
@@ -1700,7 +1720,7 @@ static int qlcnic_83xx_get_reset_instruction_template(struct qlcnic_adapter *p_d
 
 	ahw->reset.seq_error = 0;
 	ahw->reset.buff = kzalloc(QLC_83XX_RESTART_TEMPLATE_SIZE, GFP_KERNEL);
-	if (ahw->reset.buff == NULL)
+	if (p_dev->ahw->reset.buff == NULL)
 		return -ENOMEM;
 
 	p_buff = p_dev->ahw->reset.buff;
@@ -2023,7 +2043,6 @@ static void qlcnic_83xx_exec_template_cmd(struct qlcnic_adapter *p_dev,
 			break;
 		}
 		entry += p_hdr->size;
-		cond_resched();
 	}
 	p_dev->ahw->reset.seq_index = index;
 }
@@ -2231,8 +2250,7 @@ static int qlcnic_83xx_restart_hw(struct qlcnic_adapter *adapter)
 
 	/* Boot either flash image or firmware image from host file system */
 	if (qlcnic_load_fw_file == 1) {
-		err = qlcnic_83xx_load_fw_image_from_host(adapter);
-		if (err)
+		if (qlcnic_83xx_load_fw_image_from_host(adapter))
 			return err;
 	} else {
 		QLC_SHARED_REG_WR32(adapter, QLCNIC_FW_IMG_VALID,
@@ -2432,7 +2450,7 @@ static void qlcnic_83xx_init_rings(struct qlcnic_adapter *adapter)
 	qlcnic_set_sds_ring_count(adapter, rx_cnt);
 }
 
-int qlcnic_83xx_init(struct qlcnic_adapter *adapter)
+int qlcnic_83xx_init(struct qlcnic_adapter *adapter, int pci_using_dac)
 {
 	struct qlcnic_hardware_context *ahw = adapter->ahw;
 	int err = 0;
@@ -2466,7 +2484,7 @@ int qlcnic_83xx_init(struct qlcnic_adapter *adapter)
 		goto exit;
 
 	if (qlcnic_sriov_vf_check(adapter)) {
-		err = qlcnic_sriov_vf_init(adapter);
+		err = qlcnic_sriov_vf_init(adapter, pci_using_dac);
 		if (err)
 			goto detach_mbx;
 		else

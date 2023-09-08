@@ -1,9 +1,12 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Mac80211 STA API for ST-Ericsson CW1200 drivers
  *
  * Copyright (c) 2010, ST-Ericsson
  * Author: Dmitry Tarnyagin <dmitry.tarnyagin@lockless.no>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 
 #include <linux/vmalloc.h>
@@ -195,7 +198,7 @@ void __cw1200_cqm_bssloss_sm(struct cw1200_common *priv,
 
 		priv->bss_loss_state++;
 
-		skb = ieee80211_nullfunc_get(priv->hw, priv->vif, -1, false);
+		skb = ieee80211_nullfunc_get(priv->hw, priv->vif, false);
 		WARN_ON(!skb);
 		if (skb)
 			cw1200_tx(priv->hw, NULL, skb);
@@ -606,8 +609,7 @@ void cw1200_configure_filter(struct ieee80211_hw *dev,
 }
 
 int cw1200_conf_tx(struct ieee80211_hw *dev, struct ieee80211_vif *vif,
-		   unsigned int link_id, u16 queue,
-		   const struct ieee80211_tx_queue_params *params)
+		   u16 queue, const struct ieee80211_tx_queue_params *params)
 {
 	struct cw1200_common *priv = dev->priv;
 	int ret = 0;
@@ -1121,7 +1123,7 @@ int cw1200_setup_mac(struct cw1200_common *priv)
 	 *
 	 * NOTE2: RSSI based reports have been switched to RCPI, since
 	 * FW has a bug and RSSI reported values are not stable,
-	 * what can lead to signal level oscilations in user-end applications
+	 * what can leads to signal level oscilations in user-end applications
 	 */
 	struct wsm_rcpi_rssi_threshold threshold = {
 		.rssiRcpiMode = WSM_RCPI_RSSI_THRESHOLD_ENABLE |
@@ -1209,8 +1211,8 @@ static void cw1200_do_join(struct cw1200_common *priv)
 	struct cfg80211_bss *bss = NULL;
 	struct wsm_protected_mgmt_policy mgmt_policy;
 	struct wsm_join join = {
-		.mode = priv->vif->cfg.ibss_joined ?
-		WSM_JOIN_MODE_IBSS : WSM_JOIN_MODE_BSS,
+		.mode = conf->ibss_joined ?
+				WSM_JOIN_MODE_IBSS : WSM_JOIN_MODE_BSS,
 		.preamble_type = WSM_JOIN_PREAMBLE_LONG,
 		.probe_for_join = 1,
 		.atim_window = 0,
@@ -1231,7 +1233,7 @@ static void cw1200_do_join(struct cw1200_common *priv)
 	bss = cfg80211_get_bss(priv->hw->wiphy, priv->channel, bssid, NULL, 0,
 			       IEEE80211_BSS_TYPE_ANY, IEEE80211_PRIVACY_ANY);
 
-	if (!bss && !priv->vif->cfg.ibss_joined) {
+	if (!bss && !conf->ibss_joined) {
 		wsm_unlock_tx(priv);
 		return;
 	}
@@ -1285,7 +1287,7 @@ static void cw1200_do_join(struct cw1200_common *priv)
 		 join.bssid,
 		 join.dtim_period, priv->beacon_int);
 
-	if (!priv->vif->cfg.ibss_joined) {
+	if (!conf->ibss_joined) {
 		const u8 *ssidie;
 		rcu_read_lock();
 		ssidie = ieee80211_bss_get_ie(bss, WLAN_EID_SSID);
@@ -1303,7 +1305,7 @@ static void cw1200_do_join(struct cw1200_common *priv)
 	}
 
 	/* Enable asynchronous join calls */
-	if (!priv->vif->cfg.ibss_joined) {
+	if (!conf->ibss_joined) {
 		join.flags |= WSM_JOIN_FLAGS_FORCE;
 		join.flags |= WSM_JOIN_FLAGS_FORCE_WITH_COMPLETE_IND;
 	}
@@ -1672,7 +1674,7 @@ static int cw1200_set_tim_impl(struct cw1200_common *priv, bool aid0_bit_set)
 	pr_debug("[AP] mcast: %s.\n", aid0_bit_set ? "ena" : "dis");
 
 	skb = ieee80211_beacon_get_tim(priv->hw, priv->vif,
-				       &tim_offset, &tim_length, 0);
+			&tim_offset, &tim_length);
 	if (!skb) {
 		if (!__cw1200_flush(priv, true))
 			wsm_unlock_tx(priv);
@@ -1797,14 +1799,14 @@ static int cw1200_set_btcoexinfo(struct cw1200_common *priv)
 void cw1200_bss_info_changed(struct ieee80211_hw *dev,
 			     struct ieee80211_vif *vif,
 			     struct ieee80211_bss_conf *info,
-			     u64 changed)
+			     u32 changed)
 {
 	struct cw1200_common *priv = dev->priv;
 	bool do_join = false;
 
 	mutex_lock(&priv->conf_mutex);
 
-	pr_debug("BSS CHANGED:  %llx\n", changed);
+	pr_debug("BSS CHANGED:  %08x\n", changed);
 
 	/* TODO: BSS_CHANGED_QOS */
 	/* TODO: BSS_CHANGED_TXPOWER */
@@ -1814,15 +1816,15 @@ void cw1200_bss_info_changed(struct ieee80211_hw *dev,
 		int i;
 
 		pr_debug("[STA] BSS_CHANGED_ARP_FILTER cnt: %d\n",
-			 vif->cfg.arp_addr_cnt);
+			 info->arp_addr_cnt);
 
 		/* Currently only one IP address is supported by firmware.
 		 * In case of more IPs arp filtering will be disabled.
 		 */
-		if (vif->cfg.arp_addr_cnt > 0 &&
-		    vif->cfg.arp_addr_cnt <= WSM_MAX_ARP_IP_ADDRTABLE_ENTRIES) {
-			for (i = 0; i < vif->cfg.arp_addr_cnt; i++) {
-				filter.ipv4addrs[i] = vif->cfg.arp_addr_list[i];
+		if (info->arp_addr_cnt > 0 &&
+		    info->arp_addr_cnt <= WSM_MAX_ARP_IP_ADDRTABLE_ENTRIES) {
+			for (i = 0; i < info->arp_addr_cnt; i++) {
+				filter.ipv4addrs[i] = info->arp_addr_list[i];
 				pr_debug("[STA] addr[%d]: 0x%X\n",
 					 i, filter.ipv4addrs[i]);
 			}
@@ -1858,7 +1860,7 @@ void cw1200_bss_info_changed(struct ieee80211_hw *dev,
 
 	if (changed & BSS_CHANGED_BEACON_INT) {
 		pr_debug("CHANGED_BEACON_INT\n");
-		if (vif->cfg.ibss_joined)
+		if (info->ibss_joined)
 			do_join = true;
 		else if (priv->join_status == CW1200_JOIN_STATUS_AP)
 			cw1200_update_beaconing(priv);
@@ -1883,7 +1885,7 @@ void cw1200_bss_info_changed(struct ieee80211_hw *dev,
 	     BSS_CHANGED_BASIC_RATES |
 	     BSS_CHANGED_HT)) {
 		pr_debug("BSS_CHANGED_ASSOC\n");
-		if (vif->cfg.assoc) {
+		if (info->assoc) {
 			if (priv->join_status < CW1200_JOIN_STATUS_PRE_STA) {
 				ieee80211_connection_loss(vif);
 				mutex_unlock(&priv->conf_mutex);
@@ -1895,7 +1897,7 @@ void cw1200_bss_info_changed(struct ieee80211_hw *dev,
 			do_join = true;
 		}
 
-		if (vif->cfg.assoc || vif->cfg.ibss_joined) {
+		if (info->assoc || info->ibss_joined) {
 			struct ieee80211_sta *sta = NULL;
 			__le32 htprot = 0;
 
@@ -1905,13 +1907,13 @@ void cw1200_bss_info_changed(struct ieee80211_hw *dev,
 
 			rcu_read_lock();
 
-			if (info->bssid && !vif->cfg.ibss_joined)
+			if (info->bssid && !info->ibss_joined)
 				sta = ieee80211_find_sta(vif, info->bssid);
 			if (sta) {
-				priv->ht_info.ht_cap = sta->deflink.ht_cap;
+				priv->ht_info.ht_cap = sta->ht_cap;
 				priv->bss_params.operational_rate_set =
 					cw1200_rate_mask_to_wsm(priv,
-						sta->deflink.supp_rates[priv->channel->band]);
+								sta->supp_rates[priv->channel->band]);
 				priv->ht_info.channel_type = cfg80211_get_chandef_type(&dev->conf.chandef);
 				priv->ht_info.operation_mode = info->ht_operation_mode;
 			} else {
@@ -1959,7 +1961,7 @@ void cw1200_bss_info_changed(struct ieee80211_hw *dev,
 			cancel_work_sync(&priv->unjoin_work);
 
 			priv->bss_params.beacon_lost_count = priv->cqm_beacon_loss_count;
-			priv->bss_params.aid = vif->cfg.aid;
+			priv->bss_params.aid = info->aid;
 
 			if (priv->join_dtim_period < 1)
 				priv->join_dtim_period = 1;
@@ -1974,7 +1976,7 @@ void cw1200_bss_info_changed(struct ieee80211_hw *dev,
 				 priv->association_mode.basic_rate_set);
 			wsm_set_association_mode(priv, &priv->association_mode);
 
-			if (!vif->cfg.ibss_joined) {
+			if (!info->ibss_joined) {
 				wsm_keep_alive_period(priv, 30 /* sec */);
 				wsm_set_bss_params(priv, &priv->bss_params);
 				priv->setbssparams_done = true;
@@ -2204,7 +2206,7 @@ static int cw1200_upload_beacon(struct cw1200_common *priv)
 		frame.rate = WSM_TRANSMIT_RATE_6;
 
 	frame.skb = ieee80211_beacon_get_tim(priv->hw, priv->vif,
-					     &tim_offset, &tim_len, 0);
+					     &tim_offset, &tim_len);
 	if (!frame.skb)
 		return -ENOMEM;
 
@@ -2263,7 +2265,7 @@ static int cw1200_upload_null(struct cw1200_common *priv)
 		.rate = 0xFF,
 	};
 
-	frame.skb = ieee80211_nullfunc_get(priv->hw, priv->vif,-1, false);
+	frame.skb = ieee80211_nullfunc_get(priv->hw, priv->vif, false);
 	if (!frame.skb)
 		return -ENOMEM;
 
@@ -2331,8 +2333,8 @@ static int cw1200_start_ap(struct cw1200_common *priv)
 
 	memset(start.ssid, 0, sizeof(start.ssid));
 	if (!conf->hidden_ssid) {
-		start.ssid_len = priv->vif->cfg.ssid_len;
-		memcpy(start.ssid, priv->vif->cfg.ssid, start.ssid_len);
+		start.ssid_len = conf->ssid_len;
+		memcpy(start.ssid, conf->ssid, start.ssid_len);
 	}
 
 	priv->beacon_int = conf->beacon_int;

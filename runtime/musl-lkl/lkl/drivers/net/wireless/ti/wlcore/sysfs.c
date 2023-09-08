@@ -1,20 +1,32 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * This file is part of wlcore
  *
  * Copyright (C) 2013 Texas Instruments Inc.
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * version 2 as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
+ * 02110-1301 USA
+ *
  */
 
-#include <linux/pm_runtime.h>
-
-#include "acx.h"
 #include "wlcore.h"
 #include "debug.h"
+#include "ps.h"
 #include "sysfs.h"
 
-static ssize_t bt_coex_state_show(struct device *dev,
-				  struct device_attribute *attr,
-				  char *buf)
+static ssize_t wl1271_sysfs_show_bt_coex_state(struct device *dev,
+					       struct device_attribute *attr,
+					       char *buf)
 {
 	struct wl1271 *wl = dev_get_drvdata(dev);
 	ssize_t len;
@@ -30,9 +42,9 @@ static ssize_t bt_coex_state_show(struct device *dev,
 
 }
 
-static ssize_t bt_coex_state_store(struct device *dev,
-				   struct device_attribute *attr,
-				   const char *buf, size_t count)
+static ssize_t wl1271_sysfs_store_bt_coex_state(struct device *dev,
+						struct device_attribute *attr,
+						const char *buf, size_t count)
 {
 	struct wl1271 *wl = dev_get_drvdata(dev);
 	unsigned long res;
@@ -56,24 +68,25 @@ static ssize_t bt_coex_state_store(struct device *dev,
 	if (unlikely(wl->state != WLCORE_STATE_ON))
 		goto out;
 
-	ret = pm_runtime_resume_and_get(wl->dev);
+	ret = wl1271_ps_elp_wakeup(wl);
 	if (ret < 0)
 		goto out;
 
 	wl1271_acx_sg_enable(wl, wl->sg_enabled);
-	pm_runtime_mark_last_busy(wl->dev);
-	pm_runtime_put_autosuspend(wl->dev);
+	wl1271_ps_elp_sleep(wl);
 
  out:
 	mutex_unlock(&wl->mutex);
 	return count;
 }
 
-static DEVICE_ATTR_RW(bt_coex_state);
+static DEVICE_ATTR(bt_coex_state, 0644,
+		   wl1271_sysfs_show_bt_coex_state,
+		   wl1271_sysfs_store_bt_coex_state);
 
-static ssize_t hw_pg_ver_show(struct device *dev,
-			      struct device_attribute *attr,
-			      char *buf)
+static ssize_t wl1271_sysfs_show_hw_pg_ver(struct device *dev,
+					   struct device_attribute *attr,
+					   char *buf)
 {
 	struct wl1271 *wl = dev_get_drvdata(dev);
 	ssize_t len;
@@ -90,13 +103,13 @@ static ssize_t hw_pg_ver_show(struct device *dev,
 	return len;
 }
 
-static DEVICE_ATTR_RO(hw_pg_ver);
+static DEVICE_ATTR(hw_pg_ver, 0444, wl1271_sysfs_show_hw_pg_ver, NULL);
 
 static ssize_t wl1271_sysfs_read_fwlog(struct file *filp, struct kobject *kobj,
 				       struct bin_attribute *bin_attr,
 				       char *buffer, loff_t pos, size_t count)
 {
-	struct device *dev = kobj_to_dev(kobj);
+	struct device *dev = container_of(kobj, struct device, kobj);
 	struct wl1271 *wl = dev_get_drvdata(dev);
 	ssize_t len;
 	int ret;

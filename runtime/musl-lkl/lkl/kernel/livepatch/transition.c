@@ -1,8 +1,20 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * transition.c - Kernel Live Patching transition functions
  *
  * Copyright (C) 2015-2016 Josh Poimboeuf <jpoimboe@redhat.com>
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version 2
+ * of the License, or (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, see <http://www.gnu.org/licenses/>.
  */
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
@@ -12,17 +24,16 @@
 #include "core.h"
 #include "patch.h"
 #include "transition.h"
+#include "../sched/sched.h"
 
 #define MAX_STACK_ENTRIES  100
 #define STACK_ERR_BUF_SIZE 128
-
-#define SIGNALS_TIMEOUT 15
 
 struct klp_patch *klp_transition_patch;
 
 static int klp_target_state = KLP_UNDEFINED;
 
-static unsigned int klp_signals_cnt;
+static bool klp_forced = false;
 
 /*
  * This work can be performed periodically to finish patching or unpatching any
@@ -41,7 +52,7 @@ static DECLARE_DELAYED_WORK(klp_transition_work, klp_transition_work_fn);
 
 /*
  * This function is just a stub to implement a hard force
- * of synchronize_rcu(). This requires synchronizing
+ * of synchronize_sched(). This requires synchronizing
  * tasks even in userspace and idle.
  */
 static void klp_sync(struct work_struct *work)
@@ -75,11 +86,6 @@ static void klp_complete_transition(void)
 	pr_debug("'%s': completing %s transition\n",
 		 klp_transition_patch->mod->name,
 		 klp_target_state == KLP_PATCHED ? "patching" : "unpatching");
-
-	if (klp_transition_patch->replace && klp_target_state == KLP_PATCHED) {
-		klp_unpatch_replaced_patches(klp_transition_patch);
-		klp_discard_nops(klp_transition_patch);
-	}
 
 	if (klp_target_state == KLP_UNPATCHED) {
 		/*
@@ -130,6 +136,13 @@ static void klp_complete_transition(void)
 	pr_notice("'%s': %s complete\n", klp_transition_patch->mod->name,
 		  klp_target_state == KLP_PATCHED ? "patching" : "unpatching");
 
+	/*
+	 * klp_forced set implies unbounded increase of module's ref count if
+	 * the module is disabled/enabled in a loop.
+	 */
+	if (!klp_forced && klp_target_state == KLP_UNPATCHED)
+		module_put(klp_transition_patch->mod);
+
 	klp_target_state = KLP_UNDEFINED;
 	klp_transition_patch = NULL;
 }
@@ -162,7 +175,7 @@ void klp_cancel_transition(void)
 void klp_update_patch_state(struct task_struct *task)
 {
 	/*
-	 * A variant of synchronize_rcu() is used to allow patching functions
+	 * A variant of synchronize_sched() is used to allow patching functions
 	 * where RCU is not watching, see klp_synchronize_transition().
 	 */
 	preempt_disable_notrace();
@@ -189,15 +202,15 @@ void klp_update_patch_state(struct task_struct *task)
  * Determine whether the given stack trace includes any references to a
  * to-be-patched or to-be-unpatched function.
  */
-static int klp_check_stack_func(struct klp_func *func, unsigned long *entries,
-				unsigned int nr_entries)
+static int klp_check_stack_func(struct klp_func *func,
+				struct stack_trace *trace)
 {
 	unsigned long func_addr, func_size, address;
 	struct klp_ops *ops;
 	int i;
 
-	for (i = 0; i < nr_entries; i++) {
-		address = entries[i];
+	for (i = 0; i < trace->nr_entries; i++) {
+		address = trace->entries[i];
 
 		if (klp_target_state == KLP_UNPATCHED) {
 			 /*
@@ -211,11 +224,11 @@ static int klp_check_stack_func(struct klp_func *func, unsigned long *entries,
 			 * Check for the to-be-patched function
 			 * (the previous func).
 			 */
-			ops = klp_find_ops(func->old_func);
+			ops = klp_find_ops(func->old_addr);
 
 			if (list_is_singular(&ops->func_stack)) {
 				/* original function */
-				func_addr = (unsigned long)func->old_func;
+				func_addr = func->old_addr;
 				func_size = func->old_size;
 			} else {
 				/* previously patched function */
@@ -238,46 +251,42 @@ static int klp_check_stack_func(struct klp_func *func, unsigned long *entries,
  * Determine whether it's safe to transition the task to the target patch state
  * by looking for any to-be-patched or to-be-unpatched functions on its stack.
  */
-static int klp_check_stack(struct task_struct *task, const char **oldname)
+static int klp_check_stack(struct task_struct *task, char *err_buf)
 {
 	static unsigned long entries[MAX_STACK_ENTRIES];
+	struct stack_trace trace;
 	struct klp_object *obj;
 	struct klp_func *func;
-	int ret, nr_entries;
+	int ret;
 
-	ret = stack_trace_save_tsk_reliable(task, entries, ARRAY_SIZE(entries));
-	if (ret < 0)
-		return -EINVAL;
-	nr_entries = ret;
+	trace.skip = 0;
+	trace.nr_entries = 0;
+	trace.max_entries = MAX_STACK_ENTRIES;
+	trace.entries = entries;
+	ret = save_stack_trace_tsk_reliable(task, &trace);
+	WARN_ON_ONCE(ret == -ENOSYS);
+	if (ret) {
+		snprintf(err_buf, STACK_ERR_BUF_SIZE,
+			 "%s: %s:%d has an unreliable stack\n",
+			 __func__, task->comm, task->pid);
+		return ret;
+	}
 
 	klp_for_each_object(klp_transition_patch, obj) {
 		if (!obj->patched)
 			continue;
 		klp_for_each_func(obj, func) {
-			ret = klp_check_stack_func(func, entries, nr_entries);
+			ret = klp_check_stack_func(func, &trace);
 			if (ret) {
-				*oldname = func->old_name;
-				return -EADDRINUSE;
+				snprintf(err_buf, STACK_ERR_BUF_SIZE,
+					 "%s: %s:%d is sleeping on function %s\n",
+					 __func__, task->comm, task->pid,
+					 func->old_name);
+				return ret;
 			}
 		}
 	}
 
-	return 0;
-}
-
-static int klp_check_and_switch_task(struct task_struct *task, void *arg)
-{
-	int ret;
-
-	if (task_curr(task) && task != current)
-		return -EBUSY;
-
-	ret = klp_check_stack(task, arg);
-	if (ret)
-		return ret;
-
-	clear_tsk_thread_flag(task, TIF_PATCH_PENDING);
-	task->patch_state = klp_target_state;
 	return 0;
 }
 
@@ -288,8 +297,13 @@ static int klp_check_and_switch_task(struct task_struct *task, void *arg)
  */
 static bool klp_try_switch_task(struct task_struct *task)
 {
-	const char *old_name;
+	struct rq *rq;
+	struct rq_flags flags;
 	int ret;
+	bool success = false;
+	char err_buf[STACK_ERR_BUF_SIZE];
+
+	err_buf[0] = '\0';
 
 	/* check if this task has already switched over */
 	if (task->patch_state == klp_target_state)
@@ -307,70 +321,37 @@ static bool klp_try_switch_task(struct task_struct *task)
 	 * functions.  If all goes well, switch the task to the target patch
 	 * state.
 	 */
-	ret = task_call_func(task, klp_check_and_switch_task, &old_name);
-	switch (ret) {
-	case 0:		/* success */
-		break;
+	rq = task_rq_lock(task, &flags);
 
-	case -EBUSY:	/* klp_check_and_switch_task() */
-		pr_debug("%s: %s:%d is running\n",
-			 __func__, task->comm, task->pid);
-		break;
-	case -EINVAL:	/* klp_check_and_switch_task() */
-		pr_debug("%s: %s:%d has an unreliable stack\n",
-			 __func__, task->comm, task->pid);
-		break;
-	case -EADDRINUSE: /* klp_check_and_switch_task() */
-		pr_debug("%s: %s:%d is sleeping on function %s\n",
-			 __func__, task->comm, task->pid, old_name);
-		break;
-
-	default:
-		pr_debug("%s: Unknown error code (%d) when trying to switch %s:%d\n",
-			 __func__, ret, task->comm, task->pid);
-		break;
+	if (task_running(rq, task) && task != current) {
+		snprintf(err_buf, STACK_ERR_BUF_SIZE,
+			 "%s: %s:%d is running\n", __func__, task->comm,
+			 task->pid);
+		goto done;
 	}
 
-	return !ret;
-}
+	ret = klp_check_stack(task, err_buf);
+	if (ret)
+		goto done;
 
-/*
- * Sends a fake signal to all non-kthread tasks with TIF_PATCH_PENDING set.
- * Kthreads with TIF_PATCH_PENDING set are woken up.
- */
-static void klp_send_signals(void)
-{
-	struct task_struct *g, *task;
+	success = true;
 
-	if (klp_signals_cnt == SIGNALS_TIMEOUT)
-		pr_notice("signaling remaining tasks\n");
+	clear_tsk_thread_flag(task, TIF_PATCH_PENDING);
+	task->patch_state = klp_target_state;
 
-	read_lock(&tasklist_lock);
-	for_each_process_thread(g, task) {
-		if (!klp_patch_pending(task))
-			continue;
+done:
+	task_rq_unlock(rq, task, &flags);
 
-		/*
-		 * There is a small race here. We could see TIF_PATCH_PENDING
-		 * set and decide to wake up a kthread or send a fake signal.
-		 * Meanwhile the task could migrate itself and the action
-		 * would be meaningless. It is not serious though.
-		 */
-		if (task->flags & PF_KTHREAD) {
-			/*
-			 * Wake up a kthread which sleeps interruptedly and
-			 * still has not been migrated.
-			 */
-			wake_up_state(task, TASK_INTERRUPTIBLE);
-		} else {
-			/*
-			 * Send fake signal to all non-kthread tasks which are
-			 * still not migrated.
-			 */
-			set_notify_signal(task);
-		}
-	}
-	read_unlock(&tasklist_lock);
+	/*
+	 * Due to console deadlock issues, pr_debug() can't be used while
+	 * holding the task rq lock.  Instead we have to use a temporary buffer
+	 * and print the debug message after releasing the lock.
+	 */
+	if (err_buf[0] != '\0')
+		pr_debug("%s", err_buf);
+
+	return success;
+
 }
 
 /*
@@ -385,7 +366,6 @@ void klp_try_complete_transition(void)
 {
 	unsigned int cpu;
 	struct task_struct *g, *task;
-	struct klp_patch *patch;
 	bool complete = true;
 
 	WARN_ON_ONCE(klp_target_state == KLP_UNDEFINED);
@@ -408,28 +388,21 @@ void klp_try_complete_transition(void)
 	/*
 	 * Ditto for the idle "swapper" tasks.
 	 */
-	cpus_read_lock();
+	get_online_cpus();
 	for_each_possible_cpu(cpu) {
 		task = idle_task(cpu);
 		if (cpu_online(cpu)) {
-			if (!klp_try_switch_task(task)) {
+			if (!klp_try_switch_task(task))
 				complete = false;
-				/* Make idle task go through the main loop. */
-				wake_up_if_idle(cpu);
-			}
 		} else if (task->patch_state != klp_target_state) {
 			/* offline idle tasks can be switched immediately */
 			clear_tsk_thread_flag(task, TIF_PATCH_PENDING);
 			task->patch_state = klp_target_state;
 		}
 	}
-	cpus_read_unlock();
+	put_online_cpus();
 
 	if (!complete) {
-		if (klp_signals_cnt && !(klp_signals_cnt % SIGNALS_TIMEOUT))
-			klp_send_signals();
-		klp_signals_cnt++;
-
 		/*
 		 * Some tasks weren't able to be switched over.  Try again
 		 * later and/or wait for other methods like kernel exit
@@ -441,18 +414,7 @@ void klp_try_complete_transition(void)
 	}
 
 	/* we're done, now cleanup the data structures */
-	patch = klp_transition_patch;
 	klp_complete_transition();
-
-	/*
-	 * It would make more sense to free the unused patches in
-	 * klp_complete_transition() but it is called also
-	 * from klp_cancel_transition().
-	 */
-	if (!patch->enabled)
-		klp_free_patch_async(patch);
-	else if (patch->replace)
-		klp_free_replaced_patches_async(patch);
 }
 
 /*
@@ -491,8 +453,6 @@ void klp_start_transition(void)
 		if (task->patch_state != klp_target_state)
 			set_tsk_thread_flag(task, TIF_PATCH_PENDING);
 	}
-
-	klp_signals_cnt = 0;
 }
 
 /*
@@ -610,23 +570,50 @@ void klp_reverse_transition(void)
 /* Called from copy_process() during fork */
 void klp_copy_process(struct task_struct *child)
 {
-
-	/*
-	 * The parent process may have gone through a KLP transition since
-	 * the thread flag was copied in setup_thread_stack earlier. Bring
-	 * the task flag up to date with the parent here.
-	 *
-	 * The operation is serialized against all klp_*_transition()
-	 * operations by the tasklist_lock. The only exception is
-	 * klp_update_patch_state(current), but we cannot race with
-	 * that because we are current.
-	 */
-	if (test_tsk_thread_flag(current, TIF_PATCH_PENDING))
-		set_tsk_thread_flag(child, TIF_PATCH_PENDING);
-	else
-		clear_tsk_thread_flag(child, TIF_PATCH_PENDING);
-
 	child->patch_state = current->patch_state;
+
+	/* TIF_PATCH_PENDING gets copied in setup_thread_stack() */
+}
+
+/*
+ * Sends a fake signal to all non-kthread tasks with TIF_PATCH_PENDING set.
+ * Kthreads with TIF_PATCH_PENDING set are woken up. Only admin can request this
+ * action currently.
+ */
+void klp_send_signals(void)
+{
+	struct task_struct *g, *task;
+
+	pr_notice("signaling remaining tasks\n");
+
+	read_lock(&tasklist_lock);
+	for_each_process_thread(g, task) {
+		if (!klp_patch_pending(task))
+			continue;
+
+		/*
+		 * There is a small race here. We could see TIF_PATCH_PENDING
+		 * set and decide to wake up a kthread or send a fake signal.
+		 * Meanwhile the task could migrate itself and the action
+		 * would be meaningless. It is not serious though.
+		 */
+		if (task->flags & PF_KTHREAD) {
+			/*
+			 * Wake up a kthread which sleeps interruptedly and
+			 * still has not been migrated.
+			 */
+			wake_up_state(task, TASK_INTERRUPTIBLE);
+		} else {
+			/*
+			 * Send fake signal to all non-kthread tasks which are
+			 * still not migrated.
+			 */
+			spin_lock_irq(&task->sighand->siglock);
+			signal_wake_up(task, 0);
+			spin_unlock_irq(&task->sighand->siglock);
+		}
+	}
+	read_unlock(&tasklist_lock);
 }
 
 /*
@@ -640,7 +627,6 @@ void klp_copy_process(struct task_struct *child)
  */
 void klp_force_transition(void)
 {
-	struct klp_patch *patch;
 	struct task_struct *g, *task;
 	unsigned int cpu;
 
@@ -654,13 +640,5 @@ void klp_force_transition(void)
 	for_each_possible_cpu(cpu)
 		klp_update_patch_state(idle_task(cpu));
 
-	/* Set forced flag for patches being removed. */
-	if (klp_target_state == KLP_UNPATCHED)
-		klp_transition_patch->forced = true;
-	else if (klp_transition_patch->replace) {
-		klp_for_each_patch(patch) {
-			if (patch != klp_transition_patch)
-				patch->forced = true;
-		}
-	}
+	klp_forced = true;
 }

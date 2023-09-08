@@ -16,14 +16,13 @@
 
 #include <asm/asm.h>
 #include <asm/compiler.h>
+#include <asm/war.h>
 
 #ifndef CONFIG_CPU_DADDI_WORKAROUNDS
 #define GCC_DADDI_IMM_ASM() "I"
 #else
 #define GCC_DADDI_IMM_ASM() "r"
 #endif
-
-#ifndef CONFIG_HAVE_PLAT_DELAY
 
 void __delay(unsigned long loops)
 {
@@ -64,5 +63,3 @@ void __ndelay(unsigned long ns)
 	__delay((ns * 0x00000005ull * HZ * lpj) >> 32);
 }
 EXPORT_SYMBOL(__ndelay);
-
-#endif

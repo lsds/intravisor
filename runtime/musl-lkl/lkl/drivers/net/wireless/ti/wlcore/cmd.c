@@ -1,15 +1,28 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * This file is part of wl1271
  *
  * Copyright (C) 2009-2010 Nokia Corporation
  *
  * Contact: Luciano Coelho <luciano.coelho@nokia.com>
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * version 2 as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
+ * 02110-1301 USA
+ *
  */
 
 #include <linux/module.h>
 #include <linux/platform_device.h>
-#include <linux/pm_runtime.h>
 #include <linux/spi/spi.h>
 #include <linux/etherdevice.h>
 #include <linux/ieee80211.h>
@@ -178,10 +191,6 @@ int wlcore_cmd_wait_for_event_or_timeout(struct wl1271 *wl,
 
 	timeout_time = jiffies + msecs_to_jiffies(WL1271_EVENT_TIMEOUT);
 
-	ret = pm_runtime_resume_and_get(wl->dev);
-	if (ret < 0)
-		goto free_vector;
-
 	do {
 		if (time_after(jiffies, timeout_time)) {
 			wl1271_debug(DEBUG_CMD, "timeout waiting for event %d",
@@ -213,9 +222,6 @@ int wlcore_cmd_wait_for_event_or_timeout(struct wl1271 *wl,
 	} while (!event);
 
 out:
-	pm_runtime_mark_last_busy(wl->dev);
-	pm_runtime_put_autosuspend(wl->dev);
-free_vector:
 	kfree(events_vector);
 	return ret;
 }
@@ -675,8 +681,8 @@ int wl12xx_cmd_role_start_ap(struct wl1271 *wl, struct wl12xx_vif *wlvif)
 		memcpy(cmd->ap.ssid, wlvif->ssid, wlvif->ssid_len);
 	} else {
 		cmd->ap.ssid_type = WL12XX_SSID_TYPE_HIDDEN;
-		cmd->ap.ssid_len = vif->cfg.ssid_len;
-		memcpy(cmd->ap.ssid, vif->cfg.ssid, vif->cfg.ssid_len);
+		cmd->ap.ssid_len = bss_conf->ssid_len;
+		memcpy(cmd->ap.ssid, bss_conf->ssid, bss_conf->ssid_len);
 	}
 
 	supported_rates = CONF_TX_ENABLED_RATES | CONF_TX_MCS_RATES |
@@ -819,11 +825,11 @@ out:
 
 
 /**
- * wl1271_cmd_test - send test command to firmware
+ * send test command to firmware
  *
  * @wl: wl struct
  * @buf: buffer containing the command, with all headers, must work with dma
- * @buf_len: length of the buffer
+ * @len: length of the buffer
  * @answer: is answer needed
  */
 int wl1271_cmd_test(struct wl1271 *wl, void *buf, size_t buf_len, u8 answer)
@@ -848,13 +854,12 @@ int wl1271_cmd_test(struct wl1271 *wl, void *buf, size_t buf_len, u8 answer)
 EXPORT_SYMBOL_GPL(wl1271_cmd_test);
 
 /**
- * wl1271_cmd_interrogate - read acx from firmware
+ * read acx from firmware
  *
  * @wl: wl struct
  * @id: acx id
  * @buf: buffer for the response, including all headers, must work with dma
- * @cmd_len: length of command
- * @res_len: length of payload
+ * @len: length of buf
  */
 int wl1271_cmd_interrogate(struct wl1271 *wl, u16 id, void *buf,
 			   size_t cmd_len, size_t res_len)
@@ -877,7 +882,7 @@ int wl1271_cmd_interrogate(struct wl1271 *wl, u16 id, void *buf,
 }
 
 /**
- * wlcore_cmd_configure_failsafe - write acx value to firmware
+ * write acx value to firmware
  *
  * @wl: wl struct
  * @id: acx id
@@ -1065,7 +1070,7 @@ int wl12xx_cmd_build_null_data(struct wl1271 *wl, struct wl12xx_vif *wlvif)
 	} else {
 		skb = ieee80211_nullfunc_get(wl->hw,
 					     wl12xx_wlvif_to_vif(wlvif),
-					     -1, false);
+					     false);
 		if (!skb)
 			goto out;
 		size = skb->len;
@@ -1079,7 +1084,7 @@ int wl12xx_cmd_build_null_data(struct wl1271 *wl, struct wl12xx_vif *wlvif)
 out:
 	dev_kfree_skb(skb);
 	if (ret)
-		wl1271_warning("cmd build null data failed %d", ret);
+		wl1271_warning("cmd buld null data failed %d", ret);
 
 	return ret;
 
@@ -1092,7 +1097,7 @@ int wl12xx_cmd_build_klv_null_data(struct wl1271 *wl,
 	struct sk_buff *skb = NULL;
 	int ret = -ENOMEM;
 
-	skb = ieee80211_nullfunc_get(wl->hw, vif,-1, false);
+	skb = ieee80211_nullfunc_get(wl->hw, vif, false);
 	if (!skb)
 		goto out;
 
@@ -1412,7 +1417,7 @@ int wl1271_cmd_set_sta_key(struct wl1271 *wl, struct wl12xx_vif *wlvif,
 	ret = wl1271_cmd_send(wl, CMD_SET_KEYS, cmd, sizeof(*cmd), 0);
 	if (ret < 0) {
 		wl1271_warning("could not set keys");
-		goto out;
+	goto out;
 	}
 
 out:
@@ -1428,7 +1433,7 @@ out:
 int wl1271_cmd_set_ap_key(struct wl1271 *wl, struct wl12xx_vif *wlvif,
 			  u16 action, u8 id, u8 key_type,
 			  u8 key_size, const u8 *key, u8 hlid, u32 tx_seq_32,
-			  u16 tx_seq_16, bool is_pairwise)
+			  u16 tx_seq_16)
 {
 	struct wl1271_cmd_set_keys *cmd;
 	int ret = 0;
@@ -1443,10 +1448,8 @@ int wl1271_cmd_set_ap_key(struct wl1271 *wl, struct wl12xx_vif *wlvif,
 			lid_type = WEP_DEFAULT_LID_TYPE;
 		else
 			lid_type = BROADCAST_LID_TYPE;
-	} else if (is_pairwise) {
-		lid_type = UNICAST_LID_TYPE;
 	} else {
-		lid_type = BROADCAST_LID_TYPE;
+		lid_type = UNICAST_LID_TYPE;
 	}
 
 	wl1271_debug(DEBUG_CRYPT, "ap key action: %d id: %d lid: %d type: %d"
@@ -1556,11 +1559,11 @@ int wl12xx_cmd_add_peer(struct wl1271 *wl, struct wl12xx_vif *wlvif,
 					WL1271_PSD_LEGACY;
 
 
-	sta_rates = sta->deflink.supp_rates[wlvif->band];
-	if (sta->deflink.ht_cap.ht_supported)
+	sta_rates = sta->supp_rates[wlvif->band];
+	if (sta->ht_cap.ht_supported)
 		sta_rates |=
-			(sta->deflink.ht_cap.mcs.rx_mask[0] << HW_HT_RATES_OFFSET) |
-			(sta->deflink.ht_cap.mcs.rx_mask[1] << HW_MIMO_RATES_OFFSET);
+			(sta->ht_cap.mcs.rx_mask[0] << HW_HT_RATES_OFFSET) |
+			(sta->ht_cap.mcs.rx_mask[1] << HW_MIMO_RATES_OFFSET);
 
 	cmd->supported_rates =
 		cpu_to_le32(wl1271_tx_enabled_rates_get(wl, sta_rates,
@@ -1687,14 +1690,14 @@ void wlcore_set_pending_regdomain_ch(struct wl1271 *wl, u16 channel,
 	ch_bit_idx = wlcore_get_reg_conf_ch_idx(band, channel);
 
 	if (ch_bit_idx >= 0 && ch_bit_idx <= WL1271_MAX_CHANNELS)
-		__set_bit_le(ch_bit_idx, (long *)wl->reg_ch_conf_pending);
+		set_bit(ch_bit_idx, (long *)wl->reg_ch_conf_pending);
 }
 
 int wlcore_cmd_regdomain_config_locked(struct wl1271 *wl)
 {
 	struct wl12xx_cmd_regdomain_dfs_config *cmd = NULL;
 	int ret = 0, i, b, ch_bit_idx;
-	__le32 tmp_ch_bitmap[2] __aligned(sizeof(unsigned long));
+	u32 tmp_ch_bitmap[2];
 	struct wiphy *wiphy = wl->hw->wiphy;
 	struct ieee80211_supported_band *band;
 	bool timeout = false;
@@ -1704,7 +1707,7 @@ int wlcore_cmd_regdomain_config_locked(struct wl1271 *wl)
 
 	wl1271_debug(DEBUG_CMD, "cmd reg domain config");
 
-	memcpy(tmp_ch_bitmap, wl->reg_ch_conf_pending, sizeof(tmp_ch_bitmap));
+	memset(tmp_ch_bitmap, 0, sizeof(tmp_ch_bitmap));
 
 	for (b = NL80211_BAND_2GHZ; b <= NL80211_BAND_5GHZ; b++) {
 		band = wiphy->bands[b];
@@ -1725,9 +1728,12 @@ int wlcore_cmd_regdomain_config_locked(struct wl1271 *wl)
 			if (ch_bit_idx < 0)
 				continue;
 
-			__set_bit_le(ch_bit_idx, (long *)tmp_ch_bitmap);
+			set_bit(ch_bit_idx, (long *)tmp_ch_bitmap);
 		}
 	}
+
+	tmp_ch_bitmap[0] |= wl->reg_ch_conf_pending[0];
+	tmp_ch_bitmap[1] |= wl->reg_ch_conf_pending[1];
 
 	if (!memcmp(tmp_ch_bitmap, wl->reg_ch_conf_last, sizeof(tmp_ch_bitmap)))
 		goto out;
@@ -1738,8 +1744,8 @@ int wlcore_cmd_regdomain_config_locked(struct wl1271 *wl)
 		goto out;
 	}
 
-	cmd->ch_bit_map1 = tmp_ch_bitmap[0];
-	cmd->ch_bit_map2 = tmp_ch_bitmap[1];
+	cmd->ch_bit_map1 = cpu_to_le32(tmp_ch_bitmap[0]);
+	cmd->ch_bit_map2 = cpu_to_le32(tmp_ch_bitmap[1]);
 	cmd->dfs_region = wl->dfs_region;
 
 	wl1271_debug(DEBUG_CMD,

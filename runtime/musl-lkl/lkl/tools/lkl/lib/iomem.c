@@ -52,7 +52,21 @@ void unregister_iomem(void *base)
 	iomem_regions[index].size = 0;
 	iomem_regions[index].ops = NULL;
 }
+#if 0
+void *lkl_ioremap(long addr, int size)
+{
+	int index = IOMEM_ADDR_TO_INDEX(addr);
+	struct iomem_region *iomem = &iomem_regions[index];
 
+	if (index >= MAX_IOMEM_REGIONS)
+		return NULL;
+
+	if (iomem->ops && size <= iomem->size)
+		return IOMEM_INDEX_TO_ADDR(index);
+
+	return NULL;
+}
+#else
 void *lkl_ioremap(long addr, int size)
 {
 	int index = IOMEM_ADDR_TO_INDEX(addr);
@@ -67,6 +81,7 @@ void *lkl_ioremap(long addr, int size)
 	return NULL;
 }
 
+#endif
 int lkl_iomem_access(const volatile void *addr, void *res, int size, int write)
 {
 	int index = IOMEM_ADDR_TO_INDEX(addr);

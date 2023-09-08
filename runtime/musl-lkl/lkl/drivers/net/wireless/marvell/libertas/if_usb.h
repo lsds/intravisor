@@ -91,7 +91,7 @@ struct fwheader {
 struct fwdata {
 	struct fwheader hdr;
 	__le32 seqnum;
-	uint8_t data[];
+	uint8_t data[0];
 };
 
 /* fwsyncheader */

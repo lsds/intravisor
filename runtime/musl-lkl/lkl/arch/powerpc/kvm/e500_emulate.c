@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (C) 2008-2011 Freescale Semiconductor, Inc. All rights reserved.
  *
@@ -7,6 +6,10 @@
  * Description:
  * This file is derived from arch/powerpc/kvm/44x_emulate.c,
  * by Hollis Blanchard <hollisb@us.ibm.com>.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License, version 2, as
+ * published by the Free Software Foundation.
  */
 
 #include <asm/kvm_ppc.h>
@@ -50,7 +53,7 @@ static int dbell2prio(ulong param)
 
 static int kvmppc_e500_emul_msgclr(struct kvm_vcpu *vcpu, int rb)
 {
-	ulong param = vcpu->arch.regs.gpr[rb];
+	ulong param = vcpu->arch.gpr[rb];
 	int prio = dbell2prio(param);
 
 	if (prio < 0)
@@ -62,10 +65,10 @@ static int kvmppc_e500_emul_msgclr(struct kvm_vcpu *vcpu, int rb)
 
 static int kvmppc_e500_emul_msgsnd(struct kvm_vcpu *vcpu, int rb)
 {
-	ulong param = vcpu->arch.regs.gpr[rb];
+	ulong param = vcpu->arch.gpr[rb];
 	int prio = dbell2prio(rb);
 	int pir = param & PPC_DBELL_PIR_MASK;
-	unsigned long i;
+	int i;
 	struct kvm_vcpu *cvcpu;
 
 	if (prio < 0)
@@ -83,16 +86,16 @@ static int kvmppc_e500_emul_msgsnd(struct kvm_vcpu *vcpu, int rb)
 }
 #endif
 
-static int kvmppc_e500_emul_ehpriv(struct kvm_vcpu *vcpu,
+static int kvmppc_e500_emul_ehpriv(struct kvm_run *run, struct kvm_vcpu *vcpu,
 				   unsigned int inst, int *advance)
 {
 	int emulated = EMULATE_DONE;
 
 	switch (get_oc(inst)) {
 	case EHPRIV_OC_DEBUG:
-		vcpu->run->exit_reason = KVM_EXIT_DEBUG;
-		vcpu->run->debug.arch.address = vcpu->arch.regs.nip;
-		vcpu->run->debug.arch.status = 0;
+		run->exit_reason = KVM_EXIT_DEBUG;
+		run->debug.arch.address = vcpu->arch.pc;
+		run->debug.arch.status = 0;
 		kvmppc_account_exit(vcpu, DEBUG_EXITS);
 		emulated = EMULATE_EXIT_USER;
 		*advance = 0;
@@ -125,7 +128,7 @@ static int kvmppc_e500_emul_mftmr(struct kvm_vcpu *vcpu, unsigned int inst,
 	return EMULATE_FAIL;
 }
 
-int kvmppc_core_emulate_op_e500(struct kvm_vcpu *vcpu,
+int kvmppc_core_emulate_op_e500(struct kvm_run *run, struct kvm_vcpu *vcpu,
 				unsigned int inst, int *advance)
 {
 	int emulated = EMULATE_DONE;
@@ -182,7 +185,8 @@ int kvmppc_core_emulate_op_e500(struct kvm_vcpu *vcpu,
 			break;
 
 		case XOP_EHPRIV:
-			emulated = kvmppc_e500_emul_ehpriv(vcpu, inst, advance);
+			emulated = kvmppc_e500_emul_ehpriv(run, vcpu, inst,
+							   advance);
 			break;
 
 		default:
@@ -196,7 +200,7 @@ int kvmppc_core_emulate_op_e500(struct kvm_vcpu *vcpu,
 	}
 
 	if (emulated == EMULATE_FAIL)
-		emulated = kvmppc_booke_emulate_op(vcpu, inst, advance);
+		emulated = kvmppc_booke_emulate_op(run, vcpu, inst, advance);
 
 	return emulated;
 }
@@ -271,13 +275,6 @@ int kvmppc_core_emulate_mtspr_e500(struct kvm_vcpu *vcpu, int sprn, ulong spr_va
 		 * Treat the request as a general store
 		 */
 		vcpu->arch.pwrmgtcr0 = spr_val;
-		break;
-
-	case SPRN_BUCSR:
-		/*
-		 * If we are here, it means that we have already flushed the
-		 * branch predictor, so just return to guest.
-		 */
 		break;
 
 	/* extra exceptions */

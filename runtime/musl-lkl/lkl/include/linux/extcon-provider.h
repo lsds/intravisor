@@ -1,10 +1,18 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * External Connector (extcon) framework
  * - linux/include/linux/extcon-provider.h for extcon provider device driver.
  *
  * Copyright (C) 2017 Samsung Electronics
  * Author: Chanwoo Choi <cw00.choi@samsung.com>
+ *
+ * This software is licensed under the terms of the GNU General Public
+ * License version 2, as published by the Free Software Foundation, and
+ * may be copied, distributed, and modified under those terms.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
  */
 
 #ifndef __LINUX_EXTCON_PROVIDER_H__
@@ -17,30 +25,30 @@ struct extcon_dev;
 #if IS_ENABLED(CONFIG_EXTCON)
 
 /* Following APIs register/unregister the extcon device. */
-int extcon_dev_register(struct extcon_dev *edev);
-void extcon_dev_unregister(struct extcon_dev *edev);
-int devm_extcon_dev_register(struct device *dev,
+extern int extcon_dev_register(struct extcon_dev *edev);
+extern void extcon_dev_unregister(struct extcon_dev *edev);
+extern int devm_extcon_dev_register(struct device *dev,
 				struct extcon_dev *edev);
-void devm_extcon_dev_unregister(struct device *dev,
+extern void devm_extcon_dev_unregister(struct device *dev,
 				struct extcon_dev *edev);
 
 /* Following APIs allocate/free the memory of the extcon device. */
-struct extcon_dev *extcon_dev_allocate(const unsigned int *cable);
-void extcon_dev_free(struct extcon_dev *edev);
-struct extcon_dev *devm_extcon_dev_allocate(struct device *dev,
+extern struct extcon_dev *extcon_dev_allocate(const unsigned int *cable);
+extern void extcon_dev_free(struct extcon_dev *edev);
+extern struct extcon_dev *devm_extcon_dev_allocate(struct device *dev,
 				const unsigned int *cable);
-void devm_extcon_dev_free(struct device *dev, struct extcon_dev *edev);
+extern void devm_extcon_dev_free(struct device *dev, struct extcon_dev *edev);
 
 /* Synchronize the state and property value for each external connector. */
-int extcon_sync(struct extcon_dev *edev, unsigned int id);
+extern int extcon_sync(struct extcon_dev *edev, unsigned int id);
 
 /*
  * Following APIs set the connected state of each external connector.
  * The 'id' argument indicates the defined external connector.
  */
-int extcon_set_state(struct extcon_dev *edev, unsigned int id,
+extern int extcon_set_state(struct extcon_dev *edev, unsigned int id,
 				bool state);
-int extcon_set_state_sync(struct extcon_dev *edev, unsigned int id,
+extern int extcon_set_state_sync(struct extcon_dev *edev, unsigned int id,
 				bool state);
 
 /*
@@ -52,13 +60,13 @@ int extcon_set_state_sync(struct extcon_dev *edev, unsigned int id,
  * for each external connector. They are used to set the capability of the
  * property of each external connector based on the id and property.
  */
-int extcon_set_property(struct extcon_dev *edev, unsigned int id,
+extern int extcon_set_property(struct extcon_dev *edev, unsigned int id,
 				unsigned int prop,
 				union extcon_property_value prop_val);
-int extcon_set_property_sync(struct extcon_dev *edev, unsigned int id,
+extern int extcon_set_property_sync(struct extcon_dev *edev, unsigned int id,
 				unsigned int prop,
 				union extcon_property_value prop_val);
-int extcon_set_property_capability(struct extcon_dev *edev,
+extern int extcon_set_property_capability(struct extcon_dev *edev,
 				unsigned int id, unsigned int prop);
 
 #else /* CONFIG_EXTCON */

@@ -27,23 +27,15 @@
 		{RECLAIM_WB_ASYNC,	"RECLAIM_WB_ASYNC"}	\
 		) : "RECLAIM_WB_NONE"
 
-#define _VMSCAN_THROTTLE_WRITEBACK	(1 << VMSCAN_THROTTLE_WRITEBACK)
-#define _VMSCAN_THROTTLE_ISOLATED	(1 << VMSCAN_THROTTLE_ISOLATED)
-#define _VMSCAN_THROTTLE_NOPROGRESS	(1 << VMSCAN_THROTTLE_NOPROGRESS)
-#define _VMSCAN_THROTTLE_CONGESTED	(1 << VMSCAN_THROTTLE_CONGESTED)
-
-#define show_throttle_flags(flags)						\
-	(flags) ? __print_flags(flags, "|",					\
-		{_VMSCAN_THROTTLE_WRITEBACK,	"VMSCAN_THROTTLE_WRITEBACK"},	\
-		{_VMSCAN_THROTTLE_ISOLATED,	"VMSCAN_THROTTLE_ISOLATED"},	\
-		{_VMSCAN_THROTTLE_NOPROGRESS,	"VMSCAN_THROTTLE_NOPROGRESS"},	\
-		{_VMSCAN_THROTTLE_CONGESTED,	"VMSCAN_THROTTLE_CONGESTED"}	\
-		) : "VMSCAN_THROTTLE_NONE"
-
-
-#define trace_reclaim_flags(file) ( \
-	(file ? RECLAIM_WB_FILE : RECLAIM_WB_ANON) | \
+#define trace_reclaim_flags(page) ( \
+	(page_is_file_cache(page) ? RECLAIM_WB_FILE : RECLAIM_WB_ANON) | \
 	(RECLAIM_WB_ASYNC) \
+	)
+
+#define trace_shrink_flags(file) \
+	( \
+		(file ? RECLAIM_WB_FILE : RECLAIM_WB_ANON) | \
+		(RECLAIM_WB_ASYNC) \
 	)
 
 TRACE_EVENT(mm_vmscan_kswapd_sleep,
@@ -81,9 +73,7 @@ TRACE_EVENT(mm_vmscan_kswapd_wake,
 		__entry->order	= order;
 	),
 
-	TP_printk("nid=%d order=%d",
-		__entry->nid,
-		__entry->order)
+	TP_printk("nid=%d zid=%d order=%d", __entry->nid, __entry->zid, __entry->order)
 );
 
 TRACE_EVENT(mm_vmscan_wakeup_kswapd,
@@ -96,63 +86,70 @@ TRACE_EVENT(mm_vmscan_wakeup_kswapd,
 		__field(	int,	nid		)
 		__field(	int,	zid		)
 		__field(	int,	order		)
-		__field(	unsigned long,	gfp_flags	)
+		__field(	gfp_t,	gfp_flags	)
 	),
 
 	TP_fast_assign(
 		__entry->nid		= nid;
 		__entry->zid		= zid;
 		__entry->order		= order;
-		__entry->gfp_flags	= (__force unsigned long)gfp_flags;
+		__entry->gfp_flags	= gfp_flags;
 	),
 
-	TP_printk("nid=%d order=%d gfp_flags=%s",
+	TP_printk("nid=%d zid=%d order=%d gfp_flags=%s",
 		__entry->nid,
+		__entry->zid,
 		__entry->order,
 		show_gfp_flags(__entry->gfp_flags))
 );
 
 DECLARE_EVENT_CLASS(mm_vmscan_direct_reclaim_begin_template,
 
-	TP_PROTO(int order, gfp_t gfp_flags),
+	TP_PROTO(int order, int may_writepage, gfp_t gfp_flags, int classzone_idx),
 
-	TP_ARGS(order, gfp_flags),
+	TP_ARGS(order, may_writepage, gfp_flags, classzone_idx),
 
 	TP_STRUCT__entry(
 		__field(	int,	order		)
-		__field(	unsigned long,	gfp_flags	)
+		__field(	int,	may_writepage	)
+		__field(	gfp_t,	gfp_flags	)
+		__field(	int,	classzone_idx	)
 	),
 
 	TP_fast_assign(
 		__entry->order		= order;
-		__entry->gfp_flags	= (__force unsigned long)gfp_flags;
+		__entry->may_writepage	= may_writepage;
+		__entry->gfp_flags	= gfp_flags;
+		__entry->classzone_idx	= classzone_idx;
 	),
 
-	TP_printk("order=%d gfp_flags=%s",
+	TP_printk("order=%d may_writepage=%d gfp_flags=%s classzone_idx=%d",
 		__entry->order,
-		show_gfp_flags(__entry->gfp_flags))
+		__entry->may_writepage,
+		show_gfp_flags(__entry->gfp_flags),
+		__entry->classzone_idx)
 );
 
 DEFINE_EVENT(mm_vmscan_direct_reclaim_begin_template, mm_vmscan_direct_reclaim_begin,
 
-	TP_PROTO(int order, gfp_t gfp_flags),
+	TP_PROTO(int order, int may_writepage, gfp_t gfp_flags, int classzone_idx),
 
-	TP_ARGS(order, gfp_flags)
+	TP_ARGS(order, may_writepage, gfp_flags, classzone_idx)
 );
 
 #ifdef CONFIG_MEMCG
 DEFINE_EVENT(mm_vmscan_direct_reclaim_begin_template, mm_vmscan_memcg_reclaim_begin,
 
-	TP_PROTO(int order, gfp_t gfp_flags),
+	TP_PROTO(int order, int may_writepage, gfp_t gfp_flags, int classzone_idx),
 
-	TP_ARGS(order, gfp_flags)
+	TP_ARGS(order, may_writepage, gfp_flags, classzone_idx)
 );
 
 DEFINE_EVENT(mm_vmscan_direct_reclaim_begin_template, mm_vmscan_memcg_softlimit_reclaim_begin,
 
-	TP_PROTO(int order, gfp_t gfp_flags),
+	TP_PROTO(int order, int may_writepage, gfp_t gfp_flags, int classzone_idx),
 
-	TP_ARGS(order, gfp_flags)
+	TP_ARGS(order, may_writepage, gfp_flags, classzone_idx)
 );
 #endif /* CONFIG_MEMCG */
 
@@ -210,7 +207,7 @@ TRACE_EVENT(mm_shrink_slab_start,
 		__field(void *, shrink)
 		__field(int, nid)
 		__field(long, nr_objects_to_shrink)
-		__field(unsigned long, gfp_flags)
+		__field(gfp_t, gfp_flags)
 		__field(unsigned long, cache_items)
 		__field(unsigned long long, delta)
 		__field(unsigned long, total_scan)
@@ -222,14 +219,14 @@ TRACE_EVENT(mm_shrink_slab_start,
 		__entry->shrink = shr->scan_objects;
 		__entry->nid = sc->nid;
 		__entry->nr_objects_to_shrink = nr_objects_to_shrink;
-		__entry->gfp_flags = (__force unsigned long)sc->gfp_mask;
+		__entry->gfp_flags = sc->gfp_mask;
 		__entry->cache_items = cache_items;
 		__entry->delta = delta;
 		__entry->total_scan = total_scan;
 		__entry->priority = priority;
 	),
 
-	TP_printk("%pS %p: nid: %d objects to shrink %ld gfp_flags %s cache items %ld delta %lld total_scan %ld priority %d",
+	TP_printk("%pF %p: nid: %d objects to shrink %ld gfp_flags %s cache items %ld delta %lld total_scan %ld priority %d",
 		__entry->shrink,
 		__entry->shr,
 		__entry->nid,
@@ -268,7 +265,7 @@ TRACE_EVENT(mm_shrink_slab_end,
 		__entry->total_scan = total_scan;
 	),
 
-	TP_printk("%pS %p: nid: %d unused scan count %ld new scan count %ld total_scan %ld last shrinker return val %d",
+	TP_printk("%pF %p: nid: %d unused scan count %ld new scan count %ld total_scan %ld last shrinker return val %d",
 		__entry->shrink,
 		__entry->shr,
 		__entry->nid,
@@ -279,7 +276,7 @@ TRACE_EVENT(mm_shrink_slab_end,
 );
 
 TRACE_EVENT(mm_vmscan_lru_isolate,
-	TP_PROTO(int highest_zoneidx,
+	TP_PROTO(int classzone_idx,
 		int order,
 		unsigned long nr_requested,
 		unsigned long nr_scanned,
@@ -288,37 +285,33 @@ TRACE_EVENT(mm_vmscan_lru_isolate,
 		isolate_mode_t isolate_mode,
 		int lru),
 
-	TP_ARGS(highest_zoneidx, order, nr_requested, nr_scanned, nr_skipped, nr_taken, isolate_mode, lru),
+	TP_ARGS(classzone_idx, order, nr_requested, nr_scanned, nr_skipped, nr_taken, isolate_mode, lru),
 
 	TP_STRUCT__entry(
-		__field(int, highest_zoneidx)
+		__field(int, classzone_idx)
 		__field(int, order)
 		__field(unsigned long, nr_requested)
 		__field(unsigned long, nr_scanned)
 		__field(unsigned long, nr_skipped)
 		__field(unsigned long, nr_taken)
-		__field(unsigned int, isolate_mode)
+		__field(isolate_mode_t, isolate_mode)
 		__field(int, lru)
 	),
 
 	TP_fast_assign(
-		__entry->highest_zoneidx = highest_zoneidx;
+		__entry->classzone_idx = classzone_idx;
 		__entry->order = order;
 		__entry->nr_requested = nr_requested;
 		__entry->nr_scanned = nr_scanned;
 		__entry->nr_skipped = nr_skipped;
 		__entry->nr_taken = nr_taken;
-		__entry->isolate_mode = (__force unsigned int)isolate_mode;
+		__entry->isolate_mode = isolate_mode;
 		__entry->lru = lru;
 	),
 
-	/*
-	 * classzone is previous name of the highest_zoneidx.
-	 * Reason not to change it is the ABI requirement of the tracepoint.
-	 */
 	TP_printk("isolate_mode=%d classzone=%d order=%d nr_requested=%lu nr_scanned=%lu nr_skipped=%lu nr_taken=%lu lru=%s",
 		__entry->isolate_mode,
-		__entry->highest_zoneidx,
+		__entry->classzone_idx,
 		__entry->order,
 		__entry->nr_requested,
 		__entry->nr_scanned,
@@ -327,11 +320,11 @@ TRACE_EVENT(mm_vmscan_lru_isolate,
 		__print_symbolic(__entry->lru, LRU_NAMES))
 );
 
-TRACE_EVENT(mm_vmscan_write_folio,
+TRACE_EVENT(mm_vmscan_writepage,
 
-	TP_PROTO(struct folio *folio),
+	TP_PROTO(struct page *page),
 
-	TP_ARGS(folio),
+	TP_ARGS(page),
 
 	TP_STRUCT__entry(
 		__field(unsigned long, pfn)
@@ -339,12 +332,11 @@ TRACE_EVENT(mm_vmscan_write_folio,
 	),
 
 	TP_fast_assign(
-		__entry->pfn = folio_pfn(folio);
-		__entry->reclaim_flags = trace_reclaim_flags(
-						folio_is_file_lru(folio));
+		__entry->pfn = page_to_pfn(page);
+		__entry->reclaim_flags = trace_reclaim_flags(page);
 	),
 
-	TP_printk("page=%p pfn=0x%lx flags=%s",
+	TP_printk("page=%p pfn=%lu flags=%s",
 		pfn_to_page(__entry->pfn),
 		__entry->pfn,
 		show_reclaim_flags(__entry->reclaim_flags))
@@ -366,8 +358,7 @@ TRACE_EVENT(mm_vmscan_lru_shrink_inactive,
 		__field(unsigned long, nr_writeback)
 		__field(unsigned long, nr_congested)
 		__field(unsigned long, nr_immediate)
-		__field(unsigned int, nr_activate0)
-		__field(unsigned int, nr_activate1)
+		__field(unsigned long, nr_activate)
 		__field(unsigned long, nr_ref_keep)
 		__field(unsigned long, nr_unmap_fail)
 		__field(int, priority)
@@ -382,22 +373,20 @@ TRACE_EVENT(mm_vmscan_lru_shrink_inactive,
 		__entry->nr_writeback = stat->nr_writeback;
 		__entry->nr_congested = stat->nr_congested;
 		__entry->nr_immediate = stat->nr_immediate;
-		__entry->nr_activate0 = stat->nr_activate[0];
-		__entry->nr_activate1 = stat->nr_activate[1];
+		__entry->nr_activate = stat->nr_activate;
 		__entry->nr_ref_keep = stat->nr_ref_keep;
 		__entry->nr_unmap_fail = stat->nr_unmap_fail;
 		__entry->priority = priority;
-		__entry->reclaim_flags = trace_reclaim_flags(file);
+		__entry->reclaim_flags = trace_shrink_flags(file);
 	),
 
-	TP_printk("nid=%d nr_scanned=%ld nr_reclaimed=%ld nr_dirty=%ld nr_writeback=%ld nr_congested=%ld nr_immediate=%ld nr_activate_anon=%d nr_activate_file=%d nr_ref_keep=%ld nr_unmap_fail=%ld priority=%d flags=%s",
+	TP_printk("nid=%d nr_scanned=%ld nr_reclaimed=%ld nr_dirty=%ld nr_writeback=%ld nr_congested=%ld nr_immediate=%ld nr_activate=%ld nr_ref_keep=%ld nr_unmap_fail=%ld priority=%d flags=%s",
 		__entry->nid,
 		__entry->nr_scanned, __entry->nr_reclaimed,
 		__entry->nr_dirty, __entry->nr_writeback,
 		__entry->nr_congested, __entry->nr_immediate,
-		__entry->nr_activate0, __entry->nr_activate1,
-		__entry->nr_ref_keep, __entry->nr_unmap_fail,
-		__entry->priority,
+		__entry->nr_activate, __entry->nr_ref_keep,
+		__entry->nr_unmap_fail, __entry->priority,
 		show_reclaim_flags(__entry->reclaim_flags))
 );
 
@@ -426,7 +415,7 @@ TRACE_EVENT(mm_vmscan_lru_shrink_active,
 		__entry->nr_deactivated = nr_deactivated;
 		__entry->nr_referenced = nr_referenced;
 		__entry->priority = priority;
-		__entry->reclaim_flags = trace_reclaim_flags(file);
+		__entry->reclaim_flags = trace_shrink_flags(file);
 	),
 
 	TP_printk("nid=%d nr_taken=%ld nr_active=%ld nr_deactivated=%ld nr_referenced=%ld priority=%d flags=%s",
@@ -437,62 +426,44 @@ TRACE_EVENT(mm_vmscan_lru_shrink_active,
 		show_reclaim_flags(__entry->reclaim_flags))
 );
 
-TRACE_EVENT(mm_vmscan_node_reclaim_begin,
+TRACE_EVENT(mm_vmscan_inactive_list_is_low,
 
-	TP_PROTO(int nid, int order, gfp_t gfp_flags),
+	TP_PROTO(int nid, int reclaim_idx,
+		unsigned long total_inactive, unsigned long inactive,
+		unsigned long total_active, unsigned long active,
+		unsigned long ratio, int file),
 
-	TP_ARGS(nid, order, gfp_flags),
+	TP_ARGS(nid, reclaim_idx, total_inactive, inactive, total_active, active, ratio, file),
 
 	TP_STRUCT__entry(
 		__field(int, nid)
-		__field(int, order)
-		__field(unsigned long, gfp_flags)
+		__field(int, reclaim_idx)
+		__field(unsigned long, total_inactive)
+		__field(unsigned long, inactive)
+		__field(unsigned long, total_active)
+		__field(unsigned long, active)
+		__field(unsigned long, ratio)
+		__field(int, reclaim_flags)
 	),
 
 	TP_fast_assign(
 		__entry->nid = nid;
-		__entry->order = order;
-		__entry->gfp_flags = (__force unsigned long)gfp_flags;
+		__entry->reclaim_idx = reclaim_idx;
+		__entry->total_inactive = total_inactive;
+		__entry->inactive = inactive;
+		__entry->total_active = total_active;
+		__entry->active = active;
+		__entry->ratio = ratio;
+		__entry->reclaim_flags = trace_shrink_flags(file) & RECLAIM_WB_LRU;
 	),
 
-	TP_printk("nid=%d order=%d gfp_flags=%s",
+	TP_printk("nid=%d reclaim_idx=%d total_inactive=%ld inactive=%ld total_active=%ld active=%ld ratio=%ld flags=%s",
 		__entry->nid,
-		__entry->order,
-		show_gfp_flags(__entry->gfp_flags))
-);
-
-DEFINE_EVENT(mm_vmscan_direct_reclaim_end_template, mm_vmscan_node_reclaim_end,
-
-	TP_PROTO(unsigned long nr_reclaimed),
-
-	TP_ARGS(nr_reclaimed)
-);
-
-TRACE_EVENT(mm_vmscan_throttled,
-
-	TP_PROTO(int nid, int usec_timeout, int usec_delayed, int reason),
-
-	TP_ARGS(nid, usec_timeout, usec_delayed, reason),
-
-	TP_STRUCT__entry(
-		__field(int, nid)
-		__field(int, usec_timeout)
-		__field(int, usec_delayed)
-		__field(int, reason)
-	),
-
-	TP_fast_assign(
-		__entry->nid = nid;
-		__entry->usec_timeout = usec_timeout;
-		__entry->usec_delayed = usec_delayed;
-		__entry->reason = 1U << reason;
-	),
-
-	TP_printk("nid=%d usec_timeout=%d usect_delayed=%d reason=%s",
-		__entry->nid,
-		__entry->usec_timeout,
-		__entry->usec_delayed,
-		show_throttle_flags(__entry->reason))
+		__entry->reclaim_idx,
+		__entry->total_inactive, __entry->inactive,
+		__entry->total_active, __entry->active,
+		__entry->ratio,
+		show_reclaim_flags(__entry->reclaim_flags))
 );
 #endif /* _TRACE_VMSCAN_H */
 

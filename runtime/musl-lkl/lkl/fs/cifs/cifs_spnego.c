@@ -1,10 +1,22 @@
-// SPDX-License-Identifier: LGPL-2.1
 /*
- *   SPNEGO upcall management for CIFS
+ *   fs/cifs/cifs_spnego.c -- SPNEGO upcall management for CIFS
  *
  *   Copyright (c) 2007 Red Hat, Inc.
  *   Author(s): Jeff Layton (jlayton@redhat.com)
  *
+ *   This library is free software; you can redistribute it and/or modify
+ *   it under the terms of the GNU Lesser General Public License as published
+ *   by the Free Software Foundation; either version 2.1 of the License, or
+ *   (at your option) any later version.
+ *
+ *   This library is distributed in the hope that it will be useful,
+ *   but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See
+ *   the GNU Lesser General Public License for more details.
+ *
+ *   You should have received a copy of the GNU Lesser General Public License
+ *   along with this library; if not, write to the Free Software
+ *   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
  */
 
 #include <linux/list.h>
@@ -84,9 +96,9 @@ struct key_type cifs_spnego_key_type = {
 
 /* get a key struct with a SPNEGO security blob, suitable for session setup */
 struct key *
-cifs_get_spnego_key(struct cifs_ses *sesInfo,
-		    struct TCP_Server_Info *server)
+cifs_get_spnego_key(struct cifs_ses *sesInfo)
 {
+	struct TCP_Server_Info *server = sesInfo->server;
 	struct sockaddr_in *sa = (struct sockaddr_in *) &server->dstaddr;
 	struct sockaddr_in6 *sa6 = (struct sockaddr_in6 *) &server->dstaddr;
 	char *description, *dp;
@@ -135,10 +147,8 @@ cifs_get_spnego_key(struct cifs_ses *sesInfo,
 		sprintf(dp, ";sec=krb5");
 	else if (server->sec_mskerberos)
 		sprintf(dp, ";sec=mskrb5");
-	else {
-		cifs_dbg(VFS, "unknown or missing server auth type, use krb5\n");
-		sprintf(dp, ";sec=krb5");
-	}
+	else
+		goto out;
 
 	dp = description + strlen(description);
 	sprintf(dp, ";uid=0x%x",

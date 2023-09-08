@@ -11,6 +11,7 @@
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/init.h>
+#include <linux/gpio.h>
 #include <linux/delay.h>
 #include <video/mipi_display.h>
 
@@ -75,6 +76,9 @@
 static int init_display(struct fbtft_par *par)
 {
 	par->fbtftops.reset(par);
+
+	if (par->gpio.cs != -1)
+		gpio_set_value(par->gpio.cs, 0);  /* Activate chip */
 
 	write_reg(par, MIPI_DCS_SOFT_RESET); /* software reset */
 	mdelay(500);
@@ -188,10 +192,10 @@ static int set_var(struct fbtft_par *par)
 }
 
 #ifdef GAMMA_ADJ
-#define CURVE(num, idx)  curves[(num) * par->gamma.num_values + (idx)]
+#define CURVE(num, idx)  curves[num * par->gamma.num_values + idx]
 static int gamma_adj(struct fbtft_par *par, u32 *curves)
 {
-	static const unsigned long mask[] = {
+	unsigned long mask[] = {
 		0x3F, 0x3F, 0x3F, 0x3F, 0x3F,
 		0x1f, 0x3f, 0x0f, 0x0f, 0x7f, 0x1f,
 		0x3F, 0x3F, 0x3F, 0x3F, 0x3F};

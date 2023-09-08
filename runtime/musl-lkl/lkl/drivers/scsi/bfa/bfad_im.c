@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2005-2014 Brocade Communications Systems, Inc.
  * Copyright (c) 2014- QLogic Corporation.
@@ -6,6 +5,15 @@
  * www.qlogic.com
  *
  * Linux driver for QLogic BR-series Fibre Channel Host Bus Adapter.
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License (GPL) Version 2 as
+ * published by the Free Software Foundation
+ *
+ * This program is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * General Public License for more details.
  */
 
 /*
@@ -62,18 +70,21 @@ bfa_cb_ioim_done(void *drv, struct bfad_ioim_s *dio,
 				host_status = DID_ERROR;
 			}
 		}
-		cmnd->result = host_status << 16 | scsi_status;
+		cmnd->result = ScsiResult(host_status, scsi_status);
 
 		break;
 
 	case BFI_IOIM_STS_TIMEDOUT:
-		cmnd->result = DID_TIME_OUT << 16;
+		host_status = DID_TIME_OUT;
+		cmnd->result = ScsiResult(host_status, 0);
 		break;
 	case BFI_IOIM_STS_PATHTOV:
-		cmnd->result = DID_TRANSPORT_DISRUPTED << 16;
+		host_status = DID_TRANSPORT_DISRUPTED;
+		cmnd->result = ScsiResult(host_status, 0);
 		break;
 	default:
-		cmnd->result = DID_ERROR << 16;
+		host_status = DID_ERROR;
+		cmnd->result = ScsiResult(host_status, 0);
 	}
 
 	/* Unmap DMA, if host is NULL, it means a scsi passthru cmd */
@@ -96,7 +107,7 @@ bfa_cb_ioim_done(void *drv, struct bfad_ioim_s *dio,
 		}
 	}
 
-	scsi_done(cmnd);
+	cmnd->scsi_done(cmnd);
 }
 
 void
@@ -106,7 +117,7 @@ bfa_cb_ioim_good_comp(void *drv, struct bfad_ioim_s *dio)
 	struct bfad_itnim_data_s *itnim_data;
 	struct bfad_itnim_s *itnim;
 
-	cmnd->result = DID_OK << 16 | SAM_STAT_GOOD;
+	cmnd->result = ScsiResult(DID_OK, SCSI_STATUS_GOOD);
 
 	/* Unmap DMA, if host is NULL, it means a scsi passthru cmd */
 	if (cmnd->device->host != NULL)
@@ -124,7 +135,7 @@ bfa_cb_ioim_good_comp(void *drv, struct bfad_ioim_s *dio)
 		}
 	}
 
-	scsi_done(cmnd);
+	cmnd->scsi_done(cmnd);
 }
 
 void
@@ -133,7 +144,7 @@ bfa_cb_ioim_abort(void *drv, struct bfad_ioim_s *dio)
 	struct scsi_cmnd *cmnd = (struct scsi_cmnd *)dio;
 	struct bfad_s         *bfad = drv;
 
-	cmnd->result = DID_ERROR << 16;
+	cmnd->result = ScsiResult(DID_ERROR, 0);
 
 	/* Unmap DMA, if host is NULL, it means a scsi passthru cmd */
 	if (cmnd->device->host != NULL)
@@ -150,10 +161,10 @@ bfa_cb_tskim_done(void *bfad, struct bfad_tskim_s *dtsk,
 	struct scsi_cmnd *cmnd = (struct scsi_cmnd *)dtsk;
 	wait_queue_head_t *wq;
 
-	bfad_priv(cmnd)->status |= tsk_status << 1;
-	set_bit(IO_DONE_BIT, &bfad_priv(cmnd)->status);
-	wq = bfad_priv(cmnd)->wq;
-	bfad_priv(cmnd)->wq = NULL;
+	cmnd->SCp.Status |= tsk_status << 1;
+	set_bit(IO_DONE_BIT, (unsigned long *)&cmnd->SCp.Status);
+	wq = (wait_queue_head_t *) cmnd->SCp.ptr;
+	cmnd->SCp.ptr = NULL;
 
 	if (wq)
 		wake_up(wq);
@@ -226,7 +237,7 @@ bfad_im_abort_handler(struct scsi_cmnd *cmnd)
 			timeout *= 2;
 	}
 
-	scsi_done(cmnd);
+	cmnd->scsi_done(cmnd);
 	bfa_trc(bfad, hal_io->iotag);
 	BFA_LOG(KERN_INFO, bfad, bfa_log_level,
 		"scsi%d: complete abort 0x%p iotag 0x%x\n",
@@ -259,7 +270,7 @@ bfad_im_target_reset_send(struct bfad_s *bfad, struct scsi_cmnd *cmnd,
 	 * happens.
 	 */
 	cmnd->host_scribble = NULL;
-	bfad_priv(cmnd)->status = 0;
+	cmnd->SCp.Status = 0;
 	bfa_itnim = bfa_fcs_itnim_get_halitn(&itnim->fcs_itnim);
 	/*
 	 * bfa_itnim can be NULL if the port gets disconnected and the bfa
@@ -326,8 +337,8 @@ bfad_im_reset_lun_handler(struct scsi_cmnd *cmnd)
 	 * if happens.
 	 */
 	cmnd->host_scribble = NULL;
-	bfad_priv(cmnd)->wq = &wq;
-	bfad_priv(cmnd)->status = 0;
+	cmnd->SCp.ptr = (char *)&wq;
+	cmnd->SCp.Status = 0;
 	bfa_itnim = bfa_fcs_itnim_get_halitn(&itnim->fcs_itnim);
 	/*
 	 * bfa_itnim can be NULL if the port gets disconnected and the bfa
@@ -347,9 +358,10 @@ bfad_im_reset_lun_handler(struct scsi_cmnd *cmnd)
 			    FCP_TM_LUN_RESET, BFAD_LUN_RESET_TMO);
 	spin_unlock_irqrestore(&bfad->bfad_lock, flags);
 
-	wait_event(wq, test_bit(IO_DONE_BIT, &bfad_priv(cmnd)->status));
+	wait_event(wq, test_bit(IO_DONE_BIT,
+			(unsigned long *)&cmnd->SCp.Status));
 
-	task_status = bfad_priv(cmnd)->status >> 1;
+	task_status = cmnd->SCp.Status >> 1;
 	if (task_status != BFI_TSKIM_STS_OK) {
 		BFA_LOG(KERN_ERR, bfad, bfa_log_level,
 			"LUN reset failure, status: %d\n", task_status);
@@ -380,16 +392,16 @@ bfad_im_reset_target_handler(struct scsi_cmnd *cmnd)
 	spin_lock_irqsave(&bfad->bfad_lock, flags);
 	itnim = bfad_get_itnim(im_port, starget->id);
 	if (itnim) {
-		bfad_priv(cmnd)->wq = &wq;
+		cmnd->SCp.ptr = (char *)&wq;
 		rc = bfad_im_target_reset_send(bfad, cmnd, itnim);
 		if (rc == BFA_STATUS_OK) {
 			/* wait target reset to complete */
 			spin_unlock_irqrestore(&bfad->bfad_lock, flags);
 			wait_event(wq, test_bit(IO_DONE_BIT,
-						&bfad_priv(cmnd)->status));
+					(unsigned long *)&cmnd->SCp.Status));
 			spin_lock_irqsave(&bfad->bfad_lock, flags);
 
-			task_status = bfad_priv(cmnd)->status >> 1;
+			task_status = cmnd->SCp.Status >> 1;
 			if (task_status != BFI_TSKIM_STS_OK)
 				BFA_LOG(KERN_ERR, bfad, bfa_log_level,
 					"target reset failure,"
@@ -535,7 +547,7 @@ bfad_im_scsi_host_alloc(struct bfad_s *bfad, struct bfad_im_port_s *im_port,
 			struct device *dev)
 {
 	struct bfad_im_port_pointer *im_portp;
-	int error;
+	int error = 1;
 
 	mutex_lock(&bfad_mutex);
 	error = idr_alloc(&bfad_im_port_index, im_port, 0, 0, GFP_KERNEL);
@@ -755,6 +767,7 @@ void
 bfad_destroy_workq(struct bfad_im_s *im)
 {
 	if (im && im->drv_workq) {
+		flush_workqueue(im->drv_workq);
 		destroy_workqueue(im->drv_workq);
 		im->drv_workq = NULL;
 	}
@@ -795,7 +808,6 @@ struct scsi_host_template bfad_im_scsi_host_template = {
 	.name = BFAD_DRIVER_NAME,
 	.info = bfad_im_info,
 	.queuecommand = bfad_im_queuecommand,
-	.cmd_size = sizeof(struct bfad_cmd_priv),
 	.eh_timed_out = fc_eh_timed_out,
 	.eh_abort_handler = bfad_im_abort_handler,
 	.eh_device_reset_handler = bfad_im_reset_lun_handler,
@@ -808,7 +820,8 @@ struct scsi_host_template bfad_im_scsi_host_template = {
 	.this_id = -1,
 	.sg_tablesize = BFAD_IO_MAX_SGE,
 	.cmd_per_lun = 3,
-	.shost_groups = bfad_im_host_groups,
+	.use_clustering = ENABLE_CLUSTERING,
+	.shost_attrs = bfad_im_host_attrs,
 	.max_sectors = BFAD_MAX_SECTORS,
 	.vendor_id = BFA_PCI_VENDOR_ID_BROCADE,
 };
@@ -818,7 +831,6 @@ struct scsi_host_template bfad_im_vport_template = {
 	.name = BFAD_DRIVER_NAME,
 	.info = bfad_im_info,
 	.queuecommand = bfad_im_queuecommand,
-	.cmd_size = sizeof(struct bfad_cmd_priv),
 	.eh_timed_out = fc_eh_timed_out,
 	.eh_abort_handler = bfad_im_abort_handler,
 	.eh_device_reset_handler = bfad_im_reset_lun_handler,
@@ -831,7 +843,8 @@ struct scsi_host_template bfad_im_vport_template = {
 	.this_id = -1,
 	.sg_tablesize = BFAD_IO_MAX_SGE,
 	.cmd_per_lun = 3,
-	.shost_groups = bfad_im_vport_groups,
+	.use_clustering = ENABLE_CLUSTERING,
+	.shost_attrs = bfad_im_vport_attrs,
 	.max_sectors = BFAD_MAX_SECTORS,
 };
 
@@ -1199,9 +1212,9 @@ bfad_im_itnim_work_handler(struct work_struct *work)
 /*
  * Scsi_Host template entry, queue a SCSI command to the BFAD.
  */
-static int bfad_im_queuecommand_lck(struct scsi_cmnd *cmnd)
+static int
+bfad_im_queuecommand_lck(struct scsi_cmnd *cmnd, void (*done) (struct scsi_cmnd *))
 {
-	void (*done)(struct scsi_cmnd *) = scsi_done;
 	struct bfad_im_port_s *im_port =
 		(struct bfad_im_port_s *) cmnd->device->host->hostdata[0];
 	struct bfad_s         *bfad = im_port->bfad;
@@ -1233,19 +1246,21 @@ static int bfad_im_queuecommand_lck(struct scsi_cmnd *cmnd)
 	if (sg_cnt < 0)
 		return SCSI_MLQUEUE_HOST_BUSY;
 
+	cmnd->scsi_done = done;
+
 	spin_lock_irqsave(&bfad->bfad_lock, flags);
 	if (!(bfad->bfad_flags & BFAD_HAL_START_DONE)) {
 		printk(KERN_WARNING
 			"bfad%d, queuecommand %p %x failed, BFA stopped\n",
 		       bfad->inst_no, cmnd, cmnd->cmnd[0]);
-		cmnd->result = DID_NO_CONNECT << 16;
+		cmnd->result = ScsiResult(DID_NO_CONNECT, 0);
 		goto out_fail_cmd;
 	}
 
 
 	itnim = itnim_data->itnim;
 	if (!itnim) {
-		cmnd->result = DID_IMM_RETRY << 16;
+		cmnd->result = ScsiResult(DID_IMM_RETRY, 0);
 		goto out_fail_cmd;
 	}
 

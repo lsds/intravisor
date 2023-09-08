@@ -714,11 +714,11 @@ static int et131x_init_eeprom(struct et131x_adapter *adapter)
 			 * gather additional information that normally would
 			 * come from the eeprom, like MAC Address
 			 */
-			adapter->has_eeprom = false;
+			adapter->has_eeprom = 0;
 			return -EIO;
 		}
 	}
-	adapter->has_eeprom = true;
+	adapter->has_eeprom = 1;
 
 	/* Read the EEPROM for information regarding LED behavior. Refer to
 	 * et131x_xcvr_init() for its use.
@@ -950,6 +950,7 @@ static void et1310_setup_device_for_multicast(struct et131x_adapter *adapter)
 	u32 hash2 = 0;
 	u32 hash3 = 0;
 	u32 hash4 = 0;
+	u32 pm_csr;
 
 	/* If ET131X_PACKET_TYPE_MULTICAST is specified, then we provision
 	 * the multi-cast LIST.  If it is NOT specified, (and "ALL" is not
@@ -983,6 +984,7 @@ static void et1310_setup_device_for_multicast(struct et131x_adapter *adapter)
 	}
 
 	/* Write out the new hash to the device */
+	pm_csr = readl(&adapter->regs->global.pm_csr);
 	if (!et1310_in_phy_coma(adapter)) {
 		writel(hash1, &rxmac->multi_hash1);
 		writel(hash2, &rxmac->multi_hash2);
@@ -997,6 +999,7 @@ static void et1310_setup_device_for_unicast(struct et131x_adapter *adapter)
 	u32 uni_pf1;
 	u32 uni_pf2;
 	u32 uni_pf3;
+	u32 pm_csr;
 
 	/* Set up unicast packet filter reg 3 to be the first two octets of
 	 * the MAC address for both address
@@ -1022,6 +1025,7 @@ static void et1310_setup_device_for_unicast(struct et131x_adapter *adapter)
 		  (adapter->addr[4] << ET_RX_UNI_PF_ADDR1_5_SHIFT) |
 		   adapter->addr[5];
 
+	pm_csr = readl(&adapter->regs->global.pm_csr);
 	if (!et1310_in_phy_coma(adapter)) {
 		writel(uni_pf1, &rxmac->uni_pf_addr1);
 		writel(uni_pf2, &rxmac->uni_pf_addr2);
@@ -1106,7 +1110,7 @@ static void et1310_config_rxmac_regs(struct et131x_adapter *adapter)
 	writel(0, &rxmac->mif_ctrl);
 	writel(0, &rxmac->space_avail);
 
-	/* Initialize the mif_ctrl register
+	/* Initialize the the mif_ctrl register
 	 * bit 3:  Receive code error. One or more nibbles were signaled as
 	 *	   errors  during the reception of the packet.  Clear this
 	 *	   bit in Gigabit, set it in 100Mbit.  This was derived
@@ -2358,7 +2362,7 @@ static int et131x_tx_dma_memory_alloc(struct et131x_adapter *adapter)
 
 	/* Allocate memory for the TCB's (Transmit Control Block) */
 	tx_ring->tcb_ring = kcalloc(NUM_TCB, sizeof(struct tcb),
-				    GFP_KERNEL | GFP_DMA);
+				    GFP_ATOMIC | GFP_DMA);
 	if (!tx_ring->tcb_ring)
 		return -ENOMEM;
 
@@ -2413,18 +2417,16 @@ static void et131x_tx_dma_memory_free(struct et131x_adapter *adapter)
 	kfree(tx_ring->tcb_ring);
 }
 
-#define MAX_TX_DESC_PER_PKT 24
-
 /* nic_send_packet - NIC specific send handler for version B silicon. */
 static int nic_send_packet(struct et131x_adapter *adapter, struct tcb *tcb)
 {
 	u32 i;
-	struct tx_desc desc[MAX_TX_DESC_PER_PKT];
+	struct tx_desc desc[24];
 	u32 frag = 0;
 	u32 thiscopy, remainder;
 	struct sk_buff *skb = tcb->skb;
 	u32 nr_frags = skb_shinfo(skb)->nr_frags + 1;
-	skb_frag_t *frags = &skb_shinfo(skb)->frags[0];
+	struct skb_frag_struct *frags = &skb_shinfo(skb)->frags[0];
 	struct phy_device *phydev = adapter->netdev->phydev;
 	dma_addr_t dma_addr;
 	struct tx_ring *tx_ring = &adapter->tx_ring;
@@ -2433,6 +2435,9 @@ static int nic_send_packet(struct et131x_adapter *adapter, struct tcb *tcb)
 	 * sending 24 fragments at a pass.  In practice we should never see
 	 * more than 5 fragments.
 	 */
+
+	/* nr_frags should be no more than 18. */
+	BUILD_BUG_ON(MAX_SKB_FRAGS + 1 > 23);
 
 	memset(desc, 0, sizeof(struct tx_desc) * (nr_frags + 1));
 
@@ -2483,11 +2488,11 @@ static int nic_send_packet(struct et131x_adapter *adapter, struct tcb *tcb)
 				frag++;
 			}
 		} else {
-			desc[frag].len_vlan = skb_frag_size(&frags[i - 1]);
+			desc[frag].len_vlan = frags[i - 1].size;
 			dma_addr = skb_frag_dma_map(&adapter->pdev->dev,
 						    &frags[i - 1],
 						    0,
-						    desc[frag].len_vlan,
+						    frags[i - 1].size,
 						    DMA_TO_DEVICE);
 			desc[frag].addr_lo = lower_32_bits(dma_addr);
 			desc[frag].addr_hi = upper_32_bits(dma_addr);
@@ -2952,8 +2957,9 @@ static void et131x_get_drvinfo(struct net_device *netdev,
 {
 	struct et131x_adapter *adapter = netdev_priv(netdev);
 
-	strscpy(info->driver, DRIVER_NAME, sizeof(info->driver));
-	strscpy(info->bus_info, pci_name(adapter->pdev),
+	strlcpy(info->driver, DRIVER_NAME, sizeof(info->driver));
+	strlcpy(info->version, DRIVER_VERSION, sizeof(info->version));
+	strlcpy(info->bus_info, pci_name(adapter->pdev),
 		sizeof(info->bus_info));
 }
 
@@ -3252,11 +3258,19 @@ static int et131x_mii_probe(struct net_device *netdev)
 		return PTR_ERR(phydev);
 	}
 
-	phy_set_max_speed(phydev, SPEED_100);
+	phydev->supported &= (SUPPORTED_10baseT_Half |
+			      SUPPORTED_10baseT_Full |
+			      SUPPORTED_100baseT_Half |
+			      SUPPORTED_100baseT_Full |
+			      SUPPORTED_Autoneg |
+			      SUPPORTED_MII |
+			      SUPPORTED_TP);
 
 	if (adapter->pdev->device != ET131X_PCI_DEVICE_ID_FAST)
-		phy_set_max_speed(phydev, SPEED_1000);
+		phydev->supported |= SUPPORTED_1000baseT_Half |
+				     SUPPORTED_1000baseT_Full;
 
+	phydev->advertising = phydev->supported;
 	phydev->autoneg = AUTONEG_ENABLE;
 
 	phy_attached_info(phydev);
@@ -3438,9 +3452,12 @@ static irqreturn_t et131x_isr(int irq, void *dev_id)
 		 * send a pause packet, otherwise just exit
 		 */
 		if (adapter->flow == FLOW_TXONLY || adapter->flow == FLOW_BOTH) {
+			u32 pm_csr;
+
 			/* Tell the device to send a pause packet via the back
 			 * pressure register (bp req and bp xon/xoff)
 			 */
+			pm_csr = readl(&iomem->global.pm_csr);
 			if (!et1310_in_phy_coma(adapter))
 				writel(3, &iomem->txmac.bp_ctrl);
 		}
@@ -3642,6 +3659,15 @@ static int et131x_close(struct net_device *netdev)
 	return del_timer_sync(&adapter->error_timer);
 }
 
+static int et131x_ioctl(struct net_device *netdev, struct ifreq *reqbuf,
+			int cmd)
+{
+	if (!netdev->phydev)
+		return -EINVAL;
+
+	return phy_mii_ioctl(netdev->phydev, reqbuf, cmd);
+}
+
 /* et131x_set_packet_filter - Configures the Rx Packet filtering */
 static int et131x_set_packet_filter(struct et131x_adapter *adapter)
 {
@@ -3761,13 +3787,6 @@ static netdev_tx_t et131x_tx(struct sk_buff *skb, struct net_device *netdev)
 	struct et131x_adapter *adapter = netdev_priv(netdev);
 	struct tx_ring *tx_ring = &adapter->tx_ring;
 
-	/* This driver does not support TSO, it is very unlikely
-	 * this condition is true.
-	 */
-	if (unlikely(skb_shinfo(skb)->nr_frags > MAX_TX_DESC_PER_PKT - 2)) {
-		if (skb_linearize(skb))
-			goto drop_err;
-	}
 	/* stop the queue if it's getting full */
 	if (tx_ring->used >= NUM_TCB - 1 && !netif_queue_stopped(netdev))
 		netif_stop_queue(netdev);
@@ -3800,7 +3819,7 @@ drop_err:
  * specified by the 'tx_timeo" element in the net_device structure (see
  * et131x_alloc_device() to see how this value is set).
  */
-static void et131x_tx_timeout(struct net_device *netdev, unsigned int txqueue)
+static void et131x_tx_timeout(struct net_device *netdev)
 {
 	struct et131x_adapter *adapter = netdev_priv(netdev);
 	struct tx_ring *tx_ring = &adapter->tx_ring;
@@ -3869,7 +3888,7 @@ static int et131x_change_mtu(struct net_device *netdev, int new_mtu)
 
 	et131x_init_send(adapter);
 	et131x_hwaddr_init(adapter);
-	eth_hw_addr_set(netdev, adapter->addr);
+	ether_addr_copy(netdev->dev_addr, adapter->addr);
 
 	/* Init the device with the new settings */
 	et131x_adapter_setup(adapter);
@@ -3888,7 +3907,7 @@ static const struct net_device_ops et131x_netdev_ops = {
 	.ndo_set_mac_address	= eth_mac_addr,
 	.ndo_validate_addr	= eth_validate_addr,
 	.ndo_get_stats		= et131x_stats,
-	.ndo_eth_ioctl		= phy_do_ioctl,
+	.ndo_do_ioctl		= et131x_ioctl,
 };
 
 static int et131x_pci_setup(struct pci_dev *pdev,
@@ -3920,9 +3939,10 @@ static int et131x_pci_setup(struct pci_dev *pdev,
 	pci_set_master(pdev);
 
 	/* Check the DMA addressing support of this device */
-	rc = dma_set_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(64));
-	if (rc) {
+	if (dma_set_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(64)) &&
+	    dma_set_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(32))) {
 		dev_err(&pdev->dev, "No usable DMA addressing method\n");
+		rc = -EIO;
 		goto err_release_res;
 	}
 
@@ -3969,9 +3989,9 @@ static int et131x_pci_setup(struct pci_dev *pdev,
 
 	et131x_init_send(adapter);
 
-	netif_napi_add(netdev, &adapter->napi, et131x_poll);
+	netif_napi_add(netdev, &adapter->napi, et131x_poll, 64);
 
-	eth_hw_addr_set(netdev, adapter->addr);
+	ether_addr_copy(netdev->dev_addr, adapter->addr);
 
 	rc = -ENOMEM;
 

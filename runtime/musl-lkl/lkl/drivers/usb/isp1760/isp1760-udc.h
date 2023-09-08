@@ -1,13 +1,11 @@
-/* SPDX-License-Identifier: GPL-2.0 */
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Driver for the NXP ISP1761 device controller
  *
- * Copyright 2021 Linaro, Rui Miguel Silva
  * Copyright 2014 Ideas on Board Oy
  *
  * Contacts:
  *	Laurent Pinchart <laurent.pinchart@ideasonboard.com>
- *	Rui Miguel Silva <rui.silva@linaro.org>
  */
 
 #ifndef _ISP1760_UDC_H_
@@ -18,8 +16,6 @@
 #include <linux/spinlock.h>
 #include <linux/timer.h>
 #include <linux/usb/gadget.h>
-
-#include "isp1760-regs.h"
 
 struct isp1760_device;
 struct isp1760_udc;
@@ -52,7 +48,7 @@ struct isp1760_ep {
  * struct isp1760_udc - UDC state information
  * irq: IRQ number
  * irqname: IRQ name (as passed to request_irq)
- * regs: regmap for UDC registers
+ * regs: Base address of the UDC registers
  * driver: Gadget driver
  * gadget: Gadget device
  * lock: Protects driver, vbus_timer, ep, ep0_*, DC_EPINDEX register
@@ -63,13 +59,12 @@ struct isp1760_ep {
  * connected: Tracks gadget driver bus connection state
  */
 struct isp1760_udc {
+#ifdef CONFIG_USB_ISP1761_UDC
 	struct isp1760_device *isp;
 
 	int irq;
 	char *irqname;
-
-	struct regmap *regs;
-	struct regmap_field *fields[DC_FIELD_MAX];
+	void __iomem *regs;
 
 	struct usb_gadget_driver *driver;
 	struct usb_gadget gadget;
@@ -84,9 +79,9 @@ struct isp1760_udc {
 	u16 ep0_length;
 
 	bool connected;
-	bool is_isp1763;
 
 	unsigned int devstatus;
+#endif
 };
 
 #ifdef CONFIG_USB_ISP1761_UDC

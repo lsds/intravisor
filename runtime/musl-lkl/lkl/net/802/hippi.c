@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * INET		An implementation of the TCP/IP protocol suite for the LINUX
  *		operating system.  INET is implemented using the  BSD Socket
@@ -14,6 +13,11 @@
  *		Florian  La Roche, <rzsfl@rz.uni-sb.de>
  *		Alan Cox, <gw4pts@gw4pts.ampr.org>
  *		Jes Sorensen, <Jes.Sorensen@cern.ch>
+ *
+ *		This program is free software; you can redistribute it and/or
+ *		modify it under the terms of the GNU General Public License
+ *		as published by the Free Software Foundation; either version
+ *		2 of the License, or (at your option) any later version.
  */
 
 #include <linux/module.h>
@@ -65,7 +69,7 @@ static int hippi_header(struct sk_buff *skb, struct net_device *dev,
 	hip->le.src_addr_type	= 2;	/* 12 bit SC address */
 
 	memcpy(hip->le.src_switch_addr, dev->dev_addr + 3, 3);
-	memset_startat(&hip->le, 0, reserved);
+	memset(&hip->le.reserved, 0, 16);
 
 	hip->snap.dsap		= HIPPI_EXTENDED_SAP;
 	hip->snap.ssap		= HIPPI_EXTENDED_SAP;
@@ -121,7 +125,7 @@ int hippi_mac_addr(struct net_device *dev, void *p)
 	struct sockaddr *addr = p;
 	if (netif_running(dev))
 		return -EBUSY;
-	dev_addr_set(dev, addr->sa_data);
+	memcpy(dev->dev_addr, addr->sa_data, dev->addr_len);
 	return 0;
 }
 EXPORT_SYMBOL(hippi_mac_addr);

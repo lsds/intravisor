@@ -327,7 +327,7 @@ static int mt9v011_reset(struct v4l2_subdev *sd, u32 val)
 }
 
 static int mt9v011_enum_mbus_code(struct v4l2_subdev *sd,
-		struct v4l2_subdev_state *sd_state,
+		struct v4l2_subdev_pad_config *cfg,
 		struct v4l2_subdev_mbus_code_enum *code)
 {
 	if (code->pad || code->index > 0)
@@ -338,7 +338,7 @@ static int mt9v011_enum_mbus_code(struct v4l2_subdev *sd,
 }
 
 static int mt9v011_set_fmt(struct v4l2_subdev *sd,
-		struct v4l2_subdev_state *sd_state,
+		struct v4l2_subdev_pad_config *cfg,
 		struct v4l2_subdev_format *format)
 {
 	struct v4l2_mbus_framefmt *fmt = &format->format;
@@ -358,7 +358,7 @@ static int mt9v011_set_fmt(struct v4l2_subdev *sd,
 
 		set_res(sd);
 	} else {
-		sd_state->pads->try_fmt = *fmt;
+		cfg->try_fmt = *fmt;
 	}
 
 	return 0;
@@ -561,7 +561,7 @@ static int mt9v011_probe(struct i2c_client *c,
 	return 0;
 }
 
-static void mt9v011_remove(struct i2c_client *c)
+static int mt9v011_remove(struct i2c_client *c)
 {
 	struct v4l2_subdev *sd = i2c_get_clientdata(c);
 	struct mt9v011 *core = to_mt9v011(sd);
@@ -572,6 +572,8 @@ static void mt9v011_remove(struct i2c_client *c)
 
 	v4l2_device_unregister_subdev(sd);
 	v4l2_ctrl_handler_free(&core->ctrls);
+
+	return 0;
 }
 
 /* ----------------------------------------------------------------------- */

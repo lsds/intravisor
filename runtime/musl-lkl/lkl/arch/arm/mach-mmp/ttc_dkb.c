@@ -1,8 +1,11 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  *  linux/arch/arm/mach-mmp/ttc_dkb.c
  *
  *  Support for the Marvell PXA910-based TTC_DKB Development Platform.
+ *
+ *  This program is free software; you can redistribute it and/or modify
+ *  it under the terms of the GNU General Public License version 2 as
+ *  publishhed by the Free Software Foundation.
  */
 
 #include <linux/init.h>
@@ -253,12 +256,12 @@ static struct spi_board_info spi_board_info[] __initdata = {
 
 static void __init add_disp(void)
 {
-	mmp_register_device(&pxa910_device_disp,
+	pxa_register_device(&pxa910_device_disp,
 		&dkb_disp_info, sizeof(dkb_disp_info));
 	spi_register_board_info(spi_board_info, ARRAY_SIZE(spi_board_info));
-	mmp_register_device(&pxa910_device_fb,
+	pxa_register_device(&pxa910_device_fb,
 		&dkb_fb_info, sizeof(dkb_fb_info));
-	mmp_register_device(&pxa910_device_panel,
+	pxa_register_device(&pxa910_device_panel,
 		&dkb_tpo_panel_info, sizeof(dkb_tpo_panel_info));
 }
 #endif
@@ -279,11 +282,6 @@ static void __init ttc_dkb_init(void)
 				 sizeof(struct pxa_gpio_platform_data));
 	platform_add_devices(ARRAY_AND_SIZE(ttc_dkb_devices));
 
-#if IS_ENABLED(CONFIG_USB_SUPPORT)
-#if IS_ENABLED(CONFIG_PHY_PXA_USB)
-	platform_device_register(&pxa168_device_usb_phy);
-#endif
-
 #if IS_ENABLED(CONFIG_USB_MV_UDC)
 	pxa168_device_u2o.dev.platform_data = &ttc_usb_pdata;
 	platform_device_register(&pxa168_device_u2o);
@@ -297,7 +295,6 @@ static void __init ttc_dkb_init(void)
 #if IS_ENABLED(CONFIG_USB_MV_OTG)
 	pxa168_device_u2ootg.dev.platform_data = &ttc_usb_pdata;
 	platform_device_register(&pxa168_device_u2ootg);
-#endif
 #endif
 
 #if IS_ENABLED(CONFIG_MMP_DISP)

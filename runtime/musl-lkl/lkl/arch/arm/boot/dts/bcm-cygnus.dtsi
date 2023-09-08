@@ -34,21 +34,12 @@
 #include <dt-bindings/interrupt-controller/irq.h>
 #include <dt-bindings/clock/bcm-cygnus.h>
 
+#include "skeleton.dtsi"
+
 / {
-	#address-cells = <1>;
-	#size-cells = <1>;
 	compatible = "brcm,cygnus";
 	model = "Broadcom Cygnus SoC";
 	interrupt-parent = <&gic>;
-
-	aliases {
-		ethernet0 = &eth0;
-	};
-
-	memory@0 {
-		device_type = "memory";
-		reg = <0 0>;
-	};
 
 	cpus {
 		#address-cells = <1>;
@@ -69,7 +60,7 @@
 		interrupts = <GIC_SPI 8 IRQ_TYPE_LEVEL_HIGH>;
 	};
 
-	core@19000000 {
+	core {
 		compatible = "simple-bus";
 		ranges = <0x00000000 0x19000000 0x1000000>;
 		#address-cells = <1>;
@@ -91,7 +82,7 @@
 			      <0x20100 0x100>;
 		};
 
-		L2: cache-controller@22000 {
+		L2: l2-cache {
 			compatible = "arm,pl310-cache";
 			reg = <0x22000 0x1000>;
 			cache-unified;
@@ -112,18 +103,18 @@
 			status = "disabled";
 		};
 
-		pcie_phy: pcie_phy@301d0a0 {
+		pcie_phy: phy@301d0a0 {
 			compatible = "brcm,cygnus-pcie-phy";
 			reg = <0x0301d0a0 0x14>;
 			#address-cells = <1>;
 			#size-cells = <0>;
 
-			pcie0_phy: pcie-phy@0 {
+			pcie0_phy: phy@0 {
 				reg = <0>;
 				#phy-cells = <0>;
 			};
 
-			pcie1_phy: pcie-phy@1 {
+			pcie1_phy: phy@1 {
 				reg = <1>;
 				#phy-cells = <0>;
 			};
@@ -174,8 +165,8 @@
 		mdio: mdio@18002000 {
 			compatible = "brcm,iproc-mdio";
 			reg = <0x18002000 0x8>;
-			#size-cells = <0>;
-			#address-cells = <1>;
+			#size-cells = <1>;
+			#address-cells = <0>;
 			status = "disabled";
 
 			gphy0: ethernet-phy@0 {
@@ -225,7 +216,7 @@
 			reg = <0x18008000 0x100>;
 			#address-cells = <1>;
 			#size-cells = <0>;
-			interrupts = <GIC_SPI 85 IRQ_TYPE_LEVEL_HIGH>;
+			interrupts = <GIC_SPI 85 IRQ_TYPE_NONE>;
 			clock-frequency = <100000>;
 			status = "disabled";
 		};
@@ -234,8 +225,8 @@
 			compatible = "arm,sp805" , "arm,primecell";
 			reg = <0x18009000 0x1000>;
 			interrupts = <GIC_SPI 91 IRQ_TYPE_LEVEL_HIGH>;
-			clocks = <&axi81_clk>, <&axi81_clk>;
-			clock-names = "wdog_clk", "apb_pclk";
+			clocks = <&axi81_clk>;
+			clock-names = "apb_pclk";
 		};
 
 		gpio_ccm: gpio@1800a000 {
@@ -254,7 +245,7 @@
 			reg = <0x1800b000 0x100>;
 			#address-cells = <1>;
 			#size-cells = <0>;
-			interrupts = <GIC_SPI 86 IRQ_TYPE_LEVEL_HIGH>;
+			interrupts = <GIC_SPI 86 IRQ_TYPE_NONE>;
 			clock-frequency = <100000>;
 			status = "disabled";
 		};
@@ -265,7 +256,7 @@
 
 			#interrupt-cells = <1>;
 			interrupt-map-mask = <0 0 0 0>;
-			interrupt-map = <0 0 0 0 &gic GIC_SPI 100 IRQ_TYPE_LEVEL_HIGH>;
+			interrupt-map = <0 0 0 0 &gic GIC_SPI 100 IRQ_TYPE_NONE>;
 
 			linux,pci-domain = <0>;
 
@@ -274,8 +265,8 @@
 			#address-cells = <3>;
 			#size-cells = <2>;
 			device_type = "pci";
-			ranges = <0x81000000 0 0	  0x28000000 0 0x00010000>,
-				 <0x82000000 0 0x20000000 0x20000000 0 0x04000000>;
+			ranges = <0x81000000 0 0	  0x28000000 0 0x00010000
+				  0x82000000 0 0x20000000 0x20000000 0 0x04000000>;
 
 			phys = <&pcie0_phy>;
 			phy-names = "pcie-phy";
@@ -283,14 +274,14 @@
 			status = "disabled";
 
 			msi-parent = <&msi0>;
-			msi0: msi {
+			msi0: msi-controller {
 				compatible = "brcm,iproc-msi";
 				msi-controller;
 				interrupt-parent = <&gic>;
-				interrupts = <GIC_SPI 96 IRQ_TYPE_LEVEL_HIGH>,
-					     <GIC_SPI 97 IRQ_TYPE_LEVEL_HIGH>,
-					     <GIC_SPI 98 IRQ_TYPE_LEVEL_HIGH>,
-					     <GIC_SPI 99 IRQ_TYPE_LEVEL_HIGH>;
+				interrupts = <GIC_SPI 96 IRQ_TYPE_NONE>,
+					     <GIC_SPI 97 IRQ_TYPE_NONE>,
+					     <GIC_SPI 98 IRQ_TYPE_NONE>,
+					     <GIC_SPI 99 IRQ_TYPE_NONE>;
 			};
 		};
 
@@ -300,7 +291,7 @@
 
 			#interrupt-cells = <1>;
 			interrupt-map-mask = <0 0 0 0>;
-			interrupt-map = <0 0 0 0 &gic GIC_SPI 106 IRQ_TYPE_LEVEL_HIGH>;
+			interrupt-map = <0 0 0 0 &gic GIC_SPI 106 IRQ_TYPE_NONE>;
 
 			linux,pci-domain = <1>;
 
@@ -309,8 +300,8 @@
 			#address-cells = <3>;
 			#size-cells = <2>;
 			device_type = "pci";
-			ranges = <0x81000000 0 0	  0x48000000 0 0x00010000>,
-				 <0x82000000 0 0x40000000 0x40000000 0 0x04000000>;
+			ranges = <0x81000000 0 0	  0x48000000 0 0x00010000
+				  0x82000000 0 0x40000000 0x40000000 0 0x04000000>;
 
 			phys = <&pcie1_phy>;
 			phy-names = "pcie-phy";
@@ -318,14 +309,14 @@
 			status = "disabled";
 
 			msi-parent = <&msi1>;
-			msi1: msi {
+			msi1: msi-controller {
 				compatible = "brcm,iproc-msi";
 				msi-controller;
 				interrupt-parent = <&gic>;
-				interrupts = <GIC_SPI 102 IRQ_TYPE_LEVEL_HIGH>,
-					     <GIC_SPI 103 IRQ_TYPE_LEVEL_HIGH>,
-					     <GIC_SPI 104 IRQ_TYPE_LEVEL_HIGH>,
-					     <GIC_SPI 105 IRQ_TYPE_LEVEL_HIGH>;
+				interrupts = <GIC_SPI 102 IRQ_TYPE_NONE>,
+					     <GIC_SPI 103 IRQ_TYPE_NONE>,
+					     <GIC_SPI 104 IRQ_TYPE_NONE>,
+					     <GIC_SPI 105 IRQ_TYPE_NONE>;
 			};
 		};
 
@@ -397,8 +388,8 @@
 			#size-cells = <0>;
 			interrupts = <GIC_SPI 78 IRQ_TYPE_LEVEL_HIGH>;
 			pinctrl-0 = <&spi_0>;
-			clocks = <&axi81_clk>, <&axi81_clk>;
-			clock-names = "sspclk", "apb_pclk";
+			clocks = <&axi81_clk>;
+			clock-names = "apb_pclk";
 			status = "disabled";
 		};
 
@@ -409,8 +400,8 @@
 			#size-cells = <0>;
 			interrupts = <GIC_SPI 79 IRQ_TYPE_LEVEL_HIGH>;
 			pinctrl-0 = <&spi_1>;
-			clocks = <&axi81_clk>, <&axi81_clk>;
-			clock-names = "sspclk", "apb_pclk";
+			clocks = <&axi81_clk>;
+			clock-names = "apb_pclk";
 			status = "disabled";
 		};
 
@@ -421,14 +412,9 @@
 			#size-cells = <0>;
 			interrupts = <GIC_SPI 80 IRQ_TYPE_LEVEL_HIGH>;
 			pinctrl-0 = <&spi_2>;
-			clocks = <&axi81_clk>, <&axi81_clk>;
-			clock-names = "sspclk", "apb_pclk";
+			clocks = <&axi81_clk>;
+			clock-names = "apb_pclk";
 			status = "disabled";
-		};
-
-		rng: rng@18032000 {
-			compatible = "brcm,iproc-rng200";
-			reg = <0x18032000 0x28>;
 		};
 
 		sdhci0: sdhci@18041000 {
@@ -460,7 +446,7 @@
 			status = "disabled";
 		};
 
-		nand_controller: nand-controller@18046000 {
+		nand: nand@18046000 {
 			compatible = "brcm,nand-iproc", "brcm,brcmnand-v6.1";
 			reg = <0x18046000 0x600>, <0xf8105408 0x600>,
 			      <0x18046f00 0x20>;
@@ -591,6 +577,7 @@
 		adc: adc@180a6000 {
 			compatible = "brcm,iproc-static-adc";
 			#io-channel-cells = <1>;
+			io-channel-ranges;
 			adc-syscon = <&ts_adc_syscon>;
 			clocks = <&asiu_clks BCM_CYGNUS_ASIU_ADC_CLK>;
 			clock-names = "tsc_clk";

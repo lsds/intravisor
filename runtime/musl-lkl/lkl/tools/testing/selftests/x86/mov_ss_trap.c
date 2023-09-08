@@ -47,6 +47,7 @@
 unsigned short ss;
 extern unsigned char breakpoint_insn[];
 sigjmp_buf jmpbuf;
+static unsigned char altstack_data[SIGSTKSZ];
 
 static void enable_watchpoint(void)
 {
@@ -249,16 +250,14 @@ int main()
 	if (sigsetjmp(jmpbuf, 1) == 0) {
 		printf("[RUN]\tMOV SS; SYSENTER\n");
 		stack_t stack = {
-			.ss_sp = malloc(sizeof(char) * SIGSTKSZ),
+			.ss_sp = altstack_data,
 			.ss_size = SIGSTKSZ,
 		};
 		if (sigaltstack(&stack, NULL) != 0)
 			err(1, "sigaltstack");
 		sethandler(SIGSEGV, handle_and_longjmp, SA_RESETHAND | SA_ONSTACK);
 		nr = SYS_getpid;
-		free(stack.ss_sp);
-		/* Clear EBP first to make sure we segfault cleanly. */
-		asm volatile ("xorl %%ebp, %%ebp; mov %[ss], %%ss; SYSENTER" : "+a" (nr)
+		asm volatile ("mov %[ss], %%ss; SYSENTER" : "+a" (nr)
 			      : [ss] "m" (ss) : "flags", "rcx"
 #ifdef __x86_64__
 				, "r11"

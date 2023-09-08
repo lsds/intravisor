@@ -1,10 +1,13 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * AMD Secure Processor device driver
  *
- * Copyright (C) 2014,2018 Advanced Micro Devices, Inc.
+ * Copyright (C) 2014,2016 Advanced Micro Devices, Inc.
  *
  * Author: Tom Lendacky <thomas.lendacky@amd.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 
 #include <linux/module.h>
@@ -30,31 +33,8 @@ struct sp_platform {
 	unsigned int irq_count;
 };
 
-static const struct sp_dev_vdata dev_vdata[] = {
-	{
-		.bar = 0,
-#ifdef CONFIG_CRYPTO_DEV_SP_CCP
-		.ccp_vdata = &ccpv3_platform,
-#endif
-	},
-};
-
-#ifdef CONFIG_ACPI
-static const struct acpi_device_id sp_acpi_match[] = {
-	{ "AMDI0C00", (kernel_ulong_t)&dev_vdata[0] },
-	{ },
-};
-MODULE_DEVICE_TABLE(acpi, sp_acpi_match);
-#endif
-
-#ifdef CONFIG_OF
-static const struct of_device_id sp_of_match[] = {
-	{ .compatible = "amd,ccp-seattle-v1a",
-	  .data = (const void *)&dev_vdata[0] },
-	{ },
-};
-MODULE_DEVICE_TABLE(of, sp_of_match);
-#endif
+static const struct acpi_device_id sp_acpi_match[];
+static const struct of_device_id sp_of_match[];
 
 static struct sp_dev_vdata *sp_get_of_version(struct platform_device *pdev)
 {
@@ -85,9 +65,17 @@ static int sp_get_irqs(struct sp_device *sp)
 	struct sp_platform *sp_platform = sp->dev_specific;
 	struct device *dev = sp->dev;
 	struct platform_device *pdev = to_platform_device(dev);
+	unsigned int i, count;
 	int ret;
 
-	sp_platform->irq_count = platform_irq_count(pdev);
+	for (i = 0, count = 0; i < pdev->num_resources; i++) {
+		struct resource *res = &pdev->resource[i];
+
+		if (resource_type(res) == IORESOURCE_IRQ)
+			count++;
+	}
+
+	sp_platform->irq_count = count;
 
 	ret = platform_get_irq(pdev, 0);
 	if (ret < 0) {
@@ -96,7 +84,7 @@ static int sp_get_irqs(struct sp_device *sp)
 	}
 
 	sp->psp_irq = ret;
-	if (sp_platform->irq_count == 1) {
+	if (count == 1) {
 		sp->ccp_irq = ret;
 	} else {
 		ret = platform_get_irq(pdev, 1);
@@ -117,6 +105,7 @@ static int sp_platform_probe(struct platform_device *pdev)
 	struct sp_platform *sp_platform;
 	struct device *dev = &pdev->dev;
 	enum dev_dma_attr attr;
+	struct resource *ior;
 	int ret;
 
 	ret = -ENOMEM;
@@ -137,7 +126,8 @@ static int sp_platform_probe(struct platform_device *pdev)
 		goto e_err;
 	}
 
-	sp->io_map = devm_platform_ioremap_resource(pdev, 0);
+	ior = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	sp->io_map = devm_ioremap_resource(dev, ior);
 	if (IS_ERR(sp->io_map)) {
 		ret = PTR_ERR(sp->io_map);
 		goto e_err;
@@ -199,7 +189,7 @@ static int sp_platform_suspend(struct platform_device *pdev,
 	struct device *dev = &pdev->dev;
 	struct sp_device *sp = dev_get_drvdata(dev);
 
-	return sp_suspend(sp);
+	return sp_suspend(sp, state);
 }
 
 static int sp_platform_resume(struct platform_device *pdev)
@@ -209,6 +199,32 @@ static int sp_platform_resume(struct platform_device *pdev)
 
 	return sp_resume(sp);
 }
+#endif
+
+static const struct sp_dev_vdata dev_vdata[] = {
+	{
+		.bar = 0,
+#ifdef CONFIG_CRYPTO_DEV_SP_CCP
+		.ccp_vdata = &ccpv3_platform,
+#endif
+	},
+};
+
+#ifdef CONFIG_ACPI
+static const struct acpi_device_id sp_acpi_match[] = {
+	{ "AMDI0C00", (kernel_ulong_t)&dev_vdata[0] },
+	{ },
+};
+MODULE_DEVICE_TABLE(acpi, sp_acpi_match);
+#endif
+
+#ifdef CONFIG_OF
+static const struct of_device_id sp_of_match[] = {
+	{ .compatible = "amd,ccp-seattle-v1a",
+	  .data = (const void *)&dev_vdata[0] },
+	{ },
+};
+MODULE_DEVICE_TABLE(of, sp_of_match);
 #endif
 
 static struct platform_driver sp_platform_driver = {

@@ -24,11 +24,11 @@
 #include <linux/seq_file.h>
 #include <linux/bitops.h>
 #include <linux/rtc.h>
-#include <linux/of.h>
 
 #include <linux/uaccess.h>
 #include <asm/processor.h>
 #include <asm/io.h>
+#include <asm/prom.h>
 #include <asm/rtas.h>
 #include <asm/machdep.h> /* for ppc_md */
 #include <asm/time.h>
@@ -154,17 +154,29 @@ static ssize_t ppc_rtas_tone_volume_write(struct file *file,
 static int ppc_rtas_tone_volume_show(struct seq_file *m, void *v);
 static int ppc_rtas_rmo_buf_show(struct seq_file *m, void *v);
 
+static int sensors_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, ppc_rtas_sensors_show, NULL);
+}
+
+static const struct file_operations ppc_rtas_sensors_operations = {
+	.open		= sensors_open,
+	.read		= seq_read,
+	.llseek		= seq_lseek,
+	.release	= single_release,
+};
+
 static int poweron_open(struct inode *inode, struct file *file)
 {
 	return single_open(file, ppc_rtas_poweron_show, NULL);
 }
 
-static const struct proc_ops ppc_rtas_poweron_proc_ops = {
-	.proc_open	= poweron_open,
-	.proc_read	= seq_read,
-	.proc_lseek	= seq_lseek,
-	.proc_write	= ppc_rtas_poweron_write,
-	.proc_release	= single_release,
+static const struct file_operations ppc_rtas_poweron_operations = {
+	.open		= poweron_open,
+	.read		= seq_read,
+	.llseek		= seq_lseek,
+	.write		= ppc_rtas_poweron_write,
+	.release	= single_release,
 };
 
 static int progress_open(struct inode *inode, struct file *file)
@@ -172,12 +184,12 @@ static int progress_open(struct inode *inode, struct file *file)
 	return single_open(file, ppc_rtas_progress_show, NULL);
 }
 
-static const struct proc_ops ppc_rtas_progress_proc_ops = {
-	.proc_open	= progress_open,
-	.proc_read	= seq_read,
-	.proc_lseek	= seq_lseek,
-	.proc_write	= ppc_rtas_progress_write,
-	.proc_release	= single_release,
+static const struct file_operations ppc_rtas_progress_operations = {
+	.open		= progress_open,
+	.read		= seq_read,
+	.llseek		= seq_lseek,
+	.write		= ppc_rtas_progress_write,
+	.release	= single_release,
 };
 
 static int clock_open(struct inode *inode, struct file *file)
@@ -185,12 +197,12 @@ static int clock_open(struct inode *inode, struct file *file)
 	return single_open(file, ppc_rtas_clock_show, NULL);
 }
 
-static const struct proc_ops ppc_rtas_clock_proc_ops = {
-	.proc_open	= clock_open,
-	.proc_read	= seq_read,
-	.proc_lseek	= seq_lseek,
-	.proc_write	= ppc_rtas_clock_write,
-	.proc_release	= single_release,
+static const struct file_operations ppc_rtas_clock_operations = {
+	.open		= clock_open,
+	.read		= seq_read,
+	.llseek		= seq_lseek,
+	.write		= ppc_rtas_clock_write,
+	.release	= single_release,
 };
 
 static int tone_freq_open(struct inode *inode, struct file *file)
@@ -198,12 +210,12 @@ static int tone_freq_open(struct inode *inode, struct file *file)
 	return single_open(file, ppc_rtas_tone_freq_show, NULL);
 }
 
-static const struct proc_ops ppc_rtas_tone_freq_proc_ops = {
-	.proc_open	= tone_freq_open,
-	.proc_read	= seq_read,
-	.proc_lseek	= seq_lseek,
-	.proc_write	= ppc_rtas_tone_freq_write,
-	.proc_release	= single_release,
+static const struct file_operations ppc_rtas_tone_freq_operations = {
+	.open		= tone_freq_open,
+	.read		= seq_read,
+	.llseek		= seq_lseek,
+	.write		= ppc_rtas_tone_freq_write,
+	.release	= single_release,
 };
 
 static int tone_volume_open(struct inode *inode, struct file *file)
@@ -211,12 +223,24 @@ static int tone_volume_open(struct inode *inode, struct file *file)
 	return single_open(file, ppc_rtas_tone_volume_show, NULL);
 }
 
-static const struct proc_ops ppc_rtas_tone_volume_proc_ops = {
-	.proc_open	= tone_volume_open,
-	.proc_read	= seq_read,
-	.proc_lseek	= seq_lseek,
-	.proc_write	= ppc_rtas_tone_volume_write,
-	.proc_release	= single_release,
+static const struct file_operations ppc_rtas_tone_volume_operations = {
+	.open		= tone_volume_open,
+	.read		= seq_read,
+	.llseek		= seq_lseek,
+	.write		= ppc_rtas_tone_volume_write,
+	.release	= single_release,
+};
+
+static int rmo_buf_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, ppc_rtas_rmo_buf_show, NULL);
+}
+
+static const struct file_operations ppc_rtas_rmo_buf_ops = {
+	.open		= rmo_buf_open,
+	.read		= seq_read,
+	.llseek		= seq_lseek,
+	.release	= single_release,
 };
 
 static int ppc_rtas_find_all_sensors(void);
@@ -238,27 +262,28 @@ static int __init proc_rtas_init(void)
 		return -ENODEV;
 
 	proc_create("powerpc/rtas/progress", 0644, NULL,
-		    &ppc_rtas_progress_proc_ops);
+		    &ppc_rtas_progress_operations);
 	proc_create("powerpc/rtas/clock", 0644, NULL,
-		    &ppc_rtas_clock_proc_ops);
+		    &ppc_rtas_clock_operations);
 	proc_create("powerpc/rtas/poweron", 0644, NULL,
-		    &ppc_rtas_poweron_proc_ops);
-	proc_create_single("powerpc/rtas/sensors", 0444, NULL,
-			ppc_rtas_sensors_show);
+		    &ppc_rtas_poweron_operations);
+	proc_create("powerpc/rtas/sensors", 0444, NULL,
+		    &ppc_rtas_sensors_operations);
 	proc_create("powerpc/rtas/frequency", 0644, NULL,
-		    &ppc_rtas_tone_freq_proc_ops);
+		    &ppc_rtas_tone_freq_operations);
 	proc_create("powerpc/rtas/volume", 0644, NULL,
-		    &ppc_rtas_tone_volume_proc_ops);
-	proc_create_single("powerpc/rtas/rmo_buffer", 0400, NULL,
-			ppc_rtas_rmo_buf_show);
+		    &ppc_rtas_tone_volume_operations);
+	proc_create("powerpc/rtas/rmo_buffer", 0400, NULL,
+		    &ppc_rtas_rmo_buf_ops);
 	return 0;
 }
 
 __initcall(proc_rtas_init);
 
-static int parse_number(const char __user *p, size_t count, u64 *val)
+static int parse_number(const char __user *p, size_t count, unsigned long *val)
 {
 	char buf[40];
+	char *end;
 
 	if (count > 39)
 		return -EINVAL;
@@ -268,7 +293,11 @@ static int parse_number(const char __user *p, size_t count, u64 *val)
 
 	buf[count] = 0;
 
-	return kstrtoull(buf, 10, val);
+	*val = simple_strtoul(buf, &end, 10);
+	if (*end && *end != '\n')
+		return -EINVAL;
+
+	return 0;
 }
 
 /* ****************************************************************** */
@@ -278,17 +307,17 @@ static ssize_t ppc_rtas_poweron_write(struct file *file,
 		const char __user *buf, size_t count, loff_t *ppos)
 {
 	struct rtc_time tm;
-	time64_t nowtime;
+	unsigned long nowtime;
 	int error = parse_number(buf, count, &nowtime);
 	if (error)
 		return error;
 
 	power_on_time = nowtime; /* save the time */
 
-	rtc_time64_to_tm(nowtime, &tm);
+	to_tm(nowtime, &tm);
 
 	error = rtas_call(rtas_token("set-time-for-power-on"), 7, 1, NULL, 
-			tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
+			tm.tm_year, tm.tm_mon, tm.tm_mday, 
 			tm.tm_hour, tm.tm_min, tm.tm_sec, 0 /* nano */);
 	if (error)
 		printk(KERN_WARNING "error: setting poweron time returned: %s\n", 
@@ -344,14 +373,14 @@ static ssize_t ppc_rtas_clock_write(struct file *file,
 		const char __user *buf, size_t count, loff_t *ppos)
 {
 	struct rtc_time tm;
-	time64_t nowtime;
+	unsigned long nowtime;
 	int error = parse_number(buf, count, &nowtime);
 	if (error)
 		return error;
 
-	rtc_time64_to_tm(nowtime, &tm);
+	to_tm(nowtime, &tm);
 	error = rtas_call(rtas_token("set-time-of-day"), 7, 1, NULL, 
-			tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
+			tm.tm_year, tm.tm_mon, tm.tm_mday, 
 			tm.tm_hour, tm.tm_min, tm.tm_sec, 0);
 	if (error)
 		printk(KERN_WARNING "error: setting the clock returned: %s\n", 
@@ -372,8 +401,8 @@ static int ppc_rtas_clock_show(struct seq_file *m, void *v)
 		unsigned int year, mon, day, hour, min, sec;
 		year = ret[0]; mon  = ret[1]; day  = ret[2];
 		hour = ret[3]; min  = ret[4]; sec  = ret[5];
-		seq_printf(m, "%lld\n",
-				mktime64(year, mon, day, hour, min, sec));
+		seq_printf(m, "%lu\n",
+				mktime(year, mon, day, hour, min, sec));
 	}
 	return 0;
 }
@@ -499,7 +528,7 @@ static void ppc_rtas_process_sensor(struct seq_file *m,
 		"EPOW power off" };
 	const char * battery_cyclestate[]  = { "None", "In progress", 
 						"Requested" };
-	const char * battery_charging[]    = { "Charging", "Discharging",
+	const char * battery_charging[]    = { "Charging", "Discharching", 
 						"No current flow" };
 	const char * ibm_drconnector[]     = { "Empty", "Present", "Unusable", 
 						"Exchange" };
@@ -702,7 +731,7 @@ static void get_location_code(struct seq_file *m, struct individual_sensor *s,
 static ssize_t ppc_rtas_tone_freq_write(struct file *file,
 		const char __user *buf, size_t count, loff_t *ppos)
 {
-	u64 freq;
+	unsigned long freq;
 	int error = parse_number(buf, count, &freq);
 	if (error)
 		return error;
@@ -727,7 +756,7 @@ static int ppc_rtas_tone_freq_show(struct seq_file *m, void *v)
 static ssize_t ppc_rtas_tone_volume_write(struct file *file,
 		const char __user *buf, size_t count, loff_t *ppos)
 {
-	u64 volume;
+	unsigned long volume;
 	int error = parse_number(buf, count, &volume);
 	if (error)
 		return error;
@@ -750,18 +779,11 @@ static int ppc_rtas_tone_volume_show(struct seq_file *m, void *v)
 	return 0;
 }
 
-/**
- * ppc_rtas_rmo_buf_show() - Describe RTAS-addressable region for user space.
- *
- * Base + size description of a range of RTAS-addressable memory set
- * aside for user space to use as work area(s) for certain RTAS
- * functions. User space accesses this region via /dev/mem. Apart from
- * security policies, the kernel does not arbitrate or serialize
- * access to this region, and user space must ensure that concurrent
- * users do not interfere with each other.
- */
+#define RMO_READ_BUF_MAX 30
+
+/* RTAS Userspace access */
 static int ppc_rtas_rmo_buf_show(struct seq_file *m, void *v)
 {
-	seq_printf(m, "%016lx %x\n", rtas_rmo_buf, RTAS_USER_REGION_SIZE);
+	seq_printf(m, "%016lx %x\n", rtas_rmo_buf, RTAS_RMOBUF_MAX);
 	return 0;
 }

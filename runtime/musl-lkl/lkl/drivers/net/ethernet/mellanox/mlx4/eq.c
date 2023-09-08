@@ -100,7 +100,7 @@ static void eq_set_ci(struct mlx4_eq *eq, int req_not)
 					       req_not << 31),
 		     eq->doorbell);
 	/* We still want ordering, just not swabbing, so add a barrier */
-	wmb();
+	mb();
 }
 
 static struct mlx4_eqe *get_eqe(struct mlx4_eq *eq, u32 entry, u8 eqe_factor,
@@ -240,13 +240,12 @@ static void mlx4_set_eq_affinity_hint(struct mlx4_priv *priv, int vec)
 	struct mlx4_dev *dev = &priv->dev;
 	struct mlx4_eq *eq = &priv->eq_table.eq[vec];
 
-	if (!cpumask_available(eq->affinity_mask) ||
-	    cpumask_empty(eq->affinity_mask))
+	if (!eq->affinity_mask || cpumask_empty(eq->affinity_mask))
 		return;
 
-	hint_err = irq_update_affinity_hint(eq->irq, eq->affinity_mask);
+	hint_err = irq_set_affinity_hint(eq->irq, eq->affinity_mask);
 	if (hint_err)
-		mlx4_warn(dev, "irq_update_affinity_hint failed, err %d\n", hint_err);
+		mlx4_warn(dev, "irq_set_affinity_hint failed, err %d\n", hint_err);
 }
 #endif
 
@@ -558,7 +557,6 @@ static int mlx4_eq_int(struct mlx4_dev *dev, struct mlx4_eq *eq)
 			mlx4_dbg(dev, "%s: MLX4_EVENT_TYPE_SRQ_LIMIT. srq_no=0x%x, eq 0x%x\n",
 				 __func__, be32_to_cpu(eqe->event.srq.srqn),
 				 eq->eqn);
-			fallthrough;
 		case MLX4_EVENT_TYPE_SRQ_CATAS_ERROR:
 			if (mlx4_is_master(dev)) {
 				/* forward only to slave owning the SRQ */
@@ -821,7 +819,7 @@ static int mlx4_eq_int(struct mlx4_dev *dev, struct mlx4_eq *eq)
 				  !!(eqe->owner & 0x80) ^
 				  !!(eq->cons_index & eq->nent) ? "HW" : "SW");
 			break;
-		}
+		};
 
 		++eq->cons_index;
 		eqes_found = 1;
@@ -1013,6 +1011,8 @@ static int mlx4_create_eq(struct mlx4_dev *dev, int nent,
 
 		dma_list[i] = t;
 		eq->page_list[i].map = t;
+
+		memset(eq->page_list[i].buf, 0, PAGE_SIZE);
 	}
 
 	eq->eqn = mlx4_bitmap_alloc(&priv->eq_table.bitmap);
@@ -1057,7 +1057,8 @@ static int mlx4_create_eq(struct mlx4_dev *dev, int nent,
 	INIT_LIST_HEAD(&eq->tasklet_ctx.list);
 	INIT_LIST_HEAD(&eq->tasklet_ctx.process_list);
 	spin_lock_init(&eq->tasklet_ctx.lock);
-	tasklet_setup(&eq->tasklet_ctx.task, mlx4_cq_tasklet_cb);
+	tasklet_init(&eq->tasklet_ctx.task, mlx4_cq_tasklet_cb,
+		     (unsigned long)&eq->tasklet_ctx);
 
 	return err;
 
@@ -1123,7 +1124,9 @@ static void mlx4_free_irqs(struct mlx4_dev *dev)
 	for (i = 0; i < dev->caps.num_comp_vectors + 1; ++i)
 		if (eq_table->eq[i].have_irq) {
 			free_cpumask_var(eq_table->eq[i].affinity_mask);
-			irq_update_affinity_hint(eq_table->eq[i].irq, NULL);
+#if defined(CONFIG_SMP)
+			irq_set_affinity_hint(eq_table->eq[i].irq, NULL);
+#endif
 			free_irq(eq_table->eq[i].irq, eq_table->eq + i);
 			eq_table->eq[i].have_irq = 0;
 		}
@@ -1208,9 +1211,8 @@ int mlx4_init_eq_table(struct mlx4_dev *dev)
 	}
 
 	priv->eq_table.irq_names =
-		kmalloc_array(MLX4_IRQNAME_SIZE,
-			      (dev->caps.num_comp_vectors + 1),
-			      GFP_KERNEL);
+		kmalloc(MLX4_IRQNAME_SIZE * (dev->caps.num_comp_vectors + 1),
+			GFP_KERNEL);
 	if (!priv->eq_table.irq_names) {
 		err = -ENOMEM;
 		goto err_out_clr_int;

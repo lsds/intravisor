@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * IBM PowerPC Virtual I/O Infrastructure Support.
  *
@@ -8,6 +7,11 @@
  *     Hollis Blanchard <hollisb@us.ibm.com>
  *     Stephen Rothwell
  *     Robert Jennings <rcjenn@us.ibm.com>
+ *
+ *      This program is free software; you can redistribute it and/or
+ *      modify it under the terms of the GNU General Public License
+ *      as published by the Free Software Foundation; either version
+ *      2 of the License, or (at your option) any later version.
  */
 
 #include <linux/cpu.h>
@@ -20,10 +24,8 @@
 #include <linux/console.h>
 #include <linux/export.h>
 #include <linux/mm.h>
-#include <linux/dma-map-ops.h>
+#include <linux/dma-mapping.h>
 #include <linux/kobject.h>
-#include <linux/kexec.h>
-#include <linux/of_irq.h>
 
 #include <asm/iommu.h>
 #include <asm/dma.h>
@@ -33,7 +35,6 @@
 #include <asm/tce.h>
 #include <asm/page.h>
 #include <asm/hvcall.h>
-#include <asm/machdep.h>
 
 static struct vio_dev vio_bus_device  = { /* fake "parent" device */
 	.name = "vio",
@@ -491,9 +492,7 @@ static void *vio_dma_iommu_alloc_coherent(struct device *dev, size_t size,
 		return NULL;
 	}
 
-	ret = iommu_alloc_coherent(dev, get_iommu_table_base(dev), size,
-				    dma_handle, dev->coherent_dma_mask, flag,
-				    dev_to_node(dev));
+	ret = dma_iommu_ops.alloc(dev, size, dma_handle, flag, attrs);
 	if (unlikely(ret == NULL)) {
 		vio_cmo_dealloc(viodev, roundup(size, PAGE_SIZE));
 		atomic_inc(&viodev->cmo.allocs_failed);
@@ -508,7 +507,8 @@ static void vio_dma_iommu_free_coherent(struct device *dev, size_t size,
 {
 	struct vio_dev *viodev = to_vio_dev(dev);
 
-	iommu_free_coherent(get_iommu_table_base(dev), size, vaddr, dma_handle);
+	dma_iommu_ops.free(dev, size, vaddr, dma_handle, attrs);
+
 	vio_cmo_dealloc(viodev, roundup(size, PAGE_SIZE));
 }
 
@@ -518,22 +518,22 @@ static dma_addr_t vio_dma_iommu_map_page(struct device *dev, struct page *page,
                                          unsigned long attrs)
 {
 	struct vio_dev *viodev = to_vio_dev(dev);
-	struct iommu_table *tbl = get_iommu_table_base(dev);
-	dma_addr_t ret = DMA_MAPPING_ERROR;
+	struct iommu_table *tbl;
+	dma_addr_t ret = IOMMU_MAPPING_ERROR;
 
-	if (vio_cmo_alloc(viodev, roundup(size, IOMMU_PAGE_SIZE(tbl))))
-		goto out_fail;
-	ret = iommu_map_page(dev, tbl, page, offset, size, dma_get_mask(dev),
-			direction, attrs);
-	if (unlikely(ret == DMA_MAPPING_ERROR))
-		goto out_deallocate;
+	tbl = get_iommu_table_base(dev);
+	if (vio_cmo_alloc(viodev, roundup(size, IOMMU_PAGE_SIZE(tbl)))) {
+		atomic_inc(&viodev->cmo.allocs_failed);
+		return ret;
+	}
+
+	ret = dma_iommu_ops.map_page(dev, page, offset, size, direction, attrs);
+	if (unlikely(dma_mapping_error(dev, ret))) {
+		vio_cmo_dealloc(viodev, roundup(size, IOMMU_PAGE_SIZE(tbl)));
+		atomic_inc(&viodev->cmo.allocs_failed);
+	}
+
 	return ret;
-
-out_deallocate:
-	vio_cmo_dealloc(viodev, roundup(size, IOMMU_PAGE_SIZE(tbl)));
-out_fail:
-	atomic_inc(&viodev->cmo.allocs_failed);
-	return DMA_MAPPING_ERROR;
 }
 
 static void vio_dma_iommu_unmap_page(struct device *dev, dma_addr_t dma_handle,
@@ -542,9 +542,11 @@ static void vio_dma_iommu_unmap_page(struct device *dev, dma_addr_t dma_handle,
 				     unsigned long attrs)
 {
 	struct vio_dev *viodev = to_vio_dev(dev);
-	struct iommu_table *tbl = get_iommu_table_base(dev);
+	struct iommu_table *tbl;
 
-	iommu_unmap_page(tbl, dma_handle, size, direction, attrs);
+	tbl = get_iommu_table_base(dev);
+	dma_iommu_ops.unmap_page(dev, dma_handle, size, direction, attrs);
+
 	vio_cmo_dealloc(viodev, roundup(size, IOMMU_PAGE_SIZE(tbl)));
 }
 
@@ -553,32 +555,33 @@ static int vio_dma_iommu_map_sg(struct device *dev, struct scatterlist *sglist,
                                 unsigned long attrs)
 {
 	struct vio_dev *viodev = to_vio_dev(dev);
-	struct iommu_table *tbl = get_iommu_table_base(dev);
+	struct iommu_table *tbl;
 	struct scatterlist *sgl;
 	int ret, count;
 	size_t alloc_size = 0;
 
+	tbl = get_iommu_table_base(dev);
 	for_each_sg(sglist, sgl, nelems, count)
 		alloc_size += roundup(sgl->length, IOMMU_PAGE_SIZE(tbl));
 
-	ret = vio_cmo_alloc(viodev, alloc_size);
-	if (ret)
-		goto out_fail;
-	ret = ppc_iommu_map_sg(dev, tbl, sglist, nelems, dma_get_mask(dev),
-			direction, attrs);
-	if (unlikely(!ret))
-		goto out_deallocate;
+	if (vio_cmo_alloc(viodev, alloc_size)) {
+		atomic_inc(&viodev->cmo.allocs_failed);
+		return 0;
+	}
+
+	ret = dma_iommu_ops.map_sg(dev, sglist, nelems, direction, attrs);
+
+	if (unlikely(!ret)) {
+		vio_cmo_dealloc(viodev, alloc_size);
+		atomic_inc(&viodev->cmo.allocs_failed);
+		return ret;
+	}
 
 	for_each_sg(sglist, sgl, ret, count)
 		alloc_size -= roundup(sgl->dma_length, IOMMU_PAGE_SIZE(tbl));
 	if (alloc_size)
 		vio_cmo_dealloc(viodev, alloc_size);
-	return ret;
 
-out_deallocate:
-	vio_cmo_dealloc(viodev, alloc_size);
-out_fail:
-	atomic_inc(&viodev->cmo.allocs_failed);
 	return ret;
 }
 
@@ -588,31 +591,41 @@ static void vio_dma_iommu_unmap_sg(struct device *dev,
 		unsigned long attrs)
 {
 	struct vio_dev *viodev = to_vio_dev(dev);
-	struct iommu_table *tbl = get_iommu_table_base(dev);
+	struct iommu_table *tbl;
 	struct scatterlist *sgl;
 	size_t alloc_size = 0;
 	int count;
 
+	tbl = get_iommu_table_base(dev);
 	for_each_sg(sglist, sgl, nelems, count)
 		alloc_size += roundup(sgl->dma_length, IOMMU_PAGE_SIZE(tbl));
 
-	ppc_iommu_unmap_sg(tbl, sglist, nelems, direction, attrs);
+	dma_iommu_ops.unmap_sg(dev, sglist, nelems, direction, attrs);
+
 	vio_cmo_dealloc(viodev, alloc_size);
+}
+
+static int vio_dma_iommu_dma_supported(struct device *dev, u64 mask)
+{
+        return dma_iommu_ops.dma_supported(dev, mask);
+}
+
+static u64 vio_dma_get_required_mask(struct device *dev)
+{
+        return dma_iommu_ops.get_required_mask(dev);
 }
 
 static const struct dma_map_ops vio_dma_mapping_ops = {
 	.alloc             = vio_dma_iommu_alloc_coherent,
 	.free              = vio_dma_iommu_free_coherent,
+	.mmap		   = dma_nommu_mmap_coherent,
 	.map_sg            = vio_dma_iommu_map_sg,
 	.unmap_sg          = vio_dma_iommu_unmap_sg,
 	.map_page          = vio_dma_iommu_map_page,
 	.unmap_page        = vio_dma_iommu_unmap_page,
-	.dma_supported     = dma_iommu_dma_supported,
-	.get_required_mask = dma_iommu_get_required_mask,
-	.mmap		   = dma_common_mmap,
-	.get_sgtable	   = dma_common_get_sgtable,
-	.alloc_pages	   = dma_common_alloc_pages,
-	.free_pages	   = dma_common_free_pages,
+	.dma_supported     = vio_dma_iommu_dma_supported,
+	.get_required_mask = vio_dma_get_required_mask,
+	.mapping_error	   = dma_iommu_mapping_error,
 };
 
 /**
@@ -1062,7 +1075,7 @@ static struct attribute *vio_bus_attrs[] = {
 };
 ATTRIBUTE_GROUPS(vio_bus);
 
-static void __init vio_cmo_sysfs_init(void)
+static void vio_cmo_sysfs_init(void)
 {
 	vio_bus_type.dev_groups = vio_cmo_dev_groups;
 	vio_bus_type.bus_groups = vio_bus_groups;
@@ -1074,7 +1087,7 @@ static int vio_cmo_bus_probe(struct vio_dev *viodev) { return 0; }
 static void vio_cmo_bus_remove(struct vio_dev *viodev) {}
 static void vio_cmo_set_dma_ops(struct vio_dev *viodev) {}
 static void vio_cmo_bus_init(void) {}
-static void __init vio_cmo_sysfs_init(void) { }
+static void vio_cmo_sysfs_init(void) { }
 #endif /* CONFIG_PPC_SMLPAR */
 EXPORT_SYMBOL(vio_cmo_entitlement_update);
 EXPORT_SYMBOL(vio_cmo_set_dev_desired);
@@ -1182,8 +1195,6 @@ static struct iommu_table *vio_build_iommu_table(struct vio_dev *dev)
 	if (tbl == NULL)
 		return NULL;
 
-	kref_init(&tbl->it_kref);
-
 	of_parse_dma_window(dev->dev.of_node, dma_window,
 			    &tbl->it_index, &offset, &size);
 
@@ -1201,7 +1212,7 @@ static struct iommu_table *vio_build_iommu_table(struct vio_dev *dev)
 	else
 		tbl->it_ops = &iommu_table_pseries_ops;
 
-	return iommu_init_table(tbl, -1, 0, 0);
+	return iommu_init_table(tbl, -1);
 }
 
 /**
@@ -1259,11 +1270,12 @@ static int vio_bus_probe(struct device *dev)
 }
 
 /* convert from struct device to struct vio_dev and pass to driver. */
-static void vio_bus_remove(struct device *dev)
+static int vio_bus_remove(struct device *dev)
 {
 	struct vio_dev *viodev = to_vio_dev(dev);
 	struct vio_driver *viodrv = to_vio_driver(dev->driver);
 	struct device *devptr;
+	int ret = 1;
 
 	/*
 	 * Hold a reference to the device after the remove function is called
@@ -1272,26 +1284,13 @@ static void vio_bus_remove(struct device *dev)
 	devptr = get_device(dev);
 
 	if (viodrv->remove)
-		viodrv->remove(viodev);
+		ret = viodrv->remove(viodev);
 
-	if (firmware_has_feature(FW_FEATURE_CMO))
+	if (!ret && firmware_has_feature(FW_FEATURE_CMO))
 		vio_cmo_bus_remove(viodev);
 
 	put_device(devptr);
-}
-
-static void vio_bus_shutdown(struct device *dev)
-{
-	struct vio_dev *viodev = to_vio_dev(dev);
-	struct vio_driver *viodrv;
-
-	if (dev->driver) {
-		viodrv = to_vio_driver(dev->driver);
-		if (viodrv->shutdown)
-			viodrv->shutdown(viodev);
-		else if (kexec_in_progress)
-			vio_bus_remove(dev);
-	}
+	return ret;
 }
 
 /**
@@ -1301,10 +1300,6 @@ static void vio_bus_shutdown(struct device *dev)
 int __vio_register_driver(struct vio_driver *viodrv, struct module *owner,
 			  const char *mod_name)
 {
-	// vio_bus_type is only initialised for pseries
-	if (!machine_is(pseries))
-		return -ENODEV;
-
 	pr_debug("%s: driver %s registering\n", __func__, viodrv->name);
 
 	/* fill in 'struct driver' fields */
@@ -1354,6 +1349,7 @@ struct vio_dev *vio_register_device_node(struct device_node *of_node)
 	struct device_node *parent_node;
 	const __be32 *prop;
 	enum vio_dev_family family;
+	const char *of_node_name = of_node->name ? of_node->name : "<unknown>";
 
 	/*
 	 * Determine if this node is a under the /vdevice node or under the
@@ -1361,29 +1357,29 @@ struct vio_dev *vio_register_device_node(struct device_node *of_node)
 	 */
 	parent_node = of_get_parent(of_node);
 	if (parent_node) {
-		if (of_node_is_type(parent_node, "ibm,platform-facilities"))
+		if (!strcmp(parent_node->type, "ibm,platform-facilities"))
 			family = PFO;
-		else if (of_node_is_type(parent_node, "vdevice"))
+		else if (!strcmp(parent_node->type, "vdevice"))
 			family = VDEVICE;
 		else {
-			pr_warn("%s: parent(%pOF) of %pOFn not recognized.\n",
+			pr_warn("%s: parent(%pOF) of %s not recognized.\n",
 					__func__,
 					parent_node,
-					of_node);
+					of_node_name);
 			of_node_put(parent_node);
 			return NULL;
 		}
 		of_node_put(parent_node);
 	} else {
-		pr_warn("%s: could not determine the parent of node %pOFn.\n",
-				__func__, of_node);
+		pr_warn("%s: could not determine the parent of node %s.\n",
+				__func__, of_node_name);
 		return NULL;
 	}
 
 	if (family == PFO) {
 		if (of_get_property(of_node, "interrupt-controller", NULL)) {
-			pr_debug("%s: Skipping the interrupt controller %pOFn.\n",
-					__func__, of_node);
+			pr_debug("%s: Skipping the interrupt controller %s.\n",
+					__func__, of_node_name);
 			return NULL;
 		}
 	}
@@ -1400,17 +1396,18 @@ struct vio_dev *vio_register_device_node(struct device_node *of_node)
 	if (viodev->family == VDEVICE) {
 		unsigned int unit_address;
 
-		viodev->type = of_node_get_device_type(of_node);
-		if (!viodev->type) {
-			pr_warn("%s: node %pOFn is missing the 'device_type' "
-					"property.\n", __func__, of_node);
+		if (of_node->type != NULL)
+			viodev->type = of_node->type;
+		else {
+			pr_warn("%s: node %s is missing the 'device_type' "
+					"property.\n", __func__, of_node_name);
 			goto out;
 		}
 
 		prop = of_get_property(of_node, "reg", NULL);
 		if (prop == NULL) {
-			pr_warn("%s: node %pOFn missing 'reg'\n",
-					__func__, of_node);
+			pr_warn("%s: node %s missing 'reg'\n",
+					__func__, of_node_name);
 			goto out;
 		}
 		unit_address = of_read_number(prop, 1);
@@ -1425,8 +1422,8 @@ struct vio_dev *vio_register_device_node(struct device_node *of_node)
 		if (prop != NULL)
 			viodev->resource_id = of_read_number(prop, 1);
 
-		dev_set_name(&viodev->dev, "%pOFn", of_node);
-		viodev->type = dev_name(&viodev->dev);
+		dev_set_name(&viodev->dev, "%s", of_node_name);
+		viodev->type = of_node_name;
 		viodev->irq = 0;
 	}
 
@@ -1480,7 +1477,7 @@ EXPORT_SYMBOL(vio_register_device_node);
  * Starting from the root node provide, register the device node for
  * each child beneath the root.
  */
-static void __init vio_bus_scan_register_devices(char *root_name)
+static void vio_bus_scan_register_devices(char *root_name)
 {
 	struct device_node *node_root, *node_child;
 
@@ -1535,7 +1532,7 @@ static int __init vio_bus_init(void)
 
 	return 0;
 }
-machine_postcore_initcall(pseries, vio_bus_init);
+postcore_initcall(vio_bus_init);
 
 static int __init vio_device_init(void)
 {
@@ -1544,7 +1541,7 @@ static int __init vio_device_init(void)
 
 	return 0;
 }
-machine_device_initcall(pseries, vio_device_init);
+device_initcall(vio_device_init);
 
 static ssize_t name_show(struct device *dev,
 		struct device_attribute *attr, char *buf)
@@ -1633,7 +1630,6 @@ struct bus_type vio_bus_type = {
 	.match = vio_bus_match,
 	.probe = vio_bus_probe,
 	.remove = vio_bus_remove,
-	.shutdown = vio_bus_shutdown,
 };
 
 /**
@@ -1651,6 +1647,7 @@ const void *vio_get_attribute(struct vio_dev *vdev, char *which, int *length)
 }
 EXPORT_SYMBOL(vio_get_attribute);
 
+#ifdef CONFIG_PPC_PSERIES
 /* vio_find_name() - internal because only vio.c knows how we formatted the
  * kobject name
  */
@@ -1676,30 +1673,32 @@ struct vio_dev *vio_find_node(struct device_node *vnode)
 {
 	char kobj_name[20];
 	struct device_node *vnode_parent;
+	const char *dev_type;
 
 	vnode_parent = of_get_parent(vnode);
 	if (!vnode_parent)
 		return NULL;
 
+	dev_type = of_get_property(vnode_parent, "device_type", NULL);
+	of_node_put(vnode_parent);
+	if (!dev_type)
+		return NULL;
+
 	/* construct the kobject name from the device node */
-	if (of_node_is_type(vnode_parent, "vdevice")) {
+	if (!strcmp(dev_type, "vdevice")) {
 		const __be32 *prop;
 		
 		prop = of_get_property(vnode, "reg", NULL);
 		if (!prop)
-			goto out;
+			return NULL;
 		snprintf(kobj_name, sizeof(kobj_name), "%x",
 			 (uint32_t)of_read_number(prop, 1));
-	} else if (of_node_is_type(vnode_parent, "ibm,platform-facilities"))
-		snprintf(kobj_name, sizeof(kobj_name), "%pOFn", vnode);
+	} else if (!strcmp(dev_type, "ibm,platform-facilities"))
+		snprintf(kobj_name, sizeof(kobj_name), "%s", vnode->name);
 	else
-		goto out;
+		return NULL;
 
-	of_node_put(vnode_parent);
 	return vio_find_name(kobj_name);
-out:
-	of_node_put(vnode_parent);
-	return NULL;
 }
 EXPORT_SYMBOL(vio_find_node);
 
@@ -1720,10 +1719,4 @@ int vio_disable_interrupts(struct vio_dev *dev)
 	return rc;
 }
 EXPORT_SYMBOL(vio_disable_interrupts);
-
-static int __init vio_init(void)
-{
-	dma_debug_add_bus(&vio_bus_type);
-	return 0;
-}
-machine_fs_initcall(pseries, vio_init);
+#endif /* CONFIG_PPC_PSERIES */

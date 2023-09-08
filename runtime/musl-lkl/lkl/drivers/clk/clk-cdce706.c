@@ -1,10 +1,13 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * TI CDCE706 programmable 3-PLL clock synthesizer driver
  *
  * Copyright (c) 2014 Cadence Design Systems Inc.
  *
- * Reference: https://www.ti.com/lit/ds/symlink/cdce706.pdf
+ * Reference: http://www.ti.com/lit/ds/symlink/cdce706.pdf
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 
 #include <linux/clk.h>
@@ -627,9 +630,10 @@ of_clk_cdce_get(struct of_phandle_args *clkspec, void *data)
 	return &cdce->clkout[idx].hw;
 }
 
-static int cdce706_probe(struct i2c_client *client)
+static int cdce706_probe(struct i2c_client *client,
+			 const struct i2c_device_id *id)
 {
-	struct i2c_adapter *adapter = client->adapter;
+	struct i2c_adapter *adapter = to_i2c_adapter(client->dev.parent);
 	struct cdce706_dev_data *cdce;
 	int ret;
 
@@ -665,9 +669,10 @@ static int cdce706_probe(struct i2c_client *client)
 				      cdce);
 }
 
-static void cdce706_remove(struct i2c_client *client)
+static int cdce706_remove(struct i2c_client *client)
 {
 	of_clk_del_provider(client->dev.of_node);
+	return 0;
 }
 
 
@@ -690,7 +695,7 @@ static struct i2c_driver cdce706_i2c_driver = {
 		.name	= "cdce706",
 		.of_match_table = of_match_ptr(cdce706_dt_match),
 	},
-	.probe_new	= cdce706_probe,
+	.probe		= cdce706_probe,
 	.remove		= cdce706_remove,
 	.id_table	= cdce706_id,
 };

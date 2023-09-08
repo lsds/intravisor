@@ -1,27 +1,37 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * cros_ec_sensors - Driver for Chrome OS Embedded Controller sensors.
  *
  * Copyright (C) 2016 Google, Inc
  *
+ * This software is licensed under the terms of the GNU General Public
+ * License version 2, as published by the Free Software Foundation, and
+ * may be copied, distributed, and modified under those terms.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
  * This driver uses the cros-ec interface to communicate with the Chrome OS
  * EC about sensors data. Data access is presented through iio sysfs.
  */
 
+#include <linux/delay.h>
 #include <linux/device.h>
 #include <linux/iio/buffer.h>
-#include <linux/iio/common/cros_ec_sensors_core.h>
 #include <linux/iio/iio.h>
 #include <linux/iio/kfifo_buf.h>
 #include <linux/iio/trigger_consumer.h>
 #include <linux/iio/triggered_buffer.h>
 #include <linux/kernel.h>
-#include <linux/mod_devicetable.h>
+#include <linux/mfd/cros_ec.h>
+#include <linux/mfd/cros_ec_commands.h>
 #include <linux/module.h>
-#include <linux/platform_data/cros_ec_commands.h>
-#include <linux/platform_data/cros_ec_proto.h>
 #include <linux/platform_device.h>
 #include <linux/slab.h>
+#include <linux/sysfs.h>
+
+#include "cros_ec_sensors_core.h"
 
 #define CROS_EC_SENSORS_MAX_CHANNELS 4
 
@@ -64,35 +74,10 @@ static int cros_ec_sensors_read(struct iio_dev *indio_dev,
 
 		/* Save values */
 		for (i = CROS_EC_SENSOR_X; i < CROS_EC_SENSOR_MAX_AXIS; i++)
-			st->core.calib[i].offset =
+			st->core.calib[i] =
 				st->core.resp->sensor_offset.offset[i];
 		ret = IIO_VAL_INT;
-		*val = st->core.calib[idx].offset;
-		break;
-	case IIO_CHAN_INFO_CALIBSCALE:
-		st->core.param.cmd = MOTIONSENSE_CMD_SENSOR_SCALE;
-		st->core.param.sensor_offset.flags = 0;
-
-		ret = cros_ec_motion_send_host_cmd(&st->core, 0);
-		if (ret == -EPROTO || ret == -EOPNOTSUPP) {
-			/* Reading calibscale is not supported on older EC. */
-			*val = 1;
-			*val2 = 0;
-			ret = IIO_VAL_INT_PLUS_MICRO;
-			break;
-		} else if (ret) {
-			break;
-		}
-
-		/* Save values */
-		for (i = CROS_EC_SENSOR_X; i < CROS_EC_SENSOR_MAX_AXIS; i++)
-			st->core.calib[i].scale =
-				st->core.resp->sensor_scale.scale[i];
-
-		*val = st->core.calib[idx].scale >> 15;
-		*val2 = ((st->core.calib[idx].scale & 0x7FFF) * 1000000LL) /
-			MOTION_SENSE_DEFAULT_SCALE;
-		ret = IIO_VAL_INT_PLUS_MICRO;
+		*val = st->core.calib[idx];
 		break;
 	case IIO_CHAN_INFO_SCALE:
 		st->core.param.cmd = MOTIONSENSE_CMD_SENSOR_RANGE;
@@ -119,10 +104,9 @@ static int cros_ec_sensors_read(struct iio_dev *indio_dev,
 			 * Do not use IIO_DEGREE_TO_RAD to avoid precision
 			 * loss. Round to the nearest integer.
 			 */
-			*val = 0;
-			*val2 = div_s64(val64 * 3141592653ULL,
-					180 << (CROS_EC_SENSOR_BITS - 1));
-			ret = IIO_VAL_INT_PLUS_NANO;
+			*val = div_s64(val64 * 314159 + 9000000ULL, 1000);
+			*val2 = 18000 << (CROS_EC_SENSOR_BITS - 1);
+			ret = IIO_VAL_FRACTIONAL;
 			break;
 		case MOTIONSENSE_TYPE_MAG:
 			/*
@@ -160,7 +144,7 @@ static int cros_ec_sensors_write(struct iio_dev *indio_dev,
 
 	switch (mask) {
 	case IIO_CHAN_INFO_CALIBBIAS:
-		st->core.calib[idx].offset = val;
+		st->core.calib[idx] = val;
 
 		/* Send to EC for each axis, even if not complete */
 		st->core.param.cmd = MOTIONSENSE_CMD_SENSOR_OFFSET;
@@ -168,23 +152,8 @@ static int cros_ec_sensors_write(struct iio_dev *indio_dev,
 			MOTION_SENSE_SET_OFFSET;
 		for (i = CROS_EC_SENSOR_X; i < CROS_EC_SENSOR_MAX_AXIS; i++)
 			st->core.param.sensor_offset.offset[i] =
-				st->core.calib[i].offset;
+				st->core.calib[i];
 		st->core.param.sensor_offset.temp =
-			EC_MOTION_SENSE_INVALID_CALIB_TEMP;
-
-		ret = cros_ec_motion_send_host_cmd(&st->core, 0);
-		break;
-	case IIO_CHAN_INFO_CALIBSCALE:
-		st->core.calib[idx].scale = val;
-		/* Send to EC for each axis, even if not complete */
-
-		st->core.param.cmd = MOTIONSENSE_CMD_SENSOR_SCALE;
-		st->core.param.sensor_offset.flags =
-			MOTION_SENSE_SET_OFFSET;
-		for (i = CROS_EC_SENSOR_X; i < CROS_EC_SENSOR_MAX_AXIS; i++)
-			st->core.param.sensor_scale.scale[i] =
-				st->core.calib[i].scale;
-		st->core.param.sensor_scale.temp =
 			EC_MOTION_SENSE_INVALID_CALIB_TEMP;
 
 		ret = cros_ec_motion_send_host_cmd(&st->core, 0);
@@ -201,10 +170,6 @@ static int cros_ec_sensors_write(struct iio_dev *indio_dev,
 		st->core.param.sensor_range.roundup = 1;
 
 		ret = cros_ec_motion_send_host_cmd(&st->core, 0);
-		if (ret == 0) {
-			st->core.range_updated = true;
-			st->core.curr_range = val;
-		}
 		break;
 	default:
 		ret = cros_ec_sensors_core_write(
@@ -220,23 +185,27 @@ static int cros_ec_sensors_write(struct iio_dev *indio_dev,
 static const struct iio_info ec_sensors_info = {
 	.read_raw = &cros_ec_sensors_read,
 	.write_raw = &cros_ec_sensors_write,
-	.read_avail = &cros_ec_sensors_core_read_avail,
 };
 
 static int cros_ec_sensors_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
+	struct cros_ec_dev *ec_dev = dev_get_drvdata(dev->parent);
 	struct iio_dev *indio_dev;
 	struct cros_ec_sensors_state *state;
 	struct iio_chan_spec *channel;
 	int ret, i;
 
+	if (!ec_dev || !ec_dev->ec_dev) {
+		dev_warn(&pdev->dev, "No CROS EC device found.\n");
+		return -EINVAL;
+	}
+
 	indio_dev = devm_iio_device_alloc(&pdev->dev, sizeof(*state));
 	if (!indio_dev)
 		return -ENOMEM;
 
-	ret = cros_ec_sensors_core_init(pdev, indio_dev, true,
-					cros_ec_sensors_capture);
+	ret = cros_ec_sensors_core_init(pdev, indio_dev, true);
 	if (ret)
 		return ret;
 
@@ -247,12 +216,10 @@ static int cros_ec_sensors_probe(struct platform_device *pdev)
 		/* Common part */
 		channel->info_mask_separate =
 			BIT(IIO_CHAN_INFO_RAW) |
-			BIT(IIO_CHAN_INFO_CALIBBIAS) |
-			BIT(IIO_CHAN_INFO_CALIBSCALE);
+			BIT(IIO_CHAN_INFO_CALIBBIAS);
 		channel->info_mask_shared_by_all =
 			BIT(IIO_CHAN_INFO_SCALE) |
-			BIT(IIO_CHAN_INFO_SAMP_FREQ);
-		channel->info_mask_shared_by_all_available =
+			BIT(IIO_CHAN_INFO_FREQUENCY) |
 			BIT(IIO_CHAN_INFO_SAMP_FREQ);
 		channel->scan_type.realbits = CROS_EC_SENSOR_BITS;
 		channel->scan_type.storagebits = CROS_EC_SENSOR_BITS;
@@ -297,8 +264,12 @@ static int cros_ec_sensors_probe(struct platform_device *pdev)
 	else
 		state->core.read_ec_sensors_data = cros_ec_sensors_read_cmd;
 
-	return cros_ec_sensors_core_register(dev, indio_dev,
-			cros_ec_sensors_push_data);
+	ret = devm_iio_triggered_buffer_setup(dev, indio_dev, NULL,
+			cros_ec_sensors_capture, NULL);
+	if (ret)
+		return ret;
+
+	return devm_iio_device_register(dev, indio_dev);
 }
 
 static const struct platform_device_id cros_ec_sensors_ids[] = {

@@ -13,12 +13,12 @@
 #include <linux/slab.h>
 #include <linux/console.h>
 #include <linux/of.h>
-#include <linux/of_irq.h>
 #include <linux/of_platform.h>
 #include <linux/export.h>
 #include <linux/interrupt.h>
 
 #include <asm/hvconsole.h>
+#include <asm/prom.h>
 #include <asm/firmware.h>
 #include <asm/hvsi.h>
 #include <asm/udbg.h>
@@ -52,7 +52,6 @@ static u32 hvc_opal_boot_termno;
 static const struct hv_ops hvc_opal_raw_ops = {
 	.get_chars = opal_get_chars,
 	.put_chars = opal_put_chars,
-	.flush = opal_flush_chars,
 	.notifier_add = notifier_add_irq,
 	.notifier_del = notifier_del_irq,
 	.notifier_hangup = notifier_hangup_irq,
@@ -103,7 +102,7 @@ static void hvc_opal_hvsi_close(struct hvc_struct *hp, int data)
 	notifier_del_irq(hp, data);
 }
 
-static void hvc_opal_hvsi_hangup(struct hvc_struct *hp, int data)
+void hvc_opal_hvsi_hangup(struct hvc_struct *hp, int data)
 {
 	struct hvc_opal_priv *pv = hvc_opal_privs[hp->vtermno];
 
@@ -142,7 +141,6 @@ static int hvc_opal_hvsi_tiocmset(struct hvc_struct *hp, unsigned int set,
 static const struct hv_ops hvc_opal_hvsi_ops = {
 	.get_chars = hvc_opal_hvsi_get_chars,
 	.put_chars = hvc_opal_hvsi_put_chars,
-	.flush = opal_flush_chars,
 	.notifier_add = hvc_opal_hvsi_open,
 	.notifier_del = hvc_opal_hvsi_close,
 	.notifier_hangup = hvc_opal_hvsi_hangup,
@@ -185,15 +183,9 @@ static int hvc_opal_probe(struct platform_device *dev)
 			return -ENOMEM;
 		pv->proto = proto;
 		hvc_opal_privs[termno] = pv;
-		if (proto == HV_PROTOCOL_HVSI) {
-			/*
-			 * We want put_chars to be atomic to avoid mangling of
-			 * hvsi packets.
-			 */
-			hvsilib_init(&pv->hvsi,
-				     opal_get_chars, opal_put_chars_atomic,
+		if (proto == HV_PROTOCOL_HVSI)
+			hvsilib_init(&pv->hvsi, opal_get_chars, opal_put_chars,
 				     termno, 0);
-		}
 
 		/* Instanciate now to establish a mapping index==vtermno */
 		hvc_instantiate(termno, termno, ops);
@@ -283,11 +275,6 @@ static void udbg_opal_putc(char c)
 			count = hvc_opal_hvsi_put_chars(termno, &c, 1);
 			break;
 		}
-
-		/* This is needed for the cosole to flush
-		 * when there aren't any interrupts.
-		 */
-		opal_flush_console(termno);
 	} while(count == 0 || count == -EAGAIN);
 }
 
@@ -315,8 +302,14 @@ static int udbg_opal_getc(void)
 	int ch;
 	for (;;) {
 		ch = udbg_opal_getc_poll();
-		if (ch != -1)
+		if (ch == -1) {
+			/* This shouldn't be needed...but... */
+			volatile unsigned long delay;
+			for (delay=0; delay < 2000000; delay++)
+				;
+		} else {
 			return ch;
+		}
 	}
 }
 
@@ -325,6 +318,7 @@ static void udbg_init_opal_common(void)
 	udbg_putc = udbg_opal_putc;
 	udbg_getc = udbg_opal_getc;
 	udbg_getc_poll = udbg_opal_getc_poll;
+	tb_ticks_per_usec = 0x200; /* Make udelay not suck */
 }
 
 void __init hvc_opal_init_early(void)
@@ -342,9 +336,9 @@ void __init hvc_opal_init_early(void)
 		 * path, so we hard wire it
 		 */
 		opal = of_find_node_by_path("/ibm,opal/consoles");
-		if (opal) {
+		if (opal)
 			pr_devel("hvc_opal: Found consoles in new location\n");
-		} else {
+		if (!opal) {
 			opal = of_find_node_by_path("/ibm,opal");
 			if (opal)
 				pr_devel("hvc_opal: "
@@ -353,7 +347,7 @@ void __init hvc_opal_init_early(void)
 		if (!opal)
 			return;
 		for_each_child_of_node(opal, np) {
-			if (of_node_name_eq(np, "serial")) {
+			if (!strcmp(np->name, "serial")) {
 				stdout_node = np;
 				break;
 			}
@@ -377,9 +371,8 @@ void __init hvc_opal_init_early(void)
 	else if (of_device_is_compatible(stdout_node,"ibm,opal-console-hvsi")) {
 		hvc_opal_boot_priv.proto = HV_PROTOCOL_HVSI;
 		ops = &hvc_opal_hvsi_ops;
-		hvsilib_init(&hvc_opal_boot_priv.hvsi,
-			     opal_get_chars, opal_put_chars_atomic,
-			     index, 1);
+		hvsilib_init(&hvc_opal_boot_priv.hvsi, opal_get_chars,
+			     opal_put_chars, index, 1);
 		/* HVSI, perform the handshake now */
 		hvsilib_establish(&hvc_opal_boot_priv.hvsi);
 		pr_devel("hvc_opal: Found HVSI console\n");
@@ -411,8 +404,7 @@ void __init udbg_init_debug_opal_hvsi(void)
 	hvc_opal_privs[index] = &hvc_opal_boot_priv;
 	hvc_opal_boot_termno = index;
 	udbg_init_opal_common();
-	hvsilib_init(&hvc_opal_boot_priv.hvsi,
-		     opal_get_chars, opal_put_chars_atomic,
+	hvsilib_init(&hvc_opal_boot_priv.hvsi, opal_get_chars, opal_put_chars,
 		     index, 1);
 	hvsilib_establish(&hvc_opal_boot_priv.hvsi);
 }

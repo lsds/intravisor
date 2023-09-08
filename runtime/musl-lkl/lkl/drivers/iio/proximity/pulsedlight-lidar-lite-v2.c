@@ -13,7 +13,6 @@
 #include <linux/i2c.h>
 #include <linux/delay.h>
 #include <linux/module.h>
-#include <linux/mod_devicetable.h>
 #include <linux/pm_runtime.h>
 #include <linux/iio/iio.h>
 #include <linux/iio/sysfs.h>
@@ -44,11 +43,7 @@ struct lidar_data {
 	int (*xfer)(struct lidar_data *data, u8 reg, u8 *val, int len);
 	int i2c_enabled;
 
-	/* Ensure timestamp is naturally aligned */
-	struct {
-		u16 chan;
-		s64 timestamp __aligned(8);
-	} scan;
+	u16 buffer[8]; /* 2 byte distance + 8 byte timestamp */
 };
 
 static const struct iio_chan_spec lidar_channels[] = {
@@ -141,13 +136,12 @@ static inline int lidar_write_power(struct lidar_data *data, int val)
 
 static int lidar_read_measurement(struct lidar_data *data, u16 *reg)
 {
-	__be16 value;
 	int ret = data->xfer(data, LIDAR_REG_DATA_HBYTE |
 			(data->i2c_enabled ? LIDAR_REG_DATA_WORD_READ : 0),
-			(u8 *) &value, 2);
+			(u8 *) reg, 2);
 
 	if (!ret)
-		*reg = be16_to_cpu(value);
+		*reg = be16_to_cpu(*reg);
 
 	return ret;
 }
@@ -158,15 +152,12 @@ static int lidar_get_measurement(struct lidar_data *data, u16 *reg)
 	int tries = 10;
 	int ret;
 
-	ret = pm_runtime_resume_and_get(&client->dev);
-	if (ret < 0)
-		return ret;
+	pm_runtime_get_sync(&client->dev);
 
 	/* start sample */
 	ret = lidar_write_control(data, LIDAR_REG_CONTROL_ACQUIRE);
 	if (ret < 0) {
 		dev_err(&client->dev, "cannot send start measurement command");
-		pm_runtime_put_noidle(&client->dev);
 		return ret;
 	}
 
@@ -236,9 +227,9 @@ static irqreturn_t lidar_trigger_handler(int irq, void *private)
 	struct lidar_data *data = iio_priv(indio_dev);
 	int ret;
 
-	ret = lidar_get_measurement(data, &data->scan.chan);
+	ret = lidar_get_measurement(data, data->buffer);
 	if (!ret) {
-		iio_push_to_buffers_with_timestamp(indio_dev, &data->scan,
+		iio_push_to_buffers_with_timestamp(indio_dev, data->buffer,
 						   iio_get_time_ns(indio_dev));
 	} else if (ret != -EINVAL) {
 		dev_err(&data->client->dev, "cannot read LIDAR measurement");
@@ -278,6 +269,7 @@ static int lidar_probe(struct i2c_client *client,
 	indio_dev->name = LIDAR_DRV_NAME;
 	indio_dev->channels = lidar_channels;
 	indio_dev->num_channels = ARRAY_SIZE(lidar_channels);
+	indio_dev->dev.parent = &client->dev;
 	indio_dev->modes = INDIO_DIRECT_MODE;
 
 	i2c_set_clientdata(client, indio_dev);
@@ -311,7 +303,7 @@ error_unreg_buffer:
 	return ret;
 }
 
-static void lidar_remove(struct i2c_client *client)
+static int lidar_remove(struct i2c_client *client)
 {
 	struct iio_dev *indio_dev = i2c_get_clientdata(client);
 
@@ -320,6 +312,8 @@ static void lidar_remove(struct i2c_client *client)
 
 	pm_runtime_disable(&client->dev);
 	pm_runtime_set_suspended(&client->dev);
+
+	return 0;
 }
 
 static const struct i2c_device_id lidar_id[] = {
@@ -336,6 +330,7 @@ static const struct of_device_id lidar_dt_ids[] = {
 };
 MODULE_DEVICE_TABLE(of, lidar_dt_ids);
 
+#ifdef CONFIG_PM
 static int lidar_pm_runtime_suspend(struct device *dev)
 {
 	struct iio_dev *indio_dev = i2c_get_clientdata(to_i2c_client(dev));
@@ -355,16 +350,18 @@ static int lidar_pm_runtime_resume(struct device *dev)
 
 	return ret;
 }
+#endif
 
 static const struct dev_pm_ops lidar_pm_ops = {
-	RUNTIME_PM_OPS(lidar_pm_runtime_suspend, lidar_pm_runtime_resume, NULL)
+	SET_RUNTIME_PM_OPS(lidar_pm_runtime_suspend,
+			   lidar_pm_runtime_resume, NULL)
 };
 
 static struct i2c_driver lidar_driver = {
 	.driver = {
 		.name	= LIDAR_DRV_NAME,
-		.of_match_table	= lidar_dt_ids,
-		.pm	= pm_ptr(&lidar_pm_ops),
+		.of_match_table	= of_match_ptr(lidar_dt_ids),
+		.pm	= &lidar_pm_ops,
 	},
 	.probe		= lidar_probe,
 	.remove		= lidar_remove,

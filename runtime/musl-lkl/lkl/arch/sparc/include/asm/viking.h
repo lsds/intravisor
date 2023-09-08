@@ -10,7 +10,6 @@
 
 #include <asm/asi.h>
 #include <asm/mxcc.h>
-#include <asm/pgtable.h>
 #include <asm/pgtsrmmu.h>
 
 /* Bits in the SRMMU control register for GNU/Viking modules.
@@ -228,7 +227,7 @@ static inline unsigned long viking_hwprobe(unsigned long vaddr)
 			     : "=r" (val)
 			     : "r" (vaddr | 0x200), "i" (ASI_M_FLUSH_PROBE));
 	if ((val & SRMMU_ET_MASK) == SRMMU_ET_PTE) {
-		vaddr &= ~PGDIR_MASK;
+		vaddr &= ~SRMMU_PGDIR_MASK;
 		vaddr >>= PAGE_SHIFT;
 		return val | (vaddr << 8);
 	}
@@ -238,7 +237,7 @@ static inline unsigned long viking_hwprobe(unsigned long vaddr)
 			     : "=r" (val)
 			     : "r" (vaddr | 0x100), "i" (ASI_M_FLUSH_PROBE));
 	if ((val & SRMMU_ET_MASK) == SRMMU_ET_PTE) {
-		vaddr &= ~PMD_MASK;
+		vaddr &= ~SRMMU_REAL_PMD_MASK;
 		vaddr >>= PAGE_SHIFT;
 		return val | (vaddr << 8);
 	}

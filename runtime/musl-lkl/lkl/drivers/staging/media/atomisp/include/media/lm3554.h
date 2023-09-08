@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0 */
 /*
  * include/media/lm3554.h
  *
@@ -18,7 +17,6 @@
 #ifndef _LM3554_H_
 #define _LM3554_H_
 
-#include <linux/gpio/consumer.h>
 #include <linux/videodev2.h>
 #include <media/v4l2-subdev.h>
 
@@ -93,8 +91,8 @@
 #define LM3554_CLAMP_PERCENTAGE(val) \
 	clamp(val, LM3554_MIN_PERCENT, LM3554_MAX_PERCENT)
 
-#define LM3554_VALUE_TO_PERCENT(v, step)     (((((unsigned long)(v)) * (step)) + 50) / 100)
-#define LM3554_PERCENT_TO_VALUE(p, step)     (((((unsigned long)(p)) * 100) + (step >> 1)) / (step))
+#define LM3554_VALUE_TO_PERCENT(v, step)     (((((unsigned long)(v))*(step))+50)/100)
+#define LM3554_PERCENT_TO_VALUE(p, step)     (((((unsigned long)(p))*100)+(step>>1))/(step))
 
 /* Product specific limits
  * TODO: get these from platform data */
@@ -102,7 +100,7 @@
 
 /* Flash brightness, input is percentage, output is [0..15] */
 #define LM3554_FLASH_STEP	\
-	((100ul * (LM3554_MAX_PERCENT) + ((LM3554_FLASH_MAX_LVL) >> 1)) / ((LM3554_FLASH_MAX_LVL)))
+	((100ul*(LM3554_MAX_PERCENT)+((LM3554_FLASH_MAX_LVL)>>1))/((LM3554_FLASH_MAX_LVL)))
 #define LM3554_FLASH_DEFAULT_BRIGHTNESS \
 	LM3554_VALUE_TO_PERCENT(13, LM3554_FLASH_STEP)
 
@@ -120,9 +118,9 @@
  * lm3554_platform_data - Flash controller platform data
  */
 struct lm3554_platform_data {
-	struct gpio_desc *gpio_torch;
-	struct gpio_desc *gpio_strobe;
-	struct gpio_desc *gpio_reset;
+	int gpio_torch;
+	int gpio_strobe;
+	int gpio_reset;
 
 	unsigned int current_limit;
 	unsigned int envm_tx2;
@@ -130,3 +128,4 @@ struct lm3554_platform_data {
 };
 
 #endif /* _LM3554_H_ */
+

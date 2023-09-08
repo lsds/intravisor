@@ -1,8 +1,21 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Incremental bus scan, based on bus topology
  *
  * Copyright (C) 2004-2006 Kristian Hoegsberg <krh@bitplanet.net>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software Foundation,
+ * Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
  */
 
 #include <linux/bug.h>
@@ -54,11 +67,9 @@ static u32 *count_ports(u32 *sid, int *total_port_count, int *child_port_count)
 		switch (port_type) {
 		case SELFID_PORT_CHILD:
 			(*child_port_count)++;
-			fallthrough;
 		case SELFID_PORT_PARENT:
 		case SELFID_PORT_NCONN:
 			(*total_port_count)++;
-			fallthrough;
 		case SELFID_PORT_NONE:
 			break;
 		}
@@ -101,7 +112,8 @@ static struct fw_node *fw_node_create(u32 sid, int port_count, int color)
 {
 	struct fw_node *node;
 
-	node = kzalloc(struct_size(node, ports, port_count), GFP_ATOMIC);
+	node = kzalloc(sizeof(*node) + port_count * sizeof(node->ports[0]),
+		       GFP_ATOMIC);
 	if (node == NULL)
 		return NULL;
 
@@ -375,13 +387,16 @@ static void report_found_node(struct fw_card *card,
 	card->bm_retries = 0;
 }
 
-/* Must be called with card->lock held */
 void fw_destroy_nodes(struct fw_card *card)
 {
+	unsigned long flags;
+
+	spin_lock_irqsave(&card->lock, flags);
 	card->color++;
 	if (card->local_node != NULL)
 		for_each_fw_node(card, card->local_node, report_lost_node);
 	card->local_node = NULL;
+	spin_unlock_irqrestore(&card->lock, flags);
 }
 
 static void move_tree(struct fw_node *node0, struct fw_node *node1, int port)
@@ -507,8 +522,6 @@ void fw_core_handle_bus_reset(struct fw_card *card, int node_id, int generation,
 	struct fw_node *local_node;
 	unsigned long flags;
 
-	spin_lock_irqsave(&card->lock, flags);
-
 	/*
 	 * If the selfID buffer is not the immediate successor of the
 	 * previously processed one, we cannot reliably compare the
@@ -519,6 +532,8 @@ void fw_core_handle_bus_reset(struct fw_card *card, int node_id, int generation,
 		fw_destroy_nodes(card);
 		card->bm_retries = 0;
 	}
+
+	spin_lock_irqsave(&card->lock, flags);
 
 	card->broadcast_channel_allocated = card->broadcast_channel_auto_allocated;
 	card->node_id = node_id;

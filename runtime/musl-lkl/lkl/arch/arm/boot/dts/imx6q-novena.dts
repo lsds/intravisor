@@ -57,7 +57,6 @@
 
 	/* Will be filled by the bootloader */
 	memory@10000000 {
-		device_type = "memory";
 		reg = <0x10000000 0>;
 	};
 
@@ -86,7 +85,7 @@
 			linux,code = <KEY_POWER>;
 		};
 
-		lid-event {
+		lid {
 			label = "Lid";
 			gpios = <&gpio4 12 GPIO_ACTIVE_LOW>;
 			linux,input-type = <5>;	/* EV_SW */
@@ -99,7 +98,7 @@
 		pinctrl-names = "default";
 		pinctrl-0 = <&pinctrl_leds_novena>;
 
-		led-heartbeat {
+		heartbeat {
 			label = "novena:white:panel";
 			gpios = <&gpio1 21 GPIO_ACTIVE_HIGH>;
 			linux,default-trigger = "default-on";
@@ -107,7 +106,7 @@
 	};
 
 	panel: panel {
-		compatible = "innolux,n133hse-ea1";
+		compatible = "innolux,n133hse-ea1", "simple-panel";
 		backlight = <&backlight>;
 	};
 
@@ -222,30 +221,20 @@
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_enet_novena>;
 	phy-mode = "rgmii";
-	phy-handle = <&ethphy>;
 	phy-reset-gpios = <&gpio3 23 GPIO_ACTIVE_LOW>;
+	rxc-skew-ps = <3000>;
+	rxdv-skew-ps = <0>;
+	txc-skew-ps = <3000>;
+	txen-skew-ps = <0>;
+	rxd0-skew-ps = <0>;
+	rxd1-skew-ps = <0>;
+	rxd2-skew-ps = <0>;
+	rxd3-skew-ps = <0>;
+	txd0-skew-ps = <3000>;
+	txd1-skew-ps = <3000>;
+	txd2-skew-ps = <3000>;
+	txd3-skew-ps = <3000>;
 	status = "okay";
-
-	mdio {
-		#address-cells = <1>;
-		#size-cells = <0>;
-
-		ethphy: ethernet-phy {
-			compatible = "ethernet-phy-ieee802.3-c22";
-			rxc-skew-ps = <3000>;
-			rxdv-skew-ps = <0>;
-			txc-skew-ps = <3000>;
-			txen-skew-ps = <0>;
-			rxd0-skew-ps = <0>;
-			rxd1-skew-ps = <0>;
-			rxd2-skew-ps = <0>;
-			rxd3-skew-ps = <0>;
-			txd0-skew-ps = <3000>;
-			txd1-skew-ps = <3000>;
-			txd2-skew-ps = <3000>;
-			txd3-skew-ps = <3000>;
-		};
-	};
 };
 
 &hdmi {
@@ -279,6 +268,8 @@
 	touch: stmpe811@44 {
 		compatible = "st,stmpe811";
 		reg = <0x44>;
+		#address-cells = <1>;
+		#size-cells = <0>;
 		irq-gpio = <&gpio5 13 GPIO_ACTIVE_HIGH>;
 		id = <0>;
 		blocks = <0x5>;
@@ -465,7 +456,6 @@
 };
 
 &pwm1 {
-	#pwm-cells = <2>;
 	status = "okay";
 };
 

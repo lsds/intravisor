@@ -1,8 +1,16 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Qualcomm Technologies HIDMA DMA engine Management interface
  *
  * Copyright (c) 2015-2017, The Linux Foundation. All rights reserved.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 and
+ * only version 2 as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
  */
 
 #include <linux/dmaengine.h>
@@ -183,6 +191,7 @@ static int hidma_mgmt_probe(struct platform_device *pdev)
 
 	irq = platform_get_irq(pdev, 0);
 	if (irq < 0) {
+		dev_err(&pdev->dev, "irq resources not found\n");
 		rc = irq;
 		goto out;
 	}
@@ -387,21 +396,17 @@ static int __init hidma_mgmt_of_populate_channels(struct device_node *np)
 			ret = PTR_ERR(new_pdev);
 			goto out;
 		}
+		of_node_get(child);
 		new_pdev->dev.of_node = child;
-		of_dma_configure(&new_pdev->dev, child, true);
+		of_dma_configure(&new_pdev->dev, child);
 		/*
 		 * It is assumed that calling of_msi_configure is safe on
 		 * platforms with or without MSI support.
 		 */
 		of_msi_configure(&new_pdev->dev, child);
+		of_node_put(child);
 	}
-
-	kfree(res);
-
-	return ret;
-
 out:
-	of_node_put(child);
 	kfree(res);
 
 	return ret;
@@ -418,20 +423,6 @@ static int __init hidma_mgmt_init(void)
 		hidma_mgmt_of_populate_channels(child);
 	}
 #endif
-	/*
-	 * We do not check for return value here, as it is assumed that
-	 * platform_driver_register must not fail. The reason for this is that
-	 * the (potential) hidma_mgmt_of_populate_channels calls above are not
-	 * cleaned up if it does fail, and to do this work is quite
-	 * complicated. In particular, various calls of of_address_to_resource,
-	 * of_irq_to_resource, platform_device_register_full, of_dma_configure,
-	 * and of_msi_configure which then call other functions and so on, must
-	 * be cleaned up - this is not a trivial exercise.
-	 *
-	 * Currently, this module is not intended to be unloaded, and there is
-	 * no module_exit function defined which does the needed cleanup. For
-	 * this reason, we have to assume success here.
-	 */
 	platform_driver_register(&hidma_mgmt_driver);
 
 	return 0;

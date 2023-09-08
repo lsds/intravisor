@@ -1,9 +1,12 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * ACPI GSI IRQ layer
  *
  * Copyright (C) 2015 ARM Ltd.
  * Author: Lorenzo Pieralisi <lorenzo.pieralisi@arm.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 #include <linux/acpi.h>
 #include <linux/irq.h>
@@ -12,8 +15,7 @@
 
 enum acpi_irq_model_id acpi_irq_model;
 
-static struct fwnode_handle *(*acpi_get_gsi_domain_id)(u32 gsi);
-static u32 (*acpi_gsi_to_irq_fallback)(u32 gsi);
+static struct fwnode_handle *acpi_gsi_domain_id;
 
 /**
  * acpi_gsi_to_irq() - Retrieve the linux irq number for a given GSI
@@ -27,18 +29,14 @@ static u32 (*acpi_gsi_to_irq_fallback)(u32 gsi);
  */
 int acpi_gsi_to_irq(u32 gsi, unsigned int *irq)
 {
-	struct irq_domain *d;
+	struct irq_domain *d = irq_find_matching_fwnode(acpi_gsi_domain_id,
+							DOMAIN_BUS_ANY);
 
-	d = irq_find_matching_fwnode(acpi_get_gsi_domain_id(gsi),
-					DOMAIN_BUS_ANY);
 	*irq = irq_find_mapping(d, gsi);
 	/*
-	 * *irq == 0 means no mapping, that should be reported as a
-	 * failure, unless there is an arch-specific fallback handler.
+	 * *irq == 0 means no mapping, that should
+	 * be reported as a failure
 	 */
-	if (!*irq && acpi_gsi_to_irq_fallback)
-		*irq = acpi_gsi_to_irq_fallback(gsi);
-
 	return (*irq > 0) ? 0 : -EINVAL;
 }
 EXPORT_SYMBOL_GPL(acpi_gsi_to_irq);
@@ -58,12 +56,12 @@ int acpi_register_gsi(struct device *dev, u32 gsi, int trigger,
 {
 	struct irq_fwspec fwspec;
 
-	fwspec.fwnode = acpi_get_gsi_domain_id(gsi);
-	if (WARN_ON(!fwspec.fwnode)) {
+	if (WARN_ON(!acpi_gsi_domain_id)) {
 		pr_warn("GSI: No registered irqchip, giving up\n");
 		return -EINVAL;
 	}
 
+	fwspec.fwnode = acpi_gsi_domain_id;
 	fwspec.param[0] = gsi;
 	fwspec.param[1] = acpi_dev_get_irq_type(trigger, polarity);
 	fwspec.param_count = 2;
@@ -78,15 +76,10 @@ EXPORT_SYMBOL_GPL(acpi_register_gsi);
  */
 void acpi_unregister_gsi(u32 gsi)
 {
-	struct irq_domain *d;
-	int irq;
+	struct irq_domain *d = irq_find_matching_fwnode(acpi_gsi_domain_id,
+							DOMAIN_BUS_ANY);
+	int irq = irq_find_mapping(d, gsi);
 
-	if (WARN_ON(acpi_irq_model == ACPI_IRQ_MODEL_GIC && gsi < 16))
-		return;
-
-	d = irq_find_matching_fwnode(acpi_get_gsi_domain_id(gsi),
-				     DOMAIN_BUS_ANY);
-	irq = irq_find_mapping(d, gsi);
 	irq_dispose_mapping(irq);
 }
 EXPORT_SYMBOL_GPL(acpi_unregister_gsi);
@@ -103,8 +96,7 @@ EXPORT_SYMBOL_GPL(acpi_unregister_gsi);
  * The referenced device fwhandle or NULL on failure
  */
 static struct fwnode_handle *
-acpi_get_irq_source_fwhandle(const struct acpi_resource_source *source,
-			     u32 gsi)
+acpi_get_irq_source_fwhandle(const struct acpi_resource_source *source)
 {
 	struct fwnode_handle *result;
 	struct acpi_device *device;
@@ -112,18 +104,18 @@ acpi_get_irq_source_fwhandle(const struct acpi_resource_source *source,
 	acpi_status status;
 
 	if (!source->string_length)
-		return acpi_get_gsi_domain_id(gsi);
+		return acpi_gsi_domain_id;
 
 	status = acpi_get_handle(NULL, source->string_ptr, &handle);
 	if (WARN_ON(ACPI_FAILURE(status)))
 		return NULL;
 
-	device = acpi_get_acpi_dev(handle);
+	device = acpi_bus_get_acpi_device(handle);
 	if (WARN_ON(!device))
 		return NULL;
 
 	result = &device->fwnode;
-	acpi_put_acpi_dev(device);
+	acpi_bus_put_acpi_device(device);
 	return result;
 }
 
@@ -147,7 +139,6 @@ struct acpi_irq_parse_one_ctx {
  * @polarity: polarity attributes of hwirq
  * @polarity: polarity attributes of hwirq
  * @shareable: shareable attributes of hwirq
- * @wake_capable: wake capable attribute of hwirq
  * @ctx: acpi_irq_parse_one_ctx updated by this function
  *
  * Description:
@@ -157,13 +148,12 @@ struct acpi_irq_parse_one_ctx {
 static inline void acpi_irq_parse_one_match(struct fwnode_handle *fwnode,
 					    u32 hwirq, u8 triggering,
 					    u8 polarity, u8 shareable,
-					    u8 wake_capable,
 					    struct acpi_irq_parse_one_ctx *ctx)
 {
 	if (!fwnode)
 		return;
 	ctx->rc = 0;
-	*ctx->res_flags = acpi_dev_irq_flags(triggering, polarity, shareable, wake_capable);
+	*ctx->res_flags = acpi_dev_irq_flags(triggering, polarity, shareable);
 	ctx->fwspec->fwnode = fwnode;
 	ctx->fwspec->param[0] = hwirq;
 	ctx->fwspec->param[1] = acpi_dev_get_irq_type(triggering, polarity);
@@ -203,10 +193,10 @@ static acpi_status acpi_irq_parse_one_cb(struct acpi_resource *ares,
 			ctx->index -= irq->interrupt_count;
 			return AE_OK;
 		}
-		fwnode = acpi_get_gsi_domain_id(irq->interrupts[ctx->index]);
+		fwnode = acpi_gsi_domain_id;
 		acpi_irq_parse_one_match(fwnode, irq->interrupts[ctx->index],
 					 irq->triggering, irq->polarity,
-					 irq->shareable, irq->wake_capable, ctx);
+					 irq->sharable, ctx);
 		return AE_CTRL_TERMINATE;
 	case ACPI_RESOURCE_TYPE_EXTENDED_IRQ:
 		eirq = &ares->data.extended_irq;
@@ -216,11 +206,10 @@ static acpi_status acpi_irq_parse_one_cb(struct acpi_resource *ares,
 			ctx->index -= eirq->interrupt_count;
 			return AE_OK;
 		}
-		fwnode = acpi_get_irq_source_fwhandle(&eirq->resource_source,
-						      eirq->interrupts[ctx->index]);
+		fwnode = acpi_get_irq_source_fwhandle(&eirq->resource_source);
 		acpi_irq_parse_one_match(fwnode, eirq->interrupts[ctx->index],
 					 eirq->triggering, eirq->polarity,
-					 eirq->shareable, eirq->wake_capable, ctx);
+					 eirq->sharable, ctx);
 		return AE_CTRL_TERMINATE;
 	}
 
@@ -301,50 +290,8 @@ EXPORT_SYMBOL_GPL(acpi_irq_get);
  *          GSI interrupts
  */
 void __init acpi_set_irq_model(enum acpi_irq_model_id model,
-			       struct fwnode_handle *(*fn)(u32))
+			       struct fwnode_handle *fwnode)
 {
 	acpi_irq_model = model;
-	acpi_get_gsi_domain_id = fn;
+	acpi_gsi_domain_id = fwnode;
 }
-
-/**
- * acpi_set_gsi_to_irq_fallback - Register a GSI transfer
- * callback to fallback to arch specified implementation.
- * @fn: arch-specific fallback handler
- */
-void __init acpi_set_gsi_to_irq_fallback(u32 (*fn)(u32))
-{
-	acpi_gsi_to_irq_fallback = fn;
-}
-
-/**
- * acpi_irq_create_hierarchy - Create a hierarchical IRQ domain with the default
- *                             GSI domain as its parent.
- * @flags:      Irq domain flags associated with the domain
- * @size:       Size of the domain.
- * @fwnode:     Optional fwnode of the interrupt controller
- * @ops:        Pointer to the interrupt domain callbacks
- * @host_data:  Controller private data pointer
- */
-struct irq_domain *acpi_irq_create_hierarchy(unsigned int flags,
-					     unsigned int size,
-					     struct fwnode_handle *fwnode,
-					     const struct irq_domain_ops *ops,
-					     void *host_data)
-{
-	struct irq_domain *d;
-
-	/* This only works for the GIC model... */
-	if (acpi_irq_model != ACPI_IRQ_MODEL_GIC)
-		return NULL;
-
-	d = irq_find_matching_fwnode(acpi_get_gsi_domain_id(0),
-				     DOMAIN_BUS_ANY);
-
-	if (!d)
-		return NULL;
-
-	return irq_domain_create_hierarchy(d, flags, size, fwnode, ops,
-					   host_data);
-}
-EXPORT_SYMBOL_GPL(acpi_irq_create_hierarchy);

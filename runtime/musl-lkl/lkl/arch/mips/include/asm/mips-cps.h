@@ -1,13 +1,16 @@
-/* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
  * Copyright (C) 2017 Imagination Technologies
  * Author: Paul Burton <paul.burton@mips.com>
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License as published by the
+ * Free Software Foundation;  either version 2 of the  License, or (at your
+ * option) any later version.
  */
 
 #ifndef __MIPS_ASM_MIPS_CPS_H__
 #define __MIPS_ASM_MIPS_CPS_H__
 
-#include <linux/bitfield.h>
 #include <linux/io.h>
 #include <linux/types.h>
 
@@ -113,10 +116,14 @@ static inline void clear_##unit##_##name(uint##sz##_t val)		\
  */
 static inline unsigned int mips_cps_numclusters(void)
 {
+	unsigned int num_clusters;
+
 	if (mips_cm_revision() < CM_REV_CM3_5)
 		return 1;
 
-	return FIELD_GET(CM_GCR_CONFIG_NUM_CLUSTERS, read_gcr_config());
+	num_clusters = read_gcr_config() & CM_GCR_CONFIG_NUM_CLUSTERS;
+	num_clusters >>= __ffs(CM_GCR_CONFIG_NUM_CLUSTERS);
+	return num_clusters;
 }
 
 /**
@@ -166,8 +173,7 @@ static inline unsigned int mips_cps_numcores(unsigned int cluster)
 		return 0;
 
 	/* Add one before masking to handle 0xff indicating no cores */
-	return FIELD_GET(CM_GCR_CONFIG_PCORES,
-			 mips_cps_cluster_config(cluster) + 1);
+	return (mips_cps_cluster_config(cluster) + 1) & CM_GCR_CONFIG_PCORES;
 }
 
 /**
@@ -179,11 +185,14 @@ static inline unsigned int mips_cps_numcores(unsigned int cluster)
  */
 static inline unsigned int mips_cps_numiocu(unsigned int cluster)
 {
+	unsigned int num_iocu;
+
 	if (!mips_cm_present())
 		return 0;
 
-	return FIELD_GET(CM_GCR_CONFIG_NUMIOCU,
-			 mips_cps_cluster_config(cluster));
+	num_iocu = mips_cps_cluster_config(cluster) & CM_GCR_CONFIG_NUMIOCU;
+	num_iocu >>= __ffs(CM_GCR_CONFIG_NUMIOCU);
+	return num_iocu;
 }
 
 /**
@@ -225,7 +234,7 @@ static inline unsigned int mips_cps_numvps(unsigned int cluster, unsigned int co
 
 	mips_cm_unlock_other();
 
-	return FIELD_GET(CM_GCR_Cx_CONFIG_PVPE, cfg + 1);
+	return (cfg + 1) & CM_GCR_Cx_CONFIG_PVPE;
 }
 
 #endif /* __MIPS_ASM_MIPS_CPS_H__ */

@@ -1,9 +1,18 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * PCM1681 ASoC codec driver
  *
  * Copyright (c) StreamUnlimited GmbH 2013
  *	Marek Belisko <marek.belisko@streamunlimited.com>
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version 2
+ * of the License, or (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
  */
 
 #include <linux/module.h>
@@ -84,7 +93,7 @@ static const int pcm1681_deemph[] = { 44100, 48000, 32000 };
 static int pcm1681_set_deemph(struct snd_soc_component *component)
 {
 	struct pcm1681_private *priv = snd_soc_component_get_drvdata(component);
-	int i, val = -1, enable = 0;
+	int i = 0, val = -1, enable = 0;
 
 	if (priv->deemph) {
 		for (i = 0; i < ARRAY_SIZE(pcm1681_deemph); i++) {
@@ -136,8 +145,8 @@ static int pcm1681_set_dai_fmt(struct snd_soc_dai *codec_dai,
 	struct snd_soc_component *component = codec_dai->component;
 	struct pcm1681_private *priv = snd_soc_component_get_drvdata(component);
 
-	/* The PCM1681 can only be consumer to all clocks */
-	if ((format & SND_SOC_DAIFMT_CLOCK_PROVIDER_MASK) != SND_SOC_DAIFMT_CBC_CFC) {
+	/* The PCM1681 can only be slave to all clocks */
+	if ((format & SND_SOC_DAIFMT_MASTER_MASK) != SND_SOC_DAIFMT_CBS_CFS) {
 		dev_err(component->dev, "Invalid clocking mode\n");
 		return -EINVAL;
 	}
@@ -147,7 +156,7 @@ static int pcm1681_set_dai_fmt(struct snd_soc_dai *codec_dai,
 	return 0;
 }
 
-static int pcm1681_mute(struct snd_soc_dai *dai, int mute, int direction)
+static int pcm1681_digital_mute(struct snd_soc_dai *dai, int mute)
 {
 	struct snd_soc_component *component = dai->component;
 	struct pcm1681_private *priv = snd_soc_component_get_drvdata(component);
@@ -205,8 +214,7 @@ static int pcm1681_hw_params(struct snd_pcm_substream *substream,
 static const struct snd_soc_dai_ops pcm1681_dai_ops = {
 	.set_fmt	= pcm1681_set_dai_fmt,
 	.hw_params	= pcm1681_hw_params,
-	.mute_stream	= pcm1681_mute,
-	.no_capture_mute = 1,
+	.digital_mute	= pcm1681_digital_mute,
 };
 
 static const struct snd_soc_dapm_widget pcm1681_dapm_widgets[] = {
@@ -290,6 +298,7 @@ static const struct snd_soc_component_driver soc_component_dev_pcm1681 = {
 	.idle_bias_on		= 1,
 	.use_pmdown_time	= 1,
 	.endianness		= 1,
+	.non_legacy_dai_naming	= 1,
 };
 
 static const struct i2c_device_id pcm1681_i2c_id[] = {
@@ -298,7 +307,8 @@ static const struct i2c_device_id pcm1681_i2c_id[] = {
 };
 MODULE_DEVICE_TABLE(i2c, pcm1681_i2c_id);
 
-static int pcm1681_i2c_probe(struct i2c_client *client)
+static int pcm1681_i2c_probe(struct i2c_client *client,
+			      const struct i2c_device_id *id)
 {
 	int ret;
 	struct pcm1681_private *priv;
@@ -327,7 +337,7 @@ static struct i2c_driver pcm1681_i2c_driver = {
 		.of_match_table = of_match_ptr(pcm1681_dt_ids),
 	},
 	.id_table	= pcm1681_i2c_id,
-	.probe_new	= pcm1681_i2c_probe,
+	.probe		= pcm1681_i2c_probe,
 };
 
 module_i2c_driver(pcm1681_i2c_driver);

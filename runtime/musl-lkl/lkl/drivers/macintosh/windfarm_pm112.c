@@ -1,10 +1,11 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Windfarm PowerMac thermal control.
  * Control loops for machines with SMU and PPC970MP processors.
  *
  * Copyright (C) 2005 Paul Mackerras, IBM Corp. <paulus@samba.org>
  * Copyright (C) 2006 Benjamin Herrenschmidt, IBM Corp.
+ *
+ * Use and redistribute under the terms of the GNU GPL v2.
  */
 #include <linux/types.h>
 #include <linux/errno.h>
@@ -12,9 +13,7 @@
 #include <linux/device.h>
 #include <linux/platform_device.h>
 #include <linux/reboot.h>
-#include <linux/of.h>
-#include <linux/slab.h>
-
+#include <asm/prom.h>
 #include <asm/smu.h>
 
 #include "windfarm.h"
@@ -134,6 +133,14 @@ static int create_cpu_loop(int cpu)
 	s32 tmax;
 	int fmin;
 
+	/* Get PID params from the appropriate SAT */
+	hdr = smu_sat_get_sdb_partition(chip, 0xC8 + core, NULL);
+	if (hdr == NULL) {
+		printk(KERN_WARNING"windfarm: can't get CPU PID fan config\n");
+		return -EINVAL;
+	}
+	piddata = (struct smu_sdbp_cpupiddata *)&hdr[1];
+
 	/* Get FVT params to get Tmax; if not found, assume default */
 	hdr = smu_sat_get_sdb_partition(chip, 0xC4 + core, NULL);
 	if (hdr) {
@@ -145,16 +152,6 @@ static int create_cpu_loop(int cpu)
 	/* We keep a global tmax for overtemp calculations */
 	if (tmax < cpu_all_tmax)
 		cpu_all_tmax = tmax;
-
-	kfree(hdr);
-
-	/* Get PID params from the appropriate SAT */
-	hdr = smu_sat_get_sdb_partition(chip, 0xC8 + core, NULL);
-	if (hdr == NULL) {
-		printk(KERN_WARNING"windfarm: can't get CPU PID fan config\n");
-		return -EINVAL;
-	}
-	piddata = (struct smu_sdbp_cpupiddata *)&hdr[1];
 
 	/*
 	 * Darwin has a minimum fan speed of 1000 rpm for the 4-way and
@@ -178,9 +175,6 @@ static int create_cpu_loop(int cpu)
 		pid.min = fmin;
 
 	wf_cpu_pid_init(&cpu_pid[cpu], &pid);
-
-	kfree(hdr);
-
 	return 0;
 }
 

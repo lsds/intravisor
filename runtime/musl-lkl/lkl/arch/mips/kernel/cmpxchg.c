@@ -1,7 +1,11 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Copyright (C) 2017 Imagination Technologies
  * Author: Paul Burton <paul.burton@mips.com>
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License as published by the
+ * Free Software Foundation;  either version 2 of the  License, or (at your
+ * option) any later version.
  */
 
 #include <linux/bitops.h>
@@ -22,7 +26,7 @@ unsigned long __xchg_small(volatile void *ptr, unsigned long val, unsigned int s
 
 	/*
 	 * Calculate a shift & mask that correspond to the value we wish to
-	 * exchange within the naturally aligned 4 byte integer that includes
+	 * exchange within the naturally aligned 4 byte integerthat includes
 	 * it.
 	 */
 	shift = (unsigned long)ptr & 0x3;
@@ -41,7 +45,7 @@ unsigned long __xchg_small(volatile void *ptr, unsigned long val, unsigned int s
 	do {
 		old32 = load32;
 		new32 = (load32 & ~mask) | (val << shift);
-		load32 = arch_cmpxchg(ptr32, old32, new32);
+		load32 = cmpxchg(ptr32, old32, new32);
 	} while (load32 != old32);
 
 	return (load32 & mask) >> shift;
@@ -50,9 +54,10 @@ unsigned long __xchg_small(volatile void *ptr, unsigned long val, unsigned int s
 unsigned long __cmpxchg_small(volatile void *ptr, unsigned long old,
 			      unsigned long new, unsigned int size)
 {
-	u32 mask, old32, new32, load32, load;
+	u32 mask, old32, new32, load32;
 	volatile u32 *ptr32;
 	unsigned int shift;
+	u8 load;
 
 	/* Check that ptr is naturally aligned */
 	WARN_ON((unsigned long)ptr & (size - 1));
@@ -97,7 +102,7 @@ unsigned long __cmpxchg_small(volatile void *ptr, unsigned long old,
 		 */
 		old32 = (load32 & ~mask) | (old << shift);
 		new32 = (load32 & ~mask) | (new << shift);
-		load32 = arch_cmpxchg(ptr32, old32, new32);
+		load32 = cmpxchg(ptr32, old32, new32);
 		if (load32 == old32)
 			return old;
 	}

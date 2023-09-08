@@ -1,9 +1,11 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * UIO Hilscher CIF card driver
  *
  * (C) 2007 Hans J. Koch <hjk@hansjkoch.de>
  * Original code (C) 2005 Benedikt Spranger <b.spranger@linutronix.de>
+ *
+ * Licensed under GPL version 2 only.
+ *
  */
 
 #include <linux/device.h>
@@ -43,12 +45,12 @@ static int hilscher_pci_probe(struct pci_dev *dev,
 {
 	struct uio_info *info;
 
-	info = devm_kzalloc(&dev->dev, sizeof(struct uio_info), GFP_KERNEL);
+	info = kzalloc(sizeof(struct uio_info), GFP_KERNEL);
 	if (!info)
 		return -ENOMEM;
 
 	if (pci_enable_device(dev))
-		return -ENODEV;
+		goto out_free;
 
 	if (pci_request_regions(dev, "hilscher"))
 		goto out_disable;
@@ -92,6 +94,8 @@ out_release:
 	pci_release_regions(dev);
 out_disable:
 	pci_disable_device(dev);
+out_free:
+	kfree (info);
 	return -ENODEV;
 }
 
@@ -103,6 +107,8 @@ static void hilscher_pci_remove(struct pci_dev *dev)
 	pci_release_regions(dev);
 	pci_disable_device(dev);
 	iounmap(info->mem[0].internal_addr);
+
+	kfree (info);
 }
 
 static struct pci_device_id hilscher_pci_ids[] = {

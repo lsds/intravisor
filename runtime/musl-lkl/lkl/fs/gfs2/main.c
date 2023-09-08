@@ -1,7 +1,10 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (C) Sistina Software, Inc.  1997-2003 All rights reserved.
  * Copyright (C) 2004-2006 Red Hat, Inc.  All rights reserved.
+ *
+ * This copyrighted material is made available to anyone wishing to use,
+ * modify, copy, or redistribute it subject to the terms and conditions
+ * of the GNU General Public License version 2.
  */
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
@@ -36,11 +39,9 @@ static void gfs2_init_inode_once(void *foo)
 	struct gfs2_inode *ip = foo;
 
 	inode_init_once(&ip->i_inode);
-	atomic_set(&ip->i_sizehint, 0);
 	init_rwsem(&ip->i_rw_mutex);
-	INIT_LIST_HEAD(&ip->i_ordered);
+	INIT_LIST_HEAD(&ip->i_trunc_list);
 	ip->i_qadata = NULL;
-	gfs2_holder_mark_uninitialized(&ip->i_rgd_gh);
 	memset(&ip->i_res, 0, sizeof(ip->i_res));
 	RB_CLEAR_NODE(&ip->i_res.rs_node);
 	ip->i_hash_cache = NULL;
@@ -61,10 +62,11 @@ static void gfs2_init_glock_once(void *foo)
 
 static void gfs2_init_gl_aspace_once(void *foo)
 {
-	struct gfs2_glock_aspace *gla = foo;
+	struct gfs2_glock *gl = foo;
+	struct address_space *mapping = (struct address_space *)(gl + 1);
 
-	gfs2_init_glock_once(&gla->glock);
-	address_space_init_once(&gla->mapping);
+	gfs2_init_glock_once(gl);
+	address_space_init_once(mapping);
 }
 
 /**
@@ -96,13 +98,14 @@ static int __init init_gfs2_fs(void)
 	error = -ENOMEM;
 	gfs2_glock_cachep = kmem_cache_create("gfs2_glock",
 					      sizeof(struct gfs2_glock),
-					      0, SLAB_RECLAIM_ACCOUNT,
+					      0, 0,
 					      gfs2_init_glock_once);
 	if (!gfs2_glock_cachep)
 		goto fail_cachep1;
 
 	gfs2_glock_aspace_cachep = kmem_cache_create("gfs2_glock(aspace)",
-					sizeof(struct gfs2_glock_aspace),
+					sizeof(struct gfs2_glock) +
+					sizeof(struct address_space),
 					0, 0, gfs2_init_gl_aspace_once);
 
 	if (!gfs2_glock_aspace_cachep)
@@ -131,7 +134,7 @@ static int __init init_gfs2_fs(void)
 
 	gfs2_quotad_cachep = kmem_cache_create("gfs2_quotad",
 					       sizeof(struct gfs2_quota_data),
-					       0, SLAB_RECLAIM_ACCOUNT, NULL);
+					       0, 0, NULL);
 	if (!gfs2_quotad_cachep)
 		goto fail_cachep6;
 
@@ -141,15 +144,17 @@ static int __init init_gfs2_fs(void)
 	if (!gfs2_qadata_cachep)
 		goto fail_cachep7;
 
-	gfs2_trans_cachep = kmem_cache_create("gfs2_trans",
-					       sizeof(struct gfs2_trans),
-					       0, 0, NULL);
-	if (!gfs2_trans_cachep)
-		goto fail_cachep8;
-
-	error = register_shrinker(&gfs2_qd_shrinker, "gfs2-qd");
+	error = register_shrinker(&gfs2_qd_shrinker);
 	if (error)
 		goto fail_shrinker;
+
+	error = register_filesystem(&gfs2_fs_type);
+	if (error)
+		goto fail_fs1;
+
+	error = register_filesystem(&gfs2meta_fs_type);
+	if (error)
+		goto fail_fs2;
 
 	error = -ENOMEM;
 	gfs_recovery_wq = alloc_workqueue("gfs_recovery",
@@ -171,23 +176,15 @@ static int __init init_gfs2_fs(void)
 	if (!gfs2_page_pool)
 		goto fail_mempool;
 
-	gfs2_register_debugfs();
-	error = register_filesystem(&gfs2_fs_type);
+	error = gfs2_register_debugfs();
 	if (error)
-		goto fail_fs1;
-
-	error = register_filesystem(&gfs2meta_fs_type);
-	if (error)
-		goto fail_fs2;
-
+		goto fail_debugfs;
 
 	pr_info("GFS2 installed\n");
 
 	return 0;
 
-fail_fs2:
-	unregister_filesystem(&gfs2_fs_type);
-fail_fs1:
+fail_debugfs:
 	mempool_destroy(gfs2_page_pool);
 fail_mempool:
 	destroy_workqueue(gfs2_freeze_wq);
@@ -196,10 +193,12 @@ fail_wq3:
 fail_wq2:
 	destroy_workqueue(gfs_recovery_wq);
 fail_wq1:
+	unregister_filesystem(&gfs2meta_fs_type);
+fail_fs2:
+	unregister_filesystem(&gfs2_fs_type);
+fail_fs1:
 	unregister_shrinker(&gfs2_qd_shrinker);
 fail_shrinker:
-	kmem_cache_destroy(gfs2_trans_cachep);
-fail_cachep8:
 	kmem_cache_destroy(gfs2_qadata_cachep);
 fail_cachep7:
 	kmem_cache_destroy(gfs2_quotad_cachep);
@@ -242,7 +241,6 @@ static void __exit exit_gfs2_fs(void)
 	rcu_barrier();
 
 	mempool_destroy(gfs2_page_pool);
-	kmem_cache_destroy(gfs2_trans_cachep);
 	kmem_cache_destroy(gfs2_qadata_cachep);
 	kmem_cache_destroy(gfs2_quotad_cachep);
 	kmem_cache_destroy(gfs2_rgrpd_cachep);

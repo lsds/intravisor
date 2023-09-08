@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (C) 2009. SUSE Linux Products GmbH. All rights reserved.
  *
@@ -9,6 +8,10 @@
  * Description:
  * This file is derived from arch/powerpc/kvm/44x.c,
  * by Hollis Blanchard <hollisb@us.ibm.com>.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License, version 2, as
+ * published by the Free Software Foundation.
  */
 
 #include <linux/kvm_host.h>
@@ -25,6 +28,7 @@
 #include <asm/reg.h>
 #include <asm/cputable.h>
 #include <asm/cacheflush.h>
+#include <asm/tlbflush.h>
 #include <linux/uaccess.h>
 #include <asm/io.h>
 #include <asm/kvm_ppc.h>
@@ -36,64 +40,58 @@
 #include "book3s.h"
 #include "trace.h"
 
+#define VCPU_STAT(x) offsetof(struct kvm_vcpu, stat.x), KVM_STAT_VCPU
+
 /* #define EXIT_DEBUG */
 
-const struct _kvm_stats_desc kvm_vm_stats_desc[] = {
-	KVM_GENERIC_VM_STATS(),
-	STATS_DESC_ICOUNTER(VM, num_2M_pages),
-	STATS_DESC_ICOUNTER(VM, num_1G_pages)
+struct kvm_stats_debugfs_item debugfs_entries[] = {
+	{ "exits",       VCPU_STAT(sum_exits) },
+	{ "mmio",        VCPU_STAT(mmio_exits) },
+	{ "sig",         VCPU_STAT(signal_exits) },
+	{ "sysc",        VCPU_STAT(syscall_exits) },
+	{ "inst_emu",    VCPU_STAT(emulated_inst_exits) },
+	{ "dec",         VCPU_STAT(dec_exits) },
+	{ "ext_intr",    VCPU_STAT(ext_intr_exits) },
+	{ "queue_intr",  VCPU_STAT(queue_intr) },
+	{ "halt_poll_success_ns",	VCPU_STAT(halt_poll_success_ns) },
+	{ "halt_poll_fail_ns",		VCPU_STAT(halt_poll_fail_ns) },
+	{ "halt_wait_ns",		VCPU_STAT(halt_wait_ns) },
+	{ "halt_successful_poll", VCPU_STAT(halt_successful_poll), },
+	{ "halt_attempted_poll", VCPU_STAT(halt_attempted_poll), },
+	{ "halt_successful_wait",	VCPU_STAT(halt_successful_wait) },
+	{ "halt_poll_invalid", VCPU_STAT(halt_poll_invalid) },
+	{ "halt_wakeup", VCPU_STAT(halt_wakeup) },
+	{ "pf_storage",  VCPU_STAT(pf_storage) },
+	{ "sp_storage",  VCPU_STAT(sp_storage) },
+	{ "pf_instruc",  VCPU_STAT(pf_instruc) },
+	{ "sp_instruc",  VCPU_STAT(sp_instruc) },
+	{ "ld",          VCPU_STAT(ld) },
+	{ "ld_slow",     VCPU_STAT(ld_slow) },
+	{ "st",          VCPU_STAT(st) },
+	{ "st_slow",     VCPU_STAT(st_slow) },
+	{ "pthru_all",       VCPU_STAT(pthru_all) },
+	{ "pthru_host",      VCPU_STAT(pthru_host) },
+	{ "pthru_bad_aff",   VCPU_STAT(pthru_bad_aff) },
+	{ NULL }
 };
 
-const struct kvm_stats_header kvm_vm_stats_header = {
-	.name_size = KVM_STATS_NAME_SIZE,
-	.num_desc = ARRAY_SIZE(kvm_vm_stats_desc),
-	.id_offset = sizeof(struct kvm_stats_header),
-	.desc_offset = sizeof(struct kvm_stats_header) + KVM_STATS_NAME_SIZE,
-	.data_offset = sizeof(struct kvm_stats_header) + KVM_STATS_NAME_SIZE +
-		       sizeof(kvm_vm_stats_desc),
-};
+void kvmppc_unfixup_split_real(struct kvm_vcpu *vcpu)
+{
+	if (vcpu->arch.hflags & BOOK3S_HFLAG_SPLIT_HACK) {
+		ulong pc = kvmppc_get_pc(vcpu);
+		if ((pc & SPLIT_HACK_MASK) == SPLIT_HACK_OFFS)
+			kvmppc_set_pc(vcpu, pc & ~SPLIT_HACK_MASK);
+		vcpu->arch.hflags &= ~BOOK3S_HFLAG_SPLIT_HACK;
+	}
+}
+EXPORT_SYMBOL_GPL(kvmppc_unfixup_split_real);
 
-const struct _kvm_stats_desc kvm_vcpu_stats_desc[] = {
-	KVM_GENERIC_VCPU_STATS(),
-	STATS_DESC_COUNTER(VCPU, sum_exits),
-	STATS_DESC_COUNTER(VCPU, mmio_exits),
-	STATS_DESC_COUNTER(VCPU, signal_exits),
-	STATS_DESC_COUNTER(VCPU, light_exits),
-	STATS_DESC_COUNTER(VCPU, itlb_real_miss_exits),
-	STATS_DESC_COUNTER(VCPU, itlb_virt_miss_exits),
-	STATS_DESC_COUNTER(VCPU, dtlb_real_miss_exits),
-	STATS_DESC_COUNTER(VCPU, dtlb_virt_miss_exits),
-	STATS_DESC_COUNTER(VCPU, syscall_exits),
-	STATS_DESC_COUNTER(VCPU, isi_exits),
-	STATS_DESC_COUNTER(VCPU, dsi_exits),
-	STATS_DESC_COUNTER(VCPU, emulated_inst_exits),
-	STATS_DESC_COUNTER(VCPU, dec_exits),
-	STATS_DESC_COUNTER(VCPU, ext_intr_exits),
-	STATS_DESC_COUNTER(VCPU, halt_successful_wait),
-	STATS_DESC_COUNTER(VCPU, dbell_exits),
-	STATS_DESC_COUNTER(VCPU, gdbell_exits),
-	STATS_DESC_COUNTER(VCPU, ld),
-	STATS_DESC_COUNTER(VCPU, st),
-	STATS_DESC_COUNTER(VCPU, pf_storage),
-	STATS_DESC_COUNTER(VCPU, pf_instruc),
-	STATS_DESC_COUNTER(VCPU, sp_storage),
-	STATS_DESC_COUNTER(VCPU, sp_instruc),
-	STATS_DESC_COUNTER(VCPU, queue_intr),
-	STATS_DESC_COUNTER(VCPU, ld_slow),
-	STATS_DESC_COUNTER(VCPU, st_slow),
-	STATS_DESC_COUNTER(VCPU, pthru_all),
-	STATS_DESC_COUNTER(VCPU, pthru_host),
-	STATS_DESC_COUNTER(VCPU, pthru_bad_aff)
-};
-
-const struct kvm_stats_header kvm_vcpu_stats_header = {
-	.name_size = KVM_STATS_NAME_SIZE,
-	.num_desc = ARRAY_SIZE(kvm_vcpu_stats_desc),
-	.id_offset = sizeof(struct kvm_stats_header),
-	.desc_offset = sizeof(struct kvm_stats_header) + KVM_STATS_NAME_SIZE,
-	.data_offset = sizeof(struct kvm_stats_header) + KVM_STATS_NAME_SIZE +
-		       sizeof(kvm_vcpu_stats_desc),
-};
+static inline unsigned long kvmppc_interrupt_offset(struct kvm_vcpu *vcpu)
+{
+	if (!is_kvmppc_hv_enabled(vcpu->kvm))
+		return to_book3s(vcpu)->hior;
+	return 0;
+}
 
 static inline void kvmppc_update_int_pending(struct kvm_vcpu *vcpu,
 			unsigned long pending_now, unsigned long old_pending)
@@ -134,7 +132,11 @@ static inline bool kvmppc_critical_section(struct kvm_vcpu *vcpu)
 
 void kvmppc_inject_interrupt(struct kvm_vcpu *vcpu, int vec, u64 flags)
 {
-	vcpu->kvm->arch.kvm_ops->inject_interrupt(vcpu, vec, flags);
+	kvmppc_unfixup_split_real(vcpu);
+	kvmppc_set_srr0(vcpu, kvmppc_get_pc(vcpu));
+	kvmppc_set_srr1(vcpu, kvmppc_get_msr(vcpu) | flags);
+	kvmppc_set_pc(vcpu, kvmppc_interrupt_offset(vcpu) + vec);
+	vcpu->arch.mmu.reset_msr(vcpu);
 }
 
 static int kvmppc_book3s_vec2irqprio(unsigned int vec)
@@ -149,6 +151,7 @@ static int kvmppc_book3s_vec2irqprio(unsigned int vec)
 	case 0x400: prio = BOOK3S_IRQPRIO_INST_STORAGE;		break;
 	case 0x480: prio = BOOK3S_IRQPRIO_INST_SEGMENT;		break;
 	case 0x500: prio = BOOK3S_IRQPRIO_EXTERNAL;		break;
+	case 0x501: prio = BOOK3S_IRQPRIO_EXTERNAL_LEVEL;	break;
 	case 0x600: prio = BOOK3S_IRQPRIO_ALIGNMENT;		break;
 	case 0x700: prio = BOOK3S_IRQPRIO_PROGRAM;		break;
 	case 0x800: prio = BOOK3S_IRQPRIO_FP_UNAVAIL;		break;
@@ -187,19 +190,6 @@ void kvmppc_book3s_queue_irqprio(struct kvm_vcpu *vcpu, unsigned int vec)
 #endif
 }
 EXPORT_SYMBOL_GPL(kvmppc_book3s_queue_irqprio);
-
-void kvmppc_core_queue_machine_check(struct kvm_vcpu *vcpu, ulong flags)
-{
-	/* might as well deliver this straight away */
-	kvmppc_inject_interrupt(vcpu, BOOK3S_INTERRUPT_MACHINE_CHECK, flags);
-}
-EXPORT_SYMBOL_GPL(kvmppc_core_queue_machine_check);
-
-void kvmppc_core_queue_syscall(struct kvm_vcpu *vcpu)
-{
-	kvmppc_inject_interrupt(vcpu, BOOK3S_INTERRUPT_SYSCALL, 0);
-}
-EXPORT_SYMBOL(kvmppc_core_queue_syscall);
 
 void kvmppc_core_queue_program(struct kvm_vcpu *vcpu, ulong flags)
 {
@@ -247,35 +237,18 @@ EXPORT_SYMBOL_GPL(kvmppc_core_dequeue_dec);
 void kvmppc_core_queue_external(struct kvm_vcpu *vcpu,
                                 struct kvm_interrupt *irq)
 {
-	/*
-	 * This case (KVM_INTERRUPT_SET) should never actually arise for
-	 * a pseries guest (because pseries guests expect their interrupt
-	 * controllers to continue asserting an external interrupt request
-	 * until it is acknowledged at the interrupt controller), but is
-	 * included to avoid ABI breakage and potentially for other
-	 * sorts of guest.
-	 *
-	 * There is a subtlety here: HV KVM does not test the
-	 * external_oneshot flag in the code that synthesizes
-	 * external interrupts for the guest just before entering
-	 * the guest.  That is OK even if userspace did do a
-	 * KVM_INTERRUPT_SET on a pseries guest vcpu, because the
-	 * caller (kvm_vcpu_ioctl_interrupt) does a kvm_vcpu_kick()
-	 * which ends up doing a smp_send_reschedule(), which will
-	 * pull the guest all the way out to the host, meaning that
-	 * we will call kvmppc_core_prepare_to_enter() before entering
-	 * the guest again, and that will handle the external_oneshot
-	 * flag correctly.
-	 */
-	if (irq->irq == KVM_INTERRUPT_SET)
-		vcpu->arch.external_oneshot = 1;
+	unsigned int vec = BOOK3S_INTERRUPT_EXTERNAL;
 
-	kvmppc_book3s_queue_irqprio(vcpu, BOOK3S_INTERRUPT_EXTERNAL);
+	if (irq->irq == KVM_INTERRUPT_SET_LEVEL)
+		vec = BOOK3S_INTERRUPT_EXTERNAL_LEVEL;
+
+	kvmppc_book3s_queue_irqprio(vcpu, vec);
 }
 
 void kvmppc_core_dequeue_external(struct kvm_vcpu *vcpu)
 {
 	kvmppc_book3s_dequeue_irqprio(vcpu, BOOK3S_INTERRUPT_EXTERNAL);
+	kvmppc_book3s_dequeue_irqprio(vcpu, BOOK3S_INTERRUPT_EXTERNAL_LEVEL);
 }
 
 void kvmppc_core_queue_data_storage(struct kvm_vcpu *vcpu, ulong dar,
@@ -283,15 +256,18 @@ void kvmppc_core_queue_data_storage(struct kvm_vcpu *vcpu, ulong dar,
 {
 	kvmppc_set_dar(vcpu, dar);
 	kvmppc_set_dsisr(vcpu, flags);
-	kvmppc_inject_interrupt(vcpu, BOOK3S_INTERRUPT_DATA_STORAGE, 0);
+	kvmppc_book3s_queue_irqprio(vcpu, BOOK3S_INTERRUPT_DATA_STORAGE);
 }
-EXPORT_SYMBOL_GPL(kvmppc_core_queue_data_storage);
+EXPORT_SYMBOL_GPL(kvmppc_core_queue_data_storage);	/* used by kvm_hv */
 
 void kvmppc_core_queue_inst_storage(struct kvm_vcpu *vcpu, ulong flags)
 {
-	kvmppc_inject_interrupt(vcpu, BOOK3S_INTERRUPT_INST_STORAGE, flags);
+	u64 msr = kvmppc_get_msr(vcpu);
+	msr &= ~(SRR1_ISI_NOPT | SRR1_ISI_N_OR_G | SRR1_ISI_PROT);
+	msr |= flags & (SRR1_ISI_NOPT | SRR1_ISI_N_OR_G | SRR1_ISI_PROT);
+	kvmppc_set_msr_fast(vcpu, msr);
+	kvmppc_book3s_queue_irqprio(vcpu, BOOK3S_INTERRUPT_INST_STORAGE);
 }
-EXPORT_SYMBOL_GPL(kvmppc_core_queue_inst_storage);
 
 static int kvmppc_book3s_irqprio_deliver(struct kvm_vcpu *vcpu,
 					 unsigned int priority)
@@ -306,6 +282,7 @@ static int kvmppc_book3s_irqprio_deliver(struct kvm_vcpu *vcpu,
 		vec = BOOK3S_INTERRUPT_DECREMENTER;
 		break;
 	case BOOK3S_IRQPRIO_EXTERNAL:
+	case BOOK3S_IRQPRIO_EXTERNAL_LEVEL:
 		deliver = (kvmppc_get_msr(vcpu) & MSR_EE) && !crit;
 		vec = BOOK3S_INTERRUPT_EXTERNAL;
 		break;
@@ -379,16 +356,8 @@ static bool clear_irqprio(struct kvm_vcpu *vcpu, unsigned int priority)
 		case BOOK3S_IRQPRIO_DECREMENTER:
 			/* DEC interrupts get cleared by mtdec */
 			return false;
-		case BOOK3S_IRQPRIO_EXTERNAL:
-			/*
-			 * External interrupts get cleared by userspace
-			 * except when set by the KVM_INTERRUPT ioctl with
-			 * KVM_INTERRUPT_SET (not KVM_INTERRUPT_SET_LEVEL).
-			 */
-			if (vcpu->arch.external_oneshot) {
-				vcpu->arch.external_oneshot = 0;
-				return true;
-			}
+		case BOOK3S_IRQPRIO_EXTERNAL_LEVEL:
+			/* External interrupts get cleared by userspace */
 			return false;
 	}
 
@@ -481,8 +450,8 @@ int kvmppc_xlate(struct kvm_vcpu *vcpu, ulong eaddr, enum xlate_instdata xlid,
 	return r;
 }
 
-int kvmppc_load_last_inst(struct kvm_vcpu *vcpu,
-		enum instruction_fetch_type type, u32 *inst)
+int kvmppc_load_last_inst(struct kvm_vcpu *vcpu, enum instruction_type type,
+					 u32 *inst)
 {
 	ulong pc = kvmppc_get_pc(vcpu);
 	int r;
@@ -497,6 +466,11 @@ int kvmppc_load_last_inst(struct kvm_vcpu *vcpu,
 		return EMULATE_AGAIN;
 }
 EXPORT_SYMBOL_GPL(kvmppc_load_last_inst);
+
+int kvm_arch_vcpu_setup(struct kvm_vcpu *vcpu)
+{
+	return 0;
+}
 
 int kvmppc_subarch_vcpu_init(struct kvm_vcpu *vcpu)
 {
@@ -535,6 +509,8 @@ int kvm_arch_vcpu_ioctl_get_regs(struct kvm_vcpu *vcpu, struct kvm_regs *regs)
 {
 	int i;
 
+	vcpu_load(vcpu);
+
 	regs->pc = kvmppc_get_pc(vcpu);
 	regs->cr = kvmppc_get_cr(vcpu);
 	regs->ctr = kvmppc_get_ctr(vcpu);
@@ -556,12 +532,15 @@ int kvm_arch_vcpu_ioctl_get_regs(struct kvm_vcpu *vcpu, struct kvm_regs *regs)
 	for (i = 0; i < ARRAY_SIZE(regs->gpr); i++)
 		regs->gpr[i] = kvmppc_get_gpr(vcpu, i);
 
+	vcpu_put(vcpu);
 	return 0;
 }
 
 int kvm_arch_vcpu_ioctl_set_regs(struct kvm_vcpu *vcpu, struct kvm_regs *regs)
 {
 	int i;
+
+	vcpu_load(vcpu);
 
 	kvmppc_set_pc(vcpu, regs->pc);
 	kvmppc_set_cr(vcpu, regs->cr);
@@ -583,17 +562,18 @@ int kvm_arch_vcpu_ioctl_set_regs(struct kvm_vcpu *vcpu, struct kvm_regs *regs)
 	for (i = 0; i < ARRAY_SIZE(regs->gpr); i++)
 		kvmppc_set_gpr(vcpu, i, regs->gpr[i]);
 
+	vcpu_put(vcpu);
 	return 0;
 }
 
 int kvm_arch_vcpu_ioctl_get_fpu(struct kvm_vcpu *vcpu, struct kvm_fpu *fpu)
 {
-	return -EOPNOTSUPP;
+	return -ENOTSUPP;
 }
 
 int kvm_arch_vcpu_ioctl_set_fpu(struct kvm_vcpu *vcpu, struct kvm_fpu *fpu)
 {
-	return -EOPNOTSUPP;
+	return -ENOTSUPP;
 }
 
 int kvmppc_get_one_reg(struct kvm_vcpu *vcpu, u64 id,
@@ -639,24 +619,12 @@ int kvmppc_get_one_reg(struct kvm_vcpu *vcpu, u64 id,
 				r = -ENXIO;
 				break;
 			}
-			if (xics_on_xive())
+			if (xive_enabled())
 				*val = get_reg_val(id, kvmppc_xive_get_icp(vcpu));
 			else
 				*val = get_reg_val(id, kvmppc_xics_get_icp(vcpu));
 			break;
 #endif /* CONFIG_KVM_XICS */
-#ifdef CONFIG_KVM_XIVE
-		case KVM_REG_PPC_VP_STATE:
-			if (!vcpu->arch.xive_vcpu) {
-				r = -ENXIO;
-				break;
-			}
-			if (xive_enabled())
-				r = kvmppc_xive_native_get_vp(vcpu, val);
-			else
-				r = -ENXIO;
-			break;
-#endif /* CONFIG_KVM_XIVE */
 		case KVM_REG_PPC_FSCR:
 			*val = get_reg_val(id, vcpu->arch.fscr);
 			break;
@@ -724,24 +692,12 @@ int kvmppc_set_one_reg(struct kvm_vcpu *vcpu, u64 id,
 				r = -ENXIO;
 				break;
 			}
-			if (xics_on_xive())
+			if (xive_enabled())
 				r = kvmppc_xive_set_icp(vcpu, set_reg_val(id, *val));
 			else
 				r = kvmppc_xics_set_icp(vcpu, set_reg_val(id, *val));
 			break;
 #endif /* CONFIG_KVM_XICS */
-#ifdef CONFIG_KVM_XIVE
-		case KVM_REG_PPC_VP_STATE:
-			if (!vcpu->arch.xive_vcpu) {
-				r = -ENXIO;
-				break;
-			}
-			if (xive_enabled())
-				r = kvmppc_xive_native_set_vp(vcpu, val);
-			else
-				r = -ENXIO;
-			break;
-#endif /* CONFIG_KVM_XIVE */
 		case KVM_REG_PPC_FSCR:
 			vcpu->arch.fscr = set_reg_val(id, *val);
 			break;
@@ -785,9 +741,9 @@ void kvmppc_set_msr(struct kvm_vcpu *vcpu, u64 msr)
 }
 EXPORT_SYMBOL_GPL(kvmppc_set_msr);
 
-int kvmppc_vcpu_run(struct kvm_vcpu *vcpu)
+int kvmppc_vcpu_run(struct kvm_run *kvm_run, struct kvm_vcpu *vcpu)
 {
-	return vcpu->kvm->arch.kvm_ops->vcpu_run(vcpu);
+	return vcpu->kvm->arch.kvm_ops->vcpu_run(kvm_run, vcpu);
 }
 
 int kvm_arch_vcpu_ioctl_translate(struct kvm_vcpu *vcpu,
@@ -811,9 +767,9 @@ void kvmppc_decrementer_func(struct kvm_vcpu *vcpu)
 	kvm_vcpu_kick(vcpu);
 }
 
-int kvmppc_core_vcpu_create(struct kvm_vcpu *vcpu)
+struct kvm_vcpu *kvmppc_core_vcpu_create(struct kvm *kvm, unsigned int id)
 {
-	return vcpu->kvm->arch.kvm_ops->vcpu_create(vcpu);
+	return kvm->arch.kvm_ops->vcpu_create(kvm, id);
 }
 
 void kvmppc_core_vcpu_free(struct kvm_vcpu *vcpu)
@@ -826,19 +782,21 @@ int kvmppc_core_check_requests(struct kvm_vcpu *vcpu)
 	return vcpu->kvm->arch.kvm_ops->check_requests(vcpu);
 }
 
-void kvm_arch_sync_dirty_log(struct kvm *kvm, struct kvm_memory_slot *memslot)
-{
-
-}
-
 int kvm_vm_ioctl_get_dirty_log(struct kvm *kvm, struct kvm_dirty_log *log)
 {
 	return kvm->arch.kvm_ops->get_dirty_log(kvm, log);
 }
 
-void kvmppc_core_free_memslot(struct kvm *kvm, struct kvm_memory_slot *slot)
+void kvmppc_core_free_memslot(struct kvm *kvm, struct kvm_memory_slot *free,
+			      struct kvm_memory_slot *dont)
 {
-	kvm->arch.kvm_ops->free_memslot(slot);
+	kvm->arch.kvm_ops->free_memslot(free, dont);
+}
+
+int kvmppc_core_create_memslot(struct kvm *kvm, struct kvm_memory_slot *slot,
+			       unsigned long npages)
+{
+	return kvm->arch.kvm_ops->create_memslot(slot, npages);
 }
 
 void kvmppc_core_flush_memslot(struct kvm *kvm, struct kvm_memory_slot *memslot)
@@ -847,39 +805,43 @@ void kvmppc_core_flush_memslot(struct kvm *kvm, struct kvm_memory_slot *memslot)
 }
 
 int kvmppc_core_prepare_memory_region(struct kvm *kvm,
-				      const struct kvm_memory_slot *old,
-				      struct kvm_memory_slot *new,
-				      enum kvm_mr_change change)
+				struct kvm_memory_slot *memslot,
+				const struct kvm_userspace_memory_region *mem)
 {
-	return kvm->arch.kvm_ops->prepare_memory_region(kvm, old, new, change);
+	return kvm->arch.kvm_ops->prepare_memory_region(kvm, memslot, mem);
 }
 
 void kvmppc_core_commit_memory_region(struct kvm *kvm,
-				struct kvm_memory_slot *old,
-				const struct kvm_memory_slot *new,
-				enum kvm_mr_change change)
+				const struct kvm_userspace_memory_region *mem,
+				const struct kvm_memory_slot *old,
+				const struct kvm_memory_slot *new)
 {
-	kvm->arch.kvm_ops->commit_memory_region(kvm, old, new, change);
+	kvm->arch.kvm_ops->commit_memory_region(kvm, mem, old, new);
 }
 
-bool kvm_unmap_gfn_range(struct kvm *kvm, struct kvm_gfn_range *range)
+int kvm_unmap_hva_range(struct kvm *kvm, unsigned long start, unsigned long end)
 {
-	return kvm->arch.kvm_ops->unmap_gfn_range(kvm, range);
+	return kvm->arch.kvm_ops->unmap_hva_range(kvm, start, end);
 }
 
-bool kvm_age_gfn(struct kvm *kvm, struct kvm_gfn_range *range)
+int kvm_age_hva(struct kvm *kvm, unsigned long start, unsigned long end)
 {
-	return kvm->arch.kvm_ops->age_gfn(kvm, range);
+	return kvm->arch.kvm_ops->age_hva(kvm, start, end);
 }
 
-bool kvm_test_age_gfn(struct kvm *kvm, struct kvm_gfn_range *range)
+int kvm_test_age_hva(struct kvm *kvm, unsigned long hva)
 {
-	return kvm->arch.kvm_ops->test_age_gfn(kvm, range);
+	return kvm->arch.kvm_ops->test_age_hva(kvm, hva);
 }
 
-bool kvm_set_spte_gfn(struct kvm *kvm, struct kvm_gfn_range *range)
+void kvm_set_spte_hva(struct kvm *kvm, unsigned long hva, pte_t pte)
 {
-	return kvm->arch.kvm_ops->set_spte_gfn(kvm, range);
+	kvm->arch.kvm_ops->set_spte_hva(kvm, hva, pte);
+}
+
+void kvmppc_mmu_destroy(struct kvm_vcpu *vcpu)
+{
+	vcpu->kvm->arch.kvm_ops->mmu_destroy(vcpu);
 }
 
 int kvmppc_core_init_vm(struct kvm *kvm)
@@ -888,7 +850,6 @@ int kvmppc_core_init_vm(struct kvm *kvm)
 #ifdef CONFIG_PPC64
 	INIT_LIST_HEAD_RCU(&kvm->arch.spapr_tce_tables);
 	INIT_LIST_HEAD(&kvm->arch.rtas_tokens);
-	mutex_init(&kvm->arch.rtas_token_lock);
 #endif
 
 	return kvm->arch.kvm_ops->init_vm(kvm);
@@ -902,19 +863,6 @@ void kvmppc_core_destroy_vm(struct kvm *kvm)
 	kvmppc_rtas_tokens_free(kvm);
 	WARN_ON(!list_empty(&kvm->arch.spapr_tce_tables));
 #endif
-
-#ifdef CONFIG_KVM_XICS
-	/*
-	 * Free the XIVE and XICS devices which are not directly freed by the
-	 * device 'release' method
-	 */
-	kfree(kvm->arch.xive_devices.native);
-	kvm->arch.xive_devices.native = NULL;
-	kfree(kvm->arch.xive_devices.xics_on_xive);
-	kvm->arch.xive_devices.xics_on_xive = NULL;
-	kfree(kvm->arch.xics_device);
-	kvm->arch.xics_device = NULL;
-#endif /* CONFIG_KVM_XICS */
 }
 
 int kvmppc_h_logical_ci_load(struct kvm_vcpu *vcpu)
@@ -1018,7 +966,7 @@ int kvmppc_book3s_hcall_implemented(struct kvm *kvm, unsigned long hcall)
 int kvm_set_irq(struct kvm *kvm, int irq_source_id, u32 irq, int level,
 		bool line_status)
 {
-	if (xics_on_xive())
+	if (xive_enabled())
 		return kvmppc_xive_set_irq(kvm, irq_source_id, irq, level,
 					   line_status);
 	else
@@ -1071,11 +1019,9 @@ static int kvmppc_book3s_init(void)
 
 #ifdef CONFIG_KVM_XICS
 #ifdef CONFIG_KVM_XIVE
-	if (xics_on_xive()) {
+	if (xive_enabled()) {
+		kvmppc_xive_init_module();
 		kvm_register_device_ops(&kvm_xive_ops, KVM_DEV_TYPE_XICS);
-		if (kvmppc_xive_native_supported())
-			kvm_register_device_ops(&kvm_xive_native_ops,
-						KVM_DEV_TYPE_XIVE);
 	} else
 #endif
 		kvm_register_device_ops(&kvm_xics_ops, KVM_DEV_TYPE_XICS);
@@ -1085,6 +1031,10 @@ static int kvmppc_book3s_init(void)
 
 static void kvmppc_book3s_exit(void)
 {
+#ifdef CONFIG_KVM_XICS
+	if (xive_enabled())
+		kvmppc_xive_exit_module();
+#endif
 #ifdef CONFIG_KVM_BOOK3S_32_HANDLER
 	kvmppc_book3s_exit_pr();
 #endif

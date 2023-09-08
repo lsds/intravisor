@@ -1,7 +1,10 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * IIO accel SPI driver for Freescale MMA7455L 3-axis 10-bit accelerometer
  * Copyright 2015 Joachim Eastwood <manabian@gmail.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 
 #include <linux/module.h>
@@ -22,9 +25,9 @@ static int mma7455_spi_probe(struct spi_device *spi)
 	return mma7455_core_probe(&spi->dev, regmap, id->name);
 }
 
-static void mma7455_spi_remove(struct spi_device *spi)
+static int mma7455_spi_remove(struct spi_device *spi)
 {
-	mma7455_core_remove(&spi->dev);
+	return mma7455_core_remove(&spi->dev);
 }
 
 static const struct spi_device_id mma7455_spi_ids[] = {
@@ -47,4 +50,3 @@ module_spi_driver(mma7455_spi_driver);
 MODULE_AUTHOR("Joachim Eastwood <manabian@gmail.com>");
 MODULE_DESCRIPTION("Freescale MMA7455L SPI accelerometer driver");
 MODULE_LICENSE("GPL v2");
-MODULE_IMPORT_NS(IIO_MMA7455);

@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * OMAP4 Clock domains framework
  *
@@ -14,6 +13,10 @@
  * with the public linux-omap@vger.kernel.org mailing list and the
  * authors above to ensure that the autogeneration scripts are kept
  * up-to-date with the file contents.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 
 #include <linux/kernel.h>
@@ -214,7 +217,7 @@ static struct clockdomain l4_secure_44xx_clkdm = {
 	.dep_bit	  = OMAP4430_L4SEC_STATDEP_SHIFT,
 	.wkdep_srcs	  = l4_secure_wkup_sleep_deps,
 	.sleepdep_srcs	  = l4_secure_wkup_sleep_deps,
-	.flags		  = CLKDM_CAN_SWSUP,
+	.flags		  = CLKDM_CAN_HWSUP_SWSUP,
 };
 
 static struct clockdomain l4_per_44xx_clkdm = {

@@ -31,6 +31,7 @@
  *
  */
 #include <linux/errno.h>
+#include <linux/module.h>
 #include <linux/pci.h>
 
 #include "usnic_ib.h"
@@ -311,7 +312,7 @@ static int usnic_vnic_alloc_res_chunk(struct usnic_vnic *vnic,
 	}
 
 	chunk->cnt = chunk->free_cnt = cnt;
-	chunk->res = kcalloc(cnt, sizeof(*(chunk->res)), GFP_KERNEL);
+	chunk->res = kzalloc(sizeof(*(chunk->res))*cnt, GFP_KERNEL);
 	if (!chunk->res)
 		return -ENOMEM;
 

@@ -1,8 +1,13 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  *  Point-to-Point Tunneling Protocol for Linux
  *
  *	Authors: Dmitry Kozlov <xeb@mail.ru>
+ *
+ *	This program is free software; you can redistribute it and/or
+ *	modify it under the terms of the GNU General Public License
+ *	as published by the Free Software Foundation; either version
+ *	2 of the License, or (at your option) any later version.
+ *
  */
 
 #include <linux/string.h>
@@ -155,7 +160,7 @@ static int pptp_xmit(struct ppp_channel *chan, struct sk_buff *skb)
 				   opt->dst_addr.sin_addr.s_addr,
 				   opt->src_addr.sin_addr.s_addr,
 				   0, 0, IPPROTO_GRE,
-				   RT_TOS(0), sk->sk_bound_dev_if);
+				   RT_TOS(0), 0);
 	if (IS_ERR(rt))
 		goto tx_error;
 
@@ -238,7 +243,7 @@ static int pptp_xmit(struct ppp_channel *chan, struct sk_buff *skb)
 	skb_dst_drop(skb);
 	skb_dst_set(skb, &rt->dst);
 
-	nf_reset_ct(skb);
+	nf_reset(skb);
 
 	skb->ip_summed = CHECKSUM_NONE;
 	ip_select_ident(net, skb, NULL);
@@ -278,8 +283,10 @@ static int pptp_rcv_core(struct sock *sk, struct sk_buff *skb)
 		header = (struct pptp_gre_header *)(skb->data);
 
 		/* ack in different place if S = 0 */
-		ack = GRE_IS_SEQ(header->gre_hd.flags) ? ntohl(header->ack) :
-							 ntohl(header->seq);
+		ack = GRE_IS_SEQ(header->gre_hd.flags) ? header->ack : header->seq;
+
+		ack = ntohl(ack);
+
 		if (ack > opt->ack_recv)
 			opt->ack_recv = ack;
 		/* also handle sequence number wrap-around  */
@@ -318,6 +325,11 @@ allow_packet:
 			skb_pull(skb, 2);
 		}
 
+		if ((*skb->data) & 1) {
+			/* protocol is compressed */
+			*(u8 *)skb_push(skb, 1) = 0;
+		}
+
 		skb->ip_summed = CHECKSUM_NONE;
 		skb_set_network_header(skb, skb->head-skb->data);
 		ppp_input(&po->chan, skb);
@@ -353,10 +365,10 @@ static int pptp_rcv(struct sk_buff *skb)
 		/* if invalid, discard this packet */
 		goto drop;
 
-	po = lookup_chan(ntohs(header->call_id), iph->saddr);
+	po = lookup_chan(htons(header->call_id), iph->saddr);
 	if (po) {
 		skb_dst_drop(skb);
-		nf_reset_ct(skb);
+		nf_reset(skb);
 		return sk_receive_skb(sk_pppox(po), skb, 0);
 	}
 drop:
@@ -442,8 +454,7 @@ static int pptp_connect(struct socket *sock, struct sockaddr *uservaddr,
 				   opt->dst_addr.sin_addr.s_addr,
 				   opt->src_addr.sin_addr.s_addr,
 				   0, 0,
-				   IPPROTO_GRE, RT_CONN_FLAGS(sk),
-				   sk->sk_bound_dev_if);
+				   IPPROTO_GRE, RT_CONN_FLAGS(sk), 0);
 	if (IS_ERR(rt)) {
 		error = -EHOSTUNREACH;
 		goto end;
@@ -526,7 +537,6 @@ static void pptp_sock_destruct(struct sock *sk)
 		pppox_unbind_sock(sk);
 	}
 	skb_queue_purge(&sk->sk_receive_queue);
-	dst_release(rcu_dereference_protected(sk->sk_dst_cache, 1));
 }
 
 static int pptp_create(struct net *net, struct socket *sock, int kern)
@@ -614,15 +624,15 @@ static const struct proto_ops pptp_ops = {
 	.socketpair = sock_no_socketpair,
 	.accept     = sock_no_accept,
 	.getname    = pptp_getname,
+	.poll       = sock_no_poll,
 	.listen     = sock_no_listen,
 	.shutdown   = sock_no_shutdown,
+	.setsockopt = sock_no_setsockopt,
+	.getsockopt = sock_no_getsockopt,
 	.sendmsg    = sock_no_sendmsg,
 	.recvmsg    = sock_no_recvmsg,
 	.mmap       = sock_no_mmap,
 	.ioctl      = pppox_ioctl,
-#ifdef CONFIG_COMPAT
-	.compat_ioctl = pppox_compat_ioctl,
-#endif
 };
 
 static const struct pppox_proto pppox_pptp_proto = {
@@ -639,7 +649,7 @@ static int __init pptp_init_module(void)
 	int err = 0;
 	pr_info("PPTP driver version " PPTP_DRIVER_VERSION "\n");
 
-	callid_sock = vzalloc(array_size(sizeof(void *), (MAX_CALLID + 1)));
+	callid_sock = vzalloc((MAX_CALLID + 1) * sizeof(void *));
 	if (!callid_sock)
 		return -ENOMEM;
 

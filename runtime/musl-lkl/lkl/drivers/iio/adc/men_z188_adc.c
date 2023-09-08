@@ -1,9 +1,12 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * MEN 16z188 Analog to Digial Converter
  *
  * Copyright (C) 2014 MEN Mikroelektronik GmbH (www.men.de)
  * Author: Johannes Thumshirn <johannes.thumshirn@men.de>
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License as published by the Free
+ * Software Foundation; version 2 of the License.
  */
 
 #include <linux/kernel.h>
@@ -103,7 +106,6 @@ static int men_z188_probe(struct mcb_device *dev,
 	struct z188_adc *adc;
 	struct iio_dev *indio_dev;
 	struct resource *mem;
-	int ret;
 
 	indio_dev = devm_iio_device_alloc(&dev->dev, sizeof(struct z188_adc));
 	if (!indio_dev)
@@ -111,6 +113,7 @@ static int men_z188_probe(struct mcb_device *dev,
 
 	adc = iio_priv(indio_dev);
 	indio_dev->name = "z188-adc";
+	indio_dev->dev.parent = &dev->dev;
 	indio_dev->info = &z188_adc_info;
 	indio_dev->modes = INDIO_DIRECT_MODE;
 	indio_dev->channels = z188_adc_iio_channels;
@@ -129,14 +132,8 @@ static int men_z188_probe(struct mcb_device *dev,
 	adc->mem = mem;
 	mcb_set_drvdata(dev, indio_dev);
 
-	ret = iio_device_register(indio_dev);
-	if (ret)
-		goto err_unmap;
+	return iio_device_register(indio_dev);
 
-	return 0;
-
-err_unmap:
-	iounmap(adc->base);
 err:
 	mcb_release_mem(mem);
 	return -ENXIO;
@@ -173,4 +170,3 @@ MODULE_AUTHOR("Johannes Thumshirn <johannes.thumshirn@men.de>");
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("IIO ADC driver for MEN 16z188 ADC Core");
 MODULE_ALIAS("mcb:16z188");
-MODULE_IMPORT_NS(MCB);

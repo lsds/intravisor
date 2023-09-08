@@ -28,10 +28,12 @@ DECLARE_EVENT_CLASS(brcms_msg_event,
 	TP_PROTO(struct va_format *vaf),
 	TP_ARGS(vaf),
 	TP_STRUCT__entry(
-		__vstring(msg, vaf->fmt, vaf->va)
+		__dynamic_array(char, msg, MAX_MSG_LEN)
 	),
 	TP_fast_assign(
-		__assign_vstr(msg, vaf->fmt, vaf->va);
+		WARN_ON_ONCE(vsnprintf(__get_dynamic_array(msg),
+				       MAX_MSG_LEN, vaf->fmt,
+				       *vaf->va) >= MAX_MSG_LEN);
 	),
 	TP_printk("%s", __get_str(msg))
 );
@@ -62,12 +64,14 @@ TRACE_EVENT(brcms_dbg,
 	TP_STRUCT__entry(
 		__field(u32, level)
 		__string(func, func)
-		__vstring(msg, vaf->fmt, vaf->va)
+		__dynamic_array(char, msg, MAX_MSG_LEN)
 	),
 	TP_fast_assign(
 		__entry->level = level;
 		__assign_str(func, func);
-		__assign_vstr(msg, vaf->fmt, vaf->va);
+		WARN_ON_ONCE(vsnprintf(__get_dynamic_array(msg),
+				       MAX_MSG_LEN, vaf->fmt,
+				       *vaf->va) >= MAX_MSG_LEN);
 	),
 	TP_printk("%s: %s", __get_str(func), __get_str(msg))
 );

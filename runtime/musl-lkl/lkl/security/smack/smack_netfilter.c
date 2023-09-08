@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  *  Simplified MAC Kernel (smack) security module
  *
@@ -9,6 +8,10 @@
  *
  *  Copyright (C) 2014 Casey Schaufler <casey@schaufler-ca.com>
  *  Copyright (C) 2014 Intel Corporation.
+ *
+ *	This program is free software; you can redistribute it and/or modify
+ *	it under the terms of the GNU General Public License version 2,
+ *	as published by the Free Software Foundation.
  */
 
 #include <linux/netfilter_ipv4.h>
@@ -18,7 +21,27 @@
 #include <net/net_namespace.h>
 #include "smack.h"
 
-static unsigned int smack_ip_output(void *priv,
+#if IS_ENABLED(CONFIG_IPV6)
+
+static unsigned int smack_ipv6_output(void *priv,
+					struct sk_buff *skb,
+					const struct nf_hook_state *state)
+{
+	struct sock *sk = skb_to_full_sk(skb);
+	struct socket_smack *ssp;
+	struct smack_known *skp;
+
+	if (sk && sk->sk_security) {
+		ssp = sk->sk_security;
+		skp = ssp->smk_out;
+		skb->secmark = skp->smk_secid;
+	}
+
+	return NF_ACCEPT;
+}
+#endif	/* IPV6 */
+
+static unsigned int smack_ipv4_output(void *priv,
 					struct sk_buff *skb,
 					const struct nf_hook_state *state)
 {
@@ -37,14 +60,14 @@ static unsigned int smack_ip_output(void *priv,
 
 static const struct nf_hook_ops smack_nf_ops[] = {
 	{
-		.hook =		smack_ip_output,
+		.hook =		smack_ipv4_output,
 		.pf =		NFPROTO_IPV4,
 		.hooknum =	NF_INET_LOCAL_OUT,
 		.priority =	NF_IP_PRI_SELINUX_FIRST,
 	},
 #if IS_ENABLED(CONFIG_IPV6)
 	{
-		.hook =		smack_ip_output,
+		.hook =		smack_ipv6_output,
 		.pf =		NFPROTO_IPV6,
 		.hooknum =	NF_INET_LOCAL_OUT,
 		.priority =	NF_IP6_PRI_SELINUX_FIRST,

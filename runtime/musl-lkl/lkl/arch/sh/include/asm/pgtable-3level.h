@@ -2,6 +2,7 @@
 #ifndef __ASM_SH_PGTABLE_3LEVEL_H
 #define __ASM_SH_PGTABLE_3LEVEL_H
 
+#define __ARCH_USE_5LEVEL_HACK
 #include <asm-generic/pgtable-nopud.h>
 
 /*
@@ -32,13 +33,17 @@ typedef struct { unsigned long long pmd; } pmd_t;
 #define pmd_val(x)	((x).pmd)
 #define __pmd(x)	((pmd_t) { (x) } )
 
-static inline pmd_t *pud_pgtable(pud_t pud)
+static inline unsigned long pud_page_vaddr(pud_t pud)
 {
-	return (pmd_t *)(unsigned long)pud_val(pud);
+	return pud_val(pud);
 }
 
-/* only used by the stubbed out hugetlb gup code, should never be called */
-#define pud_page(pud)		NULL
+#define pmd_index(address)	(((address) >> PMD_SHIFT) & (PTRS_PER_PMD-1))
+static inline pmd_t *pmd_offset(pud_t *pud, unsigned long address)
+{
+	return (pmd_t *)pud_page_vaddr(*pud) + pmd_index(address);
+}
+
 #define pud_none(x)	(!pud_val(x))
 #define pud_present(x)	(pud_val(x))
 #define pud_clear(xp)	do { set_pud(xp, __pud(0)); } while (0)

@@ -38,12 +38,6 @@ phys_addr_t paddr_vmcoreinfo_note(void);
 
 #define VMCOREINFO_OSRELEASE(value) \
 	vmcoreinfo_append_str("OSRELEASE=%s\n", value)
-#define VMCOREINFO_BUILD_ID()						\
-	({								\
-		static_assert(sizeof(vmlinux_build_id) == 20);		\
-		vmcoreinfo_append_str("BUILD-ID=%20phN\n", vmlinux_build_id); \
-	})
-
 #define VMCOREINFO_PAGESIZE(value) \
 	vmcoreinfo_append_str("PAGESIZE=%ld\n", value)
 #define VMCOREINFO_SYMBOL(name) \
@@ -59,9 +53,6 @@ phys_addr_t paddr_vmcoreinfo_note(void);
 #define VMCOREINFO_OFFSET(name, field) \
 	vmcoreinfo_append_str("OFFSET(%s.%s)=%lu\n", #name, #field, \
 			      (unsigned long)offsetof(struct name, field))
-#define VMCOREINFO_TYPE_OFFSET(name, field) \
-	vmcoreinfo_append_str("OFFSET(%s.%s)=%lu\n", #name, #field, \
-			      (unsigned long)offsetof(name, field))
 #define VMCOREINFO_LENGTH(name, value) \
 	vmcoreinfo_append_str("LENGTH(%s)=%lu\n", #name, (unsigned long)value)
 #define VMCOREINFO_NUMBER(name) \
@@ -69,8 +60,6 @@ phys_addr_t paddr_vmcoreinfo_note(void);
 #define VMCOREINFO_CONFIG(name) \
 	vmcoreinfo_append_str("CONFIG_%s=y\n", #name)
 
-extern unsigned char *vmcoreinfo_data;
-extern size_t vmcoreinfo_size;
 extern u32 *vmcoreinfo_note;
 
 Elf_Word *append_elf_note(Elf_Word *buf, char *name, unsigned int type,

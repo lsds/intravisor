@@ -1,14 +1,17 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * SDK7786 FPGA Support.
  *
  * Copyright (C) 2010  Paul Mundt
+ *
+ * This file is subject to the terms and conditions of the GNU General Public
+ * License.  See the file "COPYING" in the main directory of this archive
+ * for more details.
  */
 #include <linux/init.h>
 #include <linux/io.h>
 #include <linux/bcd.h>
 #include <mach/fpga.h>
-#include <linux/sizes.h>
+#include <asm/sizes.h>
 
 #define FPGA_REGS_OFFSET	0x03fff800
 #define FPGA_REGS_SIZE		0x490
@@ -32,7 +35,7 @@ static void __iomem *sdk7786_fpga_probe(void)
 	 * is reserved.
 	 */
 	for (area = PA_AREA0; area < PA_AREA7; area += SZ_64M) {
-		base = ioremap(area + FPGA_REGS_OFFSET, FPGA_REGS_SIZE);
+		base = ioremap_nocache(area + FPGA_REGS_OFFSET, FPGA_REGS_SIZE);
 		if (!base) {
 			/* Failed to remap this area, move along. */
 			continue;

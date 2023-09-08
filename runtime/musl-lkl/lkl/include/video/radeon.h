@@ -750,7 +750,7 @@
 #define WAIT_DMA_GUI_IDLE			   (1 << 9)
 #define WAIT_2D_IDLECLEAN			   (1 << 16)
 
-/* SURFACE_CNTL bit constants */
+/* SURFACE_CNTL bit consants */
 #define SURF_TRANSLATION_DIS			   (1 << 8)
 #define NONSURF_AP0_SWP_16BPP			   (1 << 20)
 #define NONSURF_AP0_SWP_32BPP			   (1 << 21)

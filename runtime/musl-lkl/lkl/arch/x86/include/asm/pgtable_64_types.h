@@ -22,23 +22,12 @@ typedef struct { pteval_t pte; } pte_t;
 
 #ifdef CONFIG_X86_5LEVEL
 extern unsigned int __pgtable_l5_enabled;
-
-#ifdef USE_EARLY_PGTABLE_L5
-/*
- * cpu_feature_enabled() is not available in early boot code.
- * Use variable instead.
- */
-static inline bool pgtable_l5_enabled(void)
-{
-	return __pgtable_l5_enabled;
-}
+#ifndef pgtable_l5_enabled
+#define pgtable_l5_enabled cpu_feature_enabled(X86_FEATURE_LA57)
+#endif
 #else
-#define pgtable_l5_enabled() cpu_feature_enabled(X86_FEATURE_LA57)
-#endif /* USE_EARLY_PGTABLE_L5 */
-
-#else
-#define pgtable_l5_enabled() 0
-#endif /* CONFIG_X86_5LEVEL */
+#define pgtable_l5_enabled 0
+#endif
 
 extern unsigned int pgdir_shift;
 extern unsigned int ptrs_per_p4d;
@@ -103,7 +92,7 @@ extern unsigned int ptrs_per_p4d;
 #define PGDIR_MASK	(~(PGDIR_SIZE - 1))
 
 /*
- * See Documentation/x86/x86_64/mm.rst for a description of the memory map.
+ * See Documentation/x86/x86_64/mm.txt for a description of the memory map.
  *
  * Be very careful vs. KASLR when changing anything here. The KASLR address
  * range must not overlap with anything except the KASAN shadow area, which
@@ -111,14 +100,10 @@ extern unsigned int ptrs_per_p4d;
  */
 #define MAXMEM			(1UL << MAX_PHYSMEM_BITS)
 
-#define GUARD_HOLE_PGD_ENTRY	-256UL
-#define GUARD_HOLE_SIZE		(16UL << PGDIR_SHIFT)
-#define GUARD_HOLE_BASE_ADDR	(GUARD_HOLE_PGD_ENTRY << PGDIR_SHIFT)
-#define GUARD_HOLE_END_ADDR	(GUARD_HOLE_BASE_ADDR + GUARD_HOLE_SIZE)
-
-#define LDT_PGD_ENTRY		-240UL
+#define LDT_PGD_ENTRY_L4	-3UL
+#define LDT_PGD_ENTRY_L5	-112UL
+#define LDT_PGD_ENTRY		(pgtable_l5_enabled ? LDT_PGD_ENTRY_L5 : LDT_PGD_ENTRY_L4)
 #define LDT_BASE_ADDR		(LDT_PGD_ENTRY << PGDIR_SHIFT)
-#define LDT_END_ADDR		(LDT_BASE_ADDR + PGDIR_SIZE)
 
 #define __VMALLOC_BASE_L4	0xffffc90000000000UL
 #define __VMALLOC_BASE_L5 	0xffa0000000000000UL
@@ -131,7 +116,7 @@ extern unsigned int ptrs_per_p4d;
 
 #ifdef CONFIG_DYNAMIC_MEMORY_LAYOUT
 # define VMALLOC_START		vmalloc_base
-# define VMALLOC_SIZE_TB	(pgtable_l5_enabled() ? VMALLOC_SIZE_TB_L5 : VMALLOC_SIZE_TB_L4)
+# define VMALLOC_SIZE_TB	(pgtable_l5_enabled ? VMALLOC_SIZE_TB_L5 : VMALLOC_SIZE_TB_L4)
 # define VMEMMAP_START		vmemmap_base
 #else
 # define VMALLOC_START		__VMALLOC_BASE_L4
@@ -139,60 +124,11 @@ extern unsigned int ptrs_per_p4d;
 # define VMEMMAP_START		__VMEMMAP_BASE_L4
 #endif /* CONFIG_DYNAMIC_MEMORY_LAYOUT */
 
-/*
- * End of the region for which vmalloc page tables are pre-allocated.
- * For non-KMSAN builds, this is the same as VMALLOC_END.
- * For KMSAN builds, VMALLOC_START..VMEMORY_END is 4 times bigger than
- * VMALLOC_START..VMALLOC_END (see below).
- */
-#define VMEMORY_END		(VMALLOC_START + (VMALLOC_SIZE_TB << 40) - 1)
-
-#ifndef CONFIG_KMSAN
-#define VMALLOC_END		VMEMORY_END
-#else
-/*
- * In KMSAN builds vmalloc area is four times smaller, and the remaining 3/4
- * are used to keep the metadata for virtual pages. The memory formerly
- * belonging to vmalloc area is now laid out as follows:
- *
- * 1st quarter: VMALLOC_START to VMALLOC_END - new vmalloc area
- * 2nd quarter: KMSAN_VMALLOC_SHADOW_START to
- *              VMALLOC_END+KMSAN_VMALLOC_SHADOW_OFFSET - vmalloc area shadow
- * 3rd quarter: KMSAN_VMALLOC_ORIGIN_START to
- *              VMALLOC_END+KMSAN_VMALLOC_ORIGIN_OFFSET - vmalloc area origins
- * 4th quarter: KMSAN_MODULES_SHADOW_START to KMSAN_MODULES_ORIGIN_START
- *              - shadow for modules,
- *              KMSAN_MODULES_ORIGIN_START to
- *              KMSAN_MODULES_ORIGIN_START + MODULES_LEN - origins for modules.
- */
-#define VMALLOC_QUARTER_SIZE	((VMALLOC_SIZE_TB << 40) >> 2)
-#define VMALLOC_END		(VMALLOC_START + VMALLOC_QUARTER_SIZE - 1)
-
-/*
- * vmalloc metadata addresses are calculated by adding shadow/origin offsets
- * to vmalloc address.
- */
-#define KMSAN_VMALLOC_SHADOW_OFFSET	VMALLOC_QUARTER_SIZE
-#define KMSAN_VMALLOC_ORIGIN_OFFSET	(VMALLOC_QUARTER_SIZE << 1)
-
-#define KMSAN_VMALLOC_SHADOW_START	(VMALLOC_START + KMSAN_VMALLOC_SHADOW_OFFSET)
-#define KMSAN_VMALLOC_ORIGIN_START	(VMALLOC_START + KMSAN_VMALLOC_ORIGIN_OFFSET)
-
-/*
- * The shadow/origin for modules are placed one by one in the last 1/4 of
- * vmalloc space.
- */
-#define KMSAN_MODULES_SHADOW_START	(VMALLOC_END + KMSAN_VMALLOC_ORIGIN_OFFSET + 1)
-#define KMSAN_MODULES_ORIGIN_START	(KMSAN_MODULES_SHADOW_START + MODULES_LEN)
-#endif /* CONFIG_KMSAN */
+#define VMALLOC_END		(VMALLOC_START + (VMALLOC_SIZE_TB << 40) - 1)
 
 #define MODULES_VADDR		(__START_KERNEL_map + KERNEL_IMAGE_SIZE)
 /* The module sections ends with the start of the fixmap */
-#ifndef CONFIG_DEBUG_KMAP_LOCAL_FORCE_MAP
-# define MODULES_END		_AC(0xffffffffff000000, UL)
-#else
-# define MODULES_END		_AC(0xfffffffffe000000, UL)
-#endif
+#define MODULES_END		_AC(0xffffffffff000000, UL)
 #define MODULES_LEN		(MODULES_END - MODULES_VADDR)
 
 #define ESPFIX_PGD_ENTRY	_AC(-2, UL)
@@ -205,12 +141,5 @@ extern unsigned int ptrs_per_p4d;
 #define EFI_VA_END		(-68 * (_AC(1, UL) << 30))
 
 #define EARLY_DYNAMIC_PAGE_TABLES	64
-
-#define PGD_KERNEL_START	((PAGE_SIZE / 2) / sizeof(pgd_t))
-
-/*
- * We borrow bit 3 to remember PG_anon_exclusive.
- */
-#define _PAGE_SWP_EXCLUSIVE	_PAGE_PWT
 
 #endif /* _ASM_X86_PGTABLE_64_DEFS_H */

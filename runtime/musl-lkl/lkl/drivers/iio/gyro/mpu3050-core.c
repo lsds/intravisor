@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * MPU3050 gyroscope driver
  *
@@ -13,7 +12,6 @@
  * TODO: add support for setting up the low pass 3dB frequency.
  */
 
-#include <linux/bitfield.h>
 #include <linux/bitops.h>
 #include <linux/delay.h>
 #include <linux/err.h>
@@ -26,14 +24,12 @@
 #include <linux/interrupt.h>
 #include <linux/module.h>
 #include <linux/pm_runtime.h>
-#include <linux/property.h>
 #include <linux/random.h>
 #include <linux/slab.h>
 
 #include "mpu3050.h"
 
-#define MPU3050_CHIP_ID		0x68
-#define MPU3050_CHIP_ID_MASK	0x7E
+#define MPU3050_CHIP_ID		0x69
 
 /*
  * Register map: anything suffixed *_H is a big-endian high byte and always
@@ -273,16 +269,7 @@ static int mpu3050_read_raw(struct iio_dev *indio_dev,
 	case IIO_CHAN_INFO_OFFSET:
 		switch (chan->type) {
 		case IIO_TEMP:
-			/*
-			 * The temperature scaling is (x+23000)/280 Celsius
-			 * for the "best fit straight line" temperature range
-			 * of -30C..85C.  The 23000 includes room temperature
-			 * offset of +35C, 280 is the precision scale and x is
-			 * the 16-bit signed integer reported by hardware.
-			 *
-			 * Temperature value itself represents temperature of
-			 * the sensor die.
-			 */
+			/* The temperature scaling is (x+23000)/280 Celsius */
 			*val = 23000;
 			return IIO_VAL_INT;
 		default:
@@ -339,7 +326,7 @@ static int mpu3050_read_raw(struct iio_dev *indio_dev,
 				goto out_read_raw_unlock;
 			}
 
-			*val = (s16)be16_to_cpu(raw_val);
+			*val = be16_to_cpu(raw_val);
 			ret = IIO_VAL_INT;
 
 			goto out_read_raw_unlock;
@@ -472,10 +459,13 @@ static irqreturn_t mpu3050_trigger_handler(int irq, void *p)
 	struct iio_dev *indio_dev = pf->indio_dev;
 	struct mpu3050 *mpu3050 = iio_priv(indio_dev);
 	int ret;
-	struct {
-		__be16 chans[4];
-		s64 timestamp __aligned(8);
-	} scan;
+	/*
+	 * Temperature 1*16 bits
+	 * Three axes 3*16 bits
+	 * Timestamp 64 bits (4*16 bits)
+	 * Sum total 8*16 bits
+	 */
+	__be16 hw_values[8];
 	s64 timestamp;
 	unsigned int datums_from_fifo = 0;
 
@@ -551,15 +541,13 @@ static irqreturn_t mpu3050_trigger_handler(int irq, void *p)
 				toread = bytes_per_datum;
 				offset = 1;
 				/* Put in some dummy value */
-				fifo_values[0] = cpu_to_be16(0xAAAA);
+				fifo_values[0] = 0xAAAA;
 			}
 
 			ret = regmap_bulk_read(mpu3050->map,
 					       MPU3050_FIFO_R,
 					       &fifo_values[offset],
 					       toread);
-			if (ret)
-				goto out_trigger_unlock;
 
 			dev_dbg(mpu3050->dev,
 				"%04x %04x %04x %04x %04x\n",
@@ -570,10 +558,9 @@ static irqreturn_t mpu3050_trigger_handler(int irq, void *p)
 				fifo_values[4]);
 
 			/* Index past the footer (fifo_values[0]) and push */
-			iio_push_to_buffers_with_ts_unaligned(indio_dev,
-							      &fifo_values[1],
-							      sizeof(__be16) * 4,
-							      timestamp);
+			iio_push_to_buffers_with_timestamp(indio_dev,
+							   &fifo_values[1],
+							   timestamp);
 
 			fifocnt -= toread;
 			datums_from_fifo++;
@@ -631,15 +618,15 @@ static irqreturn_t mpu3050_trigger_handler(int irq, void *p)
 		goto out_trigger_unlock;
 	}
 
-	ret = regmap_bulk_read(mpu3050->map, MPU3050_TEMP_H, scan.chans,
-			       sizeof(scan.chans));
+	ret = regmap_bulk_read(mpu3050->map, MPU3050_TEMP_H, &hw_values,
+			       sizeof(hw_values));
 	if (ret) {
 		dev_err(mpu3050->dev,
 			"error reading axis data\n");
 		goto out_trigger_unlock;
 	}
 
-	iio_push_to_buffers_with_timestamp(indio_dev, &scan, timestamp);
+	iio_push_to_buffers_with_timestamp(indio_dev, hw_values, timestamp);
 
 out_trigger_unlock:
 	mutex_unlock(&mpu3050->lock);
@@ -673,6 +660,8 @@ static int mpu3050_buffer_postdisable(struct iio_dev *indio_dev)
 
 static const struct iio_buffer_setup_ops mpu3050_buffer_setup_ops = {
 	.preenable = mpu3050_buffer_preenable,
+	.postenable = iio_triggered_buffer_postenable,
+	.predisable = iio_triggered_buffer_predisable,
 	.postdisable = mpu3050_buffer_postdisable,
 };
 
@@ -795,8 +784,7 @@ static int mpu3050_read_mem(struct mpu3050 *mpu3050,
 static int mpu3050_hw_init(struct mpu3050 *mpu3050)
 {
 	int ret;
-	__le64 otp_le;
-	u64 otp;
+	u8 otp[8];
 
 	/* Reset */
 	ret = regmap_update_bits(mpu3050->map,
@@ -827,31 +815,29 @@ static int mpu3050_hw_init(struct mpu3050 *mpu3050)
 				MPU3050_MEM_USER_BANK |
 				MPU3050_MEM_OTP_BANK_0),
 			       0,
-			       sizeof(otp_le),
-			       (u8 *)&otp_le);
+			       sizeof(otp),
+			       otp);
 	if (ret)
 		return ret;
 
 	/* This is device-unique data so it goes into the entropy pool */
-	add_device_randomness(&otp_le, sizeof(otp_le));
-
-	otp = le64_to_cpu(otp_le);
+	add_device_randomness(otp, sizeof(otp));
 
 	dev_info(mpu3050->dev,
-		 "die ID: %04llX, wafer ID: %02llX, A lot ID: %04llX, "
-		 "W lot ID: %03llX, WP ID: %01llX, rev ID: %02llX\n",
+		 "die ID: %04X, wafer ID: %02X, A lot ID: %04X, "
+		 "W lot ID: %03X, WP ID: %01X, rev ID: %02X\n",
 		 /* Die ID, bits 0-12 */
-		 FIELD_GET(GENMASK_ULL(12, 0), otp),
+		 (otp[1] << 8 | otp[0]) & 0x1fff,
 		 /* Wafer ID, bits 13-17 */
-		 FIELD_GET(GENMASK_ULL(17, 13), otp),
+		 ((otp[2] << 8 | otp[1]) & 0x03e0) >> 5,
 		 /* A lot ID, bits 18-33 */
-		 FIELD_GET(GENMASK_ULL(33, 18), otp),
+		 ((otp[4] << 16 | otp[3] << 8 | otp[2]) & 0x3fffc) >> 2,
 		 /* W lot ID, bits 34-45 */
-		 FIELD_GET(GENMASK_ULL(45, 34), otp),
+		 ((otp[5] << 8 | otp[4]) & 0x3ffc) >> 2,
 		 /* WP ID, bits 47-49 */
-		 FIELD_GET(GENMASK_ULL(49, 47), otp),
+		 ((otp[6] << 8 | otp[5]) & 0x0380) >> 7,
 		 /* rev ID, bits 50-55 */
-		 FIELD_GET(GENMASK_ULL(55, 50), otp));
+		 otp[6] >> 2);
 
 	return 0;
 }
@@ -875,11 +861,10 @@ static int mpu3050_power_up(struct mpu3050 *mpu3050)
 	ret = regmap_update_bits(mpu3050->map, MPU3050_PWR_MGM,
 				 MPU3050_PWR_MGM_SLEEP, 0);
 	if (ret) {
-		regulator_bulk_disable(ARRAY_SIZE(mpu3050->regs), mpu3050->regs);
 		dev_err(mpu3050->dev, "error setting power mode\n");
 		return ret;
 	}
-	usleep_range(10000, 20000);
+	msleep(10);
 
 	return 0;
 }
@@ -1052,19 +1037,19 @@ static const struct iio_trigger_ops mpu3050_trigger_ops = {
 static int mpu3050_trigger_probe(struct iio_dev *indio_dev, int irq)
 {
 	struct mpu3050 *mpu3050 = iio_priv(indio_dev);
-	struct device *dev = mpu3050->dev;
 	unsigned long irq_trig;
 	int ret;
 
 	mpu3050->trig = devm_iio_trigger_alloc(&indio_dev->dev,
 					       "%s-dev%d",
 					       indio_dev->name,
-					       iio_device_id(indio_dev));
+					       indio_dev->id);
 	if (!mpu3050->trig)
 		return -ENOMEM;
 
 	/* Check if IRQ is open drain */
-	mpu3050->irq_opendrain = device_property_read_bool(dev, "drive-open-drain");
+	if (of_property_read_bool(mpu3050->dev->of_node, "drive-open-drain"))
+		mpu3050->irq_opendrain = true;
 
 	irq_trig = irqd_get_trigger_type(irq_get_irq_data(irq));
 	/*
@@ -1120,12 +1105,13 @@ static int mpu3050_trigger_probe(struct iio_dev *indio_dev, int irq)
 				   mpu3050->trig->name,
 				   mpu3050->trig);
 	if (ret) {
-		dev_err(dev, "can't get IRQ %d, error %d\n", irq, ret);
+		dev_err(mpu3050->dev,
+			"can't get IRQ %d, error %d\n", irq, ret);
 		return ret;
 	}
 
 	mpu3050->irq = irq;
-	mpu3050->trig->dev.parent = dev;
+	mpu3050->trig->dev.parent = mpu3050->dev;
 	mpu3050->trig->ops = &mpu3050_trigger_ops;
 	iio_trigger_set_drvdata(mpu3050->trig, indio_dev);
 
@@ -1163,7 +1149,8 @@ int mpu3050_common_probe(struct device *dev,
 	mpu3050->divisor = 99;
 
 	/* Read the mounting matrix, if present */
-	ret = iio_read_mount_matrix(dev, &mpu3050->orientation);
+	ret = of_iio_read_mount_matrix(dev, "mount-matrix",
+				       &mpu3050->orientation);
 	if (ret)
 		return ret;
 
@@ -1189,9 +1176,8 @@ int mpu3050_common_probe(struct device *dev,
 		goto err_power_down;
 	}
 
-	if ((val & MPU3050_CHIP_ID_MASK) != MPU3050_CHIP_ID) {
-		dev_err(dev, "unsupported chip id %02x\n",
-				(u8)(val & MPU3050_CHIP_ID_MASK));
+	if (val != MPU3050_CHIP_ID) {
+		dev_err(dev, "unsupported chip id %02x\n", (u8)val);
 		ret = -ENODEV;
 		goto err_power_down;
 	}
@@ -1210,6 +1196,7 @@ int mpu3050_common_probe(struct device *dev,
 	if (ret)
 		goto err_power_down;
 
+	indio_dev->dev.parent = dev;
 	indio_dev->channels = mpu3050_channels;
 	indio_dev->num_channels = ARRAY_SIZE(mpu3050_channels);
 	indio_dev->info = &mpu3050_info;
@@ -1262,8 +1249,9 @@ err_power_down:
 
 	return ret;
 }
+EXPORT_SYMBOL(mpu3050_common_probe);
 
-void mpu3050_common_remove(struct device *dev)
+int mpu3050_common_remove(struct device *dev)
 {
 	struct iio_dev *indio_dev = dev_get_drvdata(dev);
 	struct mpu3050 *mpu3050 = iio_priv(indio_dev);
@@ -1276,8 +1264,12 @@ void mpu3050_common_remove(struct device *dev)
 		free_irq(mpu3050->irq, mpu3050);
 	iio_device_unregister(indio_dev);
 	mpu3050_power_down(mpu3050);
-}
 
+	return 0;
+}
+EXPORT_SYMBOL(mpu3050_common_remove);
+
+#ifdef CONFIG_PM
 static int mpu3050_runtime_suspend(struct device *dev)
 {
 	return mpu3050_power_down(iio_priv(dev_get_drvdata(dev)));
@@ -1287,9 +1279,16 @@ static int mpu3050_runtime_resume(struct device *dev)
 {
 	return mpu3050_power_up(iio_priv(dev_get_drvdata(dev)));
 }
+#endif /* CONFIG_PM */
 
-DEFINE_RUNTIME_DEV_PM_OPS(mpu3050_dev_pm_ops, mpu3050_runtime_suspend,
-			  mpu3050_runtime_resume, NULL);
+const struct dev_pm_ops mpu3050_dev_pm_ops = {
+	SET_SYSTEM_SLEEP_PM_OPS(pm_runtime_force_suspend,
+				pm_runtime_force_resume)
+	SET_RUNTIME_PM_OPS(mpu3050_runtime_suspend,
+			   mpu3050_runtime_resume, NULL)
+};
+EXPORT_SYMBOL(mpu3050_dev_pm_ops);
+
 MODULE_AUTHOR("Linus Walleij");
 MODULE_DESCRIPTION("MPU3050 gyroscope driver");
 MODULE_LICENSE("GPL");

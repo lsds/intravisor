@@ -1,9 +1,8 @@
 # SPDX-License-Identifier: GPL-2.0
 OBJECT_FILES_NON_STANDARD := y
-CFLAGS_REMOVE_empty.o += $(CC_FLAGS_LTO)
 
-hostprogs-always-y	+= modpost mk_elfconfig
-always-y		+= empty.o
+hostprogs-y	:= modpost mk_elfconfig
+always		:= $(hostprogs-y) empty.o
 
 modpost-objs	:= modpost.o file2alias.o sumversion.o
 

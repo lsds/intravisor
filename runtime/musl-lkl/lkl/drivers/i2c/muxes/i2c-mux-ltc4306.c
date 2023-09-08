@@ -1,8 +1,9 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Linear Technology LTC4306 and LTC4305 I2C multiplexer/switch
  *
  * Copyright (C) 2017 Analog Devices Inc.
+ *
+ * Licensed under the GPL-2.
  *
  * Based on: i2c-mux-pca954x.c
  *
@@ -205,9 +206,10 @@ static const struct of_device_id ltc4306_of_match[] = {
 };
 MODULE_DEVICE_TABLE(of, ltc4306_of_match);
 
-static int ltc4306_probe(struct i2c_client *client)
+static int ltc4306_probe(struct i2c_client *client,
+			 const struct i2c_device_id *id)
 {
-	struct i2c_adapter *adap = client->adapter;
+	struct i2c_adapter *adap = to_i2c_adapter(client->dev.parent);
 	const struct chip_desc *chip;
 	struct i2c_mux_core *muxc;
 	struct ltc4306 *data;
@@ -219,7 +221,7 @@ static int ltc4306_probe(struct i2c_client *client)
 	chip = of_device_get_match_data(&client->dev);
 
 	if (!chip)
-		chip = &chips[i2c_match_id(ltc4306_id, client)->driver_data];
+		chip = &chips[id->driver_data];
 
 	idle_disc = device_property_read_bool(&client->dev,
 					      "i2c-mux-idle-disconnect");
@@ -294,11 +296,13 @@ static int ltc4306_probe(struct i2c_client *client)
 	return 0;
 }
 
-static void ltc4306_remove(struct i2c_client *client)
+static int ltc4306_remove(struct i2c_client *client)
 {
 	struct i2c_mux_core *muxc = i2c_get_clientdata(client);
 
 	i2c_mux_del_adapters(muxc);
+
+	return 0;
 }
 
 static struct i2c_driver ltc4306_driver = {
@@ -306,7 +310,7 @@ static struct i2c_driver ltc4306_driver = {
 		.name	= "ltc4306",
 		.of_match_table = of_match_ptr(ltc4306_of_match),
 	},
-	.probe_new	= ltc4306_probe,
+	.probe		= ltc4306_probe,
 	.remove		= ltc4306_remove,
 	.id_table	= ltc4306_id,
 };

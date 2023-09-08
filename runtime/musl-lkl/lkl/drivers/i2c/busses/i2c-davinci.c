@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * TI DAVINCI I2C adapter driver.
  *
@@ -9,7 +8,17 @@
  *
  * ----------------------------------------------------------------------------
  *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
  * ----------------------------------------------------------------------------
+ *
  */
 #include <linux/kernel.h>
 #include <linux/module.h>
@@ -228,16 +237,12 @@ static void i2c_davinci_calc_clk_dividers(struct davinci_i2c_dev *dev)
 	/*
 	 * It's not always possible to have 1 to 2 ratio when d=7, so fall back
 	 * to minimal possible clkh in this case.
-	 *
-	 * Note:
-	 * CLKH is not allowed to be 0, in this case I2C clock is not generated
-	 * at all
 	 */
-	if (clk > clkl + d) {
+	if (clk >= clkl + d) {
 		clkh = clk - clkl - d;
 		clkl -= d;
 	} else {
-		clkh = 1;
+		clkh = 0;
 		clkl = clk - (d << 1);
 	}
 
@@ -539,9 +544,10 @@ i2c_davinci_xfer(struct i2c_adapter *adap, struct i2c_msg msgs[], int num)
 
 	dev_dbg(dev->dev, "%s: msgs: %d\n", __func__, num);
 
-	ret = pm_runtime_resume_and_get(dev->dev);
+	ret = pm_runtime_get_sync(dev->dev);
 	if (ret < 0) {
 		dev_err(dev->dev, "Failed to runtime_get device: %d\n", ret);
+		pm_runtime_put_noidle(dev->dev);
 		return ret;
 	}
 
@@ -708,14 +714,14 @@ static int i2c_davinci_cpufreq_transition(struct notifier_block *nb,
 
 	dev = container_of(nb, struct davinci_i2c_dev, freq_transition);
 
-	i2c_lock_bus(&dev->adapter, I2C_LOCK_ROOT_ADAPTER);
+	i2c_lock_adapter(&dev->adapter);
 	if (val == CPUFREQ_PRECHANGE) {
 		davinci_i2c_reset_ctrl(dev, 0);
 	} else if (val == CPUFREQ_POSTCHANGE) {
 		i2c_davinci_calc_clk_dividers(dev);
 		davinci_i2c_reset_ctrl(dev, 1);
 	}
-	i2c_unlock_bus(&dev->adapter, I2C_LOCK_ROOT_ADAPTER);
+	i2c_unlock_adapter(&dev->adapter);
 
 	return 0;
 }
@@ -760,6 +766,7 @@ static int davinci_i2c_probe(struct platform_device *pdev)
 {
 	struct davinci_i2c_dev *dev;
 	struct i2c_adapter *adap;
+	struct resource *mem;
 	struct i2c_bus_recovery_info *rinfo;
 	int r, irq;
 
@@ -767,7 +774,10 @@ static int davinci_i2c_probe(struct platform_device *pdev)
 	if (irq <= 0) {
 		if (!irq)
 			irq = -ENXIO;
-		return dev_err_probe(&pdev->dev, irq, "can't get irq resource\n");
+		if (irq != -EPROBE_DEFER)
+			dev_err(&pdev->dev,
+				"can't get irq resource ret=%d\n", irq);
+		return irq;
 	}
 
 	dev = devm_kzalloc(&pdev->dev, sizeof(struct davinci_i2c_dev),
@@ -809,7 +819,8 @@ static int davinci_i2c_probe(struct platform_device *pdev)
 	if (IS_ERR(dev->clk))
 		return PTR_ERR(dev->clk);
 
-	dev->base = devm_platform_ioremap_resource(pdev, 0);
+	mem = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	dev->base = devm_ioremap_resource(&pdev->dev, mem);
 	if (IS_ERR(dev->base)) {
 		return PTR_ERR(dev->base);
 	}
@@ -820,10 +831,11 @@ static int davinci_i2c_probe(struct platform_device *pdev)
 
 	pm_runtime_enable(dev->dev);
 
-	r = pm_runtime_resume_and_get(dev->dev);
+	r = pm_runtime_get_sync(dev->dev);
 	if (r < 0) {
 		dev_err(dev->dev, "failed to runtime_get device: %d\n", r);
-		goto err_pm;
+		pm_runtime_put_noidle(dev->dev);
+		return r;
 	}
 
 	i2c_davinci_init(dev);
@@ -845,7 +857,7 @@ static int davinci_i2c_probe(struct platform_device *pdev)
 	i2c_set_adapdata(adap, dev);
 	adap->owner = THIS_MODULE;
 	adap->class = I2C_CLASS_DEPRECATED;
-	strscpy(adap->name, "DaVinci I2C adapter", sizeof(adap->name));
+	strlcpy(adap->name, "DaVinci I2C adapter", sizeof(adap->name));
 	adap->algo = &i2c_davinci_algo;
 	adap->dev.parent = &pdev->dev;
 	adap->timeout = DAVINCI_I2C_TIMEOUT;
@@ -882,7 +894,6 @@ static int davinci_i2c_probe(struct platform_device *pdev)
 err_unuse_clocks:
 	pm_runtime_dont_use_autosuspend(dev->dev);
 	pm_runtime_put_sync(dev->dev);
-err_pm:
 	pm_runtime_disable(dev->dev);
 
 	return r;
@@ -897,9 +908,11 @@ static int davinci_i2c_remove(struct platform_device *pdev)
 
 	i2c_del_adapter(&dev->adapter);
 
-	ret = pm_runtime_resume_and_get(&pdev->dev);
-	if (ret < 0)
+	ret = pm_runtime_get_sync(&pdev->dev);
+	if (ret < 0) {
+		pm_runtime_put_noidle(&pdev->dev);
 		return ret;
+	}
 
 	davinci_i2c_write_reg(dev, DAVINCI_I2C_MDR_REG, 0);
 

@@ -1,5 +1,26 @@
 // SPDX-License-Identifier: GPL-2.0
-/* Copyright(c) 2007 - 2018 Intel Corporation. */
+/* Intel(R) Gigabit Ethernet Linux driver
+ * Copyright(c) 2007-2015 Intel Corporation.
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms and conditions of the GNU General Public License,
+ * version 2, as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+ * more details.
+ *
+ * You should have received a copy of the GNU General Public License along with
+ * this program; if not, see <http://www.gnu.org/licenses/>.
+ *
+ * The full GNU General Public License is included in this distribution in
+ * the file called "COPYING".
+ *
+ * Contact Information:
+ * e1000-devel Mailing List <e1000-devel@lists.sourceforge.net>
+ * Intel Corporation, 5200 N.E. Elam Young Parkway, Hillsboro, OR 97124-6497
+ */
 
 /* e1000_82575
  * e1000_82576
@@ -225,7 +246,19 @@ static s32 igb_init_phy_params_82575(struct e1000_hw *hw)
 	hw->bus.func = (rd32(E1000_STATUS) & E1000_STATUS_FUNC_MASK) >>
 			E1000_STATUS_FUNC_SHIFT;
 
+	/* Make sure the PHY is in a good state. Several people have reported
+	 * firmware leaving the PHY's page select register set to something
+	 * other than the default of zero, which causes the PHY ID read to
+	 * access something other than the intended register.
+	 */
+	ret_val = hw->phy.ops.reset(hw);
+	if (ret_val) {
+		hw_dbg("Error resetting the PHY.\n");
+		goto out;
+	}
+
 	/* Set phy->phy_addr and phy->id. */
+	igb_write_phy_reg_82580(hw, I347AT4_PAGE_SELECT, 0);
 	ret_val = igb_get_phy_id_82575(hw);
 	if (ret_val)
 		return ret_val;
@@ -466,7 +499,7 @@ static s32 igb_init_mac_params_82575(struct e1000_hw *hw)
 			? igb_setup_copper_link_82575
 			: igb_setup_serdes_link_82575;
 
-	if (mac->type == e1000_82580 || mac->type == e1000_i350) {
+	if (mac->type == e1000_82580) {
 		switch (hw->device_id) {
 		/* feature not supported on these id's */
 		case E1000_DEV_ID_DH89XXCC_SGMII:
@@ -530,7 +563,7 @@ static s32 igb_set_sfp_media_type_82575(struct e1000_hw *hw)
 		dev_spec->module_plugged = true;
 		if (eth_flags->e1000_base_lx || eth_flags->e1000_base_sx) {
 			hw->phy.media_type = e1000_media_type_internal_serdes;
-		} else if (eth_flags->e100_base_fx || eth_flags->e100_base_lx) {
+		} else if (eth_flags->e100_base_fx) {
 			dev_spec->sgmii_active = true;
 			hw->phy.media_type = e1000_media_type_internal_serdes;
 		} else if (eth_flags->e1000_base_t) {
@@ -638,7 +671,7 @@ static s32 igb_get_invariants_82575(struct e1000_hw *hw)
 			dev_spec->sgmii_active = true;
 			break;
 		}
-		fallthrough; /* for I2C based SGMII */
+		/* fall through for I2C based SGMII */
 	case E1000_CTRL_EXT_LINK_MODE_PCIE_SERDES:
 		/* read media type from SFP EEPROM */
 		ret_val = igb_set_sfp_media_type_82575(hw);
@@ -657,10 +690,14 @@ static s32 igb_get_invariants_82575(struct e1000_hw *hw)
 			break;
 		}
 
+		/* do not change link mode for 100BaseFX */
+		if (dev_spec->eth_flags.e100_base_fx)
+			break;
+
 		/* change current link mode setting */
 		ctrl_ext &= ~E1000_CTRL_EXT_LINK_MODE_MASK;
 
-		if (dev_spec->sgmii_active)
+		if (hw->phy.media_type == e1000_media_type_copper)
 			ctrl_ext |= E1000_CTRL_EXT_LINK_MODE_SGMII;
 		else
 			ctrl_ext |= E1000_CTRL_EXT_LINK_MODE_PCIE_SERDES;
@@ -1704,7 +1741,6 @@ static s32 igb_setup_serdes_link_82575(struct e1000_hw *hw)
 	case E1000_CTRL_EXT_LINK_MODE_1000BASE_KX:
 		/* disable PCS autoneg and support parallel detect only */
 		pcs_autoneg = false;
-		fallthrough;
 	default:
 		if (hw->mac.type == e1000_82575 ||
 		    hw->mac.type == e1000_82576) {
@@ -2207,7 +2243,7 @@ out:
  *  igb_reset_mdicnfg_82580 - Reset MDICNFG destination and com_mdio bits
  *  @hw: pointer to the HW structure
  *
- *  This resets the MDICNFG.Destination and MDICNFG.Com_MDIO bits based on
+ *  This resets the the MDICNFG.Destination and MDICNFG.Com_MDIO bits based on
  *  the values found in the EEPROM.  This addresses an issue in which these
  *  bits are not restored from EEPROM after reset.
  **/
@@ -2554,7 +2590,7 @@ out:
 /**
  *  __igb_access_emi_reg - Read/write EMI register
  *  @hw: pointer to the HW structure
- *  @address: EMI address to program
+ *  @addr: EMI address to program
  *  @data: pointer to value to read/write from/to the EMI address
  *  @read: boolean flag to indicate read or write
  **/
@@ -2590,7 +2626,7 @@ s32 igb_read_emi_reg(struct e1000_hw *hw, u16 addr, u16 *data)
  *  igb_set_eee_i350 - Enable/disable EEE support
  *  @hw: pointer to the HW structure
  *  @adv1G: boolean flag enabling 1G EEE advertisement
- *  @adv100M: boolean flag enabling 100M EEE advertisement
+ *  @adv100m: boolean flag enabling 100M EEE advertisement
  *
  *  Enable/disable EEE based on setting in dev_spec structure.
  *
@@ -2646,7 +2682,7 @@ out:
  *  igb_set_eee_i354 - Enable/disable EEE support
  *  @hw: pointer to the HW structure
  *  @adv1G: boolean flag enabling 1G EEE advertisement
- *  @adv100M: boolean flag enabling 100M EEE advertisement
+ *  @adv100m: boolean flag enabling 100M EEE advertisement
  *
  *  Enable/disable EEE legacy mode based on setting in dev_spec structure.
  *
@@ -2756,7 +2792,6 @@ out:
 	return ret_val;
 }
 
-#ifdef CONFIG_IGB_HWMON
 static const u8 e1000_emc_temp_data[4] = {
 	E1000_EMC_INTERNAL_DATA,
 	E1000_EMC_DIODE1_DATA,
@@ -2770,6 +2805,7 @@ static const u8 e1000_emc_therm_limit[4] = {
 	E1000_EMC_DIODE3_THERM_LIMIT
 };
 
+#ifdef CONFIG_IGB_HWMON
 /**
  *  igb_get_thermal_sensor_data_generic - Gathers thermal sensor data
  *  @hw: pointer to hardware structure

@@ -1,8 +1,17 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Intel SST generic IPC Support
  *
  * Copyright (C) 2015, Intel Corporation. All rights reserved.
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License version
+ * 2 as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
  */
 
 #ifndef __SST_GENERIC_IPC_H
@@ -15,16 +24,17 @@
 #include <linux/workqueue.h>
 #include <linux/sched.h>
 
-struct sst_ipc_message {
-	u64 header;
-	void *data;
-	size_t size;
-};
+#define IPC_MAX_MAILBOX_BYTES	256
 
 struct ipc_message {
 	struct list_head list;
-	struct sst_ipc_message tx;
-	struct sst_ipc_message rx;
+	u64 header;
+
+	/* direction wrt host CPU */
+	char *tx_data;
+	size_t tx_size;
+	char *rx_data;
+	size_t rx_size;
 
 	wait_queue_head_t waitq;
 	bool pending;
@@ -34,7 +44,6 @@ struct ipc_message {
 };
 
 struct sst_generic_ipc;
-struct sst_dsp;
 
 struct sst_plat_ipc_ops {
 	void (*tx_msg)(struct sst_generic_ipc *, struct ipc_message *);
@@ -65,14 +74,14 @@ struct sst_generic_ipc {
 	struct sst_plat_ipc_ops ops;
 };
 
-int sst_ipc_tx_message_wait(struct sst_generic_ipc *ipc,
-	struct sst_ipc_message request, struct sst_ipc_message *reply);
+int sst_ipc_tx_message_wait(struct sst_generic_ipc *ipc, u64 header,
+	void *tx_data, size_t tx_bytes, void *rx_data, size_t rx_bytes);
 
-int sst_ipc_tx_message_nowait(struct sst_generic_ipc *ipc,
-	struct sst_ipc_message request);
+int sst_ipc_tx_message_nowait(struct sst_generic_ipc *ipc, u64 header,
+	void *tx_data, size_t tx_bytes);
 
-int sst_ipc_tx_message_nopm(struct sst_generic_ipc *ipc,
-	struct sst_ipc_message request, struct sst_ipc_message *reply);
+int sst_ipc_tx_message_nopm(struct sst_generic_ipc *ipc, u64 header,
+	void *tx_data, size_t tx_bytes, void *rx_data, size_t rx_bytes);
 
 struct ipc_message *sst_ipc_reply_find_msg(struct sst_generic_ipc *ipc,
 	u64 header);
@@ -80,6 +89,7 @@ struct ipc_message *sst_ipc_reply_find_msg(struct sst_generic_ipc *ipc,
 void sst_ipc_tx_msg_reply_complete(struct sst_generic_ipc *ipc,
 	struct ipc_message *msg);
 
+void sst_ipc_drop_all(struct sst_generic_ipc *ipc);
 int sst_ipc_init(struct sst_generic_ipc *ipc);
 void sst_ipc_fini(struct sst_generic_ipc *ipc);
 

@@ -29,7 +29,10 @@
 
 #include "ohci.h"
 
+#include <mach/hardware.h>
+
 #define USB_CONFIG_BASE		0x31020000
+#define USB_OTG_STAT_CONTROL	IO_ADDRESS(USB_CONFIG_BASE + 0x110)
 
 /* USB_OTG_STAT_CONTROL bit defines */
 #define TRANSPARENT_I2C_EN	(1 << 7)
@@ -119,38 +122,24 @@ static inline void isp1301_vbus_off(void)
 
 static void ohci_nxp_start_hc(void)
 {
-	void __iomem *usb_otg_stat_control = ioremap(USB_CONFIG_BASE + 0x110, 4);
-	unsigned long tmp;
+	unsigned long tmp = __raw_readl(USB_OTG_STAT_CONTROL) | HOST_EN;
 
-	if (WARN_ON(!usb_otg_stat_control))
-		return;
-
-	tmp = __raw_readl(usb_otg_stat_control) | HOST_EN;
-
-	__raw_writel(tmp, usb_otg_stat_control);
+	__raw_writel(tmp, USB_OTG_STAT_CONTROL);
 	isp1301_vbus_on();
-
-	iounmap(usb_otg_stat_control);
 }
 
 static void ohci_nxp_stop_hc(void)
 {
-	void __iomem *usb_otg_stat_control = ioremap(USB_CONFIG_BASE + 0x110, 4);
 	unsigned long tmp;
 
-	if (WARN_ON(!usb_otg_stat_control))
-		return;
-
 	isp1301_vbus_off();
-	tmp = __raw_readl(usb_otg_stat_control) & ~HOST_EN;
-	__raw_writel(tmp, usb_otg_stat_control);
-
-	iounmap(usb_otg_stat_control);
+	tmp = __raw_readl(USB_OTG_STAT_CONTROL) & ~HOST_EN;
+	__raw_writel(tmp, USB_OTG_STAT_CONTROL);
 }
 
 static int ohci_hcd_nxp_probe(struct platform_device *pdev)
 {
-	struct usb_hcd *hcd = NULL;
+	struct usb_hcd *hcd = 0;
 	const struct hc_driver *driver = &ohci_nxp_hc_driver;
 	struct resource *res;
 	int ret = 0, irq;
@@ -164,7 +153,6 @@ static int ohci_hcd_nxp_probe(struct platform_device *pdev)
 	}
 
 	isp1301_i2c_client = isp1301_get_client(isp1301_node);
-	of_node_put(isp1301_node);
 	if (!isp1301_i2c_client)
 		return -EPROBE_DEFER;
 
@@ -274,6 +262,8 @@ static int __init ohci_nxp_init(void)
 {
 	if (usb_disabled())
 		return -ENODEV;
+
+	pr_info("%s: " DRIVER_DESC "\n", hcd_name);
 
 	ohci_init_driver(&ohci_nxp_hc_driver, NULL);
 	return platform_driver_register(&ohci_hcd_nxp_driver);

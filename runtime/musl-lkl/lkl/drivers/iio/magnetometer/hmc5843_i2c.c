@@ -1,9 +1,12 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * i2c driver for hmc5843/5843/5883/5883l/5983
  *
  * Split from hmc5843.c
  * Copyright (C) Josef Gajdusek <atx@atx.name>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 
 #include <linux/module.h>
@@ -55,19 +58,14 @@ static const struct regmap_config hmc5843_i2c_regmap_config = {
 static int hmc5843_i2c_probe(struct i2c_client *cli,
 			     const struct i2c_device_id *id)
 {
-	struct regmap *regmap = devm_regmap_init_i2c(cli,
-			&hmc5843_i2c_regmap_config);
-	if (IS_ERR(regmap))
-		return PTR_ERR(regmap);
-
 	return hmc5843_common_probe(&cli->dev,
-			regmap,
+			devm_regmap_init_i2c(cli, &hmc5843_i2c_regmap_config),
 			id->driver_data, id->name);
 }
 
-static void hmc5843_i2c_remove(struct i2c_client *client)
+static int hmc5843_i2c_remove(struct i2c_client *client)
 {
-	hmc5843_common_remove(&client->dev);
+	return hmc5843_common_remove(&client->dev);
 }
 
 static const struct i2c_device_id hmc5843_id[] = {
@@ -91,7 +89,7 @@ MODULE_DEVICE_TABLE(of, hmc5843_of_match);
 static struct i2c_driver hmc5843_driver = {
 	.driver = {
 		.name	= "hmc5843",
-		.pm	= pm_sleep_ptr(&hmc5843_pm_ops),
+		.pm	= HMC5843_PM_OPS,
 		.of_match_table = hmc5843_of_match,
 	},
 	.id_table	= hmc5843_id,
@@ -103,4 +101,3 @@ module_i2c_driver(hmc5843_driver);
 MODULE_AUTHOR("Josef Gajdusek <atx@atx.name>");
 MODULE_DESCRIPTION("HMC5843/5883/5883L/5983 i2c driver");
 MODULE_LICENSE("GPL");
-MODULE_IMPORT_NS(IIO_HMC5843);

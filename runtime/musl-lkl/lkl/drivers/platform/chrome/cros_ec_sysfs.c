@@ -1,16 +1,32 @@
-// SPDX-License-Identifier: GPL-2.0+
-// Expose the ChromeOS EC through sysfs
-//
-// Copyright (C) 2014 Google, Inc.
+/*
+ * cros_ec_sysfs - expose the Chrome OS EC through sysfs
+ *
+ * Copyright (C) 2014 Google, Inc.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <http://www.gnu.org/licenses/>.
+ */
+
+#define pr_fmt(fmt) "cros_ec_sysfs: " fmt
 
 #include <linux/ctype.h>
 #include <linux/delay.h>
 #include <linux/device.h>
 #include <linux/fs.h>
 #include <linux/kobject.h>
+#include <linux/mfd/cros_ec.h>
+#include <linux/mfd/cros_ec_commands.h>
 #include <linux/module.h>
-#include <linux/platform_data/cros_ec_commands.h>
-#include <linux/platform_data/cros_ec_proto.h>
 #include <linux/platform_device.h>
 #include <linux/printk.h>
 #include <linux/slab.h>
@@ -18,7 +34,7 @@
 #include <linux/types.h>
 #include <linux/uaccess.h>
 
-#define DRV_NAME "cros-ec-sysfs"
+#define to_cros_ec_dev(dev)  container_of(dev, struct cros_ec_dev, class_dev)
 
 /* Accessor functions */
 
@@ -28,7 +44,7 @@ static ssize_t reboot_show(struct device *dev,
 	int count = 0;
 
 	count += scnprintf(buf + count, PAGE_SIZE - count,
-			   "ro|rw|cancel|cold|disable-jump|hibernate|cold-ap-off");
+			   "ro|rw|cancel|cold|disable-jump|hibernate");
 	count += scnprintf(buf + count, PAGE_SIZE - count,
 			   " [at-shutdown]\n");
 	return count;
@@ -46,7 +62,6 @@ static ssize_t reboot_store(struct device *dev,
 		{"cancel",       EC_REBOOT_CANCEL, 0},
 		{"ro",           EC_REBOOT_JUMP_RO, 0},
 		{"rw",           EC_REBOOT_JUMP_RW, 0},
-		{"cold-ap-off",  EC_REBOOT_COLD_AP_OFF, 0},
 		{"cold",         EC_REBOOT_COLD, 0},
 		{"disable-jump", EC_REBOOT_DISABLE_JUMP, 0},
 		{"hibernate",    EC_REBOOT_HIBERNATE, 0},
@@ -150,12 +165,14 @@ static ssize_t version_show(struct device *dev,
 	/* Get build info. */
 	msg->command = EC_CMD_GET_BUILD_INFO + ec->cmd_offset;
 	msg->insize = EC_HOST_PARAM_SIZE;
-	ret = cros_ec_cmd_xfer_status(ec->ec_dev, msg);
-	if (ret < 0) {
+	ret = cros_ec_cmd_xfer(ec->ec_dev, msg);
+	if (ret < 0)
 		count += scnprintf(buf + count, PAGE_SIZE - count,
-				   "Build info:    XFER / EC ERROR %d / %d\n",
-				   ret, msg->result);
-	} else {
+				   "Build info:    XFER ERROR %d\n", ret);
+	else if (msg->result != EC_RES_SUCCESS)
+		count += scnprintf(buf + count, PAGE_SIZE - count,
+				   "Build info:    EC error %d\n", msg->result);
+	else {
 		msg->data[EC_HOST_PARAM_SIZE - 1] = '\0';
 		count += scnprintf(buf + count, PAGE_SIZE - count,
 				   "Build info:    %s\n", msg->data);
@@ -164,12 +181,14 @@ static ssize_t version_show(struct device *dev,
 	/* Get chip info. */
 	msg->command = EC_CMD_GET_CHIP_INFO + ec->cmd_offset;
 	msg->insize = sizeof(*r_chip);
-	ret = cros_ec_cmd_xfer_status(ec->ec_dev, msg);
-	if (ret < 0) {
+	ret = cros_ec_cmd_xfer(ec->ec_dev, msg);
+	if (ret < 0)
 		count += scnprintf(buf + count, PAGE_SIZE - count,
-				   "Chip info:     XFER / EC ERROR %d / %d\n",
-				   ret, msg->result);
-	} else {
+				   "Chip info:     XFER ERROR %d\n", ret);
+	else if (msg->result != EC_RES_SUCCESS)
+		count += scnprintf(buf + count, PAGE_SIZE - count,
+				   "Chip info:     EC error %d\n", msg->result);
+	else {
 		r_chip = (struct ec_response_get_chip_info *)msg->data;
 
 		r_chip->vendor[sizeof(r_chip->vendor) - 1] = '\0';
@@ -186,12 +205,14 @@ static ssize_t version_show(struct device *dev,
 	/* Get board version */
 	msg->command = EC_CMD_GET_BOARD_VERSION + ec->cmd_offset;
 	msg->insize = sizeof(*r_board);
-	ret = cros_ec_cmd_xfer_status(ec->ec_dev, msg);
-	if (ret < 0) {
+	ret = cros_ec_cmd_xfer(ec->ec_dev, msg);
+	if (ret < 0)
 		count += scnprintf(buf + count, PAGE_SIZE - count,
-				   "Board version: XFER / EC ERROR %d / %d\n",
-				   ret, msg->result);
-	} else {
+				   "Board version: XFER ERROR %d\n", ret);
+	else if (msg->result != EC_RES_SUCCESS)
+		count += scnprintf(buf + count, PAGE_SIZE - count,
+				   "Board version: EC error %d\n", msg->result);
+	else {
 		r_board = (struct ec_response_board_version *)msg->data;
 
 		count += scnprintf(buf + count, PAGE_SIZE - count,
@@ -321,7 +342,7 @@ static struct attribute *__ec_attrs[] = {
 static umode_t cros_ec_ctrl_visible(struct kobject *kobj,
 				    struct attribute *a, int n)
 {
-	struct device *dev = kobj_to_dev(kobj);
+	struct device *dev = container_of(kobj, struct device, kobj);
 	struct cros_ec_dev *ec = to_cros_ec_dev(dev);
 
 	if (a == &dev_attr_kb_wake_angle.attr && !ec->has_kb_wake_angle)
@@ -330,43 +351,11 @@ static umode_t cros_ec_ctrl_visible(struct kobject *kobj,
 	return a->mode;
 }
 
-static const struct attribute_group cros_ec_attr_group = {
+struct attribute_group cros_ec_attr_group = {
 	.attrs = __ec_attrs,
 	.is_visible = cros_ec_ctrl_visible,
 };
-
-static int cros_ec_sysfs_probe(struct platform_device *pd)
-{
-	struct cros_ec_dev *ec_dev = dev_get_drvdata(pd->dev.parent);
-	struct device *dev = &pd->dev;
-	int ret;
-
-	ret = sysfs_create_group(&ec_dev->class_dev.kobj, &cros_ec_attr_group);
-	if (ret < 0)
-		dev_err(dev, "failed to create attributes. err=%d\n", ret);
-
-	return ret;
-}
-
-static int cros_ec_sysfs_remove(struct platform_device *pd)
-{
-	struct cros_ec_dev *ec_dev = dev_get_drvdata(pd->dev.parent);
-
-	sysfs_remove_group(&ec_dev->class_dev.kobj, &cros_ec_attr_group);
-
-	return 0;
-}
-
-static struct platform_driver cros_ec_sysfs_driver = {
-	.driver = {
-		.name = DRV_NAME,
-	},
-	.probe = cros_ec_sysfs_probe,
-	.remove = cros_ec_sysfs_remove,
-};
-
-module_platform_driver(cros_ec_sysfs_driver);
+EXPORT_SYMBOL(cros_ec_attr_group);
 
 MODULE_LICENSE("GPL");
-MODULE_DESCRIPTION("Expose the ChromeOS EC through sysfs");
-MODULE_ALIAS("platform:" DRV_NAME);
+MODULE_DESCRIPTION("ChromeOS EC control driver");

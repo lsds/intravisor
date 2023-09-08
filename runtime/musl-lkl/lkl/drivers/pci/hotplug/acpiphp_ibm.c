@@ -41,7 +41,7 @@ MODULE_VERSION(DRIVER_VERSION);
 #define IBM_HARDWARE_ID1 "IBM37D0"
 #define IBM_HARDWARE_ID2 "IBM37D4"
 
-#define hpslot_to_sun(A) (to_slot(A)->sun)
+#define hpslot_to_sun(A) (((struct slot *)((A)->private))->sun)
 
 /* union apci_descriptor - allows access to the
  * various device descriptors that are embedded in the
@@ -433,9 +433,8 @@ static int __init ibm_acpiphp_init(void)
 		goto init_return;
 	}
 	pr_debug("%s: found IBM aPCI device\n", __func__);
-	device = acpi_fetch_acpi_dev(ibm_acpi_handle);
-	if (!device) {
-		pr_err("%s: acpi_fetch_acpi_dev failed\n", __func__);
+	if (acpi_bus_get_device(ibm_acpi_handle, &device)) {
+		pr_err("%s: acpi_bus_get_device failed\n", __func__);
 		retval = -ENODEV;
 		goto init_return;
 	}

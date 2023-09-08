@@ -1,7 +1,7 @@
 #!/usr/bin/env perl
-# SPDX-License-Identifier: GPL-2.0-only
 #
 # (c) 2017 Tobin C. Harding <me@tobin.cc>
+# Licensed under the terms of the GNU GPL License version 2
 #
 # leaking_addresses.pl: Scan the kernel for potential leaking addresses.
 #  - Scans dmesg output.
@@ -97,7 +97,7 @@ Options:
 	--32-bit			Scan 32-bit kernel.
 	--page-offset-32-bit=o		Page offset (for 32-bit kernel 0xABCD1234).
 	-d, --debug			Display debugging output.
-	-h, --help			Display this help and exit.
+	-h, --help, --version		Display this help and exit.
 
 Scans the running kernel for potential leaking addresses.
 
@@ -108,6 +108,7 @@ EOM
 GetOptions(
 	'd|debug'		=> \$debug,
 	'h|help'		=> \$help,
+	'version'		=> \$help,
 	'o|output-raw=s'        => \$output_raw,
 	'i|input-raw=s'         => \$input_raw,
 	'suppress-dmesg'        => \$suppress_dmesg,
@@ -230,7 +231,7 @@ sub get_kernel_config_option
 		my $tmp_file = "/tmp/tmpkconf";
 
 		if (system("gunzip < /proc/config.gz > $tmp_file")) {
-			dprint("system(gunzip < /proc/config.gz) failed\n");
+			dprint "$0: system(gunzip < /proc/config.gz) failed\n";
 			return "";
 		} else {
 			@config_files = ($tmp_file);
@@ -242,7 +243,7 @@ sub get_kernel_config_option
 	}
 
 	foreach my $file (@config_files) {
-		dprint("parsing config file: $file\n");
+		dprint("parsing config file: %s\n", $file);
 		$value = option_from_file($option, $file);
 		if ($value ne "") {
 			last;
@@ -455,9 +456,8 @@ sub parse_file
 
 	open my $fh, "<", $file or return;
 	while ( <$fh> ) {
-		chomp;
 		if (may_leak_address($_)) {
-			printf("$file: $_\n");
+			print $file . ': ' . $_;
 		}
 	}
 	close $fh;
@@ -502,7 +502,7 @@ sub walk
 				next;
 			}
 
-			dprint("parsing: $path\n");
+			dprint "parsing: $path\n";
 			timed_parse_file($path);
 		}
 	}

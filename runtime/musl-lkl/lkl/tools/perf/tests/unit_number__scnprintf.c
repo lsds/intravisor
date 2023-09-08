@@ -2,12 +2,11 @@
 #include <inttypes.h>
 #include <linux/compiler.h>
 #include <linux/types.h>
-#include <string.h>
 #include "tests.h"
 #include "units.h"
 #include "debug.h"
 
-static int test__unit_number__scnprint(struct test_suite *t __maybe_unused, int subtest __maybe_unused)
+int test__unit_number__scnprint(struct test *t __maybe_unused, int subtest __maybe_unused)
 {
 	struct {
 		u64		 n;
@@ -38,5 +37,3 @@ static int test__unit_number__scnprint(struct test_suite *t __maybe_unused, int 
 
 	return TEST_OK;
 }
-
-DEFINE_SUITE("unit_number__scnprintf", unit_number__scnprint);

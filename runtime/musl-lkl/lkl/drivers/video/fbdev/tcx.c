@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /* tcx.c: TCX frame buffer driver
  *
  * Copyright (C) 2003, 2006 David S. Miller (davem@davemloft.net)
@@ -40,7 +39,7 @@ static int tcx_pan_display(struct fb_var_screeninfo *, struct fb_info *);
  *  Frame buffer operations
  */
 
-static const struct fb_ops tcx_ops = {
+static struct fb_ops tcx_ops = {
 	.owner			= THIS_MODULE,
 	.fb_setcolreg		= tcx_setcolreg,
 	.fb_blank		= tcx_blank,
@@ -196,7 +195,7 @@ static int tcx_setcolreg(unsigned regno,
 
 /**
  *      tcx_blank - Optional function.  Blanks the display.
- *      @blank: the blank mode we want.
+ *      @blank_mode: the blank mode we want.
  *      @info: frame buffer structure that represents a single frame buffer
  */
 static int
@@ -333,7 +332,7 @@ tcx_init_fix(struct fb_info *info, int linebytes)
 	else
 		tcx_name = "TCX24";
 
-	strscpy(info->fix.id, tcx_name, sizeof(info->fix.id));
+	strlcpy(info->fix.id, tcx_name, sizeof(info->fix.id));
 
 	info->fix.type = FB_TYPE_PACKED_PIXELS;
 	info->fix.visual = FB_VISUAL_PSEUDOCOLOR;

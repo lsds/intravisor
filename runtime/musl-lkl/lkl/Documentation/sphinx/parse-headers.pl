@@ -1,4 +1,4 @@
-#!/usr/bin/env perl
+#!/usr/bin/perl
 use strict;
 use Text::Tabs;
 use Getopt::Long;
@@ -110,7 +110,7 @@ while (<IN>) {
 	    ) {
 		my $s = $1;
 
-		$structs{$s} = "struct $s\\ ";
+		$structs{$s} = "struct :c:type:`$s`\\ ";
 		next;
 	}
 }
@@ -344,7 +344,7 @@ enums and defines and create cross-references to a Sphinx book.
 
 B<parse_headers.pl> [<options>] <C_FILE> <OUT_FILE> [<EXCEPTIONS_FILE>]
 
-Where <options> can be: --debug, --help or --usage.
+Where <options> can be: --debug, --help or --man.
 
 =head1 OPTIONS
 
@@ -393,7 +393,7 @@ Report bugs to Mauro Carvalho Chehab <mchehab@kernel.org>
 
 Copyright (c) 2016 by Mauro Carvalho Chehab <mchehab+samsung@kernel.org>.
 
-License GPLv2: GNU GPL version 2 <https://gnu.org/licenses/gpl.html>.
+License GPLv2: GNU GPL version 2 <http://gnu.org/licenses/gpl.html>.
 
 This is free software: you are free to change and redistribute it.
 There is NO WARRANTY, to the extent permitted by law.

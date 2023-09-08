@@ -176,7 +176,6 @@ void ath9k_hw_reset_calibration(struct ath_hw *ah,
 
 	ath9k_hw_setup_calibration(ah, currCal);
 
-	ah->cal_start_time = jiffies;
 	currCal->calState = CAL_RUNNING;
 
 	for (i = 0; i < AR5416_MAX_CHAINS; i++) {
@@ -210,17 +209,14 @@ bool ath9k_hw_reset_calvalid(struct ath_hw *ah)
 		return true;
 	}
 
-	currCal = ah->cal_list;
-	do {
-		ath_dbg(common, CALIBRATE, "Resetting Cal %d state for channel %u\n",
-			currCal->calData->calType,
-			ah->curchan->chan->center_freq);
+	if (!(ah->supp_cals & currCal->calData->calType))
+		return true;
 
-		ah->caldata->CalValid &= ~currCal->calData->calType;
-		currCal->calState = CAL_WAITING;
+	ath_dbg(common, CALIBRATE, "Resetting Cal %d state for channel %u\n",
+		currCal->calData->calType, ah->curchan->chan->center_freq);
 
-		currCal = currCal->calNext;
-	} while (currCal != ah->cal_list);
+	ah->caldata->CalValid &= ~currCal->calData->calType;
+	currCal->calState = CAL_WAITING;
 
 	return false;
 }

@@ -34,12 +34,12 @@
 #include <linux/kdebug.h>
 #include <linux/export.h>
 #include <linux/start_kernel.h>
-#include <uapi/linux/mount.h>
 
 #include <asm/io.h>
 #include <asm/processor.h>
 #include <asm/oplib.h>
 #include <asm/page.h>
+#include <asm/pgtable.h>
 #include <asm/traps.h>
 #include <asm/vaddrs.h>
 #include <asm/mbus.h>
@@ -266,6 +266,7 @@ static __init void leon_patch(void)
 }
 
 struct tt_entry *sparc_ttable;
+static struct pt_regs fake_swapper_regs;
 
 /* Called from head_32.S - before we have setup anything
  * in the kernel. Be very careful with what you do here.
@@ -309,26 +310,31 @@ void __init setup_arch(char **cmdline_p)
 
 	register_console(&prom_early_console);
 
+	printk("ARCH: ");
 	switch(sparc_cpu_model) {
 	case sun4m:
-		pr_info("ARCH: SUN4M\n");
+		printk("SUN4M\n");
 		break;
 	case sun4d:
-		pr_info("ARCH: SUN4D\n");
+		printk("SUN4D\n");
 		break;
 	case sun4e:
-		pr_info("ARCH: SUN4E\n");
+		printk("SUN4E\n");
 		break;
 	case sun4u:
-		pr_info("ARCH: SUN4U\n");
+		printk("SUN4U\n");
 		break;
 	case sparc_leon:
-		pr_info("ARCH: LEON\n");
+		printk("LEON\n");
 		break;
 	default:
-		pr_info("ARCH: UNKNOWN!\n");
+		printk("UNKNOWN!\n");
 		break;
 	}
+
+#ifdef CONFIG_DUMMY_CONSOLE
+	conswitchp = &dummy_con;
+#endif
 
 	idprom_init();
 	load_mmu();
@@ -352,6 +358,8 @@ void __init setup_arch(char **cmdline_p)
 	ROOT_DEV = old_decode_dev(root_dev);
 #ifdef CONFIG_BLK_DEV_RAM
 	rd_image_start = ram_flags & RAMDISK_IMAGE_START_MASK;
+	rd_prompt = ((ram_flags & RAMDISK_PROMPT_FLAG) != 0);
+	rd_doload = ((ram_flags & RAMDISK_LOAD_FLAG) != 0);	
 #endif
 
 	prom_setsync(prom_sync_me);
@@ -361,6 +369,8 @@ void __init setup_arch(char **cmdline_p)
 		printk("Booted under KADB. Syncing trap table.\n");
 		(*(linux_dbvec->teach_debugger))();
 	}
+
+	init_task.thread.kregs = &fake_swapper_regs;
 
 	/* Run-time patch instructions to match the cpu model */
 	per_cpu_patch();

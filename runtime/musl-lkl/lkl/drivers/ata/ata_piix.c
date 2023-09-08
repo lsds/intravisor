@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  *    ata_piix.c - Intel PATA/SATA controllers
  *
@@ -6,14 +5,32 @@
  *    		    Please ALWAYS copy linux-ide@vger.kernel.org
  *		    on emails.
  *
+ *
  *	Copyright 2003-2005 Red Hat Inc
  *	Copyright 2003-2005 Jeff Garzik
+ *
  *
  *	Copyright header from piix.c:
  *
  *  Copyright (C) 1998-1999 Andrzej Krzysztofowicz, Author and Maintainer
  *  Copyright (C) 1998-2000 Andre Hedrick <andre@linux-ide.org>
  *  Copyright (C) 2003 Red Hat Inc
+ *
+ *
+ *  This program is free software; you can redistribute it and/or modify
+ *  it under the terms of the GNU General Public License as published by
+ *  the Free Software Foundation; either version 2, or (at your option)
+ *  any later version.
+ *
+ *  This program is distributed in the hope that it will be useful,
+ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *  GNU General Public License for more details.
+ *
+ *  You should have received a copy of the GNU General Public License
+ *  along with this program; see the file COPYING.  If not, write to
+ *  the Free Software Foundation, 675 Mass Ave, Cambridge, MA 02139, USA.
+ *
  *
  *  libata documentation is available via 'make {ps|pdf}docs',
  *  as Documentation/driver-api/libata.rst
@@ -77,7 +94,6 @@
 #include <scsi/scsi_host.h>
 #include <linux/libata.h>
 #include <linux/dmi.h>
-#include <trace/events/libata.h>
 
 #define DRV_NAME	"ata_piix"
 #define DRV_VERSION	"2.13"
@@ -817,15 +833,10 @@ static int piix_sidpr_set_lpm(struct ata_link *link, enum ata_lpm_policy policy,
 
 static bool piix_irq_check(struct ata_port *ap)
 {
-	unsigned char host_stat;
-
 	if (unlikely(!ap->ioaddr.bmdma_addr))
 		return false;
 
-	host_stat = ap->ops->bmdma_status(ap);
-	trace_ata_bmdma_status(ap, host_stat);
-
-	return host_stat & ATA_DMA_INTR;
+	return ap->ops->bmdma_status(ap) & ATA_DMA_INTR;
 }
 
 #ifdef CONFIG_PM_SLEEP
@@ -844,12 +855,6 @@ static int piix_broken_suspend(void)
 			.matches = {
 				DMI_MATCH(DMI_SYS_VENDOR, "TOSHIBA"),
 				DMI_MATCH(DMI_PRODUCT_NAME, "Tecra M3"),
-			},
-		},
-		{
-			.ident = "TECRA M3",
-			.matches = {
-				DMI_MATCH(DMI_OEM_STRING, "Tecra M3,"),
 			},
 		},
 		{
@@ -967,9 +972,17 @@ static int piix_broken_suspend(void)
 
 		{ }	/* terminate list */
 	};
+	static const char *oemstrs[] = {
+		"Tecra M3,",
+	};
+	int i;
 
 	if (dmi_check_system(sysids))
 		return 1;
+
+	for (i = 0; i < ARRAY_SIZE(oemstrs); i++)
+		if (dmi_find_device(DMI_DEV_TYPE_OEM_STRING, oemstrs[i], NULL))
+			return 1;
 
 	/* TECRA M4 sometimes forgets its identify and reports bogus
 	 * DMI information.  As the bogus information is a bit
@@ -993,8 +1006,11 @@ static int piix_pci_device_suspend(struct pci_dev *pdev, pm_message_t mesg)
 {
 	struct ata_host *host = pci_get_drvdata(pdev);
 	unsigned long flags;
+	int rc = 0;
 
-	ata_host_suspend(host, mesg);
+	rc = ata_host_suspend(host, mesg);
+	if (rc)
+		return rc;
 
 	/* Some braindamaged ACPI suspend implementations expect the
 	 * controller to be awake on entry; otherwise, it burns cpu
@@ -1088,16 +1104,14 @@ static struct ata_port_operations ich_pata_ops = {
 	.set_dmamode		= ich_set_dmamode,
 };
 
-static struct attribute *piix_sidpr_shost_attrs[] = {
-	&dev_attr_link_power_management_policy.attr,
+static struct device_attribute *piix_sidpr_shost_attrs[] = {
+	&dev_attr_link_power_management_policy,
 	NULL
 };
 
-ATTRIBUTE_GROUPS(piix_sidpr_shost);
-
 static struct scsi_host_template piix_sidpr_sht = {
 	ATA_BMDMA_SHT(DRV_NAME),
-	.shost_groups		= piix_sidpr_shost_groups,
+	.shost_attrs		= piix_sidpr_shost_attrs,
 };
 
 static struct ata_port_operations piix_sidpr_sata_ops = {
@@ -1348,6 +1362,7 @@ static void piix_init_pcs(struct ata_host *host,
 	new_pcs = pcs | map_db->port_enable;
 
 	if (new_pcs != pcs) {
+		DPRINTK("updating PCS from 0x%x to 0x%x\n", pcs, new_pcs);
 		pci_write_config_word(pdev, ICH5_PCS, new_pcs);
 		msleep(150);
 	}
@@ -1771,12 +1786,14 @@ static int __init piix_init(void)
 {
 	int rc;
 
+	DPRINTK("pci_register_driver\n");
 	rc = pci_register_driver(&piix_pci_driver);
 	if (rc)
 		return rc;
 
 	in_module_init = 0;
 
+	DPRINTK("done\n");
 	return 0;
 }
 

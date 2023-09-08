@@ -1,8 +1,20 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * uio_aec.c -- simple driver for Adrienne Electronics Corp time code PCI device
  *
  * Copyright (C) 2008 Brandon Philips <brandon@ifup.org>
+ *
+ *   This program is free software; you can redistribute it and/or modify it
+ *   under the terms of the GNU General Public License version 2 as published
+ *   by the Free Software Foundation.
+ *
+ *   This program is distributed in the hope that it will be useful,
+ *   but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *   GNU General Public License for more details.
+ *
+ *   You should have received a copy of the GNU General Public License along
+ *   with this program; if not, write to the Free Software Foundation, Inc., 59
+ *   Temple Place, Suite 330, Boston, MA 02111-1307, USA.
  */
 
 #include <linux/kernel.h>
@@ -71,12 +83,12 @@ static int probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	struct uio_info *info;
 	int ret;
 
-	info = devm_kzalloc(&pdev->dev, sizeof(struct uio_info), GFP_KERNEL);
+	info = kzalloc(sizeof(struct uio_info), GFP_KERNEL);
 	if (!info)
 		return -ENOMEM;
 
 	if (pci_enable_device(pdev))
-		return -ENODEV;
+		goto out_free;
 
 	if (pci_request_regions(pdev, "aectc"))
 		goto out_disable;
@@ -117,6 +129,8 @@ out_release:
 	pci_release_regions(pdev);
 out_disable:
 	pci_disable_device(pdev);
+out_free:
+	kfree(info);
 	return -ENODEV;
 }
 
@@ -133,7 +147,9 @@ static void remove(struct pci_dev *pdev)
 	uio_unregister_device(info);
 	pci_release_regions(pdev);
 	pci_disable_device(pdev);
-	pci_iounmap(pdev, info->priv);
+	iounmap(info->priv);
+
+	kfree(info);
 }
 
 static struct pci_driver pci_driver = {

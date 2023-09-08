@@ -3,7 +3,6 @@
 #include <linux/types.h>
 #include <linux/audit.h>
 #include <asm/unistd.h>
-#include <asm/audit.h>
 
 static unsigned dir_class[] = {
 #include <asm-generic/audit_dir_write.h>
@@ -42,21 +41,20 @@ int audit_classify_arch(int arch)
 int audit_classify_syscall(int abi, unsigned syscall)
 {
 #ifdef CONFIG_IA32_EMULATION
+	extern int ia32_classify_syscall(unsigned);
 	if (abi == AUDIT_ARCH_I386)
 		return ia32_classify_syscall(syscall);
 #endif
 	switch(syscall) {
 	case __NR_open:
-		return AUDITSC_OPEN;
+		return 2;
 	case __NR_openat:
-		return AUDITSC_OPENAT;
+		return 3;
 	case __NR_execve:
 	case __NR_execveat:
-		return AUDITSC_EXECVE;
-	case __NR_openat2:
-		return AUDITSC_OPENAT2;
+		return 5;
 	default:
-		return AUDITSC_NATIVE;
+		return 0;
 	}
 }
 

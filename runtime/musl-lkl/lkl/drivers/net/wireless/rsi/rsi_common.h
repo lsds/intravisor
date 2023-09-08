@@ -1,4 +1,4 @@
-/*
+/**
  * Copyright (c) 2014 Redpine Signals Inc.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
@@ -75,6 +75,7 @@ static inline int rsi_kill_thread(struct rsi_thread *handle)
 	atomic_inc(&handle->thread_done);
 	rsi_set_event(&handle->event);
 
+	wait_for_completion(&handle->completion);
 	return kthread_stop(handle->task);
 }
 

@@ -1,7 +1,8 @@
-// SPDX-License-Identifier: (GPL-2.0-only OR BSD-3-Clause)
-/* Copyright (C) 2016-2022 Jason A. Donenfeld <Jason@zx2c4.com>. All Rights Reserved.
+/* Test cases for siphash.c
  *
- * Test cases for siphash.c
+ * Copyright (C) 2016 Jason A. Donenfeld <Jason@zx2c4.com>. All Rights Reserved.
+ *
+ * This file is provided under a dual BSD/GPLv2 license.
  *
  * SipHash: a fast short-input PRF
  * https://131002.net/siphash/

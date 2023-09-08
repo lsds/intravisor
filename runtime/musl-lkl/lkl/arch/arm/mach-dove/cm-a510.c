@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * arch/arm/mach-dove/cm-a510.c
  *
@@ -6,6 +5,10 @@
  * Konstantin Sinyuk <kostyas@compulab.co.il>
  *
  * Based on Marvell DB-MV88AP510-BP Development Board Setup
+ *
+ * This file is licensed under the terms of the GNU General Public
+ * License version 2.  This program is licensed "as is" without any
+ * warranty of any kind, whether express or implied.
  */
 
 #include <linux/kernel.h>
@@ -19,7 +22,8 @@
 #include <asm/mach-types.h>
 #include <asm/mach/arch.h>
 
-#include "dove.h"
+#include <mach/dove.h>
+
 #include "common.h"
 
 static struct mv643xx_eth_platform_data cm_a510_ge00_data = {

@@ -1,8 +1,20 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
- * NXP Wireless LAN device driver: station TX data handling
+ * Marvell Wireless LAN device driver: station TX data handling
  *
- * Copyright 2011-2020 NXP
+ * Copyright (C) 2011-2014, Marvell International Ltd.
+ *
+ * This software file (the "File") is distributed by Marvell International
+ * Ltd. under the terms of the GNU General Public License Version 2, June 1991
+ * (the "License").  You may use, redistribute and/or modify this File in
+ * accordance with the terms and conditions of the License, a copy of which
+ * is available by writing to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA or on the
+ * worldwide web at http://www.gnu.org/licenses/old-licenses/gpl-2.0.txt.
+ *
+ * THE FILE IS DISTRIBUTED AS-IS, WITHOUT WARRANTY OF ANY KIND, AND THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE
+ * ARE EXPRESSLY DISCLAIMED.  The License provides additional details about
+ * this warranty disclaimer.
  */
 
 #include "decl.h"
@@ -50,8 +62,8 @@ void *mwifiex_process_sta_txpd(struct mwifiex_private *priv,
 
 	pkt_type = mwifiex_is_skb_mgmt_frame(skb) ? PKT_TYPE_MGMT : 0;
 
-	pad = ((uintptr_t)skb->data - (sizeof(*local_tx_pd) + hroom)) &
-	       (MWIFIEX_DMA_ALIGN_SZ - 1);
+	pad = ((void *)skb->data - (sizeof(*local_tx_pd) + hroom)-
+			 NULL) & (MWIFIEX_DMA_ALIGN_SZ - 1);
 	skb_push(skb, sizeof(*local_tx_pd) + pad);
 
 	local_tx_pd = (struct txpd *) skb->data;
@@ -131,7 +143,7 @@ int mwifiex_send_null_packet(struct mwifiex_private *priv, u8 flags)
 	int ret;
 	struct mwifiex_txinfo *tx_info = NULL;
 
-	if (test_bit(MWIFIEX_SURPRISE_REMOVED, &adapter->work_flags))
+	if (adapter->surprise_removed)
 		return -1;
 
 	if (!priv->media_connected)

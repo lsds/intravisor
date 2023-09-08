@@ -1,9 +1,17 @@
-/* SPDX-License-Identifier: GPL-2.0-or-later */
 #ifndef _ASM_X86_XOR_32_H
 #define _ASM_X86_XOR_32_H
 
 /*
  * Optimized RAID-5 checksumming functions for MMX.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2, or (at your option)
+ * any later version.
+ *
+ * You should have received a copy of the GNU General Public License
+ * (for example /usr/src/linux/COPYING); if not, write to the Free
+ * Software Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
 /*
@@ -21,8 +29,7 @@
 #include <asm/fpu/api.h>
 
 static void
-xor_pII_mmx_2(unsigned long bytes, unsigned long * __restrict p1,
-	      const unsigned long * __restrict p2)
+xor_pII_mmx_2(unsigned long bytes, unsigned long *p1, unsigned long *p2)
 {
 	unsigned long lines = bytes >> 7;
 
@@ -65,9 +72,8 @@ xor_pII_mmx_2(unsigned long bytes, unsigned long * __restrict p1,
 }
 
 static void
-xor_pII_mmx_3(unsigned long bytes, unsigned long * __restrict p1,
-	      const unsigned long * __restrict p2,
-	      const unsigned long * __restrict p3)
+xor_pII_mmx_3(unsigned long bytes, unsigned long *p1, unsigned long *p2,
+	      unsigned long *p3)
 {
 	unsigned long lines = bytes >> 7;
 
@@ -115,10 +121,8 @@ xor_pII_mmx_3(unsigned long bytes, unsigned long * __restrict p1,
 }
 
 static void
-xor_pII_mmx_4(unsigned long bytes, unsigned long * __restrict p1,
-	      const unsigned long * __restrict p2,
-	      const unsigned long * __restrict p3,
-	      const unsigned long * __restrict p4)
+xor_pII_mmx_4(unsigned long bytes, unsigned long *p1, unsigned long *p2,
+	      unsigned long *p3, unsigned long *p4)
 {
 	unsigned long lines = bytes >> 7;
 
@@ -172,11 +176,8 @@ xor_pII_mmx_4(unsigned long bytes, unsigned long * __restrict p1,
 
 
 static void
-xor_pII_mmx_5(unsigned long bytes, unsigned long * __restrict p1,
-	      const unsigned long * __restrict p2,
-	      const unsigned long * __restrict p3,
-	      const unsigned long * __restrict p4,
-	      const unsigned long * __restrict p5)
+xor_pII_mmx_5(unsigned long bytes, unsigned long *p1, unsigned long *p2,
+	      unsigned long *p3, unsigned long *p4, unsigned long *p5)
 {
 	unsigned long lines = bytes >> 7;
 
@@ -255,8 +256,7 @@ xor_pII_mmx_5(unsigned long bytes, unsigned long * __restrict p1,
 #undef BLOCK
 
 static void
-xor_p5_mmx_2(unsigned long bytes, unsigned long * __restrict p1,
-	     const unsigned long * __restrict p2)
+xor_p5_mmx_2(unsigned long bytes, unsigned long *p1, unsigned long *p2)
 {
 	unsigned long lines = bytes >> 6;
 
@@ -303,9 +303,8 @@ xor_p5_mmx_2(unsigned long bytes, unsigned long * __restrict p1,
 }
 
 static void
-xor_p5_mmx_3(unsigned long bytes, unsigned long * __restrict p1,
-	     const unsigned long * __restrict p2,
-	     const unsigned long * __restrict p3)
+xor_p5_mmx_3(unsigned long bytes, unsigned long *p1, unsigned long *p2,
+	     unsigned long *p3)
 {
 	unsigned long lines = bytes >> 6;
 
@@ -361,10 +360,8 @@ xor_p5_mmx_3(unsigned long bytes, unsigned long * __restrict p1,
 }
 
 static void
-xor_p5_mmx_4(unsigned long bytes, unsigned long * __restrict p1,
-	     const unsigned long * __restrict p2,
-	     const unsigned long * __restrict p3,
-	     const unsigned long * __restrict p4)
+xor_p5_mmx_4(unsigned long bytes, unsigned long *p1, unsigned long *p2,
+	     unsigned long *p3, unsigned long *p4)
 {
 	unsigned long lines = bytes >> 6;
 
@@ -429,11 +426,8 @@ xor_p5_mmx_4(unsigned long bytes, unsigned long * __restrict p1,
 }
 
 static void
-xor_p5_mmx_5(unsigned long bytes, unsigned long * __restrict p1,
-	     const unsigned long * __restrict p2,
-	     const unsigned long * __restrict p3,
-	     const unsigned long * __restrict p4,
-	     const unsigned long * __restrict p5)
+xor_p5_mmx_5(unsigned long bytes, unsigned long *p1, unsigned long *p2,
+	     unsigned long *p3, unsigned long *p4, unsigned long *p5)
 {
 	unsigned long lines = bytes >> 6;
 

@@ -1,8 +1,20 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Hisilicon Fast Ethernet MAC Driver
  *
  * Copyright (c) 2016 HiSilicon Technologies Co., Ltd.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
 #include <linux/circ_buf.h>
@@ -283,7 +295,7 @@ static int hisi_femac_rx(struct net_device *dev, int limit)
 		skb->protocol = eth_type_trans(skb, dev);
 		napi_gro_receive(&priv->napi, skb);
 		dev->stats.rx_packets++;
-		dev->stats.rx_bytes += len;
+		dev->stats.rx_bytes += skb->len;
 next:
 		pos = (pos + 1) % rxq->num;
 		if (rx_pkts_num >= limit)
@@ -427,7 +439,7 @@ static void hisi_femac_free_skb_rings(struct hisi_femac_priv *priv)
 }
 
 static int hisi_femac_set_hw_mac_addr(struct hisi_femac_priv *priv,
-				      const unsigned char *mac)
+				      unsigned char *mac)
 {
 	u32 reg;
 
@@ -555,7 +567,7 @@ static int hisi_femac_set_mac_address(struct net_device *dev, void *p)
 	if (!is_valid_ether_addr(skaddr->sa_data))
 		return -EADDRNOTAVAIL;
 
-	eth_hw_addr_set(dev, skaddr->sa_data);
+	memcpy(dev->dev_addr, skaddr->sa_data, dev->addr_len);
 	dev->addr_assign_type &= ~NET_ADDR_RANDOM;
 
 	hisi_femac_set_hw_mac_addr(priv, dev->dev_addr);
@@ -675,6 +687,18 @@ static void hisi_femac_net_set_rx_mode(struct net_device *dev)
 	}
 }
 
+static int hisi_femac_net_ioctl(struct net_device *dev,
+				struct ifreq *ifreq, int cmd)
+{
+	if (!netif_running(dev))
+		return -EINVAL;
+
+	if (!dev->phydev)
+		return -EINVAL;
+
+	return phy_mii_ioctl(dev->phydev, ifreq, cmd);
+}
+
 static const struct ethtool_ops hisi_femac_ethtools_ops = {
 	.get_link		= ethtool_op_get_link,
 	.get_link_ksettings	= phy_ethtool_get_link_ksettings,
@@ -685,7 +709,7 @@ static const struct net_device_ops hisi_femac_netdev_ops = {
 	.ndo_open		= hisi_femac_net_open,
 	.ndo_stop		= hisi_femac_net_close,
 	.ndo_start_xmit		= hisi_femac_net_xmit,
-	.ndo_eth_ioctl		= phy_do_ioctl_running,
+	.ndo_do_ioctl		= hisi_femac_net_ioctl,
 	.ndo_set_mac_address	= hisi_femac_set_mac_address,
 	.ndo_set_rx_mode	= hisi_femac_net_set_rx_mode,
 };
@@ -769,9 +793,11 @@ static int hisi_femac_drv_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
 	struct device_node *node = dev->of_node;
+	struct resource *res;
 	struct net_device *ndev;
 	struct hisi_femac_priv *priv;
 	struct phy_device *phy;
+	const char *mac_addr;
 	int ret;
 
 	ndev = alloc_etherdev(sizeof(*priv));
@@ -785,13 +811,15 @@ static int hisi_femac_drv_probe(struct platform_device *pdev)
 	priv->dev = dev;
 	priv->ndev = ndev;
 
-	priv->port_base = devm_platform_ioremap_resource(pdev, 0);
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	priv->port_base = devm_ioremap_resource(dev, res);
 	if (IS_ERR(priv->port_base)) {
 		ret = PTR_ERR(priv->port_base);
 		goto out_free_netdev;
 	}
 
-	priv->glb_base = devm_platform_ioremap_resource(pdev, 1);
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 1);
+	priv->glb_base = devm_ioremap_resource(dev, res);
 	if (IS_ERR(priv->glb_base)) {
 		ret = PTR_ERR(priv->glb_base);
 		goto out_free_netdev;
@@ -841,8 +869,10 @@ static int hisi_femac_drv_probe(struct platform_device *pdev)
 			   (unsigned long)phy->phy_id,
 			   phy_modes(phy->interface));
 
-	ret = of_get_ethdev_address(node, ndev);
-	if (ret) {
+	mac_addr = of_get_mac_address(node);
+	if (mac_addr)
+		ether_addr_copy(ndev->dev_addr, mac_addr);
+	if (!is_valid_ether_addr(ndev->dev_addr)) {
 		eth_hw_addr_random(ndev);
 		dev_warn(dev, "using random MAC address %pM\n",
 			 ndev->dev_addr);
@@ -852,8 +882,7 @@ static int hisi_femac_drv_probe(struct platform_device *pdev)
 	ndev->priv_flags |= IFF_UNICAST_FLT;
 	ndev->netdev_ops = &hisi_femac_netdev_ops;
 	ndev->ethtool_ops = &hisi_femac_ethtools_ops;
-	netif_napi_add_weight(ndev, &priv->napi, hisi_femac_poll,
-			      FEMAC_POLL_WEIGHT);
+	netif_napi_add(ndev, &priv->napi, hisi_femac_poll, FEMAC_POLL_WEIGHT);
 
 	hisi_femac_port_init(priv);
 
@@ -863,6 +892,7 @@ static int hisi_femac_drv_probe(struct platform_device *pdev)
 
 	ndev->irq = platform_get_irq(pdev, 0);
 	if (ndev->irq <= 0) {
+		dev_err(dev, "No irq resource\n");
 		ret = -ENODEV;
 		goto out_disconnect_phy;
 	}

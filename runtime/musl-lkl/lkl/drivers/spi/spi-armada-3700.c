@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Marvell Armada-3700 SPI controller driver
  *
@@ -6,6 +5,10 @@
  *
  * Author: Wilson Ding <dingwei@marvell.com>
  * Author: Romain Perier <romain.perier@free-electrons.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 
 #include <linux/clk.h>
@@ -276,11 +279,11 @@ static int a3700_spi_fifo_flush(struct a3700_spi *a3700_spi)
 	return -ETIMEDOUT;
 }
 
-static void a3700_spi_init(struct a3700_spi *a3700_spi)
+static int a3700_spi_init(struct a3700_spi *a3700_spi)
 {
 	struct spi_master *master = a3700_spi->master;
 	u32 val;
-	int i;
+	int i, ret = 0;
 
 	/* Reset SPI unit */
 	val = spireg_read(a3700_spi, A3700_SPI_IF_CFG_REG);
@@ -311,6 +314,8 @@ static void a3700_spi_init(struct a3700_spi *a3700_spi)
 	/* Mask the interrupts and clear cause bits */
 	spireg_write(a3700_spi, A3700_SPI_INT_MASK_REG, 0);
 	spireg_write(a3700_spi, A3700_SPI_INT_STAT_REG, ~0U);
+
+	return ret;
 }
 
 static irqreturn_t a3700_spi_interrupt(int irq, void *dev_id)
@@ -497,7 +502,7 @@ static int a3700_spi_fifo_write(struct a3700_spi *a3700_spi)
 
 	while (!a3700_is_wfifo_full(a3700_spi) && a3700_spi->buf_len) {
 		val = *(u32 *)a3700_spi->tx_buf;
-		spireg_write(a3700_spi, A3700_SPI_DATA_OUT_REG, cpu_to_le32(val));
+		spireg_write(a3700_spi, A3700_SPI_DATA_OUT_REG, val);
 		a3700_spi->buf_len -= 4;
 		a3700_spi->tx_buf += 4;
 	}
@@ -519,7 +524,7 @@ static int a3700_spi_fifo_read(struct a3700_spi *a3700_spi)
 	while (!a3700_is_rfifo_empty(a3700_spi) && a3700_spi->buf_len) {
 		val = spireg_read(a3700_spi, A3700_SPI_DATA_IN_REG);
 		if (a3700_spi->buf_len >= 4) {
-			val = le32_to_cpu(val);
+
 			memcpy(a3700_spi->rx_buf, &val, 4);
 
 			a3700_spi->buf_len -= 4;
@@ -815,6 +820,7 @@ static int a3700_spi_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
 	struct device_node *of_node = dev->of_node;
+	struct resource *res;
 	struct spi_master *master;
 	struct a3700_spi *spi;
 	u32 num_cs = 0;
@@ -848,10 +854,12 @@ static int a3700_spi_probe(struct platform_device *pdev)
 	platform_set_drvdata(pdev, master);
 
 	spi = spi_master_get_devdata(master);
+	memset(spi, 0, sizeof(struct a3700_spi));
 
 	spi->master = master;
 
-	spi->base = devm_platform_ioremap_resource(pdev, 0);
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	spi->base = devm_ioremap_resource(dev, res);
 	if (IS_ERR(spi->base)) {
 		ret = PTR_ERR(spi->base);
 		goto error;
@@ -859,6 +867,7 @@ static int a3700_spi_probe(struct platform_device *pdev)
 
 	irq = platform_get_irq(pdev, 0);
 	if (irq < 0) {
+		dev_err(dev, "could not get irq: %d\n", irq);
 		ret = -ENXIO;
 		goto error;
 	}
@@ -883,7 +892,9 @@ static int a3700_spi_probe(struct platform_device *pdev)
 	master->min_speed_hz = DIV_ROUND_UP(clk_get_rate(spi->clk),
 						A3700_SPI_MAX_PRESCALE);
 
-	a3700_spi_init(spi);
+	ret = a3700_spi_init(spi);
+	if (ret)
+		goto error_clk;
 
 	ret = devm_request_irq(dev, spi->irq, a3700_spi_interrupt, 0,
 			       dev_name(dev), master);
@@ -901,7 +912,7 @@ static int a3700_spi_probe(struct platform_device *pdev)
 	return 0;
 
 error_clk:
-	clk_unprepare(spi->clk);
+	clk_disable_unprepare(spi->clk);
 error:
 	spi_master_put(master);
 out:

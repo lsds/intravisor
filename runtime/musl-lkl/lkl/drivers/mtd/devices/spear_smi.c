@@ -592,26 +592,6 @@ static int spear_mtd_read(struct mtd_info *mtd, loff_t from, size_t len,
 	return 0;
 }
 
-/*
- * The purpose of this function is to ensure a memcpy_toio() with byte writes
- * only. Its structure is inspired from the ARM implementation of _memcpy_toio()
- * which also does single byte writes but cannot be used here as this is just an
- * implementation detail and not part of the API. Not mentioning the comment
- * stating that _memcpy_toio() should be optimized.
- */
-static void spear_smi_memcpy_toio_b(volatile void __iomem *dest,
-				    const void *src, size_t len)
-{
-	const unsigned char *from = src;
-
-	while (len) {
-		len--;
-		writeb(*from, dest);
-		from++;
-		dest++;
-	}
-}
-
 static inline int spear_smi_cpy_toio(struct spear_smi *dev, u32 bank,
 		void __iomem *dest, const void *src, size_t len)
 {
@@ -634,23 +614,7 @@ static inline int spear_smi_cpy_toio(struct spear_smi *dev, u32 bank,
 	ctrlreg1 = readl(dev->io_base + SMI_CR1);
 	writel((ctrlreg1 | WB_MODE) & ~SW_MODE, dev->io_base + SMI_CR1);
 
-	/*
-	 * In Write Burst mode (WB_MODE), the specs states that writes must be:
-	 * - incremental
-	 * - of the same size
-	 * The ARM implementation of memcpy_toio() will optimize the number of
-	 * I/O by using as much 4-byte writes as possible, surrounded by
-	 * 2-byte/1-byte access if:
-	 * - the destination is not 4-byte aligned
-	 * - the length is not a multiple of 4-byte.
-	 * Avoid this alternance of write access size by using our own 'byte
-	 * access' helper if at least one of the two conditions above is true.
-	 */
-	if (IS_ALIGNED(len, sizeof(u32)) &&
-	    IS_ALIGNED((uintptr_t)dest, sizeof(u32)))
-		memcpy_toio(dest, src, len);
-	else
-		spear_smi_memcpy_toio_b(dest, src, len);
+	memcpy_toio(dest, src, len);
 
 	writel(ctrlreg1, dev->io_base + SMI_CR1);
 
@@ -793,7 +757,7 @@ static int spear_smi_probe_config_dt(struct platform_device *pdev,
 				     struct device_node *np)
 {
 	struct spear_smi_plat_data *pdata = dev_get_platdata(&pdev->dev);
-	struct device_node *pp;
+	struct device_node *pp = NULL;
 	const __be32 *addr;
 	u32 val;
 	int len;
@@ -812,7 +776,10 @@ static int spear_smi_probe_config_dt(struct platform_device *pdev,
 		return -ENOMEM;
 
 	/* Fill structs for each subnode (flash device) */
-	for_each_child_of_node(np, pp) {
+	while ((pp = of_get_next_child(np, pp))) {
+		struct spear_smi_flash_info *flash_info;
+
+		flash_info = &pdata->board_flash_info[i];
 		pdata->np[i] = pp;
 
 		/* Read base-addr and size from DT */
@@ -966,10 +933,11 @@ static int spear_smi_probe(struct platform_device *pdev)
 	irq = platform_get_irq(pdev, 0);
 	if (irq < 0) {
 		ret = -ENODEV;
+		dev_err(&pdev->dev, "invalid smi irq\n");
 		goto err;
 	}
 
-	dev = devm_kzalloc(&pdev->dev, sizeof(*dev), GFP_KERNEL);
+	dev = devm_kzalloc(&pdev->dev, sizeof(*dev), GFP_ATOMIC);
 	if (!dev) {
 		ret = -ENOMEM;
 		goto err;
@@ -1045,9 +1013,13 @@ static int spear_smi_remove(struct platform_device *pdev)
 {
 	struct spear_smi *dev;
 	struct spear_snor_flash *flash;
-	int i;
+	int ret, i;
 
 	dev = platform_get_drvdata(pdev);
+	if (!dev) {
+		dev_err(&pdev->dev, "dev is null\n");
+		return -ENODEV;
+	}
 
 	/* clean up for all nor flash */
 	for (i = 0; i < dev->num_flashes; i++) {
@@ -1056,7 +1028,9 @@ static int spear_smi_remove(struct platform_device *pdev)
 			continue;
 
 		/* clean up mtd stuff */
-		WARN_ON(mtd_device_unregister(&flash->mtd));
+		ret = mtd_device_unregister(&flash->mtd);
+		if (ret)
+			dev_err(&pdev->dev, "error removing mtd\n");
 	}
 
 	clk_disable_unprepare(dev->clk);

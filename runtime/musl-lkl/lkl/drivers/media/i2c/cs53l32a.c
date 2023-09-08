@@ -1,9 +1,18 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * cs53l32a (Adaptec AVC-2010 and AVC-2410) i2c ivtv driver.
  * Copyright (C) 2005  Martin Vaughan
  *
  * Audio source switching for Adaptec AVC-2410 added by Trev Jackson
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
  */
 
 
@@ -140,7 +149,7 @@ static int cs53l32a_probe(struct i2c_client *client,
 		return -EIO;
 
 	if (!id)
-		strscpy(client->name, "cs53l32a", sizeof(client->name));
+		strlcpy(client->name, "cs53l32a", sizeof(client->name));
 
 	v4l_info(client, "chip found @ 0x%x (%s)\n",
 			client->addr << 1, client->adapter->name);
@@ -190,13 +199,14 @@ static int cs53l32a_probe(struct i2c_client *client,
 	return 0;
 }
 
-static void cs53l32a_remove(struct i2c_client *client)
+static int cs53l32a_remove(struct i2c_client *client)
 {
 	struct v4l2_subdev *sd = i2c_get_clientdata(client);
 	struct cs53l32a_state *state = to_state(sd);
 
 	v4l2_device_unregister_subdev(sd);
 	v4l2_ctrl_handler_free(&state->hdl);
+	return 0;
 }
 
 static const struct i2c_device_id cs53l32a_id[] = {

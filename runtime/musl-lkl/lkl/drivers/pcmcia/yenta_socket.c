@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Regular cardbus driver ("yenta_socket")
  *
@@ -27,8 +26,7 @@
 
 static bool disable_clkrun;
 module_param(disable_clkrun, bool, 0444);
-MODULE_PARM_DESC(disable_clkrun,
-		 "If PC card doesn't function properly, please try this option (TI and Ricoh bridges only)");
+MODULE_PARM_DESC(disable_clkrun, "If PC card doesn't function properly, please try this option");
 
 static bool isa_probe = 1;
 module_param(isa_probe, bool, 0444);
@@ -144,7 +142,6 @@ static inline u8 exca_readb(struct yenta_socket *socket, unsigned reg)
 	return val;
 }
 
-/*
 static inline u8 exca_readw(struct yenta_socket *socket, unsigned reg)
 {
 	u16 val;
@@ -153,7 +150,6 @@ static inline u8 exca_readw(struct yenta_socket *socket, unsigned reg)
 	debug("%04x %04x\n", socket, reg, val);
 	return val;
 }
-*/
 
 static inline void exca_writeb(struct yenta_socket *socket, unsigned reg, u8 val)
 {
@@ -175,19 +171,20 @@ static void exca_writew(struct yenta_socket *socket, unsigned reg, u16 val)
 
 static ssize_t show_yenta_registers(struct device *yentadev, struct device_attribute *attr, char *buf)
 {
-	struct yenta_socket *socket = dev_get_drvdata(yentadev);
+	struct pci_dev *dev = to_pci_dev(yentadev);
+	struct yenta_socket *socket = pci_get_drvdata(dev);
 	int offset = 0, i;
 
-	offset = sysfs_emit(buf, "CB registers:");
+	offset = snprintf(buf, PAGE_SIZE, "CB registers:");
 	for (i = 0; i < 0x24; i += 4) {
 		unsigned val;
 		if (!(i & 15))
-			offset += sysfs_emit_at(buf, offset, "\n%02x:", i);
+			offset += snprintf(buf + offset, PAGE_SIZE - offset, "\n%02x:", i);
 		val = cb_readl(socket, i);
-		offset += sysfs_emit_at(buf, offset, " %08x", val);
+		offset += snprintf(buf + offset, PAGE_SIZE - offset, " %08x", val);
 	}
 
-	offset += sysfs_emit_at(buf, offset, "\n\nExCA registers:");
+	offset += snprintf(buf + offset, PAGE_SIZE - offset, "\n\nExCA registers:");
 	for (i = 0; i < 0x45; i++) {
 		unsigned char val;
 		if (!(i & 7)) {
@@ -195,12 +192,12 @@ static ssize_t show_yenta_registers(struct device *yentadev, struct device_attri
 				memcpy(buf + offset, " -", 2);
 				offset += 2;
 			} else
-				offset += sysfs_emit_at(buf, offset, "\n%02x:", i);
+				offset += snprintf(buf + offset, PAGE_SIZE - offset, "\n%02x:", i);
 		}
 		val = exca_readb(socket, i);
-		offset += sysfs_emit_at(buf, offset, " %02x", val);
+		offset += snprintf(buf + offset, PAGE_SIZE - offset, " %02x", val);
 	}
-	sysfs_emit_at(buf, offset, "\n");
+	buf[offset++] = '\n';
 	return offset;
 }
 
@@ -696,7 +693,7 @@ static int yenta_allocate_res(struct yenta_socket *socket, int nr, unsigned type
 	struct pci_bus_region region;
 	unsigned mask;
 
-	res = &dev->resource[nr];
+	res = dev->resource + PCI_BRIDGE_RESOURCES + nr;
 	/* Already allocated? */
 	if (res->parent)
 		return 0;
@@ -713,7 +710,7 @@ static int yenta_allocate_res(struct yenta_socket *socket, int nr, unsigned type
 	region.end = config_readl(socket, addr_end) | ~mask;
 	if (region.start && region.end > region.start && !override_bios) {
 		pcibios_bus_to_resource(dev->bus, res, &region);
-		if (pci_claim_resource(dev, nr) == 0)
+		if (pci_claim_resource(dev, PCI_BRIDGE_RESOURCES + nr) == 0)
 			return 0;
 		dev_info(&dev->dev,
 			 "Preassigned resource %d busy or not available, reconfiguring...\n",
@@ -747,35 +744,19 @@ static int yenta_allocate_res(struct yenta_socket *socket, int nr, unsigned type
 	return 0;
 }
 
-static void yenta_free_res(struct yenta_socket *socket, int nr)
-{
-	struct pci_dev *dev = socket->dev;
-	struct resource *res;
-
-	res = &dev->resource[nr];
-	if (res->start != 0 && res->end != 0)
-		release_resource(res);
-
-	res->start = res->end = res->flags = 0;
-}
-
 /*
  * Allocate the bridge mappings for the device..
  */
 static void yenta_allocate_resources(struct yenta_socket *socket)
 {
 	int program = 0;
-	program += yenta_allocate_res(socket, PCI_CB_BRIDGE_IO_0_WINDOW,
-			   IORESOURCE_IO,
+	program += yenta_allocate_res(socket, 0, IORESOURCE_IO,
 			   PCI_CB_IO_BASE_0, PCI_CB_IO_LIMIT_0);
-	program += yenta_allocate_res(socket, PCI_CB_BRIDGE_IO_1_WINDOW,
-			   IORESOURCE_IO,
+	program += yenta_allocate_res(socket, 1, IORESOURCE_IO,
 			   PCI_CB_IO_BASE_1, PCI_CB_IO_LIMIT_1);
-	program += yenta_allocate_res(socket, PCI_CB_BRIDGE_MEM_0_WINDOW,
-			   IORESOURCE_MEM | IORESOURCE_PREFETCH,
+	program += yenta_allocate_res(socket, 2, IORESOURCE_MEM|IORESOURCE_PREFETCH,
 			   PCI_CB_MEMORY_BASE_0, PCI_CB_MEMORY_LIMIT_0);
-	program += yenta_allocate_res(socket, PCI_CB_BRIDGE_MEM_1_WINDOW,
-			   IORESOURCE_MEM,
+	program += yenta_allocate_res(socket, 3, IORESOURCE_MEM,
 			   PCI_CB_MEMORY_BASE_1, PCI_CB_MEMORY_LIMIT_1);
 	if (program)
 		pci_setup_cardbus(socket->dev->subordinate);
@@ -787,10 +768,14 @@ static void yenta_allocate_resources(struct yenta_socket *socket)
  */
 static void yenta_free_resources(struct yenta_socket *socket)
 {
-	yenta_free_res(socket, PCI_CB_BRIDGE_IO_0_WINDOW);
-	yenta_free_res(socket, PCI_CB_BRIDGE_IO_1_WINDOW);
-	yenta_free_res(socket, PCI_CB_BRIDGE_MEM_0_WINDOW);
-	yenta_free_res(socket, PCI_CB_BRIDGE_MEM_1_WINDOW);
+	int i;
+	for (i = 0; i < 4; i++) {
+		struct resource *res;
+		res = socket->dev->resource + PCI_BRIDGE_RESOURCES + i;
+		if (res->start != 0 && res->end != 0)
+			release_resource(res);
+		res->start = res->end = res->flags = 0;
+	}
 }
 
 
@@ -1299,7 +1284,7 @@ static int yenta_probe(struct pci_dev *dev, const struct pci_device_id *id)
 	return ret;
 }
 
-#ifdef CONFIG_PM_SLEEP
+#ifdef CONFIG_PM
 static int yenta_dev_suspend_noirq(struct device *dev)
 {
 	struct pci_dev *pdev = to_pci_dev(dev);
@@ -1344,7 +1329,12 @@ static int yenta_dev_resume_noirq(struct device *dev)
 }
 
 static const struct dev_pm_ops yenta_pm_ops = {
-	SET_NOIRQ_SYSTEM_SLEEP_PM_OPS(yenta_dev_suspend_noirq, yenta_dev_resume_noirq)
+	.suspend_noirq = yenta_dev_suspend_noirq,
+	.resume_noirq = yenta_dev_resume_noirq,
+	.freeze_noirq = yenta_dev_suspend_noirq,
+	.thaw_noirq = yenta_dev_resume_noirq,
+	.poweroff_noirq = yenta_dev_suspend_noirq,
+	.restore_noirq = yenta_dev_resume_noirq,
 };
 
 #define YENTA_PM_OPS	(&yenta_pm_ops)

@@ -500,19 +500,19 @@ struct sci_timer {
 static inline
 void sci_init_timer(struct sci_timer *tmr, void (*fn)(struct timer_list *t))
 {
-	tmr->cancel = false;
+	tmr->cancel = 0;
 	timer_setup(&tmr->timer, fn, 0);
 }
 
 static inline void sci_mod_timer(struct sci_timer *tmr, unsigned long msec)
 {
-	tmr->cancel = false;
+	tmr->cancel = 0;
 	mod_timer(&tmr->timer, jiffies + msecs_to_jiffies(msec));
 }
 
 static inline void sci_del_timer(struct sci_timer *tmr)
 {
-	tmr->cancel = true;
+	tmr->cancel = 1;
 	del_timer(&tmr->timer);
 }
 

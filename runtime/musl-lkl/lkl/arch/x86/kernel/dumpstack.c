@@ -17,7 +17,6 @@
 #include <linux/bug.h>
 #include <linux/nmi.h>
 #include <linux/sysfs.h>
-#include <linux/kasan.h>
 
 #include <asm/cpu_entry_area.h>
 #include <asm/stacktrace.h>
@@ -25,12 +24,11 @@
 
 int panic_on_unrecovered_nmi;
 int panic_on_io_nmi;
+static unsigned int code_bytes = 64;
 static int die_counter;
 
-static struct pt_regs exec_summary_regs;
-
-bool noinstr in_task_stack(unsigned long *stack, struct task_struct *task,
-			   struct stack_info *info)
+bool in_task_stack(unsigned long *stack, struct task_struct *task,
+		   struct stack_info *info)
 {
 	unsigned long *begin = task_stack_page(task);
 	unsigned long *end   = task_stack_page(task) + THREAD_SIZE;
@@ -46,8 +44,7 @@ bool noinstr in_task_stack(unsigned long *stack, struct task_struct *task,
 	return true;
 }
 
-/* Called from get_stack_info_noinstr - so must be noinstr too */
-bool noinstr in_entry_stack(unsigned long *stack, struct stack_info *info)
+bool in_entry_stack(unsigned long *stack, struct stack_info *info)
 {
 	struct entry_stack *ss = cpu_entry_stack(smp_processor_id());
 
@@ -66,93 +63,21 @@ bool noinstr in_entry_stack(unsigned long *stack, struct stack_info *info)
 }
 
 static void printk_stack_address(unsigned long address, int reliable,
-				 const char *log_lvl)
+				 char *log_lvl)
 {
 	touch_nmi_watchdog();
-	printk("%s %s%pBb\n", log_lvl, reliable ? "" : "? ", (void *)address);
+	printk("%s %s%pB\n", log_lvl, reliable ? "" : "? ", (void *)address);
 }
 
-static int copy_code(struct pt_regs *regs, u8 *buf, unsigned long src,
-		     unsigned int nbytes)
+void show_iret_regs(struct pt_regs *regs)
 {
-	if (!user_mode(regs))
-		return copy_from_kernel_nofault(buf, (u8 *)src, nbytes);
-
-	/* The user space code from other tasks cannot be accessed. */
-	if (regs != task_pt_regs(current))
-		return -EPERM;
-
-	/*
-	 * Even if named copy_from_user_nmi() this can be invoked from
-	 * other contexts and will not try to resolve a pagefault, which is
-	 * the correct thing to do here as this code can be called from any
-	 * context.
-	 */
-	return copy_from_user_nmi(buf, (void __user *)src, nbytes);
-}
-
-/*
- * There are a couple of reasons for the 2/3rd prologue, courtesy of Linus:
- *
- * In case where we don't have the exact kernel image (which, if we did, we can
- * simply disassemble and navigate to the RIP), the purpose of the bigger
- * prologue is to have more context and to be able to correlate the code from
- * the different toolchains better.
- *
- * In addition, it helps in recreating the register allocation of the failing
- * kernel and thus make sense of the register dump.
- *
- * What is more, the additional complication of a variable length insn arch like
- * x86 warrants having longer byte sequence before rIP so that the disassembler
- * can "sync" up properly and find instruction boundaries when decoding the
- * opcode bytes.
- *
- * Thus, the 2/3rds prologue and 64 byte OPCODE_BUFSIZE is just a random
- * guesstimate in attempt to achieve all of the above.
- */
-void show_opcodes(struct pt_regs *regs, const char *loglvl)
-{
-#define PROLOGUE_SIZE 42
-#define EPILOGUE_SIZE 21
-#define OPCODE_BUFSIZE (PROLOGUE_SIZE + 1 + EPILOGUE_SIZE)
-	u8 opcodes[OPCODE_BUFSIZE];
-	unsigned long prologue = regs->ip - PROLOGUE_SIZE;
-
-	switch (copy_code(regs, opcodes, prologue, sizeof(opcodes))) {
-	case 0:
-		printk("%sCode: %" __stringify(PROLOGUE_SIZE) "ph <%02x> %"
-		       __stringify(EPILOGUE_SIZE) "ph\n", loglvl, opcodes,
-		       opcodes[PROLOGUE_SIZE], opcodes + PROLOGUE_SIZE + 1);
-		break;
-	case -EPERM:
-		/* No access to the user space stack of other tasks. Ignore. */
-		break;
-	default:
-		printk("%sCode: Unable to access opcode bytes at 0x%lx.\n",
-		       loglvl, prologue);
-		break;
-	}
-}
-
-void show_ip(struct pt_regs *regs, const char *loglvl)
-{
-#ifdef CONFIG_X86_32
-	printk("%sEIP: %pS\n", loglvl, (void *)regs->ip);
-#else
-	printk("%sRIP: %04x:%pS\n", loglvl, (int)regs->cs, (void *)regs->ip);
-#endif
-	show_opcodes(regs, loglvl);
-}
-
-void show_iret_regs(struct pt_regs *regs, const char *log_lvl)
-{
-	show_ip(regs, log_lvl);
-	printk("%sRSP: %04x:%016lx EFLAGS: %08lx", log_lvl, (int)regs->ss,
+	printk(KERN_DEFAULT "RIP: %04x:%pS\n", (int)regs->cs, (void *)regs->ip);
+	printk(KERN_DEFAULT "RSP: %04x:%016lx EFLAGS: %08lx", (int)regs->ss,
 		regs->sp, regs->flags);
 }
 
 static void show_regs_if_on_stack(struct stack_info *info, struct pt_regs *regs,
-				  bool partial, const char *log_lvl)
+				  bool partial)
 {
 	/*
 	 * These on_stack() checks aren't strictly necessary: the unwind code
@@ -164,7 +89,7 @@ static void show_regs_if_on_stack(struct stack_info *info, struct pt_regs *regs,
 	 * they can be printed in the right context.
 	 */
 	if (!partial && on_stack(info, regs, sizeof(*regs))) {
-		__show_regs(regs, SHOW_REGS_SHORT, log_lvl);
+		__show_regs(regs, 0);
 
 	} else if (partial && on_stack(info, (void *)regs + IRET_FRAME_OFFSET,
 				       IRET_FRAME_SIZE)) {
@@ -173,18 +98,12 @@ static void show_regs_if_on_stack(struct stack_info *info, struct pt_regs *regs,
 		 * full pt_regs might not have been saved yet.  In that case
 		 * just print the iret frame.
 		 */
-		show_iret_regs(regs, log_lvl);
+		show_iret_regs(regs);
 	}
 }
 
-/*
- * This function reads pointers from the stack and dereferences them. The
- * pointers may not have their KMSAN shadow set up properly, which may result
- * in false positive reports. Disable instrumentation to avoid those.
- */
-__no_kmsan_checks
-static void show_trace_log_lvl(struct task_struct *task, struct pt_regs *regs,
-			unsigned long *stack, const char *log_lvl)
+void show_trace_log_lvl(struct task_struct *task, struct pt_regs *regs,
+			unsigned long *stack, char *log_lvl)
 {
 	struct unwind_state state;
 	struct stack_info stack_info = {0};
@@ -234,7 +153,7 @@ static void show_trace_log_lvl(struct task_struct *task, struct pt_regs *regs,
 			printk("%s <%s>\n", log_lvl, stack_name);
 
 		if (regs)
-			show_regs_if_on_stack(&stack_info, regs, partial, log_lvl);
+			show_regs_if_on_stack(&stack_info, regs, partial);
 
 		/*
 		 * Scan the stack, printing any text addresses we find.  At the
@@ -295,7 +214,7 @@ next:
 			/* if the frame has entry regs, print them */
 			regs = unwind_get_entry_regs(&state, &partial);
 			if (regs)
-				show_regs_if_on_stack(&stack_info, regs, partial, log_lvl);
+				show_regs_if_on_stack(&stack_info, regs, partial);
 		}
 
 		if (stack_name)
@@ -303,8 +222,7 @@ next:
 	}
 }
 
-void show_stack(struct task_struct *task, unsigned long *sp,
-		       const char *loglvl)
+void show_stack(struct task_struct *task, unsigned long *sp)
 {
 	task = task ? : current;
 
@@ -315,7 +233,7 @@ void show_stack(struct task_struct *task, unsigned long *sp,
 	if (!sp && task == current)
 		sp = get_stack_pointer(current, NULL);
 
-	show_trace_log_lvl(task, NULL, sp, loglvl);
+	show_trace_log_lvl(task, NULL, sp, KERN_DEFAULT);
 }
 
 void show_stack_regs(struct pt_regs *regs)
@@ -349,9 +267,10 @@ unsigned long oops_begin(void)
 	bust_spinlocks(1);
 	return flags;
 }
+EXPORT_SYMBOL_GPL(oops_begin);
 NOKPROBE_SYMBOL(oops_begin);
 
-void __noreturn rewind_stack_and_make_dead(int signr);
+void __noreturn rewind_stack_do_exit(int signr);
 
 void oops_end(unsigned long flags, struct pt_regs *regs, int signr)
 {
@@ -368,9 +287,6 @@ void oops_end(unsigned long flags, struct pt_regs *regs, int signr)
 	raw_local_irq_restore(flags);
 	oops_exit();
 
-	/* Executive summary in case the oops scrolled away */
-	__show_regs(&exec_summary_regs, SHOW_REGS_ALL, KERN_DEFAULT);
-
 	if (!signr)
 		return;
 	if (in_interrupt())
@@ -382,53 +298,47 @@ void oops_end(unsigned long flags, struct pt_regs *regs, int signr)
 	 * We're not going to return, but we might be on an IST stack or
 	 * have very little stack space left.  Rewind the stack and kill
 	 * the task.
-	 * Before we rewind the stack, we have to tell KASAN that we're going to
-	 * reuse the task stack and that existing poisons are invalid.
 	 */
-	kasan_unpoison_task_stack(current);
-	rewind_stack_and_make_dead(signr);
+	rewind_stack_do_exit(signr);
 }
 NOKPROBE_SYMBOL(oops_end);
 
-static void __die_header(const char *str, struct pt_regs *regs, long err)
+int __die(const char *str, struct pt_regs *regs, long err)
 {
-	const char *pr = "";
-
-	/* Save the regs of the first oops for the executive summary later. */
-	if (!die_counter)
-		exec_summary_regs = *regs;
-
-	if (IS_ENABLED(CONFIG_PREEMPTION))
-		pr = IS_ENABLED(CONFIG_PREEMPT_RT) ? " PREEMPT_RT" : " PREEMPT";
-
+#ifdef CONFIG_X86_32
+	unsigned short ss;
+	unsigned long sp;
+#endif
 	printk(KERN_DEFAULT
 	       "%s: %04lx [#%d]%s%s%s%s%s\n", str, err & 0xffff, ++die_counter,
-	       pr,
+	       IS_ENABLED(CONFIG_PREEMPT) ? " PREEMPT"         : "",
 	       IS_ENABLED(CONFIG_SMP)     ? " SMP"             : "",
 	       debug_pagealloc_enabled()  ? " DEBUG_PAGEALLOC" : "",
 	       IS_ENABLED(CONFIG_KASAN)   ? " KASAN"           : "",
 	       IS_ENABLED(CONFIG_PAGE_TABLE_ISOLATION) ?
 	       (boot_cpu_has(X86_FEATURE_PTI) ? " PTI" : " NOPTI") : "");
-}
-NOKPROBE_SYMBOL(__die_header);
-
-static int __die_body(const char *str, struct pt_regs *regs, long err)
-{
-	show_regs(regs);
-	print_modules();
 
 	if (notify_die(DIE_OOPS, str, regs, err,
 			current->thread.trap_nr, SIGSEGV) == NOTIFY_STOP)
 		return 1;
 
+	print_modules();
+	show_regs(regs);
+#ifdef CONFIG_X86_32
+	if (user_mode(regs)) {
+		sp = regs->sp;
+		ss = regs->ss;
+	} else {
+		sp = kernel_stack_pointer(regs);
+		savesegment(ss, ss);
+	}
+	printk(KERN_EMERG "EIP: %pS SS:ESP: %04x:%08lx\n",
+	       (void *)regs->ip, ss, sp);
+#else
+	/* Executive summary in case the oops scrolled away */
+	printk(KERN_ALERT "RIP: %pS RSP: %016lx\n", (void *)regs->ip, regs->sp);
+#endif
 	return 0;
-}
-NOKPROBE_SYMBOL(__die_body);
-
-int __die(const char *str, struct pt_regs *regs, long err)
-{
-	__die_header(str, regs, err);
-	return __die_body(str, regs, err);
 }
 NOKPROBE_SYMBOL(__die);
 
@@ -446,31 +356,69 @@ void die(const char *str, struct pt_regs *regs, long err)
 	oops_end(flags, regs, sig);
 }
 
-void die_addr(const char *str, struct pt_regs *regs, long err, long gp_addr)
+static int __init code_bytes_setup(char *s)
 {
-	unsigned long flags = oops_begin();
-	int sig = SIGSEGV;
+	ssize_t ret;
+	unsigned long val;
 
-	__die_header(str, regs, err);
-	if (gp_addr)
-		kasan_non_canonical_hook(gp_addr);
-	if (__die_body(str, regs, err))
-		sig = 0;
-	oops_end(flags, regs, sig);
+	if (!s)
+		return -EINVAL;
+
+	ret = kstrtoul(s, 0, &val);
+	if (ret)
+		return ret;
+
+	code_bytes = val;
+	if (code_bytes > 8192)
+		code_bytes = 8192;
+
+	return 1;
 }
+__setup("code_bytes=", code_bytes_setup);
 
 void show_regs(struct pt_regs *regs)
 {
-	enum show_regs_mode print_kernel_regs;
+	bool all = true;
+	int i;
 
 	show_regs_print_info(KERN_DEFAULT);
 
-	print_kernel_regs = user_mode(regs) ? SHOW_REGS_USER : SHOW_REGS_ALL;
-	__show_regs(regs, print_kernel_regs, KERN_DEFAULT);
+	if (IS_ENABLED(CONFIG_X86_32))
+		all = !user_mode(regs);
+
+	__show_regs(regs, all);
 
 	/*
-	 * When in-kernel, we also print out the stack at the time of the fault..
+	 * When in-kernel, we also print out the stack and code at the
+	 * time of the fault..
 	 */
-	if (!user_mode(regs))
+	if (!user_mode(regs)) {
+		unsigned int code_prologue = code_bytes * 43 / 64;
+		unsigned int code_len = code_bytes;
+		unsigned char c;
+		u8 *ip;
+
 		show_trace_log_lvl(current, regs, NULL, KERN_DEFAULT);
+
+		printk(KERN_DEFAULT "Code: ");
+
+		ip = (u8 *)regs->ip - code_prologue;
+		if (ip < (u8 *)PAGE_OFFSET || probe_kernel_address(ip, c)) {
+			/* try starting at IP */
+			ip = (u8 *)regs->ip;
+			code_len = code_len - code_prologue + 1;
+		}
+		for (i = 0; i < code_len; i++, ip++) {
+			if (ip < (u8 *)PAGE_OFFSET ||
+					probe_kernel_address(ip, c)) {
+				pr_cont(" Bad RIP value.");
+				break;
+			}
+			if (ip == (u8 *)regs->ip)
+				pr_cont("<%02x> ", c);
+			else
+				pr_cont("%02x ", c);
+		}
+	}
+	pr_cont("\n");
 }

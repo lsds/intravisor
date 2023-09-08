@@ -17,7 +17,6 @@
 #include <linux/err.h>
 #include <linux/module.h>
 #include <linux/moduleparam.h>
-#include <linux/mod_devicetable.h>
 #include <linux/types.h>
 #include <linux/kernel.h>
 #include <linux/watchdog.h>
@@ -26,7 +25,6 @@
 #include <linux/spinlock.h>
 #include <linux/io.h>
 #include <linux/slab.h>
-#include <linux/property.h>
 
 #define DEFAULT_HEARTBEAT 60
 #define MAX_HEARTBEAT     60
@@ -100,8 +98,8 @@ static const struct max63xx_timeout max6373_table[] = {
 	{ },
 };
 
-static const struct max63xx_timeout *
-max63xx_select_timeout(const struct max63xx_timeout *table, int value)
+static struct max63xx_timeout *
+max63xx_select_timeout(struct max63xx_timeout *table, int value)
 {
 	while (table->twd) {
 		if (value <= table->twd) {
@@ -188,7 +186,9 @@ static void max63xx_mmap_set(struct max63xx_wdt *wdt, u8 set)
 
 static int max63xx_mmap_init(struct platform_device *p, struct max63xx_wdt *wdt)
 {
-	wdt->base = devm_platform_ioremap_resource(p, 0);
+	struct resource *mem = platform_get_resource(p, IORESOURCE_MEM, 0);
+
+	wdt->base = devm_ioremap_resource(&p->dev, mem);
 	if (IS_ERR(wdt->base))
 		return PTR_ERR(wdt->base);
 
@@ -201,26 +201,22 @@ static int max63xx_mmap_init(struct platform_device *p, struct max63xx_wdt *wdt)
 
 static int max63xx_wdt_probe(struct platform_device *pdev)
 {
-	struct device *dev = &pdev->dev;
 	struct max63xx_wdt *wdt;
-	const struct max63xx_timeout *table;
+	struct max63xx_timeout *table;
 	int err;
 
-	wdt = devm_kzalloc(dev, sizeof(*wdt), GFP_KERNEL);
+	wdt = devm_kzalloc(&pdev->dev, sizeof(*wdt), GFP_KERNEL);
 	if (!wdt)
 		return -ENOMEM;
 
-	/* Attempt to use fwnode first */
-	table = device_get_match_data(dev);
-	if (!table)
-		table = (struct max63xx_timeout *)pdev->id_entry->driver_data;
+	table = (struct max63xx_timeout *)pdev->id_entry->driver_data;
 
 	if (heartbeat < 1 || heartbeat > MAX_HEARTBEAT)
 		heartbeat = DEFAULT_HEARTBEAT;
 
 	wdt->timeout = max63xx_select_timeout(table, heartbeat);
 	if (!wdt->timeout) {
-		dev_err(dev, "unable to satisfy %ds heartbeat request\n",
+		dev_err(&pdev->dev, "unable to satisfy %ds heartbeat request\n",
 			heartbeat);
 		return -EINVAL;
 	}
@@ -232,19 +228,27 @@ static int max63xx_wdt_probe(struct platform_device *pdev)
 	platform_set_drvdata(pdev, &wdt->wdd);
 	watchdog_set_drvdata(&wdt->wdd, wdt);
 
-	wdt->wdd.parent = dev;
+	wdt->wdd.parent = &pdev->dev;
 	wdt->wdd.timeout = wdt->timeout->twd;
 	wdt->wdd.info = &max63xx_wdt_info;
 	wdt->wdd.ops = &max63xx_wdt_ops;
 
 	watchdog_set_nowayout(&wdt->wdd, nowayout);
 
-	err = devm_watchdog_register_device(dev, &wdt->wdd);
+	err = watchdog_register_device(&wdt->wdd);
 	if (err)
 		return err;
 
-	dev_info(dev, "using %ds heartbeat with %ds initial delay\n",
+	dev_info(&pdev->dev, "using %ds heartbeat with %ds initial delay\n",
 		 wdt->timeout->twd, wdt->timeout->tdelay);
+	return 0;
+}
+
+static int max63xx_wdt_remove(struct platform_device *pdev)
+{
+	struct watchdog_device *wdd = platform_get_drvdata(pdev);
+
+	watchdog_unregister_device(wdd);
 	return 0;
 }
 
@@ -259,23 +263,12 @@ static const struct platform_device_id max63xx_id_table[] = {
 };
 MODULE_DEVICE_TABLE(platform, max63xx_id_table);
 
-static const struct of_device_id max63xx_dt_id_table[] = {
-	{ .compatible = "maxim,max6369", .data = max6369_table, },
-	{ .compatible = "maxim,max6370", .data = max6369_table, },
-	{ .compatible = "maxim,max6371", .data = max6371_table, },
-	{ .compatible = "maxim,max6372", .data = max6371_table, },
-	{ .compatible = "maxim,max6373", .data = max6373_table, },
-	{ .compatible = "maxim,max6374", .data = max6373_table, },
-	{ }
-};
-MODULE_DEVICE_TABLE(of, max63xx_dt_id_table);
-
 static struct platform_driver max63xx_wdt_driver = {
 	.probe		= max63xx_wdt_probe,
+	.remove		= max63xx_wdt_remove,
 	.id_table	= max63xx_id_table,
 	.driver		= {
 		.name	= "max63xx_wdt",
-		.of_match_table = max63xx_dt_id_table,
 	},
 };
 

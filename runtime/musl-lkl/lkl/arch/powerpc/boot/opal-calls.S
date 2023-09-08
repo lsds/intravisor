@@ -1,6 +1,10 @@
-/* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
  * Copyright (c) 2016 IBM Corporation.
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version
+ * 2 of the License, or (at your option) any later version.
  */
 
 #include "ppc_asm.h"
@@ -16,7 +20,7 @@ opal_kentry:
 	li	r5, 0
 	li	r6, 0
 	li	r7, 0
-	LOAD_REG_ADDR(r11, opal)
+	ld	r11,opal@got(r2)
 	ld	r8,0(r11)
 	ld	r9,8(r11)
 	bctr
@@ -35,7 +39,7 @@ opal_call:
 	mr	r13,r2
 
 	/* Set opal return address */
-	LOAD_REG_ADDR(r11, opal_return)
+	ld	r11,opal_return@got(r2)
 	mtlr	r11
 	mfmsr	r12
 
@@ -45,7 +49,7 @@ opal_call:
 	mtspr	SPRN_HSRR1,r12
 
 	/* load the opal call entry point and base */
-	LOAD_REG_ADDR(r11, opal)
+	ld	r11,opal@got(r2)
 	ld	r12,8(r11)
 	ld	r2,0(r11)
 	mtspr	SPRN_HSRR0,r12

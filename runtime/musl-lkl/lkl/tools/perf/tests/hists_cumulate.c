@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0
+#include "perf.h"
 #include "util/debug.h"
-#include "util/dso.h"
 #include "util/event.h"
-#include "util/map.h"
 #include "util/symbol.h"
 #include "util/sort.h"
 #include "util/evsel.h"
@@ -47,7 +46,7 @@ static struct sample fake_samples[] = {
 };
 
 /*
- * Will be cast to struct ip_callchain which has all 64 bit entries
+ * Will be casted to struct ip_callchain which has all 64 bit entries
  * of nr and ips[].
  */
 static u64 fake_callchains[][10] = {
@@ -80,7 +79,7 @@ static u64 fake_callchains[][10] = {
 static int add_hist_entries(struct hists *hists, struct machine *machine)
 {
 	struct addr_location al;
-	struct evsel *evsel = hists_to_evsel(hists);
+	struct perf_evsel *evsel = hists_to_evsel(hists);
 	struct perf_sample sample = { .period = 1000, };
 	size_t i;
 
@@ -126,8 +125,8 @@ out:
 static void del_hist_entries(struct hists *hists)
 {
 	struct hist_entry *he;
-	struct rb_root_cached *root_in;
-	struct rb_root_cached *root_out;
+	struct rb_root *root_in;
+	struct rb_root *root_out;
 	struct rb_node *node;
 
 	if (hists__has(hists, need_collapse))
@@ -137,17 +136,17 @@ static void del_hist_entries(struct hists *hists)
 
 	root_out = &hists->entries;
 
-	while (!RB_EMPTY_ROOT(&root_out->rb_root)) {
-		node = rb_first_cached(root_out);
+	while (!RB_EMPTY_ROOT(root_out)) {
+		node = rb_first(root_out);
 
 		he = rb_entry(node, struct hist_entry, rb_node);
-		rb_erase_cached(node, root_out);
-		rb_erase_cached(&he->rb_node_in, root_in);
+		rb_erase(node, root_out);
+		rb_erase(&he->rb_node_in, root_in);
 		hist_entry__delete(he);
 	}
 }
 
-typedef int (*test_fn_t)(struct evsel *, struct machine *);
+typedef int (*test_fn_t)(struct perf_evsel *, struct machine *);
 
 #define COMM(he)  (thread__comm_str(he->thread))
 #define DSO(he)   (he->ms.map->dso->short_name)
@@ -190,7 +189,7 @@ static int do_test(struct hists *hists, struct result *expected, size_t nr_expec
 	 * function since TEST_ASSERT_VAL() returns in case of failure.
 	 */
 	hists__collapse_resort(hists, NULL);
-	evsel__output_resort(hists_to_evsel(hists), NULL);
+	perf_evsel__output_resort(hists_to_evsel(hists), NULL);
 
 	if (verbose > 2) {
 		pr_info("use callchain: %d, cumulate callchain: %d\n",
@@ -199,7 +198,7 @@ static int do_test(struct hists *hists, struct result *expected, size_t nr_expec
 		print_hists_out(hists);
 	}
 
-	root = &hists->entries.rb_root;
+	root = &hists->entries;
 	for (node = rb_first(root), i = 0;
 	     node && (he = rb_entry(node, struct hist_entry, rb_node));
 	     node = rb_next(node), i++) {
@@ -247,7 +246,7 @@ static int do_test(struct hists *hists, struct result *expected, size_t nr_expec
 }
 
 /* NO callchain + NO children */
-static int test1(struct evsel *evsel, struct machine *machine)
+static int test1(struct perf_evsel *evsel, struct machine *machine)
 {
 	int err;
 	struct hists *hists = evsel__hists(evsel);
@@ -280,7 +279,7 @@ static int test1(struct evsel *evsel, struct machine *machine)
 
 	symbol_conf.use_callchain = false;
 	symbol_conf.cumulate_callchain = false;
-	evsel__reset_sample_bit(evsel, CALLCHAIN);
+	perf_evsel__reset_sample_bit(evsel, CALLCHAIN);
 
 	setup_sorting(NULL);
 	callchain_register_param(&callchain_param);
@@ -297,8 +296,8 @@ out:
 	return err;
 }
 
-/* callchain + NO children */
-static int test2(struct evsel *evsel, struct machine *machine)
+/* callcain + NO children */
+static int test2(struct perf_evsel *evsel, struct machine *machine)
 {
 	int err;
 	struct hists *hists = evsel__hists(evsel);
@@ -427,7 +426,7 @@ static int test2(struct evsel *evsel, struct machine *machine)
 
 	symbol_conf.use_callchain = true;
 	symbol_conf.cumulate_callchain = false;
-	evsel__set_sample_bit(evsel, CALLCHAIN);
+	perf_evsel__set_sample_bit(evsel, CALLCHAIN);
 
 	setup_sorting(NULL);
 	callchain_register_param(&callchain_param);
@@ -446,7 +445,7 @@ out:
 }
 
 /* NO callchain + children */
-static int test3(struct evsel *evsel, struct machine *machine)
+static int test3(struct perf_evsel *evsel, struct machine *machine)
 {
 	int err;
 	struct hists *hists = evsel__hists(evsel);
@@ -485,7 +484,7 @@ static int test3(struct evsel *evsel, struct machine *machine)
 
 	symbol_conf.use_callchain = false;
 	symbol_conf.cumulate_callchain = true;
-	evsel__reset_sample_bit(evsel, CALLCHAIN);
+	perf_evsel__reset_sample_bit(evsel, CALLCHAIN);
 
 	setup_sorting(NULL);
 	callchain_register_param(&callchain_param);
@@ -503,7 +502,7 @@ out:
 }
 
 /* callchain + children */
-static int test4(struct evsel *evsel, struct machine *machine)
+static int test4(struct perf_evsel *evsel, struct machine *machine)
 {
 	int err;
 	struct hists *hists = evsel__hists(evsel);
@@ -669,7 +668,7 @@ static int test4(struct evsel *evsel, struct machine *machine)
 
 	symbol_conf.use_callchain = true;
 	symbol_conf.cumulate_callchain = true;
-	evsel__set_sample_bit(evsel, CALLCHAIN);
+	perf_evsel__set_sample_bit(evsel, CALLCHAIN);
 
 	setup_sorting(NULL);
 
@@ -689,13 +688,13 @@ out:
 	return err;
 }
 
-static int test__hists_cumulate(struct test_suite *test __maybe_unused, int subtest __maybe_unused)
+int test__hists_cumulate(struct test *test __maybe_unused, int subtest __maybe_unused)
 {
 	int err = TEST_FAIL;
 	struct machines machines;
 	struct machine *machine;
-	struct evsel *evsel;
-	struct evlist *evlist = evlist__new();
+	struct perf_evsel *evsel;
+	struct perf_evlist *evlist = perf_evlist__new();
 	size_t i;
 	test_fn_t testcases[] = {
 		test1,
@@ -706,7 +705,7 @@ static int test__hists_cumulate(struct test_suite *test __maybe_unused, int subt
 
 	TEST_ASSERT_VAL("No memory", evlist);
 
-	err = parse_event(evlist, "cpu-clock");
+	err = parse_events(evlist, "cpu-clock", NULL);
 	if (err)
 		goto out;
 	err = TEST_FAIL;
@@ -721,7 +720,7 @@ static int test__hists_cumulate(struct test_suite *test __maybe_unused, int subt
 	if (verbose > 1)
 		machine__fprintf(machine, stderr);
 
-	evsel = evlist__first(evlist);
+	evsel = perf_evlist__first(evlist);
 
 	for (i = 0; i < ARRAY_SIZE(testcases); i++) {
 		err = testcases[i](evsel, machine);
@@ -731,10 +730,8 @@ static int test__hists_cumulate(struct test_suite *test __maybe_unused, int subt
 
 out:
 	/* tear down everything */
-	evlist__delete(evlist);
+	perf_evlist__delete(evlist);
 	machines__exit(&machines);
 
 	return err;
 }
-
-DEFINE_SUITE("Cumulate child hist entries", hists_cumulate);

@@ -3,12 +3,13 @@
 #define __PERF_SYSCALLTBL_H
 
 struct syscalltbl {
-	int audit_machine;
-	struct {
-		int max_id;
-		int nr_entries;
-		void *entries;
-	} syscalls;
+	union {
+		int audit_machine;
+		struct {
+			int nr_entries;
+			void *entries;
+		} syscalls;
+	};
 };
 
 struct syscalltbl *syscalltbl__new(void);

@@ -5,22 +5,21 @@
 
 	.globl batch_syscall_stub
 batch_syscall_stub:
-	/* %esp comes in as "top of page" */
-	mov %esp, %ecx
-	/* %esp has pointer to first operation */
-	add $8, %esp
+	/* load pointer to first operation */
+	mov	$(STUB_DATA+8), %esp
+
 again:
 	/* load length of additional data */
 	mov	0x0(%esp), %eax
 
 	/* if(length == 0) : end of list */
 	/* write possible 0 to header */
-	mov	%eax, 0x4(%ecx)
+	mov	%eax, STUB_DATA+4
 	cmpl	$0, %eax
 	jz	done
 
 	/* save current pointer */
-	mov	%esp, 0x4(%ecx)
+	mov	%esp, STUB_DATA+4
 
 	/* skip additional data */
 	add	%eax, %esp
@@ -39,10 +38,6 @@ again:
 	/* execute syscall */
 	int	$0x80
 
-	/* restore top of page pointer in %ecx */
-	mov	%esp, %ecx
-	andl	$(~UM_KERN_PAGE_SIZE) + 1, %ecx
-
 	/* check return value */
 	pop	%ebx
 	cmp	%ebx, %eax
@@ -50,7 +45,7 @@ again:
 
 done:
 	/* save return value */
-	mov	%eax, (%ecx)
+	mov	%eax, STUB_DATA
 
 	/* stop */
 	int3

@@ -1,7 +1,11 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Nomadik RNG support
  *  Copyright 2009 Alessandro Rubini
+ *
+ *  This program is free software; you can redistribute it and/or modify
+ *  it under the terms of the GNU General Public License as published by
+ *  the Free Software Foundation; either version 2 of the License, or
+ *  (at your option) any later version.
  */
 
 #include <linux/kernel.h>
@@ -57,7 +61,7 @@ static int nmk_rng_probe(struct amba_device *dev, const struct amba_id *id)
 	if (!base)
 		goto out_release;
 	nmk_rng.priv = (unsigned long)base;
-	ret = devm_hwrng_register(&dev->dev, &nmk_rng);
+	ret = hwrng_register(&nmk_rng);
 	if (ret)
 		goto out_release;
 	return 0;
@@ -65,17 +69,19 @@ static int nmk_rng_probe(struct amba_device *dev, const struct amba_id *id)
 out_release:
 	amba_release_regions(dev);
 out_clk:
-	clk_disable_unprepare(rng_clk);
+	clk_disable(rng_clk);
 	return ret;
 }
 
-static void nmk_rng_remove(struct amba_device *dev)
+static int nmk_rng_remove(struct amba_device *dev)
 {
+	hwrng_unregister(&nmk_rng);
 	amba_release_regions(dev);
-	clk_disable_unprepare(rng_clk);
+	clk_disable(rng_clk);
+	return 0;
 }
 
-static const struct amba_id nmk_rng_ids[] = {
+static struct amba_id nmk_rng_ids[] = {
 	{
 		.id	= 0x000805e1,
 		.mask	= 0x000fffff, /* top bits are rev and cfg: accept all */

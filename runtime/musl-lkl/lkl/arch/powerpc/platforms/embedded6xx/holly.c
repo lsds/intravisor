@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Board setup routines for the IBM 750GX/CL platform w/ TSI10x bridge
  *
@@ -8,6 +7,10 @@
  * Josh Boyer <jwboyer@linux.vnet.ibm.com>
  *
  * Based on code from mpc7448_hpc2.c
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * version 2 as published by the Free Software Foundation.
  */
 
 #include <linux/stddef.h>
@@ -22,13 +25,12 @@
 #include <linux/serial.h>
 #include <linux/tty.h>
 #include <linux/serial_core.h>
-#include <linux/of_address.h>
-#include <linux/of_irq.h>
 #include <linux/of_platform.h>
 #include <linux/extable.h>
 
 #include <asm/time.h>
 #include <asm/machdep.h>
+#include <asm/prom.h>
 #include <asm/udbg.h>
 #include <asm/tsi108.h>
 #include <asm/pci-bridge.h>
@@ -42,8 +44,7 @@
 
 #define HOLLY_PCI_CFG_PHYS 0x7c000000
 
-static int holly_exclude_device(struct pci_controller *hose, u_char bus,
-				u_char devfn)
+int holly_exclude_device(struct pci_controller *hose, u_char bus, u_char devfn)
 {
 	if (bus == 0 && PCI_SLOT(devfn) == 0)
 		return PCIBIOS_DEVICE_NOT_FOUND;
@@ -51,7 +52,7 @@ static int holly_exclude_device(struct pci_controller *hose, u_char bus,
 		return PCIBIOS_SUCCESSFUL;
 }
 
-static void __init holly_remap_bridge(void)
+static void holly_remap_bridge(void)
 {
 	u32 lut_val, lut_addr;
 	int i;
@@ -109,12 +110,14 @@ static void __init holly_remap_bridge(void)
 	tsi108_write_reg(TSI108_PCI_P2O_BAR2, 0x0);
 }
 
-static void __init holly_init_pci(void)
+static void __init holly_setup_arch(void)
 {
 	struct device_node *np;
 
 	if (ppc_md.progress)
 		ppc_md.progress("holly_setup_arch():set_bridge", 0);
+
+	tsi108_csr_vir_base = get_vir_csrbase();
 
 	/* setup PCI host bridge */
 	holly_remap_bridge();
@@ -123,16 +126,9 @@ static void __init holly_init_pci(void)
 	if (np)
 		tsi108_setup_pci(np, HOLLY_PCI_CFG_PHYS, 1);
 
-	of_node_put(np);
-
 	ppc_md.pci_exclude_device = holly_exclude_device;
 	if (ppc_md.progress)
 		ppc_md.progress("tsi108: resources set", 0x100);
-}
-
-static void __init holly_setup_arch(void)
-{
-	tsi108_csr_vir_base = get_vir_csrbase();
 
 	printk(KERN_INFO "PPC750GX/CL Platform\n");
 }
@@ -186,21 +182,18 @@ static void __init holly_init_IRQ(void)
 	tsi108_pci_int_init(cascade_node);
 	irq_set_handler_data(cascade_pci_irq, mpic);
 	irq_set_chained_handler(cascade_pci_irq, tsi108_irq_cascade);
-
-	of_node_put(tsi_pci);
-	of_node_put(cascade_node);
 #endif
 	/* Configure MPIC outputs to CPU0 */
 	tsi108_write_reg(TSI108_MPIC_OFFSET + 0x30c, 0);
 }
 
-static void holly_show_cpuinfo(struct seq_file *m)
+void holly_show_cpuinfo(struct seq_file *m)
 {
 	seq_printf(m, "vendor\t\t: IBM\n");
 	seq_printf(m, "machine\t\t: PPC750 GX/CL\n");
 }
 
-static void __noreturn holly_restart(char *cmd)
+void __noreturn holly_restart(char *cmd)
 {
 	__be32 __iomem *ocn_bar1 = NULL;
 	unsigned long bar;
@@ -215,7 +208,6 @@ static void __noreturn holly_restart(char *cmd)
 	if (bridge) {
 		prop = of_get_property(bridge, "reg", &size);
 		addr = of_translate_address(bridge, prop);
-		of_node_put(bridge);
 	}
 	addr += (TSI108_PB_OFFSET + 0x414);
 
@@ -241,6 +233,18 @@ static void __noreturn holly_restart(char *cmd)
 	for (;;) ;
 }
 
+void holly_power_off(void)
+{
+	local_irq_disable();
+	/* No way to shut power off with software */
+	for (;;) ;
+}
+
+void holly_halt(void)
+{
+	holly_power_off();
+}
+
 /*
  * Called very early, device-tree isn't unflattened
  */
@@ -258,8 +262,8 @@ static int ppc750_machine_check_exception(struct pt_regs *regs)
 	/* Are we prepared to handle this fault */
 	if ((entry = search_exception_tables(regs->nip)) != NULL) {
 		tsi108_clear_pci_cfg_error();
-		regs_set_recoverable(regs);
-		regs_set_return_ip(regs, extable_fixup(entry));
+		regs->msr |= MSR_RI;
+		regs->nip = extable_fixup(entry);
 		return 1;
 	}
 	return 0;
@@ -269,7 +273,6 @@ define_machine(holly){
 	.name                   	= "PPC750 GX/CL TSI",
 	.probe                  	= holly_probe,
 	.setup_arch             	= holly_setup_arch,
-	.discover_phbs			= holly_init_pci,
 	.init_IRQ               	= holly_init_IRQ,
 	.show_cpuinfo           	= holly_show_cpuinfo,
 	.get_irq                	= mpic_get_irq,

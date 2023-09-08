@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  *  cx18 I2C functions
  *
@@ -6,6 +5,16 @@
  *
  *  Copyright (C) 2007  Hans Verkuil <hverkuil@xs4all.nl>
  *  Copyright (C) 2008  Andy Walls <awalls@md.metrocast.net>
+ *
+ *  This program is free software; you can redistribute it and/or modify
+ *  it under the terms of the GNU General Public License as published by
+ *  the Free Software Foundation; either version 2 of the License, or
+ *  (at your option) any later version.
+ *
+ *  This program is distributed in the hope that it will be useful,
+ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *  GNU General Public License for more details.
  */
 
 #include "cx18-driver.h"
@@ -74,7 +83,7 @@ static int cx18_i2c_new_ir(struct cx18 *cx, struct i2c_adapter *adap, u32 hw,
 	unsigned short addr_list[2] = { addr, I2C_CLIENT_END };
 
 	memset(&info, 0, sizeof(struct i2c_board_info));
-	strscpy(info.type, type, I2C_NAME_SIZE);
+	strlcpy(info.type, type, I2C_NAME_SIZE);
 
 	/* Our default information for ir-kbd-i2c.c to use */
 	switch (hw) {
@@ -88,7 +97,7 @@ static int cx18_i2c_new_ir(struct cx18 *cx, struct i2c_adapter *adap, u32 hw,
 		break;
 	}
 
-	return IS_ERR(i2c_new_scanned_device(adap, &info, addr_list, NULL)) ?
+	return i2c_new_probed_device(adap, &info, addr_list, NULL) == NULL ?
 	       -1 : 0;
 }
 

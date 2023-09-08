@@ -137,10 +137,12 @@ struct sigstack {
 #define SA_STACK	_SV_SSTACK
 #define SA_ONSTACK	_SV_SSTACK
 #define SA_RESTART	_SV_INTR
-#define SA_RESETHAND	_SV_RESET
+#define SA_ONESHOT	_SV_RESET
 #define SA_NODEFER	0x20u
 #define SA_NOCLDWAIT    0x100u
 #define SA_SIGINFO      0x200u
+
+#define SA_NOMASK	SA_NODEFER
 
 #define SIG_BLOCK          0x01	/* for blocking signals */
 #define SIG_UNBLOCK        0x02	/* for unblocking signals */
@@ -151,7 +153,6 @@ struct sigstack {
 
 
 #include <asm-generic/signal-defs.h>
-#include <asm/posix_types.h>
 
 #ifndef __KERNEL__
 struct __new_sigaction {
@@ -172,7 +173,7 @@ struct __old_sigaction {
 typedef struct sigaltstack {
 	void			__user *ss_sp;
 	int			ss_flags;
-	__kernel_size_t		ss_size;
+	size_t			ss_size;
 } stack_t;
 
 

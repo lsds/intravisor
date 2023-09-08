@@ -1,8 +1,12 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * PowerNV OPAL Power-Shift-Ratio interface
  *
  * Copyright 2017 IBM Corp.
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version
+ * 2 of the License, or (at your option) any later version.
  */
 
 #define pr_fmt(fmt)     "opal-psr: " fmt
@@ -13,11 +17,11 @@
 
 #include <asm/opal.h>
 
-static DEFINE_MUTEX(psr_mutex);
+DEFINE_MUTEX(psr_mutex);
 
 static struct kobject *psr_kobj;
 
-static struct psr_attr {
+struct psr_attr {
 	u32 handle;
 	struct kobj_attribute attr;
 } *psr_attrs;
@@ -135,7 +139,7 @@ void __init opal_psr_init(void)
 	psr_attrs = kcalloc(of_get_child_count(psr), sizeof(*psr_attrs),
 			    GFP_KERNEL);
 	if (!psr_attrs)
-		goto out_put_psr;
+		return;
 
 	psr_kobj = kobject_create_and_add("psr", opal_kobj);
 	if (!psr_kobj) {
@@ -162,14 +166,10 @@ void __init opal_psr_init(void)
 		}
 		i++;
 	}
-	of_node_put(psr);
 
 	return;
 out_kobj:
-	of_node_put(node);
 	kobject_put(psr_kobj);
 out:
 	kfree(psr_attrs);
-out_put_psr:
-	of_node_put(psr);
 }

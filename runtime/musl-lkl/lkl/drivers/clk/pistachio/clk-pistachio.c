@@ -1,8 +1,11 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Pistachio SoC clock controllers
  *
  * Copyright (C) 2014 Google, Inc.
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms and conditions of the GNU General Public License,
+ * version 2, as published by the Free Software Foundation.
  */
 
 #include <linux/clk-provider.h>
@@ -154,7 +157,7 @@ static struct pistachio_pll pistachio_plls[] __initdata = {
 PNAME(mux_debug) = { "mips_pll_mux", "rpu_v_pll_mux",
 		     "rpu_l_pll_mux", "sys_pll_mux",
 		     "wifi_pll_mux", "bt_pll_mux" };
-static const u32 mux_debug_idx[] = { 0x0, 0x1, 0x2, 0x4, 0x8, 0x10 };
+static u32 mux_debug_idx[] = { 0x0, 0x1, 0x2, 0x4, 0x8, 0x10 };
 
 static unsigned int pistachio_critical_clks_core[] __initdata = {
 	CLK_MIPS

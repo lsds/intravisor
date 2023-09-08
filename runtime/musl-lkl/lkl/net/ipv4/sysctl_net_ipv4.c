@@ -6,27 +6,38 @@
  * Added /proc/sys/net/ipv4 directory entry (empty =) ). [MS]
  */
 
+#include <linux/mm.h>
+#include <linux/module.h>
 #include <linux/sysctl.h>
+#include <linux/igmp.h>
+#include <linux/inetdevice.h>
 #include <linux/seqlock.h>
 #include <linux/init.h>
 #include <linux/slab.h>
+#include <linux/nsproxy.h>
+#include <linux/swap.h>
+#include <net/snmp.h>
 #include <net/icmp.h>
 #include <net/ip.h>
-#include <net/ip_fib.h>
+#include <net/route.h>
 #include <net/tcp.h>
 #include <net/udp.h>
 #include <net/cipso_ipv4.h>
+#include <net/inet_frag.h>
 #include <net/ping.h>
 #include <net/protocol.h>
 #include <net/netevent.h>
 
+static int zero;
+static int one = 1;
+static int four = 4;
+static int thousand = 1000;
+static int gso_max_segs = GSO_MAX_SEGS;
 static int tcp_retr1_max = 255;
 static int ip_local_port_range_min[] = { 1, 1 };
 static int ip_local_port_range_max[] = { 65535, 65535 };
 static int tcp_adv_win_scale_min = -31;
 static int tcp_adv_win_scale_max = 31;
-static int tcp_min_snd_mss_min = TCP_MIN_SND_MSS;
-static int tcp_min_snd_mss_max = 65535;
 static int ip_privileged_port_min;
 static int ip_privileged_port_max = 65535;
 static int ip_ttl_min = 1;
@@ -35,11 +46,6 @@ static int tcp_syn_retries_min = 1;
 static int tcp_syn_retries_max = MAX_TCP_SYNCNT;
 static int ip_ping_group_range_min[] = { 0, 0 };
 static int ip_ping_group_range_max[] = { GID_T_MAX, GID_T_MAX };
-static u32 u32_max_div_HZ = UINT_MAX / HZ;
-static int one_day_secs = 24 * 3600;
-static u32 fib_multipath_hash_fields_all_mask __maybe_unused =
-	FIB_MULTIPATH_HASH_FIELD_ALL_MASK;
-static unsigned int tcp_child_ehash_entries_max = 16 * 1024 * 1024;
 
 /* obsolete */
 static int sysctl_tcp_low_latency __read_mostly;
@@ -61,7 +67,8 @@ static void set_local_port_range(struct net *net, int range[2])
 
 /* Validate changes from /proc interface. */
 static int ipv4_local_port_range(struct ctl_table *table, int write,
-				 void *buffer, size_t *lenp, loff_t *ppos)
+				 void __user *buffer,
+				 size_t *lenp, loff_t *ppos)
 {
 	struct net *net =
 		container_of(table->data, struct net, ipv4.ip_local_ports.range);
@@ -85,7 +92,7 @@ static int ipv4_local_port_range(struct ctl_table *table, int write,
 		 * port limit.
 		 */
 		if ((range[1] < range[0]) ||
-		    (range[0] < READ_ONCE(net->ipv4.sysctl_ip_prot_sock)))
+		    (range[0] < net->ipv4.sysctl_ip_prot_sock))
 			ret = -EINVAL;
 		else
 			set_local_port_range(net, range);
@@ -96,7 +103,7 @@ static int ipv4_local_port_range(struct ctl_table *table, int write,
 
 /* Validate changes from /proc interface. */
 static int ipv4_privileged_ports(struct ctl_table *table, int write,
-				void *buffer, size_t *lenp, loff_t *ppos)
+				void __user *buffer, size_t *lenp, loff_t *ppos)
 {
 	struct net *net = container_of(table->data, struct net,
 	    ipv4.sysctl_ip_prot_sock);
@@ -111,7 +118,7 @@ static int ipv4_privileged_ports(struct ctl_table *table, int write,
 		.extra2 = &ip_privileged_port_max,
 	};
 
-	pports = READ_ONCE(net->ipv4.sysctl_ip_prot_sock);
+	pports = net->ipv4.sysctl_ip_prot_sock;
 
 	ret = proc_dointvec_minmax(&tmp, write, buffer, lenp, ppos);
 
@@ -123,7 +130,7 @@ static int ipv4_privileged_ports(struct ctl_table *table, int write,
 		if (range[0] < pports)
 			ret = -EINVAL;
 		else
-			WRITE_ONCE(net->ipv4.sysctl_ip_prot_sock, pports);
+			net->ipv4.sysctl_ip_prot_sock = pports;
 	}
 
 	return ret;
@@ -157,7 +164,8 @@ static void set_ping_group_range(struct ctl_table *table, kgid_t low, kgid_t hig
 
 /* Validate changes from /proc interface. */
 static int ipv4_ping_group_range(struct ctl_table *table, int write,
-				 void *buffer, size_t *lenp, loff_t *ppos)
+				 void __user *buffer,
+				 size_t *lenp, loff_t *ppos)
 {
 	struct user_namespace *user_ns = current_user_ns();
 	int ret;
@@ -179,9 +187,8 @@ static int ipv4_ping_group_range(struct ctl_table *table, int write,
 	if (write && ret == 0) {
 		low = make_kgid(user_ns, urange[0]);
 		high = make_kgid(user_ns, urange[1]);
-		if (!gid_valid(low) || !gid_valid(high))
-			return -EINVAL;
-		if (urange[1] < urange[0] || gid_lt(high, low)) {
+		if (!gid_valid(low) || !gid_valid(high) ||
+		    (urange[1] < urange[0]) || gid_lt(high, low)) {
 			low = make_kgid(&init_user_ns, 1);
 			high = make_kgid(&init_user_ns, 0);
 		}
@@ -191,24 +198,8 @@ static int ipv4_ping_group_range(struct ctl_table *table, int write,
 	return ret;
 }
 
-static int ipv4_fwd_update_priority(struct ctl_table *table, int write,
-				    void *buffer, size_t *lenp, loff_t *ppos)
-{
-	struct net *net;
-	int ret;
-
-	net = container_of(table->data, struct net,
-			   ipv4.sysctl_ip_fwd_update_priority);
-	ret = proc_dou8vec_minmax(table, write, buffer, lenp, ppos);
-	if (write && ret == 0)
-		call_netevent_notifiers(NETEVENT_IPV4_FWD_UPDATE_PRIORITY_UPDATE,
-					net);
-
-	return ret;
-}
-
 static int proc_tcp_congestion_control(struct ctl_table *ctl, int write,
-				       void *buffer, size_t *lenp, loff_t *ppos)
+				       void __user *buffer, size_t *lenp, loff_t *ppos)
 {
 	struct net *net = container_of(ctl->data, struct net,
 				       ipv4.tcp_congestion_control);
@@ -228,8 +219,9 @@ static int proc_tcp_congestion_control(struct ctl_table *ctl, int write,
 }
 
 static int proc_tcp_available_congestion_control(struct ctl_table *ctl,
-						 int write, void *buffer,
-						 size_t *lenp, loff_t *ppos)
+						 int write,
+						 void __user *buffer, size_t *lenp,
+						 loff_t *ppos)
 {
 	struct ctl_table tbl = { .maxlen = TCP_CA_BUF_MAX, };
 	int ret;
@@ -244,8 +236,9 @@ static int proc_tcp_available_congestion_control(struct ctl_table *ctl,
 }
 
 static int proc_allowed_congestion_control(struct ctl_table *ctl,
-					   int write, void *buffer,
-					   size_t *lenp, loff_t *ppos)
+					   int write,
+					   void __user *buffer, size_t *lenp,
+					   loff_t *ppos)
 {
 	struct ctl_table tbl = { .maxlen = TCP_CA_BUF_MAX };
 	int ret;
@@ -262,97 +255,109 @@ static int proc_allowed_congestion_control(struct ctl_table *ctl,
 	return ret;
 }
 
-static int sscanf_key(char *buf, __le32 *key)
-{
-	u32 user_key[4];
-	int i, ret = 0;
-
-	if (sscanf(buf, "%x-%x-%x-%x", user_key, user_key + 1,
-		   user_key + 2, user_key + 3) != 4) {
-		ret = -EINVAL;
-	} else {
-		for (i = 0; i < ARRAY_SIZE(user_key); i++)
-			key[i] = cpu_to_le32(user_key[i]);
-	}
-	pr_debug("proc TFO key set 0x%x-%x-%x-%x <- 0x%s: %u\n",
-		 user_key[0], user_key[1], user_key[2], user_key[3], buf, ret);
-
-	return ret;
-}
-
 static int proc_tcp_fastopen_key(struct ctl_table *table, int write,
-				 void *buffer, size_t *lenp, loff_t *ppos)
+				 void __user *buffer, size_t *lenp,
+				 loff_t *ppos)
 {
 	struct net *net = container_of(table->data, struct net,
 	    ipv4.sysctl_tcp_fastopen);
-	/* maxlen to print the list of keys in hex (*2), with dashes
-	 * separating doublewords and a comma in between keys.
-	 */
-	struct ctl_table tbl = { .maxlen = ((TCP_FASTOPEN_KEY_LENGTH *
-					    2 * TCP_FASTOPEN_KEY_MAX) +
-					    (TCP_FASTOPEN_KEY_MAX * 5)) };
-	u32 user_key[TCP_FASTOPEN_KEY_BUF_LENGTH / sizeof(u32)];
-	__le32 key[TCP_FASTOPEN_KEY_BUF_LENGTH / sizeof(__le32)];
-	char *backup_data;
-	int ret, i = 0, off = 0, n_keys;
+	struct ctl_table tbl = { .maxlen = (TCP_FASTOPEN_KEY_LENGTH * 2 + 10) };
+	struct tcp_fastopen_context *ctxt;
+	int ret;
+	u32  user_key[4]; /* 16 bytes, matching TCP_FASTOPEN_KEY_LENGTH */
 
 	tbl.data = kmalloc(tbl.maxlen, GFP_KERNEL);
 	if (!tbl.data)
 		return -ENOMEM;
 
-	n_keys = tcp_fastopen_get_cipher(net, NULL, (u64 *)key);
-	if (!n_keys) {
-		memset(&key[0], 0, TCP_FASTOPEN_KEY_LENGTH);
-		n_keys = 1;
-	}
+	rcu_read_lock();
+	ctxt = rcu_dereference(net->ipv4.tcp_fastopen_ctx);
+	if (ctxt)
+		memcpy(user_key, ctxt->key, TCP_FASTOPEN_KEY_LENGTH);
+	else
+		memset(user_key, 0, sizeof(user_key));
+	rcu_read_unlock();
 
-	for (i = 0; i < n_keys * 4; i++)
-		user_key[i] = le32_to_cpu(key[i]);
-
-	for (i = 0; i < n_keys; i++) {
-		off += snprintf(tbl.data + off, tbl.maxlen - off,
-				"%08x-%08x-%08x-%08x",
-				user_key[i * 4],
-				user_key[i * 4 + 1],
-				user_key[i * 4 + 2],
-				user_key[i * 4 + 3]);
-
-		if (WARN_ON_ONCE(off >= tbl.maxlen - 1))
-			break;
-
-		if (i + 1 < n_keys)
-			off += snprintf(tbl.data + off, tbl.maxlen - off, ",");
-	}
-
+	snprintf(tbl.data, tbl.maxlen, "%08x-%08x-%08x-%08x",
+		user_key[0], user_key[1], user_key[2], user_key[3]);
 	ret = proc_dostring(&tbl, write, buffer, lenp, ppos);
 
 	if (write && ret == 0) {
-		backup_data = strchr(tbl.data, ',');
-		if (backup_data) {
-			*backup_data = '\0';
-			backup_data++;
-		}
-		if (sscanf_key(tbl.data, key)) {
+		if (sscanf(tbl.data, "%x-%x-%x-%x", user_key, user_key + 1,
+			   user_key + 2, user_key + 3) != 4) {
 			ret = -EINVAL;
 			goto bad_key;
 		}
-		if (backup_data) {
-			if (sscanf_key(backup_data, key + 4)) {
-				ret = -EINVAL;
-				goto bad_key;
-			}
-		}
-		tcp_fastopen_reset_cipher(net, NULL, key,
-					  backup_data ? key + 4 : NULL);
+		tcp_fastopen_reset_cipher(net, NULL, user_key,
+					  TCP_FASTOPEN_KEY_LENGTH);
 	}
 
 bad_key:
+	pr_debug("proc FO key set 0x%x-%x-%x-%x <- 0x%s: %u\n",
+	       user_key[0], user_key[1], user_key[2], user_key[3],
+	       (char *)tbl.data, ret);
 	kfree(tbl.data);
 	return ret;
 }
 
+static void proc_configure_early_demux(int enabled, int protocol)
+{
+	struct net_protocol *ipprot;
+#if IS_ENABLED(CONFIG_IPV6)
+	struct inet6_protocol *ip6prot;
+#endif
+
+	rcu_read_lock();
+
+	ipprot = rcu_dereference(inet_protos[protocol]);
+	if (ipprot)
+		ipprot->early_demux = enabled ? ipprot->early_demux_handler :
+						NULL;
+
+#if IS_ENABLED(CONFIG_IPV6)
+	ip6prot = rcu_dereference(inet6_protos[protocol]);
+	if (ip6prot)
+		ip6prot->early_demux = enabled ? ip6prot->early_demux_handler :
+						 NULL;
+#endif
+	rcu_read_unlock();
+}
+
+static int proc_tcp_early_demux(struct ctl_table *table, int write,
+				void __user *buffer, size_t *lenp, loff_t *ppos)
+{
+	int ret = 0;
+
+	ret = proc_dointvec(table, write, buffer, lenp, ppos);
+
+	if (write && !ret) {
+		int enabled = init_net.ipv4.sysctl_tcp_early_demux;
+
+		proc_configure_early_demux(enabled, IPPROTO_TCP);
+	}
+
+	return ret;
+}
+
+static int proc_udp_early_demux(struct ctl_table *table, int write,
+				void __user *buffer, size_t *lenp, loff_t *ppos)
+{
+	int ret = 0;
+
+	ret = proc_dointvec(table, write, buffer, lenp, ppos);
+
+	if (write && !ret) {
+		int enabled = init_net.ipv4.sysctl_udp_early_demux;
+
+		proc_configure_early_demux(enabled, IPPROTO_UDP);
+	}
+
+	return ret;
+}
+
 static int proc_tfo_blackhole_detect_timeout(struct ctl_table *table,
-					     int write, void *buffer,
+					     int write,
+					     void __user *buffer,
 					     size_t *lenp, loff_t *ppos)
 {
 	struct net *net = container_of(table->data, struct net,
@@ -367,7 +372,8 @@ static int proc_tfo_blackhole_detect_timeout(struct ctl_table *table,
 }
 
 static int proc_tcp_available_ulp(struct ctl_table *ctl,
-				  int write, void *buffer, size_t *lenp,
+				  int write,
+				  void __user *buffer, size_t *lenp,
 				  loff_t *ppos)
 {
 	struct ctl_table tbl = { .maxlen = TCP_ULP_BUF_MAX, };
@@ -383,55 +389,16 @@ static int proc_tcp_available_ulp(struct ctl_table *ctl,
 	return ret;
 }
 
-static int proc_tcp_ehash_entries(struct ctl_table *table, int write,
-				  void *buffer, size_t *lenp, loff_t *ppos)
-{
-	struct net *net = container_of(table->data, struct net,
-				       ipv4.sysctl_tcp_child_ehash_entries);
-	struct inet_hashinfo *hinfo = net->ipv4.tcp_death_row.hashinfo;
-	int tcp_ehash_entries;
-	struct ctl_table tbl;
-
-	tcp_ehash_entries = hinfo->ehash_mask + 1;
-
-	/* A negative number indicates that the child netns
-	 * shares the global ehash.
-	 */
-	if (!net_eq(net, &init_net) && !hinfo->pernet)
-		tcp_ehash_entries *= -1;
-
-	tbl.data = &tcp_ehash_entries;
-	tbl.maxlen = sizeof(int);
-
-	return proc_dointvec(&tbl, write, buffer, lenp, ppos);
-}
-
 #ifdef CONFIG_IP_ROUTE_MULTIPATH
 static int proc_fib_multipath_hash_policy(struct ctl_table *table, int write,
-					  void *buffer, size_t *lenp,
+					  void __user *buffer, size_t *lenp,
 					  loff_t *ppos)
 {
 	struct net *net = container_of(table->data, struct net,
 	    ipv4.sysctl_fib_multipath_hash_policy);
 	int ret;
 
-	ret = proc_dou8vec_minmax(table, write, buffer, lenp, ppos);
-	if (write && ret == 0)
-		call_netevent_notifiers(NETEVENT_IPV4_MPATH_HASH_UPDATE, net);
-
-	return ret;
-}
-
-static int proc_fib_multipath_hash_fields(struct ctl_table *table, int write,
-					  void *buffer, size_t *lenp,
-					  loff_t *ppos)
-{
-	struct net *net;
-	int ret;
-
-	net = container_of(table->data, struct net,
-			   ipv4.sysctl_fib_multipath_hash_fields);
-	ret = proc_douintvec_minmax(table, write, buffer, lenp, ppos);
+	ret = proc_dointvec_minmax(table, write, buffer, lenp, ppos);
 	if (write && ret == 0)
 		call_netevent_notifiers(NETEVENT_IPV4_MPATH_HASH_UPDATE, net);
 
@@ -513,6 +480,18 @@ static struct ctl_table ipv4_table[] = {
 	},
 #endif /* CONFIG_NETLABEL */
 	{
+		.procname	= "tcp_available_congestion_control",
+		.maxlen		= TCP_CA_BUF_MAX,
+		.mode		= 0444,
+		.proc_handler   = proc_tcp_available_congestion_control,
+	},
+	{
+		.procname	= "tcp_allowed_congestion_control",
+		.maxlen		= TCP_CA_BUF_MAX,
+		.mode		= 0644,
+		.proc_handler   = proc_allowed_congestion_control,
+	},
+	{
 		.procname	= "tcp_available_ulp",
 		.maxlen		= TCP_ULP_BUF_MAX,
 		.mode		= 0444,
@@ -524,7 +503,7 @@ static struct ctl_table ipv4_table[] = {
 		.maxlen		= sizeof(int),
 		.mode		= 0644,
 		.proc_handler	= proc_dointvec_minmax,
-		.extra1		= SYSCTL_ZERO,
+		.extra1		= &zero,
 	},
 	{
 		.procname	= "icmp_msgs_burst",
@@ -532,7 +511,7 @@ static struct ctl_table ipv4_table[] = {
 		.maxlen		= sizeof(int),
 		.mode		= 0644,
 		.proc_handler	= proc_dointvec_minmax,
-		.extra1		= SYSCTL_ZERO,
+		.extra1		= &zero,
 	},
 	{
 		.procname	= "udp_mem",
@@ -541,70 +520,37 @@ static struct ctl_table ipv4_table[] = {
 		.mode		= 0644,
 		.proc_handler	= proc_doulongvec_minmax,
 	},
-	{
-		.procname	= "fib_sync_mem",
-		.data		= &sysctl_fib_sync_mem,
-		.maxlen		= sizeof(sysctl_fib_sync_mem),
-		.mode		= 0644,
-		.proc_handler	= proc_douintvec_minmax,
-		.extra1		= &sysctl_fib_sync_mem_min,
-		.extra2		= &sysctl_fib_sync_mem_max,
-	},
 	{ }
 };
 
 static struct ctl_table ipv4_net_table[] = {
 	{
-		.procname	= "tcp_max_tw_buckets",
-		.data		= &init_net.ipv4.tcp_death_row.sysctl_max_tw_buckets,
+		.procname	= "icmp_echo_ignore_all",
+		.data		= &init_net.ipv4.sysctl_icmp_echo_ignore_all,
 		.maxlen		= sizeof(int),
 		.mode		= 0644,
 		.proc_handler	= proc_dointvec
 	},
 	{
-		.procname	= "icmp_echo_ignore_all",
-		.data		= &init_net.ipv4.sysctl_icmp_echo_ignore_all,
-		.maxlen		= sizeof(u8),
-		.mode		= 0644,
-		.proc_handler	= proc_dou8vec_minmax,
-		.extra1		= SYSCTL_ZERO,
-		.extra2		= SYSCTL_ONE
-	},
-	{
-		.procname	= "icmp_echo_enable_probe",
-		.data		= &init_net.ipv4.sysctl_icmp_echo_enable_probe,
-		.maxlen		= sizeof(u8),
-		.mode		= 0644,
-		.proc_handler	= proc_dou8vec_minmax,
-		.extra1		= SYSCTL_ZERO,
-		.extra2		= SYSCTL_ONE
-	},
-	{
 		.procname	= "icmp_echo_ignore_broadcasts",
 		.data		= &init_net.ipv4.sysctl_icmp_echo_ignore_broadcasts,
-		.maxlen		= sizeof(u8),
+		.maxlen		= sizeof(int),
 		.mode		= 0644,
-		.proc_handler	= proc_dou8vec_minmax,
-		.extra1		= SYSCTL_ZERO,
-		.extra2		= SYSCTL_ONE
+		.proc_handler	= proc_dointvec
 	},
 	{
 		.procname	= "icmp_ignore_bogus_error_responses",
 		.data		= &init_net.ipv4.sysctl_icmp_ignore_bogus_error_responses,
-		.maxlen		= sizeof(u8),
+		.maxlen		= sizeof(int),
 		.mode		= 0644,
-		.proc_handler	= proc_dou8vec_minmax,
-		.extra1		= SYSCTL_ZERO,
-		.extra2		= SYSCTL_ONE
+		.proc_handler	= proc_dointvec
 	},
 	{
 		.procname	= "icmp_errors_use_inbound_ifaddr",
 		.data		= &init_net.ipv4.sysctl_icmp_errors_use_inbound_ifaddr,
-		.maxlen		= sizeof(u8),
+		.maxlen		= sizeof(int),
 		.mode		= 0644,
-		.proc_handler	= proc_dou8vec_minmax,
-		.extra1		= SYSCTL_ZERO,
-		.extra2		= SYSCTL_ONE
+		.proc_handler	= proc_dointvec
 	},
 	{
 		.procname	= "icmp_ratelimit",
@@ -627,78 +573,54 @@ static struct ctl_table ipv4_net_table[] = {
 		.mode		= 0644,
 		.proc_handler	= ipv4_ping_group_range,
 	},
-#ifdef CONFIG_NET_L3_MASTER_DEV
-	{
-		.procname	= "raw_l3mdev_accept",
-		.data		= &init_net.ipv4.sysctl_raw_l3mdev_accept,
-		.maxlen		= sizeof(u8),
-		.mode		= 0644,
-		.proc_handler	= proc_dou8vec_minmax,
-		.extra1		= SYSCTL_ZERO,
-		.extra2		= SYSCTL_ONE,
-	},
-#endif
 	{
 		.procname	= "tcp_ecn",
 		.data		= &init_net.ipv4.sysctl_tcp_ecn,
-		.maxlen		= sizeof(u8),
+		.maxlen		= sizeof(int),
 		.mode		= 0644,
-		.proc_handler	= proc_dou8vec_minmax,
-		.extra1		= SYSCTL_ZERO,
-		.extra2		= SYSCTL_TWO,
+		.proc_handler	= proc_dointvec
 	},
 	{
 		.procname	= "tcp_ecn_fallback",
 		.data		= &init_net.ipv4.sysctl_tcp_ecn_fallback,
-		.maxlen		= sizeof(u8),
+		.maxlen		= sizeof(int),
 		.mode		= 0644,
-		.proc_handler	= proc_dou8vec_minmax,
-		.extra1		= SYSCTL_ZERO,
-		.extra2		= SYSCTL_ONE,
+		.proc_handler	= proc_dointvec
 	},
 	{
 		.procname	= "ip_dynaddr",
 		.data		= &init_net.ipv4.sysctl_ip_dynaddr,
-		.maxlen		= sizeof(u8),
+		.maxlen		= sizeof(int),
 		.mode		= 0644,
-		.proc_handler	= proc_dou8vec_minmax,
+		.proc_handler	= proc_dointvec
 	},
 	{
 		.procname	= "ip_early_demux",
 		.data		= &init_net.ipv4.sysctl_ip_early_demux,
-		.maxlen		= sizeof(u8),
+		.maxlen		= sizeof(int),
 		.mode		= 0644,
-		.proc_handler	= proc_dou8vec_minmax,
+		.proc_handler	= proc_dointvec
 	},
 	{
 		.procname       = "udp_early_demux",
 		.data           = &init_net.ipv4.sysctl_udp_early_demux,
-		.maxlen         = sizeof(u8),
+		.maxlen         = sizeof(int),
 		.mode           = 0644,
-		.proc_handler   = proc_dou8vec_minmax,
+		.proc_handler   = proc_udp_early_demux
 	},
 	{
 		.procname       = "tcp_early_demux",
 		.data           = &init_net.ipv4.sysctl_tcp_early_demux,
-		.maxlen         = sizeof(u8),
+		.maxlen         = sizeof(int),
 		.mode           = 0644,
-		.proc_handler   = proc_dou8vec_minmax,
-	},
-	{
-		.procname       = "nexthop_compat_mode",
-		.data           = &init_net.ipv4.sysctl_nexthop_compat_mode,
-		.maxlen         = sizeof(u8),
-		.mode           = 0644,
-		.proc_handler   = proc_dou8vec_minmax,
-		.extra1		= SYSCTL_ZERO,
-		.extra2		= SYSCTL_ONE,
+		.proc_handler   = proc_tcp_early_demux
 	},
 	{
 		.procname	= "ip_default_ttl",
 		.data		= &init_net.ipv4.sysctl_ip_default_ttl,
-		.maxlen		= sizeof(u8),
+		.maxlen		= sizeof(int),
 		.mode		= 0644,
-		.proc_handler	= proc_dou8vec_minmax,
+		.proc_handler	= proc_dointvec_minmax,
 		.extra1		= &ip_ttl_min,
 		.extra2		= &ip_ttl_max,
 	},
@@ -719,73 +641,55 @@ static struct ctl_table ipv4_net_table[] = {
 	{
 		.procname	= "ip_no_pmtu_disc",
 		.data		= &init_net.ipv4.sysctl_ip_no_pmtu_disc,
-		.maxlen		= sizeof(u8),
+		.maxlen		= sizeof(int),
 		.mode		= 0644,
-		.proc_handler	= proc_dou8vec_minmax,
+		.proc_handler	= proc_dointvec
 	},
 	{
 		.procname	= "ip_forward_use_pmtu",
 		.data		= &init_net.ipv4.sysctl_ip_fwd_use_pmtu,
-		.maxlen		= sizeof(u8),
+		.maxlen		= sizeof(int),
 		.mode		= 0644,
-		.proc_handler	= proc_dou8vec_minmax,
-	},
-	{
-		.procname	= "ip_forward_update_priority",
-		.data		= &init_net.ipv4.sysctl_ip_fwd_update_priority,
-		.maxlen		= sizeof(u8),
-		.mode		= 0644,
-		.proc_handler   = ipv4_fwd_update_priority,
-		.extra1		= SYSCTL_ZERO,
-		.extra2		= SYSCTL_ONE,
+		.proc_handler	= proc_dointvec,
 	},
 	{
 		.procname	= "ip_nonlocal_bind",
 		.data		= &init_net.ipv4.sysctl_ip_nonlocal_bind,
-		.maxlen		= sizeof(u8),
+		.maxlen		= sizeof(int),
 		.mode		= 0644,
-		.proc_handler	= proc_dou8vec_minmax,
-	},
-	{
-		.procname	= "ip_autobind_reuse",
-		.data		= &init_net.ipv4.sysctl_ip_autobind_reuse,
-		.maxlen		= sizeof(u8),
-		.mode		= 0644,
-		.proc_handler	= proc_dou8vec_minmax,
-		.extra1         = SYSCTL_ZERO,
-		.extra2         = SYSCTL_ONE,
+		.proc_handler	= proc_dointvec
 	},
 	{
 		.procname	= "fwmark_reflect",
 		.data		= &init_net.ipv4.sysctl_fwmark_reflect,
-		.maxlen		= sizeof(u8),
+		.maxlen		= sizeof(int),
 		.mode		= 0644,
-		.proc_handler	= proc_dou8vec_minmax,
+		.proc_handler	= proc_dointvec,
 	},
 	{
 		.procname	= "tcp_fwmark_accept",
 		.data		= &init_net.ipv4.sysctl_tcp_fwmark_accept,
-		.maxlen		= sizeof(u8),
+		.maxlen		= sizeof(int),
 		.mode		= 0644,
-		.proc_handler	= proc_dou8vec_minmax,
+		.proc_handler	= proc_dointvec,
 	},
 #ifdef CONFIG_NET_L3_MASTER_DEV
 	{
 		.procname	= "tcp_l3mdev_accept",
 		.data		= &init_net.ipv4.sysctl_tcp_l3mdev_accept,
-		.maxlen		= sizeof(u8),
+		.maxlen		= sizeof(int),
 		.mode		= 0644,
-		.proc_handler	= proc_dou8vec_minmax,
-		.extra1		= SYSCTL_ZERO,
-		.extra2		= SYSCTL_ONE,
+		.proc_handler	= proc_dointvec_minmax,
+		.extra1		= &zero,
+		.extra2		= &one,
 	},
 #endif
 	{
 		.procname	= "tcp_mtu_probing",
 		.data		= &init_net.ipv4.sysctl_tcp_mtu_probing,
-		.maxlen		= sizeof(u8),
+		.maxlen		= sizeof(int),
 		.mode		= 0644,
-		.proc_handler	= proc_dou8vec_minmax,
+		.proc_handler	= proc_dointvec,
 	},
 	{
 		.procname	= "tcp_base_mss",
@@ -793,24 +697,6 @@ static struct ctl_table ipv4_net_table[] = {
 		.maxlen		= sizeof(int),
 		.mode		= 0644,
 		.proc_handler	= proc_dointvec,
-	},
-	{
-		.procname	= "tcp_min_snd_mss",
-		.data		= &init_net.ipv4.sysctl_tcp_min_snd_mss,
-		.maxlen		= sizeof(int),
-		.mode		= 0644,
-		.proc_handler	= proc_dointvec_minmax,
-		.extra1		= &tcp_min_snd_mss_min,
-		.extra2		= &tcp_min_snd_mss_max,
-	},
-	{
-		.procname	= "tcp_mtu_probe_floor",
-		.data		= &init_net.ipv4.sysctl_tcp_mtu_probe_floor,
-		.maxlen		= sizeof(int),
-		.mode		= 0644,
-		.proc_handler	= proc_dointvec_minmax,
-		.extra1		= &tcp_min_snd_mss_min,
-		.extra2		= &tcp_min_snd_mss_max,
 	},
 	{
 		.procname	= "tcp_probe_threshold",
@@ -822,17 +708,16 @@ static struct ctl_table ipv4_net_table[] = {
 	{
 		.procname	= "tcp_probe_interval",
 		.data		= &init_net.ipv4.sysctl_tcp_probe_interval,
-		.maxlen		= sizeof(u32),
+		.maxlen		= sizeof(int),
 		.mode		= 0644,
-		.proc_handler	= proc_douintvec_minmax,
-		.extra2		= &u32_max_div_HZ,
+		.proc_handler	= proc_dointvec,
 	},
 	{
 		.procname	= "igmp_link_local_mcast_reports",
 		.data		= &init_net.ipv4.sysctl_igmp_llm_reports,
-		.maxlen		= sizeof(u8),
+		.maxlen		= sizeof(int),
 		.mode		= 0644,
-		.proc_handler	= proc_dou8vec_minmax,
+		.proc_handler	= proc_dointvec
 	},
 	{
 		.procname	= "igmp_max_memberships",
@@ -855,7 +740,7 @@ static struct ctl_table ipv4_net_table[] = {
 		.maxlen		= sizeof(int),
 		.mode		= 0644,
 		.proc_handler	= proc_dointvec_minmax,
-		.extra1		= SYSCTL_ONE
+		.extra1		= &one
 	},
 #endif
 	{
@@ -864,18 +749,6 @@ static struct ctl_table ipv4_net_table[] = {
 		.mode		= 0644,
 		.maxlen		= TCP_CA_NAME_MAX,
 		.proc_handler	= proc_tcp_congestion_control,
-	},
-	{
-		.procname	= "tcp_available_congestion_control",
-		.maxlen		= TCP_CA_BUF_MAX,
-		.mode		= 0444,
-		.proc_handler   = proc_tcp_available_congestion_control,
-	},
-	{
-		.procname	= "tcp_allowed_congestion_control",
-		.maxlen		= TCP_CA_BUF_MAX,
-		.mode		= 0644,
-		.proc_handler   = proc_allowed_congestion_control,
 	},
 	{
 		.procname	= "tcp_keepalive_time",
@@ -887,9 +760,9 @@ static struct ctl_table ipv4_net_table[] = {
 	{
 		.procname	= "tcp_keepalive_probes",
 		.data		= &init_net.ipv4.sysctl_tcp_keepalive_probes,
-		.maxlen		= sizeof(u8),
+		.maxlen		= sizeof(int),
 		.mode		= 0644,
-		.proc_handler	= proc_dou8vec_minmax,
+		.proc_handler	= proc_dointvec
 	},
 	{
 		.procname	= "tcp_keepalive_intvl",
@@ -901,37 +774,28 @@ static struct ctl_table ipv4_net_table[] = {
 	{
 		.procname	= "tcp_syn_retries",
 		.data		= &init_net.ipv4.sysctl_tcp_syn_retries,
-		.maxlen		= sizeof(u8),
+		.maxlen		= sizeof(int),
 		.mode		= 0644,
-		.proc_handler	= proc_dou8vec_minmax,
+		.proc_handler	= proc_dointvec_minmax,
 		.extra1		= &tcp_syn_retries_min,
 		.extra2		= &tcp_syn_retries_max
 	},
 	{
 		.procname	= "tcp_synack_retries",
 		.data		= &init_net.ipv4.sysctl_tcp_synack_retries,
-		.maxlen		= sizeof(u8),
+		.maxlen		= sizeof(int),
 		.mode		= 0644,
-		.proc_handler	= proc_dou8vec_minmax,
+		.proc_handler	= proc_dointvec
 	},
 #ifdef CONFIG_SYN_COOKIES
 	{
 		.procname	= "tcp_syncookies",
 		.data		= &init_net.ipv4.sysctl_tcp_syncookies,
-		.maxlen		= sizeof(u8),
+		.maxlen		= sizeof(int),
 		.mode		= 0644,
-		.proc_handler	= proc_dou8vec_minmax,
+		.proc_handler	= proc_dointvec
 	},
 #endif
-	{
-		.procname	= "tcp_migrate_req",
-		.data		= &init_net.ipv4.sysctl_tcp_migrate_req,
-		.maxlen		= sizeof(u8),
-		.mode		= 0644,
-		.proc_handler	= proc_dou8vec_minmax,
-		.extra1		= SYSCTL_ZERO,
-		.extra2		= SYSCTL_ONE
-	},
 	{
 		.procname	= "tcp_reordering",
 		.data		= &init_net.ipv4.sysctl_tcp_reordering,
@@ -942,24 +806,24 @@ static struct ctl_table ipv4_net_table[] = {
 	{
 		.procname	= "tcp_retries1",
 		.data		= &init_net.ipv4.sysctl_tcp_retries1,
-		.maxlen		= sizeof(u8),
+		.maxlen		= sizeof(int),
 		.mode		= 0644,
-		.proc_handler	= proc_dou8vec_minmax,
+		.proc_handler	= proc_dointvec_minmax,
 		.extra2		= &tcp_retr1_max
 	},
 	{
 		.procname	= "tcp_retries2",
 		.data		= &init_net.ipv4.sysctl_tcp_retries2,
-		.maxlen		= sizeof(u8),
+		.maxlen		= sizeof(int),
 		.mode		= 0644,
-		.proc_handler	= proc_dou8vec_minmax,
+		.proc_handler	= proc_dointvec
 	},
 	{
 		.procname	= "tcp_orphan_retries",
 		.data		= &init_net.ipv4.sysctl_tcp_orphan_retries,
-		.maxlen		= sizeof(u8),
+		.maxlen		= sizeof(int),
 		.mode		= 0644,
-		.proc_handler	= proc_dou8vec_minmax,
+		.proc_handler	= proc_dointvec
 	},
 	{
 		.procname	= "tcp_fin_timeout",
@@ -978,11 +842,16 @@ static struct ctl_table ipv4_net_table[] = {
 	{
 		.procname	= "tcp_tw_reuse",
 		.data		= &init_net.ipv4.sysctl_tcp_tw_reuse,
-		.maxlen		= sizeof(u8),
+		.maxlen		= sizeof(int),
 		.mode		= 0644,
-		.proc_handler	= proc_dou8vec_minmax,
-		.extra1		= SYSCTL_ZERO,
-		.extra2		= SYSCTL_TWO,
+		.proc_handler	= proc_dointvec
+	},
+	{
+		.procname	= "tcp_max_tw_buckets",
+		.data		= &init_net.ipv4.tcp_death_row.sysctl_max_tw_buckets,
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec
 	},
 	{
 		.procname	= "tcp_max_syn_backlog",
@@ -1002,12 +871,7 @@ static struct ctl_table ipv4_net_table[] = {
 		.procname	= "tcp_fastopen_key",
 		.mode		= 0600,
 		.data		= &init_net.ipv4.sysctl_tcp_fastopen,
-		/* maxlen to print the list of keys in hex (*2), with dashes
-		 * separating doublewords and a comma in between keys.
-		 */
-		.maxlen		= ((TCP_FASTOPEN_KEY_LENGTH *
-				   2 * TCP_FASTOPEN_KEY_MAX) +
-				   (TCP_FASTOPEN_KEY_MAX * 5)),
+		.maxlen		= ((TCP_FASTOPEN_KEY_LENGTH * 2) + 10),
 		.proc_handler	= proc_tcp_fastopen_key,
 	},
 	{
@@ -1016,35 +880,26 @@ static struct ctl_table ipv4_net_table[] = {
 		.maxlen		= sizeof(int),
 		.mode		= 0644,
 		.proc_handler	= proc_tfo_blackhole_detect_timeout,
-		.extra1		= SYSCTL_ZERO,
+		.extra1		= &zero,
 	},
 #ifdef CONFIG_IP_ROUTE_MULTIPATH
 	{
 		.procname	= "fib_multipath_use_neigh",
 		.data		= &init_net.ipv4.sysctl_fib_multipath_use_neigh,
-		.maxlen		= sizeof(u8),
+		.maxlen		= sizeof(int),
 		.mode		= 0644,
-		.proc_handler	= proc_dou8vec_minmax,
-		.extra1		= SYSCTL_ZERO,
-		.extra2		= SYSCTL_ONE,
+		.proc_handler	= proc_dointvec_minmax,
+		.extra1		= &zero,
+		.extra2		= &one,
 	},
 	{
 		.procname	= "fib_multipath_hash_policy",
 		.data		= &init_net.ipv4.sysctl_fib_multipath_hash_policy,
-		.maxlen		= sizeof(u8),
+		.maxlen		= sizeof(int),
 		.mode		= 0644,
 		.proc_handler	= proc_fib_multipath_hash_policy,
-		.extra1		= SYSCTL_ZERO,
-		.extra2		= SYSCTL_THREE,
-	},
-	{
-		.procname	= "fib_multipath_hash_fields",
-		.data		= &init_net.ipv4.sysctl_fib_multipath_hash_fields,
-		.maxlen		= sizeof(u32),
-		.mode		= 0644,
-		.proc_handler	= proc_fib_multipath_hash_fields,
-		.extra1		= SYSCTL_ONE,
-		.extra2		= &fib_multipath_hash_fields_all_mask,
+		.extra1		= &zero,
+		.extra2		= &one,
 	},
 #endif
 	{
@@ -1058,98 +913,98 @@ static struct ctl_table ipv4_net_table[] = {
 	{
 		.procname	= "udp_l3mdev_accept",
 		.data		= &init_net.ipv4.sysctl_udp_l3mdev_accept,
-		.maxlen		= sizeof(u8),
+		.maxlen		= sizeof(int),
 		.mode		= 0644,
-		.proc_handler	= proc_dou8vec_minmax,
-		.extra1		= SYSCTL_ZERO,
-		.extra2		= SYSCTL_ONE,
+		.proc_handler	= proc_dointvec_minmax,
+		.extra1		= &zero,
+		.extra2		= &one,
 	},
 #endif
 	{
 		.procname	= "tcp_sack",
 		.data		= &init_net.ipv4.sysctl_tcp_sack,
-		.maxlen		= sizeof(u8),
+		.maxlen		= sizeof(int),
 		.mode		= 0644,
-		.proc_handler	= proc_dou8vec_minmax,
+		.proc_handler	= proc_dointvec
 	},
 	{
 		.procname	= "tcp_window_scaling",
 		.data		= &init_net.ipv4.sysctl_tcp_window_scaling,
-		.maxlen		= sizeof(u8),
+		.maxlen		= sizeof(int),
 		.mode		= 0644,
-		.proc_handler	= proc_dou8vec_minmax,
+		.proc_handler	= proc_dointvec
 	},
 	{
 		.procname	= "tcp_timestamps",
 		.data		= &init_net.ipv4.sysctl_tcp_timestamps,
-		.maxlen		= sizeof(u8),
+		.maxlen		= sizeof(int),
 		.mode		= 0644,
-		.proc_handler	= proc_dou8vec_minmax,
+		.proc_handler	= proc_dointvec
 	},
 	{
 		.procname	= "tcp_early_retrans",
 		.data		= &init_net.ipv4.sysctl_tcp_early_retrans,
-		.maxlen		= sizeof(u8),
+		.maxlen		= sizeof(int),
 		.mode		= 0644,
-		.proc_handler	= proc_dou8vec_minmax,
-		.extra1		= SYSCTL_ZERO,
-		.extra2		= SYSCTL_FOUR,
+		.proc_handler	= proc_dointvec_minmax,
+		.extra1		= &zero,
+		.extra2		= &four,
 	},
 	{
 		.procname	= "tcp_recovery",
 		.data		= &init_net.ipv4.sysctl_tcp_recovery,
-		.maxlen		= sizeof(u8),
+		.maxlen		= sizeof(int),
 		.mode		= 0644,
-		.proc_handler	= proc_dou8vec_minmax,
+		.proc_handler	= proc_dointvec,
 	},
 	{
 		.procname       = "tcp_thin_linear_timeouts",
 		.data           = &init_net.ipv4.sysctl_tcp_thin_linear_timeouts,
-		.maxlen         = sizeof(u8),
+		.maxlen         = sizeof(int),
 		.mode           = 0644,
-		.proc_handler   = proc_dou8vec_minmax,
+		.proc_handler   = proc_dointvec
 	},
 	{
 		.procname	= "tcp_slow_start_after_idle",
 		.data		= &init_net.ipv4.sysctl_tcp_slow_start_after_idle,
-		.maxlen		= sizeof(u8),
+		.maxlen		= sizeof(int),
 		.mode		= 0644,
-		.proc_handler	= proc_dou8vec_minmax,
+		.proc_handler	= proc_dointvec
 	},
 	{
 		.procname	= "tcp_retrans_collapse",
 		.data		= &init_net.ipv4.sysctl_tcp_retrans_collapse,
-		.maxlen		= sizeof(u8),
+		.maxlen		= sizeof(int),
 		.mode		= 0644,
-		.proc_handler	= proc_dou8vec_minmax,
+		.proc_handler	= proc_dointvec
 	},
 	{
 		.procname	= "tcp_stdurg",
 		.data		= &init_net.ipv4.sysctl_tcp_stdurg,
-		.maxlen		= sizeof(u8),
+		.maxlen		= sizeof(int),
 		.mode		= 0644,
-		.proc_handler	= proc_dou8vec_minmax,
+		.proc_handler	= proc_dointvec
 	},
 	{
 		.procname	= "tcp_rfc1337",
 		.data		= &init_net.ipv4.sysctl_tcp_rfc1337,
-		.maxlen		= sizeof(u8),
+		.maxlen		= sizeof(int),
 		.mode		= 0644,
-		.proc_handler	= proc_dou8vec_minmax,
+		.proc_handler	= proc_dointvec
 	},
 	{
 		.procname	= "tcp_abort_on_overflow",
 		.data		= &init_net.ipv4.sysctl_tcp_abort_on_overflow,
-		.maxlen		= sizeof(u8),
+		.maxlen		= sizeof(int),
 		.mode		= 0644,
-		.proc_handler	= proc_dou8vec_minmax,
+		.proc_handler	= proc_dointvec
 	},
 	{
 		.procname	= "tcp_fack",
 		.data		= &init_net.ipv4.sysctl_tcp_fack,
-		.maxlen		= sizeof(u8),
+		.maxlen		= sizeof(int),
 		.mode		= 0644,
-		.proc_handler	= proc_dou8vec_minmax,
+		.proc_handler	= proc_dointvec
 	},
 	{
 		.procname	= "tcp_max_reordering",
@@ -1161,16 +1016,16 @@ static struct ctl_table ipv4_net_table[] = {
 	{
 		.procname	= "tcp_dsack",
 		.data		= &init_net.ipv4.sysctl_tcp_dsack,
-		.maxlen		= sizeof(u8),
+		.maxlen		= sizeof(int),
 		.mode		= 0644,
-		.proc_handler	= proc_dou8vec_minmax,
+		.proc_handler	= proc_dointvec
 	},
 	{
 		.procname	= "tcp_app_win",
 		.data		= &init_net.ipv4.sysctl_tcp_app_win,
-		.maxlen		= sizeof(u8),
+		.maxlen		= sizeof(int),
 		.mode		= 0644,
-		.proc_handler	= proc_dou8vec_minmax,
+		.proc_handler	= proc_dointvec
 	},
 	{
 		.procname	= "tcp_adv_win_scale",
@@ -1184,46 +1039,37 @@ static struct ctl_table ipv4_net_table[] = {
 	{
 		.procname	= "tcp_frto",
 		.data		= &init_net.ipv4.sysctl_tcp_frto,
-		.maxlen		= sizeof(u8),
+		.maxlen		= sizeof(int),
 		.mode		= 0644,
-		.proc_handler	= proc_dou8vec_minmax,
+		.proc_handler	= proc_dointvec
 	},
 	{
 		.procname	= "tcp_no_metrics_save",
 		.data		= &init_net.ipv4.sysctl_tcp_nometrics_save,
-		.maxlen		= sizeof(u8),
+		.maxlen		= sizeof(int),
 		.mode		= 0644,
-		.proc_handler	= proc_dou8vec_minmax,
-	},
-	{
-		.procname	= "tcp_no_ssthresh_metrics_save",
-		.data		= &init_net.ipv4.sysctl_tcp_no_ssthresh_metrics_save,
-		.maxlen		= sizeof(u8),
-		.mode		= 0644,
-		.proc_handler	= proc_dou8vec_minmax,
-		.extra1		= SYSCTL_ZERO,
-		.extra2		= SYSCTL_ONE,
+		.proc_handler	= proc_dointvec,
 	},
 	{
 		.procname	= "tcp_moderate_rcvbuf",
 		.data		= &init_net.ipv4.sysctl_tcp_moderate_rcvbuf,
-		.maxlen		= sizeof(u8),
+		.maxlen		= sizeof(int),
 		.mode		= 0644,
-		.proc_handler	= proc_dou8vec_minmax,
+		.proc_handler	= proc_dointvec,
 	},
 	{
 		.procname	= "tcp_tso_win_divisor",
 		.data		= &init_net.ipv4.sysctl_tcp_tso_win_divisor,
-		.maxlen		= sizeof(u8),
+		.maxlen		= sizeof(int),
 		.mode		= 0644,
-		.proc_handler	= proc_dou8vec_minmax,
+		.proc_handler	= proc_dointvec,
 	},
 	{
 		.procname	= "tcp_workaround_signed_windows",
 		.data		= &init_net.ipv4.sysctl_tcp_workaround_signed_windows,
-		.maxlen		= sizeof(u8),
+		.maxlen		= sizeof(int),
 		.mode		= 0644,
-		.proc_handler	= proc_dou8vec_minmax,
+		.proc_handler	= proc_dointvec
 	},
 	{
 		.procname	= "tcp_limit_output_bytes",
@@ -1242,35 +1088,27 @@ static struct ctl_table ipv4_net_table[] = {
 	{
 		.procname	= "tcp_min_tso_segs",
 		.data		= &init_net.ipv4.sysctl_tcp_min_tso_segs,
-		.maxlen		= sizeof(u8),
+		.maxlen		= sizeof(int),
 		.mode		= 0644,
-		.proc_handler	= proc_dou8vec_minmax,
-		.extra1		= SYSCTL_ONE,
-	},
-	{
-		.procname	= "tcp_tso_rtt_log",
-		.data		= &init_net.ipv4.sysctl_tcp_tso_rtt_log,
-		.maxlen		= sizeof(u8),
-		.mode		= 0644,
-		.proc_handler	= proc_dou8vec_minmax,
+		.proc_handler	= proc_dointvec_minmax,
+		.extra1		= &one,
+		.extra2		= &gso_max_segs,
 	},
 	{
 		.procname	= "tcp_min_rtt_wlen",
 		.data		= &init_net.ipv4.sysctl_tcp_min_rtt_wlen,
 		.maxlen		= sizeof(int),
 		.mode		= 0644,
-		.proc_handler	= proc_dointvec_minmax,
-		.extra1		= SYSCTL_ZERO,
-		.extra2		= &one_day_secs
+		.proc_handler	= proc_dointvec
 	},
 	{
 		.procname	= "tcp_autocorking",
 		.data		= &init_net.ipv4.sysctl_tcp_autocorking,
-		.maxlen		= sizeof(u8),
+		.maxlen		= sizeof(int),
 		.mode		= 0644,
-		.proc_handler	= proc_dou8vec_minmax,
-		.extra1		= SYSCTL_ZERO,
-		.extra2		= SYSCTL_ONE,
+		.proc_handler	= proc_dointvec_minmax,
+		.extra1		= &zero,
+		.extra2		= &one,
 	},
 	{
 		.procname	= "tcp_invalid_ratelimit",
@@ -1285,8 +1123,8 @@ static struct ctl_table ipv4_net_table[] = {
 		.maxlen		= sizeof(int),
 		.mode		= 0644,
 		.proc_handler	= proc_dointvec_minmax,
-		.extra1		= SYSCTL_ZERO,
-		.extra2		= SYSCTL_ONE_THOUSAND,
+		.extra1		= &zero,
+		.extra2		= &thousand,
 	},
 	{
 		.procname	= "tcp_pacing_ca_ratio",
@@ -1294,8 +1132,8 @@ static struct ctl_table ipv4_net_table[] = {
 		.maxlen		= sizeof(int),
 		.mode		= 0644,
 		.proc_handler	= proc_dointvec_minmax,
-		.extra1		= SYSCTL_ZERO,
-		.extra2		= SYSCTL_ONE_THOUSAND,
+		.extra1		= &zero,
+		.extra2		= &thousand,
 	},
 	{
 		.procname	= "tcp_wmem",
@@ -1303,7 +1141,7 @@ static struct ctl_table ipv4_net_table[] = {
 		.maxlen		= sizeof(init_net.ipv4.sysctl_tcp_wmem),
 		.mode		= 0644,
 		.proc_handler	= proc_dointvec_minmax,
-		.extra1		= SYSCTL_ONE,
+		.extra1		= &one,
 	},
 	{
 		.procname	= "tcp_rmem",
@@ -1311,53 +1149,7 @@ static struct ctl_table ipv4_net_table[] = {
 		.maxlen		= sizeof(init_net.ipv4.sysctl_tcp_rmem),
 		.mode		= 0644,
 		.proc_handler	= proc_dointvec_minmax,
-		.extra1		= SYSCTL_ONE,
-	},
-	{
-		.procname	= "tcp_comp_sack_delay_ns",
-		.data		= &init_net.ipv4.sysctl_tcp_comp_sack_delay_ns,
-		.maxlen		= sizeof(unsigned long),
-		.mode		= 0644,
-		.proc_handler	= proc_doulongvec_minmax,
-	},
-	{
-		.procname	= "tcp_comp_sack_slack_ns",
-		.data		= &init_net.ipv4.sysctl_tcp_comp_sack_slack_ns,
-		.maxlen		= sizeof(unsigned long),
-		.mode		= 0644,
-		.proc_handler	= proc_doulongvec_minmax,
-	},
-	{
-		.procname	= "tcp_comp_sack_nr",
-		.data		= &init_net.ipv4.sysctl_tcp_comp_sack_nr,
-		.maxlen		= sizeof(u8),
-		.mode		= 0644,
-		.proc_handler	= proc_dou8vec_minmax,
-		.extra1		= SYSCTL_ZERO,
-	},
-	{
-		.procname       = "tcp_reflect_tos",
-		.data           = &init_net.ipv4.sysctl_tcp_reflect_tos,
-		.maxlen         = sizeof(u8),
-		.mode           = 0644,
-		.proc_handler   = proc_dou8vec_minmax,
-		.extra1         = SYSCTL_ZERO,
-		.extra2         = SYSCTL_ONE,
-	},
-	{
-		.procname	= "tcp_ehash_entries",
-		.data		= &init_net.ipv4.sysctl_tcp_child_ehash_entries,
-		.mode		= 0444,
-		.proc_handler	= proc_tcp_ehash_entries,
-	},
-	{
-		.procname	= "tcp_child_ehash_entries",
-		.data		= &init_net.ipv4.sysctl_tcp_child_ehash_entries,
-		.maxlen		= sizeof(unsigned int),
-		.mode		= 0644,
-		.proc_handler	= proc_douintvec_minmax,
-		.extra1		= SYSCTL_ZERO,
-		.extra2		= &tcp_child_ehash_entries_max,
+		.extra1		= &one,
 	},
 	{
 		.procname	= "udp_rmem_min",
@@ -1365,7 +1157,7 @@ static struct ctl_table ipv4_net_table[] = {
 		.maxlen		= sizeof(init_net.ipv4.sysctl_udp_rmem_min),
 		.mode		= 0644,
 		.proc_handler	= proc_dointvec_minmax,
-		.extra1		= SYSCTL_ONE
+		.extra1		= &one
 	},
 	{
 		.procname	= "udp_wmem_min",
@@ -1373,16 +1165,7 @@ static struct ctl_table ipv4_net_table[] = {
 		.maxlen		= sizeof(init_net.ipv4.sysctl_udp_wmem_min),
 		.mode		= 0644,
 		.proc_handler	= proc_dointvec_minmax,
-		.extra1		= SYSCTL_ONE
-	},
-	{
-		.procname	= "fib_notify_on_flag_change",
-		.data		= &init_net.ipv4.sysctl_fib_notify_on_flag_change,
-		.maxlen		= sizeof(u8),
-		.mode		= 0644,
-		.proc_handler	= proc_dou8vec_minmax,
-		.extra1		= SYSCTL_ZERO,
-		.extra2		= SYSCTL_TWO,
+		.extra1		= &one
 	},
 	{ }
 };
@@ -1399,19 +1182,9 @@ static __net_init int ipv4_sysctl_init_net(struct net *net)
 		if (!table)
 			goto err_alloc;
 
-		for (i = 0; i < ARRAY_SIZE(ipv4_net_table) - 1; i++) {
-			if (table[i].data) {
-				/* Update the variables to point into
-				 * the current struct net
-				 */
-				table[i].data += (void *)net - (void *)&init_net;
-			} else {
-				/* Entries without data pointer are global;
-				 * Make them read-only in non-init_net ns
-				 */
-				table[i].mode &= ~0222;
-			}
-		}
+		/* Update the variables to point into the current struct net */
+		for (i = 0; i < ARRAY_SIZE(ipv4_net_table) - 1; i++)
+			table[i].data += (void *)net - (void *)&init_net;
 	}
 
 	net->ipv4.ipv4_hdr = register_net_sysctl(net, "net/ipv4", table);

@@ -11,12 +11,11 @@
 #include <linux/sched.h>
 #include <linux/types.h>
 #include <linux/seq_file.h>
+#include <linux/proc_fs.h>
 #include <linux/exportfs.h>
 
 #include "inotify/inotify.h"
-#include "fanotify/fanotify.h"
-#include "fdinfo.h"
-#include "fsnotify.h"
+#include "../fs/mount.h"
 
 #if defined(CONFIG_PROC_FS)
 
@@ -29,13 +28,13 @@ static void show_fdinfo(struct seq_file *m, struct file *f,
 	struct fsnotify_group *group = f->private_data;
 	struct fsnotify_mark *mark;
 
-	fsnotify_group_lock(group);
+	mutex_lock(&group->mark_mutex);
 	list_for_each_entry(mark, &group->marks_list, g_list) {
 		show(m, mark);
 		if (seq_has_overflowed(m))
 			break;
 	}
-	fsnotify_group_unlock(group);
+	mutex_unlock(&group->mark_mutex);
 }
 
 #if defined(CONFIG_EXPORTFS)
@@ -50,7 +49,7 @@ static void show_mark_fhandle(struct seq_file *m, struct inode *inode)
 	f.handle.handle_bytes = sizeof(f.pad);
 	size = f.handle.handle_bytes >> 2;
 
-	ret = exportfs_encode_inode_fh(inode, (struct fid *)f.handle.f_handle, &size, NULL);
+	ret = exportfs_encode_inode_fh(inode, (struct fid *)f.handle.f_handle, &size, 0);
 	if ((ret == FILEID_INVALID) || (ret < 0)) {
 		WARN_ONCE(1, "Can't encode file handler for inotify: %d\n", ret);
 		return;
@@ -78,15 +77,22 @@ static void inotify_fdinfo(struct seq_file *m, struct fsnotify_mark *mark)
 	struct inotify_inode_mark *inode_mark;
 	struct inode *inode;
 
-	if (mark->connector->type != FSNOTIFY_OBJ_TYPE_INODE)
+	if (!(mark->connector->flags & FSNOTIFY_OBJ_TYPE_INODE))
 		return;
 
 	inode_mark = container_of(mark, struct inotify_inode_mark, fsn_mark);
-	inode = igrab(fsnotify_conn_inode(mark->connector));
+	inode = igrab(mark->connector->inode);
 	if (inode) {
-		seq_printf(m, "inotify wd:%x ino:%lx sdev:%x mask:%x ignored_mask:0 ",
+		/*
+		 * IN_ALL_EVENTS represents all of the mask bits
+		 * that we expose to userspace.  There is at
+		 * least one bit (FS_EVENT_ON_CHILD) which is
+		 * used only internally to the kernel.
+		 */
+		u32 mask = mark->mask & IN_ALL_EVENTS;
+		seq_printf(m, "inotify wd:%x ino:%lx sdev:%x mask:%x ignored_mask:%x ",
 			   inode_mark->wd, inode->i_ino, inode->i_sb->s_dev,
-			   inotify_mark_user_mask(mark));
+			   mask, mark->ignored_mask);
 		show_mark_fhandle(m, inode);
 		seq_putc(m, '\n');
 		iput(inode);
@@ -104,39 +110,58 @@ void inotify_show_fdinfo(struct seq_file *m, struct file *f)
 
 static void fanotify_fdinfo(struct seq_file *m, struct fsnotify_mark *mark)
 {
-	unsigned int mflags = fanotify_mark_user_flags(mark);
+	unsigned int mflags = 0;
 	struct inode *inode;
 
-	if (mark->connector->type == FSNOTIFY_OBJ_TYPE_INODE) {
-		inode = igrab(fsnotify_conn_inode(mark->connector));
+	if (mark->flags & FSNOTIFY_MARK_FLAG_IGNORED_SURV_MODIFY)
+		mflags |= FAN_MARK_IGNORED_SURV_MODIFY;
+
+	if (mark->connector->flags & FSNOTIFY_OBJ_TYPE_INODE) {
+		inode = igrab(mark->connector->inode);
 		if (!inode)
 			return;
 		seq_printf(m, "fanotify ino:%lx sdev:%x mflags:%x mask:%x ignored_mask:%x ",
 			   inode->i_ino, inode->i_sb->s_dev,
-			   mflags, mark->mask, mark->ignore_mask);
+			   mflags, mark->mask, mark->ignored_mask);
 		show_mark_fhandle(m, inode);
 		seq_putc(m, '\n');
 		iput(inode);
-	} else if (mark->connector->type == FSNOTIFY_OBJ_TYPE_VFSMOUNT) {
-		struct mount *mnt = fsnotify_conn_mount(mark->connector);
+	} else if (mark->connector->flags & FSNOTIFY_OBJ_TYPE_VFSMOUNT) {
+		struct mount *mnt = real_mount(mark->connector->mnt);
 
 		seq_printf(m, "fanotify mnt_id:%x mflags:%x mask:%x ignored_mask:%x\n",
-			   mnt->mnt_id, mflags, mark->mask, mark->ignore_mask);
-	} else if (mark->connector->type == FSNOTIFY_OBJ_TYPE_SB) {
-		struct super_block *sb = fsnotify_conn_sb(mark->connector);
-
-		seq_printf(m, "fanotify sdev:%x mflags:%x mask:%x ignored_mask:%x\n",
-			   sb->s_dev, mflags, mark->mask, mark->ignore_mask);
+			   mnt->mnt_id, mflags, mark->mask, mark->ignored_mask);
 	}
 }
 
 void fanotify_show_fdinfo(struct seq_file *m, struct file *f)
 {
 	struct fsnotify_group *group = f->private_data;
+	unsigned int flags = 0;
+
+	switch (group->priority) {
+	case FS_PRIO_0:
+		flags |= FAN_CLASS_NOTIF;
+		break;
+	case FS_PRIO_1:
+		flags |= FAN_CLASS_CONTENT;
+		break;
+	case FS_PRIO_2:
+		flags |= FAN_CLASS_PRE_CONTENT;
+		break;
+	}
+
+	if (group->max_events == UINT_MAX)
+		flags |= FAN_UNLIMITED_QUEUE;
+
+	if (group->fanotify_data.max_marks == UINT_MAX)
+		flags |= FAN_UNLIMITED_MARKS;
+
+	if (group->fanotify_data.audit)
+		flags |= FAN_ENABLE_AUDIT;
 
 	seq_printf(m, "fanotify flags:%x event-flags:%x\n",
-		   group->fanotify_data.flags & FANOTIFY_INIT_FLAGS,
-		   group->fanotify_data.f_flags);
+		   flags, group->fanotify_data.f_flags);
 
 	show_fdinfo(m, f, fanotify_fdinfo);
 }

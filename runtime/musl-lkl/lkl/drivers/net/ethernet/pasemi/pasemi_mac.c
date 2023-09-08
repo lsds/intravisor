@@ -1,8 +1,19 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (C) 2006-2007 PA Semi, Inc
  *
  * Driver for the PA Semi PWRficient onchip 1G/10G Ethernet MACs
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, see <http://www.gnu.org/licenses/>.
  */
 
 #include <linux/module.h>
@@ -221,7 +232,7 @@ static int pasemi_mac_set_mac_addr(struct net_device *dev, void *p)
 	if (!is_valid_ether_addr(addr->sa_data))
 		return -EADDRNOTAVAIL;
 
-	eth_hw_addr_set(dev, addr->sa_data);
+	memcpy(dev->dev_addr, addr->sa_data, dev->addr_len);
 
 	adr0 = dev->dev_addr[2] << 24 |
 	       dev->dev_addr[3] << 16 |
@@ -247,13 +258,12 @@ static int pasemi_mac_unmap_tx_skb(struct pasemi_mac *mac,
 	int f;
 	struct pci_dev *pdev = mac->dma_pdev;
 
-	dma_unmap_single(&pdev->dev, dmas[0], skb_headlen(skb), DMA_TO_DEVICE);
+	pci_unmap_single(pdev, dmas[0], skb_headlen(skb), PCI_DMA_TODEVICE);
 
 	for (f = 0; f < nfrags; f++) {
 		const skb_frag_t *frag = &skb_shinfo(skb)->frags[f];
 
-		dma_unmap_page(&pdev->dev, dmas[f + 1], skb_frag_size(frag),
-			       DMA_TO_DEVICE);
+		pci_unmap_page(pdev, dmas[f+1], skb_frag_size(frag), PCI_DMA_TODEVICE);
 	}
 	dev_kfree_skb_irq(skb);
 
@@ -380,9 +390,8 @@ static int pasemi_mac_setup_rx_resources(const struct net_device *dev)
 	spin_lock_init(&ring->lock);
 
 	ring->size = RX_RING_SIZE;
-	ring->ring_info = kcalloc(RX_RING_SIZE,
-				  sizeof(struct pasemi_mac_buffer),
-				  GFP_KERNEL);
+	ring->ring_info = kzalloc(sizeof(struct pasemi_mac_buffer) *
+				  RX_RING_SIZE, GFP_KERNEL);
 
 	if (!ring->ring_info)
 		goto out_ring_info;
@@ -391,9 +400,9 @@ static int pasemi_mac_setup_rx_resources(const struct net_device *dev)
 	if (pasemi_dma_alloc_ring(&ring->chan, RX_RING_SIZE))
 		goto out_ring_desc;
 
-	ring->buffers = dma_alloc_coherent(&mac->dma_pdev->dev,
-					   RX_RING_SIZE * sizeof(u64),
-					   &ring->buf_dma, GFP_KERNEL);
+	ring->buffers = dma_zalloc_coherent(&mac->dma_pdev->dev,
+					    RX_RING_SIZE * sizeof(u64),
+					    &ring->buf_dma, GFP_KERNEL);
 	if (!ring->buffers)
 		goto out_ring_desc;
 
@@ -464,9 +473,8 @@ pasemi_mac_setup_tx_resources(const struct net_device *dev)
 	spin_lock_init(&ring->lock);
 
 	ring->size = TX_RING_SIZE;
-	ring->ring_info = kcalloc(TX_RING_SIZE,
-				  sizeof(struct pasemi_mac_buffer),
-				  GFP_KERNEL);
+	ring->ring_info = kzalloc(sizeof(struct pasemi_mac_buffer) *
+				  TX_RING_SIZE, GFP_KERNEL);
 	if (!ring->ring_info)
 		goto out_ring_info;
 
@@ -549,8 +557,10 @@ static void pasemi_mac_free_rx_buffers(struct pasemi_mac *mac)
 	for (i = 0; i < RX_RING_SIZE; i++) {
 		info = &RX_DESC_INFO(rx, i);
 		if (info->skb && info->dma) {
-			dma_unmap_single(&mac->dma_pdev->dev, info->dma,
-					 info->skb->len, DMA_FROM_DEVICE);
+			pci_unmap_single(mac->dma_pdev,
+					 info->dma,
+					 info->skb->len,
+					 PCI_DMA_FROMDEVICE);
 			dev_kfree_skb_any(info->skb);
 		}
 		info->dma = 0;
@@ -599,11 +609,11 @@ static void pasemi_mac_replenish_rx_ring(struct net_device *dev,
 		if (unlikely(!skb))
 			break;
 
-		dma = dma_map_single(&mac->dma_pdev->dev, skb->data,
+		dma = pci_map_single(mac->dma_pdev, skb->data,
 				     mac->bufsz - LOCAL_SKB_ALIGN,
-				     DMA_FROM_DEVICE);
+				     PCI_DMA_FROMDEVICE);
 
-		if (dma_mapping_error(&mac->dma_pdev->dev, dma)) {
+		if (unlikely(pci_dma_mapping_error(mac->dma_pdev, dma))) {
 			dev_kfree_skb_irq(info->skb);
 			break;
 		}
@@ -740,9 +750,8 @@ static int pasemi_mac_clean_rx(struct pasemi_mac_rxring *rx,
 
 		len = (macrx & XCT_MACRX_LLEN_M) >> XCT_MACRX_LLEN_S;
 
-		dma_unmap_single(&pdev->dev, dma,
-				 mac->bufsz - LOCAL_SKB_ALIGN,
-				 DMA_FROM_DEVICE);
+		pci_unmap_single(pdev, dma, mac->bufsz - LOCAL_SKB_ALIGN,
+				 PCI_DMA_FROMDEVICE);
 
 		if (macrx & XCT_MACRX_CRC) {
 			/* CRC error flagged */
@@ -1042,6 +1051,7 @@ static int pasemi_mac_phy_init(struct net_device *dev)
 
 	dn = pci_device_to_OF_node(mac->pdev);
 	phy_dn = of_parse_phandle(dn, "phy-handle", 0);
+	of_node_put(phy_dn);
 
 	mac->link = 0;
 	mac->speed = 0;
@@ -1050,7 +1060,6 @@ static int pasemi_mac_phy_init(struct net_device *dev)
 	phydev = of_phy_connect(dev, phy_dn, &pasemi_adjust_link, 0,
 				PHY_INTERFACE_MODE_SGMII);
 
-	of_node_put(phy_dn);
 	if (!phydev) {
 		printk(KERN_ERR "%s: Could not attach to phy\n", dev->name);
 		return -ENODEV;
@@ -1078,20 +1087,16 @@ static int pasemi_mac_open(struct net_device *dev)
 
 	mac->tx = pasemi_mac_setup_tx_resources(dev);
 
-	if (!mac->tx) {
-		ret = -ENOMEM;
+	if (!mac->tx)
 		goto out_tx_ring;
-	}
 
 	/* We might already have allocated rings in case mtu was changed
 	 * before interface was brought up.
 	 */
 	if (dev->mtu > 1500 && !mac->num_cs) {
 		pasemi_mac_setup_csrings(mac);
-		if (!mac->num_cs) {
-			ret = -ENOMEM;
+		if (!mac->num_cs)
 			goto out_tx_ring;
-		}
 	}
 
 	/* Zero out rmon counters */
@@ -1348,7 +1353,7 @@ static void pasemi_mac_queue_csdesc(const struct sk_buff *skb,
 	const int nh_off = skb_network_offset(skb);
 	const int nh_len = skb_network_header_len(skb);
 	const int nfrags = skb_shinfo(skb)->nr_frags;
-	int cs_size, i, fill, hdr, evt;
+	int cs_size, i, fill, hdr, cpyhdr, evt;
 	dma_addr_t csdma;
 
 	fund = XCT_FUN_ST | XCT_FUN_RR_8BRES |
@@ -1389,6 +1394,7 @@ static void pasemi_mac_queue_csdesc(const struct sk_buff *skb,
 		fill++;
 
 	/* Copy the result into the TCP packet */
+	cpyhdr = fill;
 	CS_DESC(csring, fill++) = XCT_FUN_O | XCT_FUN_FUN(csring->fun) |
 				  XCT_FUN_LLEN(2) | XCT_FUN_SE;
 	CS_DESC(csring, fill++) = XCT_PTR_LEN(2) | XCT_PTR_ADDR(cs_dest) | XCT_PTR_T;
@@ -1444,10 +1450,10 @@ static int pasemi_mac_start_tx(struct sk_buff *skb, struct net_device *dev)
 
 	nfrags = skb_shinfo(skb)->nr_frags;
 
-	map[0] = dma_map_single(&mac->dma_pdev->dev, skb->data,
-				skb_headlen(skb), DMA_TO_DEVICE);
+	map[0] = pci_map_single(mac->dma_pdev, skb->data, skb_headlen(skb),
+				PCI_DMA_TODEVICE);
 	map_size[0] = skb_headlen(skb);
-	if (dma_mapping_error(&mac->dma_pdev->dev, map[0]))
+	if (pci_dma_mapping_error(mac->dma_pdev, map[0]))
 		goto out_err_nolock;
 
 	for (i = 0; i < nfrags; i++) {
@@ -1534,8 +1540,8 @@ out_err:
 	spin_unlock_irqrestore(&txring->lock, flags);
 out_err_nolock:
 	while (nfrags--)
-		dma_unmap_single(&mac->dma_pdev->dev, map[nfrags],
-				 map_size[nfrags], DMA_TO_DEVICE);
+		pci_unmap_single(mac->dma_pdev, map[nfrags], map_size[nfrags],
+				 PCI_DMA_TODEVICE);
 
 	return NETDEV_TX_BUSY;
 }
@@ -1697,7 +1703,7 @@ pasemi_mac_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	mac->pdev = pdev;
 	mac->netdev = dev;
 
-	netif_napi_add(dev, &mac->napi, pasemi_mac_poll);
+	netif_napi_add(dev, &mac->napi, pasemi_mac_poll, 64);
 
 	dev->features = NETIF_F_IP_CSUM | NETIF_F_LLTX | NETIF_F_SG |
 			NETIF_F_HIGHDMA | NETIF_F_GSO;
@@ -1708,7 +1714,6 @@ pasemi_mac_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 		err = -ENODEV;
 		goto out;
 	}
-	dma_set_mask(&mac->dma_pdev->dev, DMA_BIT_MASK(64));
 
 	mac->iob_pdev = pci_get_device(PCI_VENDOR_ID_PASEMI, 0xa001, NULL);
 	if (!mac->iob_pdev) {
@@ -1722,7 +1727,7 @@ pasemi_mac_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 		err = -ENODEV;
 		goto out;
 	}
-	eth_hw_addr_set(dev, mac->mac_addr);
+	memcpy(dev->dev_addr, mac->mac_addr, sizeof(mac->mac_addr));
 
 	ret = mac_to_intf(mac);
 	if (ret < 0) {
@@ -1831,7 +1836,7 @@ static void __exit pasemi_mac_cleanup_module(void)
 	pci_unregister_driver(&pasemi_mac_driver);
 }
 
-static int pasemi_mac_init_module(void)
+int pasemi_mac_init_module(void)
 {
 	int err;
 

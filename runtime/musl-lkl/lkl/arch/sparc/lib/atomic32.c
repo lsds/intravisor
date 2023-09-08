@@ -29,7 +29,7 @@ static DEFINE_SPINLOCK(dummy);
 #endif /* SMP */
 
 #define ATOMIC_FETCH_OP(op, c_op)					\
-int arch_atomic_fetch_##op(int i, atomic_t *v)				\
+int atomic_fetch_##op(int i, atomic_t *v)				\
 {									\
 	int ret;							\
 	unsigned long flags;						\
@@ -41,10 +41,10 @@ int arch_atomic_fetch_##op(int i, atomic_t *v)				\
 	spin_unlock_irqrestore(ATOMIC_HASH(v), flags);			\
 	return ret;							\
 }									\
-EXPORT_SYMBOL(arch_atomic_fetch_##op);
+EXPORT_SYMBOL(atomic_fetch_##op);
 
 #define ATOMIC_OP_RETURN(op, c_op)					\
-int arch_atomic_##op##_return(int i, atomic_t *v)			\
+int atomic_##op##_return(int i, atomic_t *v)				\
 {									\
 	int ret;							\
 	unsigned long flags;						\
@@ -55,7 +55,7 @@ int arch_atomic_##op##_return(int i, atomic_t *v)			\
 	spin_unlock_irqrestore(ATOMIC_HASH(v), flags);			\
 	return ret;							\
 }									\
-EXPORT_SYMBOL(arch_atomic_##op##_return);
+EXPORT_SYMBOL(atomic_##op##_return);
 
 ATOMIC_OP_RETURN(add, +=)
 
@@ -67,7 +67,7 @@ ATOMIC_FETCH_OP(xor, ^=)
 #undef ATOMIC_FETCH_OP
 #undef ATOMIC_OP_RETURN
 
-int arch_atomic_xchg(atomic_t *v, int new)
+int atomic_xchg(atomic_t *v, int new)
 {
 	int ret;
 	unsigned long flags;
@@ -78,9 +78,9 @@ int arch_atomic_xchg(atomic_t *v, int new)
 	spin_unlock_irqrestore(ATOMIC_HASH(v), flags);
 	return ret;
 }
-EXPORT_SYMBOL(arch_atomic_xchg);
+EXPORT_SYMBOL(atomic_xchg);
 
-int arch_atomic_cmpxchg(atomic_t *v, int old, int new)
+int atomic_cmpxchg(atomic_t *v, int old, int new)
 {
 	int ret;
 	unsigned long flags;
@@ -93,9 +93,9 @@ int arch_atomic_cmpxchg(atomic_t *v, int old, int new)
 	spin_unlock_irqrestore(ATOMIC_HASH(v), flags);
 	return ret;
 }
-EXPORT_SYMBOL(arch_atomic_cmpxchg);
+EXPORT_SYMBOL(atomic_cmpxchg);
 
-int arch_atomic_fetch_add_unless(atomic_t *v, int a, int u)
+int __atomic_add_unless(atomic_t *v, int a, int u)
 {
 	int ret;
 	unsigned long flags;
@@ -107,10 +107,10 @@ int arch_atomic_fetch_add_unless(atomic_t *v, int a, int u)
 	spin_unlock_irqrestore(ATOMIC_HASH(v), flags);
 	return ret;
 }
-EXPORT_SYMBOL(arch_atomic_fetch_add_unless);
+EXPORT_SYMBOL(__atomic_add_unless);
 
 /* Atomic operations are already serializing */
-void arch_atomic_set(atomic_t *v, int i)
+void atomic_set(atomic_t *v, int i)
 {
 	unsigned long flags;
 
@@ -118,9 +118,9 @@ void arch_atomic_set(atomic_t *v, int i)
 	v->counter = i;
 	spin_unlock_irqrestore(ATOMIC_HASH(v), flags);
 }
-EXPORT_SYMBOL(arch_atomic_set);
+EXPORT_SYMBOL(atomic_set);
 
-unsigned long sp32___set_bit(unsigned long *addr, unsigned long mask)
+unsigned long ___set_bit(unsigned long *addr, unsigned long mask)
 {
 	unsigned long old, flags;
 
@@ -131,9 +131,9 @@ unsigned long sp32___set_bit(unsigned long *addr, unsigned long mask)
 
 	return old & mask;
 }
-EXPORT_SYMBOL(sp32___set_bit);
+EXPORT_SYMBOL(___set_bit);
 
-unsigned long sp32___clear_bit(unsigned long *addr, unsigned long mask)
+unsigned long ___clear_bit(unsigned long *addr, unsigned long mask)
 {
 	unsigned long old, flags;
 
@@ -144,9 +144,9 @@ unsigned long sp32___clear_bit(unsigned long *addr, unsigned long mask)
 
 	return old & mask;
 }
-EXPORT_SYMBOL(sp32___clear_bit);
+EXPORT_SYMBOL(___clear_bit);
 
-unsigned long sp32___change_bit(unsigned long *addr, unsigned long mask)
+unsigned long ___change_bit(unsigned long *addr, unsigned long mask)
 {
 	unsigned long old, flags;
 
@@ -157,7 +157,7 @@ unsigned long sp32___change_bit(unsigned long *addr, unsigned long mask)
 
 	return old & mask;
 }
-EXPORT_SYMBOL(sp32___change_bit);
+EXPORT_SYMBOL(___change_bit);
 
 unsigned long __cmpxchg_u32(volatile u32 *ptr, u32 old, u32 new)
 {

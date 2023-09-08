@@ -23,6 +23,7 @@
 #include <linux/mutex.h>
 #include <linux/cma.h>
 #include <linux/mm.h>
+#include <asm/compat.h>
 #include <asm/cpcmd.h>
 #include <asm/debug.h>
 #include <asm/vmcp.h>
@@ -43,8 +44,6 @@ static struct cma *vmcp_cma;
 
 static int __init early_parse_vmcp_cma(char *p)
 {
-	if (!p)
-		return 1;
 	vmcp_cma_size = ALIGN(memparse(p, NULL), PAGE_SIZE);
 	return 0;
 }
@@ -70,9 +69,9 @@ static void vmcp_response_alloc(struct vmcp_session *session)
 	 * anymore the system won't work anyway.
 	 */
 	if (order > 2)
-		page = cma_alloc(vmcp_cma, nr_pages, 0, false);
+		page = cma_alloc(vmcp_cma, nr_pages, 0, GFP_KERNEL);
 	if (page) {
-		session->response = (char *)page_to_virt(page);
+		session->response = (char *)page_to_phys(page);
 		session->cma_alloc = 1;
 		return;
 	}
@@ -89,7 +88,7 @@ static void vmcp_response_free(struct vmcp_session *session)
 	order = get_order(session->bufsize);
 	nr_pages = ALIGN(session->bufsize, PAGE_SIZE) >> PAGE_SHIFT;
 	if (session->cma_alloc) {
-		page = virt_to_page((unsigned long)session->response);
+		page = phys_to_page((unsigned long)session->response);
 		cma_release(vmcp_cma, page, nr_pages);
 		session->cma_alloc = 0;
 	} else {

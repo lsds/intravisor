@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * ALPS touchpad PS/2 mouse driver
  *
@@ -10,6 +9,10 @@
  *
  * ALPS detection, tap switching and status querying info is taken from
  * tpconfig utility (by C. Scott Ananian and Bruce Kall).
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License version 2 as published by
+ * the Free Software Foundation.
  */
 
 #include <linux/slab.h>
@@ -21,7 +24,6 @@
 
 #include "psmouse.h"
 #include "alps.h"
-#include "trackpoint.h"
 
 /*
  * Definitions for ALPS version 3 and 4 command mode protocol
@@ -210,7 +212,7 @@ static void alps_set_abs_params_v7(struct alps_data *priv,
 static void alps_set_abs_params_ss4_v2(struct alps_data *priv,
 				       struct input_dev *dev1);
 
-/* Packet formats are described in Documentation/input/devices/alps.rst */
+/* Packet formats are described in Documentation/input/alps.txt */
 
 static bool alps_is_valid_first_byte(struct alps_data *priv,
 				     unsigned char data)
@@ -986,7 +988,7 @@ static void alps_get_finger_coordinate_v7(struct input_mt_pos *mt,
 	case V7_PACKET_ID_TWO:
 		mt[1].x &= ~0x000F;
 		mt[1].y |= 0x000F;
-		/* Detect false-positive touches where x & y report max value */
+		/* Detect false-postive touches where x & y report max value */
 		if (mt[1].y == 0x7ff && mt[1].x == 0xff0) {
 			mt[1].x = 0;
 			/* y gets set to 0 at the end of this function */
@@ -1929,7 +1931,7 @@ static int alps_monitor_mode(struct psmouse *psmouse, bool enable)
 static int alps_absolute_mode_v6(struct psmouse *psmouse)
 {
 	u16 reg_val = 0x181;
-	int ret;
+	int ret = -1;
 
 	/* enter monitor mode, to write the register */
 	if (alps_monitor_mode(psmouse, true))
@@ -2047,10 +2049,13 @@ static int alps_hw_init_v1_v2(struct psmouse *psmouse)
 	return 0;
 }
 
-/* Must be in passthrough mode when calling this function */
-static int alps_trackstick_enter_extended_mode_v3_v6(struct psmouse *psmouse)
+static int alps_hw_init_v6(struct psmouse *psmouse)
 {
 	unsigned char param[2] = {0xC8, 0x14};
+
+	/* Enter passthrough mode to let trackpoint enter 6byte raw mode */
+	if (alps_passthrough_mode_v2(psmouse, true))
+		return -1;
 
 	if (ps2_command(&psmouse->ps2dev, NULL, PSMOUSE_CMD_SETSCALE11) ||
 	    ps2_command(&psmouse->ps2dev, NULL, PSMOUSE_CMD_SETSCALE11) ||
@@ -2059,24 +2064,8 @@ static int alps_trackstick_enter_extended_mode_v3_v6(struct psmouse *psmouse)
 	    ps2_command(&psmouse->ps2dev, &param[1], PSMOUSE_CMD_SETRATE))
 		return -1;
 
-	return 0;
-}
-
-static int alps_hw_init_v6(struct psmouse *psmouse)
-{
-	int ret;
-
-	/* Enter passthrough mode to let trackpoint enter 6byte raw mode */
-	if (alps_passthrough_mode_v2(psmouse, true))
-		return -1;
-
-	ret = alps_trackstick_enter_extended_mode_v3_v6(psmouse);
-
 	if (alps_passthrough_mode_v2(psmouse, false))
 		return -1;
-
-	if (ret)
-		return ret;
 
 	if (alps_absolute_mode_v6(psmouse)) {
 		psmouse_err(psmouse, "Failed to enable absolute mode\n");
@@ -2151,17 +2140,9 @@ error:
 
 static int alps_setup_trackstick_v3(struct psmouse *psmouse, int reg_base)
 {
+	struct ps2dev *ps2dev = &psmouse->ps2dev;
 	int ret = 0;
-	int reg_val;
 	unsigned char param[4];
-
-	/*
-	 * We need to configure trackstick to report data for touchpad in
-	 * extended format. And also we need to tell touchpad to expect data
-	 * from trackstick in extended format. Without this configuration
-	 * trackstick packets sent from touchpad are in basic format which is
-	 * different from what we expect.
-	 */
 
 	if (alps_passthrough_mode_v3(psmouse, reg_base, true))
 		return -EIO;
@@ -2180,36 +2161,39 @@ static int alps_setup_trackstick_v3(struct psmouse *psmouse, int reg_base)
 		ret = -ENODEV;
 	} else {
 		psmouse_dbg(psmouse, "trackstick E7 report: %3ph\n", param);
-		if (alps_trackstick_enter_extended_mode_v3_v6(psmouse)) {
-			psmouse_err(psmouse, "Failed to enter into trackstick extended mode\n");
-			ret = -EIO;
-		}
-	}
 
-	if (alps_passthrough_mode_v3(psmouse, reg_base, false))
-		return -EIO;
-
-	if (ret)
-		return ret;
-
-	if (alps_enter_command_mode(psmouse))
-		return -EIO;
-
-	reg_val = alps_command_mode_read_reg(psmouse, reg_base + 0x08);
-	if (reg_val == -1) {
-		ret = -EIO;
-	} else {
 		/*
-		 * Tell touchpad that trackstick is now in extended mode.
-		 * If bit 1 isn't set the packet format is different.
+		 * Not sure what this does, but it is absolutely
+		 * essential. Without it, the touchpad does not
+		 * work at all and the trackstick just emits normal
+		 * PS/2 packets.
 		 */
-		reg_val |= BIT(1);
-		if (__alps_command_mode_write_reg(psmouse, reg_val))
+		if (ps2_command(ps2dev, NULL, PSMOUSE_CMD_SETSCALE11) ||
+		    ps2_command(ps2dev, NULL, PSMOUSE_CMD_SETSCALE11) ||
+		    ps2_command(ps2dev, NULL, PSMOUSE_CMD_SETSCALE11) ||
+		    alps_command_mode_send_nibble(psmouse, 0x9) ||
+		    alps_command_mode_send_nibble(psmouse, 0x4)) {
+			psmouse_err(psmouse,
+				    "Error sending magic E6 sequence\n");
+			ret = -EIO;
+			goto error;
+		}
+
+		/*
+		 * This ensures the trackstick packets are in the format
+		 * supported by this driver. If bit 1 isn't set the packet
+		 * format is different.
+		 */
+		if (alps_enter_command_mode(psmouse) ||
+		    alps_command_mode_write_reg(psmouse,
+						reg_base + 0x08, 0x82) ||
+		    alps_exit_command_mode(psmouse))
 			ret = -EIO;
 	}
 
-	if (alps_exit_command_mode(psmouse))
-		return -EIO;
+error:
+	if (alps_passthrough_mode_v3(psmouse, reg_base, false))
+		ret = -EIO;
 
 	return ret;
 }
@@ -2862,23 +2846,6 @@ static const struct alps_protocol_info *alps_match_table(unsigned char *e7,
 	return NULL;
 }
 
-static bool alps_is_cs19_trackpoint(struct psmouse *psmouse)
-{
-	u8 param[2] = { 0 };
-
-	if (ps2_command(&psmouse->ps2dev,
-			param, MAKE_PS2_CMD(0, 2, TP_READ_ID)))
-		return false;
-
-	/*
-	 * param[0] contains the trackpoint device variant_id while
-	 * param[1] contains the firmware_id. So far all alps
-	 * trackpoint-only devices have their variant_ids equal
-	 * TP_VARIANT_ALPS and their firmware_ids are in 0x20~0x2f range.
-	 */
-	return param[0] == TP_VARIANT_ALPS && ((param[1] & 0xf0) == 0x20);
-}
-
 static int alps_identify(struct psmouse *psmouse, struct alps_data *priv)
 {
 	const struct alps_protocol_info *protocol;
@@ -3178,20 +3145,6 @@ int alps_detect(struct psmouse *psmouse, bool set_properties)
 	error = alps_identify(psmouse, NULL);
 	if (error)
 		return error;
-
-	/*
-	 * ALPS cs19 is a trackpoint-only device, and uses different
-	 * protocol than DualPoint ones, so we return -EINVAL here and let
-	 * trackpoint.c drive this device. If the trackpoint driver is not
-	 * enabled, the device will fall back to a bare PS/2 mouse.
-	 * If ps2_command() fails here, we depend on the immediately
-	 * followed psmouse_reset() to reset the device to normal state.
-	 */
-	if (alps_is_cs19_trackpoint(psmouse)) {
-		psmouse_dbg(psmouse,
-			    "ALPS CS19 trackpoint-only device detected, ignoring\n");
-		return -EINVAL;
-	}
 
 	/*
 	 * Reset the device to make sure it is fully operational:

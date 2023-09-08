@@ -8,13 +8,14 @@
 #include "vmlinux-xip.lds.S"
 #else
 
-#include <linux/pgtable.h>
-#include <asm/vmlinux.lds.h>
+#include <asm-generic/vmlinux.lds.h>
 #include <asm/cache.h>
 #include <asm/thread_info.h>
 #include <asm/memory.h>
-#include <asm/mpu.h>
 #include <asm/page.h>
+#include <asm/pgtable.h>
+
+#include "vmlinux.lds.h"
 
 OUTPUT_ARCH(arm)
 ENTRY(stext)
@@ -41,13 +42,9 @@ SECTIONS
 #ifndef CONFIG_SMP_ON_UP
 		*(.alt.smp.init)
 #endif
-#ifndef CONFIG_ARM_UNWIND
-		*(.ARM.exidx) *(.ARM.exidx.*)
-		*(.ARM.extab) *(.ARM.extab.*)
-#endif
 	}
 
-	. = KERNEL_OFFSET + TEXT_OFFSET;
+	. = PAGE_OFFSET + TEXT_OFFSET;
 	.head.text : {
 		_text = .;
 		HEAD_TEXT
@@ -57,9 +54,6 @@ SECTIONS
 	. = ALIGN(1<<SECTION_SHIFT);
 #endif
 
-#ifdef CONFIG_ARM_MPU
-	. = ALIGN(PMSAv8_MINALIGN);
-#endif
 	.text : {			/* Real text segment		*/
 		_stext = .;		/* Text and read-only data	*/
 		ARM_TEXT
@@ -82,6 +76,8 @@ SECTIONS
 #ifdef CONFIG_ARM_UNWIND
 	ARM_UNWIND_SECTIONS
 #endif
+
+	NOTES
 
 #ifdef CONFIG_STRICT_KERNEL_RWX
 	. = ALIGN(1<<SECTION_SHIFT);
@@ -138,25 +134,18 @@ SECTIONS
 #ifdef CONFIG_STRICT_KERNEL_RWX
 	. = ALIGN(1<<SECTION_SHIFT);
 #else
-	. = ALIGN(THREAD_ALIGN);
+	. = ALIGN(THREAD_SIZE);
 #endif
 	__init_end = .;
 
 	_sdata = .;
-	RW_DATA(L1_CACHE_BYTES, PAGE_SIZE, THREAD_ALIGN)
+	RW_DATA_SECTION(L1_CACHE_BYTES, PAGE_SIZE, THREAD_SIZE)
 	_edata = .;
 
 	BSS_SECTION(0, 0, 0)
-#ifdef CONFIG_ARM_MPU
-	. = ALIGN(PMSAv8_MINALIGN);
-#endif
 	_end = .;
 
 	STABS_DEBUG
-	DWARF_DEBUG
-	ARM_DETAILS
-
-	ARM_ASSERTS
 }
 
 #ifdef CONFIG_STRICT_KERNEL_RWX
@@ -174,8 +163,14 @@ __start_rodata_section_aligned = ALIGN(__start_rodata, 1 << SECTION_SHIFT);
  * binutils is too old (for other reasons as well)
  */
 ASSERT((__proc_info_end - __proc_info_begin), "missing CPU support")
-#ifndef CONFIG_COMPILE_TEST
 ASSERT((__arch_info_end - __arch_info_begin), "no machine record defined")
-#endif
+
+/*
+ * The HYP init code can't be more than a page long,
+ * and should not cross a page boundary.
+ * The above comment applies as well.
+ */
+ASSERT(__hyp_idmap_text_end - (__hyp_idmap_text_start & PAGE_MASK) <= PAGE_SIZE,
+	"HYP init code too big or misaligned")
 
 #endif /* CONFIG_XIP_KERNEL */

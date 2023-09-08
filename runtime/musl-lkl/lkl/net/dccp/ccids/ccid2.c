@@ -1,10 +1,23 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  *  Copyright (c) 2005, 2006 Andrea Bittau <a.bittau@cs.ucl.ac.uk>
  *
  *  Changes to meet Linux coding standards, and DCCP infrastructure fixes.
  *
  *  Copyright (c) 2006 Arnaldo Carvalho de Melo <acme@conectiva.com.br>
+ *
+ *  This program is free software; you can redistribute it and/or modify
+ *  it under the terms of the GNU General Public License as published by
+ *  the Free Software Foundation; either version 2 of the License, or
+ *  (at your option) any later version.
+ *
+ *  This program is distributed in the hope that it will be useful,
+ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *  GNU General Public License for more details.
+ *
+ *  You should have received a copy of the GNU General Public License
+ *  along with this program; if not, write to the Free Software
+ *  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
 /*
@@ -33,8 +46,7 @@ static int ccid2_hc_tx_alloc_seq(struct ccid2_hc_tx_sock *hc)
 		return -ENOMEM;
 
 	/* allocate buffer and initialize linked list */
-	seqp = kmalloc_array(CCID2_SEQBUF_LEN, sizeof(struct ccid2_seq),
-			     gfp_any());
+	seqp = kmalloc(CCID2_SEQBUF_LEN * sizeof(struct ccid2_seq), gfp_any());
 	if (seqp == NULL)
 		return -ENOMEM;
 
@@ -181,9 +193,6 @@ MODULE_PARM_DESC(ccid2_do_cwv, "Perform RFC2861 Congestion Window Validation");
 
 /**
  * ccid2_update_used_window  -  Track how much of cwnd is actually used
- * @hc: socket to update window
- * @new_wnd: new window values to add into the filter
- *
  * This is done in addition to CWV. The sender needs to have an idea of how many
  * packets may be in flight, to set the local Sequence Window value accordingly
  * (RFC 4340, 7.5.2). The CWV mechanism is exploited to keep track of the
@@ -219,16 +228,14 @@ static void ccid2_cwnd_restart(struct sock *sk, const u32 now)
 	struct ccid2_hc_tx_sock *hc = ccid2_hc_tx_sk(sk);
 	u32 cwnd = hc->tx_cwnd, restart_cwnd,
 	    iwnd = rfc3390_bytes_to_packets(dccp_sk(sk)->dccps_mss_cache);
-	s32 delta = now - hc->tx_lsndtime;
 
 	hc->tx_ssthresh = max(hc->tx_ssthresh, (cwnd >> 1) + (cwnd >> 2));
 
 	/* don't reduce cwnd below the initial window (IW) */
 	restart_cwnd = min(cwnd, iwnd);
-
-	while ((delta -= hc->tx_rto) >= 0 && cwnd > restart_cwnd)
-		cwnd >>= 1;
+	cwnd >>= (now - hc->tx_lsndtime) / hc->tx_rto;
 	hc->tx_cwnd = max(cwnd, restart_cwnd);
+
 	hc->tx_cwnd_stamp = now;
 	hc->tx_cwnd_used  = 0;
 
@@ -352,8 +359,6 @@ static void ccid2_hc_tx_packet_sent(struct sock *sk, unsigned int len)
 
 /**
  * ccid2_rtt_estimator - Sample RTT and compute RTO using RFC2988 algorithm
- * @sk: socket to perform estimator on
- *
  * This code is almost identical with TCP's tcp_rtt_estimator(), since
  * - it has a higher sampling frequency (recommended by RFC 1323),
  * - the RTO does not collapse into RTT due to RTTVAR going towards zero,

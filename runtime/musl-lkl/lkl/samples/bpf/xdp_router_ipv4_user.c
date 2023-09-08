@@ -1,5 +1,8 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /* Copyright (C) 2017 Cavium, Inc.
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of version 2 of the GNU General Public License
+ * as published by the Free Software Foundation.
  */
 #include <linux/bpf.h>
 #include <linux/netlink.h>
@@ -12,7 +15,8 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <unistd.h>
-#include <bpf/bpf.h>
+#include "bpf_load.h"
+#include "libbpf.h"
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <poll.h>
@@ -21,42 +25,53 @@
 #include <sys/ioctl.h>
 #include <sys/syscall.h>
 #include "bpf_util.h"
-#include <bpf/libbpf.h>
-#include <libgen.h>
-#include <getopt.h>
-#include <pthread.h>
-#include "xdp_sample_user.h"
-#include "xdp_router_ipv4.skel.h"
 
-static const char *__doc__ =
-"XDP IPv4 router implementation\n"
-"Usage: xdp_router_ipv4 <IFNAME-0> ... <IFNAME-N>\n";
-
-static char buf[8192];
-static int lpm_map_fd;
-static int arp_table_map_fd;
-static int exact_match_map_fd;
-static int tx_port_map_fd;
-
-static bool routes_thread_exit;
-static int interval = 5;
-
-static int mask = SAMPLE_RX_CNT | SAMPLE_REDIRECT_ERR_MAP_CNT |
-		  SAMPLE_DEVMAP_XMIT_CNT_MULTI | SAMPLE_EXCEPTION_CNT;
-
-DEFINE_SAMPLE_INIT(xdp_router_ipv4);
-
-static const struct option long_options[] = {
-	{ "help", no_argument, NULL, 'h' },
-	{ "skb-mode", no_argument, NULL, 'S' },
-	{ "force", no_argument, NULL, 'F' },
-	{ "interval", required_argument, NULL, 'i' },
-	{ "verbose", no_argument, NULL, 'v' },
-	{ "stats", no_argument, NULL, 's' },
-	{}
-};
+int sock, sock_arp, flags = 0;
+static int total_ifindex;
+int *ifindex_list;
+char buf[8192];
 
 static int get_route_table(int rtm_family);
+static void int_exit(int sig)
+{
+	int i = 0;
+
+	for (i = 0; i < total_ifindex; i++)
+		bpf_set_link_xdp_fd(ifindex_list[i], -1, flags);
+	exit(0);
+}
+
+static void close_and_exit(int sig)
+{
+	int i = 0;
+
+	close(sock);
+	close(sock_arp);
+
+	for (i = 0; i < total_ifindex; i++)
+		bpf_set_link_xdp_fd(ifindex_list[i], -1, flags);
+	exit(0);
+}
+
+/* Get the mac address of the interface given interface name */
+static __be64 getmac(char *iface)
+{
+	struct ifreq ifr;
+	__be64 mac = 0;
+	int fd, i;
+
+	fd = socket(AF_INET, SOCK_DGRAM, 0);
+	ifr.ifr_addr.sa_family = AF_INET;
+	strncpy(ifr.ifr_name, iface, IFNAMSIZ - 1);
+	if (ioctl(fd, SIOCGIFHWADDR, &ifr) < 0) {
+		printf("ioctl failed leaving....\n");
+		return -1;
+	}
+	for (i = 0; i < 6 ; i++)
+		*((__u8 *)&mac + i) = (__u8)ifr.ifr_hwaddr.sa_data[i];
+	close(fd);
+	return mac;
+}
 
 static int recv_msg(struct sockaddr_nl sock_addr, int sock)
 {
@@ -99,6 +114,7 @@ static void read_route(struct nlmsghdr *nh, int nll)
 	int i;
 	struct route_table {
 		int  dst_len, iface, metric;
+		char *iface_name;
 		__be32 dst, gw;
 		__be64 mac;
 	} route;
@@ -113,7 +129,17 @@ static void read_route(struct nlmsghdr *nh, int nll)
 		__be64 mac;
 	} direct_entry;
 
+	if (nh->nlmsg_type == RTM_DELROUTE)
+		printf("DELETING Route entry\n");
+	else if (nh->nlmsg_type == RTM_GETROUTE)
+		printf("READING Route entry\n");
+	else if (nh->nlmsg_type == RTM_NEWROUTE)
+		printf("NEW Route entry\n");
+	else
+		printf("%d\n", nh->nlmsg_type);
+
 	memset(&route, 0, sizeof(route));
+	printf("Destination\t\tGateway\t\tGenmask\t\tMetric\t\tIface\n");
 	for (; NLMSG_OK(nh, nll); nh = NLMSG_NEXT(nh, nll)) {
 		rt_msg = (struct rtmsg *)NLMSG_DATA(nh);
 		rtm_family = rt_msg->rtm_family;
@@ -150,9 +176,17 @@ static void read_route(struct nlmsghdr *nh, int nll)
 		route.gw = atoi(gws);
 		route.iface = atoi(ifs);
 		route.metric = atoi(metrics);
-		assert(get_mac_addr(route.iface, &route.mac) == 0);
-		assert(bpf_map_update_elem(tx_port_map_fd,
-					   &route.iface, &route.iface, 0) == 0);
+		route.iface_name = alloca(sizeof(char *) * IFNAMSIZ);
+		route.iface_name = if_indextoname(route.iface, route.iface_name);
+		route.mac = getmac(route.iface_name);
+		if (route.mac == -1) {
+			int i = 0;
+
+			for (i = 0; i < total_ifindex; i++)
+				bpf_set_link_xdp_fd(ifindex_list[i], -1, flags);
+			exit(0);
+		}
+		assert(bpf_map_update_elem(map_fd[4], &route.iface, &route.iface, 0) == 0);
 		if (rtm_family == AF_INET) {
 			struct trie_value {
 				__u8 prefix[4];
@@ -173,22 +207,25 @@ static void read_route(struct nlmsghdr *nh, int nll)
 			direct_entry.arp.dst = 0;
 			if (route.dst_len == 32) {
 				if (nh->nlmsg_type == RTM_DELROUTE) {
-					assert(bpf_map_delete_elem(exact_match_map_fd,
-								   &route.dst) == 0);
+					assert(bpf_map_delete_elem(map_fd[3], &route.dst) == 0);
 				} else {
-					if (bpf_map_lookup_elem(arp_table_map_fd,
-								&route.dst,
-								&direct_entry.arp.mac) == 0)
+					if (bpf_map_lookup_elem(map_fd[2], &route.dst, &direct_entry.arp.mac) == 0)
 						direct_entry.arp.dst = route.dst;
-					assert(bpf_map_update_elem(exact_match_map_fd,
-								   &route.dst,
-								   &direct_entry, 0) == 0);
+					assert(bpf_map_update_elem(map_fd[3], &route.dst, &direct_entry, 0) == 0);
 				}
 			}
 			for (i = 0; i < 4; i++)
 				prefix_key->data[i] = (route.dst >> i * 8) & 0xff;
 
-			if (bpf_map_lookup_elem(lpm_map_fd, prefix_key,
+			printf("%3d.%d.%d.%d\t\t%3x\t\t%d\t\t%d\t\t%s\n",
+			       (int)prefix_key->data[0],
+			       (int)prefix_key->data[1],
+			       (int)prefix_key->data[2],
+			       (int)prefix_key->data[3],
+			       route.gw, route.dst_len,
+			       route.metric,
+			       route.iface_name);
+			if (bpf_map_lookup_elem(map_fd[0], prefix_key,
 						prefix_value) < 0) {
 				for (i = 0; i < 4; i++)
 					prefix_value->prefix[i] = prefix_key->data[i];
@@ -197,19 +234,26 @@ static void read_route(struct nlmsghdr *nh, int nll)
 				prefix_value->gw = route.gw;
 				prefix_value->metric = route.metric;
 
-				assert(bpf_map_update_elem(lpm_map_fd,
+				assert(bpf_map_update_elem(map_fd[0],
 							   prefix_key,
 							   prefix_value, 0
 							   ) == 0);
 			} else {
 				if (nh->nlmsg_type == RTM_DELROUTE) {
-					assert(bpf_map_delete_elem(lpm_map_fd,
+					printf("deleting entry\n");
+					printf("prefix key=%d.%d.%d.%d/%d",
+					       prefix_key->data[0],
+					       prefix_key->data[1],
+					       prefix_key->data[2],
+					       prefix_key->data[3],
+					       prefix_key->prefixlen);
+					assert(bpf_map_delete_elem(map_fd[0],
 								   prefix_key
 								   ) == 0);
 					/* Rereading the route table to check if
 					 * there is an entry with the same
 					 * prefix but a different metric as the
-					 * deleted entry.
+					 * deleted enty.
 					 */
 					get_route_table(AF_INET);
 				} else if (prefix_key->data[0] ==
@@ -231,7 +275,8 @@ static void read_route(struct nlmsghdr *nh, int nll)
 					prefix_value->ifindex = route.iface;
 					prefix_value->gw = route.gw;
 					prefix_value->metric = route.metric;
-					assert(bpf_map_update_elem(lpm_map_fd,
+					assert(bpf_map_update_elem(
+								   map_fd[0],
 								   prefix_key,
 								   prefix_value,
 								   0) == 0);
@@ -266,14 +311,14 @@ static int get_route_table(int rtm_family)
 
 	sock = socket(AF_NETLINK, SOCK_RAW, NETLINK_ROUTE);
 	if (sock < 0) {
-		fprintf(stderr, "open netlink socket: %s\n", strerror(errno));
-		return -errno;
+		printf("open netlink socket: %s\n", strerror(errno));
+		return -1;
 	}
 	memset(&sa, 0, sizeof(sa));
 	sa.nl_family = AF_NETLINK;
 	if (bind(sock, (struct sockaddr *)&sa, sizeof(sa)) < 0) {
-		fprintf(stderr, "bind netlink socket: %s\n", strerror(errno));
-		ret = -errno;
+		printf("bind to netlink: %s\n", strerror(errno));
+		ret = -1;
 		goto cleanup;
 	}
 	memset(&req, 0, sizeof(req));
@@ -292,15 +337,15 @@ static int get_route_table(int rtm_family)
 	msg.msg_iovlen = 1;
 	ret = sendmsg(sock, &msg, 0);
 	if (ret < 0) {
-		fprintf(stderr, "send to netlink: %s\n", strerror(errno));
-		ret = -errno;
+		printf("send to netlink: %s\n", strerror(errno));
+		ret = -1;
 		goto cleanup;
 	}
 	memset(buf, 0, sizeof(buf));
 	nll = recv_msg(sa, sock);
 	if (nll < 0) {
-		fprintf(stderr, "recv from netlink: %s\n", strerror(nll));
-		ret = nll;
+		printf("recv from netlink: %s\n", strerror(nll));
+		ret = -1;
 		goto cleanup;
 	}
 	nh = (struct nlmsghdr *)buf;
@@ -330,6 +375,9 @@ static void read_arp(struct nlmsghdr *nh, int nll)
 		__be64 mac;
 	} direct_entry;
 
+	if (nh->nlmsg_type == RTM_GETNEIGH)
+		printf("READING arp entry\n");
+	printf("Address\tHwAddress\n");
 	for (; NLMSG_OK(nh, nll); nh = NLMSG_NEXT(nh, nll)) {
 		rt_msg = (struct ndmsg *)NLMSG_DATA(nh);
 		rt_attr = (struct rtattr *)RTM_RTA(rt_msg);
@@ -351,10 +399,9 @@ static void read_arp(struct nlmsghdr *nh, int nll)
 		}
 		arp_entry.dst = atoi(dsts);
 		arp_entry.mac = atol(mac);
-
+		printf("%x\t\t%llx\n", arp_entry.dst, arp_entry.mac);
 		if (ndm_family == AF_INET) {
-			if (bpf_map_lookup_elem(exact_match_map_fd,
-						&arp_entry.dst,
+			if (bpf_map_lookup_elem(map_fd[3], &arp_entry.dst,
 						&direct_entry) == 0) {
 				if (nh->nlmsg_type == RTM_DELNEIGH) {
 					direct_entry.arp.dst = 0;
@@ -363,17 +410,16 @@ static void read_arp(struct nlmsghdr *nh, int nll)
 					direct_entry.arp.dst = arp_entry.dst;
 					direct_entry.arp.mac = arp_entry.mac;
 				}
-				assert(bpf_map_update_elem(exact_match_map_fd,
+				assert(bpf_map_update_elem(map_fd[3],
 							   &arp_entry.dst,
 							   &direct_entry, 0
 							   ) == 0);
 				memset(&direct_entry, 0, sizeof(direct_entry));
 			}
 			if (nh->nlmsg_type == RTM_DELNEIGH) {
-				assert(bpf_map_delete_elem(arp_table_map_fd,
-							   &arp_entry.dst) == 0);
+				assert(bpf_map_delete_elem(map_fd[2], &arp_entry.dst) == 0);
 			} else if (nh->nlmsg_type == RTM_NEWNEIGH) {
-				assert(bpf_map_update_elem(arp_table_map_fd,
+				assert(bpf_map_update_elem(map_fd[2],
 							   &arp_entry.dst,
 							   &arp_entry.mac, 0
 							   ) == 0);
@@ -402,14 +448,14 @@ static int get_arp_table(int rtm_family)
 
 	sock = socket(AF_NETLINK, SOCK_RAW, NETLINK_ROUTE);
 	if (sock < 0) {
-		fprintf(stderr, "open netlink socket: %s\n", strerror(errno));
-		return -errno;
+		printf("open netlink socket: %s\n", strerror(errno));
+		return -1;
 	}
 	memset(&sa, 0, sizeof(sa));
 	sa.nl_family = AF_NETLINK;
 	if (bind(sock, (struct sockaddr *)&sa, sizeof(sa)) < 0) {
-		fprintf(stderr, "bind netlink socket: %s\n", strerror(errno));
-		ret = -errno;
+		printf("bind to netlink: %s\n", strerror(errno));
+		ret = -1;
 		goto cleanup;
 	}
 	memset(&req, 0, sizeof(req));
@@ -427,15 +473,15 @@ static int get_arp_table(int rtm_family)
 	msg.msg_iovlen = 1;
 	ret = sendmsg(sock, &msg, 0);
 	if (ret < 0) {
-		fprintf(stderr, "send to netlink: %s\n", strerror(errno));
-		ret = -errno;
+		printf("send to netlink: %s\n", strerror(errno));
+		ret = -1;
 		goto cleanup;
 	}
 	memset(buf, 0, sizeof(buf));
 	nll = recv_msg(sa, sock);
 	if (nll < 0) {
-		fprintf(stderr, "recv from netlink: %s\n", strerror(nll));
-		ret = nll;
+		printf("recv from netlink: %s\n", strerror(nll));
+		ret = -1;
 		goto cleanup;
 	}
 	nh = (struct nlmsghdr *)buf;
@@ -448,17 +494,24 @@ cleanup:
 /* Function to keep track and update changes in route and arp table
  * Give regular statistics of packets forwarded
  */
-static void *monitor_routes_thread(void *arg)
+static int monitor_route(void)
 {
+	unsigned int nr_cpus = bpf_num_possible_cpus();
+	const unsigned int nr_keys = 256;
 	struct pollfd fds_route, fds_arp;
+	__u64 prev[nr_keys][nr_cpus];
 	struct sockaddr_nl la, lr;
-	int sock, sock_arp, nll;
+	__u64 values[nr_cpus];
 	struct nlmsghdr *nh;
+	int nll, ret = 0;
+	int interval = 5;
+	__u32 key;
+	int i;
 
 	sock = socket(AF_NETLINK, SOCK_RAW, NETLINK_ROUTE);
 	if (sock < 0) {
-		fprintf(stderr, "open netlink socket: %s\n", strerror(errno));
-		return NULL;
+		printf("open netlink socket: %s\n", strerror(errno));
+		return -1;
 	}
 
 	fcntl(sock, F_SETFL, O_NONBLOCK);
@@ -466,19 +519,17 @@ static void *monitor_routes_thread(void *arg)
 	lr.nl_family = AF_NETLINK;
 	lr.nl_groups = RTMGRP_IPV6_ROUTE | RTMGRP_IPV4_ROUTE | RTMGRP_NOTIFY;
 	if (bind(sock, (struct sockaddr *)&lr, sizeof(lr)) < 0) {
-		fprintf(stderr, "bind netlink socket: %s\n", strerror(errno));
-		close(sock);
-		return NULL;
+		printf("bind to netlink: %s\n", strerror(errno));
+		ret = -1;
+		goto cleanup;
 	}
-
 	fds_route.fd = sock;
 	fds_route.events = POLL_IN;
 
 	sock_arp = socket(AF_NETLINK, SOCK_RAW, NETLINK_ROUTE);
 	if (sock_arp < 0) {
-		fprintf(stderr, "open netlink socket: %s\n", strerror(errno));
-		close(sock);
-		return NULL;
+		printf("open netlink socket: %s\n", strerror(errno));
+		return -1;
 	}
 
 	fcntl(sock_arp, F_SETFL, O_NONBLOCK);
@@ -486,44 +537,50 @@ static void *monitor_routes_thread(void *arg)
 	la.nl_family = AF_NETLINK;
 	la.nl_groups = RTMGRP_NEIGH | RTMGRP_NOTIFY;
 	if (bind(sock_arp, (struct sockaddr *)&la, sizeof(la)) < 0) {
-		fprintf(stderr, "bind netlink socket: %s\n", strerror(errno));
+		printf("bind to netlink: %s\n", strerror(errno));
+		ret = -1;
 		goto cleanup;
 	}
-
 	fds_arp.fd = sock_arp;
 	fds_arp.events = POLL_IN;
 
-	/* dump route and arp tables */
-	if (get_arp_table(AF_INET) < 0) {
-		fprintf(stderr, "Failed reading arp table\n");
-		goto cleanup;
-	}
+	memset(prev, 0, sizeof(prev));
+	do {
+		signal(SIGINT, close_and_exit);
+		signal(SIGTERM, close_and_exit);
 
-	if (get_route_table(AF_INET) < 0) {
-		fprintf(stderr, "Failed reading route table\n");
-		goto cleanup;
-	}
+		sleep(interval);
+		for (key = 0; key < nr_keys; key++) {
+			__u64 sum = 0;
 
-	while (!routes_thread_exit) {
+			assert(bpf_map_lookup_elem(map_fd[1], &key, values) == 0);
+			for (i = 0; i < nr_cpus; i++)
+				sum += (values[i] - prev[key][i]);
+			if (sum)
+				printf("proto %u: %10llu pkt/s\n",
+				       key, sum / interval);
+			memcpy(prev[key], values, sizeof(values));
+		}
+
 		memset(buf, 0, sizeof(buf));
 		if (poll(&fds_route, 1, 3) == POLL_IN) {
 			nll = recv_msg(lr, sock);
 			if (nll < 0) {
-				fprintf(stderr, "recv from netlink: %s\n",
-					strerror(nll));
+				printf("recv from netlink: %s\n", strerror(nll));
+				ret = -1;
 				goto cleanup;
 			}
 
 			nh = (struct nlmsghdr *)buf;
+			printf("Routing table updated.\n");
 			read_route(nh, nll);
 		}
-
 		memset(buf, 0, sizeof(buf));
 		if (poll(&fds_arp, 1, 3) == POLL_IN) {
 			nll = recv_msg(la, sock_arp);
 			if (nll < 0) {
-				fprintf(stderr, "recv from netlink: %s\n",
-					strerror(nll));
+				printf("recv from netlink: %s\n", strerror(nll));
+				ret = -1;
 				goto cleanup;
 			}
 
@@ -531,169 +588,73 @@ static void *monitor_routes_thread(void *arg)
 			read_arp(nh, nll);
 		}
 
-		sleep(interval);
-	}
-
+	} while (1);
 cleanup:
-	close(sock_arp);
 	close(sock);
-	return NULL;
+	return ret;
 }
 
-static void usage(char *argv[], const struct option *long_options,
-		  const char *doc, int mask, bool error,
-		  struct bpf_object *obj)
+int main(int ac, char **argv)
 {
-	sample_usage(argv, long_options, doc, mask, error);
-}
+	char filename[256];
+	char **ifname_list;
+	int i = 1;
 
-int main(int argc, char **argv)
-{
-	bool error = true, generic = false, force = false;
-	int opt, ret = EXIT_FAIL_BPF;
-	struct xdp_router_ipv4 *skel;
-	int i, total_ifindex = argc - 1;
-	char **ifname_list = argv + 1;
-	pthread_t routes_thread;
-	int longindex = 0;
-
-	if (libbpf_set_strict_mode(LIBBPF_STRICT_ALL) < 0) {
-		fprintf(stderr, "Failed to set libbpf strict mode: %s\n",
-			strerror(errno));
-		goto end;
+	snprintf(filename, sizeof(filename), "%s_kern.o", argv[0]);
+	if (ac < 2) {
+		printf("usage: %s [-S] Interface name list\n", argv[0]);
+		return 1;
 	}
-
-	skel = xdp_router_ipv4__open();
-	if (!skel) {
-		fprintf(stderr, "Failed to xdp_router_ipv4__open: %s\n",
-			strerror(errno));
-		goto end;
+	if (!strcmp(argv[1], "-S")) {
+		flags = XDP_FLAGS_SKB_MODE;
+		total_ifindex = ac - 2;
+		ifname_list = (argv + 2);
+	} else {
+		flags = 0;
+		total_ifindex = ac - 1;
+		ifname_list = (argv + 1);
 	}
-
-	ret = sample_init_pre_load(skel);
-	if (ret < 0) {
-		fprintf(stderr, "Failed to sample_init_pre_load: %s\n",
-			strerror(-ret));
-		ret = EXIT_FAIL_BPF;
-		goto end_destroy;
+	if (load_bpf_file(filename)) {
+		printf("%s", bpf_log_buf);
+		return 1;
 	}
-
-	ret = xdp_router_ipv4__load(skel);
-	if (ret < 0) {
-		fprintf(stderr, "Failed to xdp_router_ipv4__load: %s\n",
-			strerror(errno));
-		goto end_destroy;
+	printf("\n**************loading bpf file*********************\n\n\n");
+	if (!prog_fd[0]) {
+		printf("load_bpf_file: %s\n", strerror(errno));
+		return 1;
 	}
-
-	ret = sample_init(skel, mask);
-	if (ret < 0) {
-		fprintf(stderr, "Failed to initialize sample: %s\n", strerror(-ret));
-		ret = EXIT_FAIL;
-		goto end_destroy;
-	}
-
-	while ((opt = getopt_long(argc, argv, "si:SFvh",
-				  long_options, &longindex)) != -1) {
-		switch (opt) {
-		case 's':
-			mask |= SAMPLE_REDIRECT_MAP_CNT;
-			total_ifindex--;
-			ifname_list++;
-			break;
-		case 'i':
-			interval = strtoul(optarg, NULL, 0);
-			total_ifindex -= 2;
-			ifname_list += 2;
-			break;
-		case 'S':
-			generic = true;
-			total_ifindex--;
-			ifname_list++;
-			break;
-		case 'F':
-			force = true;
-			total_ifindex--;
-			ifname_list++;
-			break;
-		case 'v':
-			sample_switch_mode();
-			total_ifindex--;
-			ifname_list++;
-			break;
-		case 'h':
-			error = false;
-		default:
-			usage(argv, long_options, __doc__, mask, error, skel->obj);
-			goto end_destroy;
-		}
-	}
-
-	ret = EXIT_FAIL_OPTION;
-	if (optind == argc) {
-		usage(argv, long_options, __doc__, mask, true, skel->obj);
-		goto end_destroy;
-	}
-
-	lpm_map_fd = bpf_map__fd(skel->maps.lpm_map);
-	if (lpm_map_fd < 0) {
-		fprintf(stderr, "Failed loading lpm_map %s\n",
-			strerror(-lpm_map_fd));
-		goto end_destroy;
-	}
-	arp_table_map_fd = bpf_map__fd(skel->maps.arp_table);
-	if (arp_table_map_fd < 0) {
-		fprintf(stderr, "Failed loading arp_table_map_fd %s\n",
-			strerror(-arp_table_map_fd));
-		goto end_destroy;
-	}
-	exact_match_map_fd = bpf_map__fd(skel->maps.exact_match);
-	if (exact_match_map_fd < 0) {
-		fprintf(stderr, "Failed loading exact_match_map_fd %s\n",
-			strerror(-exact_match_map_fd));
-		goto end_destroy;
-	}
-	tx_port_map_fd = bpf_map__fd(skel->maps.tx_port);
-	if (tx_port_map_fd < 0) {
-		fprintf(stderr, "Failed loading tx_port_map_fd %s\n",
-			strerror(-tx_port_map_fd));
-		goto end_destroy;
-	}
-
-	ret = EXIT_FAIL_XDP;
+	ifindex_list = (int *)malloc(total_ifindex * sizeof(int *));
 	for (i = 0; i < total_ifindex; i++) {
-		int index = if_nametoindex(ifname_list[i]);
-
-		if (!index) {
-			fprintf(stderr, "Interface %s not found %s\n",
-				ifname_list[i], strerror(-tx_port_map_fd));
-			goto end_destroy;
+		ifindex_list[i] = if_nametoindex(ifname_list[i]);
+		if (!ifindex_list[i]) {
+			printf("Couldn't translate interface name: %s",
+			       strerror(errno));
+			return 1;
 		}
-		if (sample_install_xdp(skel->progs.xdp_router_ipv4_prog,
-				       index, generic, force) < 0)
-			goto end_destroy;
+	}
+	for (i = 0; i < total_ifindex; i++) {
+		if (bpf_set_link_xdp_fd(ifindex_list[i], prog_fd[0], flags) < 0) {
+			printf("link set xdp fd failed\n");
+			int recovery_index = i;
+
+			for (i = 0; i < recovery_index; i++)
+				bpf_set_link_xdp_fd(ifindex_list[i], -1, flags);
+
+			return 1;
+		}
+		printf("Attached to %d\n", ifindex_list[i]);
+	}
+	signal(SIGINT, int_exit);
+	signal(SIGTERM, int_exit);
+
+	printf("*******************ROUTE TABLE*************************\n\n\n");
+	get_route_table(AF_INET);
+	printf("*******************ARP TABLE***************************\n\n\n");
+	get_arp_table(AF_INET);
+	if (monitor_route() < 0) {
+		printf("Error in receiving route update");
+		return 1;
 	}
 
-	ret = pthread_create(&routes_thread, NULL, monitor_routes_thread, NULL);
-	if (ret) {
-		fprintf(stderr, "Failed creating routes_thread: %s\n", strerror(-ret));
-		ret = EXIT_FAIL;
-		goto end_destroy;
-	}
-
-	ret = sample_run(interval, NULL, NULL);
-	routes_thread_exit = true;
-
-	if (ret < 0) {
-		fprintf(stderr, "Failed during sample run: %s\n", strerror(-ret));
-		ret = EXIT_FAIL;
-		goto end_thread_wait;
-	}
-	ret = EXIT_OK;
-
-end_thread_wait:
-	pthread_join(routes_thread, NULL);
-end_destroy:
-	xdp_router_ipv4__destroy(skel);
-end:
-	sample_exit(ret);
+	return 0;
 }

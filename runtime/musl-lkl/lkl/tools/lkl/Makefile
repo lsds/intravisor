@@ -36,7 +36,7 @@ all:
 
 conf: $(OUTPUT)Makefile.conf
 
-$(OUTPUT)Makefile.conf $(OUTPUT)include/kernel_config.h $(OUTPUT)/kernel.config: Makefile.autoconf
+$(OUTPUT)Makefile.conf: Makefile.autoconf
 	$(call QUIET_AUTOCONF, headers)$(MAKE) -f Makefile.autoconf -s
 
 -include $(OUTPUT)Makefile.conf
@@ -60,26 +60,11 @@ else
 	$(Q)touch bin/stat
 endif
 
-ASM_UAPI_GENERATED:=$(OUTPUT)../../arch/lkl/include/generated/uapi/asm
-ASM_CONFIG:=$(ASM_UAPI_GENERATED)/config.h
-DOT_CONFIG:=$(OUTPUT)../../.config
-
-$(DOT_CONFIG): $(OUTPUT)/kernel.config
-	$(Q)$(MAKE) -C ../.. ARCH=lkl $(KOPT) $(KCONFIG)
-	$(call QUIET_INSTALL, kernel.config)cat $(OUTPUT)/kernel.config >> $(DOT_CONFIG)
-	$(Q)$(MAKE) -C ../.. ARCH=lkl $(KOPT) olddefconfig
-	$(Q)$(MAKE) -C ../.. ARCH=lkl $(KOPT) syncconfig
-
-
-$(ASM_CONFIG): $(OUTPUT)include/kernel_config.h
-	$(Q)mkdir -p $$(dirname $@)
-	$(call QUIET_INSTALL, kernel_config.h)cp $<  $@
-
 # rule to build lkl.o
-$(OUTPUT)lib/lkl.o: bin/stat $(ASM_CONFIG) $(DOT_CONFIG)
+$(OUTPUT)lib/lkl.o: bin/stat
+	$(Q)$(MAKE) -C ../.. ARCH=lkl $(KOPT) $(KCONFIG)
 # this workaround is for arm32 linker (ld.gold)
 	$(Q)export PATH=$(srctree)/tools/lkl/bin/:${PATH} ;\
-	$(MAKE) -C ../.. ARCH=lkl $(KOPT)
 	$(MAKE) -C ../.. ARCH=lkl $(KOPT) install INSTALL_PATH=$(OUTPUT)
 
 # rules to link libs
@@ -105,7 +90,6 @@ $(OUTPUT)cpfromfs$(EXESUF): cptofs$(EXESUF)
 	$(Q)if ! [ -e $@ ]; then ln -s $< $@; fi
 
 clean:
-	$(call QUIET_CLEAN, vmlinux)$(MAKE) -C ../.. ARCH=lkl $(KOPT) clean
 	$(call QUIET_CLEAN, objects)find $(OUTPUT) -name '*.o' -delete -o -name '\.*.cmd'\
 	 -delete -o -name '\.*.d' -delete
 	$(call QUIET_CLEAN, headers)$(RM) -r $(OUTPUT)/include/lkl/
@@ -114,8 +98,6 @@ clean:
 
 clean-conf: clean
 	$(call QUIET_CLEAN, Makefile.conf)$(RM) $(OUTPUT)/Makefile.conf
-	$(call QUIET_CLEAN, kernel_config.h)$(RM) $(OUTPUT)/include/kernel_config.h
-	$(call QUIET_CLEAN, kernel.config)$(RM) $(OUTPUT)/kernel.config
 
 headers_install: $(TARGETS)
 	$(call QUIET_INSTALL, headers) \
@@ -139,12 +121,6 @@ install: headers_install libraries_install programs_install
 
 run-tests:
 	./tests/run.py $(tests)
-
-# Enable libFuzzer fuzzing instrumentation for the LKL fuzzers
-$(OUTPUT)fuzzers/%$(EXESUF): LDFLAGS += -fsanitize=fuzzer --coverage
-
-FUZZ_TARGETS := $(fuzzers-y:%=$(OUTPUT)%$(EXESUF))
-fuzzers: $(FUZZ_TARGETS)
 
 FORCE: ;
 .PHONY: all clean FORCE run-tests

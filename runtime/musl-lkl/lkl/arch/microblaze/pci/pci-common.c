@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Contains common pci routines for ALL ppc platform
  * (based on pci_32.c and pci_64.c)
@@ -10,13 +9,18 @@
  *   Rework, based on alpha PCI code.
  *
  * Common pmac/prep/chrp pci routines. -- Cort
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version
+ * 2 of the License, or (at your option) any later version.
  */
 
 #include <linux/kernel.h>
 #include <linux/pci.h>
 #include <linux/string.h>
 #include <linux/init.h>
-#include <linux/memblock.h>
+#include <linux/bootmem.h>
 #include <linux/mm.h>
 #include <linux/shmem_fs.h>
 #include <linux/list.h>
@@ -165,6 +169,55 @@ int pci_iobar_pfn(struct pci_dev *pdev, int bar, struct vm_area_struct *vma)
 	return 0;
 }
 
+/*
+ * This one is used by /dev/mem and fbdev who have no clue about the
+ * PCI device, it tries to find the PCI device first and calls the
+ * above routine
+ */
+pgprot_t pci_phys_mem_access_prot(struct file *file,
+				  unsigned long pfn,
+				  unsigned long size,
+				  pgprot_t prot)
+{
+	struct pci_dev *pdev = NULL;
+	struct resource *found = NULL;
+	resource_size_t offset = ((resource_size_t)pfn) << PAGE_SHIFT;
+	int i;
+
+	if (page_is_ram(pfn))
+		return prot;
+
+	prot = pgprot_noncached(prot);
+	for_each_pci_dev(pdev) {
+		for (i = 0; i <= PCI_ROM_RESOURCE; i++) {
+			struct resource *rp = &pdev->resource[i];
+			int flags = rp->flags;
+
+			/* Active and same type? */
+			if ((flags & IORESOURCE_MEM) == 0)
+				continue;
+			/* In the range of this resource? */
+			if (offset < (rp->start & PAGE_MASK) ||
+			    offset > rp->end)
+				continue;
+			found = rp;
+			break;
+		}
+		if (found)
+			break;
+	}
+	if (found) {
+		if (found->flags & IORESOURCE_PREFETCH)
+			prot = pgprot_noncached_wc(prot);
+		pci_dev_put(pdev);
+	}
+
+	pr_debug("PCI: Non-PCI map for %llx, prot: %lx\n",
+		 (unsigned long long)offset, pgprot_val(prot));
+
+	return prot;
+}
+
 /* This provides legacy IO read access on a bus */
 int pci_legacy_read(struct pci_bus *bus, loff_t port, u32 *val, size_t size)
 {
@@ -276,10 +329,12 @@ int pci_mmap_legacy_page_range(struct pci_bus *bus,
 		 * memory, effectively behaving just like /dev/zero
 		 */
 		if ((offset + size) > hose->isa_mem_size) {
+#ifdef CONFIG_MMU
 			pr_debug("Process %s (pid:%d) mapped non-existing PCI",
 				current->comm, current->pid);
 			pr_debug("legacy memory for 0%04x:%02x\n",
 				pci_domain_nr(bus), bus->number);
+#endif
 			if (vma->vm_flags & VM_SHARED)
 				return shmem_zero_setup(vma);
 			return 0;
@@ -382,6 +437,10 @@ void pci_process_bridge_OF_ranges(struct pci_controller *hose,
 	pr_debug("Parsing ranges property...\n");
 	for_each_of_pci_range(&parser, &range) {
 		/* Read next ranges element */
+		pr_debug("pci_space: 0x%08x pci_addr:0x%016llx ",
+				range.pci_space, range.pci_addr);
+		pr_debug("cpu_addr:0x%016llx size:0x%016llx\n",
+					range.cpu_addr, range.size);
 
 		/* If we failed translation or got a zero-sized region
 		 * (some FW try to feed us with non sensical zero sized regions
@@ -431,7 +490,7 @@ void pci_process_bridge_OF_ranges(struct pci_controller *hose,
 			pr_info(" MEM 0x%016llx..0x%016llx -> 0x%016llx %s\n",
 				range.cpu_addr, range.cpu_addr + range.size - 1,
 				range.pci_addr,
-				(range.flags & IORESOURCE_PREFETCH) ?
+				(range.pci_space & 0x40000000) ?
 				"Prefetch" : "");
 
 			/* We support only 3 memory ranges */
@@ -538,12 +597,26 @@ static void pcibios_fixup_resources(struct pci_dev *dev)
 }
 DECLARE_PCI_FIXUP_HEADER(PCI_ANY_ID, PCI_ANY_ID, pcibios_fixup_resources);
 
-int pcibios_device_add(struct pci_dev *dev)
+/*
+ * We need to avoid collisions with `mirrored' VGA ports
+ * and other strange ISA hardware, so we always want the
+ * addresses to be allocated in the 0x000-0x0ff region
+ * modulo 0x400.
+ *
+ * Why? Because some silly external IO cards only decode
+ * the low 10 bits of the IO address. The 0x00-0xff region
+ * is reserved for motherboard devices that decode all 16
+ * bits, so it's ok to allocate at, say, 0x2800-0x28ff,
+ * but we want to try to avoid allocating at 0x2900-0x2bff
+ * which might have be mirrored at 0x0100-0x03ff..
+ */
+int pcibios_add_device(struct pci_dev *dev)
 {
 	dev->irq = of_irq_parse_and_map_pci(dev, 0, 0);
 
 	return 0;
 }
+EXPORT_SYMBOL(pcibios_add_device);
 
 /*
  * Reparent resource children of pr that conflict with res
@@ -842,6 +915,67 @@ void __init pcibios_resource_survey(void)
 	pci_assign_unassigned_resources();
 }
 
+/* This is used by the PCI hotplug driver to allocate resource
+ * of newly plugged busses. We can try to consolidate with the
+ * rest of the code later, for now, keep it as-is as our main
+ * resource allocation function doesn't deal with sub-trees yet.
+ */
+void pcibios_claim_one_bus(struct pci_bus *bus)
+{
+	struct pci_dev *dev;
+	struct pci_bus *child_bus;
+
+	list_for_each_entry(dev, &bus->devices, bus_list) {
+		int i;
+
+		for (i = 0; i < PCI_NUM_RESOURCES; i++) {
+			struct resource *r = &dev->resource[i];
+
+			if (r->parent || !r->start || !r->flags)
+				continue;
+
+			pr_debug("PCI: Claiming %s: ", pci_name(dev));
+			pr_debug("Resource %d: %016llx..%016llx [%x]\n",
+				 i, (unsigned long long)r->start,
+				 (unsigned long long)r->end,
+				 (unsigned int)r->flags);
+
+			if (pci_claim_resource(dev, i) == 0)
+				continue;
+
+			pci_claim_bridge_resource(dev, i);
+		}
+	}
+
+	list_for_each_entry(child_bus, &bus->children, node)
+		pcibios_claim_one_bus(child_bus);
+}
+EXPORT_SYMBOL_GPL(pcibios_claim_one_bus);
+
+
+/* pcibios_finish_adding_to_bus
+ *
+ * This is to be called by the hotplug code after devices have been
+ * added to a bus, this include calling it for a PHB that is just
+ * being added
+ */
+void pcibios_finish_adding_to_bus(struct pci_bus *bus)
+{
+	pr_debug("PCI: Finishing adding to hotplug bus %04x:%02x\n",
+		 pci_domain_nr(bus), bus->number);
+
+	/* Allocate bus and devices resources */
+	pcibios_allocate_bus_resources(bus);
+	pcibios_claim_one_bus(bus);
+
+	/* Add new devices to global lists.  Register in proc, sysfs. */
+	pci_bus_add_devices(bus);
+
+	/* Fixup EEH */
+	/* eeh_add_device_tree_late(bus); */
+}
+EXPORT_SYMBOL_GPL(pcibios_finish_adding_to_bus);
+
 static void pcibios_setup_phb_resources(struct pci_controller *hose,
 					struct list_head *resources)
 {
@@ -1065,3 +1199,4 @@ int early_find_capability(struct pci_controller *hose, int bus, int devfn,
 {
 	return pci_bus_find_capability(fake_pci_bus(hose, bus), devfn, cap);
 }
+

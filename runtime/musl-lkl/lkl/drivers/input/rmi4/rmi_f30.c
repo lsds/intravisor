@@ -1,6 +1,9 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2012-2016 Synaptics Incorporated
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License version 2 as published by
+ * the Free Software Foundation.
  */
 
 #include <linux/kernel.h>
@@ -119,9 +122,8 @@ static void rmi_f30_report_button(struct rmi_function *fn,
 	}
 }
 
-static irqreturn_t rmi_f30_attention(int irq, void *ctx)
+static int rmi_f30_attention(struct rmi_function *fn, unsigned long *irq_bits)
 {
-	struct rmi_function *fn = ctx;
 	struct f30_data *f30 = dev_get_drvdata(&fn->dev);
 	struct rmi_driver_data *drvdata = dev_get_drvdata(&fn->rmi_dev->dev);
 	int error;
@@ -132,7 +134,7 @@ static irqreturn_t rmi_f30_attention(int irq, void *ctx)
 		if (drvdata->attn_data.size < f30->register_count) {
 			dev_warn(&fn->dev,
 				 "F30 interrupted, but data is missing\n");
-			return IRQ_HANDLED;
+			return 0;
 		}
 		memcpy(f30->data_regs, drvdata->attn_data.data,
 			f30->register_count);
@@ -145,7 +147,7 @@ static irqreturn_t rmi_f30_attention(int irq, void *ctx)
 			dev_err(&fn->dev,
 				"%s: Failed to read F30 data registers: %d\n",
 				__func__, error);
-			return IRQ_RETVAL(error);
+			return error;
 		}
 	}
 
@@ -157,7 +159,7 @@ static irqreturn_t rmi_f30_attention(int irq, void *ctx)
 			rmi_f03_commit_buttons(f30->f03);
 	}
 
-	return IRQ_HANDLED;
+	return 0;
 }
 
 static int rmi_f30_config(struct rmi_function *fn)
@@ -168,17 +170,17 @@ static int rmi_f30_config(struct rmi_function *fn)
 				rmi_get_platform_data(fn->rmi_dev);
 	int error;
 
-	/* can happen if gpio_data.disable is set */
+	/* can happen if f30_data.disable is set */
 	if (!f30)
 		return 0;
 
-	if (pdata->gpio_data.trackstick_buttons) {
+	if (pdata->f30_data.trackstick_buttons) {
 		/* Try [re-]establish link to F03. */
 		f30->f03 = rmi_find_function(fn->rmi_dev, 0x03);
 		f30->trackstick_buttons = f30->f03 != NULL;
 	}
 
-	if (pdata->gpio_data.disable) {
+	if (pdata->f30_data.disable) {
 		drv->clear_irq_bits(fn->rmi_dev, fn->irq_mask);
 	} else {
 		/* Write Control Register values back to device */
@@ -245,10 +247,10 @@ static int rmi_f30_map_gpios(struct rmi_function *fn,
 		if (!rmi_f30_is_valid_button(i, f30->ctrl))
 			continue;
 
-		if (pdata->gpio_data.trackstick_buttons &&
+		if (pdata->f30_data.trackstick_buttons &&
 		    i >= TRACKSTICK_RANGE_START && i < TRACKSTICK_RANGE_END) {
 			f30->gpioled_key_map[i] = trackstick_button++;
-		} else if (!pdata->gpio_data.buttonpad || !button_mapped) {
+		} else if (!pdata->f30_data.buttonpad || !button_mapped) {
 			f30->gpioled_key_map[i] = button;
 			input_set_capability(input, EV_KEY, button++);
 			button_mapped = true;
@@ -264,7 +266,7 @@ static int rmi_f30_map_gpios(struct rmi_function *fn,
 	 * but I am not sure, so use only the pdata info and the number of
 	 * mapped buttons.
 	 */
-	if (pdata->gpio_data.buttonpad || (button - BTN_LEFT == 1))
+	if (pdata->f30_data.buttonpad || (button - BTN_LEFT == 1))
 		__set_bit(INPUT_PROP_BUTTONPAD, input->propbit);
 
 	return 0;
@@ -372,7 +374,7 @@ static int rmi_f30_probe(struct rmi_function *fn)
 	struct f30_data *f30;
 	int error;
 
-	if (pdata->gpio_data.disable)
+	if (pdata->f30_data.disable)
 		return 0;
 
 	if (!drv_data->input) {

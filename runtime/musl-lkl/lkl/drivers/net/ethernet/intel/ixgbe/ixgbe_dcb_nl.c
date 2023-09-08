@@ -1,5 +1,30 @@
-// SPDX-License-Identifier: GPL-2.0
-/* Copyright(c) 1999 - 2018 Intel Corporation. */
+/*******************************************************************************
+
+  Intel 10 Gigabit PCI Express Linux driver
+  Copyright(c) 1999 - 2014 Intel Corporation.
+
+  This program is free software; you can redistribute it and/or modify it
+  under the terms and conditions of the GNU General Public License,
+  version 2, as published by the Free Software Foundation.
+
+  This program is distributed in the hope it will be useful, but WITHOUT
+  ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+  FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+  more details.
+
+  You should have received a copy of the GNU General Public License along with
+  this program; if not, write to the Free Software Foundation, Inc.,
+  51 Franklin St - Fifth Floor, Boston, MA 02110-1301 USA.
+
+  The full GNU General Public License is included in this distribution in
+  the file called "COPYING".
+
+  Contact Information:
+  Linux NICS <linux.nics@intel.com>
+  e1000-devel Mailing List <e1000-devel@lists.sourceforge.net>
+  Intel Corporation, 5200 N.E. Elam Young Parkway, Hillsboro, OR 97124-6497
+
+*******************************************************************************/
 
 #include "ixgbe.h"
 #include <linux/dcbnl.h>
@@ -8,10 +33,12 @@
 #include "ixgbe_sriov.h"
 
 /* Callbacks for DCB netlink in the kernel */
+#define BIT_DCB_MODE	0x01
 #define BIT_PFC		0x02
 #define BIT_PG_RX	0x04
 #define BIT_PG_TX	0x08
 #define BIT_APP_UPCHG	0x10
+#define BIT_LINKSPEED   0x80
 
 /* Responses for the DCB_C_SET_ALL command */
 #define DCB_HW_CHG_RST  0  /* DCB configuration changed with reset */
@@ -359,7 +386,7 @@ static u8 ixgbe_dcbnl_set_all(struct net_device *netdev)
 	}
 
 #ifdef IXGBE_FCOE
-	/* Reprogram FCoE hardware offloads when the traffic class
+	/* Reprogam FCoE hardware offloads when the traffic class
 	 * FCoE is using changes. This happens if the APP info
 	 * changes or the up2tc mapping is updated.
 	 */

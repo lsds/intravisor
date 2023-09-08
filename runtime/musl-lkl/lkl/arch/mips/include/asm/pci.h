@@ -38,6 +38,7 @@ struct pci_controller {
 	struct resource *io_resource;
 	unsigned long io_offset;
 	unsigned long io_map_base;
+	struct resource *busn_resource;
 
 #ifndef CONFIG_PCI_DOMAINS_GENERIC
 	unsigned int index;
@@ -107,6 +108,7 @@ extern unsigned long PCIBIOS_MIN_MEM;
 
 #define HAVE_PCI_MMAP
 #define ARCH_GENERIC_PCI_MMAP_RESOURCE
+#define HAVE_ARCH_PCI_RESOURCE_TO_USER
 
 /*
  * Dynamic DMA mapping stuff.
@@ -118,6 +120,13 @@ extern unsigned long PCIBIOS_MIN_MEM;
 #include <linux/scatterlist.h>
 #include <linux/string.h>
 #include <asm/io.h>
+
+/*
+ * The PCI address space does equal the physical memory address space.
+ * The networking and block device layers use this boolean for bounce
+ * buffer decisions.
+ */
+#define PCI_DMA_BUS_IS_PHYS     (1)
 
 #ifdef CONFIG_PCI_DOMAINS_GENERIC
 static inline int pci_proc_domain(struct pci_bus *bus)
@@ -138,5 +147,11 @@ static inline int pci_proc_domain(struct pci_bus *bus)
 
 /* Do platform specific device initialization at pci_enable_device() time */
 extern int pcibios_plat_dev_init(struct pci_dev *dev);
+
+/* Chances are this interrupt is wired PC-style ...  */
+static inline int pci_get_legacy_ide_irq(struct pci_dev *dev, int channel)
+{
+	return channel ? 15 : 14;
+}
 
 #endif /* _ASM_PCI_H */

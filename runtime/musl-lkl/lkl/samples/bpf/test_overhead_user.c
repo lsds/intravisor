@@ -1,9 +1,11 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /* Copyright (c) 2016 Facebook
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of version 2 of the GNU General Public
+ * License as published by the Free Software Foundation.
  */
 #define _GNU_SOURCE
 #include <sched.h>
-#include <errno.h>
 #include <stdio.h>
 #include <sys/types.h>
 #include <asm/unistd.h>
@@ -16,14 +18,11 @@
 #include <linux/bpf.h>
 #include <string.h>
 #include <time.h>
-#include <bpf/bpf.h>
-#include <bpf/libbpf.h>
+#include <sys/resource.h>
+#include "libbpf.h"
+#include "bpf_load.h"
 
 #define MAX_CNT 1000000
-
-static struct bpf_link *links[2];
-static struct bpf_object *obj;
-static int cnt;
 
 static __u64 time_get_ns(void)
 {
@@ -45,13 +44,8 @@ static void test_task_rename(int cpu)
 		exit(1);
 	}
 	start_time = time_get_ns();
-	for (i = 0; i < MAX_CNT; i++) {
-		if (write(fd, buf, sizeof(buf)) < 0) {
-			printf("task rename failed: %s\n", strerror(errno));
-			close(fd);
-			return;
-		}
-	}
+	for (i = 0; i < MAX_CNT; i++)
+		write(fd, buf, sizeof(buf));
 	printf("task_rename:%d: %lld events per sec\n",
 	       cpu, MAX_CNT * 1000000000ll / (time_get_ns() - start_time));
 	close(fd);
@@ -69,13 +63,8 @@ static void test_urandom_read(int cpu)
 		exit(1);
 	}
 	start_time = time_get_ns();
-	for (i = 0; i < MAX_CNT; i++) {
-		if (read(fd, buf, sizeof(buf)) < 0) {
-			printf("failed to read from /dev/urandom: %s\n", strerror(errno));
-			close(fd);
-			return;
-		}
-	}
+	for (i = 0; i < MAX_CNT; i++)
+		read(fd, buf, sizeof(buf));
 	printf("urandom_read:%d: %lld events per sec\n",
 	       cpu, MAX_CNT * 1000000000ll / (time_get_ns() - start_time));
 	close(fd);
@@ -118,54 +107,22 @@ static void run_perf_test(int tasks, int flags)
 	}
 }
 
-static int load_progs(char *filename)
-{
-	struct bpf_program *prog;
-	int err = 0;
-
-	obj = bpf_object__open_file(filename, NULL);
-	err = libbpf_get_error(obj);
-	if (err < 0) {
-		fprintf(stderr, "ERROR: opening BPF object file failed\n");
-		return err;
-	}
-
-	/* load BPF program */
-	err = bpf_object__load(obj);
-	if (err < 0) {
-		fprintf(stderr, "ERROR: loading BPF object file failed\n");
-		return err;
-	}
-
-	bpf_object__for_each_program(prog, obj) {
-		links[cnt] = bpf_program__attach(prog);
-		err = libbpf_get_error(links[cnt]);
-		if (err < 0) {
-			fprintf(stderr, "ERROR: bpf_program__attach failed\n");
-			links[cnt] = NULL;
-			return err;
-		}
-		cnt++;
-	}
-
-	return err;
-}
-
 static void unload_progs(void)
 {
-	while (cnt)
-		bpf_link__destroy(links[--cnt]);
-
-	bpf_object__close(obj);
+	close(prog_fd[0]);
+	close(prog_fd[1]);
+	close(event_fd[0]);
+	close(event_fd[1]);
 }
 
 int main(int argc, char **argv)
 {
-	int num_cpu = sysconf(_SC_NPROCESSORS_ONLN);
-	int test_flags = ~0;
+	struct rlimit r = {RLIM_INFINITY, RLIM_INFINITY};
 	char filename[256];
-	int err = 0;
+	int num_cpu = 8;
+	int test_flags = ~0;
 
+	setrlimit(RLIMIT_MEMLOCK, &r);
 
 	if (argc > 1)
 		test_flags = atoi(argv[1]) ? : test_flags;
@@ -180,36 +137,38 @@ int main(int argc, char **argv)
 	if (test_flags & 0xC) {
 		snprintf(filename, sizeof(filename),
 			 "%s_kprobe_kern.o", argv[0]);
-
+		if (load_bpf_file(filename)) {
+			printf("%s", bpf_log_buf);
+			return 1;
+		}
 		printf("w/KPROBE\n");
-		err = load_progs(filename);
-		if (!err)
-			run_perf_test(num_cpu, test_flags >> 2);
-
+		run_perf_test(num_cpu, test_flags >> 2);
 		unload_progs();
 	}
 
 	if (test_flags & 0x30) {
 		snprintf(filename, sizeof(filename),
 			 "%s_tp_kern.o", argv[0]);
+		if (load_bpf_file(filename)) {
+			printf("%s", bpf_log_buf);
+			return 1;
+		}
 		printf("w/TRACEPOINT\n");
-		err = load_progs(filename);
-		if (!err)
-			run_perf_test(num_cpu, test_flags >> 4);
-
+		run_perf_test(num_cpu, test_flags >> 4);
 		unload_progs();
 	}
 
 	if (test_flags & 0xC0) {
 		snprintf(filename, sizeof(filename),
 			 "%s_raw_tp_kern.o", argv[0]);
+		if (load_bpf_file(filename)) {
+			printf("%s", bpf_log_buf);
+			return 1;
+		}
 		printf("w/RAW_TRACEPOINT\n");
-		err = load_progs(filename);
-		if (!err)
-			run_perf_test(num_cpu, test_flags >> 6);
-
+		run_perf_test(num_cpu, test_flags >> 6);
 		unload_progs();
 	}
 
-	return err;
+	return 0;
 }

@@ -46,16 +46,15 @@
 #ifndef __COMMON_H__
 #define __COMMON_H__
 
-#include <linux/delay.h>
 #include <linux/init.h>
 #include <linux/interrupt.h>
-#include <linux/io.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/pci.h>
 #include <linux/seq_file.h>
 #include <linux/string.h>
 #include <linux/types.h>
+#include <linux/version.h>
 
 /* Device specific zlib function definitions */
 #include "zip_device.h"
@@ -149,25 +148,6 @@ struct zip_operation {
 	u32   sizeofptr;
 	u32   sizeofzops;
 };
-
-static inline int zip_poll_result(union zip_zres_s *result)
-{
-	int retries = 1000;
-
-	while (!result->s.compcode) {
-		if (!--retries) {
-			pr_err("ZIP ERR: request timed out");
-			return -ETIMEDOUT;
-		}
-		udelay(10);
-		/*
-		 * Force re-reading of compcode which is updated
-		 * by the ZIP coprocessor.
-		 */
-		rmb();
-	}
-	return 0;
-}
 
 /* error messages */
 #define zip_err(fmt, args...) pr_err("ZIP ERR:%s():%d: " \

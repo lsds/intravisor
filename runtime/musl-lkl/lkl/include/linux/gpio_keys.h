@@ -2,8 +2,6 @@
 #ifndef _GPIO_KEYS_H
 #define _GPIO_KEYS_H
 
-#include <linux/types.h>
-
 struct device;
 
 /**

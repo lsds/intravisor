@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
 #ifndef __SST_MFLD_DSP_H__
 #define __SST_MFLD_DSP_H__
 /*
@@ -7,6 +6,15 @@
  *  Copyright (C) 2008-14 Intel Corporation
  *  Authors:	Vinod Koul <vinod.koul@linux.intel.com>
  *  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+ *
+ *  This program is free software; you can redistribute it and/or modify
+ *  it under the terms of the GNU General Public License as published by
+ *  the Free Software Foundation; version 2 of the License.
+ *
+ *  This program is distributed in the hope that it will be useful, but
+ *  WITHOUT ANY WARRANTY; without even the implied warranty of
+ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ *  General Public License for more details.
  *
  * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
  */
@@ -256,7 +264,7 @@ struct snd_sst_tstamp {
 	u32 channel_peak[8];
 } __packed;
 
-/* Stream type params structure for Alloc stream */
+/* Stream type params struture for Alloc stream */
 struct snd_sst_str_type {
 	u8 codec_type;		/* Codec type */
 	u8 str_type;		/* 1 = voice 2 = music */
@@ -358,7 +366,7 @@ struct snd_wma_params {
 	u8 reserved;	/* reserved */
 } __packed;
 
-/* Codec params structure */
+/* Codec params struture */
 union  snd_sst_codec_params {
 	struct snd_pcm_params pcm_params;
 	struct snd_mp3_params mp3_params;
@@ -427,7 +435,7 @@ struct snd_sst_drop_response {
 
 struct snd_sst_async_msg {
 	u32 msg_id; /* Async msg id */
-	u32 payload[];
+	u32 payload[0];
 };
 
 struct snd_sst_async_err_msg {
@@ -514,7 +522,7 @@ struct snd_sst_bytes_v2 {
 	u8 pipe_id;
 	u8 rsvd;
 	u16 len;
-	char bytes[];
+	char bytes[0];
 };
 
 #define MAX_VTSV_FILES 2

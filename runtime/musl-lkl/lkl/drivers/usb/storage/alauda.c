@@ -36,7 +36,6 @@
 MODULE_DESCRIPTION("Driver for Alauda-based card readers");
 MODULE_AUTHOR("Daniel Drake <dsd@gentoo.org>");
 MODULE_LICENSE("GPL");
-MODULE_IMPORT_NS(USB_STORAGE);
 
 /*
  * Status bytes
@@ -453,8 +452,9 @@ static int alauda_check_media(struct us_data *us)
 {
 	struct alauda_info *info = (struct alauda_info *) us->extra;
 	unsigned char status[2];
+	int rc;
 
-	alauda_get_media_status(us, status);
+	rc = alauda_get_media_status(us, status);
 
 	/* Check for no media or door open */
 	if ((status[0] & 0x80) || ((status[0] & 0x1F) == 0x10)
@@ -1025,7 +1025,7 @@ static int alauda_write_data(struct us_data *us, unsigned long address,
 	 * We also need a temporary block buffer, where we read in the old data,
 	 * overwrite parts with the new data, and manipulate the redundancy data
 	 */
-	blockbuffer = kmalloc_array(pagesize + 64, blocksize, GFP_NOIO);
+	blockbuffer = kmalloc((pagesize + 64) * blocksize, GFP_NOIO);
 	if (!blockbuffer) {
 		kfree(buffer);
 		return USB_STOR_TRANSPORT_ERROR;
@@ -1104,7 +1104,7 @@ static int init_alauda(struct us_data *us)
 
 	us->extra = kzalloc(sizeof(struct alauda_info), GFP_NOIO);
 	if (!us->extra)
-		return -ENOMEM;
+		return USB_STOR_TRANSPORT_ERROR;
 
 	info = (struct alauda_info *) us->extra;
 	us->extra_destructor = alauda_info_destructor;
@@ -1113,7 +1113,7 @@ static int init_alauda(struct us_data *us)
 		altsetting->endpoint[0].desc.bEndpointAddress
 		& USB_ENDPOINT_NUMBER_MASK);
 
-	return 0;
+	return USB_STOR_TRANSPORT_GOOD;
 }
 
 static int alauda_transport(struct scsi_cmnd *srb, struct us_data *us)

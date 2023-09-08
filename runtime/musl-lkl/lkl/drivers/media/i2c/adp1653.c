@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * drivers/media/i2c/adp1653.c
  *
@@ -11,10 +10,20 @@
  *	Tuukka Toivonen <tuukkat76@gmail.com>
  *	Pavel Machek <pavel@ucw.cz>
  *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * version 2 as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * General Public License for more details.
+ *
  * TODO:
  * - fault interrupt handling
  * - hardware strobe
  * - power doesn't need to be ON if all lights are off
+ *
  */
 
 #include <linux/delay.h>
@@ -379,7 +388,8 @@ static const struct v4l2_subdev_internal_ops adp1653_internal_ops = {
 
 static int adp1653_suspend(struct device *dev)
 {
-	struct v4l2_subdev *subdev = dev_get_drvdata(dev);
+	struct i2c_client *client = to_i2c_client(dev);
+	struct v4l2_subdev *subdev = i2c_get_clientdata(client);
 	struct adp1653_flash *flash = to_adp1653_flash(subdev);
 
 	if (!flash->power_count)
@@ -390,7 +400,8 @@ static int adp1653_suspend(struct device *dev)
 
 static int adp1653_resume(struct device *dev)
 {
-	struct v4l2_subdev *subdev = dev_get_drvdata(dev);
+	struct i2c_client *client = to_i2c_client(dev);
+	struct v4l2_subdev *subdev = i2c_get_clientdata(client);
 	struct adp1653_flash *flash = to_adp1653_flash(subdev);
 
 	if (!flash->power_count)
@@ -510,7 +521,7 @@ free_and_quit:
 	return ret;
 }
 
-static void adp1653_remove(struct i2c_client *client)
+static int adp1653_remove(struct i2c_client *client)
 {
 	struct v4l2_subdev *subdev = i2c_get_clientdata(client);
 	struct adp1653_flash *flash = to_adp1653_flash(subdev);
@@ -518,6 +529,8 @@ static void adp1653_remove(struct i2c_client *client)
 	v4l2_device_unregister_subdev(&flash->subdev);
 	v4l2_ctrl_handler_free(&flash->ctrls);
 	media_entity_cleanup(&flash->subdev.entity);
+
+	return 0;
 }
 
 static const struct i2c_device_id adp1653_id_table[] = {

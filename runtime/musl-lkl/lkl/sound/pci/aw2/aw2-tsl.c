@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*****************************************************************************
  *
  * Copyright (C) 2008 Cedric Bregardis <cedric.bregardis@free.fr> and
@@ -7,6 +6,20 @@
  * Copyright 2002 Martijn Sipkema
  *
  * This file is part of the Audiowerk2 ALSA driver
+ *
+ * The Audiowerk2 ALSA driver is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; version 2.
+ *
+ * The Audiowerk2 ALSA driver is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with the Audiowerk2 ALSA driver; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301,
+ * USA.
  *
  *****************************************************************************/
 
@@ -59,7 +72,7 @@
     /*      SD3:          >-------<_4-L___>-------<_4-R___> */
     /*      WS4:          -------\_______________/--------- */
 
-static const int tsl1[8] = {
+static int tsl1[8] = {
 	1 * TSL_SDW_A1 | 3 * TSL_BSEL_A1 |
 	0 * TSL_DIS_A1 | 0 * TSL_DOD_A1 | TSL_LF_A1,
 
@@ -85,7 +98,7 @@ static const int tsl1[8] = {
 	0 * TSL_DOD_A1 | TSL_WS1 | TSL_WS0 | TSL_SF_A1 | TSL_EOS,
 };
 
-static const int tsl2[8] = {
+static int tsl2[8] = {
 	0 * TSL_SDW_A2 | 3 * TSL_BSEL_A2 | 2 * TSL_DOD_A2 | TSL_LF_A2,
 	0 * TSL_SDW_A2 | 2 * TSL_BSEL_A2 | 2 * TSL_DOD_A2,
 	0 * TSL_SDW_A2 | 3 * TSL_BSEL_A2 | 2 * TSL_DOD_A2,

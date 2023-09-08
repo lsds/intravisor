@@ -1,12 +1,12 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (C) 2001 - 2007 Jeff Dike (jdike@{addtoit,linux.intel}.com)
  * Copyright (C) 2001 Lennert Buytenhek (buytenh@gnu.org) and
  * James Leu (jleu@mindspring.net).
  * Copyright (C) 2001 by various other people who didn't put their name here.
+ * Licensed under the GPL.
  */
 
-#include <linux/memblock.h>
+#include <linux/bootmem.h>
 #include <linux/etherdevice.h>
 #include <linux/ethtool.h>
 #include <linux/inetdevice.h>
@@ -137,6 +137,8 @@ static irqreturn_t uml_net_interrupt(int irq, void *dev_id)
 		schedule_work(&lp->work);
 		goto out;
 	}
+	reactivate_fd(lp->fd, UM_ETH_IRQ);
+
 out:
 	spin_unlock(&lp->lock);
 	return IRQ_HANDLED;
@@ -160,7 +162,7 @@ static int uml_net_open(struct net_device *dev)
 
 	err = um_request_irq(dev->irq, lp->fd, IRQ_READ, uml_net_interrupt,
 			     IRQF_SHARED, dev->name, dev);
-	if (err < 0) {
+	if (err != 0) {
 		printk(KERN_ERR "uml_net_open: failed to get irq(%d)\n", err);
 		err = -ENETUNREACH;
 		goto out_close;
@@ -247,7 +249,7 @@ static void uml_net_set_multicast_list(struct net_device *dev)
 	return;
 }
 
-static void uml_net_tx_timeout(struct net_device *dev, unsigned int txqueue)
+static void uml_net_tx_timeout(struct net_device *dev)
 {
 	netif_trans_update(dev);
 	netif_wake_queue(dev);
@@ -265,7 +267,8 @@ static void uml_net_poll_controller(struct net_device *dev)
 static void uml_net_get_drvinfo(struct net_device *dev,
 				struct ethtool_drvinfo *info)
 {
-	strscpy(info->driver, DRIVER_NAME, sizeof(info->driver));
+	strlcpy(info->driver, DRIVER_NAME, sizeof(info->driver));
+	strlcpy(info->version, "42", sizeof(info->version));
 }
 
 static const struct ethtool_ops uml_net_ethtool_ops = {
@@ -274,9 +277,20 @@ static const struct ethtool_ops uml_net_ethtool_ops = {
 	.get_ts_info	= ethtool_op_get_ts_info,
 };
 
+static void uml_net_user_timer_expire(struct timer_list *t)
+{
+#ifdef undef
+	struct uml_net_private *lp = from_timer(lp, t, tl);
+	struct connection *conn = &lp->user;
+
+	dprintk(KERN_INFO "uml_net_user_timer_expire [%p]\n", conn);
+	do_connect(conn);
+#endif
+}
+
 void uml_net_setup_etheraddr(struct net_device *dev, char *str)
 {
-	u8 addr[ETH_ALEN];
+	unsigned char *addr = dev->dev_addr;
 	char *end;
 	int i;
 
@@ -316,7 +330,6 @@ void uml_net_setup_etheraddr(struct net_device *dev, char *str)
 		       addr[0] | 0x02, addr[1], addr[2], addr[3], addr[4],
 		       addr[5]);
 	}
-	eth_hw_addr_set(dev, addr);
 	return;
 
 random:
@@ -445,6 +458,7 @@ static void eth_configure(int n, void *init, char *mac,
 		  .add_address 		= transport->user->add_address,
 		  .delete_address  	= transport->user->delete_address });
 
+	timer_setup(&lp->tl, uml_net_user_timer_expire, 0);
 	spin_lock_init(&lp->lock);
 	memcpy(lp->mac, dev->dev_addr, sizeof(lp->mac));
 
@@ -636,10 +650,7 @@ static int __init eth_setup(char *str)
 		return 1;
 	}
 
-	new = memblock_alloc(sizeof(*new), SMP_CACHE_BYTES);
-	if (!new)
-		panic("%s: Failed to allocate %zu bytes\n", __func__,
-		      sizeof(*new));
+	new = alloc_bootmem(sizeof(*new));
 
 	INIT_LIST_HEAD(&new->list);
 	new->index = n;

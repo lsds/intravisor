@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  *	SEGA Dreamcast mouse driver
  *	Based on drivers/usb/usbmouse.c

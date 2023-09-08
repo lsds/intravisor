@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * TAS571x amplifier audio driver
  *
@@ -8,8 +7,10 @@
  * TAS5721 support:
  * Copyright (C) 2016 Petr Kulhavy, Barix AG <petr@barix.com>
  *
- * TAS5707 support:
- * Copyright (C) 2018 Jerome Brunet, Baylibre SAS <jbrunet@baylibre.com>
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
  */
 
 #include <linux/clk.h>
@@ -301,7 +302,7 @@ static int tas571x_hw_params(struct snd_pcm_substream *substream,
 				  TAS571X_SDI_FMT_MASK, val);
 }
 
-static int tas571x_mute(struct snd_soc_dai *dai, int mute, int direction)
+static int tas571x_mute(struct snd_soc_dai *dai, int mute)
 {
 	struct snd_soc_component *component = dai->component;
 	u8 sysctl2;
@@ -354,8 +355,7 @@ static int tas571x_set_bias_level(struct snd_soc_component *component,
 static const struct snd_soc_dai_ops tas571x_dai_ops = {
 	.set_fmt	= tas571x_set_dai_fmt,
 	.hw_params	= tas571x_hw_params,
-	.mute_stream	= tas571x_mute,
-	.no_capture_mute = 1,
+	.digital_mute	= tas571x_mute,
 };
 
 
@@ -441,111 +441,6 @@ static const struct tas571x_chip tas5711_chip = {
 	.controls			= tas5711_controls,
 	.num_controls			= ARRAY_SIZE(tas5711_controls),
 	.regmap_config			= &tas5711_regmap_config,
-	.vol_reg_size			= 1,
-};
-
-static const struct regmap_range tas5707_volatile_regs_range[] = {
-	regmap_reg_range(TAS571X_CLK_CTRL_REG,  TAS571X_ERR_STATUS_REG),
-	regmap_reg_range(TAS571X_OSC_TRIM_REG,  TAS571X_OSC_TRIM_REG),
-	regmap_reg_range(TAS5707_CH1_BQ0_REG, TAS5707_CH2_BQ6_REG),
-};
-
-static const struct regmap_access_table tas5707_volatile_regs = {
-	.yes_ranges =	tas5707_volatile_regs_range,
-	.n_yes_ranges =	ARRAY_SIZE(tas5707_volatile_regs_range),
-
-};
-
-static const DECLARE_TLV_DB_SCALE(tas5707_volume_tlv, -7900, 50, 1);
-
-static const char * const tas5707_volume_slew_step_txt[] = {
-	"256", "512", "1024", "2048",
-};
-
-static const unsigned int tas5707_volume_slew_step_values[] = {
-	3, 0, 1, 2,
-};
-
-static SOC_VALUE_ENUM_SINGLE_DECL(tas5707_volume_slew_step_enum,
-				  TAS571X_VOL_CFG_REG, 0, 0x3,
-				  tas5707_volume_slew_step_txt,
-				  tas5707_volume_slew_step_values);
-
-static const struct snd_kcontrol_new tas5707_controls[] = {
-	SOC_SINGLE_TLV("Master Volume",
-		       TAS571X_MVOL_REG,
-		       0, 0xff, 1, tas5707_volume_tlv),
-	SOC_DOUBLE_R_TLV("Speaker Volume",
-			 TAS571X_CH1_VOL_REG,
-			 TAS571X_CH2_VOL_REG,
-			 0, 0xff, 1, tas5707_volume_tlv),
-	SOC_DOUBLE("Speaker Switch",
-		   TAS571X_SOFT_MUTE_REG,
-		   TAS571X_SOFT_MUTE_CH1_SHIFT, TAS571X_SOFT_MUTE_CH2_SHIFT,
-		   1, 1),
-
-	SOC_ENUM("Slew Rate Steps", tas5707_volume_slew_step_enum),
-
-	BIQUAD_COEFS("CH1 - Biquad 0", TAS5707_CH1_BQ0_REG),
-	BIQUAD_COEFS("CH1 - Biquad 1", TAS5707_CH1_BQ1_REG),
-	BIQUAD_COEFS("CH1 - Biquad 2", TAS5707_CH1_BQ2_REG),
-	BIQUAD_COEFS("CH1 - Biquad 3", TAS5707_CH1_BQ3_REG),
-	BIQUAD_COEFS("CH1 - Biquad 4", TAS5707_CH1_BQ4_REG),
-	BIQUAD_COEFS("CH1 - Biquad 5", TAS5707_CH1_BQ5_REG),
-	BIQUAD_COEFS("CH1 - Biquad 6", TAS5707_CH1_BQ6_REG),
-
-	BIQUAD_COEFS("CH2 - Biquad 0", TAS5707_CH2_BQ0_REG),
-	BIQUAD_COEFS("CH2 - Biquad 1", TAS5707_CH2_BQ1_REG),
-	BIQUAD_COEFS("CH2 - Biquad 2", TAS5707_CH2_BQ2_REG),
-	BIQUAD_COEFS("CH2 - Biquad 3", TAS5707_CH2_BQ3_REG),
-	BIQUAD_COEFS("CH2 - Biquad 4", TAS5707_CH2_BQ4_REG),
-	BIQUAD_COEFS("CH2 - Biquad 5", TAS5707_CH2_BQ5_REG),
-	BIQUAD_COEFS("CH2 - Biquad 6", TAS5707_CH2_BQ6_REG),
-};
-
-static const struct reg_default tas5707_reg_defaults[] = {
-	{TAS571X_CLK_CTRL_REG,		0x6c},
-	{TAS571X_DEV_ID_REG,		0x70},
-	{TAS571X_ERR_STATUS_REG,	0x00},
-	{TAS571X_SYS_CTRL_1_REG,	0xa0},
-	{TAS571X_SDI_REG,		0x05},
-	{TAS571X_SYS_CTRL_2_REG,	0x40},
-	{TAS571X_SOFT_MUTE_REG,		0x00},
-	{TAS571X_MVOL_REG,		0xff},
-	{TAS571X_CH1_VOL_REG,		0x30},
-	{TAS571X_CH2_VOL_REG,		0x30},
-	{TAS571X_VOL_CFG_REG,		0x91},
-	{TAS571X_MODULATION_LIMIT_REG,	0x02},
-	{TAS571X_IC_DELAY_CH1_REG,	0xac},
-	{TAS571X_IC_DELAY_CH2_REG,	0x54},
-	{TAS571X_IC_DELAY_CH3_REG,	0xac},
-	{TAS571X_IC_DELAY_CH4_REG,	0x54},
-	{TAS571X_START_STOP_PERIOD_REG,	0x0f},
-	{TAS571X_OSC_TRIM_REG,		0x82},
-	{TAS571X_BKND_ERR_REG,		0x02},
-	{TAS571X_INPUT_MUX_REG,		0x17772},
-	{TAS571X_PWM_MUX_REG,		0x1021345},
-};
-
-static const struct regmap_config tas5707_regmap_config = {
-	.reg_bits			= 8,
-	.val_bits			= 32,
-	.max_register			= 0xff,
-	.reg_read			= tas571x_reg_read,
-	.reg_write			= tas571x_reg_write,
-	.reg_defaults			= tas5707_reg_defaults,
-	.num_reg_defaults		= ARRAY_SIZE(tas5707_reg_defaults),
-	.cache_type			= REGCACHE_RBTREE,
-	.wr_table			= &tas571x_write_regs,
-	.volatile_table			= &tas5707_volatile_regs,
-};
-
-static const struct tas571x_chip tas5707_chip = {
-	.supply_names			= tas5711_supply_names,
-	.num_supply_names		= ARRAY_SIZE(tas5711_supply_names),
-	.controls			= tas5707_controls,
-	.num_controls			= ARRAY_SIZE(tas5707_controls),
-	.regmap_config			= &tas5707_regmap_config,
 	.vol_reg_size			= 1,
 };
 
@@ -722,8 +617,8 @@ static const struct regmap_config tas5721_regmap_config = {
 static const struct tas571x_chip tas5721_chip = {
 	.supply_names			= tas5721_supply_names,
 	.num_supply_names		= ARRAY_SIZE(tas5721_supply_names),
-	.controls			= tas5721_controls,
-	.num_controls			= ARRAY_SIZE(tas5721_controls),
+	.controls			= tas5711_controls,
+	.num_controls			= ARRAY_SIZE(tas5711_controls),
 	.regmap_config			= &tas5721_regmap_config,
 	.vol_reg_size			= 1,
 };
@@ -756,6 +651,7 @@ static const struct snd_soc_component_driver tas571x_component = {
 	.num_dapm_routes	= ARRAY_SIZE(tas571x_dapm_routes),
 	.use_pmdown_time	= 1,
 	.endianness		= 1,
+	.non_legacy_dai_naming	= 1,
 };
 
 static struct snd_soc_dai_driver tas571x_dai = {
@@ -772,10 +668,10 @@ static struct snd_soc_dai_driver tas571x_dai = {
 	.ops = &tas571x_dai_ops,
 };
 
-static const struct of_device_id tas571x_of_match[] __maybe_unused;
-static const struct i2c_device_id tas571x_i2c_id[];
+static const struct of_device_id tas571x_of_match[];
 
-static int tas571x_i2c_probe(struct i2c_client *client)
+static int tas571x_i2c_probe(struct i2c_client *client,
+			     const struct i2c_device_id *id)
 {
 	struct tas571x_private *priv;
 	struct device *dev = &client->dev;
@@ -790,11 +686,8 @@ static int tas571x_i2c_probe(struct i2c_client *client)
 	of_id = of_match_device(tas571x_of_match, dev);
 	if (of_id)
 		priv->chip = of_id->data;
-	else {
-		const struct i2c_device_id *id =
-			i2c_match_id(tas571x_i2c_id, client);
+	else
 		priv->chip = (void *) id->driver_data;
-	}
 
 	priv->mclk = devm_clk_get(dev, "mclk");
 	if (IS_ERR(priv->mclk) && PTR_ERR(priv->mclk) != -ENOENT) {
@@ -823,17 +716,14 @@ static int tas571x_i2c_probe(struct i2c_client *client)
 
 	priv->regmap = devm_regmap_init(dev, NULL, client,
 					priv->chip->regmap_config);
-	if (IS_ERR(priv->regmap)) {
-		ret = PTR_ERR(priv->regmap);
-		goto disable_regs;
-	}
+	if (IS_ERR(priv->regmap))
+		return PTR_ERR(priv->regmap);
 
 	priv->pdn_gpio = devm_gpiod_get_optional(dev, "pdn", GPIOD_OUT_LOW);
 	if (IS_ERR(priv->pdn_gpio)) {
 		dev_err(dev, "error requesting pdn_gpio: %ld\n",
 			PTR_ERR(priv->pdn_gpio));
-		ret = PTR_ERR(priv->pdn_gpio);
-		goto disable_regs;
+		return PTR_ERR(priv->pdn_gpio);
 	}
 
 	priv->reset_gpio = devm_gpiod_get_optional(dev, "reset",
@@ -841,8 +731,7 @@ static int tas571x_i2c_probe(struct i2c_client *client)
 	if (IS_ERR(priv->reset_gpio)) {
 		dev_err(dev, "error requesting reset_gpio: %ld\n",
 			PTR_ERR(priv->reset_gpio));
-		ret = PTR_ERR(priv->reset_gpio);
-		goto disable_regs;
+		return PTR_ERR(priv->reset_gpio);
 	} else if (priv->reset_gpio) {
 		/* pulse the active low reset line for ~100us */
 		usleep_range(100, 200);
@@ -852,7 +741,7 @@ static int tas571x_i2c_probe(struct i2c_client *client)
 
 	ret = regmap_write(priv->regmap, TAS571X_OSC_TRIM_REG, 0);
 	if (ret)
-		goto disable_regs;
+		return ret;
 
 	usleep_range(50000, 60000);
 
@@ -868,31 +757,24 @@ static int tas571x_i2c_probe(struct i2c_client *client)
 		 */
 		ret = regmap_update_bits(priv->regmap, TAS571X_MVOL_REG, 1, 0);
 		if (ret)
-			goto disable_regs;
+			return ret;
 	}
 
-	ret = devm_snd_soc_register_component(&client->dev,
+	return devm_snd_soc_register_component(&client->dev,
 				      &priv->component_driver,
 				      &tas571x_dai, 1);
-	if (ret)
-		goto disable_regs;
-
-	return ret;
-
-disable_regs:
-	regulator_bulk_disable(priv->chip->num_supply_names, priv->supplies);
-	return ret;
 }
 
-static void tas571x_i2c_remove(struct i2c_client *client)
+static int tas571x_i2c_remove(struct i2c_client *client)
 {
 	struct tas571x_private *priv = i2c_get_clientdata(client);
 
 	regulator_bulk_disable(priv->chip->num_supply_names, priv->supplies);
+
+	return 0;
 }
 
-static const struct of_device_id tas571x_of_match[] __maybe_unused = {
-	{ .compatible = "ti,tas5707", .data = &tas5707_chip, },
+static const struct of_device_id tas571x_of_match[] = {
 	{ .compatible = "ti,tas5711", .data = &tas5711_chip, },
 	{ .compatible = "ti,tas5717", .data = &tas5717_chip, },
 	{ .compatible = "ti,tas5719", .data = &tas5717_chip, },
@@ -902,7 +784,6 @@ static const struct of_device_id tas571x_of_match[] __maybe_unused = {
 MODULE_DEVICE_TABLE(of, tas571x_of_match);
 
 static const struct i2c_device_id tas571x_i2c_id[] = {
-	{ "tas5707", (kernel_ulong_t) &tas5707_chip },
 	{ "tas5711", (kernel_ulong_t) &tas5711_chip },
 	{ "tas5717", (kernel_ulong_t) &tas5717_chip },
 	{ "tas5719", (kernel_ulong_t) &tas5717_chip },
@@ -916,7 +797,7 @@ static struct i2c_driver tas571x_i2c_driver = {
 		.name = "tas571x",
 		.of_match_table = of_match_ptr(tas571x_of_match),
 	},
-	.probe_new = tas571x_i2c_probe,
+	.probe = tas571x_i2c_probe,
 	.remove = tas571x_i2c_remove,
 	.id_table = tas571x_i2c_id,
 };

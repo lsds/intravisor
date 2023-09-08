@@ -1,17 +1,29 @@
-/* SPDX-License-Identifier: GPL-2.0+ */
 /*
+ * include/linux/TODO
+ *
  * userspace interface for pi433 radio module
  *
  * Pi433 is a 433MHz radio module for the Raspberry Pi.
- * It is based on the HopeRf Module RFM69CW. Therefore, inside of this
- * driver you'll find an abstraction of the rf69 chip.
+ * It is based on the HopeRf Module RFM69CW. Therefore inside of this
+ * driver, you'll find an abstraction of the rf69 chip.
  *
- * If needed this driver could also be extended to support other
- * devices based on HopeRf rf69 as well as HopeRf modules with a similar
- * interface such as RFM69HCW, RFM12, RFM95 and so on.
+ * If needed, this driver could be extended, to also support other
+ * devices, basing on HopeRfs rf69.
  *
+ * The driver can also be extended, to support other modules of
+ * HopeRf with a similar interace - e. g. RFM69HCW, RFM12, RFM95, ...
  * Copyright (C) 2016 Wolf-Entwicklungen
  *	Marcus Wolf <linux@wolf-entwicklungen.de>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
  */
 
 #ifndef PI433_H
@@ -30,8 +42,7 @@ enum option_on_off {
 /* IOCTL structs and commands */
 
 /**
- * struct pi433_tx_cfg
- * describes the configuration of the radio module for sending data
+ * struct pi433_tx_config - describes the configuration of the radio module for sending
  * @frequency:
  * @bit_rate:
  * @modulation:
@@ -43,7 +54,7 @@ enum option_on_off {
  * @repetitions:
  *
  * ATTENTION:
- * If the contents of 'pi433_tx_cfg' ever change
+ * If the contents of 'pi433_tx_config' ever change
  * incompatibly, then the ioctl number (see define below) must change.
  *
  * NOTE: struct layout is the same in 64bit and 32bit userspace.
@@ -78,8 +89,7 @@ struct pi433_tx_cfg {
 };
 
 /**
- * struct pi433_rx_cfg
- * describes the configuration of the radio module for receiving data
+ * struct pi433_rx_config - describes the configuration of the radio module for sending
  * @frequency:
  * @bit_rate:
  * @modulation:
@@ -91,7 +101,7 @@ struct pi433_tx_cfg {
  * @repetitions:
  *
  * ATTENTION:
- * If the contents of 'pi433_rx_cfg' ever change
+ * If the contents of 'pi433_rx_config' ever change
  * incompatibly, then the ioctl number (see define below) must change
  *
  * NOTE: struct layout is the same in 64bit and 32bit userspace.
@@ -114,15 +124,9 @@ struct pi433_rx_cfg {
 
 	/* packet format */
 	enum option_on_off	enable_sync;
-
-	/* should be used in combination with sync, only */
-	enum option_on_off	enable_length_byte;
-
-	/* operational with sync, only */
-	enum address_filtering	enable_address_filtering;
-
-	/* only operational, if sync on and fixed length or length byte is used */
-	enum option_on_off	enable_crc;
+	enum option_on_off	enable_length_byte;	  /* should be used in combination with sync, only */
+	enum address_filtering	enable_address_filtering; /* operational with sync, only */
+	enum option_on_off	enable_crc;		  /* only operational, if sync on and fixed length or length byte is used */
 
 	__u8			sync_length;
 	__u8			fixed_message_length;
@@ -133,16 +137,12 @@ struct pi433_rx_cfg {
 	__u8			broadcast_address;
 };
 
-#define PI433_IOC_MAGIC	'r'
+#define PI433_IOC_MAGIC			'r'
 
-#define PI433_IOC_RD_TX_CFG                                             \
-	_IOR(PI433_IOC_MAGIC, PI433_TX_CFG_IOCTL_NR, char[sizeof(struct pi433_tx_cfg)])
-#define PI433_IOC_WR_TX_CFG                                             \
-	_IOW(PI433_IOC_MAGIC, PI433_TX_CFG_IOCTL_NR, char[sizeof(struct pi433_tx_cfg)])
+#define PI433_IOC_RD_TX_CFG	_IOR(PI433_IOC_MAGIC, PI433_TX_CFG_IOCTL_NR, char[sizeof(struct pi433_tx_cfg)])
+#define PI433_IOC_WR_TX_CFG	_IOW(PI433_IOC_MAGIC, PI433_TX_CFG_IOCTL_NR, char[sizeof(struct pi433_tx_cfg)])
 
-#define PI433_IOC_RD_RX_CFG                                             \
-	_IOR(PI433_IOC_MAGIC, PI433_RX_CFG_IOCTL_NR, char[sizeof(struct pi433_rx_cfg)])
-#define PI433_IOC_WR_RX_CFG                                             \
-	_IOW(PI433_IOC_MAGIC, PI433_RX_CFG_IOCTL_NR, char[sizeof(struct pi433_rx_cfg)])
+#define PI433_IOC_RD_RX_CFG	_IOR(PI433_IOC_MAGIC, PI433_RX_CFG_IOCTL_NR, char[sizeof(struct pi433_rx_cfg)])
+#define PI433_IOC_WR_RX_CFG	_IOW(PI433_IOC_MAGIC, PI433_RX_CFG_IOCTL_NR, char[sizeof(struct pi433_rx_cfg)])
 
 #endif /* PI433_H */

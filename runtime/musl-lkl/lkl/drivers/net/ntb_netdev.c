@@ -71,6 +71,7 @@ static unsigned int tx_start = 10;
 static unsigned int tx_stop = 5;
 
 struct ntb_netdev {
+	struct list_head list;
 	struct pci_dev *pdev;
 	struct net_device *ndev;
 	struct ntb_transport_qp *qp;
@@ -79,6 +80,8 @@ struct ntb_netdev {
 
 #define	NTB_TX_TIMEOUT_MS	1000
 #define	NTB_RXQ_SIZE		100
+
+static LIST_HEAD(dev_list);
 
 static void ntb_netdev_event_handler(void *data, int link_is_up)
 {
@@ -119,7 +122,7 @@ static void ntb_netdev_rx_handler(struct ntb_transport_qp *qp, void *qp_data,
 	skb->protocol = eth_type_trans(skb, ndev);
 	skb->ip_summed = CHECKSUM_NONE;
 
-	if (__netif_rx(skb) == NET_RX_DROP) {
+	if (netif_rx(skb) == NET_RX_DROP) {
 		ndev->stats.rx_errors++;
 		ndev->stats.rx_dropped++;
 	} else {
@@ -233,7 +236,7 @@ static void ntb_netdev_tx_timer(struct timer_list *t)
 	struct net_device *ndev = dev->ndev;
 
 	if (ntb_transport_tx_free_entry(dev->qp) < tx_stop) {
-		mod_timer(&dev->tx_timer, jiffies + usecs_to_jiffies(tx_time));
+		mod_timer(&dev->tx_timer, jiffies + msecs_to_jiffies(tx_time));
 	} else {
 		/* Make sure anybody stopping the queue after this sees the new
 		 * value of ntb_transport_tx_free_entry()
@@ -364,9 +367,9 @@ static void ntb_get_drvinfo(struct net_device *ndev,
 {
 	struct ntb_netdev *dev = netdev_priv(ndev);
 
-	strscpy(info->driver, KBUILD_MODNAME, sizeof(info->driver));
-	strscpy(info->version, NTB_NETDEV_VER, sizeof(info->version));
-	strscpy(info->bus_info, pci_name(dev->pdev), sizeof(info->bus_info));
+	strlcpy(info->driver, KBUILD_MODNAME, sizeof(info->driver));
+	strlcpy(info->version, NTB_NETDEV_VER, sizeof(info->version));
+	strlcpy(info->bus_info, pci_name(dev->pdev), sizeof(info->bus_info));
 }
 
 static int ntb_get_link_ksettings(struct net_device *dev,
@@ -427,8 +430,8 @@ static int ntb_netdev_probe(struct device *client_dev)
 	ndev->hw_features = ndev->features;
 	ndev->watchdog_timeo = msecs_to_jiffies(NTB_TX_TIMEOUT_MS);
 
-	eth_random_addr(ndev->perm_addr);
-	dev_addr_set(ndev, ndev->perm_addr);
+	random_ether_addr(ndev->perm_addr);
+	memcpy(ndev->dev_addr, ndev->perm_addr, ndev->addr_len);
 
 	ndev->netdev_ops = &ntb_netdev_ops;
 	ndev->ethtool_ops = &ntb_ethtool_ops;
@@ -449,7 +452,7 @@ static int ntb_netdev_probe(struct device *client_dev)
 	if (rc)
 		goto err1;
 
-	dev_set_drvdata(client_dev, ndev);
+	list_add(&dev->list, &dev_list);
 	dev_info(&pdev->dev, "%s created\n", ndev->name);
 	return 0;
 
@@ -462,8 +465,27 @@ err:
 
 static void ntb_netdev_remove(struct device *client_dev)
 {
-	struct net_device *ndev = dev_get_drvdata(client_dev);
-	struct ntb_netdev *dev = netdev_priv(ndev);
+	struct ntb_dev *ntb;
+	struct net_device *ndev;
+	struct pci_dev *pdev;
+	struct ntb_netdev *dev;
+	bool found = false;
+
+	ntb = dev_ntb(client_dev->parent);
+	pdev = ntb->pdev;
+
+	list_for_each_entry(dev, &dev_list, list) {
+		if (dev->pdev == pdev) {
+			found = true;
+			break;
+		}
+	}
+	if (!found)
+		return;
+
+	list_del(&dev->list);
+
+	ndev = dev->ndev;
 
 	unregister_netdev(ndev);
 	ntb_transport_free_queue(dev->qp);
@@ -484,14 +506,7 @@ static int __init ntb_netdev_init_module(void)
 	rc = ntb_transport_register_client_dev(KBUILD_MODNAME);
 	if (rc)
 		return rc;
-
-	rc = ntb_transport_register_client(&ntb_netdev_client);
-	if (rc) {
-		ntb_transport_unregister_client_dev(KBUILD_MODNAME);
-		return rc;
-	}
-
-	return 0;
+	return ntb_transport_register_client(&ntb_netdev_client);
 }
 module_init(ntb_netdev_init_module);
 

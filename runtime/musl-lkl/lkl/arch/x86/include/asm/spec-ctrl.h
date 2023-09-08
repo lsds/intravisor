@@ -13,7 +13,7 @@
  * Takes the guest view of SPEC_CTRL MSR as a parameter and also
  * the guest's version of VIRT_SPEC_CTRL, if emulated.
  */
-extern void x86_virt_spec_ctrl(u64 guest_virt_spec_ctrl, bool guest);
+extern void x86_virt_spec_ctrl(u64 guest_spec_ctrl, u64 guest_virt_spec_ctrl, bool guest);
 
 /**
  * x86_spec_ctrl_set_guest - Set speculation control registers for the guest
@@ -24,9 +24,9 @@ extern void x86_virt_spec_ctrl(u64 guest_virt_spec_ctrl, bool guest);
  * Avoids writing to the MSR if the content/bits are the same
  */
 static inline
-void x86_spec_ctrl_set_guest(u64 guest_virt_spec_ctrl)
+void x86_spec_ctrl_set_guest(u64 guest_spec_ctrl, u64 guest_virt_spec_ctrl)
 {
-	x86_virt_spec_ctrl(guest_virt_spec_ctrl, true);
+	x86_virt_spec_ctrl(guest_spec_ctrl, guest_virt_spec_ctrl, true);
 }
 
 /**
@@ -38,9 +38,9 @@ void x86_spec_ctrl_set_guest(u64 guest_virt_spec_ctrl)
  * Avoids writing to the MSR if the content/bits are the same
  */
 static inline
-void x86_spec_ctrl_restore_host(u64 guest_virt_spec_ctrl)
+void x86_spec_ctrl_restore_host(u64 guest_spec_ctrl, u64 guest_virt_spec_ctrl)
 {
-	x86_virt_spec_ctrl(guest_virt_spec_ctrl, false);
+	x86_virt_spec_ctrl(guest_spec_ctrl, guest_virt_spec_ctrl, false);
 }
 
 /* AMD specific Speculative Store Bypass MSR data */
@@ -53,22 +53,10 @@ static inline u64 ssbd_tif_to_spec_ctrl(u64 tifn)
 	return (tifn & _TIF_SSBD) >> (TIF_SSBD - SPEC_CTRL_SSBD_SHIFT);
 }
 
-static inline u64 stibp_tif_to_spec_ctrl(u64 tifn)
-{
-	BUILD_BUG_ON(TIF_SPEC_IB < SPEC_CTRL_STIBP_SHIFT);
-	return (tifn & _TIF_SPEC_IB) >> (TIF_SPEC_IB - SPEC_CTRL_STIBP_SHIFT);
-}
-
 static inline unsigned long ssbd_spec_ctrl_to_tif(u64 spec_ctrl)
 {
 	BUILD_BUG_ON(TIF_SSBD < SPEC_CTRL_SSBD_SHIFT);
 	return (spec_ctrl & SPEC_CTRL_SSBD) << (TIF_SSBD - SPEC_CTRL_SSBD_SHIFT);
-}
-
-static inline unsigned long stibp_spec_ctrl_to_tif(u64 spec_ctrl)
-{
-	BUILD_BUG_ON(TIF_SPEC_IB < SPEC_CTRL_STIBP_SHIFT);
-	return (spec_ctrl & SPEC_CTRL_STIBP) << (TIF_SPEC_IB - SPEC_CTRL_STIBP_SHIFT);
 }
 
 static inline u64 ssbd_tif_to_amd_ls_cfg(u64 tifn)
@@ -82,7 +70,11 @@ extern void speculative_store_bypass_ht_init(void);
 static inline void speculative_store_bypass_ht_init(void) { }
 #endif
 
-extern void speculation_ctrl_update(unsigned long tif);
-extern void speculation_ctrl_update_current(void);
+extern void speculative_store_bypass_update(unsigned long tif);
+
+static inline void speculative_store_bypass_update_current(void)
+{
+	speculative_store_bypass_update(current_thread_info()->flags);
+}
 
 #endif

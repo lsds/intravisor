@@ -1,13 +1,29 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
-/*
+/* -*- mode: c; c-basic-offset: 8; -*-
+ * vim: noexpandtab sw=8 ts=8 sts=0:
+ *
  * item.c - library routines for handling generic config items
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public
+ * License as published by the Free Software Foundation; either
+ * version 2 of the License, or (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public
+ * License along with this program; if not, write to the
+ * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+ * Boston, MA 021110-1307, USA.
  *
  * Based on kobject:
  *	kobject is Copyright (c) 2002-2003 Patrick Mochel
  *
  * configfs Copyright (C) 2005 Oracle.  All rights reserved.
  *
- * Please see the file Documentation/filesystems/configfs.rst for
+ * Please see the file Documentation/filesystems/configfs/configfs.txt for
  * critical information about using the config_item interface.
  */
 
@@ -48,6 +64,7 @@ static void config_item_init(struct config_item *item)
  */
 int config_item_set_name(struct config_item *item, const char *fmt, ...)
 {
+	int error = 0;
 	int limit = CONFIGFS_ITEM_NAME_LEN;
 	int need;
 	va_list args;
@@ -62,11 +79,25 @@ int config_item_set_name(struct config_item *item, const char *fmt, ...)
 	if (need < limit)
 		name = item->ci_namebuf;
 	else {
+		/*
+		 * Need more space? Allocate it and try again
+		 */
+		limit = need + 1;
+		name = kmalloc(limit, GFP_KERNEL);
+		if (!name) {
+			error = -ENOMEM;
+			goto Done;
+		}
 		va_start(args, fmt);
-		name = kvasprintf(GFP_KERNEL, fmt, args);
+		need = vsnprintf(name, limit, fmt, args);
 		va_end(args);
-		if (!name)
-			return -EFAULT;
+
+		/* Still? Give up. */
+		if (need >= limit) {
+			kfree(name);
+			error = -EFAULT;
+			goto Done;
+		}
 	}
 
 	/* Free the old name, if necessary. */
@@ -75,7 +106,8 @@ int config_item_set_name(struct config_item *item, const char *fmt, ...)
 
 	/* Now, set the new name */
 	item->ci_name = name;
-	return 0;
+ Done:
+	return error;
 }
 EXPORT_SYMBOL(config_item_set_name);
 

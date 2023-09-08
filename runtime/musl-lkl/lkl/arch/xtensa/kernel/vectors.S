@@ -43,11 +43,10 @@
  */
 
 #include <linux/linkage.h>
-#include <linux/pgtable.h>
-#include <asm/asmmacro.h>
 #include <asm/ptrace.h>
 #include <asm/current.h>
 #include <asm/asm-offsets.h>
+#include <asm/pgtable.h>
 #include <asm/processor.h>
 #include <asm/page.h>
 #include <asm/thread_info.h>
@@ -88,7 +87,7 @@ ENDPROC(_UserExceptionVector)
  * Kernel exception vector. (Exceptions with PS.UM == 0, PS.EXCM == 0)
  *
  * We get this exception when we were already in kernel space.
- * We decrement the current stack pointer (kernel) by PT_KERNEL_SIZE and
+ * We decrement the current stack pointer (kernel) by PT_SIZE and
  * jump to the first-level handler associated with the exception cause.
  *
  * Note: we need to preserve space for the spill region.
@@ -100,7 +99,7 @@ ENTRY(_KernelExceptionVector)
 
 	xsr	a3, excsave1		# save a3, and get dispatch table
 	wsr	a2, depc		# save a2
-	addi	a2, a1, -16 - PT_KERNEL_SIZE	# adjust stack pointer
+	addi	a2, a1, -16-PT_SIZE	# adjust stack pointer
 	s32i	a0, a2, PT_AREG0	# save a0 to ESF
 	rsr	a0, exccause		# retrieve exception cause
 	s32i	a0, a2, PT_DEPC		# mark it as a regular exception
@@ -226,7 +225,6 @@ ENTRY(_DoubleExceptionVector)
 
 	xsr	a0, depc		# get DEPC, save a0
 
-#ifdef SUPPORT_WINDOWED
 	movi	a2, WINDOW_VECTORS_VADDR
 	_bltu	a0, a2, .Lfixup
 	addi	a2, a2, WINDOW_VECTORS_SIZE
@@ -275,10 +273,6 @@ _DoubleExceptionVector_WindowUnderflow:
 	xsr	a3, excsave1
 	l32i	a0, a0, EXC_TABLE_FAST_USER
 	jx	a0
-
-#else
-	j	.Lfixup
-#endif
 
 	/*
 	 * We only allow the ITLB miss exception if we are in kernel space.
@@ -348,7 +342,6 @@ _DoubleExceptionVector_WindowUnderflow:
 	l32i	a0, a0, EXC_TABLE_FAST_USER
 	jx	a0
 
-#ifdef SUPPORT_WINDOWED
 	/*
 	 * Restart window OVERFLOW exception.
 	 * Currently:
@@ -481,12 +474,10 @@ _DoubleExceptionVector_handle_exception:
 	rsr	a0, depc
 	rotw	-3
 	j	1b
-#endif
 
 ENDPROC(_DoubleExceptionVector)
 
-#ifdef SUPPORT_WINDOWED
-
+	.text
 /*
  * Fixup handler for TLB miss in double exception handler for window owerflow.
  * We get here with windowbase set to the window that was being spilled and
@@ -514,7 +505,6 @@ ENDPROC(_DoubleExceptionVector)
  * a3: exctable, original value in excsave1
  */
 
-	__XTENSA_HANDLER
 	.literal_position
 
 ENTRY(window_overflow_restore_a0_fixup)
@@ -599,8 +589,6 @@ ENTRY(window_overflow_restore_a0_fixup)
 
 ENDPROC(window_overflow_restore_a0_fixup)
 
-#endif
-
 /*
  * Debug interrupt vector
  *
@@ -661,25 +649,6 @@ ENTRY(_Level\level\()InterruptVector)
 	irq_entry_level 5
 	irq_entry_level 6
 
-#if XCHAL_EXCM_LEVEL >= 2
-	/*
-	 *  Continuation of medium priority interrupt dispatch code.
-	 *  On entry here, a0 contains PS, and EPC2 contains saved a0:
-	 */
-	__XTENSA_HANDLER
-	.align 4
-_SimulateUserKernelVectorException:
-	addi	a0, a0, (1 << PS_EXCM_BIT)
-#if !XTENSA_FAKE_NMI
-	wsr	a0, ps
-#endif
-	bbsi.l	a0, PS_UM_BIT, 1f	# branch if user mode
-	xsr	a0, excsave2		# restore a0
-	j	_KernelExceptionVector	# simulate kernel vector exception
-1:	xsr	a0, excsave2		# restore a0
-	j	_UserExceptionVector	# simulate user vector exception
-#endif
-
 
 /* Window overflow and underflow handlers.
  * The handlers must be 64 bytes apart, first starting with the underflow
@@ -698,8 +667,6 @@ _SimulateUserKernelVectorException:
 	.section		.WindowVectors.text, "ax"
 
 
-#ifdef SUPPORT_WINDOWED
-
 /* 4-Register Window Overflow Vector (Handler) */
 
 ENTRY_ALIGN64(_WindowOverflow4)
@@ -711,6 +678,27 @@ ENTRY_ALIGN64(_WindowOverflow4)
 	rfwo
 
 ENDPROC(_WindowOverflow4)
+
+
+#if XCHAL_EXCM_LEVEL >= 2
+	/*  Not a window vector - but a convenient location
+	 *  (where we know there's space) for continuation of
+	 *  medium priority interrupt dispatch code.
+	 *  On entry here, a0 contains PS, and EPC2 contains saved a0:
+	 */
+	.align 4
+_SimulateUserKernelVectorException:
+	addi	a0, a0, (1 << PS_EXCM_BIT)
+#if !XTENSA_FAKE_NMI
+	wsr	a0, ps
+#endif
+	bbsi.l	a0, PS_UM_BIT, 1f	# branch if user mode
+	xsr	a0, excsave2		# restore a0
+	j	_KernelExceptionVector	# simulate kernel vector exception
+1:	xsr	a0, excsave2		# restore a0
+	j	_UserExceptionVector	# simulate user vector exception
+#endif
+
 
 /* 4-Register Window Underflow Vector (Handler) */
 
@@ -799,7 +787,5 @@ ENTRY_ALIGN64(_WindowUnderflow12)
 	rfwu
 
 ENDPROC(_WindowUnderflow12)
-
-#endif
 
 	.text

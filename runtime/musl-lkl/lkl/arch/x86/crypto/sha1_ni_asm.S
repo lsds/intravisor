@@ -59,6 +59,8 @@
 #define DATA_PTR	%rsi	/* 2nd arg */
 #define NUM_BLKS	%rdx	/* 3rd arg */
 
+#define RSPSAVE		%rax
+
 /* gcc conversion */
 #define FRAME_SIZE	32	/* space for 2x16 bytes */
 
@@ -93,9 +95,8 @@
  */
 .text
 .align 32
-SYM_FUNC_START(sha1_ni_transform)
-	push		%rbp
-	mov		%rsp, %rbp
+ENTRY(sha1_ni_transform)
+	mov		%rsp, RSPSAVE
 	sub		$FRAME_SIZE, %rsp
 	and		$~0xF, %rsp
 
@@ -287,11 +288,10 @@ SYM_FUNC_START(sha1_ni_transform)
 	pextrd		$3, E0, 1*16(DIGEST_PTR)
 
 .Ldone_hash:
-	mov		%rbp, %rsp
-	pop		%rbp
+	mov		RSPSAVE, %rsp
 
-	RET
-SYM_FUNC_END(sha1_ni_transform)
+	ret
+ENDPROC(sha1_ni_transform)
 
 .section	.rodata.cst16.PSHUFFLE_BYTE_FLIP_MASK, "aM", @progbits, 16
 .align 16

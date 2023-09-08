@@ -1,8 +1,11 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Driver for the TXx9 SoC DMA Controller
  *
  * Copyright (C) 2009 Atsushi Nemoto
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 #include <linux/dma-mapping.h>
 #include <linux/init.h>
@@ -324,6 +327,7 @@ static void txx9dmac_reset_chan(struct txx9dmac_chan *dc)
 	channel_writel(dc, SAIR, 0);
 	channel_writel(dc, DAIR, 0);
 	channel_writel(dc, CCR, 0);
+	mmiowb();
 }
 
 /* Called with dc->lock held and bh disabled */
@@ -601,13 +605,13 @@ scan_done:
 	}
 }
 
-static void txx9dmac_chan_tasklet(struct tasklet_struct *t)
+static void txx9dmac_chan_tasklet(unsigned long data)
 {
 	int irq;
 	u32 csr;
 	struct txx9dmac_chan *dc;
 
-	dc = from_tasklet(dc, t, tasklet);
+	dc = (struct txx9dmac_chan *)data;
 	csr = channel_readl(dc, CSR);
 	dev_vdbg(chan2dev(&dc->chan), "tasklet: status=%x\n", csr);
 
@@ -638,13 +642,13 @@ static irqreturn_t txx9dmac_chan_interrupt(int irq, void *dev_id)
 	return IRQ_HANDLED;
 }
 
-static void txx9dmac_tasklet(struct tasklet_struct *t)
+static void txx9dmac_tasklet(unsigned long data)
 {
 	int irq;
 	u32 csr;
 	struct txx9dmac_chan *dc;
 
-	struct txx9dmac_dev *ddev = from_tasklet(ddev, t, tasklet);
+	struct txx9dmac_dev *ddev = (struct txx9dmac_dev *)data;
 	u32 mcr;
 	int i;
 
@@ -950,6 +954,7 @@ static void txx9dmac_chain_dynamic(struct txx9dmac_chan *dc,
 	dma_sync_single_for_device(chan2parent(&dc->chan),
 				   prev->txd.phys, ddev->descsize,
 				   DMA_TO_DEVICE);
+	mmiowb();
 	if (!(channel_readl(dc, CSR) & TXX9_DMA_CSR_CHNEN) &&
 	    channel_read_CHAR(dc) == prev->txd.phys)
 		/* Restart chain DMA */
@@ -1075,6 +1080,7 @@ static void txx9dmac_free_chan_resources(struct dma_chan *chan)
 static void txx9dmac_off(struct txx9dmac_dev *ddev)
 {
 	dma_writel(ddev, MCR, 0);
+	mmiowb();
 }
 
 static int __init txx9dmac_chan_probe(struct platform_device *pdev)
@@ -1113,7 +1119,8 @@ static int __init txx9dmac_chan_probe(struct platform_device *pdev)
 		irq = platform_get_irq(pdev, 0);
 		if (irq < 0)
 			return irq;
-		tasklet_setup(&dc->tasklet, txx9dmac_chan_tasklet);
+		tasklet_init(&dc->tasklet, txx9dmac_chan_tasklet,
+				(unsigned long)dc);
 		dc->irq = irq;
 		err = devm_request_irq(&pdev->dev, dc->irq,
 			txx9dmac_chan_interrupt, 0, dev_name(&pdev->dev), dc);
@@ -1199,7 +1206,8 @@ static int __init txx9dmac_probe(struct platform_device *pdev)
 
 	ddev->irq = platform_get_irq(pdev, 0);
 	if (ddev->irq >= 0) {
-		tasklet_setup(&ddev->tasklet, txx9dmac_tasklet);
+		tasklet_init(&ddev->tasklet, txx9dmac_tasklet,
+				(unsigned long)ddev);
 		err = devm_request_irq(&pdev->dev, ddev->irq,
 			txx9dmac_interrupt, 0, dev_name(&pdev->dev), ddev);
 		if (err)
@@ -1236,7 +1244,8 @@ static void txx9dmac_shutdown(struct platform_device *pdev)
 
 static int txx9dmac_suspend_noirq(struct device *dev)
 {
-	struct txx9dmac_dev *ddev = dev_get_drvdata(dev);
+	struct platform_device *pdev = to_platform_device(dev);
+	struct txx9dmac_dev *ddev = platform_get_drvdata(pdev);
 
 	txx9dmac_off(ddev);
 	return 0;
@@ -1244,8 +1253,9 @@ static int txx9dmac_suspend_noirq(struct device *dev)
 
 static int txx9dmac_resume_noirq(struct device *dev)
 {
-	struct txx9dmac_dev *ddev = dev_get_drvdata(dev);
-	struct txx9dmac_platform_data *pdata = dev_get_platdata(dev);
+	struct platform_device *pdev = to_platform_device(dev);
+	struct txx9dmac_dev *ddev = platform_get_drvdata(pdev);
+	struct txx9dmac_platform_data *pdata = dev_get_platdata(&pdev->dev);
 	u32 mcr;
 
 	mcr = TXX9_DMA_MCR_MSTEN | MCR_LE;

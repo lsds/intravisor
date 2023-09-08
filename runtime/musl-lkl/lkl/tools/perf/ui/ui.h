@@ -2,11 +2,11 @@
 #ifndef _PERF_UI_H_
 #define _PERF_UI_H_ 1
 
-#include "../util/mutex.h"
+#include <pthread.h>
 #include <stdbool.h>
 #include <linux/compiler.h>
 
-extern struct mutex ui__lock;
+extern pthread_mutex_t ui__lock;
 extern void *perf_gtk_handle;
 
 extern int use_browser;

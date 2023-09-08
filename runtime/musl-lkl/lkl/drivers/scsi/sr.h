@@ -18,7 +18,8 @@
 #ifndef _SR_H
 #define _SR_H
 
-#include <linux/mutex.h>
+#include <linux/genhd.h>
+#include <linux/kref.h>
 
 #define MAX_RETRIES	3
 #define SR_TIMEOUT	(30 * HZ)
@@ -31,6 +32,7 @@ struct scsi_device;
 
 
 typedef struct scsi_cd {
+	struct scsi_driver *driver;
 	unsigned capacity;	/* size in blocks                       */
 	struct scsi_device *device;
 	unsigned int vendor;	/* vendor code, see sr_vendor.c         */
@@ -49,7 +51,9 @@ typedef struct scsi_cd {
 	bool ignore_get_event:1;	/* GET_EVENT is unreliable, use TUR */
 
 	struct cdrom_device_info cdi;
-	struct mutex lock;
+	/* We hold gendisk and scsi_device references on probe and use
+	 * the refs on this kref to decide when to release them */
+	struct kref kref;
 	struct gendisk *disk;
 } Scsi_CD;
 

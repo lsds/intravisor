@@ -268,6 +268,7 @@ static struct rng_alg exynos_rng_alg = {
 static int exynos_rng_probe(struct platform_device *pdev)
 {
 	struct exynos_rng_dev *rng;
+	struct resource *res;
 	int ret;
 
 	if (exynos_rng_dev)
@@ -288,7 +289,8 @@ static int exynos_rng_probe(struct platform_device *pdev)
 		return PTR_ERR(rng->clk);
 	}
 
-	rng->mem = devm_platform_ioremap_resource(pdev, 0);
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	rng->mem = devm_ioremap_resource(&pdev->dev, res);
 	if (IS_ERR(rng->mem))
 		return PTR_ERR(rng->mem);
 
@@ -317,7 +319,8 @@ static int exynos_rng_remove(struct platform_device *pdev)
 
 static int __maybe_unused exynos_rng_suspend(struct device *dev)
 {
-	struct exynos_rng_dev *rng = dev_get_drvdata(dev);
+	struct platform_device *pdev = to_platform_device(dev);
+	struct exynos_rng_dev *rng = platform_get_drvdata(pdev);
 	int ret;
 
 	/* If we were never seeded then after resume it will be the same */
@@ -347,7 +350,8 @@ static int __maybe_unused exynos_rng_suspend(struct device *dev)
 
 static int __maybe_unused exynos_rng_resume(struct device *dev)
 {
-	struct exynos_rng_dev *rng = dev_get_drvdata(dev);
+	struct platform_device *pdev = to_platform_device(dev);
+	struct exynos_rng_dev *rng = platform_get_drvdata(pdev);
 	int ret;
 
 	/* Never seeded so nothing to do */

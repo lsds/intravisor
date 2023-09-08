@@ -17,7 +17,7 @@
 
 #include "hvc_console.h"
 
-static struct hvc_struct *hvc_udbg_dev;
+struct hvc_struct *hvc_udbg_dev;
 
 static int hvc_udbg_put(uint32_t vtermno, const char *buf, int count)
 {

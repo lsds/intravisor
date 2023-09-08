@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * (C) 2003 Red Hat, Inc.
  * (C) 2004 Dan Brown <dan_brown@ieee.org>
@@ -58,7 +57,6 @@ static unsigned long doc_locations[] __initdata = {
 static struct mtd_info *doclist = NULL;
 
 struct doc_priv {
-	struct nand_controller base;
 	void __iomem *virtadr;
 	unsigned long physadr;
 	u_char ChipID;
@@ -68,9 +66,7 @@ struct doc_priv {
 	int curchip;
 	int mh0_page;
 	int mh1_page;
-	struct rs_control *rs_decoder;
 	struct mtd_info *nextdoc;
-	bool supports_32b_reads;
 
 	/* Handle the last stage of initialization (BBT scan, partitioning) */
 	int (*late_init)(struct mtd_info *mtd);
@@ -85,6 +81,10 @@ static u_char empty_write_ecc[6] = { 0x4b, 0x00, 0xe2, 0x0e, 0x93, 0xf7 };
 #define DoC_is_MillenniumPlus(doc) ((doc)->ChipID == DOC_ChipID_DocMilPlus16 || (doc)->ChipID == DOC_ChipID_DocMilPlus32)
 #define DoC_is_Millennium(doc) ((doc)->ChipID == DOC_ChipID_DocMil)
 #define DoC_is_2000(doc) ((doc)->ChipID == DOC_ChipID_Doc2k)
+
+static void doc200x_hwcontrol(struct mtd_info *mtd, int cmd,
+			      unsigned int bitmask);
+static void doc200x_select_chip(struct mtd_info *mtd, int chip);
 
 static int debug = 0;
 module_param(debug, int, 0);
@@ -123,6 +123,9 @@ MODULE_PARM_DESC(doc_config_location, "Physical memory address at which to probe
 /* Number of symbols */
 #define NN 1023
 
+/* the Reed Solomon control structure */
+static struct rs_control *rs_decoder;
+
 /*
  * The HW decoder in the DoC ASIC's provides us a error syndrome,
  * which we must convert to a standard syndrome usable by the generic
@@ -137,7 +140,6 @@ static int doc_ecc_decode(struct rs_control *rs, uint8_t *data, uint8_t *ecc)
 	int i, j, nerr, errpos[8];
 	uint8_t parity;
 	uint16_t ds[4], s[5], tmp, errval[8], syn[4];
-	struct rs_codec *cd = rs->codec;
 
 	memset(syn, 0, sizeof(syn));
 	/* Convert the ecc bytes into words */
@@ -158,15 +160,15 @@ static int doc_ecc_decode(struct rs_control *rs, uint8_t *data, uint8_t *ecc)
 	for (j = 1; j < NROOTS; j++) {
 		if (ds[j] == 0)
 			continue;
-		tmp = cd->index_of[ds[j]];
+		tmp = rs->index_of[ds[j]];
 		for (i = 0; i < NROOTS; i++)
-			s[i] ^= cd->alpha_to[rs_modnn(cd, tmp + (FCR + i) * j)];
+			s[i] ^= rs->alpha_to[rs_modnn(rs, tmp + (FCR + i) * j)];
 	}
 
 	/* Calc syn[i] = s[i] / alpha^(v + i) */
 	for (i = 0; i < NROOTS; i++) {
 		if (s[i])
-			syn[i] = rs_modnn(cd, cd->index_of[s[i]] + (NN - FCR - i));
+			syn[i] = rs_modnn(rs, rs->index_of[s[i]] + (NN - FCR - i));
 	}
 	/* Call the decoder library */
 	nerr = decode_rs16(rs, NULL, NULL, 1019, syn, 0, errpos, 0, errval);
@@ -216,7 +218,7 @@ static int doc_ecc_decode(struct rs_control *rs, uint8_t *data, uint8_t *ecc)
 
 static void DoC_Delay(struct doc_priv *doc, unsigned short cycles)
 {
-	volatile char __always_unused dummy;
+	volatile char dummy;
 	int i;
 
 	for (i = 0; i < cycles; i++) {
@@ -289,8 +291,9 @@ static inline int DoC_WaitReady(struct doc_priv *doc)
 	return ret;
 }
 
-static void doc2000_write_byte(struct nand_chip *this, u_char datum)
+static void doc2000_write_byte(struct mtd_info *mtd, u_char datum)
 {
+	struct nand_chip *this = mtd_to_nand(mtd);
 	struct doc_priv *doc = nand_get_controller_data(this);
 	void __iomem *docptr = doc->virtadr;
 
@@ -300,9 +303,24 @@ static void doc2000_write_byte(struct nand_chip *this, u_char datum)
 	WriteDOC(datum, docptr, 2k_CDSN_IO);
 }
 
-static void doc2000_writebuf(struct nand_chip *this, const u_char *buf,
-			     int len)
+static u_char doc2000_read_byte(struct mtd_info *mtd)
 {
+	struct nand_chip *this = mtd_to_nand(mtd);
+	struct doc_priv *doc = nand_get_controller_data(this);
+	void __iomem *docptr = doc->virtadr;
+	u_char ret;
+
+	ReadDOC(docptr, CDSNSlowIO);
+	DoC_Delay(doc, 2);
+	ret = ReadDOC(docptr, 2k_CDSN_IO);
+	if (debug)
+		printk("read_byte returns %02x\n", ret);
+	return ret;
+}
+
+static void doc2000_writebuf(struct mtd_info *mtd, const u_char *buf, int len)
+{
+	struct nand_chip *this = mtd_to_nand(mtd);
 	struct doc_priv *doc = nand_get_controller_data(this);
 	void __iomem *docptr = doc->virtadr;
 	int i;
@@ -317,46 +335,40 @@ static void doc2000_writebuf(struct nand_chip *this, const u_char *buf,
 		printk("\n");
 }
 
-static void doc2000_readbuf(struct nand_chip *this, u_char *buf, int len)
+static void doc2000_readbuf(struct mtd_info *mtd, u_char *buf, int len)
 {
+	struct nand_chip *this = mtd_to_nand(mtd);
 	struct doc_priv *doc = nand_get_controller_data(this);
 	void __iomem *docptr = doc->virtadr;
-	u32 *buf32 = (u32 *)buf;
 	int i;
 
 	if (debug)
 		printk("readbuf of %d bytes: ", len);
 
-	if (!doc->supports_32b_reads ||
-	    ((((unsigned long)buf) | len) & 3)) {
-		for (i = 0; i < len; i++)
-			buf[i] = ReadDOC(docptr, 2k_CDSN_IO + i);
-	} else {
-		for (i = 0; i < len / 4; i++)
-			buf32[i] = readl(docptr + DoC_2k_CDSN_IO + i);
+	for (i = 0; i < len; i++) {
+		buf[i] = ReadDOC(docptr, 2k_CDSN_IO + i);
 	}
 }
 
-/*
- * We need our own readid() here because it's called before the NAND chip
- * has been initialized, and calling nand_op_readid() would lead to a NULL
- * pointer exception when dereferencing the NAND timings.
- */
-static void doc200x_readid(struct nand_chip *this, unsigned int cs, u8 *id)
+static void doc2000_readbuf_dword(struct mtd_info *mtd, u_char *buf, int len)
 {
-	u8 addr = 0;
-	struct nand_op_instr instrs[] = {
-		NAND_OP_CMD(NAND_CMD_READID, 0),
-		NAND_OP_ADDR(1, &addr, 50),
-		NAND_OP_8BIT_DATA_IN(2, id, 0),
-	};
+	struct nand_chip *this = mtd_to_nand(mtd);
+	struct doc_priv *doc = nand_get_controller_data(this);
+	void __iomem *docptr = doc->virtadr;
+	int i;
 
-	struct nand_operation op = NAND_OPERATION(cs, instrs);
+	if (debug)
+		printk("readbuf_dword of %d bytes: ", len);
 
-	if (!id)
-		op.ninstrs--;
-
-	this->controller->ops->exec_op(this, &op, false);
+	if (unlikely((((unsigned long)buf) | len) & 3)) {
+		for (i = 0; i < len; i++) {
+			*(uint8_t *) (&buf[i]) = ReadDOC(docptr, 2k_CDSN_IO + i);
+		}
+	} else {
+		for (i = 0; i < len; i += 4) {
+			*(uint32_t *) (&buf[i]) = readl(docptr + DoC_2k_CDSN_IO + i);
+		}
+	}
 }
 
 static uint16_t __init doc200x_ident_chip(struct mtd_info *mtd, int nr)
@@ -364,11 +376,20 @@ static uint16_t __init doc200x_ident_chip(struct mtd_info *mtd, int nr)
 	struct nand_chip *this = mtd_to_nand(mtd);
 	struct doc_priv *doc = nand_get_controller_data(this);
 	uint16_t ret;
-	u8 id[2];
 
-	doc200x_readid(this, nr, id);
+	doc200x_select_chip(mtd, nr);
+	doc200x_hwcontrol(mtd, NAND_CMD_READID,
+			  NAND_CTRL_CLE | NAND_CTRL_CHANGE);
+	doc200x_hwcontrol(mtd, 0, NAND_CTRL_ALE | NAND_CTRL_CHANGE);
+	doc200x_hwcontrol(mtd, NAND_CMD_NONE, NAND_NCE | NAND_CTRL_CHANGE);
 
-	ret = ((u16)id[0] << 8) | id[1];
+	/* We can't use dev_ready here, but at least we wait for the
+	 * command to complete
+	 */
+	udelay(50);
+
+	ret = this->read_byte(mtd) << 8;
+	ret |= this->read_byte(mtd);
 
 	if (doc->ChipID == DOC_ChipID_Doc2k && try_dword && !nr) {
 		/* First chip probe. See if we get same results by 32-bit access */
@@ -378,12 +399,18 @@ static uint16_t __init doc200x_ident_chip(struct mtd_info *mtd, int nr)
 		} ident;
 		void __iomem *docptr = doc->virtadr;
 
-		doc200x_readid(this, nr, NULL);
+		doc200x_hwcontrol(mtd, NAND_CMD_READID,
+				  NAND_CTRL_CLE | NAND_CTRL_CHANGE);
+		doc200x_hwcontrol(mtd, 0, NAND_CTRL_ALE | NAND_CTRL_CHANGE);
+		doc200x_hwcontrol(mtd, NAND_CMD_NONE,
+				  NAND_NCE | NAND_CTRL_CHANGE);
+
+		udelay(50);
 
 		ident.dword = readl(docptr + DoC_2k_CDSN_IO);
 		if (((ident.byte[0] << 8) | ident.byte[1]) == ret) {
 			pr_info("DiskOnChip 2000 responds to DWORD access\n");
-			doc->supports_32b_reads = true;
+			this->read_buf = &doc2000_readbuf_dword;
 		}
 	}
 
@@ -412,8 +439,23 @@ static void __init doc2000_count_chips(struct mtd_info *mtd)
 	pr_debug("Detected %d chips per floor.\n", i);
 }
 
-static void doc2001_write_byte(struct nand_chip *this, u_char datum)
+static int doc200x_wait(struct mtd_info *mtd, struct nand_chip *this)
 {
+	struct doc_priv *doc = nand_get_controller_data(this);
+
+	int status;
+
+	DoC_WaitReady(doc);
+	nand_status_op(this, NULL);
+	DoC_WaitReady(doc);
+	status = (int)this->read_byte(mtd);
+
+	return status;
+}
+
+static void doc2001_write_byte(struct mtd_info *mtd, u_char datum)
+{
+	struct nand_chip *this = mtd_to_nand(mtd);
 	struct doc_priv *doc = nand_get_controller_data(this);
 	void __iomem *docptr = doc->virtadr;
 
@@ -422,8 +464,23 @@ static void doc2001_write_byte(struct nand_chip *this, u_char datum)
 	WriteDOC(datum, docptr, WritePipeTerm);
 }
 
-static void doc2001_writebuf(struct nand_chip *this, const u_char *buf, int len)
+static u_char doc2001_read_byte(struct mtd_info *mtd)
 {
+	struct nand_chip *this = mtd_to_nand(mtd);
+	struct doc_priv *doc = nand_get_controller_data(this);
+	void __iomem *docptr = doc->virtadr;
+
+	//ReadDOC(docptr, CDSNSlowIO);
+	/* 11.4.5 -- delay twice to allow extended length cycle */
+	DoC_Delay(doc, 2);
+	ReadDOC(docptr, ReadPipeInit);
+	//return ReadDOC(docptr, Mil_CDSN_IO);
+	return ReadDOC(docptr, LastDataRead);
+}
+
+static void doc2001_writebuf(struct mtd_info *mtd, const u_char *buf, int len)
+{
+	struct nand_chip *this = mtd_to_nand(mtd);
 	struct doc_priv *doc = nand_get_controller_data(this);
 	void __iomem *docptr = doc->virtadr;
 	int i;
@@ -434,8 +491,9 @@ static void doc2001_writebuf(struct nand_chip *this, const u_char *buf, int len)
 	WriteDOC(0x00, docptr, WritePipeTerm);
 }
 
-static void doc2001_readbuf(struct nand_chip *this, u_char *buf, int len)
+static void doc2001_readbuf(struct mtd_info *mtd, u_char *buf, int len)
 {
+	struct nand_chip *this = mtd_to_nand(mtd);
 	struct doc_priv *doc = nand_get_controller_data(this);
 	void __iomem *docptr = doc->virtadr;
 	int i;
@@ -450,8 +508,24 @@ static void doc2001_readbuf(struct nand_chip *this, u_char *buf, int len)
 	buf[i] = ReadDOC(docptr, LastDataRead);
 }
 
-static void doc2001plus_writebuf(struct nand_chip *this, const u_char *buf, int len)
+static u_char doc2001plus_read_byte(struct mtd_info *mtd)
 {
+	struct nand_chip *this = mtd_to_nand(mtd);
+	struct doc_priv *doc = nand_get_controller_data(this);
+	void __iomem *docptr = doc->virtadr;
+	u_char ret;
+
+	ReadDOC(docptr, Mplus_ReadPipeInit);
+	ReadDOC(docptr, Mplus_ReadPipeInit);
+	ret = ReadDOC(docptr, Mplus_LastDataRead);
+	if (debug)
+		printk("read_byte returns %02x\n", ret);
+	return ret;
+}
+
+static void doc2001plus_writebuf(struct mtd_info *mtd, const u_char *buf, int len)
+{
+	struct nand_chip *this = mtd_to_nand(mtd);
 	struct doc_priv *doc = nand_get_controller_data(this);
 	void __iomem *docptr = doc->virtadr;
 	int i;
@@ -467,8 +541,9 @@ static void doc2001plus_writebuf(struct nand_chip *this, const u_char *buf, int 
 		printk("\n");
 }
 
-static void doc2001plus_readbuf(struct nand_chip *this, u_char *buf, int len)
+static void doc2001plus_readbuf(struct mtd_info *mtd, u_char *buf, int len)
 {
+	struct nand_chip *this = mtd_to_nand(mtd);
 	struct doc_priv *doc = nand_get_controller_data(this);
 	void __iomem *docptr = doc->virtadr;
 	int i;
@@ -487,12 +562,9 @@ static void doc2001plus_readbuf(struct nand_chip *this, u_char *buf, int len)
 	}
 
 	/* Terminate read pipeline */
-	if (len >= 2) {
-		buf[len - 2] = ReadDOC(docptr, Mplus_LastDataRead);
-		if (debug && i < 16)
-			printk("%02x ", buf[len - 2]);
-	}
-
+	buf[len - 2] = ReadDOC(docptr, Mplus_LastDataRead);
+	if (debug && i < 16)
+		printk("%02x ", buf[len - 2]);
 	buf[len - 1] = ReadDOC(docptr, Mplus_LastDataRead);
 	if (debug && i < 16)
 		printk("%02x ", buf[len - 1]);
@@ -500,168 +572,235 @@ static void doc2001plus_readbuf(struct nand_chip *this, u_char *buf, int len)
 		printk("\n");
 }
 
-static void doc200x_write_control(struct doc_priv *doc, u8 value)
+static void doc2001plus_select_chip(struct mtd_info *mtd, int chip)
 {
-	WriteDOC(value, doc->virtadr, CDSNControl);
-	/* 11.4.3 -- 4 NOPs after CSDNControl write */
-	DoC_Delay(doc, 4);
-}
-
-static void doc200x_exec_instr(struct nand_chip *this,
-			       const struct nand_op_instr *instr)
-{
+	struct nand_chip *this = mtd_to_nand(mtd);
 	struct doc_priv *doc = nand_get_controller_data(this);
-	unsigned int i;
+	void __iomem *docptr = doc->virtadr;
+	int floor = 0;
 
-	switch (instr->type) {
-	case NAND_OP_CMD_INSTR:
-		doc200x_write_control(doc, CDSN_CTRL_CE | CDSN_CTRL_CLE);
-		doc2000_write_byte(this, instr->ctx.cmd.opcode);
-		break;
+	if (debug)
+		printk("select chip (%d)\n", chip);
 
-	case NAND_OP_ADDR_INSTR:
-		doc200x_write_control(doc, CDSN_CTRL_CE | CDSN_CTRL_ALE);
-		for (i = 0; i < instr->ctx.addr.naddrs; i++) {
-			u8 addr = instr->ctx.addr.addrs[i];
-
-			if (DoC_is_2000(doc))
-				doc2000_write_byte(this, addr);
-			else
-				doc2001_write_byte(this, addr);
-		}
-		break;
-
-	case NAND_OP_DATA_IN_INSTR:
-		doc200x_write_control(doc, CDSN_CTRL_CE);
-		if (DoC_is_2000(doc))
-			doc2000_readbuf(this, instr->ctx.data.buf.in,
-					instr->ctx.data.len);
-		else
-			doc2001_readbuf(this, instr->ctx.data.buf.in,
-					instr->ctx.data.len);
-		break;
-
-	case NAND_OP_DATA_OUT_INSTR:
-		doc200x_write_control(doc, CDSN_CTRL_CE);
-		if (DoC_is_2000(doc))
-			doc2000_writebuf(this, instr->ctx.data.buf.out,
-					 instr->ctx.data.len);
-		else
-			doc2001_writebuf(this, instr->ctx.data.buf.out,
-					 instr->ctx.data.len);
-		break;
-
-	case NAND_OP_WAITRDY_INSTR:
-		DoC_WaitReady(doc);
-		break;
+	if (chip == -1) {
+		/* Disable flash internally */
+		WriteDOC(0, docptr, Mplus_FlashSelect);
+		return;
 	}
 
-	if (instr->delay_ns)
-		ndelay(instr->delay_ns);
-}
-
-static int doc200x_exec_op(struct nand_chip *this,
-			   const struct nand_operation *op,
-			   bool check_only)
-{
-	struct doc_priv *doc = nand_get_controller_data(this);
-	unsigned int i;
-
-	if (check_only)
-		return true;
-
-	doc->curchip = op->cs % doc->chips_per_floor;
-	doc->curfloor = op->cs / doc->chips_per_floor;
-
-	WriteDOC(doc->curfloor, doc->virtadr, FloorSelect);
-	WriteDOC(doc->curchip, doc->virtadr, CDSNDeviceSelect);
-
-	/* Assert CE pin */
-	doc200x_write_control(doc, CDSN_CTRL_CE);
-
-	for (i = 0; i < op->ninstrs; i++)
-		doc200x_exec_instr(this, &op->instrs[i]);
-
-	/* De-assert CE pin */
-	doc200x_write_control(doc, 0);
-
-	return 0;
-}
-
-static void doc2001plus_write_pipe_term(struct doc_priv *doc)
-{
-	WriteDOC(0x00, doc->virtadr, Mplus_WritePipeTerm);
-	WriteDOC(0x00, doc->virtadr, Mplus_WritePipeTerm);
-}
-
-static void doc2001plus_exec_instr(struct nand_chip *this,
-				   const struct nand_op_instr *instr)
-{
-	struct doc_priv *doc = nand_get_controller_data(this);
-	unsigned int i;
-
-	switch (instr->type) {
-	case NAND_OP_CMD_INSTR:
-		WriteDOC(instr->ctx.cmd.opcode, doc->virtadr, Mplus_FlashCmd);
-		doc2001plus_write_pipe_term(doc);
-		break;
-
-	case NAND_OP_ADDR_INSTR:
-		for (i = 0; i < instr->ctx.addr.naddrs; i++) {
-			u8 addr = instr->ctx.addr.addrs[i];
-
-			WriteDOC(addr, doc->virtadr, Mplus_FlashAddress);
-		}
-		doc2001plus_write_pipe_term(doc);
-		/* deassert ALE */
-		WriteDOC(0, doc->virtadr, Mplus_FlashControl);
-		break;
-
-	case NAND_OP_DATA_IN_INSTR:
-		doc2001plus_readbuf(this, instr->ctx.data.buf.in,
-				    instr->ctx.data.len);
-		break;
-	case NAND_OP_DATA_OUT_INSTR:
-		doc2001plus_writebuf(this, instr->ctx.data.buf.out,
-				     instr->ctx.data.len);
-		doc2001plus_write_pipe_term(doc);
-		break;
-	case NAND_OP_WAITRDY_INSTR:
-		DoC_WaitReady(doc);
-		break;
-	}
-
-	if (instr->delay_ns)
-		ndelay(instr->delay_ns);
-}
-
-static int doc2001plus_exec_op(struct nand_chip *this,
-			       const struct nand_operation *op,
-			       bool check_only)
-{
-	struct doc_priv *doc = nand_get_controller_data(this);
-	unsigned int i;
-
-	if (check_only)
-		return true;
-
-	doc->curchip = op->cs % doc->chips_per_floor;
-	doc->curfloor = op->cs / doc->chips_per_floor;
+	floor = chip / doc->chips_per_floor;
+	chip -= (floor * doc->chips_per_floor);
 
 	/* Assert ChipEnable and deassert WriteProtect */
-	WriteDOC(DOC_FLASH_CE, doc->virtadr, Mplus_FlashSelect);
+	WriteDOC((DOC_FLASH_CE), docptr, Mplus_FlashSelect);
+	nand_reset_op(this);
 
-	for (i = 0; i < op->ninstrs; i++)
-		doc2001plus_exec_instr(this, &op->instrs[i]);
+	doc->curchip = chip;
+	doc->curfloor = floor;
+}
 
-	/* De-assert ChipEnable */
-	WriteDOC(0, doc->virtadr, Mplus_FlashSelect);
+static void doc200x_select_chip(struct mtd_info *mtd, int chip)
+{
+	struct nand_chip *this = mtd_to_nand(mtd);
+	struct doc_priv *doc = nand_get_controller_data(this);
+	void __iomem *docptr = doc->virtadr;
+	int floor = 0;
 
+	if (debug)
+		printk("select chip (%d)\n", chip);
+
+	if (chip == -1)
+		return;
+
+	floor = chip / doc->chips_per_floor;
+	chip -= (floor * doc->chips_per_floor);
+
+	/* 11.4.4 -- deassert CE before changing chip */
+	doc200x_hwcontrol(mtd, NAND_CMD_NONE, 0 | NAND_CTRL_CHANGE);
+
+	WriteDOC(floor, docptr, FloorSelect);
+	WriteDOC(chip, docptr, CDSNDeviceSelect);
+
+	doc200x_hwcontrol(mtd, NAND_CMD_NONE, NAND_NCE | NAND_CTRL_CHANGE);
+
+	doc->curchip = chip;
+	doc->curfloor = floor;
+}
+
+#define CDSN_CTRL_MSK (CDSN_CTRL_CE | CDSN_CTRL_CLE | CDSN_CTRL_ALE)
+
+static void doc200x_hwcontrol(struct mtd_info *mtd, int cmd,
+			      unsigned int ctrl)
+{
+	struct nand_chip *this = mtd_to_nand(mtd);
+	struct doc_priv *doc = nand_get_controller_data(this);
+	void __iomem *docptr = doc->virtadr;
+
+	if (ctrl & NAND_CTRL_CHANGE) {
+		doc->CDSNControl &= ~CDSN_CTRL_MSK;
+		doc->CDSNControl |= ctrl & CDSN_CTRL_MSK;
+		if (debug)
+			printk("hwcontrol(%d): %02x\n", cmd, doc->CDSNControl);
+		WriteDOC(doc->CDSNControl, docptr, CDSNControl);
+		/* 11.4.3 -- 4 NOPs after CSDNControl write */
+		DoC_Delay(doc, 4);
+	}
+	if (cmd != NAND_CMD_NONE) {
+		if (DoC_is_2000(doc))
+			doc2000_write_byte(mtd, cmd);
+		else
+			doc2001_write_byte(mtd, cmd);
+	}
+}
+
+static void doc2001plus_command(struct mtd_info *mtd, unsigned command, int column, int page_addr)
+{
+	struct nand_chip *this = mtd_to_nand(mtd);
+	struct doc_priv *doc = nand_get_controller_data(this);
+	void __iomem *docptr = doc->virtadr;
+
+	/*
+	 * Must terminate write pipeline before sending any commands
+	 * to the device.
+	 */
+	if (command == NAND_CMD_PAGEPROG) {
+		WriteDOC(0x00, docptr, Mplus_WritePipeTerm);
+		WriteDOC(0x00, docptr, Mplus_WritePipeTerm);
+	}
+
+	/*
+	 * Write out the command to the device.
+	 */
+	if (command == NAND_CMD_SEQIN) {
+		int readcmd;
+
+		if (column >= mtd->writesize) {
+			/* OOB area */
+			column -= mtd->writesize;
+			readcmd = NAND_CMD_READOOB;
+		} else if (column < 256) {
+			/* First 256 bytes --> READ0 */
+			readcmd = NAND_CMD_READ0;
+		} else {
+			column -= 256;
+			readcmd = NAND_CMD_READ1;
+		}
+		WriteDOC(readcmd, docptr, Mplus_FlashCmd);
+	}
+	WriteDOC(command, docptr, Mplus_FlashCmd);
+	WriteDOC(0, docptr, Mplus_WritePipeTerm);
+	WriteDOC(0, docptr, Mplus_WritePipeTerm);
+
+	if (column != -1 || page_addr != -1) {
+		/* Serially input address */
+		if (column != -1) {
+			/* Adjust columns for 16 bit buswidth */
+			if (this->options & NAND_BUSWIDTH_16 &&
+					!nand_opcode_8bits(command))
+				column >>= 1;
+			WriteDOC(column, docptr, Mplus_FlashAddress);
+		}
+		if (page_addr != -1) {
+			WriteDOC((unsigned char)(page_addr & 0xff), docptr, Mplus_FlashAddress);
+			WriteDOC((unsigned char)((page_addr >> 8) & 0xff), docptr, Mplus_FlashAddress);
+			if (this->options & NAND_ROW_ADDR_3) {
+				WriteDOC((unsigned char)((page_addr >> 16) & 0x0f), docptr, Mplus_FlashAddress);
+				printk("high density\n");
+			}
+		}
+		WriteDOC(0, docptr, Mplus_WritePipeTerm);
+		WriteDOC(0, docptr, Mplus_WritePipeTerm);
+		/* deassert ALE */
+		if (command == NAND_CMD_READ0 || command == NAND_CMD_READ1 ||
+		    command == NAND_CMD_READOOB || command == NAND_CMD_READID)
+			WriteDOC(0, docptr, Mplus_FlashControl);
+	}
+
+	/*
+	 * program and erase have their own busy handlers
+	 * status and sequential in needs no delay
+	 */
+	switch (command) {
+
+	case NAND_CMD_PAGEPROG:
+	case NAND_CMD_ERASE1:
+	case NAND_CMD_ERASE2:
+	case NAND_CMD_SEQIN:
+	case NAND_CMD_STATUS:
+		return;
+
+	case NAND_CMD_RESET:
+		if (this->dev_ready)
+			break;
+		udelay(this->chip_delay);
+		WriteDOC(NAND_CMD_STATUS, docptr, Mplus_FlashCmd);
+		WriteDOC(0, docptr, Mplus_WritePipeTerm);
+		WriteDOC(0, docptr, Mplus_WritePipeTerm);
+		while (!(this->read_byte(mtd) & 0x40)) ;
+		return;
+
+		/* This applies to read commands */
+	default:
+		/*
+		 * If we don't have access to the busy pin, we apply the given
+		 * command delay
+		 */
+		if (!this->dev_ready) {
+			udelay(this->chip_delay);
+			return;
+		}
+	}
+
+	/* Apply this short delay always to ensure that we do wait tWB in
+	 * any case on any machine. */
+	ndelay(100);
+	/* wait until command is processed */
+	while (!this->dev_ready(mtd)) ;
+}
+
+static int doc200x_dev_ready(struct mtd_info *mtd)
+{
+	struct nand_chip *this = mtd_to_nand(mtd);
+	struct doc_priv *doc = nand_get_controller_data(this);
+	void __iomem *docptr = doc->virtadr;
+
+	if (DoC_is_MillenniumPlus(doc)) {
+		/* 11.4.2 -- must NOP four times before checking FR/B# */
+		DoC_Delay(doc, 4);
+		if ((ReadDOC(docptr, Mplus_FlashControl) & CDSN_CTRL_FR_B_MASK) != CDSN_CTRL_FR_B_MASK) {
+			if (debug)
+				printk("not ready\n");
+			return 0;
+		}
+		if (debug)
+			printk("was ready\n");
+		return 1;
+	} else {
+		/* 11.4.2 -- must NOP four times before checking FR/B# */
+		DoC_Delay(doc, 4);
+		if (!(ReadDOC(docptr, CDSNControl) & CDSN_CTRL_FR_B)) {
+			if (debug)
+				printk("not ready\n");
+			return 0;
+		}
+		/* 11.4.2 -- Must NOP twice if it's ready */
+		DoC_Delay(doc, 2);
+		if (debug)
+			printk("was ready\n");
+		return 1;
+	}
+}
+
+static int doc200x_block_bad(struct mtd_info *mtd, loff_t ofs)
+{
+	/* This is our last resort if we couldn't find or create a BBT.  Just
+	   pretend all blocks are good. */
 	return 0;
 }
 
-static void doc200x_enable_hwecc(struct nand_chip *this, int mode)
+static void doc200x_enable_hwecc(struct mtd_info *mtd, int mode)
 {
+	struct nand_chip *this = mtd_to_nand(mtd);
 	struct doc_priv *doc = nand_get_controller_data(this);
 	void __iomem *docptr = doc->virtadr;
 
@@ -678,8 +817,9 @@ static void doc200x_enable_hwecc(struct nand_chip *this, int mode)
 	}
 }
 
-static void doc2001plus_enable_hwecc(struct nand_chip *this, int mode)
+static void doc2001plus_enable_hwecc(struct mtd_info *mtd, int mode)
 {
+	struct nand_chip *this = mtd_to_nand(mtd);
 	struct doc_priv *doc = nand_get_controller_data(this);
 	void __iomem *docptr = doc->virtadr;
 
@@ -697,13 +837,13 @@ static void doc2001plus_enable_hwecc(struct nand_chip *this, int mode)
 }
 
 /* This code is only called on write */
-static int doc200x_calculate_ecc(struct nand_chip *this, const u_char *dat,
-				 unsigned char *ecc_code)
+static int doc200x_calculate_ecc(struct mtd_info *mtd, const u_char *dat, unsigned char *ecc_code)
 {
+	struct nand_chip *this = mtd_to_nand(mtd);
 	struct doc_priv *doc = nand_get_controller_data(this);
 	void __iomem *docptr = doc->virtadr;
 	int i;
-	int __always_unused emptymatch = 1;
+	int emptymatch = 1;
 
 	/* flush the pipeline */
 	if (DoC_is_2000(doc)) {
@@ -756,10 +896,11 @@ static int doc200x_calculate_ecc(struct nand_chip *this, const u_char *dat,
 	return 0;
 }
 
-static int doc200x_correct_data(struct nand_chip *this, u_char *dat,
+static int doc200x_correct_data(struct mtd_info *mtd, u_char *dat,
 				u_char *read_ecc, u_char *isnull)
 {
 	int i, ret = 0;
+	struct nand_chip *this = mtd_to_nand(mtd);
 	struct doc_priv *doc = nand_get_controller_data(this);
 	void __iomem *docptr = doc->virtadr;
 	uint8_t calc_ecc[6];
@@ -789,7 +930,7 @@ static int doc200x_correct_data(struct nand_chip *this, u_char *dat,
 				calc_ecc[i] = ReadDOC_(docptr, DoC_ECCSyndrome0 + i);
 		}
 
-		ret = doc_ecc_decode(doc->rs_decoder, dat, calc_ecc);
+		ret = doc_ecc_decode(rs_decoder, dat, calc_ecc);
 		if (ret > 0)
 			pr_err("doc200x_correct_data corrected %d errors\n",
 			       ret);
@@ -906,7 +1047,6 @@ static inline int __init nftl_partscan(struct mtd_info *mtd, struct mtd_partitio
 {
 	struct nand_chip *this = mtd_to_nand(mtd);
 	struct doc_priv *doc = nand_get_controller_data(this);
-	struct nand_memory_organization *memorg;
 	int ret = 0;
 	u_char *buf;
 	struct NFTLMediaHeader *mh;
@@ -914,8 +1054,6 @@ static inline int __init nftl_partscan(struct mtd_info *mtd, struct mtd_partitio
 	int numparts = 0;
 	unsigned blocks, maxblocks;
 	int offs, numheaders;
-
-	memorg = nanddev_get_memorg(&this->base);
 
 	buf = kmalloc(mtd->writesize, GFP_KERNEL);
 	if (!buf) {
@@ -963,7 +1101,6 @@ static inline int __init nftl_partscan(struct mtd_info *mtd, struct mtd_partitio
 	   implementation of the NAND layer.  */
 	if (mh->UnitSizeFactor != 0xff) {
 		this->bbt_erase_shift += (0xff - mh->UnitSizeFactor);
-		memorg->pages_per_eraseblock <<= (0xff - mh->UnitSizeFactor);
 		mtd->erasesize <<= (0xff - mh->UnitSizeFactor);
 		pr_info("Setting virtual erase size to %d\n", mtd->erasesize);
 		blocks = mtd->size >> this->bbt_erase_shift;
@@ -1046,7 +1183,7 @@ static inline int __init inftl_partscan(struct mtd_info *mtd, struct mtd_partiti
 		"    NoOfBootImageBlocks   = %d\n"
 		"    NoOfBinaryPartitions  = %d\n"
 		"    NoOfBDTLPartitions    = %d\n"
-		"    BlockMultiplierBits   = %d\n"
+		"    BlockMultiplerBits    = %d\n"
 		"    FormatFlgs            = %d\n"
 		"    OsakVersion           = %d.%d.%d.%d\n"
 		"    PercentUsed           = %d\n",
@@ -1155,7 +1292,7 @@ static int __init nftl_scan_bbt(struct mtd_info *mtd)
 		this->bbt_md = NULL;
 	}
 
-	ret = nand_create_bbt(this);
+	ret = this->scan_bbt(mtd);
 	if (ret)
 		return ret;
 
@@ -1169,7 +1306,7 @@ static int __init inftl_scan_bbt(struct mtd_info *mtd)
 	struct doc_priv *doc = nand_get_controller_data(this);
 	struct mtd_partition parts[5];
 
-	if (nanddev_ntargets(&this->base) > doc->chips_per_floor) {
+	if (this->numchips > doc->chips_per_floor) {
 		pr_err("Multi-floor INFTL devices not yet supported.\n");
 		return -EIO;
 	}
@@ -1202,7 +1339,7 @@ static int __init inftl_scan_bbt(struct mtd_info *mtd)
 		this->bbt_md->pattern = "TBB_SYSM";
 	}
 
-	ret = nand_create_bbt(this);
+	ret = this->scan_bbt(mtd);
 	if (ret)
 		return ret;
 
@@ -1221,6 +1358,9 @@ static inline int __init doc2000_init(struct mtd_info *mtd)
 	struct nand_chip *this = mtd_to_nand(mtd);
 	struct doc_priv *doc = nand_get_controller_data(this);
 
+	this->read_byte = doc2000_read_byte;
+	this->write_buf = doc2000_writebuf;
+	this->read_buf = doc2000_readbuf;
 	doc->late_init = nftl_scan_bbt;
 
 	doc->CDSNControl = CDSN_CTRL_FLASH_IO | CDSN_CTRL_ECC_IO;
@@ -1233,6 +1373,10 @@ static inline int __init doc2001_init(struct mtd_info *mtd)
 {
 	struct nand_chip *this = mtd_to_nand(mtd);
 	struct doc_priv *doc = nand_get_controller_data(this);
+
+	this->read_byte = doc2001_read_byte;
+	this->write_buf = doc2001_writebuf;
+	this->read_buf = doc2001_readbuf;
 
 	ReadDOC(doc->virtadr, ChipID);
 	ReadDOC(doc->virtadr, ChipID);
@@ -1260,7 +1404,13 @@ static inline int __init doc2001plus_init(struct mtd_info *mtd)
 	struct nand_chip *this = mtd_to_nand(mtd);
 	struct doc_priv *doc = nand_get_controller_data(this);
 
+	this->read_byte = doc2001plus_read_byte;
+	this->write_buf = doc2001plus_writebuf;
+	this->read_buf = doc2001plus_readbuf;
 	doc->late_init = inftl_scan_bbt;
+	this->cmd_ctrl = NULL;
+	this->select_chip = doc2001plus_select_chip;
+	this->cmdfunc = doc2001plus_command;
 	this->ecc.hwctl = doc2001plus_enable_hwecc;
 
 	doc->chips_per_floor = 1;
@@ -1269,39 +1419,12 @@ static inline int __init doc2001plus_init(struct mtd_info *mtd)
 	return 1;
 }
 
-static int doc200x_attach_chip(struct nand_chip *chip)
-{
-	if (chip->ecc.engine_type != NAND_ECC_ENGINE_TYPE_ON_HOST)
-		return 0;
-
-	chip->ecc.placement = NAND_ECC_PLACEMENT_INTERLEAVED;
-	chip->ecc.size = 512;
-	chip->ecc.bytes = 6;
-	chip->ecc.strength = 2;
-	chip->ecc.options = NAND_ECC_GENERIC_ERASED_CHECK;
-	chip->ecc.hwctl = doc200x_enable_hwecc;
-	chip->ecc.calculate = doc200x_calculate_ecc;
-	chip->ecc.correct = doc200x_correct_data;
-
-	return 0;
-}
-
-static const struct nand_controller_ops doc200x_ops = {
-	.exec_op = doc200x_exec_op,
-	.attach_chip = doc200x_attach_chip,
-};
-
-static const struct nand_controller_ops doc2001plus_ops = {
-	.exec_op = doc2001plus_exec_op,
-	.attach_chip = doc200x_attach_chip,
-};
-
 static int __init doc_probe(unsigned long physadr)
 {
-	struct nand_chip *nand = NULL;
-	struct doc_priv *doc = NULL;
 	unsigned char ChipID;
 	struct mtd_info *mtd;
+	struct nand_chip *nand;
+	struct doc_priv *doc;
 	void __iomem *virtadr;
 	unsigned char save_control;
 	unsigned char tmp, tmpb, tmpc;
@@ -1358,12 +1481,12 @@ static int __init doc_probe(unsigned long physadr)
 		WriteDOC(tmp, virtadr, Mplus_DOCControl);
 		WriteDOC(~tmp, virtadr, Mplus_CtrlConfirm);
 
-		usleep_range(1000, 2000);
+		mdelay(1);
 		/* Enable the Millennium Plus ASIC */
 		tmp = DOC_MODE_NORMAL | DOC_MODE_MDWREN | DOC_MODE_RST_LAT | DOC_MODE_BDECT;
 		WriteDOC(tmp, virtadr, Mplus_DOCControl);
 		WriteDOC(~tmp, virtadr, Mplus_CtrlConfirm);
-		usleep_range(1000, 2000);
+		mdelay(1);
 
 		ChipID = ReadDOC(virtadr, ChipID);
 
@@ -1373,7 +1496,6 @@ static int __init doc_probe(unsigned long physadr)
 			break;
 		case DOC_ChipID_DocMilPlus32:
 			pr_err("DiskOnChip Millennium Plus 32MB is not supported, ignoring.\n");
-			fallthrough;
 		default:
 			ret = -ENODEV;
 			goto notfound;
@@ -1439,41 +1561,32 @@ static int __init doc_probe(unsigned long physadr)
 		goto fail;
 	}
 
-	/*
-	 * Allocate a RS codec instance
-	 *
-	 * Symbolsize is 10 (bits)
-	 * Primitve polynomial is x^10+x^3+1
-	 * First consecutive root is 510
-	 * Primitve element to generate roots = 1
-	 * Generator polinomial degree = 4
-	 */
-	doc = (struct doc_priv *) (nand + 1);
-	doc->rs_decoder = init_rs(10, 0x409, FCR, 1, NROOTS);
-	if (!doc->rs_decoder) {
-		pr_err("DiskOnChip: Could not create a RS codec\n");
-		ret = -ENOMEM;
-		goto fail;
-	}
-
-	nand_controller_init(&doc->base);
-	if (ChipID == DOC_ChipID_DocMilPlus16)
-		doc->base.ops = &doc2001plus_ops;
-	else
-		doc->base.ops = &doc200x_ops;
-
 	mtd			= nand_to_mtd(nand);
+	doc			= (struct doc_priv *) (nand + 1);
 	nand->bbt_td		= (struct nand_bbt_descr *) (doc + 1);
 	nand->bbt_md		= nand->bbt_td + 1;
 
 	mtd->owner		= THIS_MODULE;
 	mtd_set_ooblayout(mtd, &doc200x_ooblayout_ops);
 
-	nand->controller	= &doc->base;
 	nand_set_controller_data(nand, doc);
+	nand->select_chip	= doc200x_select_chip;
+	nand->cmd_ctrl		= doc200x_hwcontrol;
+	nand->dev_ready		= doc200x_dev_ready;
+	nand->waitfunc		= doc200x_wait;
+	nand->block_bad		= doc200x_block_bad;
+	nand->ecc.hwctl		= doc200x_enable_hwecc;
+	nand->ecc.calculate	= doc200x_calculate_ecc;
+	nand->ecc.correct	= doc200x_correct_data;
+
+	nand->ecc.mode		= NAND_ECC_HW_SYNDROME;
+	nand->ecc.size		= 512;
+	nand->ecc.bytes		= 6;
+	nand->ecc.strength	= 2;
+	nand->ecc.options	= NAND_ECC_GENERIC_ERASED_CHECK;
 	nand->bbt_options	= NAND_BBT_USE_FLASH;
 	/* Skip the automatic BBT scan so we can run it manually */
-	nand->options		|= NAND_SKIP_BBTSCAN | NAND_NO_BBM_QUIRK;
+	nand->options		|= NAND_SKIP_BBTSCAN;
 
 	doc->physadr		= physadr;
 	doc->virtadr		= virtadr;
@@ -1491,11 +1604,15 @@ static int __init doc_probe(unsigned long physadr)
 	else
 		numchips = doc2001_init(mtd);
 
-	if ((ret = nand_scan(nand, numchips)) || (ret = doc->late_init(mtd))) {
-		/* DBB note: i believe nand_cleanup is necessary here, as
+	if ((ret = nand_scan(mtd, numchips)) || (ret = doc->late_init(mtd))) {
+		/* DBB note: i believe nand_release is necessary here, as
 		   buffers may have been allocated in nand_base.  Check with
 		   Thomas. FIX ME! */
-		nand_cleanup(nand);
+		/* nand_release will call mtd_device_unregister, but we
+		   haven't yet added it.  This is handled without incident by
+		   mtd_device_unregister, as far as I can tell. */
+		nand_release(mtd);
+		kfree(nand);
 		goto fail;
 	}
 
@@ -1508,9 +1625,6 @@ static int __init doc_probe(unsigned long physadr)
 	   actually a DiskOnChip.  */
 	WriteDOC(save_control, virtadr, DOCControl);
  fail:
-	if (doc)
-		free_rs(doc->rs_decoder);
-	kfree(nand);
 	iounmap(virtadr);
 
 error_ioremap:
@@ -1524,19 +1638,15 @@ static void release_nanddoc(void)
 	struct mtd_info *mtd, *nextmtd;
 	struct nand_chip *nand;
 	struct doc_priv *doc;
-	int ret;
 
 	for (mtd = doclist; mtd; mtd = nextmtd) {
 		nand = mtd_to_nand(mtd);
 		doc = nand_get_controller_data(nand);
 
 		nextmtd = doc->nextdoc;
-		ret = mtd_device_unregister(mtd);
-		WARN_ON(ret);
-		nand_cleanup(nand);
+		nand_release(mtd);
 		iounmap(doc->virtadr);
 		release_mem_region(doc->physadr, DOC_IOREMAP_LEN);
-		free_rs(doc->rs_decoder);
 		kfree(nand);
 	}
 }
@@ -1545,12 +1655,27 @@ static int __init init_nanddoc(void)
 {
 	int i, ret = 0;
 
+	/* We could create the decoder on demand, if memory is a concern.
+	 * This way we have it handy, if an error happens
+	 *
+	 * Symbolsize is 10 (bits)
+	 * Primitve polynomial is x^10+x^3+1
+	 * first consecutive root is 510
+	 * primitve element to generate roots = 1
+	 * generator polinomial degree = 4
+	 */
+	rs_decoder = init_rs(10, 0x409, FCR, 1, NROOTS);
+	if (!rs_decoder) {
+		pr_err("DiskOnChip: Could not create a RS decoder\n");
+		return -ENOMEM;
+	}
+
 	if (doc_config_location) {
 		pr_info("Using configured DiskOnChip probe address 0x%lx\n",
 			doc_config_location);
 		ret = doc_probe(doc_config_location);
 		if (ret < 0)
-			return ret;
+			goto outerr;
 	} else {
 		for (i = 0; (doc_locations[i] != 0xffffffff); i++) {
 			doc_probe(doc_locations[i]);
@@ -1561,7 +1686,11 @@ static int __init init_nanddoc(void)
 	if (!doclist) {
 		pr_info("No valid DiskOnChip devices found\n");
 		ret = -ENODEV;
+		goto outerr;
 	}
+	return 0;
+ outerr:
+	free_rs(rs_decoder);
 	return ret;
 }
 
@@ -1569,6 +1698,11 @@ static void __exit cleanup_nanddoc(void)
 {
 	/* Cleanup the nand/DoC resources */
 	release_nanddoc();
+
+	/* Free the reed solomon resources */
+	if (rs_decoder) {
+		free_rs(rs_decoder);
+	}
 }
 
 module_init(init_nanddoc);

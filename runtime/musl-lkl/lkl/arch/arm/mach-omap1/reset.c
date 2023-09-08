@@ -6,7 +6,8 @@
 #include <linux/io.h>
 #include <linux/reboot.h>
 
-#include "hardware.h"
+#include <mach/hardware.h>
+
 #include "iomap.h"
 #include "common.h"
 

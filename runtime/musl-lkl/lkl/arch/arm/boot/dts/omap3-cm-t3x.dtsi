@@ -60,7 +60,7 @@
 		regulator-max-microvolt = <3300000>;
 	};
 
-	tv0: svideo-connector {
+	tv0: connector {
 		compatible = "svideo-connector";
 		label = "tv";
 
@@ -246,7 +246,7 @@
 };
 
 &venc {
-	status = "okay";
+	status = "ok";
 
 	port {
 		venc_out: endpoint {
@@ -257,7 +257,7 @@
 };
 
 &mcbsp2 {
-	status = "okay";
+	status = "ok";
 
 	pinctrl-names = "default";
 	pinctrl-0 = <&mcbsp2_pins>;

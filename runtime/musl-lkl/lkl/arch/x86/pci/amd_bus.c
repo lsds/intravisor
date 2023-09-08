@@ -93,8 +93,7 @@ static int __init early_root_info_init(void)
 		vendor = id & 0xffff;
 		device = (id>>16) & 0xffff;
 
-		if (vendor != PCI_VENDOR_ID_AMD &&
-		    vendor != PCI_VENDOR_ID_HYGON)
+		if (vendor != PCI_VENDOR_ID_AMD)
 			continue;
 
 		if (hb_probes[i].device == device) {
@@ -126,7 +125,7 @@ static int __init early_root_info_init(void)
 		node = (reg >> 4) & 0x07;
 		link = (reg >> 8) & 0x03;
 
-		alloc_pci_root_info(min_bus, max_bus, node, link);
+		info = alloc_pci_root_info(min_bus, max_bus, node, link);
 	}
 
 	/*
@@ -284,7 +283,7 @@ static int __init early_root_info_init(void)
 
 	/* need to take out [4G, TOM2) for RAM*/
 	/* SYS_CFG */
-	address = MSR_AMD64_SYSCFG;
+	address = MSR_K8_SYSCFG;
 	rdmsrl(address, val);
 	/* TOP_MEM2 is enabled? */
 	if (val & (1<<21)) {
@@ -391,8 +390,7 @@ static int __init pci_io_ecs_init(void)
 
 static int __init amd_postcore_init(void)
 {
-	if (boot_cpu_data.x86_vendor != X86_VENDOR_AMD &&
-	    boot_cpu_data.x86_vendor != X86_VENDOR_HYGON)
+	if (boot_cpu_data.x86_vendor != X86_VENDOR_AMD)
 		return 0;
 
 	early_root_info_init();

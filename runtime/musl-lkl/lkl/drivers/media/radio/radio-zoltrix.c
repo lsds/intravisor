@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Zoltrix Radio Plus driver
  * Copyright 1998 C. van Schaik <carl@leg.uct.ac.za>

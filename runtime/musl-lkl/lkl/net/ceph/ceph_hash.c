@@ -4,7 +4,7 @@
 
 /*
  * Robert Jenkin's hash function.
- * https://burtleburtle.net/bob/hash/evahash.html
+ * http://burtleburtle.net/bob/hash/evahash.html
  * This is in the public domain.
  */
 #define mix(a, b, c)						\
@@ -50,35 +50,35 @@ unsigned int ceph_str_hash_rjenkins(const char *str, unsigned int length)
 	switch (len) {
 	case 11:
 		c = c + ((__u32)k[10] << 24);
-		fallthrough;
+		/* fall through */
 	case 10:
 		c = c + ((__u32)k[9] << 16);
-		fallthrough;
+		/* fall through */
 	case 9:
 		c = c + ((__u32)k[8] << 8);
 		/* the first byte of c is reserved for the length */
-		fallthrough;
+		/* fall through */
 	case 8:
 		b = b + ((__u32)k[7] << 24);
-		fallthrough;
+		/* fall through */
 	case 7:
 		b = b + ((__u32)k[6] << 16);
-		fallthrough;
+		/* fall through */
 	case 6:
 		b = b + ((__u32)k[5] << 8);
-		fallthrough;
+		/* fall through */
 	case 5:
 		b = b + k[4];
-		fallthrough;
+		/* fall through */
 	case 4:
 		a = a + ((__u32)k[3] << 24);
-		fallthrough;
+		/* fall through */
 	case 3:
 		a = a + ((__u32)k[2] << 16);
-		fallthrough;
+		/* fall through */
 	case 2:
 		a = a + ((__u32)k[1] << 8);
-		fallthrough;
+		/* fall through */
 	case 1:
 		a = a + k[0];
 		/* case 0: nothing left to add */

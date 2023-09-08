@@ -1,8 +1,10 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright 2012-2013, Marco Porsch <marco.porsch@s2005.tu-chemnitz.de>
  * Copyright 2012-2013, cozybit Inc.
- * Copyright (C) 2021 Intel Corporation
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 
 #include "mesh.h"
@@ -13,7 +15,6 @@
 
 /**
  * mps_qos_null_get - create pre-addressed QoS Null frame for mesh powersave
- * @sta: the station to get the frame for
  */
 static struct sk_buff *mps_qos_null_get(struct sta_info *sta)
 {
@@ -46,7 +47,6 @@ static struct sk_buff *mps_qos_null_get(struct sta_info *sta)
 
 /**
  * mps_qos_null_tx - send a QoS Null to indicate link-specific power mode
- * @sta: the station to send to
  */
 static void mps_qos_null_tx(struct sta_info *sta)
 {
@@ -403,8 +403,6 @@ static void mpsp_trigger_send(struct sta_info *sta, bool rspi, bool eosp)
 
 /**
  * mpsp_qos_null_append - append QoS Null frame to MPSP skb queue if needed
- * @sta: the station to handle
- * @frames: the frame list to append to
  *
  * To properly end a mesh MPSP the last transmitted frame has to set the EOSP
  * flag in the QoS Control field. In case the current tailing frame is not a
@@ -437,7 +435,7 @@ static void mpsp_qos_null_append(struct sta_info *sta,
 
 	info = IEEE80211_SKB_CB(new_skb);
 	info->control.vif = &sdata->vif;
-	info->control.flags |= IEEE80211_TX_INTCFL_NEED_TXPROCESSING;
+	info->flags |= IEEE80211_TX_INTFL_NEED_TXPROCESSING;
 
 	__skb_queue_tail(frames, new_skb);
 }
@@ -589,7 +587,7 @@ void ieee80211_mps_frame_release(struct sta_info *sta,
 
 	/* only transmit to PS STA with announced, non-zero awake window */
 	if (test_sta_flag(sta, WLAN_STA_PS_STA) &&
-	    (!elems->awake_window || !get_unaligned_le16(elems->awake_window)))
+	    (!elems->awake_window || !le16_to_cpu(*elems->awake_window)))
 		return;
 
 	if (!test_sta_flag(sta, WLAN_STA_MPSP_OWNER))

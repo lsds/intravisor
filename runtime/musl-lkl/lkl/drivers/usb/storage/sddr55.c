@@ -29,7 +29,6 @@
 MODULE_DESCRIPTION("Driver for SanDisk SDDR-55 SmartMedia reader");
 MODULE_AUTHOR("Simon Munton");
 MODULE_LICENSE("GPL");
-MODULE_IMPORT_NS(USB_STORAGE);
 
 /*
  * The table of devices
@@ -554,8 +553,8 @@ static int sddr55_reset(struct us_data *us)
 
 static unsigned long sddr55_get_capacity(struct us_data *us) {
 
-	unsigned char manufacturerID;
-	unsigned char deviceID;
+	unsigned char uninitialized_var(manufacturerID);
+	unsigned char uninitialized_var(deviceID);
 	int result;
 	struct sddr55_card_info *info = (struct sddr55_card_info *)us->extra;
 
@@ -592,7 +591,7 @@ static unsigned long sddr55_get_capacity(struct us_data *us) {
 	case 0x64:
 		info->pageshift = 8;
 		info->smallpageshift = 1;
-		fallthrough;
+		/* fall through */
 	case 0x5d: // 5d is a ROM card with pagesize 512.
 		return 0x00200000;
 
@@ -652,7 +651,7 @@ static int sddr55_read_map(struct us_data *us) {
 
 	numblocks = info->capacity >> (info->blockshift + info->pageshift);
 	
-	buffer = kmalloc_array(numblocks, 2, GFP_NOIO );
+	buffer = kmalloc( numblocks * 2, GFP_NOIO );
 	
 	if (!buffer)
 		return -1;
@@ -685,8 +684,8 @@ static int sddr55_read_map(struct us_data *us) {
 
 	kfree(info->lba_to_pba);
 	kfree(info->pba_to_lba);
-	info->lba_to_pba = kmalloc_array(numblocks, sizeof(int), GFP_NOIO);
-	info->pba_to_lba = kmalloc_array(numblocks, sizeof(int), GFP_NOIO);
+	info->lba_to_pba = kmalloc(numblocks*sizeof(int), GFP_NOIO);
+	info->pba_to_lba = kmalloc(numblocks*sizeof(int), GFP_NOIO);
 
 	if (info->lba_to_pba == NULL || info->pba_to_lba == NULL) {
 		kfree(info->lba_to_pba);

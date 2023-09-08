@@ -1,37 +1,37 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Based on arch/arm/mm/copypage.c
  *
  * Copyright (C) 2002 Deep Blue Solutions Ltd, All Rights Reserved.
  * Copyright (C) 2012 ARM Ltd.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include <linux/bitops.h>
 #include <linux/mm.h>
 
 #include <asm/page.h>
 #include <asm/cacheflush.h>
-#include <asm/cpufeature.h>
-#include <asm/mte.h>
 
-void copy_highpage(struct page *to, struct page *from)
+void __cpu_copy_user_page(void *kto, const void *kfrom, unsigned long vaddr)
 {
-	void *kto = page_address(to);
-	void *kfrom = page_address(from);
-
+	struct page *page = virt_to_page(kto);
 	copy_page(kto, kfrom);
-
-	if (system_supports_mte() && test_bit(PG_mte_tagged, &from->flags)) {
-		set_bit(PG_mte_tagged, &to->flags);
-		mte_copy_page_tags(kto, kfrom);
-	}
+	flush_dcache_page(page);
 }
-EXPORT_SYMBOL(copy_highpage);
+EXPORT_SYMBOL_GPL(__cpu_copy_user_page);
 
-void copy_user_highpage(struct page *to, struct page *from,
-			unsigned long vaddr, struct vm_area_struct *vma)
+void __cpu_clear_user_page(void *kaddr, unsigned long vaddr)
 {
-	copy_highpage(to, from);
-	flush_dcache_page(to);
+	clear_page(kaddr);
 }
-EXPORT_SYMBOL_GPL(copy_user_highpage);
+EXPORT_SYMBOL_GPL(__cpu_clear_user_page);

@@ -72,6 +72,9 @@ MODULE_VERSION(my_VERSION);
 #define MPT_LAN_RECEIVE_POST_REQUEST_SIZE \
 	(sizeof(LANReceivePostRequest_t) - sizeof(SGE_MPI_UNION))
 
+#define MPT_LAN_TRANSACTION32_SIZE \
+	(sizeof(SGETransaction32_t) - sizeof(u32))
+
 /*
  *  Fusion MPT LAN private structures
  */
@@ -391,8 +394,7 @@ mpt_lan_open(struct net_device *dev)
 				"a moment.\n");
 	}
 
-	priv->mpt_txfidx = kmalloc_array(priv->tx_max_out, sizeof(int),
-					 GFP_KERNEL);
+	priv->mpt_txfidx = kmalloc(priv->tx_max_out * sizeof(int), GFP_KERNEL);
 	if (priv->mpt_txfidx == NULL)
 		goto out;
 	priv->mpt_txfidx_tail = -1;
@@ -406,8 +408,8 @@ mpt_lan_open(struct net_device *dev)
 
 	dlprintk((KERN_INFO MYNAM "@lo: Finished initializing SendCtl\n"));
 
-	priv->mpt_rxfidx = kmalloc_array(priv->max_buckets_out, sizeof(int),
-					 GFP_KERNEL);
+	priv->mpt_rxfidx = kmalloc(priv->max_buckets_out * sizeof(int),
+				   GFP_KERNEL);
 	if (priv->mpt_rxfidx == NULL)
 		goto out_SendCtl;
 	priv->mpt_rxfidx_tail = -1;
@@ -516,9 +518,9 @@ mpt_lan_close(struct net_device *dev)
 		if (priv->RcvCtl[i].skb != NULL) {
 /**/			dlprintk((KERN_INFO MYNAM "/lan_close: bucket %05x "
 /**/				  "is still out\n", i));
-			dma_unmap_single(&mpt_dev->pcidev->dev,
-					 priv->RcvCtl[i].dma,
-					 priv->RcvCtl[i].len, DMA_FROM_DEVICE);
+			pci_unmap_single(mpt_dev->pcidev, priv->RcvCtl[i].dma,
+					 priv->RcvCtl[i].len,
+					 PCI_DMA_FROMDEVICE);
 			dev_kfree_skb(priv->RcvCtl[i].skb);
 		}
 	}
@@ -528,9 +530,9 @@ mpt_lan_close(struct net_device *dev)
 
 	for (i = 0; i < priv->tx_max_out; i++) {
 		if (priv->SendCtl[i].skb != NULL) {
-			dma_unmap_single(&mpt_dev->pcidev->dev,
-					 priv->SendCtl[i].dma,
-					 priv->SendCtl[i].len, DMA_TO_DEVICE);
+			pci_unmap_single(mpt_dev->pcidev, priv->SendCtl[i].dma,
+					 priv->SendCtl[i].len,
+					 PCI_DMA_TODEVICE);
 			dev_kfree_skb(priv->SendCtl[i].skb);
 		}
 	}
@@ -549,7 +551,7 @@ mpt_lan_close(struct net_device *dev)
 /*=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=*/
 /* Tx timeout handler. */
 static void
-mpt_lan_tx_timeout(struct net_device *dev, unsigned int txqueue)
+mpt_lan_tx_timeout(struct net_device *dev)
 {
 	struct mpt_lan_priv *priv = netdev_priv(dev);
 	MPT_ADAPTER *mpt_dev = priv->mpt_dev;
@@ -582,8 +584,8 @@ mpt_lan_send_turbo(struct net_device *dev, u32 tmsg)
 			__func__, sent));
 
 	priv->SendCtl[ctx].skb = NULL;
-	dma_unmap_single(&mpt_dev->pcidev->dev, priv->SendCtl[ctx].dma,
-			 priv->SendCtl[ctx].len, DMA_TO_DEVICE);
+	pci_unmap_single(mpt_dev->pcidev, priv->SendCtl[ctx].dma,
+			 priv->SendCtl[ctx].len, PCI_DMA_TODEVICE);
 	dev_kfree_skb_irq(sent);
 
 	spin_lock_irqsave(&priv->txfidx_lock, flags);
@@ -648,9 +650,8 @@ mpt_lan_send_reply(struct net_device *dev, LANSendReply_t *pSendRep)
 				__func__, sent));
 
 		priv->SendCtl[ctx].skb = NULL;
-		dma_unmap_single(&mpt_dev->pcidev->dev,
-				 priv->SendCtl[ctx].dma,
-				 priv->SendCtl[ctx].len, DMA_TO_DEVICE);
+		pci_unmap_single(mpt_dev->pcidev, priv->SendCtl[ctx].dma,
+				 priv->SendCtl[ctx].len, PCI_DMA_TODEVICE);
 		dev_kfree_skb_irq(sent);
 
 		priv->mpt_txfidx[++priv->mpt_txfidx_tail] = ctx;
@@ -669,7 +670,7 @@ out:
 }
 
 /*=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=*/
-static netdev_tx_t
+static int
 mpt_lan_sdu_send (struct sk_buff *skb, struct net_device *dev)
 {
 	struct mpt_lan_priv *priv = netdev_priv(dev);
@@ -721,8 +722,8 @@ mpt_lan_sdu_send (struct sk_buff *skb, struct net_device *dev)
 	skb_reset_mac_header(skb);
 	skb_pull(skb, 12);
 
-	dma = dma_map_single(&mpt_dev->pcidev->dev, skb->data, skb->len,
-			     DMA_TO_DEVICE);
+        dma = pci_map_single(mpt_dev->pcidev, skb->data, skb->len,
+			     PCI_DMA_TODEVICE);
 
 	priv->SendCtl[ctx].skb = skb;
 	priv->SendCtl[ctx].dma = dma;
@@ -743,7 +744,7 @@ mpt_lan_sdu_send (struct sk_buff *skb, struct net_device *dev)
 	pTrans->ContextSize   = sizeof(u32);
 	pTrans->DetailsLength = 2 * sizeof(u32);
 	pTrans->Flags         = 0;
-	pTrans->TransactionContext = cpu_to_le32(ctx);
+	pTrans->TransactionContext[0] = cpu_to_le32(ctx);
 
 //	dioprintk((KERN_INFO MYNAM ": %s/%s: BC = %08x, skb = %p, buff = %p\n",
 //			IOC_AND_NETDEV_NAMES_s_s(dev),
@@ -869,17 +870,13 @@ mpt_lan_receive_post_turbo(struct net_device *dev, u32 tmsg)
 			return -ENOMEM;
 		}
 
-		dma_sync_single_for_cpu(&mpt_dev->pcidev->dev,
-					priv->RcvCtl[ctx].dma,
-					priv->RcvCtl[ctx].len,
-					DMA_FROM_DEVICE);
+		pci_dma_sync_single_for_cpu(mpt_dev->pcidev, priv->RcvCtl[ctx].dma,
+					    priv->RcvCtl[ctx].len, PCI_DMA_FROMDEVICE);
 
 		skb_copy_from_linear_data(old_skb, skb_put(skb, len), len);
 
-		dma_sync_single_for_device(&mpt_dev->pcidev->dev,
-					   priv->RcvCtl[ctx].dma,
-					   priv->RcvCtl[ctx].len,
-					   DMA_FROM_DEVICE);
+		pci_dma_sync_single_for_device(mpt_dev->pcidev, priv->RcvCtl[ctx].dma,
+					       priv->RcvCtl[ctx].len, PCI_DMA_FROMDEVICE);
 		goto out;
 	}
 
@@ -887,8 +884,8 @@ mpt_lan_receive_post_turbo(struct net_device *dev, u32 tmsg)
 
 	priv->RcvCtl[ctx].skb = NULL;
 
-	dma_unmap_single(&mpt_dev->pcidev->dev, priv->RcvCtl[ctx].dma,
-			 priv->RcvCtl[ctx].len, DMA_FROM_DEVICE);
+	pci_unmap_single(mpt_dev->pcidev, priv->RcvCtl[ctx].dma,
+			 priv->RcvCtl[ctx].len, PCI_DMA_FROMDEVICE);
 
 out:
 	spin_lock_irqsave(&priv->rxfidx_lock, flags);
@@ -932,8 +929,8 @@ mpt_lan_receive_post_free(struct net_device *dev,
 //		dlprintk((KERN_INFO MYNAM "@rpr[2] TC + 3\n"));
 
 		priv->RcvCtl[ctx].skb = NULL;
-		dma_unmap_single(&mpt_dev->pcidev->dev, priv->RcvCtl[ctx].dma,
-				 priv->RcvCtl[ctx].len, DMA_FROM_DEVICE);
+		pci_unmap_single(mpt_dev->pcidev, priv->RcvCtl[ctx].dma,
+				 priv->RcvCtl[ctx].len, PCI_DMA_FROMDEVICE);
 		dev_kfree_skb_any(skb);
 
 		priv->mpt_rxfidx[++priv->mpt_rxfidx_tail] = ctx;
@@ -1033,16 +1030,16 @@ mpt_lan_receive_post_reply(struct net_device *dev,
 //					IOC_AND_NETDEV_NAMES_s_s(dev),
 //					i, l));
 
-			dma_sync_single_for_cpu(&mpt_dev->pcidev->dev,
-						priv->RcvCtl[ctx].dma,
-						priv->RcvCtl[ctx].len,
-						DMA_FROM_DEVICE);
+			pci_dma_sync_single_for_cpu(mpt_dev->pcidev,
+						    priv->RcvCtl[ctx].dma,
+						    priv->RcvCtl[ctx].len,
+						    PCI_DMA_FROMDEVICE);
 			skb_copy_from_linear_data(old_skb, skb_put(skb, l), l);
 
-			dma_sync_single_for_device(&mpt_dev->pcidev->dev,
-						   priv->RcvCtl[ctx].dma,
-						   priv->RcvCtl[ctx].len,
-						   DMA_FROM_DEVICE);
+			pci_dma_sync_single_for_device(mpt_dev->pcidev,
+						       priv->RcvCtl[ctx].dma,
+						       priv->RcvCtl[ctx].len,
+						       PCI_DMA_FROMDEVICE);
 
 			priv->mpt_rxfidx[++priv->mpt_rxfidx_tail] = ctx;
 			szrem -= l;
@@ -1061,17 +1058,17 @@ mpt_lan_receive_post_reply(struct net_device *dev,
 			return -ENOMEM;
 		}
 
-		dma_sync_single_for_cpu(&mpt_dev->pcidev->dev,
-					priv->RcvCtl[ctx].dma,
-					priv->RcvCtl[ctx].len,
-					DMA_FROM_DEVICE);
+		pci_dma_sync_single_for_cpu(mpt_dev->pcidev,
+					    priv->RcvCtl[ctx].dma,
+					    priv->RcvCtl[ctx].len,
+					    PCI_DMA_FROMDEVICE);
 
 		skb_copy_from_linear_data(old_skb, skb_put(skb, len), len);
 
-		dma_sync_single_for_device(&mpt_dev->pcidev->dev,
-					   priv->RcvCtl[ctx].dma,
-					   priv->RcvCtl[ctx].len,
-					   DMA_FROM_DEVICE);
+		pci_dma_sync_single_for_device(mpt_dev->pcidev,
+					       priv->RcvCtl[ctx].dma,
+					       priv->RcvCtl[ctx].len,
+					       PCI_DMA_FROMDEVICE);
 
 		spin_lock_irqsave(&priv->rxfidx_lock, flags);
 		priv->mpt_rxfidx[++priv->mpt_rxfidx_tail] = ctx;
@@ -1082,8 +1079,8 @@ mpt_lan_receive_post_reply(struct net_device *dev,
 
 		priv->RcvCtl[ctx].skb = NULL;
 
-		dma_unmap_single(&mpt_dev->pcidev->dev, priv->RcvCtl[ctx].dma,
-				 priv->RcvCtl[ctx].len, DMA_FROM_DEVICE);
+		pci_unmap_single(mpt_dev->pcidev, priv->RcvCtl[ctx].dma,
+				 priv->RcvCtl[ctx].len, PCI_DMA_FROMDEVICE);
 		priv->RcvCtl[ctx].dma = 0;
 
 		priv->mpt_rxfidx[++priv->mpt_rxfidx_tail] = ctx;
@@ -1161,7 +1158,7 @@ mpt_lan_post_receive_buckets(struct mpt_lan_priv *priv)
 			__func__, buckets, curr));
 
 	max = (mpt_dev->req_sz - MPT_LAN_RECEIVE_POST_REQUEST_SIZE) /
-			(sizeof(SGETransaction32_t) + sizeof(SGESimple64_t));
+			(MPT_LAN_TRANSACTION32_SIZE + sizeof(SGESimple64_t));
 
 	while (buckets) {
 		mf = mpt_get_msg_frame(LanCtx, mpt_dev);
@@ -1204,10 +1201,10 @@ mpt_lan_post_receive_buckets(struct mpt_lan_priv *priv)
 
 			skb = priv->RcvCtl[ctx].skb;
 			if (skb && (priv->RcvCtl[ctx].len != len)) {
-				dma_unmap_single(&mpt_dev->pcidev->dev,
+				pci_unmap_single(mpt_dev->pcidev,
 						 priv->RcvCtl[ctx].dma,
 						 priv->RcvCtl[ctx].len,
-						 DMA_FROM_DEVICE);
+						 PCI_DMA_FROMDEVICE);
 				dev_kfree_skb(priv->RcvCtl[ctx].skb);
 				skb = priv->RcvCtl[ctx].skb = NULL;
 			}
@@ -1223,9 +1220,8 @@ mpt_lan_post_receive_buckets(struct mpt_lan_priv *priv)
 					break;
 				}
 
-				dma = dma_map_single(&mpt_dev->pcidev->dev,
-						     skb->data, len,
-						     DMA_FROM_DEVICE);
+				dma = pci_map_single(mpt_dev->pcidev, skb->data,
+						     len, PCI_DMA_FROMDEVICE);
 
 				priv->RcvCtl[ctx].skb = skb;
 				priv->RcvCtl[ctx].dma = dma;
@@ -1237,7 +1233,7 @@ mpt_lan_post_receive_buckets(struct mpt_lan_priv *priv)
 			pTrans->ContextSize   = sizeof(u32);
 			pTrans->DetailsLength = 0;
 			pTrans->Flags         = 0;
-			pTrans->TransactionContext = cpu_to_le32(ctx);
+			pTrans->TransactionContext[0] = cpu_to_le32(ctx);
 
 			pSimple = (SGESimple64_t *) pTrans->TransactionDetails;
 
@@ -1356,7 +1352,7 @@ mpt_register_lan_device (MPT_ADAPTER *mpt_dev, int pnum)
 	HWaddr[5] = a[0];
 
 	dev->addr_len = FC_ALEN;
-	dev_addr_set(dev, HWaddr);
+	memcpy(dev->dev_addr, HWaddr, FC_ALEN);
 	memset(dev->broadcast, 0xff, FC_ALEN);
 
 	/* The Tx queue is 127 deep on the 909.
@@ -1383,7 +1379,7 @@ mpt_register_lan_device (MPT_ADAPTER *mpt_dev, int pnum)
 }
 
 static int
-mptlan_probe(struct pci_dev *pdev)
+mptlan_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 {
 	MPT_ADAPTER 		*ioc = pci_get_drvdata(pdev);
 	struct net_device	*dev;

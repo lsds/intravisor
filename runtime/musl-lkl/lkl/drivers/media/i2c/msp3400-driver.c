@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Programming the mspx4xx sound processor family
  *
@@ -12,7 +11,7 @@
  *
  *  FM-Mono
  *      should work. The stereo modes are backward compatible to FM-mono,
- *      therefore FM-Mono should be always available.
+ *      therefore FM-Mono should be allways available.
  *
  *  FM-Stereo (B/G, used in germany)
  *      should work, with autodetect
@@ -30,6 +29,16 @@
  *
  * 980623  Thomas Sailer (sailer@ife.ee.ethz.ch)
  *         using soundcore instead of OSS
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version 2
+ * of the License, or (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
  */
 
 
@@ -679,7 +688,7 @@ static int msp_probe(struct i2c_client *client, const struct i2c_device_id *id)
 #endif
 
 	if (!id)
-		strscpy(client->name, "msp3400", sizeof(client->name));
+		strlcpy(client->name, "msp3400", sizeof(client->name));
 
 	if (msp_reset(client) == -1) {
 		dev_dbg_lvl(&client->dev, 1, msp_debug, "msp3400 not found\n");
@@ -694,10 +703,8 @@ static int msp_probe(struct i2c_client *client, const struct i2c_device_id *id)
 	v4l2_i2c_subdev_init(sd, client, &msp_ops);
 
 #if defined(CONFIG_MEDIA_CONTROLLER)
-	state->pads[MSP3400_PAD_IF_INPUT].flags = MEDIA_PAD_FL_SINK;
-	state->pads[MSP3400_PAD_IF_INPUT].sig_type = PAD_SIGNAL_AUDIO;
-	state->pads[MSP3400_PAD_OUT].flags = MEDIA_PAD_FL_SOURCE;
-	state->pads[MSP3400_PAD_OUT].sig_type = PAD_SIGNAL_AUDIO;
+	state->pads[IF_AUD_DEC_PAD_IF_INPUT].flags = MEDIA_PAD_FL_SINK;
+	state->pads[IF_AUD_DEC_PAD_OUT].flags = MEDIA_PAD_FL_SOURCE;
 
 	sd->entity.function = MEDIA_ENT_F_IF_AUD_DECODER;
 
@@ -859,7 +866,7 @@ static int msp_probe(struct i2c_client *client, const struct i2c_device_id *id)
 	return 0;
 }
 
-static void msp_remove(struct i2c_client *client)
+static int msp_remove(struct i2c_client *client)
 {
 	struct msp_state *state = to_state(i2c_get_clientdata(client));
 
@@ -872,6 +879,7 @@ static void msp_remove(struct i2c_client *client)
 	msp_reset(client);
 
 	v4l2_ctrl_handler_free(&state->hdl);
+	return 0;
 }
 
 /* ----------------------------------------------------------------------- */

@@ -17,7 +17,7 @@
 				       sizeof(*(ptr)));			\
 })
 
-#define arch_cmpxchg_local(ptr, o, n)					\
+#define cmpxchg_local(ptr, o, n)					\
 ({									\
 	__typeof__(*(ptr)) _o_ = (o);					\
 	__typeof__(*(ptr)) _n_ = (n);					\
@@ -26,7 +26,7 @@
 					  sizeof(*(ptr)));		\
 })
 
-#define arch_cmpxchg64_local(ptr, o, n)					\
+#define cmpxchg64_local(ptr, o, n)					\
 ({									\
 	BUILD_BUG_ON(sizeof(*(ptr)) != 8);				\
 	cmpxchg_local((ptr), (o), (n));					\
@@ -42,7 +42,7 @@
  * The leading and the trailing memory barriers guarantee that these
  * operations are fully ordered.
  */
-#define arch_xchg(ptr, x)						\
+#define xchg(ptr, x)							\
 ({									\
 	__typeof__(*(ptr)) __ret;					\
 	__typeof__(*(ptr)) _x_ = (x);					\
@@ -53,7 +53,7 @@
 	__ret;								\
 })
 
-#define arch_cmpxchg(ptr, o, n)						\
+#define cmpxchg(ptr, o, n)						\
 ({									\
 	__typeof__(*(ptr)) __ret;					\
 	__typeof__(*(ptr)) _o_ = (o);					\
@@ -65,10 +65,10 @@
 	__ret;								\
 })
 
-#define arch_cmpxchg64(ptr, o, n)					\
+#define cmpxchg64(ptr, o, n)						\
 ({									\
 	BUILD_BUG_ON(sizeof(*(ptr)) != 8);				\
-	arch_cmpxchg((ptr), (o), (n));					\
+	cmpxchg((ptr), (o), (n));					\
 })
 
 #undef ____cmpxchg

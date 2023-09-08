@@ -1,15 +1,20 @@
-// SPDX-License-Identifier: GPL-2.0+
-//
-// soc-ac97.c  --  ALSA SoC Audio Layer AC97 support
-//
-// Copyright 2005 Wolfson Microelectronics PLC.
-// Copyright 2005 Openedhand Ltd.
-// Copyright (C) 2010 Slimlogic Ltd.
-// Copyright (C) 2010 Texas Instruments Inc.
-//
-// Author: Liam Girdwood <lrg@slimlogic.co.uk>
-//         with code, comments and ideas from :-
-//         Richard Purdie <richard@openedhand.com>
+/*
+ * soc-ac97.c  --  ALSA SoC Audio Layer AC97 support
+ *
+ * Copyright 2005 Wolfson Microelectronics PLC.
+ * Copyright 2005 Openedhand Ltd.
+ * Copyright (C) 2010 Slimlogic Ltd.
+ * Copyright (C) 2010 Texas Instruments Inc.
+ *
+ * Author: Liam Girdwood <lrg@slimlogic.co.uk>
+ *         with code, comments and ideas from :-
+ *         Richard Purdie <richard@openedhand.com>
+ *
+ *  This program is free software; you can redistribute  it and/or modify it
+ *  under  the terms of  the GNU General  Public License as published by the
+ *  Free Software Foundation;  either version 2 of the  License, or (at your
+ *  option) any later version.
+ */
 
 #include <linux/ctype.h>
 #include <linux/delay.h>
@@ -34,6 +39,14 @@ struct snd_ac97_reset_cfg {
 	int gpio_reset;
 };
 
+struct snd_ac97_gpio_priv {
+#ifdef CONFIG_GPIOLIB
+	struct gpio_chip gpio_chip;
+#endif
+	unsigned int gpios_set;
+	struct snd_soc_component *component;
+};
+
 static struct snd_ac97_bus soc_ac97_bus = {
 	.ops = NULL, /* Gets initialized in snd_soc_set_ac97_ops() */
 };
@@ -44,12 +57,6 @@ static void soc_ac97_device_release(struct device *dev)
 }
 
 #ifdef CONFIG_GPIOLIB
-struct snd_ac97_gpio_priv {
-	struct gpio_chip gpio_chip;
-	unsigned int gpios_set;
-	struct snd_soc_component *component;
-};
-
 static inline struct snd_soc_component *gpio_to_component(struct gpio_chip *chip)
 {
 	struct snd_ac97_gpio_priv *gpio_priv = gpiochip_get_data(chip);
@@ -57,7 +64,7 @@ static inline struct snd_soc_component *gpio_to_component(struct gpio_chip *chip
 	return gpio_priv->component;
 }
 
-static int snd_soc_ac97_gpio_request(struct gpio_chip *chip, unsigned int offset)
+static int snd_soc_ac97_gpio_request(struct gpio_chip *chip, unsigned offset)
 {
 	if (offset >= AC97_NUM_GPIOS)
 		return -EINVAL;
@@ -66,7 +73,7 @@ static int snd_soc_ac97_gpio_request(struct gpio_chip *chip, unsigned int offset
 }
 
 static int snd_soc_ac97_gpio_direction_in(struct gpio_chip *chip,
-					  unsigned int offset)
+					  unsigned offset)
 {
 	struct snd_soc_component *component = gpio_to_component(chip);
 
@@ -75,20 +82,21 @@ static int snd_soc_ac97_gpio_direction_in(struct gpio_chip *chip,
 				   1 << offset, 1 << offset);
 }
 
-static int snd_soc_ac97_gpio_get(struct gpio_chip *chip, unsigned int offset)
+static int snd_soc_ac97_gpio_get(struct gpio_chip *chip, unsigned offset)
 {
 	struct snd_soc_component *component = gpio_to_component(chip);
 	int ret;
 
-	ret = snd_soc_component_read(component, AC97_GPIO_STATUS);
+	if (snd_soc_component_read(component, AC97_GPIO_STATUS, &ret) < 0)
+		ret = -1;
 
 	dev_dbg(component->dev, "get gpio %d : %d\n", offset,
-		ret & (1 << offset));
+		ret < 0 ? ret : ret & (1 << offset));
 
-	return !!(ret & (1 << offset));
+	return ret < 0 ? ret : !!(ret & (1 << offset));
 }
 
-static void snd_soc_ac97_gpio_set(struct gpio_chip *chip, unsigned int offset,
+static void snd_soc_ac97_gpio_set(struct gpio_chip *chip, unsigned offset,
 				  int value)
 {
 	struct snd_ac97_gpio_priv *gpio_priv = gpiochip_get_data(chip);
@@ -391,8 +399,6 @@ EXPORT_SYMBOL_GPL(snd_soc_set_ac97_ops);
 
 /**
  * snd_soc_set_ac97_ops_of_reset - Set ac97 ops with generic ac97 reset functions
- * @ops: bus ops
- * @pdev: platform device
  *
  * This function sets the reset and warm_reset properties of ops and parses
  * the device node of pdev to get pinctrl states and gpio numbers to use.

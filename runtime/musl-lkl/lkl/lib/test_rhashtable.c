@@ -1,9 +1,12 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Resizable, Scalable, Concurrent Hash Table
  *
  * Copyright (c) 2014-2015 Thomas Graf <tgraf@suug.ch>
  * Copyright (c) 2008-2014 Patrick McHardy <kaber@trash.net>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 
 /**************************************************************************
@@ -17,11 +20,11 @@
 #include <linux/module.h>
 #include <linux/rcupdate.h>
 #include <linux/rhashtable.h>
+#include <linux/semaphore.h>
 #include <linux/slab.h>
 #include <linux/sched.h>
 #include <linux/random.h>
 #include <linux/vmalloc.h>
-#include <linux/wait.h>
 
 #define MAX_ENTRIES	1000000
 #define TEST_INSERT_FAIL INT_MAX
@@ -80,7 +83,7 @@ static u32 my_hashfn(const void *data, u32 len, u32 seed)
 {
 	const struct test_obj_rhl *obj = data;
 
-	return (obj->value.id % 10);
+	return (obj->value.id % 10) << RHT_HASH_RESERVED_SPACE;
 }
 
 static int my_cmpfn(struct rhashtable_compare_arg *arg, const void *obj)
@@ -96,6 +99,7 @@ static struct rhashtable_params test_rht_params = {
 	.key_offset = offsetof(struct test_obj, value),
 	.key_len = sizeof(struct test_obj_val),
 	.hashfn = jhash,
+	.nulls_base = (3U << RHT_BASE_SHIFT),
 };
 
 static struct rhashtable_params test_rht_params_dup = {
@@ -109,8 +113,8 @@ static struct rhashtable_params test_rht_params_dup = {
 	.automatic_shrinking = false,
 };
 
-static atomic_t startup_count;
-static DECLARE_WAIT_QUEUE_HEAD(startup_wait);
+static struct semaphore prestart_sem;
+static struct semaphore startup_sem = __SEMAPHORE_INITIALIZER(startup_sem, 0);
 
 static int insert_retry(struct rhashtable *ht, struct test_obj *obj,
                         const struct rhashtable_params params)
@@ -174,11 +178,16 @@ static int __init test_rht_lookup(struct rhashtable *ht, struct test_obj *array,
 
 static void test_bucket_stats(struct rhashtable *ht, unsigned int entries)
 {
-	unsigned int total = 0, chain_len = 0;
+	unsigned int err, total = 0, chain_len = 0;
 	struct rhashtable_iter hti;
 	struct rhash_head *pos;
 
-	rhashtable_walk_enter(ht, &hti);
+	err = rhashtable_walk_init(ht, &hti, GFP_KERNEL);
+	if (err) {
+		pr_warn("Test failed: allocation error");
+		return;
+	}
+
 	rhashtable_walk_start(&hti);
 
 	while ((pos = rhashtable_walk_next(&hti))) {
@@ -276,22 +285,22 @@ static int __init test_rhltable(unsigned int entries)
 	if (entries == 0)
 		entries = 1;
 
-	rhl_test_objects = vzalloc(array_size(entries,
-					      sizeof(*rhl_test_objects)));
+	rhl_test_objects = vzalloc(sizeof(*rhl_test_objects) * entries);
 	if (!rhl_test_objects)
 		return -ENOMEM;
 
 	ret = -ENOMEM;
-	obj_in_table = vzalloc(array_size(sizeof(unsigned long),
-					  BITS_TO_LONGS(entries)));
+	obj_in_table = vzalloc(BITS_TO_LONGS(entries) * sizeof(unsigned long));
 	if (!obj_in_table)
 		goto out_free;
 
+	/* nulls_base not supported in rhlist interface */
+	test_rht_params.nulls_base = 0;
 	err = rhltable_init(&rhlt, &test_rht_params);
 	if (WARN_ON(err))
 		goto out_free;
 
-	k = get_random_u32();
+	k = prandom_u32();
 	ret = 0;
 	for (i = 0; i < entries; i++) {
 		rhl_test_objects[i].value.id = k;
@@ -369,9 +378,17 @@ static int __init test_rhltable(unsigned int entries)
 	pr_info("test %d random rhlist add/delete operations\n", entries);
 	for (j = 0; j < entries; j++) {
 		u32 i = prandom_u32_max(entries);
-		u32 prand = prandom_u32_max(4);
+		u32 prand = prandom_u32();
 
 		cond_resched();
+
+		if (prand == 0)
+			prand = prandom_u32();
+
+		if (prand & 1) {
+			prand >>= 1;
+			continue;
+		}
 
 		err = rhltable_remove(&rhlt, &rhl_test_objects[i].list_node, test_rht_params);
 		if (test_bit(i, obj_in_table)) {
@@ -379,35 +396,41 @@ static int __init test_rhltable(unsigned int entries)
 			if (WARN(err, "cannot remove element at slot %d", i))
 				continue;
 		} else {
-			if (WARN(err != -ENOENT, "removed non-existent element %d, error %d not %d",
+			if (WARN(err != -ENOENT, "removed non-existant element %d, error %d not %d",
 			     i, err, -ENOENT))
 				continue;
 		}
 
 		if (prand & 1) {
-			err = rhltable_insert(&rhlt, &rhl_test_objects[i].list_node, test_rht_params);
-			if (err == 0) {
-				if (WARN(test_and_set_bit(i, obj_in_table), "succeeded to insert same object %d", i))
-					continue;
-			} else {
-				if (WARN(!test_bit(i, obj_in_table), "failed to insert object %d", i))
-					continue;
-			}
+			prand >>= 1;
+			continue;
 		}
 
-		if (prand & 2) {
-			i = prandom_u32_max(entries);
-			if (test_bit(i, obj_in_table)) {
-				err = rhltable_remove(&rhlt, &rhl_test_objects[i].list_node, test_rht_params);
-				WARN(err, "cannot remove element at slot %d", i);
-				if (err == 0)
-					clear_bit(i, obj_in_table);
-			} else {
-				err = rhltable_insert(&rhlt, &rhl_test_objects[i].list_node, test_rht_params);
-				WARN(err, "failed to insert object %d", i);
-				if (err == 0)
-					set_bit(i, obj_in_table);
-			}
+		err = rhltable_insert(&rhlt, &rhl_test_objects[i].list_node, test_rht_params);
+		if (err == 0) {
+			if (WARN(test_and_set_bit(i, obj_in_table), "succeeded to insert same object %d", i))
+				continue;
+		} else {
+			if (WARN(!test_bit(i, obj_in_table), "failed to insert object %d", i))
+				continue;
+		}
+
+		if (prand & 1) {
+			prand >>= 1;
+			continue;
+		}
+
+		i = prandom_u32_max(entries);
+		if (test_bit(i, obj_in_table)) {
+			err = rhltable_remove(&rhlt, &rhl_test_objects[i].list_node, test_rht_params);
+			WARN(err, "cannot remove element at slot %d", i);
+			if (err == 0)
+				clear_bit(i, obj_in_table);
+		} else {
+			err = rhltable_insert(&rhlt, &rhl_test_objects[i].list_node, test_rht_params);
+			WARN(err, "failed to insert object %d", i);
+			if (err == 0)
+				set_bit(i, obj_in_table);
 		}
 	}
 
@@ -418,9 +441,9 @@ static int __init test_rhltable(unsigned int entries)
 			if (WARN(err, "cannot remove element at slot %d", i))
 				continue;
 		} else {
-			if (WARN(err != -ENOENT, "removed non-existent element, error %d not %d",
+			if (WARN(err != -ENOENT, "removed non-existant element, error %d not %d",
 				 err, -ENOENT))
-				continue;
+			continue;
 		}
 	}
 
@@ -473,33 +496,30 @@ static unsigned int __init print_ht(struct rhltable *rhlt)
 	struct rhashtable *ht;
 	const struct bucket_table *tbl;
 	char buff[512] = "";
-	int offset = 0;
 	unsigned int i, cnt = 0;
 
 	ht = &rhlt->ht;
-	/* Take the mutex to avoid RCU warning */
-	mutex_lock(&ht->mutex);
 	tbl = rht_dereference(ht->tbl, ht);
 	for (i = 0; i < tbl->size; i++) {
 		struct rhash_head *pos, *next;
 		struct test_obj_rhl *p;
 
-		pos = rht_ptr_exclusive(tbl->buckets + i);
+		pos = rht_dereference(tbl->buckets[i], ht);
 		next = !rht_is_a_nulls(pos) ? rht_dereference(pos->next, ht) : NULL;
 
 		if (!rht_is_a_nulls(pos)) {
-			offset += sprintf(buff + offset, "\nbucket[%d] -> ", i);
+			sprintf(buff, "%s\nbucket[%d] -> ", buff, i);
 		}
 
 		while (!rht_is_a_nulls(pos)) {
 			struct rhlist_head *list = container_of(pos, struct rhlist_head, rhead);
-			offset += sprintf(buff + offset, "[[");
+			sprintf(buff, "%s[[", buff);
 			do {
 				pos = &list->rhead;
 				list = rht_dereference(list->next, ht);
 				p = rht_obj(ht, pos);
 
-				offset += sprintf(buff + offset, " val %d (tid=%d)%s", p->value.id, p->value.tid,
+				sprintf(buff, "%s val %d (tid=%d)%s", buff, p->value.id, p->value.tid,
 					list? ", " : " ");
 				cnt++;
 			} while (list);
@@ -508,11 +528,10 @@ static unsigned int __init print_ht(struct rhltable *rhlt)
 			next = !rht_is_a_nulls(pos) ?
 				rht_dereference(pos->next, ht) : NULL;
 
-			offset += sprintf(buff + offset, "]]%s", !rht_is_a_nulls(pos) ? " -> " : "");
+			sprintf(buff, "%s]]%s", buff, !rht_is_a_nulls(pos) ? " -> " : "");
 		}
 	}
 	printk(KERN_ERR "\n---- ht: ----%s\n-------------\n", buff);
-	mutex_unlock(&ht->mutex);
 
 	return cnt;
 }
@@ -520,45 +539,38 @@ static unsigned int __init print_ht(struct rhltable *rhlt)
 static int __init test_insert_dup(struct test_obj_rhl *rhl_test_objects,
 				  int cnt, bool slow)
 {
-	struct rhltable *rhlt;
+	struct rhltable rhlt;
 	unsigned int i, ret;
 	const char *key;
 	int err = 0;
 
-	rhlt = kmalloc(sizeof(*rhlt), GFP_KERNEL);
-	if (WARN_ON(!rhlt))
-		return -EINVAL;
-
-	err = rhltable_init(rhlt, &test_rht_params_dup);
-	if (WARN_ON(err)) {
-		kfree(rhlt);
+	err = rhltable_init(&rhlt, &test_rht_params_dup);
+	if (WARN_ON(err))
 		return err;
-	}
 
 	for (i = 0; i < cnt; i++) {
 		rhl_test_objects[i].value.tid = i;
-		key = rht_obj(&rhlt->ht, &rhl_test_objects[i].list_node.rhead);
+		key = rht_obj(&rhlt.ht, &rhl_test_objects[i].list_node.rhead);
 		key += test_rht_params_dup.key_offset;
 
 		if (slow) {
-			err = PTR_ERR(rhashtable_insert_slow(&rhlt->ht, key,
+			err = PTR_ERR(rhashtable_insert_slow(&rhlt.ht, key,
 							     &rhl_test_objects[i].list_node.rhead));
 			if (err == -EAGAIN)
 				err = 0;
 		} else
-			err = rhltable_insert(rhlt,
+			err = rhltable_insert(&rhlt,
 					      &rhl_test_objects[i].list_node,
 					      test_rht_params_dup);
 		if (WARN(err, "error %d on element %d/%d (%s)\n", err, i, cnt, slow? "slow" : "fast"))
 			goto skip_print;
 	}
 
-	ret = print_ht(rhlt);
+	ret = print_ht(&rhlt);
 	WARN(ret != cnt, "missing rhltable elements (%d != %d, %s)\n", ret, cnt, slow? "slow" : "fast");
 
 skip_print:
-	rhltable_destroy(rhlt);
-	kfree(rhlt);
+	rhltable_destroy(&rhlt);
 
 	return 0;
 }
@@ -620,12 +632,9 @@ static int threadfunc(void *data)
 	int i, step, err = 0, insert_retries = 0;
 	struct thread_data *tdata = data;
 
-	if (atomic_dec_and_test(&startup_count))
-		wake_up(&startup_wait);
-	if (wait_event_interruptible(startup_wait, atomic_read(&startup_count) == -1)) {
-		pr_err("  thread[%d]: interrupted\n", tdata->id);
-		goto out;
-	}
+	up(&prestart_sem);
+	if (down_interruptible(&startup_sem))
+		pr_err("  thread[%d]: down_interruptible failed\n", tdata->id);
 
 	for (i = 0; i < tdata->entries; i++) {
 		tdata->objs[i].value.id = i;
@@ -697,8 +706,7 @@ static int __init test_rht_init(void)
 	test_rht_params.max_size = max_size ? : roundup_pow_of_two(entries);
 	test_rht_params.nelem_hint = size;
 
-	objs = vzalloc(array_size(sizeof(struct test_obj),
-				  test_rht_params.max_size + 1));
+	objs = vzalloc((test_rht_params.max_size + 1) * sizeof(struct test_obj));
 	if (!objs)
 		return -ENOMEM;
 
@@ -744,11 +752,11 @@ static int __init test_rht_init(void)
 
 	pr_info("Testing concurrent rhashtable access from %d threads\n",
 	        tcount);
-	atomic_set(&startup_count, tcount);
-	tdata = vzalloc(array_size(tcount, sizeof(struct thread_data)));
+	sema_init(&prestart_sem, 1 - tcount);
+	tdata = vzalloc(tcount * sizeof(struct thread_data));
 	if (!tdata)
 		return -ENOMEM;
-	objs  = vzalloc(array3_size(sizeof(struct test_obj), tcount, entries));
+	objs  = vzalloc(tcount * entries * sizeof(struct test_obj));
 	if (!objs) {
 		vfree(tdata);
 		return -ENOMEM;
@@ -770,18 +778,15 @@ static int __init test_rht_init(void)
 		tdata[i].objs = objs + i * entries;
 		tdata[i].task = kthread_run(threadfunc, &tdata[i],
 		                            "rhashtable_thrad[%d]", i);
-		if (IS_ERR(tdata[i].task)) {
+		if (IS_ERR(tdata[i].task))
 			pr_err(" kthread_run failed for thread %d\n", i);
-			atomic_dec(&startup_count);
-		} else {
+		else
 			started_threads++;
-		}
 	}
-	if (wait_event_interruptible(startup_wait, atomic_read(&startup_count) == 0))
-		pr_err("  wait_event interruptible failed\n");
-	/* count is 0 now, set it to -1 and wake up all threads together */
-	atomic_dec(&startup_count);
-	wake_up_all(&startup_wait);
+	if (down_interruptible(&prestart_sem))
+		pr_err("  down interruptible failed\n");
+	for (i = 0; i < tcount; i++)
+		up(&startup_sem);
 	for (i = 0; i < tcount; i++) {
 		if (IS_ERR(tdata[i].task))
 			continue;

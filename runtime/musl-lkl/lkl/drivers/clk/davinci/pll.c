@@ -11,7 +11,6 @@
 
 #include <linux/clk-provider.h>
 #include <linux/clk.h>
-#include <linux/clk/davinci.h>
 #include <linux/delay.h>
 #include <linux/err.h>
 #include <linux/io.h>
@@ -98,7 +97,7 @@
  * @hw: clk_hw for the pll
  * @base: Base memory address
  * @pllm_min: The minimum allowable PLLM[PLLM] value
- * @pllm_max: The maximum allowable PLLM[PLLM] value
+ * @pllm_max: The maxiumum allowable PLLM[PLLM] value
  * @pllm_mask: Bitmask for PLLM[PLLM] value
  */
 struct davinci_pll_clk {
@@ -191,7 +190,7 @@ static int davinci_pll_set_rate(struct clk_hw *hw, unsigned long rate,
 }
 
 #ifdef CONFIG_DEBUG_FS
-static void davinci_pll_debug_init(struct clk_hw *hw, struct dentry *dentry);
+static int davinci_pll_debug_init(struct clk_hw *hw, struct dentry *dentry);
 #else
 #define davinci_pll_debug_init NULL
 #endif
@@ -224,7 +223,6 @@ static const struct clk_ops dm365_pll_ops = {
 
 /**
  * davinci_pll_div_register - common *DIV clock implementation
- * @dev: The PLL platform device or NULL
  * @name: the clock name
  * @parent_name: the parent clock name
  * @reg: the *DIV register
@@ -242,21 +240,17 @@ static struct clk *davinci_pll_div_register(struct device *dev,
 	const struct clk_ops *divider_ops = &clk_divider_ops;
 	struct clk_gate *gate;
 	struct clk_divider *divider;
-	struct clk *clk;
-	int ret;
 
-	gate = kzalloc(sizeof(*gate), GFP_KERNEL);
+	gate = devm_kzalloc(dev, sizeof(*gate), GFP_KERNEL);
 	if (!gate)
 		return ERR_PTR(-ENOMEM);
 
 	gate->reg = reg;
 	gate->bit_idx = DIV_ENABLE_SHIFT;
 
-	divider = kzalloc(sizeof(*divider), GFP_KERNEL);
-	if (!divider) {
-		ret = -ENOMEM;
-		goto err_free_gate;
-	}
+	divider = devm_kzalloc(dev, sizeof(*divider), GFP_KERNEL);
+	if (!divider)
+		return ERR_PTR(-ENOMEM);
 
 	divider->reg = reg;
 	divider->shift = DIV_RATIO_SHIFT;
@@ -267,22 +261,9 @@ static struct clk *davinci_pll_div_register(struct device *dev,
 		divider_ops = &clk_divider_ro_ops;
 	}
 
-	clk = clk_register_composite(dev, name, parent_names, num_parents,
-				     NULL, NULL, &divider->hw, divider_ops,
-				     &gate->hw, &clk_gate_ops, flags);
-	if (IS_ERR(clk)) {
-		ret = PTR_ERR(clk);
-		goto err_free_divider;
-	}
-
-	return clk;
-
-err_free_divider:
-	kfree(divider);
-err_free_gate:
-	kfree(gate);
-
-	return ERR_PTR(ret);
+	return clk_register_composite(dev, name, parent_names, num_parents,
+				      NULL, NULL, &divider->hw, divider_ops,
+				      &gate->hw, &clk_gate_ops, flags);
 }
 
 struct davinci_pllen_clk {
@@ -340,17 +321,36 @@ static int davinci_pllen_rate_change(struct notifier_block *nb,
 	return NOTIFY_OK;
 }
 
+static struct davinci_pll_platform_data *davinci_pll_get_pdata(struct device *dev)
+{
+	struct davinci_pll_platform_data *pdata = dev_get_platdata(dev);
+
+	/*
+	 * Platform data is optional, so allocate a new struct if one was not
+	 * provided. For device tree, this will always be the case.
+	 */
+	if (!pdata)
+		pdata = devm_kzalloc(dev, sizeof(*pdata), GFP_KERNEL);
+	if (!pdata)
+		return NULL;
+
+	/* for device tree, we need to fill in the struct */
+	if (dev->of_node)
+		pdata->cfgchip =
+			syscon_regmap_lookup_by_compatible("ti,da830-cfgchip");
+
+	return pdata;
+}
+
 static struct notifier_block davinci_pllen_notifier = {
 	.notifier_call = davinci_pllen_rate_change,
 };
 
 /**
  * davinci_pll_clk_register - Register a PLL clock
- * @dev: The PLL platform device or NULL
  * @info: The device-specific clock info
  * @parent_name: The parent clock name
  * @base: The PLL's memory region
- * @cfgchip: CFGCHIP syscon regmap for info->unlock_reg or NULL
  *
  * This creates a series of clocks that represent the PLL.
  *
@@ -366,9 +366,9 @@ static struct notifier_block davinci_pllen_notifier = {
 struct clk *davinci_pll_clk_register(struct device *dev,
 				     const struct davinci_pll_clk_info *info,
 				     const char *parent_name,
-				     void __iomem *base,
-				     struct regmap *cfgchip)
+				     void __iomem *base)
 {
+	struct davinci_pll_platform_data *pdata;
 	char prediv_name[MAX_NAME_SIZE];
 	char pllout_name[MAX_NAME_SIZE];
 	char postdiv_name[MAX_NAME_SIZE];
@@ -376,12 +376,11 @@ struct clk *davinci_pll_clk_register(struct device *dev,
 	struct clk_init_data init;
 	struct davinci_pll_clk *pllout;
 	struct davinci_pllen_clk *pllen;
-	struct clk *oscin_clk = NULL;
-	struct clk *prediv_clk = NULL;
-	struct clk *pllout_clk;
-	struct clk *postdiv_clk = NULL;
-	struct clk *pllen_clk;
-	int ret;
+	struct clk *pllout_clk, *clk;
+
+	pdata = davinci_pll_get_pdata(dev);
+	if (!pdata)
+		return ERR_PTR(-ENOMEM);
 
 	if (info->flags & PLL_HAS_CLKMODE) {
 		/*
@@ -393,10 +392,10 @@ struct clk *davinci_pll_clk_register(struct device *dev,
 		 * a number of different things. In this driver we use it to
 		 * mean the signal after the PLLCTL[CLKMODE] switch.
 		 */
-		oscin_clk = clk_register_fixed_factor(dev, OSCIN_CLK_NAME,
-						      parent_name, 0, 1, 1);
-		if (IS_ERR(oscin_clk))
-			return oscin_clk;
+		clk = clk_register_fixed_factor(dev, OSCIN_CLK_NAME,
+						parent_name, 0, 1, 1);
+		if (IS_ERR(clk))
+			return clk;
 
 		parent_name = OSCIN_CLK_NAME;
 	}
@@ -412,34 +411,30 @@ struct clk *davinci_pll_clk_register(struct device *dev,
 
 		/* Some? DM355 chips don't correctly report the PREDIV value */
 		if (info->flags & PLL_PREDIV_FIXED8)
-			prediv_clk = clk_register_fixed_factor(dev, prediv_name,
-							parent_name, flags, 1, 8);
+			clk = clk_register_fixed_factor(dev, prediv_name,
+						parent_name, flags, 1, 8);
 		else
-			prediv_clk = davinci_pll_div_register(dev, prediv_name,
+			clk = davinci_pll_div_register(dev, prediv_name,
 				parent_name, base + PREDIV, fixed, flags);
-		if (IS_ERR(prediv_clk)) {
-			ret = PTR_ERR(prediv_clk);
-			goto err_unregister_oscin;
-		}
+		if (IS_ERR(clk))
+			return clk;
 
 		parent_name = prediv_name;
 	}
 
 	/* Unlock writing to PLL registers */
 	if (info->unlock_reg) {
-		if (IS_ERR_OR_NULL(cfgchip))
+		if (IS_ERR_OR_NULL(pdata->cfgchip))
 			dev_warn(dev, "Failed to get CFGCHIP (%ld)\n",
-				 PTR_ERR(cfgchip));
+				 PTR_ERR(pdata->cfgchip));
 		else
-			regmap_write_bits(cfgchip, info->unlock_reg,
+			regmap_write_bits(pdata->cfgchip, info->unlock_reg,
 					  info->unlock_mask, 0);
 	}
 
-	pllout = kzalloc(sizeof(*pllout), GFP_KERNEL);
-	if (!pllout) {
-		ret = -ENOMEM;
-		goto err_unregister_prediv;
-	}
+	pllout = devm_kzalloc(dev, sizeof(*pllout), GFP_KERNEL);
+	if (!pllout)
+		return ERR_PTR(-ENOMEM);
 
 	snprintf(pllout_name, MAX_NAME_SIZE, "%s_pllout", info->name);
 
@@ -461,11 +456,9 @@ struct clk *davinci_pll_clk_register(struct device *dev,
 	pllout->pllm_min = info->pllm_min;
 	pllout->pllm_max = info->pllm_max;
 
-	pllout_clk = clk_register(dev, &pllout->hw);
-	if (IS_ERR(pllout_clk)) {
-		ret = PTR_ERR(pllout_clk);
-		goto err_free_pllout;
-	}
+	pllout_clk = devm_clk_register(dev, &pllout->hw);
+	if (IS_ERR(pllout_clk))
+		return pllout_clk;
 
 	clk_hw_set_rate_range(&pllout->hw, info->pllout_min_rate,
 			      info->pllout_max_rate);
@@ -481,21 +474,17 @@ struct clk *davinci_pll_clk_register(struct device *dev,
 		if (info->flags & PLL_POSTDIV_ALWAYS_ENABLED)
 			flags |= CLK_IS_CRITICAL;
 
-		postdiv_clk = davinci_pll_div_register(dev, postdiv_name,
-				parent_name, base + POSTDIV, fixed, flags);
-		if (IS_ERR(postdiv_clk)) {
-			ret = PTR_ERR(postdiv_clk);
-			goto err_unregister_pllout;
-		}
+		clk = davinci_pll_div_register(dev, postdiv_name, parent_name,
+					       base + POSTDIV, fixed, flags);
+		if (IS_ERR(clk))
+			return clk;
 
 		parent_name = postdiv_name;
 	}
 
-	pllen = kzalloc(sizeof(*pllen), GFP_KERNEL);
-	if (!pllen) {
-		ret = -ENOMEM;
-		goto err_unregister_postdiv;
-	}
+	pllen = devm_kzalloc(dev, sizeof(*pllout), GFP_KERNEL);
+	if (!pllen)
+		return ERR_PTR(-ENOMEM);
 
 	snprintf(pllen_name, MAX_NAME_SIZE, "%s_pllen", info->name);
 
@@ -508,35 +497,17 @@ struct clk *davinci_pll_clk_register(struct device *dev,
 	pllen->hw.init = &init;
 	pllen->base = base;
 
-	pllen_clk = clk_register(dev, &pllen->hw);
-	if (IS_ERR(pllen_clk)) {
-		ret = PTR_ERR(pllen_clk);
-		goto err_free_pllen;
-	}
+	clk = devm_clk_register(dev, &pllen->hw);
+	if (IS_ERR(clk))
+		return clk;
 
-	clk_notifier_register(pllen_clk, &davinci_pllen_notifier);
+	clk_notifier_register(clk, &davinci_pllen_notifier);
 
 	return pllout_clk;
-
-err_free_pllen:
-	kfree(pllen);
-err_unregister_postdiv:
-	clk_unregister(postdiv_clk);
-err_unregister_pllout:
-	clk_unregister(pllout_clk);
-err_free_pllout:
-	kfree(pllout);
-err_unregister_prediv:
-	clk_unregister(prediv_clk);
-err_unregister_oscin:
-	clk_unregister(oscin_clk);
-
-	return ERR_PTR(ret);
 }
 
 /**
  * davinci_pll_auxclk_register - Register bypass clock (AUXCLK)
- * @dev: The PLL platform device or NULL
  * @name: The clock name
  * @base: The PLL memory region
  */
@@ -550,7 +521,6 @@ struct clk *davinci_pll_auxclk_register(struct device *dev,
 
 /**
  * davinci_pll_sysclkbp_clk_register - Register bypass divider clock (SYSCLKBP)
- * @dev: The PLL platform device or NULL
  * @name: The clock name
  * @base: The PLL memory region
  */
@@ -565,7 +535,6 @@ struct clk *davinci_pll_sysclkbp_clk_register(struct device *dev,
 
 /**
  * davinci_pll_obsclk_register - Register oscillator divider clock (OBSCLK)
- * @dev: The PLL platform device or NULL
  * @info: The clock info
  * @base: The PLL memory region
  */
@@ -577,11 +546,9 @@ davinci_pll_obsclk_register(struct device *dev,
 	struct clk_mux *mux;
 	struct clk_gate *gate;
 	struct clk_divider *divider;
-	struct clk *clk;
 	u32 oscdiv;
-	int ret;
 
-	mux = kzalloc(sizeof(*mux), GFP_KERNEL);
+	mux = devm_kzalloc(dev, sizeof(*mux), GFP_KERNEL);
 	if (!mux)
 		return ERR_PTR(-ENOMEM);
 
@@ -589,20 +556,16 @@ davinci_pll_obsclk_register(struct device *dev,
 	mux->table = info->table;
 	mux->mask = info->ocsrc_mask;
 
-	gate = kzalloc(sizeof(*gate), GFP_KERNEL);
-	if (!gate) {
-		ret = -ENOMEM;
-		goto err_free_mux;
-	}
+	gate = devm_kzalloc(dev, sizeof(*gate), GFP_KERNEL);
+	if (!gate)
+		return ERR_PTR(-ENOMEM);
 
 	gate->reg = base + CKEN;
 	gate->bit_idx = CKEN_OBSCLK_SHIFT;
 
-	divider = kzalloc(sizeof(*divider), GFP_KERNEL);
-	if (!divider) {
-		ret = -ENOMEM;
-		goto err_free_gate;
-	}
+	divider = devm_kzalloc(dev, sizeof(*divider), GFP_KERNEL);
+	if (!divider)
+		return ERR_PTR(-ENOMEM);
 
 	divider->reg = base + OSCDIV;
 	divider->shift = DIV_RATIO_SHIFT;
@@ -613,27 +576,11 @@ davinci_pll_obsclk_register(struct device *dev,
 	oscdiv |= BIT(DIV_ENABLE_SHIFT);
 	writel(oscdiv, base + OSCDIV);
 
-	clk = clk_register_composite(dev, info->name, info->parent_names,
-				     info->num_parents,
-				     &mux->hw, &clk_mux_ops,
-				     &divider->hw, &clk_divider_ops,
-				     &gate->hw, &clk_gate_ops, 0);
-
-	if (IS_ERR(clk)) {
-		ret = PTR_ERR(clk);
-		goto err_free_divider;
-	}
-
-	return clk;
-
-err_free_divider:
-	kfree(divider);
-err_free_gate:
-	kfree(gate);
-err_free_mux:
-	kfree(mux);
-
-	return ERR_PTR(ret);
+	return clk_register_composite(dev, info->name, info->parent_names,
+				      info->num_parents,
+				      &mux->hw, &clk_mux_ops,
+				      &divider->hw, &clk_divider_ops,
+				      &gate->hw, &clk_gate_ops, 0);
 }
 
 /* The PLL SYSCLKn clocks have a mechanism for synchronizing rate changes. */
@@ -651,7 +598,7 @@ static int davinci_pll_sysclk_rate_change(struct notifier_block *nb,
 		pllcmd = readl(pll->base + PLLCMD);
 		pllcmd |= PLLCMD_GOSET;
 		writel(pllcmd, pll->base + PLLCMD);
-		fallthrough;
+		/* fallthrough */
 	case PRE_RATE_CHANGE:
 		/* Wait until for outstanding changes to take effect */
 		do {
@@ -669,7 +616,6 @@ static struct notifier_block davinci_pll_sysclk_notifier = {
 
 /**
  * davinci_pll_sysclk_register - Register divider clocks (SYSCLKn)
- * @dev: The PLL platform device or NULL
  * @info: The clock info
  * @base: The PLL memory region
  */
@@ -684,7 +630,6 @@ davinci_pll_sysclk_register(struct device *dev,
 	struct clk *clk;
 	u32 reg;
 	u32 flags = 0;
-	int ret;
 
 	/* PLLDIVn registers are not entirely consecutive */
 	if (info->id < 4)
@@ -692,18 +637,16 @@ davinci_pll_sysclk_register(struct device *dev,
 	else
 		reg = PLLDIV4 + 4 * (info->id - 4);
 
-	gate = kzalloc(sizeof(*gate), GFP_KERNEL);
+	gate = devm_kzalloc(dev, sizeof(*gate), GFP_KERNEL);
 	if (!gate)
 		return ERR_PTR(-ENOMEM);
 
 	gate->reg = base + reg;
 	gate->bit_idx = DIV_ENABLE_SHIFT;
 
-	divider = kzalloc(sizeof(*divider), GFP_KERNEL);
-	if (!divider) {
-		ret = -ENOMEM;
-		goto err_free_gate;
-	}
+	divider = devm_kzalloc(dev, sizeof(*divider), GFP_KERNEL);
+	if (!divider)
+		return ERR_PTR(-ENOMEM);
 
 	divider->reg = base + reg;
 	divider->shift = DIV_RATIO_SHIFT;
@@ -725,31 +668,22 @@ davinci_pll_sysclk_register(struct device *dev,
 	clk = clk_register_composite(dev, info->name, &info->parent_name, 1,
 				     NULL, NULL, &divider->hw, divider_ops,
 				     &gate->hw, &clk_gate_ops, flags);
-	if (IS_ERR(clk)) {
-		ret = PTR_ERR(clk);
-		goto err_free_divider;
-	}
+	if (IS_ERR(clk))
+		return clk;
 
 	clk_notifier_register(clk, &davinci_pll_sysclk_notifier);
 
 	return clk;
-
-err_free_divider:
-	kfree(divider);
-err_free_gate:
-	kfree(gate);
-
-	return ERR_PTR(ret);
 }
 
-int of_davinci_pll_init(struct device *dev, struct device_node *node,
+int of_davinci_pll_init(struct device *dev,
 			const struct davinci_pll_clk_info *info,
 			const struct davinci_pll_obsclk_info *obsclk_info,
 			const struct davinci_pll_sysclk_info **div_info,
 			u8 max_sysclk_id,
-			void __iomem *base,
-			struct regmap *cfgchip)
+			void __iomem *base)
 {
+	struct device_node *node = dev->of_node;
 	struct device_node *child;
 	const char *parent_name;
 	struct clk *clk;
@@ -759,7 +693,7 @@ int of_davinci_pll_init(struct device *dev, struct device_node *node,
 	else
 		parent_name = OSCIN_CLK_NAME;
 
-	clk = davinci_pll_clk_register(dev, info, parent_name, base, cfgchip);
+	clk = davinci_pll_clk_register(dev, info, parent_name, base);
 	if (IS_ERR(clk)) {
 		dev_err(dev, "failed to register %s\n", info->name);
 		return PTR_ERR(clk);
@@ -777,18 +711,13 @@ int of_davinci_pll_init(struct device *dev, struct device_node *node,
 		int n_clks =  max_sysclk_id + 1;
 		int i;
 
-		clk_data = kzalloc(sizeof(*clk_data), GFP_KERNEL);
-		if (!clk_data) {
-			of_node_put(child);
+		clk_data = devm_kzalloc(dev, sizeof(*clk_data), GFP_KERNEL);
+		if (!clk_data)
 			return -ENOMEM;
-		}
 
-		clks = kmalloc_array(n_clks, sizeof(*clks), GFP_KERNEL);
-		if (!clks) {
-			kfree(clk_data);
-			of_node_put(child);
+		clks = devm_kmalloc_array(dev, n_clks, sizeof(*clks), GFP_KERNEL);
+		if (!clks)
 			return -ENOMEM;
-		}
 
 		clk_data->clks = clks;
 		clk_data->clk_num = n_clks;
@@ -841,67 +770,35 @@ int of_davinci_pll_init(struct device *dev, struct device_node *node,
 	return 0;
 }
 
-static struct davinci_pll_platform_data *davinci_pll_get_pdata(struct device *dev)
-{
-	struct davinci_pll_platform_data *pdata = dev_get_platdata(dev);
-
-	/*
-	 * Platform data is optional, so allocate a new struct if one was not
-	 * provided. For device tree, this will always be the case.
-	 */
-	if (!pdata)
-		pdata = devm_kzalloc(dev, sizeof(*pdata), GFP_KERNEL);
-	if (!pdata)
-		return NULL;
-
-	/* for device tree, we need to fill in the struct */
-	if (dev->of_node)
-		pdata->cfgchip =
-			syscon_regmap_lookup_by_compatible("ti,da830-cfgchip");
-
-	return pdata;
-}
-
-/* needed in early boot for clocksource/clockevent */
-#ifdef CONFIG_ARCH_DAVINCI_DA850
-CLK_OF_DECLARE(da850_pll0, "ti,da850-pll0", of_da850_pll0_init);
-#endif
-
 static const struct of_device_id davinci_pll_of_match[] = {
-#ifdef CONFIG_ARCH_DAVINCI_DA850
+	{ .compatible = "ti,da850-pll0", .data = of_da850_pll0_init },
 	{ .compatible = "ti,da850-pll1", .data = of_da850_pll1_init },
-#endif
 	{ }
 };
 
 static const struct platform_device_id davinci_pll_id_table[] = {
-#ifdef CONFIG_ARCH_DAVINCI_DA830
 	{ .name = "da830-pll",   .driver_data = (kernel_ulong_t)da830_pll_init   },
-#endif
-#ifdef CONFIG_ARCH_DAVINCI_DA850
 	{ .name = "da850-pll0",  .driver_data = (kernel_ulong_t)da850_pll0_init  },
 	{ .name = "da850-pll1",  .driver_data = (kernel_ulong_t)da850_pll1_init  },
-#endif
-#ifdef CONFIG_ARCH_DAVINCI_DM355
 	{ .name = "dm355-pll1",  .driver_data = (kernel_ulong_t)dm355_pll1_init  },
 	{ .name = "dm355-pll2",  .driver_data = (kernel_ulong_t)dm355_pll2_init  },
-#endif
-#ifdef CONFIG_ARCH_DAVINCI_DM365
 	{ .name = "dm365-pll1",  .driver_data = (kernel_ulong_t)dm365_pll1_init  },
 	{ .name = "dm365-pll2",  .driver_data = (kernel_ulong_t)dm365_pll2_init  },
-#endif
+	{ .name = "dm644x-pll1", .driver_data = (kernel_ulong_t)dm644x_pll1_init },
+	{ .name = "dm644x-pll2", .driver_data = (kernel_ulong_t)dm644x_pll2_init },
+	{ .name = "dm646x-pll1", .driver_data = (kernel_ulong_t)dm646x_pll1_init },
+	{ .name = "dm646x-pll2", .driver_data = (kernel_ulong_t)dm646x_pll2_init },
 	{ }
 };
 
-typedef int (*davinci_pll_init)(struct device *dev, void __iomem *base,
-				struct regmap *cfgchip);
+typedef int (*davinci_pll_init)(struct device *dev, void __iomem *base);
 
 static int davinci_pll_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
-	struct davinci_pll_platform_data *pdata;
 	const struct of_device_id *of_id;
 	davinci_pll_init pll_init = NULL;
+	struct resource *res;
 	void __iomem *base;
 
 	of_id = of_match_device(davinci_pll_of_match, dev);
@@ -915,17 +812,12 @@ static int davinci_pll_probe(struct platform_device *pdev)
 		return -EINVAL;
 	}
 
-	pdata = davinci_pll_get_pdata(dev);
-	if (!pdata) {
-		dev_err(dev, "missing platform data\n");
-		return -EINVAL;
-	}
-
-	base = devm_platform_ioremap_resource(pdev, 0);
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	base = devm_ioremap_resource(dev, res);
 	if (IS_ERR(base))
 		return PTR_ERR(base);
 
-	return pll_init(dev, base, pdata->cfgchip);
+	return pll_init(dev, base);
 }
 
 static struct platform_driver davinci_pll_driver = {
@@ -982,19 +874,26 @@ static const struct debugfs_reg32 davinci_pll_regs[] = {
 	DEBUG_REG(PLLDIV9),
 };
 
-static void davinci_pll_debug_init(struct clk_hw *hw, struct dentry *dentry)
+static int davinci_pll_debug_init(struct clk_hw *hw, struct dentry *dentry)
 {
 	struct davinci_pll_clk *pll = to_davinci_pll_clk(hw);
 	struct debugfs_regset32 *regset;
+	struct dentry *d;
 
 	regset = kzalloc(sizeof(*regset), GFP_KERNEL);
 	if (!regset)
-		return;
+		return -ENOMEM;
 
 	regset->regs = davinci_pll_regs;
 	regset->nregs = ARRAY_SIZE(davinci_pll_regs);
 	regset->base = pll->base;
 
-	debugfs_create_regset32("registers", 0400, dentry, regset);
+	d = debugfs_create_regset32("registers", 0400, dentry, regset);
+	if (IS_ERR(d)) {
+		kfree(regset);
+		return PTR_ERR(d);
+	}
+
+	return 0;
 }
 #endif

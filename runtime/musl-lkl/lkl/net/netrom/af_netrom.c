@@ -1,5 +1,8 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
  *
  * Copyright Jonathan Naylor G4KLX (g4klx@g4klx.demon.co.uk)
  * Copyright Alan Cox GW4PTS (alan@lxorguk.ukuu.org.uk)
@@ -150,7 +153,7 @@ static struct sock *nr_find_listener(ax25_address *addr)
 	sk_for_each(s, &nr_list)
 		if (!ax25cmp(&nr_sk(s)->source_addr, addr) &&
 		    s->sk_state == TCP_LISTEN) {
-			sock_hold(s);
+			bh_lock_sock(s);
 			goto found;
 		}
 	s = NULL;
@@ -171,7 +174,7 @@ static struct sock *nr_find_socket(unsigned char index, unsigned char id)
 		struct nr_sock *nr = nr_sk(s);
 
 		if (nr->my_index == index && nr->my_id == id) {
-			sock_hold(s);
+			bh_lock_sock(s);
 			goto found;
 		}
 	}
@@ -195,7 +198,7 @@ static struct sock *nr_find_peer(unsigned char index, unsigned char id,
 
 		if (nr->your_index == index && nr->your_id == id &&
 		    !ax25cmp(&nr->dest_addr, dest)) {
-			sock_hold(s);
+			bh_lock_sock(s);
 			goto found;
 		}
 	}
@@ -221,7 +224,7 @@ static unsigned short nr_find_next_circuit(void)
 		if (i != 0 && j != 0) {
 			if ((sk=nr_find_socket(i, j)) == NULL)
 				break;
-			sock_put(sk);
+			bh_unlock_sock(sk);
 		}
 
 		id++;
@@ -294,11 +297,11 @@ void nr_destroy_socket(struct sock *sk)
  */
 
 static int nr_setsockopt(struct socket *sock, int level, int optname,
-		sockptr_t optval, unsigned int optlen)
+	char __user *optval, unsigned int optlen)
 {
 	struct sock *sk = sock->sk;
 	struct nr_sock *nr = nr_sk(sk);
-	unsigned int opt;
+	unsigned long opt;
 
 	if (level != SOL_NETROM)
 		return -ENOPROTOOPT;
@@ -306,18 +309,18 @@ static int nr_setsockopt(struct socket *sock, int level, int optname,
 	if (optlen < sizeof(unsigned int))
 		return -EINVAL;
 
-	if (copy_from_sockptr(&opt, optval, sizeof(opt)))
+	if (get_user(opt, (unsigned int __user *)optval))
 		return -EFAULT;
 
 	switch (optname) {
 	case NETROM_T1:
-		if (opt < 1 || opt > UINT_MAX / HZ)
+		if (opt < 1 || opt > ULONG_MAX / HZ)
 			return -EINVAL;
 		nr->t1 = opt * HZ;
 		return 0;
 
 	case NETROM_T2:
-		if (opt < 1 || opt > UINT_MAX / HZ)
+		if (opt < 1 || opt > ULONG_MAX / HZ)
 			return -EINVAL;
 		nr->t2 = opt * HZ;
 		return 0;
@@ -329,13 +332,13 @@ static int nr_setsockopt(struct socket *sock, int level, int optname,
 		return 0;
 
 	case NETROM_T4:
-		if (opt < 1 || opt > UINT_MAX / HZ)
+		if (opt < 1 || opt > ULONG_MAX / HZ)
 			return -EINVAL;
 		nr->t4 = opt * HZ;
 		return 0;
 
 	case NETROM_IDLE:
-		if (opt > UINT_MAX / (60 * HZ))
+		if (opt > ULONG_MAX / (60 * HZ))
 			return -EINVAL;
 		nr->idle = opt * 60 * HZ;
 		return 0;
@@ -633,7 +636,7 @@ static int nr_connect(struct socket *sock, struct sockaddr *uaddr,
 	struct sock *sk = sock->sk;
 	struct nr_sock *nr = nr_sk(sk);
 	struct sockaddr_ax25 *addr = (struct sockaddr_ax25 *)uaddr;
-	const ax25_address *source = NULL;
+	ax25_address *source = NULL;
 	ax25_uid_assoc *user;
 	struct net_device *dev;
 	int err = 0;
@@ -673,7 +676,7 @@ static int nr_connect(struct socket *sock, struct sockaddr *uaddr,
 			err = -ENETUNREACH;
 			goto out_release;
 		}
-		source = (const ax25_address *)dev->dev_addr;
+		source = (ax25_address *)dev->dev_addr;
 
 		user = ax25_findbyuid(current_euid());
 		if (user) {
@@ -869,7 +872,7 @@ int nr_rx_frame(struct sk_buff *skb, struct net_device *dev)
 	unsigned short frametype, flags, window, timeout;
 	int ret;
 
-	skb_orphan(skb);
+	skb->sk = NULL;		/* Initially we don't know who it's for */
 
 	/*
 	 *	skb->data points to the netrom frame start
@@ -917,7 +920,6 @@ int nr_rx_frame(struct sk_buff *skb, struct net_device *dev)
 	}
 
 	if (sk != NULL) {
-		bh_lock_sock(sk);
 		skb_reset_transport_header(skb);
 
 		if (frametype == NR_CONNACK && skb->len == 22)
@@ -927,7 +929,6 @@ int nr_rx_frame(struct sk_buff *skb, struct net_device *dev)
 
 		ret = nr_process_rx_frame(sk, skb);
 		bh_unlock_sock(sk);
-		sock_put(sk);
 		return ret;
 	}
 
@@ -959,17 +960,13 @@ int nr_rx_frame(struct sk_buff *skb, struct net_device *dev)
 	    (make = nr_make_new(sk)) == NULL) {
 		nr_transmit_refusal(skb, 0);
 		if (sk)
-			sock_put(sk);
+			bh_unlock_sock(sk);
 		return 0;
 	}
 
-	bh_lock_sock(sk);
-
 	window = skb->data[20];
 
-	sock_hold(make);
 	skb->sk             = make;
-	skb->destructor     = sock_efree;
 	make->sk_state	    = TCP_ESTABLISHED;
 
 	/* Fill in his circuit details */
@@ -1019,7 +1016,6 @@ int nr_rx_frame(struct sk_buff *skb, struct net_device *dev)
 		sk->sk_data_ready(sk);
 
 	bh_unlock_sock(sk);
-	sock_put(sk);
 
 	nr_insert_socket(make);
 
@@ -1159,8 +1155,7 @@ static int nr_recvmsg(struct socket *sock, struct msghdr *msg, size_t size,
 	}
 
 	/* Now we can treat all alike */
-	skb = skb_recv_datagram(sk, flags, &er);
-	if (!skb) {
+	if ((skb = skb_recv_datagram(sk, flags & ~MSG_DONTWAIT, flags & MSG_DONTWAIT, &er)) == NULL) {
 		release_sock(sk);
 		return er;
 	}
@@ -1199,6 +1194,7 @@ static int nr_ioctl(struct socket *sock, unsigned int cmd, unsigned long arg)
 {
 	struct sock *sk = sock->sk;
 	void __user *argp = (void __user *)arg;
+	int ret;
 
 	switch (cmd) {
 	case TIOCOUTQ: {
@@ -1223,6 +1219,18 @@ static int nr_ioctl(struct socket *sock, unsigned int cmd, unsigned long arg)
 		release_sock(sk);
 		return put_user(amount, (int __user *)argp);
 	}
+
+	case SIOCGSTAMP:
+		lock_sock(sk);
+		ret = sock_get_timestamp(sk, argp);
+		release_sock(sk);
+		return ret;
+
+	case SIOCGSTAMPNS:
+		lock_sock(sk);
+		ret = sock_get_timestampns(sk, argp);
+		release_sock(sk);
+		return ret;
 
 	case SIOCGIFADDR:
 	case SIOCSIFADDR:
@@ -1253,7 +1261,6 @@ static int nr_ioctl(struct socket *sock, unsigned int cmd, unsigned long arg)
 #ifdef CONFIG_PROC_FS
 
 static void *nr_info_start(struct seq_file *seq, loff_t *pos)
-	__acquires(&nr_list_lock)
 {
 	spin_lock_bh(&nr_list_lock);
 	return seq_hlist_start_head(&nr_list, *pos);
@@ -1265,7 +1272,6 @@ static void *nr_info_next(struct seq_file *seq, void *v, loff_t *pos)
 }
 
 static void nr_info_stop(struct seq_file *seq, void *v)
-	__releases(&nr_list_lock)
 {
 	spin_unlock_bh(&nr_list_lock);
 }
@@ -1332,6 +1338,18 @@ static const struct seq_operations nr_info_seqops = {
 	.stop = nr_info_stop,
 	.show = nr_info_show,
 };
+
+static int nr_info_open(struct inode *inode, struct file *file)
+{
+	return seq_open(file, &nr_info_seqops);
+}
+
+static const struct file_operations nr_info_fops = {
+	.open = nr_info_open,
+	.read = seq_read,
+	.llseek = seq_lseek,
+	.release = seq_release,
+};
 #endif	/* CONFIG_PROC_FS */
 
 static const struct net_proto_family nr_family_ops = {
@@ -1351,7 +1369,6 @@ static const struct proto_ops nr_proto_ops = {
 	.getname	=	nr_getname,
 	.poll		=	datagram_poll,
 	.ioctl		=	nr_ioctl,
-	.gettstamp	=	sock_gettstamp,
 	.listen		=	nr_listen,
 	.shutdown	=	sock_no_shutdown,
 	.setsockopt	=	nr_setsockopt,
@@ -1382,22 +1399,18 @@ static int __init nr_proto_init(void)
 	int i;
 	int rc = proto_register(&nr_proto, 0);
 
-	if (rc)
-		return rc;
+	if (rc != 0)
+		goto out;
 
 	if (nr_ndevs > 0x7fffffff/sizeof(struct net_device *)) {
-		pr_err("NET/ROM: %s - nr_ndevs parameter too large\n",
-		       __func__);
-		rc = -EINVAL;
-		goto unregister_proto;
+		printk(KERN_ERR "NET/ROM: nr_proto_init - nr_ndevs parameter to large\n");
+		return -1;
 	}
 
-	dev_nr = kcalloc(nr_ndevs, sizeof(struct net_device *), GFP_KERNEL);
-	if (!dev_nr) {
-		pr_err("NET/ROM: %s - unable to allocate device array\n",
-		       __func__);
-		rc = -ENOMEM;
-		goto unregister_proto;
+	dev_nr = kzalloc(nr_ndevs * sizeof(struct net_device *), GFP_KERNEL);
+	if (dev_nr == NULL) {
+		printk(KERN_ERR "NET/ROM: nr_proto_init - unable to allocate device array\n");
+		return -1;
 	}
 
 	for (i = 0; i < nr_ndevs; i++) {
@@ -1407,13 +1420,13 @@ static int __init nr_proto_init(void)
 		sprintf(name, "nr%d", i);
 		dev = alloc_netdev(0, name, NET_NAME_UNKNOWN, nr_setup);
 		if (!dev) {
-			rc = -ENOMEM;
+			printk(KERN_ERR "NET/ROM: nr_proto_init - unable to allocate device structure\n");
 			goto fail;
 		}
 
 		dev->base_addr = i;
-		rc = register_netdev(dev);
-		if (rc) {
+		if (register_netdev(dev)) {
+			printk(KERN_ERR "NET/ROM: nr_proto_init - unable to register network device\n");
 			free_netdev(dev);
 			goto fail;
 		}
@@ -1421,64 +1434,36 @@ static int __init nr_proto_init(void)
 		dev_nr[i] = dev;
 	}
 
-	rc = sock_register(&nr_family_ops);
-	if (rc)
+	if (sock_register(&nr_family_ops)) {
+		printk(KERN_ERR "NET/ROM: nr_proto_init - unable to register socket family\n");
 		goto fail;
+	}
 
-	rc = register_netdevice_notifier(&nr_dev_notifier);
-	if (rc)
-		goto out_sock;
+	register_netdevice_notifier(&nr_dev_notifier);
 
 	ax25_register_pid(&nr_pid);
 	ax25_linkfail_register(&nr_linkfail_notifier);
 
 #ifdef CONFIG_SYSCTL
-	rc = nr_register_sysctl();
-	if (rc)
-		goto out_sysctl;
+	nr_register_sysctl();
 #endif
 
 	nr_loopback_init();
 
-	rc = -ENOMEM;
-	if (!proc_create_seq("nr", 0444, init_net.proc_net, &nr_info_seqops))
-		goto proc_remove1;
-	if (!proc_create_seq("nr_neigh", 0444, init_net.proc_net,
-			     &nr_neigh_seqops))
-		goto proc_remove2;
-	if (!proc_create_seq("nr_nodes", 0444, init_net.proc_net,
-			     &nr_node_seqops))
-		goto proc_remove3;
-
-	return 0;
-
-proc_remove3:
-	remove_proc_entry("nr_neigh", init_net.proc_net);
-proc_remove2:
-	remove_proc_entry("nr", init_net.proc_net);
-proc_remove1:
-
-	nr_loopback_clear();
-	nr_rt_free();
-
-#ifdef CONFIG_SYSCTL
-	nr_unregister_sysctl();
-out_sysctl:
-#endif
-	ax25_linkfail_release(&nr_linkfail_notifier);
-	ax25_protocol_release(AX25_P_NETROM);
-	unregister_netdevice_notifier(&nr_dev_notifier);
-out_sock:
-	sock_unregister(PF_NETROM);
+	proc_create("nr", 0444, init_net.proc_net, &nr_info_fops);
+	proc_create("nr_neigh", 0444, init_net.proc_net, &nr_neigh_fops);
+	proc_create("nr_nodes", 0444, init_net.proc_net, &nr_nodes_fops);
+out:
+	return rc;
 fail:
 	while (--i >= 0) {
 		unregister_netdev(dev_nr[i]);
 		free_netdev(dev_nr[i]);
 	}
 	kfree(dev_nr);
-unregister_proto:
 	proto_unregister(&nr_proto);
-	return rc;
+	rc = -1;
+	goto out;
 }
 
 module_init(nr_proto_init);

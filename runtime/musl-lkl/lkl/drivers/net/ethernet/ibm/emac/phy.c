@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * drivers/net/ethernet/ibm/emac/phy.c
  *

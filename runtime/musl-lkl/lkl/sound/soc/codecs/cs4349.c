@@ -1,10 +1,13 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * cs4349.c  --  CS4349 ALSA Soc Audio driver
  *
  * Copyright 2015 Cirrus Logic, Inc.
  *
  * Authors: Tim Howe <Tim.Howe@cirrus.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 
 #include <linux/module.h>
@@ -131,7 +134,7 @@ static int cs4349_pcm_hw_params(struct snd_pcm_substream *substream,
 	return 0;
 }
 
-static int cs4349_mute(struct snd_soc_dai *dai, int mute, int direction)
+static int cs4349_digital_mute(struct snd_soc_dai *dai, int mute)
 {
 	struct snd_soc_component *component = dai->component;
 	int reg;
@@ -223,9 +226,12 @@ static const struct snd_soc_dapm_route cs4349_routes[] = {
 	{"OutputB", NULL, "HiFi DAC"},
 };
 
-#define CS4349_PCM_FORMATS (SNDRV_PCM_FMTBIT_S8  | SNDRV_PCM_FMTBIT_S16_LE  | \
-			SNDRV_PCM_FMTBIT_S18_3LE | SNDRV_PCM_FMTBIT_S20_3LE | \
-			SNDRV_PCM_FMTBIT_S24_3LE | SNDRV_PCM_FMTBIT_S24_LE  | \
+#define CS4349_PCM_FORMATS (SNDRV_PCM_FMTBIT_S8  | \
+			SNDRV_PCM_FMTBIT_S16_LE  | SNDRV_PCM_FMTBIT_S16_BE  | \
+			SNDRV_PCM_FMTBIT_S18_3LE | SNDRV_PCM_FMTBIT_S18_3BE | \
+			SNDRV_PCM_FMTBIT_S20_3LE | SNDRV_PCM_FMTBIT_S20_3BE | \
+			SNDRV_PCM_FMTBIT_S24_3LE | SNDRV_PCM_FMTBIT_S24_3BE | \
+			SNDRV_PCM_FMTBIT_S24_LE  | SNDRV_PCM_FMTBIT_S24_BE  | \
 			SNDRV_PCM_FMTBIT_S32_LE)
 
 #define CS4349_PCM_RATES SNDRV_PCM_RATE_8000_192000
@@ -233,8 +239,7 @@ static const struct snd_soc_dapm_route cs4349_routes[] = {
 static const struct snd_soc_dai_ops cs4349_dai_ops = {
 	.hw_params	= cs4349_pcm_hw_params,
 	.set_fmt	= cs4349_set_dai_fmt,
-	.mute_stream	= cs4349_mute,
-	.no_capture_mute = 1,
+	.digital_mute	= cs4349_digital_mute,
 };
 
 static struct snd_soc_dai_driver cs4349_dai = {
@@ -247,7 +252,7 @@ static struct snd_soc_dai_driver cs4349_dai = {
 		.formats	= CS4349_PCM_FORMATS,
 	},
 	.ops = &cs4349_dai_ops,
-	.symmetric_rate = 1,
+	.symmetric_rates = 1,
 };
 
 static const struct snd_soc_component_driver soc_component_dev_cs4349 = {
@@ -260,6 +265,7 @@ static const struct snd_soc_component_driver soc_component_dev_cs4349 = {
 	.idle_bias_on		= 1,
 	.use_pmdown_time	= 1,
 	.endianness		= 1,
+	.non_legacy_dai_naming	= 1,
 };
 
 static const struct regmap_config cs4349_regmap = {
@@ -274,7 +280,8 @@ static const struct regmap_config cs4349_regmap = {
 	.cache_type		= REGCACHE_RBTREE,
 };
 
-static int cs4349_i2c_probe(struct i2c_client *client)
+static int cs4349_i2c_probe(struct i2c_client *client,
+				      const struct i2c_device_id *id)
 {
 	struct cs4349_private *cs4349;
 	int ret;
@@ -305,12 +312,14 @@ static int cs4349_i2c_probe(struct i2c_client *client)
 		&cs4349_dai, 1);
 }
 
-static void cs4349_i2c_remove(struct i2c_client *client)
+static int cs4349_i2c_remove(struct i2c_client *client)
 {
 	struct cs4349_private *cs4349 = i2c_get_clientdata(client);
 
 	/* Hold down reset */
 	gpiod_set_value_cansleep(cs4349->reset_gpio, 0);
+
+	return 0;
 }
 
 #ifdef CONFIG_PM
@@ -372,10 +381,9 @@ static struct i2c_driver cs4349_i2c_driver = {
 	.driver = {
 		.name		= "cs4349",
 		.of_match_table	= cs4349_of_match,
-		.pm = &cs4349_runtime_pm,
 	},
 	.id_table	= cs4349_i2c_id,
-	.probe_new	= cs4349_i2c_probe,
+	.probe		= cs4349_i2c_probe,
 	.remove		= cs4349_i2c_remove,
 };
 

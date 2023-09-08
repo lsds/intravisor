@@ -1,45 +1,47 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*******************************************************************************
   Copyright (C) 2013  Vayavya Labs Pvt Ltd
 
   This implements all the API for managing HW timestamp & PTP.
 
+  This program is free software; you can redistribute it and/or modify it
+  under the terms and conditions of the GNU General Public License,
+  version 2, as published by the Free Software Foundation.
+
+  This program is distributed in the hope it will be useful, but WITHOUT
+  ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+  FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+  more details.
+
+  The full GNU General Public License is included in this distribution in
+  the file called "COPYING".
 
   Author: Rayagond Kokatanur <rayagond@vayavyalabs.com>
   Author: Giuseppe Cavallaro <peppe.cavallaro@st.com>
 *******************************************************************************/
 
 #include <linux/io.h>
-#include <linux/iopoll.h>
 #include <linux/delay.h>
-#include <linux/ptp_clock_kernel.h>
 #include "common.h"
 #include "stmmac_ptp.h"
-#include "dwmac4.h"
-#include "stmmac.h"
 
-static void config_hw_tstamping(void __iomem *ioaddr, u32 data)
+static void stmmac_config_hw_tstamping(void __iomem *ioaddr, u32 data)
 {
 	writel(data, ioaddr + PTP_TCR);
 }
 
-static void config_sub_second_increment(void __iomem *ioaddr,
-		u32 ptp_clock, int gmac4, u32 *ssinc)
+static u32 stmmac_config_sub_second_increment(void __iomem *ioaddr,
+					      u32 ptp_clock, int gmac4)
 {
 	u32 value = readl(ioaddr + PTP_TCR);
 	unsigned long data;
 	u32 reg_value;
 
-	/* For GMAC3.x, 4.x versions, in "fine adjustement mode" set sub-second
-	 * increment to twice the number of nanoseconds of a clock cycle.
-	 * The calculation of the default_addend value by the caller will set it
-	 * to mid-range = 2^31 when the remainder of this division is zero,
-	 * which will make the accumulator overflow once every 2 ptp_clock
-	 * cycles, adding twice the number of nanoseconds of a clock cycle :
-	 * 2000000000ULL / ptp_clock.
+	/* For GMAC3.x, 4.x versions, convert the ptp_clock to nano second
+	 *	formula = (1/ptp_clock) * 1000000000
+	 * where ptp_clock is 50MHz if fine method is used to update system
 	 */
 	if (value & PTP_TCR_TSCFUPDT)
-		data = (2000000000ULL / ptp_clock);
+		data = (1000000000ULL / 50000000);
 	else
 		data = (1000000000ULL / ptp_clock);
 
@@ -55,12 +57,12 @@ static void config_sub_second_increment(void __iomem *ioaddr,
 
 	writel(reg_value, ioaddr + PTP_SSIR);
 
-	if (ssinc)
-		*ssinc = data;
+	return data;
 }
 
-static int init_systime(void __iomem *ioaddr, u32 sec, u32 nsec)
+static int stmmac_init_systime(void __iomem *ioaddr, u32 sec, u32 nsec)
 {
+	int limit;
 	u32 value;
 
 	writel(sec, ioaddr + PTP_STSUR);
@@ -71,12 +73,19 @@ static int init_systime(void __iomem *ioaddr, u32 sec, u32 nsec)
 	writel(value, ioaddr + PTP_TCR);
 
 	/* wait for present system time initialize to complete */
-	return readl_poll_timeout_atomic(ioaddr + PTP_TCR, value,
-				 !(value & PTP_TCR_TSINIT),
-				 10, 100000);
+	limit = 10;
+	while (limit--) {
+		if (!(readl(ioaddr + PTP_TCR) & PTP_TCR_TSINIT))
+			break;
+		mdelay(10);
+	}
+	if (limit < 0)
+		return -EBUSY;
+
+	return 0;
 }
 
-static int config_addend(void __iomem *ioaddr, u32 addend)
+static int stmmac_config_addend(void __iomem *ioaddr, u32 addend)
 {
 	u32 value;
 	int limit;
@@ -100,8 +109,8 @@ static int config_addend(void __iomem *ioaddr, u32 addend)
 	return 0;
 }
 
-static int adjust_systime(void __iomem *ioaddr, u32 sec, u32 nsec,
-		int add_sub, int gmac4)
+static int stmmac_adjust_systime(void __iomem *ioaddr, u32 sec, u32 nsec,
+				 int add_sub, int gmac4)
 {
 	u32 value;
 	int limit;
@@ -112,7 +121,7 @@ static int adjust_systime(void __iomem *ioaddr, u32 sec, u32 nsec,
 		 * programmed with (2^32 – <new_sec_value>)
 		 */
 		if (gmac4)
-			sec = -sec;
+			sec = (100000000ULL - sec);
 
 		value = readl(ioaddr + PTP_TCR);
 		if (value & PTP_TCR_TSCTRLSSR)
@@ -143,81 +152,23 @@ static int adjust_systime(void __iomem *ioaddr, u32 sec, u32 nsec,
 	return 0;
 }
 
-static void get_systime(void __iomem *ioaddr, u64 *systime)
-{
-	u64 ns, sec0, sec1;
-
-	/* Get the TSS value */
-	sec1 = readl_relaxed(ioaddr + PTP_STSR);
-	do {
-		sec0 = sec1;
-		/* Get the TSSS value */
-		ns = readl_relaxed(ioaddr + PTP_STNSR);
-		/* Get the TSS value */
-		sec1 = readl_relaxed(ioaddr + PTP_STSR);
-	} while (sec0 != sec1);
-
-	if (systime)
-		*systime = ns + (sec1 * 1000000000ULL);
-}
-
-static void get_ptptime(void __iomem *ptpaddr, u64 *ptp_time)
+static u64 stmmac_get_systime(void __iomem *ioaddr)
 {
 	u64 ns;
 
-	ns = readl(ptpaddr + PTP_ATNR);
-	ns += readl(ptpaddr + PTP_ATSR) * NSEC_PER_SEC;
+	/* Get the TSSS value */
+	ns = readl(ioaddr + PTP_STNSR);
+	/* Get the TSS and convert sec time value to nanosecond */
+	ns += readl(ioaddr + PTP_STSR) * 1000000000ULL;
 
-	*ptp_time = ns;
-}
-
-static void timestamp_interrupt(struct stmmac_priv *priv)
-{
-	u32 num_snapshot, ts_status, tsync_int;
-	struct ptp_clock_event event;
-	unsigned long flags;
-	u64 ptp_time;
-	int i;
-
-	if (priv->plat->int_snapshot_en) {
-		wake_up(&priv->tstamp_busy_wait);
-		return;
-	}
-
-	tsync_int = readl(priv->ioaddr + GMAC_INT_STATUS) & GMAC_INT_TSIE;
-
-	if (!tsync_int)
-		return;
-
-	/* Read timestamp status to clear interrupt from either external
-	 * timestamp or start/end of PPS.
-	 */
-	ts_status = readl(priv->ioaddr + GMAC_TIMESTAMP_STATUS);
-
-	if (!priv->plat->ext_snapshot_en)
-		return;
-
-	num_snapshot = (ts_status & GMAC_TIMESTAMP_ATSNS_MASK) >>
-		       GMAC_TIMESTAMP_ATSNS_SHIFT;
-
-	for (i = 0; i < num_snapshot; i++) {
-		read_lock_irqsave(&priv->ptp_lock, flags);
-		get_ptptime(priv->ptpaddr, &ptp_time);
-		read_unlock_irqrestore(&priv->ptp_lock, flags);
-		event.type = PTP_CLOCK_EXTTS;
-		event.index = 0;
-		event.timestamp = ptp_time;
-		ptp_clock_event(priv->ptp_clock, &event);
-	}
+	return ns;
 }
 
 const struct stmmac_hwtimestamp stmmac_ptp = {
-	.config_hw_tstamping = config_hw_tstamping,
-	.init_systime = init_systime,
-	.config_sub_second_increment = config_sub_second_increment,
-	.config_addend = config_addend,
-	.adjust_systime = adjust_systime,
-	.get_systime = get_systime,
-	.get_ptptime = get_ptptime,
-	.timestamp_interrupt = timestamp_interrupt,
+	.config_hw_tstamping = stmmac_config_hw_tstamping,
+	.init_systime = stmmac_init_systime,
+	.config_sub_second_increment = stmmac_config_sub_second_increment,
+	.config_addend = stmmac_config_addend,
+	.adjust_systime = stmmac_adjust_systime,
+	.get_systime = stmmac_get_systime,
 };

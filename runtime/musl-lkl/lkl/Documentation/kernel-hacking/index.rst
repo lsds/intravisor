@@ -1,5 +1,3 @@
-.. _kernel_hacking:
-
 =====================
 Kernel Hacking Guides
 =====================

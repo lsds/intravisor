@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 #include "edac_module.h"
 
 static struct workqueue_struct *wq;
@@ -37,6 +36,7 @@ int edac_workqueue_setup(void)
 
 void edac_workqueue_teardown(void)
 {
+	flush_workqueue(wq);
 	destroy_workqueue(wq);
 	wq = NULL;
 }

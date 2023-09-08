@@ -40,16 +40,13 @@
 #include <linux/slab.h>
 #include <linux/string.h>
 #include <linux/ioport.h>
+#include <scsi/scsi.h>
 #include <linux/major.h>
 #include <linux/blkdev.h>
-
-#include <scsi/scsi.h>
-#include <scsi/scsi_cmnd.h>
-#include <scsi/scsi_device.h>
-#include <scsi/scsi_eh.h>
-#include <scsi/scsi_host.h>
 #include <scsi/scsi_ioctl.h>
-#include <scsi/scsi_tcq.h>
+
+#include "scsi.h"
+#include <scsi/scsi_host.h>
 #include "aha152x.h"
 
 #include <pcmcia/cistpl.h>
@@ -223,4 +220,16 @@ static struct pcmcia_driver aha152x_cs_driver = {
 	.id_table       = aha152x_ids,
 	.resume		= aha152x_resume,
 };
-module_pcmcia_driver(aha152x_cs_driver);
+
+static int __init init_aha152x_cs(void)
+{
+	return pcmcia_register_driver(&aha152x_cs_driver);
+}
+
+static void __exit exit_aha152x_cs(void)
+{
+	pcmcia_unregister_driver(&aha152x_cs_driver);
+}
+
+module_init(init_aha152x_cs);
+module_exit(exit_aha152x_cs);

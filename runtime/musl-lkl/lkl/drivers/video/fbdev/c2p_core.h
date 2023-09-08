@@ -12,8 +12,6 @@
  *  for more details.
  */
 
-#include <linux/build_bug.h>
-
 
     /*
      *  Basic transpose step
@@ -29,7 +27,9 @@ static inline void _transp(u32 d[], unsigned int i1, unsigned int i2,
 }
 
 
-static __always_inline u32 get_mask(unsigned int n)
+extern void c2p_unsupported(void);
+
+static inline u32 get_mask(unsigned int n)
 {
 	switch (n) {
 	case 1:
@@ -48,7 +48,7 @@ static __always_inline u32 get_mask(unsigned int n)
 		return 0x0000ffff;
 	}
 
-	BUILD_BUG();
+	c2p_unsupported();
 	return 0;
 }
 
@@ -57,7 +57,7 @@ static __always_inline u32 get_mask(unsigned int n)
      *  Transpose operations on 8 32-bit words
      */
 
-static __always_inline void transp8(u32 d[], unsigned int n, unsigned int m)
+static inline void transp8(u32 d[], unsigned int n, unsigned int m)
 {
 	u32 mask = get_mask(n);
 
@@ -91,7 +91,7 @@ static __always_inline void transp8(u32 d[], unsigned int n, unsigned int m)
 		return;
 	}
 
-	BUILD_BUG();
+	c2p_unsupported();
 }
 
 
@@ -99,7 +99,7 @@ static __always_inline void transp8(u32 d[], unsigned int n, unsigned int m)
      *  Transpose operations on 4 32-bit words
      */
 
-static __always_inline void transp4(u32 d[], unsigned int n, unsigned int m)
+static inline void transp4(u32 d[], unsigned int n, unsigned int m)
 {
 	u32 mask = get_mask(n);
 
@@ -118,7 +118,7 @@ static __always_inline void transp4(u32 d[], unsigned int n, unsigned int m)
 		return;
 	}
 
-	BUILD_BUG();
+	c2p_unsupported();
 }
 
 
@@ -126,7 +126,7 @@ static __always_inline void transp4(u32 d[], unsigned int n, unsigned int m)
      *  Transpose operations on 4 32-bit words (reverse order)
      */
 
-static __always_inline void transp4x(u32 d[], unsigned int n, unsigned int m)
+static inline void transp4x(u32 d[], unsigned int n, unsigned int m)
 {
 	u32 mask = get_mask(n);
 
@@ -138,7 +138,7 @@ static __always_inline void transp4x(u32 d[], unsigned int n, unsigned int m)
 		return;
 	}
 
-	BUILD_BUG();
+	c2p_unsupported();
 }
 
 

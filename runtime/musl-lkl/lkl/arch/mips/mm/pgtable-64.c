@@ -10,6 +10,7 @@
 #include <linux/init.h>
 #include <linux/mm.h>
 #include <asm/fixmap.h>
+#include <asm/pgtable.h>
 #include <asm/pgalloc.h>
 #include <asm/tlbflush.h>
 
@@ -100,6 +101,7 @@ void set_pmd_at(struct mm_struct *mm, unsigned long addr,
 		pmd_t *pmdp, pmd_t pmd)
 {
 	*pmdp = pmd;
+	flush_tlb_all();
 }
 
 void __init pagetable_init(void)

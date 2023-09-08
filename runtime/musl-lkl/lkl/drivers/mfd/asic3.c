@@ -1,8 +1,11 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * driver/mfd/asic3.c
  *
  * Compaq ASIC3 support.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  *
  * Copyright 2001 Compaq Computer Corporation.
  * Copyright 2004-2005 Phil Blundell
@@ -10,12 +13,13 @@
  *
  * Authors: Phil Blundell <pb@handhelds.org>,
  *	    Samuel Ortiz <sameo@openedhand.com>
+ *
  */
 
 #include <linux/kernel.h>
 #include <linux/delay.h>
 #include <linux/irq.h>
-#include <linux/gpio/driver.h>
+#include <linux/gpio.h>
 #include <linux/export.h>
 #include <linux/io.h>
 #include <linux/slab.h>
@@ -26,8 +30,6 @@
 #include <linux/mfd/core.h>
 #include <linux/mfd/ds1wm.h>
 #include <linux/mfd/tmio.h>
-
-#include <linux/mmc/host.h>
 
 enum {
 	ASIC3_CLOCK_SPI,
@@ -596,11 +598,12 @@ static __init int asic3_gpio_probe(struct platform_device *pdev,
 	return gpiochip_add_data(&asic->gpio, asic);
 }
 
-static void asic3_gpio_remove(struct platform_device *pdev)
+static int asic3_gpio_remove(struct platform_device *pdev)
 {
 	struct asic3 *asic = platform_get_drvdata(pdev);
 
 	gpiochip_remove(&asic->gpio);
+	return 0;
 }
 
 static void asic3_clk_enable(struct asic3 *asic, struct asic3_clk *clk)
@@ -716,14 +719,21 @@ static void asic3_mmc_clk_div(struct platform_device *pdev, int state)
 
 static struct tmio_mmc_data asic3_mmc_data = {
 	.hclk           = 24576000,
-	.ocr_mask	= MMC_VDD_32_33 | MMC_VDD_33_34,
 	.set_pwr        = asic3_mmc_pwr,
 	.set_clk_div    = asic3_mmc_clk_div,
 };
 
 static struct resource asic3_mmc_resources[] = {
-	DEFINE_RES_MEM(ASIC3_SD_CTRL_BASE, 0x400),
-	DEFINE_RES_IRQ(0)
+	{
+		.start = ASIC3_SD_CTRL_BASE,
+		.end   = ASIC3_SD_CTRL_BASE + 0x3ff,
+		.flags = IORESOURCE_MEM,
+	},
+	{
+		.start = 0,
+		.end   = 0,
+		.flags = IORESOURCE_IRQ,
+	},
 };
 
 static int asic3_mmc_enable(struct platform_device *pdev)
@@ -905,14 +915,14 @@ static int __init asic3_mfd_probe(struct platform_device *pdev,
 		ret = mfd_add_devices(&pdev->dev, pdev->id,
 			&asic3_cell_ds1wm, 1, mem, asic->irq_base, NULL);
 		if (ret < 0)
-			goto out_unmap;
+			goto out;
 	}
 
 	if (mem_sdio && (irq >= 0)) {
 		ret = mfd_add_devices(&pdev->dev, pdev->id,
 			&asic3_cell_mmc, 1, mem_sdio, irq, NULL);
 		if (ret < 0)
-			goto out_unmap;
+			goto out;
 	}
 
 	ret = 0;
@@ -926,12 +936,8 @@ static int __init asic3_mfd_probe(struct platform_device *pdev,
 		ret = mfd_add_devices(&pdev->dev, 0,
 			asic3_cell_leds, ASIC3_NUM_LEDS, NULL, 0, NULL);
 	}
-	return ret;
 
-out_unmap:
-	if (asic->tmio_cnf)
-		iounmap(asic->tmio_cnf);
-out:
+ out:
 	return ret;
 }
 
@@ -1029,6 +1035,7 @@ static int __init asic3_probe(struct platform_device *pdev)
 
 static int asic3_remove(struct platform_device *pdev)
 {
+	int ret;
 	struct asic3 *asic = platform_get_drvdata(pdev);
 
 	asic3_set_register(asic, ASIC3_OFFSET(EXTCF, SELECT),
@@ -1036,8 +1043,9 @@ static int asic3_remove(struct platform_device *pdev)
 
 	asic3_mfd_remove(pdev);
 
-	asic3_gpio_remove(pdev);
-
+	ret = asic3_gpio_remove(pdev);
+	if (ret < 0)
+		return ret;
 	asic3_irq_remove(pdev);
 
 	asic3_write_register(asic, ASIC3_OFFSET(CLOCK, SEL), 0);

@@ -1,10 +1,23 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * OSS compatible sequencer driver
  *
  * synth device handlers
  *
  * Copyright (C) 1998,99 Takashi Iwai <tiwai@suse.de>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307 USA
  */
 
 #include "seq_oss_synth.h"
@@ -107,7 +120,7 @@ snd_seq_oss_synth_probe(struct device *_dev)
 	snd_use_lock_init(&rec->use_lock);
 
 	/* copy and truncate the name of synth device */
-	strscpy(rec->name, dev->name, sizeof(rec->name));
+	strlcpy(rec->name, dev->name, sizeof(rec->name));
 
 	/* registration */
 	spin_lock_irqsave(&register_lock, flags);
@@ -451,8 +464,7 @@ snd_seq_oss_synth_load_patch(struct seq_oss_devinfo *dp, int dev, int fmt,
 
 	if (info->is_midi)
 		return 0;
-	rec = get_synthdev(dp, dev);
-	if (!rec)
+	if ((rec = get_synthdev(dp, dev)) == NULL)
 		return -ENXIO;
 
 	if (rec->oper.load_patch == NULL)
@@ -570,8 +582,7 @@ snd_seq_oss_synth_ioctl(struct seq_oss_devinfo *dp, int dev, unsigned int cmd, u
 	info = get_synthinfo_nospec(dp, dev);
 	if (!info || info->is_midi)
 		return -ENXIO;
-	rec = get_synthdev(dp, dev);
-	if (!rec)
+	if ((rec = get_synthdev(dp, dev)) == NULL)
 		return -ENXIO;
 	if (rec->oper.ioctl == NULL)
 		rc = -ENXIO;
@@ -606,29 +617,26 @@ int
 snd_seq_oss_synth_make_info(struct seq_oss_devinfo *dp, int dev, struct synth_info *inf)
 {
 	struct seq_oss_synth *rec;
-	struct seq_oss_synthinfo *info = get_synthinfo_nospec(dp, dev);
 
-	if (!info)
+	if (dev < 0 || dev >= dp->max_synthdev)
 		return -ENXIO;
 
-	if (info->is_midi) {
+	if (dp->synths[dev].is_midi) {
 		struct midi_info minf;
-		if (snd_seq_oss_midi_make_info(dp, info->midi_mapped, &minf))
-			return -ENXIO;
+		snd_seq_oss_midi_make_info(dp, dp->synths[dev].midi_mapped, &minf);
 		inf->synth_type = SYNTH_TYPE_MIDI;
 		inf->synth_subtype = 0;
 		inf->nr_voices = 16;
 		inf->device = dev;
-		strscpy(inf->name, minf.name, sizeof(inf->name));
+		strlcpy(inf->name, minf.name, sizeof(inf->name));
 	} else {
-		rec = get_synthdev(dp, dev);
-		if (!rec)
+		if ((rec = get_synthdev(dp, dev)) == NULL)
 			return -ENXIO;
 		inf->synth_type = rec->synth_type;
 		inf->synth_subtype = rec->synth_subtype;
 		inf->nr_voices = rec->nr_voices;
 		inf->device = dev;
-		strscpy(inf->name, rec->name, sizeof(inf->name));
+		strlcpy(inf->name, rec->name, sizeof(inf->name));
 		snd_use_lock_free(&rec->use_lock);
 	}
 	return 0;

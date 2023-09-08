@@ -1,8 +1,11 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * max98095.c -- MAX98095 ALSA SoC Audio driver
  *
  * Copyright 2011 Maxim Integrated Products
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 
 #include <linux/module.h>
@@ -971,7 +974,7 @@ static int max98095_dai1_hw_params(struct snd_pcm_substream *substream,
 	cdata->rate = rate;
 
 	/* Configure NI when operating as master */
-	if (snd_soc_component_read(component, M98095_02A_DAI1_FORMAT) & M98095_DAI_MAS) {
+	if (snd_soc_component_read32(component, M98095_02A_DAI1_FORMAT) & M98095_DAI_MAS) {
 		if (max98095->sysclk == 0) {
 			dev_err(component->dev, "Invalid system clock frequency\n");
 			return -EINVAL;
@@ -1032,7 +1035,7 @@ static int max98095_dai2_hw_params(struct snd_pcm_substream *substream,
 	cdata->rate = rate;
 
 	/* Configure NI when operating as master */
-	if (snd_soc_component_read(component, M98095_034_DAI2_FORMAT) & M98095_DAI_MAS) {
+	if (snd_soc_component_read32(component, M98095_034_DAI2_FORMAT) & M98095_DAI_MAS) {
 		if (max98095->sysclk == 0) {
 			dev_err(component->dev, "Invalid system clock frequency\n");
 			return -EINVAL;
@@ -1093,7 +1096,7 @@ static int max98095_dai3_hw_params(struct snd_pcm_substream *substream,
 	cdata->rate = rate;
 
 	/* Configure NI when operating as master */
-	if (snd_soc_component_read(component, M98095_03E_DAI3_FORMAT) & M98095_DAI_MAS) {
+	if (snd_soc_component_read32(component, M98095_03E_DAI3_FORMAT) & M98095_DAI_MAS) {
 		if (max98095->sysclk == 0) {
 			dev_err(component->dev, "Invalid system clock frequency\n");
 			return -EINVAL;
@@ -1168,18 +1171,20 @@ static int max98095_dai1_set_fmt(struct snd_soc_dai *codec_dai,
 	if (fmt != cdata->fmt) {
 		cdata->fmt = fmt;
 
-		switch (fmt & SND_SOC_DAIFMT_CLOCK_PROVIDER_MASK) {
-		case SND_SOC_DAIFMT_CBC_CFC:
-			/* Consumer mode PLL */
+		switch (fmt & SND_SOC_DAIFMT_MASTER_MASK) {
+		case SND_SOC_DAIFMT_CBS_CFS:
+			/* Slave mode PLL */
 			snd_soc_component_write(component, M98095_028_DAI1_CLKCFG_HI,
 				0x80);
 			snd_soc_component_write(component, M98095_029_DAI1_CLKCFG_LO,
 				0x00);
 			break;
-		case SND_SOC_DAIFMT_CBP_CFP:
-			/* Set to provider mode */
+		case SND_SOC_DAIFMT_CBM_CFM:
+			/* Set to master mode */
 			regval |= M98095_DAI_MAS;
 			break;
+		case SND_SOC_DAIFMT_CBS_CFM:
+		case SND_SOC_DAIFMT_CBM_CFS:
 		default:
 			dev_err(component->dev, "Clock mode unsupported");
 			return -EINVAL;
@@ -1234,18 +1239,20 @@ static int max98095_dai2_set_fmt(struct snd_soc_dai *codec_dai,
 	if (fmt != cdata->fmt) {
 		cdata->fmt = fmt;
 
-		switch (fmt & SND_SOC_DAIFMT_CLOCK_PROVIDER_MASK) {
-		case SND_SOC_DAIFMT_CBC_CFC:
-			/* Consumer mode PLL */
+		switch (fmt & SND_SOC_DAIFMT_MASTER_MASK) {
+		case SND_SOC_DAIFMT_CBS_CFS:
+			/* Slave mode PLL */
 			snd_soc_component_write(component, M98095_032_DAI2_CLKCFG_HI,
 				0x80);
 			snd_soc_component_write(component, M98095_033_DAI2_CLKCFG_LO,
 				0x00);
 			break;
-		case SND_SOC_DAIFMT_CBP_CFP:
-			/* Set to provider mode */
+		case SND_SOC_DAIFMT_CBM_CFM:
+			/* Set to master mode */
 			regval |= M98095_DAI_MAS;
 			break;
+		case SND_SOC_DAIFMT_CBS_CFM:
+		case SND_SOC_DAIFMT_CBM_CFS:
 		default:
 			dev_err(component->dev, "Clock mode unsupported");
 			return -EINVAL;
@@ -1301,18 +1308,20 @@ static int max98095_dai3_set_fmt(struct snd_soc_dai *codec_dai,
 	if (fmt != cdata->fmt) {
 		cdata->fmt = fmt;
 
-		switch (fmt & SND_SOC_DAIFMT_CLOCK_PROVIDER_MASK) {
-		case SND_SOC_DAIFMT_CBC_CFC:
-			/* Consumer mode PLL */
+		switch (fmt & SND_SOC_DAIFMT_MASTER_MASK) {
+		case SND_SOC_DAIFMT_CBS_CFS:
+			/* Slave mode PLL */
 			snd_soc_component_write(component, M98095_03C_DAI3_CLKCFG_HI,
 				0x80);
 			snd_soc_component_write(component, M98095_03D_DAI3_CLKCFG_LO,
 				0x00);
 			break;
-		case SND_SOC_DAIFMT_CBP_CFP:
-			/* Set to provider mode */
+		case SND_SOC_DAIFMT_CBM_CFM:
+			/* Set to master mode */
 			regval |= M98095_DAI_MAS;
 			break;
+		case SND_SOC_DAIFMT_CBS_CFM:
+		case SND_SOC_DAIFMT_CBM_CFS:
 		default:
 			dev_err(component->dev, "Clock mode unsupported");
 			return -EINVAL;
@@ -1528,7 +1537,7 @@ static int max98095_put_eq_enum(struct snd_kcontrol *kcontrol,
 	regmask = (channel == 0) ? M98095_EQ1EN : M98095_EQ2EN;
 
 	/* Disable filter while configuring, and save current on/off state */
-	regsave = snd_soc_component_read(component, M98095_088_CFG_LEVEL);
+	regsave = snd_soc_component_read32(component, M98095_088_CFG_LEVEL);
 	snd_soc_component_update_bits(component, M98095_088_CFG_LEVEL, regmask, 0);
 
 	mutex_lock(&max98095->lock);
@@ -1625,12 +1634,15 @@ static const char *bq_mode_name[] = {"Biquad1 Mode", "Biquad2 Mode"};
 static int max98095_get_bq_channel(struct snd_soc_component *component,
 				   const char *name)
 {
-	int ret;
+	int i;
 
-	ret = match_string(bq_mode_name, ARRAY_SIZE(bq_mode_name), name);
-	if (ret < 0)
-		dev_err(component->dev, "Bad biquad channel name '%s'\n", name);
-	return ret;
+	for (i = 0; i < ARRAY_SIZE(bq_mode_name); i++)
+		if (strcmp(name, bq_mode_name[i]) == 0)
+			return i;
+
+	/* Shouldn't happen */
+	dev_err(component->dev, "Bad biquad channel name '%s'\n", name);
+	return -EINVAL;
 }
 
 static int max98095_put_bq_enum(struct snd_kcontrol *kcontrol,
@@ -1679,7 +1691,7 @@ static int max98095_put_bq_enum(struct snd_kcontrol *kcontrol,
 	regmask = (channel == 0) ? M98095_BQ1EN : M98095_BQ2EN;
 
 	/* Disable filter while configuring, and save current on/off state */
-	regsave = snd_soc_component_read(component, M98095_088_CFG_LEVEL);
+	regsave = snd_soc_component_read32(component, M98095_088_CFG_LEVEL);
 	snd_soc_component_update_bits(component, M98095_088_CFG_LEVEL, regmask, 0);
 
 	mutex_lock(&max98095->lock);
@@ -1810,7 +1822,7 @@ static irqreturn_t max98095_report_jack(int irq, void *data)
 	int mic_report = 0;
 
 	/* Read the Jack Status Register */
-	value = snd_soc_component_read(component, M98095_007_JACK_AUTO_STS);
+	value = snd_soc_component_read32(component, M98095_007_JACK_AUTO_STS);
 
 	/* If ddone is not set, then detection isn't finished yet */
 	if ((value & M98095_DDONE) == 0)
@@ -1966,7 +1978,7 @@ static int max98095_reset(struct snd_soc_component *component)
 	/* Reset to hardware default for registers, as there is not
 	 * a soft reset hardware control register */
 	for (i = M98095_010_HOST_INT_CFG; i < M98095_REG_MAX_CACHED; i++) {
-		ret = snd_soc_component_write(component, i, snd_soc_component_read(component, i));
+		ret = snd_soc_component_write(component, i, snd_soc_component_read32(component, i));
 		if (ret < 0) {
 			dev_err(component->dev, "Failed to reset: %d\n", ret);
 			return ret;
@@ -2032,7 +2044,7 @@ static int max98095_probe(struct snd_soc_component *component)
 		}
 	}
 
-	ret = snd_soc_component_read(component, M98095_0FF_REV_ID);
+	ret = snd_soc_component_read32(component, M98095_0FF_REV_ID);
 	if (ret < 0) {
 		dev_err(component->dev, "Failure reading hardware revision: %d\n",
 			ret);
@@ -2103,19 +2115,14 @@ static const struct snd_soc_component_driver soc_component_dev_max98095 = {
 	.idle_bias_on		= 1,
 	.use_pmdown_time	= 1,
 	.endianness		= 1,
+	.non_legacy_dai_naming	= 1,
 };
 
-static const struct i2c_device_id max98095_i2c_id[] = {
-	{ "max98095", MAX98095 },
-	{ }
-};
-MODULE_DEVICE_TABLE(i2c, max98095_i2c_id);
-
-static int max98095_i2c_probe(struct i2c_client *i2c)
+static int max98095_i2c_probe(struct i2c_client *i2c,
+			     const struct i2c_device_id *id)
 {
 	struct max98095_priv *max98095;
 	int ret;
-	const struct i2c_device_id *id;
 
 	max98095 = devm_kzalloc(&i2c->dev, sizeof(struct max98095_priv),
 				GFP_KERNEL);
@@ -2131,7 +2138,6 @@ static int max98095_i2c_probe(struct i2c_client *i2c)
 		return ret;
 	}
 
-	id = i2c_match_id(max98095_i2c_id, i2c);
 	max98095->devtype = id->driver_data;
 	i2c_set_clientdata(i2c, max98095);
 	max98095->pdata = i2c->dev.platform_data;
@@ -2142,20 +2148,24 @@ static int max98095_i2c_probe(struct i2c_client *i2c)
 	return ret;
 }
 
-#ifdef CONFIG_OF
+static const struct i2c_device_id max98095_i2c_id[] = {
+	{ "max98095", MAX98095 },
+	{ }
+};
+MODULE_DEVICE_TABLE(i2c, max98095_i2c_id);
+
 static const struct of_device_id max98095_of_match[] = {
 	{ .compatible = "maxim,max98095", },
 	{ }
 };
 MODULE_DEVICE_TABLE(of, max98095_of_match);
-#endif
 
 static struct i2c_driver max98095_i2c_driver = {
 	.driver = {
 		.name = "max98095",
 		.of_match_table = of_match_ptr(max98095_of_match),
 	},
-	.probe_new = max98095_i2c_probe,
+	.probe  = max98095_i2c_probe,
 	.id_table = max98095_i2c_id,
 };
 

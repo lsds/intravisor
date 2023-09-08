@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * This file contains Xilinx specific SMP code, used to start up
  * the second processor.
@@ -8,6 +7,15 @@
  * based on linux/arch/arm/mach-realview/platsmp.c
  *
  * Copyright (C) 2002 ARM Ltd.
+ *
+ * This software is licensed under the terms of the GNU General Public
+ * License version 2, as published by the Free Software Foundation, and
+ * may be copied, distributed, and modified under those terms.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
  */
 
 #include <linux/export.h>
@@ -15,7 +23,6 @@
 #include <linux/init.h>
 #include <linux/io.h>
 #include <asm/cacheflush.h>
-#include <asm/smp_plat.h>
 #include <asm/smp_scu.h>
 #include <linux/irqchip/arm-gic.h>
 #include "common.h"
@@ -31,7 +38,6 @@ int zynq_cpun_start(u32 address, int cpu)
 {
 	u32 trampoline_code_size = &zynq_secondary_trampoline_end -
 						&zynq_secondary_trampoline;
-	u32 phy_cpuid = cpu_logical_map(cpu);
 
 	/* MS: Expectation that SLCR are directly map and accessible */
 	/* Not possible to jump to non aligned address */
@@ -41,7 +47,7 @@ int zynq_cpun_start(u32 address, int cpu)
 		u32 trampoline_size = &zynq_secondary_trampoline_jump -
 						&zynq_secondary_trampoline;
 
-		zynq_slcr_cpu_stop(phy_cpuid);
+		zynq_slcr_cpu_stop(cpu);
 		if (address) {
 			if (__pa(PAGE_OFFSET)) {
 				zero = ioremap(0, trampoline_code_size);
@@ -59,7 +65,7 @@ int zynq_cpun_start(u32 address, int cpu)
 			* 0x4: Jump by mov instruction
 			* 0x8: Jumping address
 			*/
-			memcpy_toio(zero, &zynq_secondary_trampoline,
+			memcpy((__force void *)zero, &zynq_secondary_trampoline,
 							trampoline_size);
 			writel(address, zero + trampoline_size);
 
@@ -70,7 +76,7 @@ int zynq_cpun_start(u32 address, int cpu)
 			if (__pa(PAGE_OFFSET))
 				iounmap(zero);
 		}
-		zynq_slcr_cpu_start(phy_cpuid);
+		zynq_slcr_cpu_start(cpu);
 
 		return 0;
 	}
@@ -83,7 +89,7 @@ EXPORT_SYMBOL(zynq_cpun_start);
 
 static int zynq_boot_secondary(unsigned int cpu, struct task_struct *idle)
 {
-	return zynq_cpun_start(__pa_symbol(secondary_startup_arm), cpu);
+	return zynq_cpun_start(__pa_symbol(secondary_startup), cpu);
 }
 
 /*

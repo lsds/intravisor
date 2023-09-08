@@ -3,7 +3,7 @@
  *
  * Module Name: utbuffer - Buffer dump routines
  *
- * Copyright (C) 2000 - 2022, Intel Corp.
+ * Copyright (C) 2000 - 2018, Intel Corp.
  *
  *****************************************************************************/
 
@@ -37,9 +37,7 @@ void acpi_ut_dump_buffer(u8 *buffer, u32 count, u32 display, u32 base_offset)
 	u32 j;
 	u32 temp32;
 	u8 buf_char;
-	u32 display_data_only = display & DB_DISPLAY_DATA_ONLY;
 
-	display &= ~DB_DISPLAY_DATA_ONLY;
 	if (!buffer) {
 		acpi_os_printf("Null Buffer Pointer in DumpBuffer!\n");
 		return;
@@ -55,9 +53,7 @@ void acpi_ut_dump_buffer(u8 *buffer, u32 count, u32 display, u32 base_offset)
 
 		/* Print current offset */
 
-		if (!display_data_only) {
-			acpi_os_printf("%8.4X: ", (base_offset + i));
-		}
+		acpi_os_printf("%6.4X: ", (base_offset + i));
 
 		/* Print 16 hex chars */
 
@@ -113,34 +109,32 @@ void acpi_ut_dump_buffer(u8 *buffer, u32 count, u32 display, u32 base_offset)
 		 * Print the ASCII equivalent characters but watch out for the bad
 		 * unprintable ones (printable chars are 0x20 through 0x7E)
 		 */
-		if (!display_data_only) {
-			acpi_os_printf(" ");
-			for (j = 0; j < 16; j++) {
-				if (i + j >= count) {
-					acpi_os_printf("\n");
-					return;
-				}
-
-				/*
-				 * Add comment characters so rest of line is ignored when
-				 * compiled
-				 */
-				if (j == 0) {
-					acpi_os_printf("// ");
-				}
-
-				buf_char = buffer[(acpi_size)i + j];
-				if (isprint(buf_char)) {
-					acpi_os_printf("%c", buf_char);
-				} else {
-					acpi_os_printf(".");
-				}
+		acpi_os_printf(" ");
+		for (j = 0; j < 16; j++) {
+			if (i + j >= count) {
+				acpi_os_printf("\n");
+				return;
 			}
 
-			/* Done with that line. */
+			/*
+			 * Add comment characters so rest of line is ignored when
+			 * compiled
+			 */
+			if (j == 0) {
+				acpi_os_printf("// ");
+			}
 
-			acpi_os_printf("\n");
+			buf_char = buffer[(acpi_size)i + j];
+			if (isprint(buf_char)) {
+				acpi_os_printf("%c", buf_char);
+			} else {
+				acpi_os_printf(".");
+			}
 		}
+
+		/* Done with that line. */
+
+		acpi_os_printf("\n");
 		i += 16;
 	}
 
@@ -225,7 +219,7 @@ acpi_ut_dump_buffer_to_file(ACPI_FILE file,
 
 		/* Print current offset */
 
-		fprintf(file, "%8.4X: ", (base_offset + i));
+		fprintf(file, "%6.4X: ", (base_offset + i));
 
 		/* Print 16 hex chars */
 

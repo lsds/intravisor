@@ -1,6 +1,9 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (C) 2013 Texas Instruments Incorporated - https://www.ti.com/
+ * Copyright (C) 2013 Texas Instruments Incorporated - http://www.ti.com/
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 
 /* AM43x EPOS EVM */
@@ -11,7 +14,7 @@
 #include <dt-bindings/pinctrl/am43xx.h>
 #include <dt-bindings/gpio/gpio.h>
 #include <dt-bindings/pwm/pwm.h>
-#include <dt-bindings/sound/tlv320aic31xx.h>
+#include <dt-bindings/sound/tlv320aic31xx-micbias.h>
 
 / {
 	model = "TI AM43x EPOS EVM";
@@ -42,10 +45,26 @@
 	};
 
 	lcd0: display {
-		compatible = "osddisplays,osd070t1718-19ts", "panel-dpi";
+		compatible = "osddisplays,osd057T0559-34ts", "panel-dpi";
 		label = "lcd";
 
 		backlight = <&lcd_bl>;
+
+		panel-timing {
+			clock-frequency = <33000000>;
+			hactive = <800>;
+			vactive = <480>;
+			hfront-porch = <210>;
+			hback-porch = <16>;
+			hsync-len = <30>;
+			vback-porch = <10>;
+			vfront-porch = <22>;
+			vsync-len = <13>;
+			hsync-active = <0>;
+			vsync-active = <0>;
+			de-active = <1>;
+			pixelclk-active = <1>;
+		};
 
 		port {
 			lcd_in: endpoint {
@@ -61,7 +80,6 @@
 		pinctrl-names = "default", "sleep";
 		pinctrl-0 = <&matrix_keypad_default>;
 		pinctrl-1 = <&matrix_keypad_sleep>;
-		wakeup-source;
 
 		row-gpios = <&gpio0 12 GPIO_ACTIVE_HIGH		/* Bank0, pin12 */
 			     &gpio0 13 GPIO_ACTIVE_HIGH		/* Bank0, pin13 */
@@ -128,12 +146,6 @@
 			sound-dai = <&tlv320aic3111>;
 			system-clock-frequency = <12000000>;
 		};
-	};
-
-	audio_mstrclk: clock {
-		compatible = "fixed-clock";
-		#clock-cells = <0>;
-		clock-frequency = <12000000>;
 	};
 };
 
@@ -550,44 +562,40 @@
 	cd-gpios = <&gpio0 6 GPIO_ACTIVE_LOW>;
 };
 
-&mac_sw {
+&mac {
 	pinctrl-names = "default", "sleep";
 	pinctrl-0 = <&cpsw_default>;
 	pinctrl-1 = <&cpsw_sleep>;
 	status = "okay";
+	slaves = <1>;
 };
 
-&davinci_mdio_sw {
+&davinci_mdio {
 	pinctrl-names = "default", "sleep";
 	pinctrl-0 = <&davinci_mdio_default>;
 	pinctrl-1 = <&davinci_mdio_sleep>;
-
-	ethphy0: ethernet-phy@16 {
-		reg = <16>;
-	};
+	status = "okay";
 };
 
-&cpsw_port1 {
-	phy-handle = <&ethphy0>;
+&cpsw_emac0 {
+	phy_id = <&davinci_mdio>, <16>;
 	phy-mode = "rmii";
-	phys = <&phy_gmii_sel 1 1>;
-	ti,dual-emac-pvid = <1>;
 };
 
-&cpsw_port2 {
-	status = "disabled";
+&phy_sel {
+	rmii-clock-ext;
 };
 
 &i2c0 {
 	status = "okay";
 	pinctrl-names = "default";
 	pinctrl-0 = <&i2c0_pins>;
-	clock-frequency = <100000>;
+	clock-frequency = <400000>;
 
 	tps65218: tps65218@24 {
 		reg = <0x24>;
 		compatible = "ti,tps65218";
-		interrupts = <GIC_SPI 7 IRQ_TYPE_LEVEL_HIGH>; /* NMIn */
+		interrupts = <GIC_SPI 7 IRQ_TYPE_NONE>; /* NMIn */
 		interrupt-controller;
 		#interrupt-cells = <2>;
 
@@ -611,12 +619,6 @@
 			regulator-name = "vdcdc3";
 			regulator-boot-on;
 			regulator-always-on;
-			regulator-state-mem {
-				regulator-on-in-suspend;
-			};
-			regulator-state-disk {
-				regulator-off-in-suspend;
-			};
 		};
 
 		dcdc4: regulator-dcdc4 {
@@ -631,16 +633,12 @@
 			regulator-name = "v1_0bat";
 			regulator-min-microvolt = <1000000>;
 			regulator-max-microvolt = <1000000>;
-			regulator-boot-on;
-			regulator-always-on;
 		};
 
 		dcdc6: regulator-dcdc6 {
 			regulator-name = "v1_8bat";
 			regulator-min-microvolt = <1800000>;
 			regulator-max-microvolt = <1800000>;
-			regulator-boot-on;
-			regulator-always-on;
 		};
 
 		ldo1: regulator-ldo1 {
@@ -689,21 +687,6 @@
 		IOVDD-supply = <&dcdc4>; /* V3_3D -> DCDC4 */
 		DVDD-supply = <&ldo1>; /* V1_8AUD -> V1_8D -> LDO1 */
 	};
-
-	ov2659@30 {
-		compatible = "ovti,ov2659";
-		reg = <0x30>;
-
-		clocks = <&audio_mstrclk>;
-		clock-names = "xvclk";
-
-		port {
-			ov2659_1: endpoint {
-				remote-endpoint = <&vpfe1_ep>;
-				link-frequencies = /bits/ 64 <70000000>;
-			};
-		};
-	};
 };
 
 &i2c2 {
@@ -725,7 +708,7 @@
 	pinctrl-0 = <&display_mux_pins>;
 	status = "okay";
 
-	sel-lcd-hdmi-hog {
+	p1 {
 		/*
 		 * SelLCDorHDMI selects between display and audio paths:
 		 * Low: HDMI display with audio via HDMI
@@ -836,10 +819,6 @@
 	status = "okay";
 };
 
-&rtc_target {
-	status = "disabled";
-};
-
 &tscadc {
 	status = "okay";
 
@@ -860,7 +839,6 @@
 	pinctrl-names = "default", "sleep";
 	pinctrl-0 = <&spi0_pins_default>;
 	pinctrl-1 = <&spi0_pins_sleep>;
-	ti,pindir-d0-out-d1-in;
 };
 
 &spi1 {
@@ -868,7 +846,6 @@
 	pinctrl-names = "default", "sleep";
 	pinctrl-0 = <&spi1_pins_default>;
 	pinctrl-1 = <&spi1_pins_sleep>;
-	ti,pindir-d0-out-d1-in;
 };
 
 &usb2_phy1 {
@@ -902,7 +879,7 @@
 	pinctrl-1 = <&qspi1_pins_sleep>;
 
 	spi-max-frequency = <48000000>;
-	flash@0 {
+	m25p80@0 {
 		compatible = "mx66l51235l";
 		spi-max-frequency = <48000000>;
 		reg = <0>;
@@ -955,7 +932,7 @@
 };
 
 &dss {
-	status = "okay";
+	status = "ok";
 
 	pinctrl-names = "default";
 	pinctrl-0 = <&dss_pins>;
@@ -976,7 +953,7 @@
 
 	port {
 		vpfe1_ep: endpoint {
-			remote-endpoint = <&ov2659_1>;
+			/* remote-endpoint = <&sensor>; add once we have it */
 			ti,am437x-vpfe-interface = <0>;
 			bus-width = <8>;
 			hsync-active = <0>;
@@ -1017,12 +994,4 @@
 
 &cpu {
 	cpu0-supply = <&dcdc2>;
-};
-
-&wkup_m3_ipc {
-	firmware-name = "am43x-evm-scale-data.bin";
-};
-
-&pruss1_mdio {
-	status = "disabled";
 };

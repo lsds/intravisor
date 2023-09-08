@@ -1,11 +1,23 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * trace_events_filter - generic event filtering
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
  *
  * Copyright (C) 2009 Tom Zanussi <tzanussi@gmail.com>
  */
 
-#include <linux/uaccess.h>
 #include <linux/module.h>
 #include <linux/ctype.h>
 #include <linux/mutex.h>
@@ -43,42 +55,6 @@ enum filter_op_ids { OPS };
 
 static const char * ops[] = { OPS };
 
-enum filter_pred_fn {
-	FILTER_PRED_FN_NOP,
-	FILTER_PRED_FN_64,
-	FILTER_PRED_FN_S64,
-	FILTER_PRED_FN_U64,
-	FILTER_PRED_FN_32,
-	FILTER_PRED_FN_S32,
-	FILTER_PRED_FN_U32,
-	FILTER_PRED_FN_16,
-	FILTER_PRED_FN_S16,
-	FILTER_PRED_FN_U16,
-	FILTER_PRED_FN_8,
-	FILTER_PRED_FN_S8,
-	FILTER_PRED_FN_U8,
-	FILTER_PRED_FN_COMM,
-	FILTER_PRED_FN_STRING,
-	FILTER_PRED_FN_STRLOC,
-	FILTER_PRED_FN_STRRELLOC,
-	FILTER_PRED_FN_PCHAR_USER,
-	FILTER_PRED_FN_PCHAR,
-	FILTER_PRED_FN_CPU,
-	FILTER_PRED_FN_,
-	FILTER_PRED_TEST_VISITED,
-};
-
-struct filter_pred {
-	enum filter_pred_fn 	fn_num;
-	u64 			val;
-	struct regex		regex;
-	unsigned short		*ops;
-	struct ftrace_event_field *field;
-	int 			offset;
-	int			not;
-	int 			op;
-};
-
 /*
  * pred functions are OP_LE, OP_LT, OP_GE, OP_GT, and OP_BAND
  * pred_funcs_##type below must match the order of them above.
@@ -102,9 +78,7 @@ struct filter_pred {
 	C(TOO_MANY_PREDS,	"Too many terms in predicate expression"), \
 	C(INVALID_FILTER,	"Meaningless filter expression"),	\
 	C(IP_FIELD_ONLY,	"Only 'ip' field is supported for function trace"), \
-	C(INVALID_VALUE,	"Invalid value (did you forget quotes)?"), \
-	C(ERRNO,		"Error"),				\
-	C(NO_FILTER,		"No filter found")
+	C(INVALID_VALUE,	"Invalid value (did you forget quotes)?"),
 
 #undef C
 #define C(a, b)		FILT_ERR_##a
@@ -114,7 +88,7 @@ enum { ERRORS };
 #undef C
 #define C(a, b)		b
 
-static const char *err_text[] = { ERRORS };
+static char *err_text[] = { ERRORS };
 
 /* Called after a '!' character but "!=" and "!~" are not "not"s */
 static bool is_not(const char *str)
@@ -293,7 +267,7 @@ enum {
  * is "&&" we don't call update_preds(). Instead continue to "c". As the
  * next token after "c" is not "&&" but the end of input, we first process the
  * "&&" by calling update_preds() for the "&&" then we process the "||" by
- * calling updates_preds() with the values for processing "||".
+ * callin updates_preds() with the values for processing "||".
  *
  * What does that mean? What update_preds() does is to first save the "target"
  * of the program entry indexed by the current program entry's "target"
@@ -333,7 +307,7 @@ enum {
  * and "FALSE" the program entry after that, we are now done with the first
  * pass.
  *
- * Making the above "a || b && c" have a program of:
+ * Making the above "a || b && c" have a progam of:
  *  prog[0] = { "a", 1, 2 }
  *  prog[1] = { "b", 0, 2 }
  *  prog[2] = { "c", 0, 3 }
@@ -427,7 +401,7 @@ enum {
  * F: return FALSE
  *
  * As "r = a; if (!r) goto n5;" is obviously the same as
- * "if (!a) goto n5;" without doing anything we can interpret the
+ * "if (!a) goto n5;" without doing anything we can interperate the
  * program as:
  * n1: if (!a) goto n5;
  * n2: if (!b) goto n5;
@@ -462,15 +436,15 @@ predicate_parse(const char *str, int nr_parens, int nr_preds,
 
 	nr_preds += 2; /* For TRUE and FALSE */
 
-	op_stack = kmalloc_array(nr_parens, sizeof(*op_stack), GFP_KERNEL);
+	op_stack = kmalloc(sizeof(*op_stack) * nr_parens, GFP_KERNEL);
 	if (!op_stack)
 		return ERR_PTR(-ENOMEM);
-	prog_stack = kcalloc(nr_preds, sizeof(*prog_stack), GFP_KERNEL);
+	prog_stack = kmalloc(sizeof(*prog_stack) * nr_preds, GFP_KERNEL);
 	if (!prog_stack) {
 		parse_error(pe, -ENOMEM, 0);
 		goto out_free;
 	}
-	inverts = kmalloc_array(nr_preds, sizeof(*inverts), GFP_KERNEL);
+	inverts = kmalloc(sizeof(*inverts) * nr_preds, GFP_KERNEL);
 	if (!inverts) {
 		parse_error(pe, -ENOMEM, 0);
 		goto out_free;
@@ -489,10 +463,8 @@ predicate_parse(const char *str, int nr_parens, int nr_preds,
 
 		switch (*next) {
 		case '(':					/* #2 */
-			if (top - op_stack > nr_parens) {
-				ret = -EINVAL;
-				goto out_free;
-			}
+			if (top - op_stack > nr_parens)
+				return ERR_PTR(-EINVAL);
 			*(++top) = invert;
 			continue;
 		case '!':					/* #3 */
@@ -531,12 +503,10 @@ predicate_parse(const char *str, int nr_parens, int nr_preds,
 				break;
 			case '&':
 			case '|':
-				/* accepting only "&&" or "||" */
 				if (next[1] == next[0]) {
 					ptr++;
 					break;
 				}
-				fallthrough;
 			default:
 				parse_error(pe, FILT_ERR_TOO_MANY_PREDS,
 					    next - str);
@@ -580,13 +550,6 @@ predicate_parse(const char *str, int nr_parens, int nr_preds,
 		goto out_free;
 	}
 
-	if (!N) {
-		/* No program? */
-		ret = -EINVAL;
-		parse_error(pe, FILT_ERR_NO_FILTER, ptr - str);
-		goto out_free;
-	}
-
 	prog[N].pred = NULL;					/* #13 */
 	prog[N].target = 1;		/* TRUE */
 	prog[N+1].pred = NULL;
@@ -612,62 +575,52 @@ predicate_parse(const char *str, int nr_parens, int nr_preds,
 		}
 	}
 
-	kfree(op_stack);
-	kfree(inverts);
 	return prog;
 out_free:
 	kfree(op_stack);
+	kfree(prog_stack);
 	kfree(inverts);
-	if (prog_stack) {
-		for (i = 0; prog_stack[i].pred; i++)
-			kfree(prog_stack[i].pred);
-		kfree(prog_stack);
-	}
 	return ERR_PTR(ret);
 }
 
-enum pred_cmp_types {
-	PRED_CMP_TYPE_NOP,
-	PRED_CMP_TYPE_LT,
-	PRED_CMP_TYPE_LE,
-	PRED_CMP_TYPE_GT,
-	PRED_CMP_TYPE_GE,
-	PRED_CMP_TYPE_BAND,
-};
-
 #define DEFINE_COMPARISON_PRED(type)					\
-static int filter_pred_##type(struct filter_pred *pred, void *event)	\
+static int filter_pred_LT_##type(struct filter_pred *pred, void *event)	\
 {									\
-	switch (pred->op) {						\
-	case OP_LT: {							\
-		type *addr = (type *)(event + pred->offset);		\
-		type val = (type)pred->val;				\
-		return *addr < val;					\
-	}								\
-	case OP_LE: {					\
-		type *addr = (type *)(event + pred->offset);		\
-		type val = (type)pred->val;				\
-		return *addr <= val;					\
-	}								\
-	case OP_GT: {					\
-		type *addr = (type *)(event + pred->offset);		\
-		type val = (type)pred->val;				\
-		return *addr > val;					\
-	}								\
-	case OP_GE: {					\
-		type *addr = (type *)(event + pred->offset);		\
-		type val = (type)pred->val;				\
-		return *addr >= val;					\
-	}								\
-	case OP_BAND: {					\
-		type *addr = (type *)(event + pred->offset);		\
-		type val = (type)pred->val;				\
-		return !!(*addr & val);					\
-	}								\
-	default:							\
-		return 0;						\
-	}								\
-}
+	type *addr = (type *)(event + pred->offset);			\
+	type val = (type)pred->val;					\
+	return *addr < val;						\
+}									\
+static int filter_pred_LE_##type(struct filter_pred *pred, void *event)	\
+{									\
+	type *addr = (type *)(event + pred->offset);			\
+	type val = (type)pred->val;					\
+	return *addr <= val;						\
+}									\
+static int filter_pred_GT_##type(struct filter_pred *pred, void *event)	\
+{									\
+	type *addr = (type *)(event + pred->offset);			\
+	type val = (type)pred->val;					\
+	return *addr > val;					\
+}									\
+static int filter_pred_GE_##type(struct filter_pred *pred, void *event)	\
+{									\
+	type *addr = (type *)(event + pred->offset);			\
+	type val = (type)pred->val;					\
+	return *addr >= val;						\
+}									\
+static int filter_pred_BAND_##type(struct filter_pred *pred, void *event) \
+{									\
+	type *addr = (type *)(event + pred->offset);			\
+	type val = (type)pred->val;					\
+	return !!(*addr & val);						\
+}									\
+static const filter_pred_fn_t pred_funcs_##type[] = {			\
+	filter_pred_LE_##type,						\
+	filter_pred_LT_##type,						\
+	filter_pred_GE_##type,						\
+	filter_pred_GT_##type,						\
+	filter_pred_BAND_##type,					\
+};
 
 #define DEFINE_EQUALITY_PRED(size)					\
 static int filter_pred_##size(struct filter_pred *pred, void *event)	\
@@ -695,52 +648,6 @@ DEFINE_EQUALITY_PRED(32);
 DEFINE_EQUALITY_PRED(16);
 DEFINE_EQUALITY_PRED(8);
 
-/* user space strings temp buffer */
-#define USTRING_BUF_SIZE	1024
-
-struct ustring_buffer {
-	char		buffer[USTRING_BUF_SIZE];
-};
-
-static __percpu struct ustring_buffer *ustring_per_cpu;
-
-static __always_inline char *test_string(char *str)
-{
-	struct ustring_buffer *ubuf;
-	char *kstr;
-
-	if (!ustring_per_cpu)
-		return NULL;
-
-	ubuf = this_cpu_ptr(ustring_per_cpu);
-	kstr = ubuf->buffer;
-
-	/* For safety, do not trust the string pointer */
-	if (!strncpy_from_kernel_nofault(kstr, str, USTRING_BUF_SIZE))
-		return NULL;
-	return kstr;
-}
-
-static __always_inline char *test_ustring(char *str)
-{
-	struct ustring_buffer *ubuf;
-	char __user *ustr;
-	char *kstr;
-
-	if (!ustring_per_cpu)
-		return NULL;
-
-	ubuf = this_cpu_ptr(ustring_per_cpu);
-	kstr = ubuf->buffer;
-
-	/* user space address? */
-	ustr = (char __user *)str;
-	if (!strncpy_from_user_nofault(kstr, ustr, USTRING_BUF_SIZE))
-		return NULL;
-
-	return kstr;
-}
-
 /* Filter predicate for fixed sized arrays of characters */
 static int filter_pred_string(struct filter_pred *pred, void *event)
 {
@@ -754,42 +661,18 @@ static int filter_pred_string(struct filter_pred *pred, void *event)
 	return match;
 }
 
-static __always_inline int filter_pchar(struct filter_pred *pred, char *str)
-{
-	int cmp, match;
-	int len;
-
-	len = strlen(str) + 1;	/* including tailing '\0' */
-	cmp = pred->regex.match(str, &pred->regex, len);
-
-	match = cmp ^ pred->not;
-
-	return match;
-}
 /* Filter predicate for char * pointers */
 static int filter_pred_pchar(struct filter_pred *pred, void *event)
 {
 	char **addr = (char **)(event + pred->offset);
-	char *str;
+	int cmp, match;
+	int len = strlen(*addr) + 1;	/* including tailing '\0' */
 
-	str = test_string(*addr);
-	if (!str)
-		return 0;
+	cmp = pred->regex.match(*addr, &pred->regex, len);
 
-	return filter_pchar(pred, str);
-}
+	match = cmp ^ pred->not;
 
-/* Filter predicate for char * pointers in user space*/
-static int filter_pred_pchar_user(struct filter_pred *pred, void *event)
-{
-	char **addr = (char **)(event + pred->offset);
-	char *str;
-
-	str = test_ustring(*addr);
-	if (!str)
-		return 0;
-
-	return filter_pchar(pred, str);
+	return match;
 }
 
 /*
@@ -808,29 +691,6 @@ static int filter_pred_strloc(struct filter_pred *pred, void *event)
 	int str_loc = str_item & 0xffff;
 	int str_len = str_item >> 16;
 	char *addr = (char *)(event + str_loc);
-	int cmp, match;
-
-	cmp = pred->regex.match(addr, &pred->regex, str_len);
-
-	match = cmp ^ pred->not;
-
-	return match;
-}
-
-/*
- * Filter predicate for relative dynamic sized arrays of characters.
- * These are implemented through a list of strings at the end
- * of the entry as same as dynamic string.
- * The difference is that the relative one records the location offset
- * from the field itself, not the event entry.
- */
-static int filter_pred_strrelloc(struct filter_pred *pred, void *event)
-{
-	u32 *item = (u32 *)(event + pred->offset);
-	u32 str_item = *item;
-	int str_loc = str_item & 0xffff;
-	int str_len = str_item >> 16;
-	char *addr = (char *)(&item[1]) + str_loc;
 	int cmp, match;
 
 	cmp = pred->regex.match(addr, &pred->regex, str_len);
@@ -876,6 +736,11 @@ static int filter_pred_comm(struct filter_pred *pred, void *event)
 	return cmp ^ pred->not;
 }
 
+static int filter_pred_none(struct filter_pred *pred, void *event)
+{
+	return 0;
+}
+
 /*
  * regex_match_foo - Basic regex callbacks
  *
@@ -885,32 +750,31 @@ static int filter_pred_comm(struct filter_pred *pred, void *event)
  *
  * Note:
  * - @str might not be NULL-terminated if it's of type DYN_STRING
- *   RDYN_STRING, or STATIC_STRING, unless @len is zero.
+ *   or STATIC_STRING
  */
 
 static int regex_match_full(char *str, struct regex *r, int len)
 {
-	/* len of zero means str is dynamic and ends with '\0' */
-	if (!len)
-		return strcmp(str, r->pattern) == 0;
-
-	return strncmp(str, r->pattern, len) == 0;
+	if (strncmp(str, r->pattern, len) == 0)
+		return 1;
+	return 0;
 }
 
 static int regex_match_front(char *str, struct regex *r, int len)
 {
-	if (len && len < r->len)
+	if (len < r->len)
 		return 0;
 
-	return strncmp(str, r->pattern, r->len) == 0;
+	if (strncmp(str, r->pattern, r->len) == 0)
+		return 1;
+	return 0;
 }
 
 static int regex_match_middle(char *str, struct regex *r, int len)
 {
-	if (!len)
-		return strstr(str, r->pattern) != NULL;
-
-	return strnstr(str, r->pattern, len) != NULL;
+	if (strnstr(str, r->pattern, len))
+		return 1;
+	return 0;
 }
 
 static int regex_match_end(char *str, struct regex *r, int len)
@@ -961,9 +825,6 @@ enum regex_type filter_parse_regex(char *buff, int len, char **search, int *not)
 
 	*search = buff;
 
-	if (isdigit(buff[0]))
-		return MATCH_INDEX;
-
 	for (i = 0; i < len; i++) {
 		if (buff[i] == '*') {
 			if (!i) {
@@ -1001,8 +862,6 @@ static void filter_build_regex(struct filter_pred *pred)
 	}
 
 	switch (type) {
-	/* MATCH_INDEX should not happen, but if it does, match full */
-	case MATCH_INDEX:
 	case MATCH_FULL:
 		r->match = regex_match_full;
 		break;
@@ -1021,19 +880,6 @@ static void filter_build_regex(struct filter_pred *pred)
 	}
 }
 
-
-#ifdef CONFIG_FTRACE_STARTUP_TEST
-static int test_pred_visited_fn(struct filter_pred *pred, void *event);
-#else
-static int test_pred_visited_fn(struct filter_pred *pred, void *event)
-{
-	return 0;
-}
-#endif
-
-
-static int filter_pred_fn_call(struct filter_pred *pred, void *event);
-
 /* return 1 if event matches, 0 otherwise (discard) */
 int filter_match_preds(struct event_filter *filter, void *rec)
 {
@@ -1044,14 +890,13 @@ int filter_match_preds(struct event_filter *filter, void *rec)
 	if (!filter)
 		return 1;
 
-	/* Protected by either SRCU(tracepoint_srcu) or preempt_disable */
-	prog = rcu_dereference_raw(filter->prog);
+	prog = rcu_dereference_sched(filter->prog);
 	if (!prog)
 		return 1;
 
 	for (i = 0; prog[i].pred; i++) {
 		struct filter_pred *pred = prog[i].pred;
-		int match = filter_pred_fn_call(pred, rec);
+		int match = pred->fn(pred, rec);
 		if (match == prog[i].when_to_branch)
 			i = prog[i].target;
 	}
@@ -1068,8 +913,7 @@ static void remove_filter_string(struct event_filter *filter)
 	filter->filter_string = NULL;
 }
 
-static void append_filter_err(struct trace_array *tr,
-			      struct filter_parse_error *pe,
+static void append_filter_err(struct filter_parse_error *pe,
 			      struct event_filter *filter)
 {
 	struct trace_seq *s;
@@ -1097,14 +941,8 @@ static void append_filter_err(struct trace_array *tr,
 	if (pe->lasterr > 0) {
 		trace_seq_printf(s, "\n%*s", pos, "^");
 		trace_seq_printf(s, "\nparse_error: %s\n", err_text[pe->lasterr]);
-		tracing_log_err(tr, "event filter parse error",
-				filter->filter_string, err_text,
-				pe->lasterr, pe->lasterr_pos);
 	} else {
 		trace_seq_printf(s, "\nError: (%d)\n", pe->lasterr);
-		tracing_log_err(tr, "event filter parse error",
-				filter->filter_string, err_text,
-				FILT_ERR_ERRNO, 0);
 	}
 	trace_seq_putc(s, 0);
 	buf = kmemdup_nul(s->buffer, s->seq.len, GFP_KERNEL);
@@ -1225,22 +1063,16 @@ int filter_assign_type(const char *type)
 	if (strstr(type, "__data_loc") && strstr(type, "char"))
 		return FILTER_DYN_STRING;
 
-	if (strstr(type, "__rel_loc") && strstr(type, "char"))
-		return FILTER_RDYN_STRING;
-
 	if (strchr(type, '[') && strstr(type, "char"))
 		return FILTER_STATIC_STRING;
-
-	if (strcmp(type, "char *") == 0 || strcmp(type, "const char *") == 0)
-		return FILTER_PTR_STRING;
 
 	return FILTER_OTHER;
 }
 
-static enum filter_pred_fn select_comparison_fn(enum filter_op_ids op,
-						int field_size, int field_is_signed)
+static filter_pred_fn_t select_comparison_fn(enum filter_op_ids op,
+					    int field_size, int field_is_signed)
 {
-	enum filter_pred_fn fn = FILTER_PRED_FN_NOP;
+	filter_pred_fn_t fn = NULL;
 	int pred_func_index = -1;
 
 	switch (op) {
@@ -1249,97 +1081,48 @@ static enum filter_pred_fn select_comparison_fn(enum filter_op_ids op,
 		break;
 	default:
 		if (WARN_ON_ONCE(op < PRED_FUNC_START))
-			return fn;
+			return NULL;
 		pred_func_index = op - PRED_FUNC_START;
 		if (WARN_ON_ONCE(pred_func_index > PRED_FUNC_MAX))
-			return fn;
+			return NULL;
 	}
 
 	switch (field_size) {
 	case 8:
 		if (pred_func_index < 0)
-			fn = FILTER_PRED_FN_64;
+			fn = filter_pred_64;
 		else if (field_is_signed)
-			fn = FILTER_PRED_FN_S64;
+			fn = pred_funcs_s64[pred_func_index];
 		else
-			fn = FILTER_PRED_FN_U64;
+			fn = pred_funcs_u64[pred_func_index];
 		break;
 	case 4:
 		if (pred_func_index < 0)
-			fn = FILTER_PRED_FN_32;
+			fn = filter_pred_32;
 		else if (field_is_signed)
-			fn = FILTER_PRED_FN_S32;
+			fn = pred_funcs_s32[pred_func_index];
 		else
-			fn = FILTER_PRED_FN_U32;
+			fn = pred_funcs_u32[pred_func_index];
 		break;
 	case 2:
 		if (pred_func_index < 0)
-			fn = FILTER_PRED_FN_16;
+			fn = filter_pred_16;
 		else if (field_is_signed)
-			fn = FILTER_PRED_FN_S16;
+			fn = pred_funcs_s16[pred_func_index];
 		else
-			fn = FILTER_PRED_FN_U16;
+			fn = pred_funcs_u16[pred_func_index];
 		break;
 	case 1:
 		if (pred_func_index < 0)
-			fn = FILTER_PRED_FN_8;
+			fn = filter_pred_8;
 		else if (field_is_signed)
-			fn = FILTER_PRED_FN_S8;
+			fn = pred_funcs_s8[pred_func_index];
 		else
-			fn = FILTER_PRED_FN_U8;
+			fn = pred_funcs_u8[pred_func_index];
 		break;
 	}
 
 	return fn;
-}
-
-
-static int filter_pred_fn_call(struct filter_pred *pred, void *event)
-{
-	switch (pred->fn_num) {
-	case FILTER_PRED_FN_64:
-		return filter_pred_64(pred, event);
-	case FILTER_PRED_FN_S64:
-		return filter_pred_s64(pred, event);
-	case FILTER_PRED_FN_U64:
-		return filter_pred_u64(pred, event);
-	case FILTER_PRED_FN_32:
-		return filter_pred_32(pred, event);
-	case FILTER_PRED_FN_S32:
-		return filter_pred_s32(pred, event);
-	case FILTER_PRED_FN_U32:
-		return filter_pred_u32(pred, event);
-	case FILTER_PRED_FN_16:
-		return filter_pred_16(pred, event);
-	case FILTER_PRED_FN_S16:
-		return filter_pred_s16(pred, event);
-	case FILTER_PRED_FN_U16:
-		return filter_pred_u16(pred, event);
-	case FILTER_PRED_FN_8:
-		return filter_pred_8(pred, event);
-	case FILTER_PRED_FN_S8:
-		return filter_pred_s8(pred, event);
-	case FILTER_PRED_FN_U8:
-		return filter_pred_u8(pred, event);
-	case FILTER_PRED_FN_COMM:
-		return filter_pred_comm(pred, event);
-	case FILTER_PRED_FN_STRING:
-		return filter_pred_string(pred, event);
-	case FILTER_PRED_FN_STRLOC:
-		return filter_pred_strloc(pred, event);
-	case FILTER_PRED_FN_STRRELLOC:
-		return filter_pred_strrelloc(pred, event);
-	case FILTER_PRED_FN_PCHAR_USER:
-		return filter_pred_pchar_user(pred, event);
-	case FILTER_PRED_FN_PCHAR:
-		return filter_pred_pchar(pred, event);
-	case FILTER_PRED_FN_CPU:
-		return filter_pred_cpu(pred, event);
-	case FILTER_PRED_TEST_VISITED:
-		return test_pred_visited_fn(pred, event);
-	default:
-		return 0;
-	}
 }
 
 /* Called when a predicate is encountered by predicate_parse() */
@@ -1352,7 +1135,6 @@ static int parse_pred(const char *str, void *data,
 	struct filter_pred *pred = NULL;
 	char num_buf[24];	/* Big enough to hold an address */
 	char *field_name;
-	bool ustring = false;
 	char q;
 	u64 val;
 	int len;
@@ -1385,12 +1167,6 @@ static int parse_pred(const char *str, void *data,
 	if (!field) {
 		parse_error(pe, FILT_ERR_FIELD_NOT_FOUND, pos + i);
 		return -EINVAL;
-	}
-
-	/* See if the field is a user space string */
-	if ((len = str_has_prefix(str + i, ".ustring"))) {
-		ustring = true;
-		i += len;
 	}
 
 	while (isspace(str[i]))
@@ -1432,30 +1208,30 @@ static int parse_pred(const char *str, void *data,
 		 * (perf doesn't use it) and grab everything.
 		 */
 		if (strcmp(field->name, "ip") != 0) {
-			parse_error(pe, FILT_ERR_IP_FIELD_ONLY, pos + i);
-			goto err_free;
-		}
-		pred->fn_num = FILTER_PRED_FN_NOP;
+			 parse_error(pe, FILT_ERR_IP_FIELD_ONLY, pos + i);
+			 goto err_free;
+		 }
+		 pred->fn = filter_pred_none;
 
-		/*
-		 * Quotes are not required, but if they exist then we need
-		 * to read them till we hit a matching one.
-		 */
-		if (str[i] == '\'' || str[i] == '"')
-			q = str[i];
-		else
-			q = 0;
+		 /*
+		  * Quotes are not required, but if they exist then we need
+		  * to read them till we hit a matching one.
+		  */
+		 if (str[i] == '\'' || str[i] == '"')
+			 q = str[i];
+		 else
+			 q = 0;
 
-		for (i++; str[i]; i++) {
-			if (q && str[i] == q)
-				break;
-			if (!q && (str[i] == ')' || str[i] == '&' ||
-				   str[i] == '|'))
-				break;
-		}
-		/* Skip quotes */
-		if (q)
-			s++;
+		 for (i++; str[i]; i++) {
+			 if (q && str[i] == q)
+				 break;
+			 if (!q && (str[i] == ')' || str[i] == '&' ||
+				    str[i] == '|'))
+				 break;
+		 }
+		 /* Skip quotes */
+		 if (q)
+			 s++;
 		len = i - s;
 		if (len >= MAX_FILTER_STR_VAL) {
 			parse_error(pe, FILT_ERR_OPERAND_TOO_LONG, pos + i);
@@ -1474,7 +1250,7 @@ static int parse_pred(const char *str, void *data,
 		switch (op) {
 		case OP_NE:
 			pred->not = 1;
-			fallthrough;
+			/* Fall through */
 		case OP_GLOB:
 		case OP_EQ:
 			break;
@@ -1513,34 +1289,20 @@ static int parse_pred(const char *str, void *data,
 		filter_build_regex(pred);
 
 		if (field->filter_type == FILTER_COMM) {
-			pred->fn_num = FILTER_PRED_FN_COMM;
+			pred->fn = filter_pred_comm;
 
 		} else if (field->filter_type == FILTER_STATIC_STRING) {
-			pred->fn_num = FILTER_PRED_FN_STRING;
+			pred->fn = filter_pred_string;
 			pred->regex.field_len = field->size;
 
-		} else if (field->filter_type == FILTER_DYN_STRING) {
-			pred->fn_num = FILTER_PRED_FN_STRLOC;
-		} else if (field->filter_type == FILTER_RDYN_STRING)
-			pred->fn_num = FILTER_PRED_FN_STRRELLOC;
-		else {
-
-			if (!ustring_per_cpu) {
-				/* Once allocated, keep it around for good */
-				ustring_per_cpu = alloc_percpu(struct ustring_buffer);
-				if (!ustring_per_cpu)
-					goto err_mem;
-			}
-
-			if (ustring)
-				pred->fn_num = FILTER_PRED_FN_PCHAR_USER;
-			else
-				pred->fn_num = FILTER_PRED_FN_PCHAR;
-		}
+		} else if (field->filter_type == FILTER_DYN_STRING)
+			pred->fn = filter_pred_strloc;
+		else
+			pred->fn = filter_pred_pchar;
 		/* go past the last quote */
 		i++;
 
-	} else if (isdigit(str[i]) || str[i] == '-') {
+	} else if (isdigit(str[i])) {
 
 		/* Make sure the field is not a string */
 		if (is_string_field(field)) {
@@ -1552,9 +1314,6 @@ static int parse_pred(const char *str, void *data,
 			parse_error(pe, FILT_ERR_ILLEGAL_FIELD_OP, pos + i);
 			goto err_free;
 		}
-
-		if (str[i] == '-')
-			i++;
 
 		/* We allow 0xDEADBEEF */
 		while (isalnum(str[i]))
@@ -1583,10 +1342,10 @@ static int parse_pred(const char *str, void *data,
 		pred->val = val;
 
 		if (field->filter_type == FILTER_CPU)
-			pred->fn_num = FILTER_PRED_FN_CPU;
+			pred->fn = filter_pred_cpu;
 		else {
-			pred->fn_num = select_comparison_fn(pred->op, field->size,
-							    field->is_signed);
+			pred->fn = select_comparison_fn(pred->op, field->size,
+							field->is_signed);
 			if (pred->op == OP_NE)
 				pred->not = 1;
 		}
@@ -1602,9 +1361,6 @@ static int parse_pred(const char *str, void *data,
 err_free:
 	kfree(pred);
 	return -EINVAL;
-err_mem:
-	kfree(pred);
-	return -ENOMEM;
 }
 
 enum {
@@ -1779,6 +1535,27 @@ static inline void event_clear_filter(struct trace_event_file *file)
 	RCU_INIT_POINTER(file->filter, NULL);
 }
 
+static inline void
+event_set_no_set_filter_flag(struct trace_event_file *file)
+{
+	file->flags |= EVENT_FILE_FL_NO_SET_FILTER;
+}
+
+static inline void
+event_clear_no_set_filter_flag(struct trace_event_file *file)
+{
+	file->flags &= ~EVENT_FILE_FL_NO_SET_FILTER;
+}
+
+static inline bool
+event_no_set_filter_flag(struct trace_event_file *file)
+{
+	if (file->flags & EVENT_FILE_FL_NO_SET_FILTER)
+		return true;
+
+	return false;
+}
+
 struct filter_list {
 	struct list_head	list;
 	struct event_filter	*filter;
@@ -1814,7 +1591,7 @@ static int process_system_preds(struct trace_subsystem_dir *dir,
 		if (err) {
 			filter_disable(file);
 			parse_error(pe, FILT_ERR_BAD_SUBSYS_FILTER, 0);
-			append_filter_err(tr, pe, filter);
+			append_filter_err(pe, filter);
 		} else
 			event_set_filtered_flag(file);
 
@@ -1840,10 +1617,10 @@ static int process_system_preds(struct trace_subsystem_dir *dir,
 
 	/*
 	 * The calls can still be using the old filters.
-	 * Do a synchronize_rcu() and to ensure all calls are
+	 * Do a synchronize_sched() to ensure all calls are
 	 * done with them before we free them.
 	 */
-	tracepoint_synchronize_unregister();
+	synchronize_sched();
 	list_for_each_entry_safe(filter_item, tmp, &filter_list, list) {
 		__free_filter(filter_item->filter);
 		list_del(&filter_item->list);
@@ -1859,10 +1636,10 @@ static int process_system_preds(struct trace_subsystem_dir *dir,
 	parse_error(pe, FILT_ERR_BAD_SUBSYS_FILTER, 0);
 	return -EINVAL;
  fail_mem:
-	__free_filter(filter);
+	kfree(filter);
 	/* If any call succeeded, we still need to sync */
 	if (!fail)
-		tracepoint_synchronize_unregister();
+		synchronize_sched();
 	list_for_each_entry_safe(filter_item, tmp, &filter_list, list) {
 		__free_filter(filter_item->filter);
 		list_del(&filter_item->list);
@@ -1911,12 +1688,10 @@ static void create_filter_finish(struct filter_parse_error *pe)
 
 /**
  * create_filter - create a filter for a trace_event_call
- * @tr: the trace array associated with these events
  * @call: trace_event_call to create a filter for
- * @filter_string: filter string
+ * @filter_str: filter string
  * @set_str: remember @filter_str and enable detailed error in filter
  * @filterp: out param for created filter (always updated on return)
- *           Must be a pointer that references a NULL pointer.
  *
  * Creates a filter for @call with @filter_str.  If @set_str is %true,
  * @filter_str is copied and recorded in the new filter.
@@ -1927,17 +1702,12 @@ static void create_filter_finish(struct filter_parse_error *pe)
  * information if @set_str is %true and the caller is responsible for
  * freeing it.
  */
-static int create_filter(struct trace_array *tr,
-			 struct trace_event_call *call,
+static int create_filter(struct trace_event_call *call,
 			 char *filter_string, bool set_str,
 			 struct event_filter **filterp)
 {
 	struct filter_parse_error *pe = NULL;
 	int err;
-
-	/* filterp must point to NULL */
-	if (WARN_ON(*filterp))
-		*filterp = NULL;
 
 	err = create_filter_start(filter_string, set_str, &pe, filterp);
 	if (err)
@@ -1945,23 +1715,21 @@ static int create_filter(struct trace_array *tr,
 
 	err = process_preds(call, filter_string, *filterp, pe);
 	if (err && set_str)
-		append_filter_err(tr, pe, *filterp);
-	create_filter_finish(pe);
+		append_filter_err(pe, *filterp);
 
 	return err;
 }
 
-int create_event_filter(struct trace_array *tr,
-			struct trace_event_call *call,
+int create_event_filter(struct trace_event_call *call,
 			char *filter_str, bool set_str,
 			struct event_filter **filterp)
 {
-	return create_filter(tr, call, filter_str, set_str, filterp);
+	return create_filter(call, filter_str, set_str, filterp);
 }
 
 /**
- * create_system_filter - create a filter for an event subsystem
- * @dir: the descriptor for the subsystem directory
+ * create_system_filter - create a filter for an event_subsystem
+ * @system: event_subsystem to create a filter for
  * @filter_str: filter string
  * @filterp: out param for created filter (always updated on return)
  *
@@ -1969,6 +1737,7 @@ int create_event_filter(struct trace_array *tr,
  * and always remembers @filter_str.
  */
 static int create_system_filter(struct trace_subsystem_dir *dir,
+				struct trace_array *tr,
 				char *filter_str, struct event_filter **filterp)
 {
 	struct filter_parse_error *pe = NULL;
@@ -1976,13 +1745,13 @@ static int create_system_filter(struct trace_subsystem_dir *dir,
 
 	err = create_filter_start(filter_str, true, &pe, filterp);
 	if (!err) {
-		err = process_system_preds(dir, dir->tr, pe, filter_str);
+		err = process_system_preds(dir, tr, pe, filter_str);
 		if (!err) {
 			/* System filters just show a default message */
 			kfree((*filterp)->filter_string);
 			(*filterp)->filter_string = NULL;
 		} else {
-			append_filter_err(dir->tr, pe, *filterp);
+			append_filter_err(pe, *filterp);
 		}
 	}
 	create_filter_finish(pe);
@@ -2007,13 +1776,13 @@ int apply_event_filter(struct trace_event_file *file, char *filter_string)
 		event_clear_filter(file);
 
 		/* Make sure the filter is not being used */
-		tracepoint_synchronize_unregister();
+		synchronize_sched();
 		__free_filter(filter);
 
 		return 0;
 	}
 
-	err = create_filter(file->tr, call, filter_string, true, &filter);
+	err = create_filter(call, filter_string, true, &filter);
 
 	/*
 	 * Always swap the call filter with the new filter
@@ -2034,7 +1803,7 @@ int apply_event_filter(struct trace_event_file *file, char *filter_string)
 
 		if (tmp) {
 			/* Make sure the call is done with the filter */
-			tracepoint_synchronize_unregister();
+			synchronize_sched();
 			__free_filter(tmp);
 		}
 	}
@@ -2064,17 +1833,17 @@ int apply_subsystem_event_filter(struct trace_subsystem_dir *dir,
 		filter = system->filter;
 		system->filter = NULL;
 		/* Ensure all filters are no longer used */
-		tracepoint_synchronize_unregister();
+		synchronize_sched();
 		filter_free_subsystem_filters(dir, tr);
 		__free_filter(filter);
 		goto out_unlock;
 	}
 
-	err = create_system_filter(dir, filter_string, &filter);
+	err = create_system_filter(dir, tr, filter_string, &filter);
 	if (filter) {
 		/*
 		 * No event actually uses the system filter
-		 * we can free it without synchronize_rcu().
+		 * we can free it without synchronize_sched().
 		 */
 		__free_filter(system->filter);
 		system->filter = filter;
@@ -2147,7 +1916,7 @@ static int __ftrace_function_set_filter(int filter, char *buf, int len,
 	/*
 	 * The 'ip' field could have multiple filters set, separated
 	 * either by space or comma. We first cut the filter and apply
-	 * all pieces separately.
+	 * all pieces separatelly.
 	 */
 	re = ftrace_function_filter_re(buf, len, &re_cnt);
 	if (!re)
@@ -2269,7 +2038,7 @@ int ftrace_profile_set_filter(struct perf_event *event, int event_id,
 	if (event->filter)
 		goto out_unlock;
 
-	err = create_filter(NULL, call, filter_str, false, &filter);
+	err = create_filter(call, filter_str, false, &filter);
 	if (err)
 		goto free_filter;
 
@@ -2393,7 +2162,7 @@ static void update_pred_fn(struct event_filter *filter, char *fields)
 		struct filter_pred *pred = prog[i].pred;
 		struct ftrace_event_field *field = pred->field;
 
-		WARN_ON_ONCE(pred->fn_num == FILTER_PRED_FN_NOP);
+		WARN_ON_ONCE(!pred->fn);
 
 		if (!field) {
 			WARN_ONCE(1, "all leafs should have field defined %d", i);
@@ -2403,7 +2172,7 @@ static void update_pred_fn(struct event_filter *filter, char *fields)
 		if (!strchr(fields, *field->name))
 			continue;
 
-		pred->fn_num = FILTER_PRED_TEST_VISITED;
+		pred->fn = test_pred_visited_fn;
 	}
 }
 
@@ -2418,8 +2187,8 @@ static __init int ftrace_test_event_filter(void)
 		struct test_filter_data_t *d = &test_filter_data[i];
 		int err;
 
-		err = create_filter(NULL, &event_ftrace_test_filter,
-				    d->filter, false, &filter);
+		err = create_filter(&event_ftrace_test_filter, d->filter,
+				    false, &filter);
 		if (err) {
 			printk(KERN_INFO
 			       "Failed to get filter for '%s', err %d\n",

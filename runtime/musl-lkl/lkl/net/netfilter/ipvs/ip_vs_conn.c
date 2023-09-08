@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * IPVS         An implementation of the IP virtual server support for the
  *              LINUX operating system.  IPVS is now implemented as a module
@@ -10,11 +9,17 @@
  *              Peter Kese <peter.kese@ijs.si>
  *              Julian Anastasov <ja@ssi.bg>
  *
+ *              This program is free software; you can redistribute it and/or
+ *              modify it under the terms of the GNU General Public License
+ *              as published by the Free Software Foundation; either version
+ *              2 of the License, or (at your option) any later version.
+ *
  * The IPVS code for kernel 2.2 was done by Wensong Zhang and Peter Kese,
  * with changes/fixes from Julian Anastasov, Lars Marowsky-Bree, Horms
  * and others. Many code here is taken from IP MASQ code of kernel 2.2.
  *
  * Changes:
+ *
  */
 
 #define KMSG_COMPONENT "IPVS"
@@ -402,8 +407,6 @@ struct ip_vs_conn *ip_vs_conn_out_get(const struct ip_vs_conn_param *p)
 {
 	unsigned int hash;
 	struct ip_vs_conn *cp, *ret=NULL;
-	const union nf_inet_addr *saddr;
-	__be16 sport;
 
 	/*
 	 *	Check for "full" addressed entries
@@ -413,20 +416,10 @@ struct ip_vs_conn *ip_vs_conn_out_get(const struct ip_vs_conn_param *p)
 	rcu_read_lock();
 
 	hlist_for_each_entry_rcu(cp, &ip_vs_conn_tab[hash], c_list) {
-		if (p->vport != cp->cport)
-			continue;
-
-		if (IP_VS_FWD_METHOD(cp) != IP_VS_CONN_F_MASQ) {
-			sport = cp->vport;
-			saddr = &cp->vaddr;
-		} else {
-			sport = cp->dport;
-			saddr = &cp->daddr;
-		}
-
-		if (p->cport == sport && cp->af == p->af &&
+		if (p->vport == cp->cport && p->cport == cp->dport &&
+		    cp->af == p->af &&
 		    ip_vs_addr_equal(p->af, p->vaddr, &cp->caddr) &&
-		    ip_vs_addr_equal(p->af, p->caddr, saddr) &&
+		    ip_vs_addr_equal(p->af, p->caddr, &cp->daddr) &&
 		    p->protocol == cp->protocol &&
 		    cp->ipvs == p->ipvs) {
 			if (!__ip_vs_conn_get(cp))
@@ -819,31 +812,6 @@ static void ip_vs_conn_rcu_free(struct rcu_head *head)
 	kmem_cache_free(ip_vs_conn_cachep, cp);
 }
 
-/* Try to delete connection while not holding reference */
-static void ip_vs_conn_del(struct ip_vs_conn *cp)
-{
-	if (del_timer(&cp->timer)) {
-		/* Drop cp->control chain too */
-		if (cp->control)
-			cp->timeout = 0;
-		ip_vs_conn_expire(&cp->timer);
-	}
-}
-
-/* Try to delete connection while holding reference */
-static void ip_vs_conn_del_put(struct ip_vs_conn *cp)
-{
-	if (del_timer(&cp->timer)) {
-		/* Drop cp->control chain too */
-		if (cp->control)
-			cp->timeout = 0;
-		__ip_vs_conn_put(cp);
-		ip_vs_conn_expire(&cp->timer);
-	} else {
-		__ip_vs_conn_put(cp);
-	}
-}
-
 static void ip_vs_conn_expire(struct timer_list *t)
 {
 	struct ip_vs_conn *cp = from_timer(cp, t, timer);
@@ -857,26 +825,12 @@ static void ip_vs_conn_expire(struct timer_list *t)
 
 	/* Unlink conn if not referenced anymore */
 	if (likely(ip_vs_conn_unlink(cp))) {
-		struct ip_vs_conn *ct = cp->control;
-
 		/* delete the timer if it is activated by other users */
 		del_timer(&cp->timer);
 
 		/* does anybody control me? */
-		if (ct) {
-			bool has_ref = !cp->timeout && __ip_vs_conn_get(ct);
-
+		if (cp->control)
 			ip_vs_control_del(cp);
-			/* Drop CTL or non-assured TPL if not used anymore */
-			if (has_ref && !atomic_read(&ct->n_control) &&
-			    (!(ct->flags & IP_VS_CONN_F_TEMPLATE) ||
-			     !(ct->state & IP_VS_CTPL_S_ASSURED))) {
-				IP_VS_DBG(4, "drop controlling connection\n");
-				ip_vs_conn_del_put(ct);
-			} else if (has_ref) {
-				__ip_vs_conn_put(ct);
-			}
-		}
 
 		if ((cp->flags & IP_VS_CONN_F_NFCT) &&
 		    !(cp->flags & IP_VS_CONN_F_ONE_PACKET)) {
@@ -918,10 +872,6 @@ static void ip_vs_conn_expire(struct timer_list *t)
 
 /* Modify timer, so that it expires as soon as possible.
  * Can be called without reference only if under RCU lock.
- * We can have such chain of conns linked with ->control: DATA->CTL->TPL
- * - DATA (eg. FTP) and TPL (persistence) can be present depending on setup
- * - cp->timeout=0 indicates all conns from chain should be dropped but
- * TPL is not dropped if in assured state
  */
 void ip_vs_conn_expire_now(struct ip_vs_conn *cp)
 {
@@ -1152,28 +1102,24 @@ static int ip_vs_conn_seq_show(struct seq_file *seq, void *v)
 #ifdef CONFIG_IP_VS_IPV6
 		if (cp->af == AF_INET6)
 			seq_printf(seq, "%-3s %pI6 %04X %pI6 %04X "
-				"%s %04X %-11s %7u%s\n",
+				"%s %04X %-11s %7lu%s\n",
 				ip_vs_proto_name(cp->protocol),
 				&cp->caddr.in6, ntohs(cp->cport),
 				&cp->vaddr.in6, ntohs(cp->vport),
 				dbuf, ntohs(cp->dport),
-				ip_vs_state_name(cp),
-				jiffies_delta_to_msecs(cp->timer.expires -
-						       jiffies) / 1000,
-				pe_data);
+				ip_vs_state_name(cp->protocol, cp->state),
+				(cp->timer.expires-jiffies)/HZ, pe_data);
 		else
 #endif
 			seq_printf(seq,
 				"%-3s %08X %04X %08X %04X"
-				" %s %04X %-11s %7u%s\n",
+				" %s %04X %-11s %7lu%s\n",
 				ip_vs_proto_name(cp->protocol),
 				ntohl(cp->caddr.ip), ntohs(cp->cport),
 				ntohl(cp->vaddr.ip), ntohs(cp->vport),
 				dbuf, ntohs(cp->dport),
-				ip_vs_state_name(cp),
-				jiffies_delta_to_msecs(cp->timer.expires -
-						       jiffies) / 1000,
-				pe_data);
+				ip_vs_state_name(cp->protocol, cp->state),
+				(cp->timer.expires-jiffies)/HZ, pe_data);
 	}
 	return 0;
 }
@@ -1183,6 +1129,19 @@ static const struct seq_operations ip_vs_conn_seq_ops = {
 	.next  = ip_vs_conn_seq_next,
 	.stop  = ip_vs_conn_seq_stop,
 	.show  = ip_vs_conn_seq_show,
+};
+
+static int ip_vs_conn_open(struct inode *inode, struct file *file)
+{
+	return seq_open_net(inode, file, &ip_vs_conn_seq_ops,
+			    sizeof(struct ip_vs_iter_state));
+}
+
+static const struct file_operations ip_vs_conn_fops = {
+	.open    = ip_vs_conn_open,
+	.read    = seq_read,
+	.llseek  = seq_lseek,
+	.release = seq_release_net,
 };
 
 static const char *ip_vs_origin_name(unsigned int flags)
@@ -1218,28 +1177,26 @@ static int ip_vs_conn_sync_seq_show(struct seq_file *seq, void *v)
 #ifdef CONFIG_IP_VS_IPV6
 		if (cp->af == AF_INET6)
 			seq_printf(seq, "%-3s %pI6 %04X %pI6 %04X "
-				"%s %04X %-11s %-6s %7u\n",
+				"%s %04X %-11s %-6s %7lu\n",
 				ip_vs_proto_name(cp->protocol),
 				&cp->caddr.in6, ntohs(cp->cport),
 				&cp->vaddr.in6, ntohs(cp->vport),
 				dbuf, ntohs(cp->dport),
-				ip_vs_state_name(cp),
+				ip_vs_state_name(cp->protocol, cp->state),
 				ip_vs_origin_name(cp->flags),
-				jiffies_delta_to_msecs(cp->timer.expires -
-						       jiffies) / 1000);
+				(cp->timer.expires-jiffies)/HZ);
 		else
 #endif
 			seq_printf(seq,
 				"%-3s %08X %04X %08X %04X "
-				"%s %04X %-11s %-6s %7u\n",
+				"%s %04X %-11s %-6s %7lu\n",
 				ip_vs_proto_name(cp->protocol),
 				ntohl(cp->caddr.ip), ntohs(cp->cport),
 				ntohl(cp->vaddr.ip), ntohs(cp->vport),
 				dbuf, ntohs(cp->dport),
-				ip_vs_state_name(cp),
+				ip_vs_state_name(cp->protocol, cp->state),
 				ip_vs_origin_name(cp->flags),
-				jiffies_delta_to_msecs(cp->timer.expires -
-						       jiffies) / 1000);
+				(cp->timer.expires-jiffies)/HZ);
 	}
 	return 0;
 }
@@ -1250,14 +1207,25 @@ static const struct seq_operations ip_vs_conn_sync_seq_ops = {
 	.stop  = ip_vs_conn_seq_stop,
 	.show  = ip_vs_conn_sync_seq_show,
 };
+
+static int ip_vs_conn_sync_open(struct inode *inode, struct file *file)
+{
+	return seq_open_net(inode, file, &ip_vs_conn_sync_seq_ops,
+			    sizeof(struct ip_vs_iter_state));
+}
+
+static const struct file_operations ip_vs_conn_sync_fops = {
+	.open    = ip_vs_conn_sync_open,
+	.read    = seq_read,
+	.llseek  = seq_lseek,
+	.release = seq_release_net,
+};
+
 #endif
 
 
-/* Randomly drop connection entries before running out of memory
- * Can be used for DATA and CTL conns. For TPL conns there are exceptions:
- * - traffic for services in OPS mode increases ct->in_pkts, so it is supported
- * - traffic for services not in OPS mode does not increase ct->in_pkts in
- * all cases, so it is not supported
+/*
+ *      Randomly drop connection entries before running out of memory
  */
 static inline int todrop_entry(struct ip_vs_conn *cp)
 {
@@ -1265,8 +1233,8 @@ static inline int todrop_entry(struct ip_vs_conn *cp)
 	 * The drop rate array needs tuning for real environments.
 	 * Called from timer bh only => no locking
 	 */
-	static const signed char todrop_rate[9] = {0, 1, 2, 3, 4, 5, 6, 7, 8};
-	static signed char todrop_counter[9] = {0};
+	static const char todrop_rate[9] = {0, 1, 2, 3, 4, 5, 6, 7, 8};
+	static char todrop_counter[9] = {0};
 	int i;
 
 	/* if the conn entry hasn't lasted for 60 seconds, don't drop it.
@@ -1301,27 +1269,25 @@ static inline bool ip_vs_conn_ops_mode(struct ip_vs_conn *cp)
 void ip_vs_random_dropentry(struct netns_ipvs *ipvs)
 {
 	int idx;
-	struct ip_vs_conn *cp;
+	struct ip_vs_conn *cp, *cp_c;
 
 	rcu_read_lock();
 	/*
 	 * Randomly scan 1/32 of the whole table every second
 	 */
 	for (idx = 0; idx < (ip_vs_conn_tab_size>>5); idx++) {
-		unsigned int hash = get_random_u32() & ip_vs_conn_tab_mask;
+		unsigned int hash = prandom_u32() & ip_vs_conn_tab_mask;
 
 		hlist_for_each_entry_rcu(cp, &ip_vs_conn_tab[hash], c_list) {
 			if (cp->ipvs != ipvs)
 				continue;
-			if (atomic_read(&cp->n_control))
-				continue;
 			if (cp->flags & IP_VS_CONN_F_TEMPLATE) {
-				/* connection template of OPS */
-				if (ip_vs_conn_ops_mode(cp))
+				if (atomic_read(&cp->n_control) ||
+				    !ip_vs_conn_ops_mode(cp))
+					continue;
+				else
+					/* connection template of OPS */
 					goto try_drop;
-				if (!(cp->state & IP_VS_CTPL_S_ASSURED))
-					goto drop;
-				continue;
 			}
 			if (cp->protocol == IPPROTO_TCP) {
 				switch(cp->state) {
@@ -1355,9 +1321,15 @@ try_drop:
 					continue;
 			}
 
-drop:
-			IP_VS_DBG(4, "drop connection\n");
-			ip_vs_conn_del(cp);
+			IP_VS_DBG(4, "del connection\n");
+			ip_vs_conn_expire_now(cp);
+			cp_c = cp->control;
+			/* cp->control is valid only with reference to cp */
+			if (cp_c && __ip_vs_conn_get(cp)) {
+				IP_VS_DBG(4, "del conn template\n");
+				ip_vs_conn_expire_now(cp_c);
+				__ip_vs_conn_put(cp);
+			}
 		}
 		cond_resched_rcu();
 	}
@@ -1380,14 +1352,14 @@ flush_again:
 		hlist_for_each_entry_rcu(cp, &ip_vs_conn_tab[idx], c_list) {
 			if (cp->ipvs != ipvs)
 				continue;
-			if (atomic_read(&cp->n_control))
-				continue;
-			cp_c = cp->control;
 			IP_VS_DBG(4, "del connection\n");
-			ip_vs_conn_del(cp);
-			if (cp_c && !atomic_read(&cp_c->n_control)) {
-				IP_VS_DBG(4, "del controlling connection\n");
-				ip_vs_conn_del(cp_c);
+			ip_vs_conn_expire_now(cp);
+			cp_c = cp->control;
+			/* cp->control is valid only with reference to cp */
+			if (cp_c && __ip_vs_conn_get(cp)) {
+				IP_VS_DBG(4, "del conn template\n");
+				ip_vs_conn_expire_now(cp_c);
+				__ip_vs_conn_put(cp);
 			}
 		}
 		cond_resched_rcu();
@@ -1401,45 +1373,6 @@ flush_again:
 		goto flush_again;
 	}
 }
-
-#ifdef CONFIG_SYSCTL
-void ip_vs_expire_nodest_conn_flush(struct netns_ipvs *ipvs)
-{
-	int idx;
-	struct ip_vs_conn *cp, *cp_c;
-	struct ip_vs_dest *dest;
-
-	rcu_read_lock();
-	for (idx = 0; idx < ip_vs_conn_tab_size; idx++) {
-		hlist_for_each_entry_rcu(cp, &ip_vs_conn_tab[idx], c_list) {
-			if (cp->ipvs != ipvs)
-				continue;
-
-			dest = cp->dest;
-			if (!dest || (dest->flags & IP_VS_DEST_F_AVAILABLE))
-				continue;
-
-			if (atomic_read(&cp->n_control))
-				continue;
-
-			cp_c = cp->control;
-			IP_VS_DBG(4, "del connection\n");
-			ip_vs_conn_del(cp);
-			if (cp_c && !atomic_read(&cp_c->n_control)) {
-				IP_VS_DBG(4, "del controlling connection\n");
-				ip_vs_conn_del(cp_c);
-			}
-		}
-		cond_resched_rcu();
-
-		/* netns clean up started, abort delayed work */
-		if (!ipvs->enable)
-			break;
-	}
-	rcu_read_unlock();
-}
-#endif
-
 /*
  * per netns init and exit
  */
@@ -1447,36 +1380,18 @@ int __net_init ip_vs_conn_net_init(struct netns_ipvs *ipvs)
 {
 	atomic_set(&ipvs->conn_count, 0);
 
-#ifdef CONFIG_PROC_FS
-	if (!proc_create_net("ip_vs_conn", 0, ipvs->net->proc_net,
-			     &ip_vs_conn_seq_ops,
-			     sizeof(struct ip_vs_iter_state)))
-		goto err_conn;
-
-	if (!proc_create_net("ip_vs_conn_sync", 0, ipvs->net->proc_net,
-			     &ip_vs_conn_sync_seq_ops,
-			     sizeof(struct ip_vs_iter_state)))
-		goto err_conn_sync;
-#endif
-
+	proc_create("ip_vs_conn", 0, ipvs->net->proc_net, &ip_vs_conn_fops);
+	proc_create("ip_vs_conn_sync", 0, ipvs->net->proc_net,
+		    &ip_vs_conn_sync_fops);
 	return 0;
-
-#ifdef CONFIG_PROC_FS
-err_conn_sync:
-	remove_proc_entry("ip_vs_conn", ipvs->net->proc_net);
-err_conn:
-	return -ENOMEM;
-#endif
 }
 
 void __net_exit ip_vs_conn_net_cleanup(struct netns_ipvs *ipvs)
 {
 	/* flush all the connection entries first */
 	ip_vs_conn_flush(ipvs);
-#ifdef CONFIG_PROC_FS
 	remove_proc_entry("ip_vs_conn", ipvs->net->proc_net);
 	remove_proc_entry("ip_vs_conn_sync", ipvs->net->proc_net);
-#endif
 }
 
 int __init ip_vs_conn_init(void)
@@ -1484,18 +1399,13 @@ int __init ip_vs_conn_init(void)
 	int idx;
 
 	/* Compute size and mask */
-	if (ip_vs_conn_tab_bits < 8 || ip_vs_conn_tab_bits > 20) {
-		pr_info("conn_tab_bits not in [8, 20]. Using default value\n");
-		ip_vs_conn_tab_bits = CONFIG_IP_VS_TAB_BITS;
-	}
 	ip_vs_conn_tab_size = 1 << ip_vs_conn_tab_bits;
 	ip_vs_conn_tab_mask = ip_vs_conn_tab_size - 1;
 
 	/*
 	 * Allocate the connection hash table and initialize its list heads
 	 */
-	ip_vs_conn_tab = vmalloc(array_size(ip_vs_conn_tab_size,
-					    sizeof(*ip_vs_conn_tab)));
+	ip_vs_conn_tab = vmalloc(ip_vs_conn_tab_size * sizeof(*ip_vs_conn_tab));
 	if (!ip_vs_conn_tab)
 		return -ENOMEM;
 
@@ -1511,7 +1421,7 @@ int __init ip_vs_conn_init(void)
 	pr_info("Connection hash table configured "
 		"(size=%d, memory=%ldKbytes)\n",
 		ip_vs_conn_tab_size,
-		(long)(ip_vs_conn_tab_size*sizeof(*ip_vs_conn_tab))/1024);
+		(long)(ip_vs_conn_tab_size*sizeof(struct list_head))/1024);
 	IP_VS_DBG(0, "Each connection entry needs %zd bytes at least\n",
 		  sizeof(struct ip_vs_conn));
 

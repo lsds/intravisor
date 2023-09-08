@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * drivers/mb862xx/mb862xxfb.c
  *
@@ -6,11 +5,15 @@
  *
  * (C) 2008 Anatolij Gustschin <agust@denx.de>
  * DENX Software Engineering
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ *
  */
 
 #undef DEBUG
 
-#include <linux/aperture.h>
 #include <linux/fb.h>
 #include <linux/delay.h>
 #include <linux/uaccess.h>
@@ -19,8 +22,6 @@
 #include <linux/interrupt.h>
 #include <linux/pci.h>
 #if defined(CONFIG_OF)
-#include <linux/of_address.h>
-#include <linux/of_irq.h>
 #include <linux/of_platform.h>
 #endif
 #include "mb862xxfb.h"
@@ -197,8 +198,6 @@ static int mb862xxfb_check_var(struct fb_var_screeninfo *var,
 	return 0;
 }
 
-static struct fb_ops mb862xxfb_ops;
-
 /*
  * set display parameters
  */
@@ -209,7 +208,7 @@ static int mb862xxfb_set_par(struct fb_info *fbi)
 
 	dev_dbg(par->dev, "%s\n", __func__);
 	if (par->type == BT_CORALP)
-		mb862xxfb_init_accel(fbi, &mb862xxfb_ops, fbi->var.xres);
+		mb862xxfb_init_accel(fbi, fbi->var.xres);
 
 	if (par->pre_init)
 		return 0;
@@ -545,8 +544,8 @@ static int mb862xxfb_init_fbinfo(struct fb_info *fbi)
 /*
  * show some display controller and cursor registers
  */
-static ssize_t dispregs_show(struct device *dev,
-			     struct device_attribute *attr, char *buf)
+static ssize_t mb862xxfb_show_dispregs(struct device *dev,
+				       struct device_attribute *attr, char *buf)
 {
 	struct fb_info *fbi = dev_get_drvdata(dev);
 	struct mb862xxfb_par *par = fbi->par;
@@ -580,7 +579,7 @@ static ssize_t dispregs_show(struct device *dev,
 	return ptr - buf;
 }
 
-static DEVICE_ATTR_RO(dispregs);
+static DEVICE_ATTR(dispregs, 0444, mb862xxfb_show_dispregs, NULL);
 
 static irqreturn_t mb862xx_intr(int irq, void *dev_id)
 {
@@ -685,15 +684,17 @@ static int of_platform_mb862xx_probe(struct platform_device *ofdev)
 	}
 
 	info = framebuffer_alloc(sizeof(struct mb862xxfb_par), dev);
-	if (!info)
+	if (info == NULL) {
+		dev_err(dev, "cannot allocate framebuffer\n");
 		return -ENOMEM;
+	}
 
 	par = info->par;
 	par->info = info;
 	par->dev = dev;
 
 	par->irq = irq_of_parse_and_map(np, 0);
-	if (!par->irq) {
+	if (par->irq == NO_IRQ) {
 		dev_err(dev, "failed to map irq\n");
 		ret = -ENODEV;
 		goto fbrel;
@@ -1000,10 +1001,6 @@ static int mb862xx_pci_probe(struct pci_dev *pdev,
 	struct device *dev = &pdev->dev;
 	int ret;
 
-	ret = aperture_remove_conflicting_pci_devices(pdev, "mb862xxfb");
-	if (ret)
-		return ret;
-
 	ret = pci_enable_device(pdev);
 	if (ret < 0) {
 		dev_err(dev, "Cannot enable PCI device\n");
@@ -1012,6 +1009,7 @@ static int mb862xx_pci_probe(struct pci_dev *pdev,
 
 	info = framebuffer_alloc(sizeof(struct mb862xxfb_par), dev);
 	if (!info) {
+		dev_err(dev, "framebuffer alloc failed\n");
 		ret = -ENOMEM;
 		goto dis_dev;
 	}

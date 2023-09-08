@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  *  The NFC Controller Interface is the communication protocol between an
  *  NFC Controller (NFCC) and a Device Host (DH).
@@ -7,6 +6,19 @@
  *  Copyright (C) 2014 Marvell International Ltd.
  *
  *  Written by Ilan Elias <ilane@ti.com>
+ *
+ *  This program is free software; you can redistribute it and/or modify
+ *  it under the terms of the GNU General Public License version 2
+ *  as published by the Free Software Foundation
+ *
+ *  This program is distributed in the hope that it will be useful,
+ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *  GNU General Public License for more details.
+ *
+ *  You should have received a copy of the GNU General Public License
+ *  along with this program; if not, see <http://www.gnu.org/licenses/>.
+ *
  */
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": %s: " fmt, __func__
@@ -26,7 +38,7 @@
 void nci_data_exchange_complete(struct nci_dev *ndev, struct sk_buff *skb,
 				__u8 conn_id, int err)
 {
-	const struct nci_conn_info *conn_info;
+	struct nci_conn_info    *conn_info;
 	data_exchange_cb_t cb;
 	void *cb_context;
 
@@ -80,7 +92,7 @@ static inline void nci_push_data_hdr(struct nci_dev *ndev,
 
 int nci_conn_max_data_pkt_payload_size(struct nci_dev *ndev, __u8 conn_id)
 {
-	const struct nci_conn_info *conn_info;
+	struct nci_conn_info *conn_info;
 
 	conn_info = nci_get_conn_info_by_conn_id(ndev, conn_id);
 	if (!conn_info)
@@ -93,9 +105,9 @@ EXPORT_SYMBOL(nci_conn_max_data_pkt_payload_size);
 static int nci_queue_tx_data_frags(struct nci_dev *ndev,
 				   __u8 conn_id,
 				   struct sk_buff *skb) {
-	const struct nci_conn_info *conn_info;
+	struct nci_conn_info    *conn_info;
 	int total_len = skb->len;
-	const unsigned char *data = skb->data;
+	unsigned char *data = skb->data;
 	unsigned long flags;
 	struct sk_buff_head frags_q;
 	struct sk_buff *skb_frag;
@@ -107,7 +119,7 @@ static int nci_queue_tx_data_frags(struct nci_dev *ndev,
 	conn_info = nci_get_conn_info_by_conn_id(ndev, conn_id);
 	if (!conn_info) {
 		rc = -EPROTO;
-		goto exit;
+		goto free_exit;
 	}
 
 	__skb_queue_head_init(&frags_q);
@@ -118,7 +130,7 @@ static int nci_queue_tx_data_frags(struct nci_dev *ndev,
 
 		skb_frag = nci_skb_alloc(ndev,
 					 (NCI_DATA_HDR_SIZE + frag_len),
-					 GFP_ATOMIC);
+					 GFP_KERNEL);
 		if (skb_frag == NULL) {
 			rc = -ENOMEM;
 			goto free_exit;
@@ -166,7 +178,7 @@ exit:
 /* Send NCI data */
 int nci_send_data(struct nci_dev *ndev, __u8 conn_id, struct sk_buff *skb)
 {
-	const struct nci_conn_info *conn_info;
+	struct nci_conn_info    *conn_info;
 	int rc = 0;
 
 	pr_debug("conn_id 0x%x, plen %d\n", conn_id, skb->len);
@@ -269,7 +281,7 @@ void nci_rx_data_packet(struct nci_dev *ndev, struct sk_buff *skb)
 	__u8 pbf = nci_pbf(skb->data);
 	__u8 status = 0;
 	__u8 conn_id = nci_conn_id(skb->data);
-	const struct nci_conn_info *conn_info;
+	struct nci_conn_info    *conn_info;
 
 	pr_debug("len %d\n", skb->len);
 
@@ -279,10 +291,8 @@ void nci_rx_data_packet(struct nci_dev *ndev, struct sk_buff *skb)
 		 nci_plen(skb->data));
 
 	conn_info = nci_get_conn_info_by_conn_id(ndev, nci_conn_id(skb->data));
-	if (!conn_info) {
-		kfree_skb(skb);
+	if (!conn_info)
 		return;
-	}
 
 	/* strip the nci data header */
 	skb_pull(skb, NCI_DATA_HDR_SIZE);

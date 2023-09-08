@@ -1,6 +1,9 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright 2011 Paul Mackerras, IBM Corp. <paulus@au1.ibm.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License, version 2, as
+ * published by the Free Software Foundation.
  */
 
 #include <linux/cpu.h>
@@ -16,10 +19,9 @@
 #include <linux/bitops.h>
 
 #include <asm/cputable.h>
-#include <asm/interrupt.h>
 #include <asm/kvm_ppc.h>
 #include <asm/kvm_book3s.h>
-#include <asm/machdep.h>
+#include <asm/archrandom.h>
 #include <asm/xics.h>
 #include <asm/xive.h>
 #include <asm/dbell.h>
@@ -32,6 +34,21 @@
 
 #include "book3s_xics.h"
 #include "book3s_xive.h"
+
+/*
+ * The XIVE module will populate these when it loads
+ */
+unsigned long (*__xive_vm_h_xirr)(struct kvm_vcpu *vcpu);
+unsigned long (*__xive_vm_h_ipoll)(struct kvm_vcpu *vcpu, unsigned long server);
+int (*__xive_vm_h_ipi)(struct kvm_vcpu *vcpu, unsigned long server,
+		       unsigned long mfrr);
+int (*__xive_vm_h_cppr)(struct kvm_vcpu *vcpu, unsigned long cppr);
+int (*__xive_vm_h_eoi)(struct kvm_vcpu *vcpu, unsigned long xirr);
+EXPORT_SYMBOL_GPL(__xive_vm_h_xirr);
+EXPORT_SYMBOL_GPL(__xive_vm_h_ipoll);
+EXPORT_SYMBOL_GPL(__xive_vm_h_ipi);
+EXPORT_SYMBOL_GPL(__xive_vm_h_cppr);
+EXPORT_SYMBOL_GPL(__xive_vm_h_eoi);
 
 /*
  * Hash page table alignment on newer cpus(CPU_FTR_ARCH_206)
@@ -59,7 +76,7 @@ struct page *kvm_alloc_hpt_cma(unsigned long nr_pages)
 	VM_BUG_ON(order_base_2(nr_pages) < KVM_CMA_CHUNK_ORDER - PAGE_SHIFT);
 
 	return cma_alloc(kvm_cma, nr_pages, order_base_2(HPT_ALIGN_PAGES),
-			 false);
+			 GFP_KERNEL);
 }
 EXPORT_SYMBOL_GPL(kvm_alloc_hpt_cma);
 
@@ -80,17 +97,25 @@ EXPORT_SYMBOL_GPL(kvm_free_hpt_cma);
 void __init kvm_cma_reserve(void)
 {
 	unsigned long align_size;
-	phys_addr_t selected_size;
+	struct memblock_region *reg;
+	phys_addr_t selected_size = 0;
 
 	/*
 	 * We need CMA reservation only when we are in HV mode
 	 */
 	if (!cpu_has_feature(CPU_FTR_HVMODE))
 		return;
+	/*
+	 * We cannot use memblock_phys_mem_size() here, because
+	 * memblock_analyze() has not been called yet.
+	 */
+	for_each_memblock(memory, reg)
+		selected_size += memblock_region_memory_end_pfn(reg) -
+				 memblock_region_memory_base_pfn(reg);
 
-	selected_size = PAGE_ALIGN(memblock_phys_mem_size() * kvm_cma_resv_ratio / 100);
+	selected_size = (selected_size * kvm_cma_resv_ratio / 100) << PAGE_SHIFT;
 	if (selected_size) {
-		pr_info("%s: reserving %ld MiB for global area\n", __func__,
+		pr_debug("%s: reserving %ld MiB for global area\n", __func__,
 			 (unsigned long)selected_size / SZ_1M);
 		align_size = HPT_ALIGN_PAGES << PAGE_SHIFT;
 		cma_declare_contiguous(0, selected_size, 0, align_size,
@@ -136,23 +161,23 @@ long int kvmppc_rm_h_confer(struct kvm_vcpu *vcpu, int target,
  * exist in the system. We use a counter of VMs to track this.
  *
  * One of the operations we need to block is onlining of secondaries, so we
- * protect hv_vm_count with cpus_read_lock/unlock().
+ * protect hv_vm_count with get/put_online_cpus().
  */
 static atomic_t hv_vm_count;
 
 void kvm_hv_vm_activated(void)
 {
-	cpus_read_lock();
+	get_online_cpus();
 	atomic_inc(&hv_vm_count);
-	cpus_read_unlock();
+	put_online_cpus();
 }
 EXPORT_SYMBOL_GPL(kvm_hv_vm_activated);
 
 void kvm_hv_vm_deactivated(void)
 {
-	cpus_read_lock();
+	get_online_cpus();
 	atomic_dec(&hv_vm_count);
-	cpus_read_unlock();
+	put_online_cpus();
 }
 EXPORT_SYMBOL_GPL(kvm_hv_vm_deactivated);
 
@@ -176,14 +201,20 @@ EXPORT_SYMBOL_GPL(kvmppc_hcall_impl_hv_realmode);
 
 int kvmppc_hwrng_present(void)
 {
-	return ppc_md.get_random_seed != NULL;
+	return powernv_hwrng_present();
 }
 EXPORT_SYMBOL_GPL(kvmppc_hwrng_present);
 
-long kvmppc_rm_h_random(struct kvm_vcpu *vcpu)
+long kvmppc_h_random(struct kvm_vcpu *vcpu)
 {
-	if (ppc_md.get_random_seed &&
-	    ppc_md.get_random_seed(&vcpu->arch.regs.gpr[4]))
+	int r;
+
+	/* Only need to do the expensive mfmsr() on radix */
+	if (kvm_is_radix(vcpu->kvm) && (mfmsr() & MSR_IR))
+		r = powernv_get_random_long(&vcpu->arch.gpr[4]);
+	else
+		r = powernv_get_random_real_mode(&vcpu->arch.gpr[4]);
+	if (r)
 		return H_SUCCESS;
 
 	return H_HARDWARE;
@@ -216,7 +247,7 @@ void kvmhv_rm_send_ipi(int cpu)
 	}
 
 	/* We should never reach this */
-	if (WARN_ON_ONCE(xics_on_xive()))
+	if (WARN_ON_ONCE(xive_enabled()))
 	    return;
 
 	/* Else poke the target with an IPI */
@@ -247,7 +278,8 @@ void kvmhv_commence_exit(int trap)
 	struct kvmppc_vcore *vc = local_paca->kvm_hstate.kvm_vcore;
 	int ptid = local_paca->kvm_hstate.ptid;
 	struct kvm_split_mode *sip = local_paca->kvm_hstate.kvm_split_mode;
-	int me, ee, i;
+	int me, ee, i, t;
+	int cpu0;
 
 	/* Set our bit in the threads-exiting-guest map in the 0xff00
 	   bits of vcore->entry_exit_map */
@@ -288,6 +320,22 @@ void kvmhv_commence_exit(int trap)
 				 ee | VCORE_EXIT_REQ) != ee);
 		if ((ee >> 8) == 0)
 			kvmhv_interrupt_vcore(vc, ee);
+	}
+
+	/*
+	 * On POWER9 when running a HPT guest on a radix host (sip != NULL),
+	 * we have to interrupt inactive CPU threads to get them to
+	 * restore the host LPCR value.
+	 */
+	if (sip->lpcr_req) {
+		if (cmpxchg(&sip->do_restore, 0, 1) == 0) {
+			vc = local_paca->kvm_hstate.kvm_vcore;
+			cpu0 = vc->pcpu + ptid - local_paca->kvm_hstate.tid;
+			for (t = 1; t < threads_per_core; ++t) {
+				if (sip->napped[t])
+					kvmhv_rm_send_ipi(cpu0 + t);
+			}
+		}
 	}
 }
 
@@ -490,135 +538,181 @@ static long kvmppc_read_one_intr(bool *again)
 	return kvmppc_check_passthru(xisr, xirr, again);
 }
 
-static void kvmppc_end_cede(struct kvm_vcpu *vcpu)
+#ifdef CONFIG_KVM_XICS
+static inline bool is_rm(void)
 {
-	vcpu->arch.ceded = 0;
-	if (vcpu->arch.timer_running) {
-		hrtimer_try_to_cancel(&vcpu->arch.dec_timer);
-		vcpu->arch.timer_running = 0;
-	}
+	return !(mfmsr() & MSR_DR);
 }
 
-void kvmppc_set_msr_hv(struct kvm_vcpu *vcpu, u64 msr)
+unsigned long kvmppc_rm_h_xirr(struct kvm_vcpu *vcpu)
 {
-	/* Guest must always run with ME enabled, HV disabled. */
-	msr = (msr | MSR_ME) & ~MSR_HV;
-
-	/*
-	 * Check for illegal transactional state bit combination
-	 * and if we find it, force the TS field to a safe state.
-	 */
-	if ((msr & MSR_TS_MASK) == MSR_TS_MASK)
-		msr &= ~MSR_TS_MASK;
-	vcpu->arch.shregs.msr = msr;
-	kvmppc_end_cede(vcpu);
-}
-EXPORT_SYMBOL_GPL(kvmppc_set_msr_hv);
-
-static void inject_interrupt(struct kvm_vcpu *vcpu, int vec, u64 srr1_flags)
-{
-	unsigned long msr, pc, new_msr, new_pc;
-
-	msr = kvmppc_get_msr(vcpu);
-	pc = kvmppc_get_pc(vcpu);
-	new_msr = vcpu->arch.intr_msr;
-	new_pc = vec;
-
-	/* If transactional, change to suspend mode on IRQ delivery */
-	if (MSR_TM_TRANSACTIONAL(msr))
-		new_msr |= MSR_TS_S;
-	else
-		new_msr |= msr & MSR_TS_MASK;
-
-	/*
-	 * Perform MSR and PC adjustment for LPCR[AIL]=3 if it is set and
-	 * applicable. AIL=2 is not supported.
-	 *
-	 * AIL does not apply to SRESET, MCE, or HMI (which is never
-	 * delivered to the guest), and does not apply if IR=0 or DR=0.
-	 */
-	if (vec != BOOK3S_INTERRUPT_SYSTEM_RESET &&
-	    vec != BOOK3S_INTERRUPT_MACHINE_CHECK &&
-	    (vcpu->arch.vcore->lpcr & LPCR_AIL) == LPCR_AIL_3 &&
-	    (msr & (MSR_IR|MSR_DR)) == (MSR_IR|MSR_DR) ) {
-		new_msr |= MSR_IR | MSR_DR;
-		new_pc += 0xC000000000004000ULL;
-	}
-
-	kvmppc_set_srr0(vcpu, pc);
-	kvmppc_set_srr1(vcpu, (msr & SRR1_MSR_BITS) | srr1_flags);
-	kvmppc_set_pc(vcpu, new_pc);
-	vcpu->arch.shregs.msr = new_msr;
+	if (!kvmppc_xics_enabled(vcpu))
+		return H_TOO_HARD;
+	if (xive_enabled()) {
+		if (is_rm())
+			return xive_rm_h_xirr(vcpu);
+		if (unlikely(!__xive_vm_h_xirr))
+			return H_NOT_AVAILABLE;
+		return __xive_vm_h_xirr(vcpu);
+	} else
+		return xics_rm_h_xirr(vcpu);
 }
 
-void kvmppc_inject_interrupt_hv(struct kvm_vcpu *vcpu, int vec, u64 srr1_flags)
+unsigned long kvmppc_rm_h_xirr_x(struct kvm_vcpu *vcpu)
 {
-	inject_interrupt(vcpu, vec, srr1_flags);
-	kvmppc_end_cede(vcpu);
+	if (!kvmppc_xics_enabled(vcpu))
+		return H_TOO_HARD;
+	vcpu->arch.gpr[5] = get_tb();
+	if (xive_enabled()) {
+		if (is_rm())
+			return xive_rm_h_xirr(vcpu);
+		if (unlikely(!__xive_vm_h_xirr))
+			return H_NOT_AVAILABLE;
+		return __xive_vm_h_xirr(vcpu);
+	} else
+		return xics_rm_h_xirr(vcpu);
 }
-EXPORT_SYMBOL_GPL(kvmppc_inject_interrupt_hv);
+
+unsigned long kvmppc_rm_h_ipoll(struct kvm_vcpu *vcpu, unsigned long server)
+{
+	if (!kvmppc_xics_enabled(vcpu))
+		return H_TOO_HARD;
+	if (xive_enabled()) {
+		if (is_rm())
+			return xive_rm_h_ipoll(vcpu, server);
+		if (unlikely(!__xive_vm_h_ipoll))
+			return H_NOT_AVAILABLE;
+		return __xive_vm_h_ipoll(vcpu, server);
+	} else
+		return H_TOO_HARD;
+}
+
+int kvmppc_rm_h_ipi(struct kvm_vcpu *vcpu, unsigned long server,
+		    unsigned long mfrr)
+{
+	if (!kvmppc_xics_enabled(vcpu))
+		return H_TOO_HARD;
+	if (xive_enabled()) {
+		if (is_rm())
+			return xive_rm_h_ipi(vcpu, server, mfrr);
+		if (unlikely(!__xive_vm_h_ipi))
+			return H_NOT_AVAILABLE;
+		return __xive_vm_h_ipi(vcpu, server, mfrr);
+	} else
+		return xics_rm_h_ipi(vcpu, server, mfrr);
+}
+
+int kvmppc_rm_h_cppr(struct kvm_vcpu *vcpu, unsigned long cppr)
+{
+	if (!kvmppc_xics_enabled(vcpu))
+		return H_TOO_HARD;
+	if (xive_enabled()) {
+		if (is_rm())
+			return xive_rm_h_cppr(vcpu, cppr);
+		if (unlikely(!__xive_vm_h_cppr))
+			return H_NOT_AVAILABLE;
+		return __xive_vm_h_cppr(vcpu, cppr);
+	} else
+		return xics_rm_h_cppr(vcpu, cppr);
+}
+
+int kvmppc_rm_h_eoi(struct kvm_vcpu *vcpu, unsigned long xirr)
+{
+	if (!kvmppc_xics_enabled(vcpu))
+		return H_TOO_HARD;
+	if (xive_enabled()) {
+		if (is_rm())
+			return xive_rm_h_eoi(vcpu, xirr);
+		if (unlikely(!__xive_vm_h_eoi))
+			return H_NOT_AVAILABLE;
+		return __xive_vm_h_eoi(vcpu, xirr);
+	} else
+		return xics_rm_h_eoi(vcpu, xirr);
+}
+#endif /* CONFIG_KVM_XICS */
+
+void kvmppc_bad_interrupt(struct pt_regs *regs)
+{
+	die("Bad interrupt in KVM entry/exit code", regs, SIGABRT);
+	panic("Bad KVM trap");
+}
 
 /*
- * Is there a PRIV_DOORBELL pending for the guest (on POWER9)?
- * Can we inject a Decrementer or a External interrupt?
+ * Functions used to switch LPCR HR and UPRT bits on all threads
+ * when entering and exiting HPT guests on a radix host.
  */
-void kvmppc_guest_entry_inject_int(struct kvm_vcpu *vcpu)
+
+#define PHASE_REALMODE		1	/* in real mode */
+#define PHASE_SET_LPCR		2	/* have set LPCR */
+#define PHASE_OUT_OF_GUEST	4	/* have finished executing in guest */
+#define PHASE_RESET_LPCR	8	/* have reset LPCR to host value */
+
+#define ALL(p)		(((p) << 24) | ((p) << 16) | ((p) << 8) | (p))
+
+static void wait_for_sync(struct kvm_split_mode *sip, int phase)
 {
-	int ext;
-	unsigned long lpcr;
+	int thr = local_paca->kvm_hstate.tid;
 
-	WARN_ON_ONCE(cpu_has_feature(CPU_FTR_ARCH_300));
-
-	/* Insert EXTERNAL bit into LPCR at the MER bit position */
-	ext = (vcpu->arch.pending_exceptions >> BOOK3S_IRQPRIO_EXTERNAL) & 1;
-	lpcr = mfspr(SPRN_LPCR);
-	lpcr |= ext << LPCR_MER_SH;
-	mtspr(SPRN_LPCR, lpcr);
-	isync();
-
-	if (vcpu->arch.shregs.msr & MSR_EE) {
-		if (ext) {
-			inject_interrupt(vcpu, BOOK3S_INTERRUPT_EXTERNAL, 0);
-		} else {
-			long int dec = mfspr(SPRN_DEC);
-			if (!(lpcr & LPCR_LD))
-				dec = (int) dec;
-			if (dec < 0)
-				inject_interrupt(vcpu,
-					BOOK3S_INTERRUPT_DECREMENTER, 0);
-		}
+	sip->lpcr_sync.phase[thr] |= phase;
+	phase = ALL(phase);
+	while ((sip->lpcr_sync.allphases & phase) != phase) {
+		HMT_low();
+		barrier();
 	}
-
-	if (vcpu->arch.doorbell_request) {
-		mtspr(SPRN_DPDES, 1);
-		vcpu->arch.vcore->dpdes = 1;
-		smp_wmb();
-		vcpu->arch.doorbell_request = 0;
-	}
+	HMT_medium();
 }
 
-static void flush_guest_tlb(struct kvm *kvm)
+void kvmhv_p9_set_lpcr(struct kvm_split_mode *sip)
 {
 	unsigned long rb, set;
 
-	rb = PPC_BIT(52);	/* IS = 2 */
-	for (set = 0; set < kvm->arch.tlb_sets; ++set) {
-		/* R=0 PRS=0 RIC=0 */
-		asm volatile(PPC_TLBIEL(%0, %4, %3, %2, %1)
-			     : : "r" (rb), "i" (0), "i" (0), "i" (0),
-			       "r" (0) : "memory");
-		rb += PPC_BIT(51);	/* increment set number */
+	/* wait for every other thread to get to real mode */
+	wait_for_sync(sip, PHASE_REALMODE);
+
+	/* Set LPCR and LPIDR */
+	mtspr(SPRN_LPCR, sip->lpcr_req);
+	mtspr(SPRN_LPID, sip->lpidr_req);
+	isync();
+
+	/* Invalidate the TLB on thread 0 */
+	if (local_paca->kvm_hstate.tid == 0) {
+		sip->do_set = 0;
+		asm volatile("ptesync" : : : "memory");
+		for (set = 0; set < POWER9_TLB_SETS_RADIX; ++set) {
+			rb = TLBIEL_INVAL_SET_LPID +
+				(set << TLBIEL_INVAL_SET_SHIFT);
+			asm volatile(PPC_TLBIEL(%0, %1, 0, 0, 0) : :
+				     "r" (rb), "r" (0));
+		}
+		asm volatile("ptesync" : : : "memory");
 	}
-	asm volatile("ptesync": : :"memory");
+
+	/* indicate that we have done so and wait for others */
+	wait_for_sync(sip, PHASE_SET_LPCR);
+	/* order read of sip->lpcr_sync.allphases vs. sip->do_set */
+	smp_rmb();
 }
 
-void kvmppc_check_need_tlb_flush(struct kvm *kvm, int pcpu)
+/*
+ * Called when a thread that has been in the guest needs
+ * to reload the host LPCR value - but only on POWER9 when
+ * running a HPT guest on a radix host.
+ */
+void kvmhv_p9_restore_lpcr(struct kvm_split_mode *sip)
 {
-	if (cpumask_test_cpu(pcpu, &kvm->arch.need_tlb_flush)) {
-		flush_guest_tlb(kvm);
+	/* we're out of the guest... */
+	wait_for_sync(sip, PHASE_OUT_OF_GUEST);
 
-		/* Clear the bit after the TLB flush */
-		cpumask_clear_cpu(pcpu, &kvm->arch.need_tlb_flush);
+	mtspr(SPRN_LPID, 0);
+	mtspr(SPRN_LPCR, sip->host_lpcr);
+	isync();
+
+	if (local_paca->kvm_hstate.tid == 0) {
+		sip->do_restore = 0;
+		smp_wmb();	/* order store of do_restore vs. phase */
 	}
+
+	wait_for_sync(sip, PHASE_RESET_LPCR);
+	smp_mb();
+	local_paca->kvm_hstate.kvm_split_mode = NULL;
 }
-EXPORT_SYMBOL_GPL(kvmppc_check_need_tlb_flush);

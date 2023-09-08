@@ -1,14 +1,18 @@
-/* SPDX-License-Identifier: GPL-2.0 */
 /*
  * Driver for the MMC / SD / SDIO cell found in:
  *
  * TC6393XB TC6391XB TC6387XB T7L66XB ASIC3
  *
- * Copyright (C) 2015-19 Renesas Electronics Corporation
- * Copyright (C) 2016-19 Sang Engineering, Wolfram Sang
+ * Copyright (C) 2015-17 Renesas Electronics Corporation
+ * Copyright (C) 2016-17 Sang Engineering, Wolfram Sang
  * Copyright (C) 2016-17 Horms Solutions, Simon Horman
  * Copyright (C) 2007 Ian Molton
  * Copyright (C) 2004 Ian Molton
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ *
  */
 
 #ifndef TMIO_MMC_H
@@ -42,7 +46,9 @@
 #define CTL_DMA_ENABLE 0xd8
 #define CTL_RESET_SD 0xe0
 #define CTL_VERSION 0xe2
-#define CTL_SDIF_MODE 0xe6 /* only known on R-Car 2+ */
+#define CTL_SDIO_REGS 0x100
+#define CTL_CLK_AND_WAIT_CTL 0x138
+#define CTL_RESET_SDIO 0x1e0
 
 /* Definitions for values the CTL_STOP_INTERNAL_ACTION register can take */
 #define TMIO_STOP_STP		BIT(0)
@@ -70,7 +76,6 @@
 #define TMIO_STAT_DAT0		BIT(23)	/* only known on R-Car so far */
 #define TMIO_STAT_RXRDY         BIT(24)
 #define TMIO_STAT_TXRQ          BIT(25)
-#define TMIO_STAT_ALWAYS_SET_27	BIT(27) /* only known on R-Car 2+ so far */
 #define TMIO_STAT_ILL_FUNC      BIT(29) /* only when !TMIO_MMC_HAS_IDLE_WAIT */
 #define TMIO_STAT_SCLKDIVEN     BIT(29) /* only when TMIO_MMC_HAS_IDLE_WAIT */
 #define TMIO_STAT_CMD_BUSY      BIT(30)
@@ -81,11 +86,7 @@
 #define	CLK_CTL_SCLKEN		BIT(8)
 
 /* Definitions for values the CTL_SD_MEM_CARD_OPT register can take */
-#define CARD_OPT_TOP_MASK	0xf0
-#define CARD_OPT_TOP_SHIFT	4
-#define CARD_OPT_EXTOP		BIT(9) /* first appeared on R-Car Gen3 SDHI */
 #define CARD_OPT_WIDTH8		BIT(13)
-#define CARD_OPT_ALWAYS1	BIT(14)
 #define CARD_OPT_WIDTH		BIT(15)
 
 /* Definitions for values the CTL_SDIO_STATUS register can take */
@@ -99,20 +100,14 @@
 /* Definitions for values the CTL_DMA_ENABLE register can take */
 #define DMA_ENABLE_DMASDRW	BIT(1)
 
-/* Definitions for values the CTL_SDIF_MODE register can take */
-#define SDIF_MODE_HS400		BIT(0) /* only known on R-Car 2+ */
-
 /* Define some IRQ masks */
 /* This is the mask used at reset by the chip */
 #define TMIO_MASK_ALL           0x837f031d
-#define TMIO_MASK_ALL_RCAR2	0x8b7f031d
 #define TMIO_MASK_READOP  (TMIO_STAT_RXRDY | TMIO_STAT_DATAEND)
 #define TMIO_MASK_WRITEOP (TMIO_STAT_TXRQ | TMIO_STAT_DATAEND)
 #define TMIO_MASK_CMD     (TMIO_STAT_CMDRESPEND | TMIO_STAT_CMDTIMEOUT | \
 		TMIO_STAT_CARD_REMOVE | TMIO_STAT_CARD_INSERT)
 #define TMIO_MASK_IRQ     (TMIO_MASK_READOP | TMIO_MASK_WRITEOP | TMIO_MASK_CMD)
-
-#define TMIO_MAX_BLK_SIZE 512
 
 struct tmio_mmc_data;
 struct tmio_mmc_host;
@@ -125,9 +120,6 @@ struct tmio_mmc_dma_ops {
 	void (*release)(struct tmio_mmc_host *host);
 	void (*abort)(struct tmio_mmc_host *host);
 	void (*dataend)(struct tmio_mmc_host *host);
-
-	/* optional */
-	void (*end)(struct tmio_mmc_host *host);	/* held host->lock */
 };
 
 struct tmio_mmc_host {
@@ -140,6 +132,7 @@ struct tmio_mmc_host {
 
 	/* Callbacks for clock / power control */
 	void (*set_pwr)(struct platform_device *host, int state);
+	void (*set_clk_div)(struct platform_device *host, int state);
 
 	/* pio related stuff */
 	struct scatterlist      *sg_ptr;
@@ -152,7 +145,7 @@ struct tmio_mmc_host {
 	struct tmio_mmc_data *pdata;
 
 	/* DMA support */
-	bool			dma_on;
+	bool			force_pio;
 	struct dma_chan		*chan_rx;
 	struct dma_chan		*chan_tx;
 	struct tasklet_struct	dma_issue;
@@ -167,8 +160,6 @@ struct tmio_mmc_host {
 	u32			sdcard_irq_mask;
 	u32			sdio_irq_mask;
 	unsigned int		clk_cache;
-	u32			sdcard_irq_setbit_mask;
-	u32			sdcard_irq_mask_all;
 
 	spinlock_t		lock;		/* protect host private data */
 	unsigned long		last_req_ts;
@@ -178,17 +169,28 @@ struct tmio_mmc_host {
 
 	/* Mandatory callback */
 	int (*clk_enable)(struct tmio_mmc_host *host);
-	void (*set_clock)(struct tmio_mmc_host *host, unsigned int clock);
 
 	/* Optional callbacks */
+	unsigned int (*clk_update)(struct tmio_mmc_host *host,
+				   unsigned int new_clock);
 	void (*clk_disable)(struct tmio_mmc_host *host);
 	int (*multi_io_quirk)(struct mmc_card *card,
 			      unsigned int direction, int blk_size);
 	int (*write16_hook)(struct tmio_mmc_host *host, int addr);
-	void (*reset)(struct tmio_mmc_host *host, bool preserve);
-	bool (*check_retune)(struct tmio_mmc_host *host, struct mmc_request *mrq);
-	void (*fixup_request)(struct tmio_mmc_host *host, struct mmc_request *mrq);
-	unsigned int (*get_timeout_cycles)(struct tmio_mmc_host *host);
+	void (*hw_reset)(struct tmio_mmc_host *host);
+	void (*prepare_tuning)(struct tmio_mmc_host *host, unsigned long tap);
+	bool (*check_scc_error)(struct tmio_mmc_host *host);
+
+	/*
+	 * Mandatory callback for tuning to occur which is optional for SDR50
+	 * and mandatory for SDR104.
+	 */
+	unsigned int (*init_tuning)(struct tmio_mmc_host *host);
+	int (*select_tuning)(struct tmio_mmc_host *host);
+
+	/* Tuning values: 1 for success, 0 for failure */
+	DECLARE_BITMAP(taps, BITS_PER_BYTE * sizeof(long));
+	unsigned int tap_num;
 
 	const struct tmio_mmc_dma_ops *dma_ops;
 };
@@ -267,16 +269,8 @@ static inline void sd_ctrl_write16_rep(struct tmio_mmc_host *host, int addr,
 static inline void sd_ctrl_write32_as_16_and_16(struct tmio_mmc_host *host,
 						int addr, u32 val)
 {
-	if (addr == CTL_IRQ_MASK || addr == CTL_STATUS)
-		val |= host->sdcard_irq_setbit_mask;
-
 	iowrite16(val & 0xffff, host->ctl + (addr << host->bus_shift));
 	iowrite16(val >> 16, host->ctl + ((addr + 2) << host->bus_shift));
-}
-
-static inline void sd_ctrl_write32(struct tmio_mmc_host *host, int addr, u32 val)
-{
-	iowrite32(val, host->ctl + (addr << host->bus_shift));
 }
 
 static inline void sd_ctrl_write32_rep(struct tmio_mmc_host *host, int addr,

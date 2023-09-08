@@ -79,15 +79,27 @@ static inline unsigned long find_zero(unsigned long mask)
  */
 static inline unsigned long load_unaligned_zeropad(const void *addr)
 {
-	unsigned long ret;
+	unsigned long ret, dummy;
 
-	asm volatile(
-		"1:	mov %[mem], %[ret]\n"
+	asm(
+		"1:\tmov %2,%0\n"
 		"2:\n"
-		_ASM_EXTABLE_TYPE(1b, 2b, EX_TYPE_ZEROPAD)
-		: [ret] "=r" (ret)
-		: [mem] "m" (*(unsigned long *)addr));
-
+		".section .fixup,\"ax\"\n"
+		"3:\t"
+		"lea %2,%1\n\t"
+		"and %3,%1\n\t"
+		"mov (%1),%0\n\t"
+		"leal %2,%%ecx\n\t"
+		"andl %4,%%ecx\n\t"
+		"shll $3,%%ecx\n\t"
+		"shr %%cl,%0\n\t"
+		"jmp 2b\n"
+		".previous\n"
+		_ASM_EXTABLE(1b, 3b)
+		:"=&r" (ret),"=&c" (dummy)
+		:"m" (*(unsigned long *)addr),
+		 "i" (-sizeof(unsigned long)),
+		 "i" (sizeof(unsigned long)-1));
 	return ret;
 }
 

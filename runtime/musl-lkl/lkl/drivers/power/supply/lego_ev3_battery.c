@@ -39,7 +39,7 @@ static int lego_ev3_battery_get_property(struct power_supply *psy,
 					 union power_supply_propval *val)
 {
 	struct lego_ev3_battery *batt = power_supply_get_drvdata(psy);
-	int ret, val2;
+	int val2;
 
 	switch (psp) {
 	case POWER_SUPPLY_PROP_TECHNOLOGY:
@@ -47,18 +47,11 @@ static int lego_ev3_battery_get_property(struct power_supply *psy,
 		break;
 	case POWER_SUPPLY_PROP_VOLTAGE_NOW:
 		/* battery voltage is iio channel * 2 + Vce of transistor */
-		ret = iio_read_channel_processed(batt->iio_v, &val->intval);
-		if (ret)
-			return ret;
-
+		iio_read_channel_processed(batt->iio_v, &val->intval);
 		val->intval *= 2000;
-		val->intval += 50000;
-
+		val->intval += 200000;
 		/* plus adjust for shunt resistor drop */
-		ret = iio_read_channel_processed(batt->iio_i, &val2);
-		if (ret)
-			return ret;
-
+		iio_read_channel_processed(batt->iio_i, &val2);
 		val2 *= 1000;
 		val2 /= 15;
 		val->intval += val2;
@@ -71,10 +64,7 @@ static int lego_ev3_battery_get_property(struct power_supply *psy,
 		break;
 	case POWER_SUPPLY_PROP_CURRENT_NOW:
 		/* battery current is iio channel / 15 / 0.05 ohms */
-		ret = iio_read_channel_processed(batt->iio_i, &val->intval);
-		if (ret)
-			return ret;
-
+		iio_read_channel_processed(batt->iio_i, &val->intval);
 		val->intval *= 20000;
 		val->intval /= 15;
 		break;
@@ -166,21 +156,27 @@ static int lego_ev3_battery_probe(struct platform_device *pdev)
 
 	batt->iio_v = devm_iio_channel_get(dev, "voltage");
 	err = PTR_ERR_OR_ZERO(batt->iio_v);
-	if (err)
-		return dev_err_probe(dev, err,
-				     "Failed to get voltage iio channel\n");
+	if (err) {
+		if (err != -EPROBE_DEFER)
+			dev_err(dev, "Failed to get voltage iio channel\n");
+		return err;
+	}
 
 	batt->iio_i = devm_iio_channel_get(dev, "current");
 	err = PTR_ERR_OR_ZERO(batt->iio_i);
-	if (err)
-		return dev_err_probe(dev, err,
-				     "Failed to get current iio channel\n");
+	if (err) {
+		if (err != -EPROBE_DEFER)
+			dev_err(dev, "Failed to get current iio channel\n");
+		return err;
+	}
 
 	batt->rechargeable_gpio = devm_gpiod_get(dev, "rechargeable", GPIOD_IN);
 	err = PTR_ERR_OR_ZERO(batt->rechargeable_gpio);
-	if (err)
-		return dev_err_probe(dev, err,
-				     "Failed to get rechargeable gpio\n");
+	if (err) {
+		if (err != -EPROBE_DEFER)
+			dev_err(dev, "Failed to get rechargeable gpio\n");
+		return err;
+	}
 
 	/*
 	 * The rechargeable battery indication switch cannot be changed without

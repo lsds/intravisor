@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * mcp3422.c - driver for the Microchip mcp3421/2/3/4/5/6/7/8 chip family
  *
@@ -6,20 +5,24 @@
  * Author: Angelo Compagnucci <angelo.compagnucci@gmail.com>
  *
  * Datasheet: http://ww1.microchip.com/downloads/en/devicedoc/22088b.pdf
- *            https://ww1.microchip.com/downloads/en/DeviceDoc/22226a.pdf
- *            https://ww1.microchip.com/downloads/en/DeviceDoc/22072b.pdf
+ *            http://ww1.microchip.com/downloads/en/DeviceDoc/22226a.pdf
+ *            http://ww1.microchip.com/downloads/en/DeviceDoc/22072b.pdf
  *
  * This driver exports the value of analog input voltage to sysfs, the
  * voltage unit is nV.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
  */
 
 #include <linux/err.h>
 #include <linux/i2c.h>
 #include <linux/module.h>
-#include <linux/mod_devicetable.h>
 #include <linux/delay.h>
 #include <linux/sysfs.h>
-#include <asm/unaligned.h>
+#include <linux/of.h>
 
 #include <linux/iio/iio.h>
 #include <linux/iio/sysfs.h>
@@ -96,11 +99,15 @@ static int mcp3422_update_config(struct mcp3422 *adc, u8 newconfig)
 {
 	int ret;
 
+	mutex_lock(&adc->lock);
+
 	ret = i2c_master_send(adc->i2c, &newconfig, 1);
 	if (ret > 0) {
 		adc->config = newconfig;
 		ret = 0;
 	}
+
+	mutex_unlock(&adc->lock);
 
 	return ret;
 }
@@ -114,11 +121,11 @@ static int mcp3422_read(struct mcp3422 *adc, int *value, u8 *config)
 
 	if (sample_rate == MCP3422_SRATE_3) {
 		ret = i2c_master_recv(adc->i2c, buf, 4);
-		temp = get_unaligned_be24(&buf[0]);
+		temp = buf[0] << 16 | buf[1] << 8 | buf[2];
 		*config = buf[3];
 	} else {
 		ret = i2c_master_recv(adc->i2c, buf, 3);
-		temp = get_unaligned_be16(&buf[0]);
+		temp = buf[0] << 8 | buf[1];
 		*config = buf[2];
 	}
 
@@ -134,8 +141,6 @@ static int mcp3422_read_channel(struct mcp3422 *adc,
 	u8 config;
 	u8 req_channel = channel->channel;
 
-	mutex_lock(&adc->lock);
-
 	if (req_channel != MCP3422_CHANNEL(adc->config)) {
 		config = adc->config;
 		config &= ~MCP3422_CHANNEL_MASK;
@@ -143,18 +148,12 @@ static int mcp3422_read_channel(struct mcp3422 *adc,
 		config &= ~MCP3422_PGA_MASK;
 		config |= MCP3422_PGA_VALUE(adc->pga[req_channel]);
 		ret = mcp3422_update_config(adc, config);
-		if (ret < 0) {
-			mutex_unlock(&adc->lock);
+		if (ret < 0)
 			return ret;
-		}
 		msleep(mcp3422_read_times[MCP3422_SAMPLE_RATE(adc->config)]);
 	}
 
-	ret = mcp3422_read(adc, value, &config);
-
-	mutex_unlock(&adc->lock);
-
-	return ret;
+	return mcp3422_read(adc, value, &config);
 }
 
 static int mcp3422_read_raw(struct iio_dev *iio,
@@ -351,6 +350,8 @@ static int mcp3422_probe(struct i2c_client *client,
 
 	mutex_init(&adc->lock);
 
+	indio_dev->dev.parent = &client->dev;
+	indio_dev->dev.of_node = client->dev.of_node;
 	indio_dev->name = dev_name(&client->dev);
 	indio_dev->modes = INDIO_DIRECT_MODE;
 	indio_dev->info = &mcp3422_info;
@@ -406,16 +407,18 @@ static const struct i2c_device_id mcp3422_id[] = {
 };
 MODULE_DEVICE_TABLE(i2c, mcp3422_id);
 
+#ifdef CONFIG_OF
 static const struct of_device_id mcp3422_of_match[] = {
 	{ .compatible = "mcp3422" },
 	{ }
 };
 MODULE_DEVICE_TABLE(of, mcp3422_of_match);
+#endif
 
 static struct i2c_driver mcp3422_driver = {
 	.driver = {
 		.name = "mcp3422",
-		.of_match_table = mcp3422_of_match,
+		.of_match_table = of_match_ptr(mcp3422_of_match),
 	},
 	.probe = mcp3422_probe,
 	.id_table = mcp3422_id,

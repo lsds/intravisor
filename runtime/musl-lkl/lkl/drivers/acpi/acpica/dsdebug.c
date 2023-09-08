@@ -3,7 +3,7 @@
  *
  * Module Name: dsdebug - Parser/Interpreter interface - debugging
  *
- * Copyright (C) 2000 - 2022, Intel Corp.
+ * Copyright (C) 2000 - 2018, Intel Corp.
  *
  *****************************************************************************/
 
@@ -100,7 +100,7 @@ acpi_ds_dump_method_stack(acpi_status status,
 
 	/* Ignore control codes, they are not errors */
 
-	if (ACPI_CNTL_EXCEPTION(status)) {
+	if ((status & AE_CODE_MASK) == AE_CODE_CONTROL) {
 		return_VOID;
 	}
 
@@ -162,15 +162,9 @@ acpi_ds_dump_method_stack(acpi_status status,
 				op->common.next = NULL;
 
 #ifdef ACPI_DISASSEMBLER
-				if (walk_state->method_node !=
-				    acpi_gbl_root_node) {
-
-					/* More verbose if not module-level code */
-
-					acpi_os_printf("Failed at ");
-					acpi_dm_disassemble(next_walk_state, op,
-							    ACPI_UINT32_MAX);
-				}
+				acpi_os_printf("Failed at ");
+				acpi_dm_disassemble(next_walk_state, op,
+						    ACPI_UINT32_MAX);
 #endif
 				op->common.next = next;
 			}

@@ -1,9 +1,10 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Driver for ADAU1381/ADAU1781 CODEC
  *
  * Copyright 2014 Analog Devices Inc.
  *  Author: Lars-Peter Clausen <lars@metafoo.de>
+ *
+ * Licensed under the GPL-2.
  */
 
 #include <linux/i2c.h>
@@ -14,12 +15,10 @@
 
 #include "adau1781.h"
 
-static const struct i2c_device_id adau1781_i2c_ids[];
-
-static int adau1781_i2c_probe(struct i2c_client *client)
+static int adau1781_i2c_probe(struct i2c_client *client,
+	const struct i2c_device_id *id)
 {
 	struct regmap_config config;
-	const struct i2c_device_id *id = i2c_match_id(adau1781_i2c_ids, client);
 
 	config = adau1781_regmap_config;
 	config.val_bits = 8;
@@ -30,9 +29,10 @@ static int adau1781_i2c_probe(struct i2c_client *client)
 		id->driver_data, NULL);
 }
 
-static void adau1781_i2c_remove(struct i2c_client *client)
+static int adau1781_i2c_remove(struct i2c_client *client)
 {
 	adau17x1_remove(&client->dev);
+	return 0;
 }
 
 static const struct i2c_device_id adau1781_i2c_ids[] = {
@@ -56,7 +56,7 @@ static struct i2c_driver adau1781_i2c_driver = {
 		.name = "adau1781",
 		.of_match_table = of_match_ptr(adau1781_i2c_dt_ids),
 	},
-	.probe_new = adau1781_i2c_probe,
+	.probe = adau1781_i2c_probe,
 	.remove = adau1781_i2c_remove,
 	.id_table = adau1781_i2c_ids,
 };

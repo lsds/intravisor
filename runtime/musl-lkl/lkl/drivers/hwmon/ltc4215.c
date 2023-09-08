@@ -1,8 +1,11 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Driver for Linear Technology LTC4215 I2C Hot Swap Controller
  *
  * Copyright (C) 2009 Ira W. Snyder <iws@ovro.caltech.edu>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; version 2 of the License.
  *
  * Datasheet:
  * http://www.linear.com/pc/downloadDocument.do?navId=H0,C1,C1003,C1006,C1163,P17572,D12697
@@ -64,7 +67,7 @@ static struct ltc4215_data *ltc4215_update_device(struct device *dev)
 		}
 
 		data->last_updated = jiffies;
-		data->valid = true;
+		data->valid = 1;
 	}
 
 	mutex_unlock(&data->update_lock);
@@ -133,25 +136,28 @@ static unsigned int ltc4215_get_current(struct device *dev)
 	return curr;
 }
 
-static ssize_t ltc4215_voltage_show(struct device *dev,
-				    struct device_attribute *da, char *buf)
+static ssize_t ltc4215_show_voltage(struct device *dev,
+				    struct device_attribute *da,
+				    char *buf)
 {
 	struct sensor_device_attribute *attr = to_sensor_dev_attr(da);
 	const int voltage = ltc4215_get_voltage(dev, attr->index);
 
-	return sysfs_emit(buf, "%d\n", voltage);
+	return snprintf(buf, PAGE_SIZE, "%d\n", voltage);
 }
 
-static ssize_t ltc4215_current_show(struct device *dev,
-				    struct device_attribute *da, char *buf)
+static ssize_t ltc4215_show_current(struct device *dev,
+				    struct device_attribute *da,
+				    char *buf)
 {
 	const unsigned int curr = ltc4215_get_current(dev);
 
-	return sysfs_emit(buf, "%u\n", curr);
+	return snprintf(buf, PAGE_SIZE, "%u\n", curr);
 }
 
-static ssize_t ltc4215_power_show(struct device *dev,
-				  struct device_attribute *da, char *buf)
+static ssize_t ltc4215_show_power(struct device *dev,
+				  struct device_attribute *da,
+				  char *buf)
 {
 	const unsigned int curr = ltc4215_get_current(dev);
 	const int output_voltage = ltc4215_get_voltage(dev, LTC4215_ADIN);
@@ -159,18 +165,19 @@ static ssize_t ltc4215_power_show(struct device *dev,
 	/* current in mA * voltage in mV == power in uW */
 	const unsigned int power = abs(output_voltage * curr);
 
-	return sysfs_emit(buf, "%u\n", power);
+	return snprintf(buf, PAGE_SIZE, "%u\n", power);
 }
 
-static ssize_t ltc4215_alarm_show(struct device *dev,
-				  struct device_attribute *da, char *buf)
+static ssize_t ltc4215_show_alarm(struct device *dev,
+					  struct device_attribute *da,
+					  char *buf)
 {
 	struct sensor_device_attribute *attr = to_sensor_dev_attr(da);
 	struct ltc4215_data *data = ltc4215_update_device(dev);
 	const u8 reg = data->regs[LTC4215_STATUS];
 	const u32 mask = attr->index;
 
-	return sysfs_emit(buf, "%u\n", !!(reg & mask));
+	return snprintf(buf, PAGE_SIZE, "%u\n", !!(reg & mask));
 }
 
 /*
@@ -182,20 +189,26 @@ static ssize_t ltc4215_alarm_show(struct device *dev,
 /* Construct a sensor_device_attribute structure for each register */
 
 /* Current */
-static SENSOR_DEVICE_ATTR_RO(curr1_input, ltc4215_current, 0);
-static SENSOR_DEVICE_ATTR_RO(curr1_max_alarm, ltc4215_alarm, 1 << 2);
+static SENSOR_DEVICE_ATTR(curr1_input, S_IRUGO, ltc4215_show_current, NULL, 0);
+static SENSOR_DEVICE_ATTR(curr1_max_alarm, S_IRUGO, ltc4215_show_alarm, NULL,
+			  1 << 2);
 
 /* Power (virtual) */
-static SENSOR_DEVICE_ATTR_RO(power1_input, ltc4215_power, 0);
+static SENSOR_DEVICE_ATTR(power1_input, S_IRUGO, ltc4215_show_power, NULL, 0);
 
 /* Input Voltage */
-static SENSOR_DEVICE_ATTR_RO(in1_input, ltc4215_voltage, LTC4215_ADIN);
-static SENSOR_DEVICE_ATTR_RO(in1_max_alarm, ltc4215_alarm, 1 << 0);
-static SENSOR_DEVICE_ATTR_RO(in1_min_alarm, ltc4215_alarm, 1 << 1);
+static SENSOR_DEVICE_ATTR(in1_input, S_IRUGO, ltc4215_show_voltage, NULL,
+			  LTC4215_ADIN);
+static SENSOR_DEVICE_ATTR(in1_max_alarm, S_IRUGO, ltc4215_show_alarm, NULL,
+			  1 << 0);
+static SENSOR_DEVICE_ATTR(in1_min_alarm, S_IRUGO, ltc4215_show_alarm, NULL,
+			  1 << 1);
 
 /* Output Voltage */
-static SENSOR_DEVICE_ATTR_RO(in2_input, ltc4215_voltage, LTC4215_SOURCE);
-static SENSOR_DEVICE_ATTR_RO(in2_min_alarm, ltc4215_alarm, 1 << 3);
+static SENSOR_DEVICE_ATTR(in2_input, S_IRUGO, ltc4215_show_voltage, NULL,
+			  LTC4215_SOURCE);
+static SENSOR_DEVICE_ATTR(in2_min_alarm, S_IRUGO, ltc4215_show_alarm, NULL,
+			  1 << 3);
 
 /*
  * Finally, construct an array of pointers to members of the above objects,
@@ -218,7 +231,8 @@ static struct attribute *ltc4215_attrs[] = {
 };
 ATTRIBUTE_GROUPS(ltc4215);
 
-static int ltc4215_probe(struct i2c_client *client)
+static int ltc4215_probe(struct i2c_client *client,
+			 const struct i2c_device_id *id)
 {
 	struct i2c_adapter *adapter = client->adapter;
 	struct device *dev = &client->dev;
@@ -255,7 +269,7 @@ static struct i2c_driver ltc4215_driver = {
 	.driver = {
 		.name	= "ltc4215",
 	},
-	.probe_new	= ltc4215_probe,
+	.probe		= ltc4215_probe,
 	.id_table	= ltc4215_id,
 };
 

@@ -584,14 +584,6 @@ static int tw9910_s_register(struct v4l2_subdev *sd,
 }
 #endif
 
-static void tw9910_set_gpio_value(struct gpio_desc *desc, int value)
-{
-	if (desc) {
-		gpiod_set_value(desc, value);
-		usleep_range(500, 1000);
-	}
-}
-
 static int tw9910_power_on(struct tw9910_priv *priv)
 {
 	struct i2c_client *client = v4l2_get_subdevdata(&priv->subdev);
@@ -603,7 +595,10 @@ static int tw9910_power_on(struct tw9910_priv *priv)
 			return ret;
 	}
 
-	tw9910_set_gpio_value(priv->pdn_gpio, 0);
+	if (priv->pdn_gpio) {
+		gpiod_set_value(priv->pdn_gpio, 0);
+		usleep_range(500, 1000);
+	}
 
 	/*
 	 * FIXME: The reset signal is connected to a shared GPIO on some
@@ -615,14 +610,14 @@ static int tw9910_power_on(struct tw9910_priv *priv)
 					     GPIOD_OUT_LOW);
 	if (IS_ERR(priv->rstb_gpio)) {
 		dev_info(&client->dev, "Unable to get GPIO \"rstb\"");
-		clk_disable_unprepare(priv->clk);
-		tw9910_set_gpio_value(priv->pdn_gpio, 1);
 		return PTR_ERR(priv->rstb_gpio);
 	}
 
 	if (priv->rstb_gpio) {
-		tw9910_set_gpio_value(priv->rstb_gpio, 1);
-		tw9910_set_gpio_value(priv->rstb_gpio, 0);
+		gpiod_set_value(priv->rstb_gpio, 1);
+		usleep_range(500, 1000);
+		gpiod_set_value(priv->rstb_gpio, 0);
+		usleep_range(500, 1000);
 
 		gpiod_put(priv->rstb_gpio);
 	}
@@ -633,7 +628,11 @@ static int tw9910_power_on(struct tw9910_priv *priv)
 static int tw9910_power_off(struct tw9910_priv *priv)
 {
 	clk_disable_unprepare(priv->clk);
-	tw9910_set_gpio_value(priv->pdn_gpio, 1);
+
+	if (priv->pdn_gpio) {
+		gpiod_set_value(priv->pdn_gpio, 1);
+		usleep_range(500, 1000);
+	}
 
 	return 0;
 }
@@ -720,7 +719,7 @@ tw9910_set_fmt_error:
 }
 
 static int tw9910_get_selection(struct v4l2_subdev *sd,
-				struct v4l2_subdev_state *sd_state,
+				struct v4l2_subdev_pad_config *cfg,
 				struct v4l2_subdev_selection *sel)
 {
 	struct i2c_client *client = v4l2_get_subdevdata(sd);
@@ -746,7 +745,7 @@ static int tw9910_get_selection(struct v4l2_subdev *sd,
 }
 
 static int tw9910_get_fmt(struct v4l2_subdev *sd,
-			  struct v4l2_subdev_state *sd_state,
+			  struct v4l2_subdev_pad_config *cfg,
 			  struct v4l2_subdev_format *format)
 {
 	struct v4l2_mbus_framefmt *mf = &format->format;
@@ -797,7 +796,7 @@ static int tw9910_s_fmt(struct v4l2_subdev *sd,
 }
 
 static int tw9910_set_fmt(struct v4l2_subdev *sd,
-			  struct v4l2_subdev_state *sd_state,
+			  struct v4l2_subdev_pad_config *cfg,
 			  struct v4l2_subdev_format *format)
 {
 	struct v4l2_mbus_framefmt *mf = &format->format;
@@ -829,7 +828,7 @@ static int tw9910_set_fmt(struct v4l2_subdev *sd,
 	if (format->which == V4L2_SUBDEV_FORMAT_ACTIVE)
 		return tw9910_s_fmt(sd, mf);
 
-	sd_state->pads->try_fmt = *mf;
+	cfg->try_fmt = *mf;
 
 	return 0;
 }
@@ -886,7 +885,7 @@ static const struct v4l2_subdev_core_ops tw9910_subdev_core_ops = {
 };
 
 static int tw9910_enum_mbus_code(struct v4l2_subdev *sd,
-				 struct v4l2_subdev_state *sd_state,
+				 struct v4l2_subdev_pad_config *cfg,
 				 struct v4l2_subdev_mbus_code_enum *code)
 {
 	if (code->pad || code->index)
@@ -934,7 +933,8 @@ static int tw9910_probe(struct i2c_client *client,
 {
 	struct tw9910_priv		*priv;
 	struct tw9910_video_info	*info;
-	struct i2c_adapter		*adapter = client->adapter;
+	struct i2c_adapter		*adapter =
+		to_i2c_adapter(client->dev.parent);
 	int ret;
 
 	if (!client->dev.platform_data) {
@@ -993,14 +993,16 @@ error_clk_put:
 	return ret;
 }
 
-static void tw9910_remove(struct i2c_client *client)
+static int tw9910_remove(struct i2c_client *client)
 {
 	struct tw9910_priv *priv = to_tw9910(client);
 
 	if (priv->pdn_gpio)
 		gpiod_put(priv->pdn_gpio);
 	clk_put(priv->clk);
-	v4l2_async_unregister_subdev(&priv->subdev);
+	v4l2_device_unregister_subdev(&priv->subdev);
+
+	return 0;
 }
 
 static const struct i2c_device_id tw9910_id[] = {

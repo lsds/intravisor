@@ -1,7 +1,22 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  *  FUJITSU Extended Socket Network Device driver
  *  Copyright (c) 2015 FUJITSU LIMITED
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms and conditions of the GNU General Public License,
+ * version 2, as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+ * more details.
+ *
+ * You should have received a copy of the GNU General Public License along with
+ * this program; if not, see <http://www.gnu.org/licenses/>.
+ *
+ * The full GNU General Public License is included in this distribution in
+ * the file called "COPYING".
+ *
  */
 
 /* ethtool support for fjes */
@@ -21,7 +36,7 @@ struct fjes_stats {
 
 #define FJES_STAT(name, stat) { \
 	.stat_string = name, \
-	.sizeof_stat = sizeof_field(struct fjes_adapter, stat), \
+	.sizeof_stat = FIELD_SIZEOF(struct fjes_adapter, stat), \
 	.stat_offset = offsetof(struct fjes_adapter, stat) \
 }
 
@@ -151,11 +166,11 @@ static void fjes_get_drvinfo(struct net_device *netdev,
 
 	plat_dev = adapter->plat_dev;
 
-	strscpy(drvinfo->driver, fjes_driver_name, sizeof(drvinfo->driver));
-	strscpy(drvinfo->version, fjes_driver_version,
+	strlcpy(drvinfo->driver, fjes_driver_name, sizeof(drvinfo->driver));
+	strlcpy(drvinfo->version, fjes_driver_version,
 		sizeof(drvinfo->version));
 
-	strscpy(drvinfo->fw_version, "none", sizeof(drvinfo->fw_version));
+	strlcpy(drvinfo->fw_version, "none", sizeof(drvinfo->fw_version));
 	snprintf(drvinfo->bus_info, sizeof(drvinfo->bus_info),
 		 "platform:%s", plat_dev->name);
 }

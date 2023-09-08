@@ -1,12 +1,19 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2015 MediaTek Inc.
  * Author: Andrew-CT Chen <andrew-ct.chen@mediatek.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
  */
 
 #include <linux/device.h>
 #include <linux/module.h>
-#include <linux/mod_devicetable.h>
 #include <linux/io.h>
 #include <linux/nvmem-provider.h>
 #include <linux/platform_device.h>
@@ -19,12 +26,24 @@ static int mtk_reg_read(void *context,
 			unsigned int reg, void *_val, size_t bytes)
 {
 	struct mtk_efuse_priv *priv = context;
-	void __iomem *addr = priv->base + reg;
-	u8 *val = _val;
-	int i;
+	u32 *val = _val;
+	int i = 0, words = bytes / 4;
 
-	for (i = 0; i < bytes; i++, val++)
-		*val = readb(addr + i);
+	while (words--)
+		*val++ = readl(priv->base + reg + (i++ * 4));
+
+	return 0;
+}
+
+static int mtk_reg_write(void *context,
+			 unsigned int reg, void *_val, size_t bytes)
+{
+	struct mtk_efuse_priv *priv = context;
+	u32 *val = _val;
+	int i = 0, words = bytes / 4;
+
+	while (words--)
+		writel(*val++, priv->base + reg + (i++ * 4));
 
 	return 0;
 }
@@ -41,13 +60,15 @@ static int mtk_efuse_probe(struct platform_device *pdev)
 	if (!priv)
 		return -ENOMEM;
 
-	priv->base = devm_platform_get_and_ioremap_resource(pdev, 0, &res);
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	priv->base = devm_ioremap_resource(dev, res);
 	if (IS_ERR(priv->base))
 		return PTR_ERR(priv->base);
 
-	econfig.stride = 1;
-	econfig.word_size = 1;
+	econfig.stride = 4;
+	econfig.word_size = 4;
 	econfig.reg_read = mtk_reg_read;
+	econfig.reg_write = mtk_reg_write;
 	econfig.size = resource_size(res);
 	econfig.priv = priv;
 	econfig.dev = dev;

@@ -21,7 +21,6 @@
 #include <asm/sections.h>
 #include <asm/io.h>
 #include <asm/setup_arch.h>
-#include <asm/sev.h>
 
 static struct resource system_rom_resource = {
 	.name	= "System ROM",
@@ -81,7 +80,7 @@ static struct resource video_rom_resource = {
  */
 static bool match_id(struct pci_dev *pdev, unsigned short vendor, unsigned short device)
 {
-	struct pci_driver *drv = to_pci_driver(pdev->dev.driver);
+	struct pci_driver *drv = pdev->driver;
 	const struct pci_device_id *id;
 
 	if (pdev->vendor == vendor && pdev->device == device)
@@ -95,12 +94,12 @@ static bool match_id(struct pci_dev *pdev, unsigned short vendor, unsigned short
 }
 
 static bool probe_list(struct pci_dev *pdev, unsigned short vendor,
-		       const void *rom_list)
+		       const unsigned char *rom_list)
 {
 	unsigned short device;
 
 	do {
-		if (get_kernel_nofault(device, rom_list) != 0)
+		if (probe_kernel_address(rom_list, device) != 0)
 			device = 0;
 
 		if (device && match_id(pdev, vendor, device))
@@ -120,19 +119,19 @@ static struct resource *find_oprom(struct pci_dev *pdev)
 	for (i = 0; i < ARRAY_SIZE(adapter_rom_resources); i++) {
 		struct resource *res = &adapter_rom_resources[i];
 		unsigned short offset, vendor, device, list, rev;
-		const void *rom;
+		const unsigned char *rom;
 
 		if (res->end == 0)
 			break;
 
 		rom = isa_bus_to_virt(res->start);
-		if (get_kernel_nofault(offset, rom + 0x18) != 0)
+		if (probe_kernel_address(rom + 0x18, offset) != 0)
 			continue;
 
-		if (get_kernel_nofault(vendor, rom + offset + 0x4) != 0)
+		if (probe_kernel_address(rom + offset + 0x4, vendor) != 0)
 			continue;
 
-		if (get_kernel_nofault(device, rom + offset + 0x6) != 0)
+		if (probe_kernel_address(rom + offset + 0x6, device) != 0)
 			continue;
 
 		if (match_id(pdev, vendor, device)) {
@@ -140,8 +139,8 @@ static struct resource *find_oprom(struct pci_dev *pdev)
 			break;
 		}
 
-		if (get_kernel_nofault(list, rom + offset + 0x8) == 0 &&
-		    get_kernel_nofault(rev, rom + offset + 0xc) == 0 &&
+		if (probe_kernel_address(rom + offset + 0x8, list) == 0 &&
+		    probe_kernel_address(rom + offset + 0xc, rev) == 0 &&
 		    rev >= 3 && list &&
 		    probe_list(pdev, vendor, rom + offset + list)) {
 			oprom = res;
@@ -184,34 +183,24 @@ static int __init romsignature(const unsigned char *rom)
 	const unsigned short * const ptr = (const unsigned short *)rom;
 	unsigned short sig;
 
-	return get_kernel_nofault(sig, ptr) == 0 && sig == ROMSIGNATURE;
+	return probe_kernel_address(ptr, sig) == 0 && sig == ROMSIGNATURE;
 }
 
 static int __init romchecksum(const unsigned char *rom, unsigned long length)
 {
 	unsigned char sum, c;
 
-	for (sum = 0; length && get_kernel_nofault(c, rom++) == 0; length--)
+	for (sum = 0; length && probe_kernel_address(rom++, c) == 0; length--)
 		sum += c;
 	return !length && !sum;
 }
 
 void __init probe_roms(void)
 {
-	unsigned long start, length, upper;
 	const unsigned char *rom;
+	unsigned long start, length, upper;
 	unsigned char c;
 	int i;
-
-	/*
-	 * The ROM memory range is not part of the e820 table and is therefore not
-	 * pre-validated by BIOS. The kernel page table maps the ROM region as encrypted
-	 * memory, and SNP requires encrypted memory to be validated before access.
-	 * Do that here.
-	 */
-	snp_prep_memory(video_rom_resource.start,
-			((system_rom_resource.end + 1) - video_rom_resource.start),
-			SNP_PAGE_STATE_PRIVATE);
 
 	/* video rom */
 	upper = adapter_rom_resources[0].start;
@@ -222,7 +211,7 @@ void __init probe_roms(void)
 
 		video_rom_resource.start = start;
 
-		if (get_kernel_nofault(c, rom + 2) != 0)
+		if (probe_kernel_address(rom + 2, c) != 0)
 			continue;
 
 		/* 0 < length <= 0x7f * 512, historically */
@@ -260,7 +249,7 @@ void __init probe_roms(void)
 		if (!romsignature(rom))
 			continue;
 
-		if (get_kernel_nofault(c, rom + 2) != 0)
+		if (probe_kernel_address(rom + 2, c) != 0)
 			continue;
 
 		/* 0 < length <= 0x7f * 512, historically */

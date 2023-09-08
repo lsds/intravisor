@@ -1,9 +1,18 @@
-// SPDX-License-Identifier: GPL-2.0
-//
-// Copyright (C) 2017 Socionext Inc.
-//   Author: Masahiro Yamada <yamada.masahiro@socionext.com>
+/*
+ * Copyright (C) 2017 Socionext Inc.
+ *   Author: Masahiro Yamada <yamada.masahiro@socionext.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ */
 
-#include <linux/bits.h>
+#include <linux/bitops.h>
 #include <linux/gpio/driver.h>
 #include <linux/irq.h>
 #include <linux/irqdomain.h>
@@ -14,6 +23,9 @@
 #include <linux/platform_device.h>
 #include <linux/spinlock.h>
 #include <dt-bindings/gpio/uniphier-gpio.h>
+
+#define UNIPHIER_GPIO_BANK_MASK		\
+				GENMASK((UNIPHIER_GPIO_LINES_PER_BANK) - 1, 0)
 
 #define UNIPHIER_GPIO_IRQ_MAX_NUM	24
 
@@ -30,7 +42,7 @@ struct uniphier_gpio_priv {
 	struct irq_domain *domain;
 	void __iomem *regs;
 	spinlock_t lock;
-	u32 saved_vals[];
+	u32 saved_vals[0];
 };
 
 static unsigned int uniphier_gpio_bank_to_reg(unsigned int bank)
@@ -110,10 +122,7 @@ static int uniphier_gpio_offset_read(struct gpio_chip *chip,
 static int uniphier_gpio_get_direction(struct gpio_chip *chip,
 				       unsigned int offset)
 {
-	if (uniphier_gpio_offset_read(chip, offset, UNIPHIER_GPIO_PORT_DIR))
-		return GPIO_LINE_DIRECTION_IN;
-
-	return GPIO_LINE_DIRECTION_OUT;
+	return uniphier_gpio_offset_read(chip, offset, UNIPHIER_GPIO_PORT_DIR);
 }
 
 static int uniphier_gpio_direction_input(struct gpio_chip *chip,
@@ -147,11 +156,15 @@ static void uniphier_gpio_set(struct gpio_chip *chip,
 static void uniphier_gpio_set_multiple(struct gpio_chip *chip,
 				       unsigned long *mask, unsigned long *bits)
 {
-	unsigned long i, bank, bank_mask, bank_bits;
+	unsigned int bank, shift, bank_mask, bank_bits;
+	int i;
 
-	for_each_set_clump8(i, bank_mask, mask, chip->ngpio) {
+	for (i = 0; i < chip->ngpio; i += UNIPHIER_GPIO_LINES_PER_BANK) {
 		bank = i / UNIPHIER_GPIO_LINES_PER_BANK;
-		bank_bits = bitmap_get_value8(bits, i);
+		shift = i % BITS_PER_LONG;
+		bank_mask = (mask[BIT_WORD(i)] >> shift) &
+						UNIPHIER_GPIO_BANK_MASK;
+		bank_bits = bits[BIT_WORD(i)] >> shift;
 
 		uniphier_gpio_bank_write(chip, bank, UNIPHIER_GPIO_PORT_DATA,
 					 bank_mask, bank_bits);
@@ -168,39 +181,35 @@ static int uniphier_gpio_to_irq(struct gpio_chip *chip, unsigned int offset)
 	fwspec.fwnode = of_node_to_fwnode(chip->parent->of_node);
 	fwspec.param_count = 2;
 	fwspec.param[0] = offset - UNIPHIER_GPIO_IRQ_OFFSET;
-	/*
-	 * IRQ_TYPE_NONE is rejected by the parent irq domain. Set LEVEL_HIGH
-	 * temporarily. Anyway, ->irq_set_type() will override it later.
-	 */
-	fwspec.param[1] = IRQ_TYPE_LEVEL_HIGH;
+	fwspec.param[1] = IRQ_TYPE_NONE;
 
 	return irq_create_fwspec_mapping(&fwspec);
 }
 
 static void uniphier_gpio_irq_mask(struct irq_data *data)
 {
-	struct uniphier_gpio_priv *priv = irq_data_get_irq_chip_data(data);
-	u32 mask = BIT(irqd_to_hwirq(data));
+	struct uniphier_gpio_priv *priv = data->chip_data;
+	u32 mask = BIT(data->hwirq);
 
 	uniphier_gpio_reg_update(priv, UNIPHIER_GPIO_IRQ_EN, mask, 0);
 
-	irq_chip_mask_parent(data);
+	return irq_chip_mask_parent(data);
 }
 
 static void uniphier_gpio_irq_unmask(struct irq_data *data)
 {
-	struct uniphier_gpio_priv *priv = irq_data_get_irq_chip_data(data);
-	u32 mask = BIT(irqd_to_hwirq(data));
+	struct uniphier_gpio_priv *priv = data->chip_data;
+	u32 mask = BIT(data->hwirq);
 
 	uniphier_gpio_reg_update(priv, UNIPHIER_GPIO_IRQ_EN, mask, mask);
 
-	irq_chip_unmask_parent(data);
+	return irq_chip_unmask_parent(data);
 }
 
 static int uniphier_gpio_irq_set_type(struct irq_data *data, unsigned int type)
 {
-	struct uniphier_gpio_priv *priv = irq_data_get_irq_chip_data(data);
-	u32 mask = BIT(irqd_to_hwirq(data));
+	struct uniphier_gpio_priv *priv = data->chip_data;
+	u32 mask = BIT(data->hwirq);
 	u32 val = 0;
 
 	if (type == IRQ_TYPE_EDGE_BOTH) {
@@ -297,8 +306,8 @@ static int uniphier_gpio_irq_domain_activate(struct irq_domain *domain,
 	struct uniphier_gpio_priv *priv = domain->host_data;
 	struct gpio_chip *chip = &priv->chip;
 
-	return gpiochip_lock_as_irq(chip,
-			irqd_to_hwirq(data) + UNIPHIER_GPIO_IRQ_OFFSET);
+	gpiochip_lock_as_irq(chip, data->hwirq + UNIPHIER_GPIO_IRQ_OFFSET);
+	return 0;
 }
 
 static void uniphier_gpio_irq_domain_deactivate(struct irq_domain *domain,
@@ -307,8 +316,7 @@ static void uniphier_gpio_irq_domain_deactivate(struct irq_domain *domain,
 	struct uniphier_gpio_priv *priv = domain->host_data;
 	struct gpio_chip *chip = &priv->chip;
 
-	gpiochip_unlock_as_irq(chip,
-			irqd_to_hwirq(data) + UNIPHIER_GPIO_IRQ_OFFSET);
+	gpiochip_unlock_as_irq(chip, data->hwirq + UNIPHIER_GPIO_IRQ_OFFSET);
 }
 
 static const struct irq_domain_ops uniphier_gpio_irq_domain_ops = {
@@ -344,6 +352,7 @@ static int uniphier_gpio_probe(struct platform_device *pdev)
 	struct uniphier_gpio_priv *priv;
 	struct gpio_chip *chip;
 	struct irq_chip *irq_chip;
+	struct resource *regs;
 	unsigned int nregs;
 	u32 ngpios;
 	int ret;
@@ -362,12 +371,14 @@ static int uniphier_gpio_probe(struct platform_device *pdev)
 		return ret;
 
 	nregs = uniphier_gpio_get_nbanks(ngpios) * 2 + 3;
-	priv = devm_kzalloc(dev, struct_size(priv, saved_vals, nregs),
+	priv = devm_kzalloc(dev,
+			    sizeof(*priv) + sizeof(priv->saved_vals[0]) * nregs,
 			    GFP_KERNEL);
 	if (!priv)
 		return -ENOMEM;
 
-	priv->regs = devm_platform_ioremap_resource(pdev, 0);
+	regs = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	priv->regs = devm_ioremap_resource(dev, regs);
 	if (IS_ERR(priv->regs))
 		return PTR_ERR(priv->regs);
 

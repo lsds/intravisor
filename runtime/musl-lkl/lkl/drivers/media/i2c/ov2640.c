@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * ov2640 Camera Driver
  *
@@ -8,6 +7,10 @@
  *
  * Copyright 2005-2009 Freescale Semiconductor, Inc. All Rights Reserved.
  * Copyright (C) 2006, OmniVision
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 
 #include <linux/init.h>
@@ -23,7 +26,6 @@
 #include <linux/videodev2.h>
 
 #include <media/v4l2-device.h>
-#include <media/v4l2-event.h>
 #include <media/v4l2-subdev.h>
 #include <media/v4l2-ctrls.h>
 #include <media/v4l2-image-sizes.h>
@@ -305,10 +307,6 @@ struct ov2640_priv {
 
 	struct gpio_desc *resetb_gpio;
 	struct gpio_desc *pwdn_gpio;
-
-	struct mutex lock; /* lock to protect streaming and power_count */
-	bool streaming;
-	int power_count;
 };
 
 /*
@@ -703,11 +701,6 @@ err:
 	return ret;
 }
 
-static const char * const ov2640_test_pattern_menu[] = {
-	"Disabled",
-	"Eight Vertical Colour Bars",
-};
-
 /*
  * functions
  */
@@ -716,19 +709,8 @@ static int ov2640_s_ctrl(struct v4l2_ctrl *ctrl)
 	struct v4l2_subdev *sd =
 		&container_of(ctrl->handler, struct ov2640_priv, hdl)->subdev;
 	struct i2c_client  *client = v4l2_get_subdevdata(sd);
-	struct ov2640_priv *priv = to_ov2640(client);
 	u8 val;
 	int ret;
-
-	/* v4l2_ctrl_lock() locks our own mutex */
-
-	/*
-	 * If the device is not powered up by the host driver, do not apply any
-	 * controls to H/W at this time. Instead the controls will be restored
-	 * when the streaming is started.
-	 */
-	if (!priv->power_count)
-		return 0;
 
 	ret = i2c_smbus_write_byte_data(client, BANK_SEL, BANK_SEL_SENS);
 	if (ret < 0)
@@ -743,9 +725,6 @@ static int ov2640_s_ctrl(struct v4l2_ctrl *ctrl)
 	case V4L2_CID_HFLIP:
 		val = ctrl->val ? REG04_HFLIP_IMG : 0x00;
 		return ov2640_mask_set(client, REG04, REG04_HFLIP_IMG, val);
-	case V4L2_CID_TEST_PATTERN:
-		val = ctrl->val ? COM7_COLOR_BAR_TEST : 0x00;
-		return ov2640_mask_set(client, COM7, COM7_COLOR_BAR_TEST, val);
 	}
 
 	return -EINVAL;
@@ -784,9 +763,12 @@ static int ov2640_s_register(struct v4l2_subdev *sd,
 }
 #endif
 
-static void ov2640_set_power(struct ov2640_priv *priv, int on)
+static int ov2640_s_power(struct v4l2_subdev *sd, int on)
 {
 #ifdef CONFIG_GPIOLIB
+	struct i2c_client *client = v4l2_get_subdevdata(sd);
+	struct ov2640_priv *priv = to_ov2640(client);
+
 	if (priv->pwdn_gpio)
 		gpiod_direction_output(priv->pwdn_gpio, !on);
 	if (on && priv->resetb_gpio) {
@@ -796,25 +778,6 @@ static void ov2640_set_power(struct ov2640_priv *priv, int on)
 		gpiod_set_value(priv->resetb_gpio, 0);
 	}
 #endif
-}
-
-static int ov2640_s_power(struct v4l2_subdev *sd, int on)
-{
-	struct i2c_client *client = v4l2_get_subdevdata(sd);
-	struct ov2640_priv *priv = to_ov2640(client);
-
-	mutex_lock(&priv->lock);
-
-	/*
-	 * If the power count is modified from 0 to != 0 or from != 0 to 0,
-	 * update the power state.
-	 */
-	if (priv->power_count == !on)
-		ov2640_set_power(priv, on);
-	priv->power_count += on ? 1 : -1;
-	WARN_ON(priv->power_count < 0);
-	mutex_unlock(&priv->lock);
-
 	return 0;
 }
 
@@ -835,10 +798,16 @@ static const struct ov2640_win_size *ov2640_select_win(u32 width, u32 height)
 static int ov2640_set_params(struct i2c_client *client,
 			     const struct ov2640_win_size *win, u32 code)
 {
+	struct ov2640_priv       *priv = to_ov2640(client);
 	const struct regval_list *selected_cfmt_regs;
 	u8 val;
 	int ret;
 
+	/* select win */
+	priv->win = win;
+
+	/* select format */
+	priv->cfmt_code = 0;
 	switch (code) {
 	case MEDIA_BUS_FMT_RGB565_2X8_BE:
 		dev_dbg(&client->dev, "%s: Selected cfmt RGB565 BE", __func__);
@@ -877,13 +846,13 @@ static int ov2640_set_params(struct i2c_client *client,
 		goto err;
 
 	/* select preamble */
-	dev_dbg(&client->dev, "%s: Set size to %s", __func__, win->name);
+	dev_dbg(&client->dev, "%s: Set size to %s", __func__, priv->win->name);
 	ret = ov2640_write_array(client, ov2640_size_change_preamble_regs);
 	if (ret < 0)
 		goto err;
 
 	/* set size win */
-	ret = ov2640_write_array(client, win->regs);
+	ret = ov2640_write_array(client, priv->win->regs);
 	if (ret < 0)
 		goto err;
 
@@ -903,17 +872,20 @@ static int ov2640_set_params(struct i2c_client *client,
 	if (ret < 0)
 		goto err;
 
+	priv->cfmt_code = code;
+
 	return 0;
 
 err:
 	dev_err(&client->dev, "%s: Error %d", __func__, ret);
 	ov2640_reset(client);
+	priv->win = NULL;
 
 	return ret;
 }
 
 static int ov2640_get_fmt(struct v4l2_subdev *sd,
-		struct v4l2_subdev_state *sd_state,
+		struct v4l2_subdev_pad_config *cfg,
 		struct v4l2_subdev_format *format)
 {
 	struct v4l2_mbus_framefmt *mf = &format->format;
@@ -923,14 +895,9 @@ static int ov2640_get_fmt(struct v4l2_subdev *sd,
 	if (format->pad)
 		return -EINVAL;
 
-	if (format->which == V4L2_SUBDEV_FORMAT_TRY) {
-#ifdef CONFIG_VIDEO_V4L2_SUBDEV_API
-		mf = v4l2_subdev_get_try_format(sd, sd_state, 0);
-		format->format = *mf;
-		return 0;
-#else
-		return -EINVAL;
-#endif
+	if (!priv->win) {
+		priv->win = ov2640_select_win(SVGA_WIDTH, SVGA_HEIGHT);
+		priv->cfmt_code = MEDIA_BUS_FMT_UYVY8_2X8;
 	}
 
 	mf->width	= priv->win->width;
@@ -938,27 +905,20 @@ static int ov2640_get_fmt(struct v4l2_subdev *sd,
 	mf->code	= priv->cfmt_code;
 	mf->colorspace	= V4L2_COLORSPACE_SRGB;
 	mf->field	= V4L2_FIELD_NONE;
-	mf->ycbcr_enc	= V4L2_YCBCR_ENC_DEFAULT;
-	mf->quantization = V4L2_QUANTIZATION_DEFAULT;
-	mf->xfer_func	= V4L2_XFER_FUNC_DEFAULT;
 
 	return 0;
 }
 
 static int ov2640_set_fmt(struct v4l2_subdev *sd,
-		struct v4l2_subdev_state *sd_state,
+		struct v4l2_subdev_pad_config *cfg,
 		struct v4l2_subdev_format *format)
 {
 	struct v4l2_mbus_framefmt *mf = &format->format;
 	struct i2c_client *client = v4l2_get_subdevdata(sd);
-	struct ov2640_priv *priv = to_ov2640(client);
 	const struct ov2640_win_size *win;
-	int ret = 0;
 
 	if (format->pad)
 		return -EINVAL;
-
-	mutex_lock(&priv->lock);
 
 	/* select suitable win */
 	win = ov2640_select_win(mf->width, mf->height);
@@ -967,9 +927,6 @@ static int ov2640_set_fmt(struct v4l2_subdev *sd,
 
 	mf->field	= V4L2_FIELD_NONE;
 	mf->colorspace	= V4L2_COLORSPACE_SRGB;
-	mf->ycbcr_enc	= V4L2_YCBCR_ENC_DEFAULT;
-	mf->quantization = V4L2_QUANTIZATION_DEFAULT;
-	mf->xfer_func	= V4L2_XFER_FUNC_DEFAULT;
 
 	switch (mf->code) {
 	case MEDIA_BUS_FMT_RGB565_2X8_BE:
@@ -984,49 +941,14 @@ static int ov2640_set_fmt(struct v4l2_subdev *sd,
 		break;
 	}
 
-	if (format->which == V4L2_SUBDEV_FORMAT_ACTIVE) {
-		struct ov2640_priv *priv = to_ov2640(client);
-
-		if (priv->streaming) {
-			ret = -EBUSY;
-			goto out;
-		}
-		/* select win */
-		priv->win = win;
-		/* select format */
-		priv->cfmt_code = mf->code;
-	} else {
-		sd_state->pads->try_fmt = *mf;
-	}
-out:
-	mutex_unlock(&priv->lock);
-
-	return ret;
-}
-
-static int ov2640_init_cfg(struct v4l2_subdev *sd,
-			   struct v4l2_subdev_state *sd_state)
-{
-#ifdef CONFIG_VIDEO_V4L2_SUBDEV_API
-	struct v4l2_mbus_framefmt *try_fmt =
-		v4l2_subdev_get_try_format(sd, sd_state, 0);
-	const struct ov2640_win_size *win =
-		ov2640_select_win(SVGA_WIDTH, SVGA_HEIGHT);
-
-	try_fmt->width = win->width;
-	try_fmt->height = win->height;
-	try_fmt->code = MEDIA_BUS_FMT_UYVY8_2X8;
-	try_fmt->colorspace = V4L2_COLORSPACE_SRGB;
-	try_fmt->field = V4L2_FIELD_NONE;
-	try_fmt->ycbcr_enc = V4L2_YCBCR_ENC_DEFAULT;
-	try_fmt->quantization = V4L2_QUANTIZATION_DEFAULT;
-	try_fmt->xfer_func = V4L2_XFER_FUNC_DEFAULT;
-#endif
+	if (format->which == V4L2_SUBDEV_FORMAT_ACTIVE)
+		return ov2640_set_params(client, win, mf->code);
+	cfg->try_fmt = *mf;
 	return 0;
 }
 
 static int ov2640_enum_mbus_code(struct v4l2_subdev *sd,
-		struct v4l2_subdev_state *sd_state,
+		struct v4l2_subdev_pad_config *cfg,
 		struct v4l2_subdev_mbus_code_enum *code)
 {
 	if (code->pad || code->index >= ARRAY_SIZE(ov2640_codes))
@@ -1037,7 +959,7 @@ static int ov2640_enum_mbus_code(struct v4l2_subdev *sd,
 }
 
 static int ov2640_get_selection(struct v4l2_subdev *sd,
-		struct v4l2_subdev_state *sd_state,
+		struct v4l2_subdev_pad_config *cfg,
 		struct v4l2_subdev_selection *sel)
 {
 	if (sel->which != V4L2_SUBDEV_FORMAT_ACTIVE)
@@ -1045,6 +967,7 @@ static int ov2640_get_selection(struct v4l2_subdev *sd,
 
 	switch (sel->target) {
 	case V4L2_SEL_TGT_CROP_BOUNDS:
+	case V4L2_SEL_TGT_CROP_DEFAULT:
 	case V4L2_SEL_TGT_CROP:
 		sel->r.left = 0;
 		sel->r.top = 0;
@@ -1054,28 +977,6 @@ static int ov2640_get_selection(struct v4l2_subdev *sd,
 	default:
 		return -EINVAL;
 	}
-}
-
-static int ov2640_s_stream(struct v4l2_subdev *sd, int on)
-{
-	struct i2c_client *client = v4l2_get_subdevdata(sd);
-	struct ov2640_priv *priv = to_ov2640(client);
-	int ret = 0;
-
-	mutex_lock(&priv->lock);
-	if (priv->streaming == !on) {
-		if (on) {
-			ret = ov2640_set_params(client, priv->win,
-						priv->cfmt_code);
-			if (!ret)
-				ret = __v4l2_ctrl_handler_setup(&priv->hdl);
-		}
-	}
-	if (!ret)
-		priv->streaming = on;
-	mutex_unlock(&priv->lock);
-
-	return ret;
 }
 
 static int ov2640_video_probe(struct i2c_client *client)
@@ -1113,6 +1014,8 @@ static int ov2640_video_probe(struct i2c_client *client)
 		 "%s Product ID %0x:%0x Manufacturer ID %x:%x\n",
 		 devname, pid, ver, midh, midl);
 
+	ret = v4l2_ctrl_handler_setup(&priv->hdl);
+
 done:
 	ov2640_s_power(&priv->subdev, 0);
 	return ret;
@@ -1123,9 +1026,6 @@ static const struct v4l2_ctrl_ops ov2640_ctrl_ops = {
 };
 
 static const struct v4l2_subdev_core_ops ov2640_subdev_core_ops = {
-	.log_status = v4l2_ctrl_subdev_log_status,
-	.subscribe_event = v4l2_ctrl_subdev_subscribe_event,
-	.unsubscribe_event = v4l2_event_subdev_unsubscribe,
 #ifdef CONFIG_VIDEO_ADV_DEBUG
 	.g_register	= ov2640_g_register,
 	.s_register	= ov2640_s_register,
@@ -1134,21 +1034,15 @@ static const struct v4l2_subdev_core_ops ov2640_subdev_core_ops = {
 };
 
 static const struct v4l2_subdev_pad_ops ov2640_subdev_pad_ops = {
-	.init_cfg	= ov2640_init_cfg,
 	.enum_mbus_code = ov2640_enum_mbus_code,
 	.get_selection	= ov2640_get_selection,
 	.get_fmt	= ov2640_get_fmt,
 	.set_fmt	= ov2640_set_fmt,
 };
 
-static const struct v4l2_subdev_video_ops ov2640_subdev_video_ops = {
-	.s_stream = ov2640_s_stream,
-};
-
 static const struct v4l2_subdev_ops ov2640_subdev_ops = {
 	.core	= &ov2640_subdev_core_ops,
 	.pad	= &ov2640_subdev_pad_ops,
-	.video	= &ov2640_subdev_video_ops,
 };
 
 static int ov2640_probe_dt(struct i2c_client *client,
@@ -1190,10 +1084,11 @@ static int ov2640_probe_dt(struct i2c_client *client,
 /*
  * i2c_driver functions
  */
-static int ov2640_probe(struct i2c_client *client)
+static int ov2640_probe(struct i2c_client *client,
+			const struct i2c_device_id *did)
 {
 	struct ov2640_priv	*priv;
-	struct i2c_adapter	*adapter = client->adapter;
+	struct i2c_adapter	*adapter = to_i2c_adapter(client->dev.parent);
 	int			ret;
 
 	if (!i2c_check_functionality(adapter, I2C_FUNC_SMBUS_BYTE_DATA)) {
@@ -1219,23 +1114,13 @@ static int ov2640_probe(struct i2c_client *client)
 	if (ret)
 		goto err_clk;
 
-	priv->win = ov2640_select_win(SVGA_WIDTH, SVGA_HEIGHT);
-	priv->cfmt_code = MEDIA_BUS_FMT_UYVY8_2X8;
-
 	v4l2_i2c_subdev_init(&priv->subdev, client, &ov2640_subdev_ops);
-	priv->subdev.flags |= V4L2_SUBDEV_FL_HAS_DEVNODE |
-			      V4L2_SUBDEV_FL_HAS_EVENTS;
-	mutex_init(&priv->lock);
-	v4l2_ctrl_handler_init(&priv->hdl, 3);
-	priv->hdl.lock = &priv->lock;
+	priv->subdev.flags |= V4L2_SUBDEV_FL_HAS_DEVNODE;
+	v4l2_ctrl_handler_init(&priv->hdl, 2);
 	v4l2_ctrl_new_std(&priv->hdl, &ov2640_ctrl_ops,
 			V4L2_CID_VFLIP, 0, 1, 1, 0);
 	v4l2_ctrl_new_std(&priv->hdl, &ov2640_ctrl_ops,
 			V4L2_CID_HFLIP, 0, 1, 1, 0);
-	v4l2_ctrl_new_std_menu_items(&priv->hdl, &ov2640_ctrl_ops,
-			V4L2_CID_TEST_PATTERN,
-			ARRAY_SIZE(ov2640_test_pattern_menu) - 1, 0, 0,
-			ov2640_test_pattern_menu);
 	priv->subdev.ctrl_handler = &priv->hdl;
 	if (priv->hdl.error) {
 		ret = priv->hdl.error;
@@ -1265,22 +1150,21 @@ err_videoprobe:
 	media_entity_cleanup(&priv->subdev.entity);
 err_hdl:
 	v4l2_ctrl_handler_free(&priv->hdl);
-	mutex_destroy(&priv->lock);
 err_clk:
 	clk_disable_unprepare(priv->clk);
 	return ret;
 }
 
-static void ov2640_remove(struct i2c_client *client)
+static int ov2640_remove(struct i2c_client *client)
 {
 	struct ov2640_priv       *priv = to_ov2640(client);
 
 	v4l2_async_unregister_subdev(&priv->subdev);
 	v4l2_ctrl_handler_free(&priv->hdl);
-	mutex_destroy(&priv->lock);
 	media_entity_cleanup(&priv->subdev.entity);
 	v4l2_device_unregister_subdev(&priv->subdev);
 	clk_disable_unprepare(priv->clk);
+	return 0;
 }
 
 static const struct i2c_device_id ov2640_id[] = {
@@ -1300,7 +1184,7 @@ static struct i2c_driver ov2640_i2c_driver = {
 		.name = "ov2640",
 		.of_match_table = of_match_ptr(ov2640_of_match),
 	},
-	.probe_new = ov2640_probe,
+	.probe    = ov2640_probe,
 	.remove   = ov2640_remove,
 	.id_table = ov2640_id,
 };

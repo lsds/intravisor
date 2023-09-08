@@ -40,7 +40,6 @@
 /**
  * qib_make_uc_req - construct a request packet (SEND, RDMA write)
  * @qp: a pointer to the QP
- * @flags: unused
  *
  * Assumes the s_lock is held.
  *
@@ -69,7 +68,7 @@ int qib_make_uc_req(struct rvt_qp *qp, unsigned long *flags)
 			goto bail;
 		}
 		wqe = rvt_get_swqe_ptr(qp, qp->s_last);
-		rvt_send_complete(qp, wqe, IB_WC_WR_FLUSH_ERR);
+		qib_send_complete(qp, wqe, IB_WC_WR_FLUSH_ERR);
 		goto done;
 	}
 
@@ -162,7 +161,7 @@ int qib_make_uc_req(struct rvt_qp *qp, unsigned long *flags)
 
 	case OP(SEND_FIRST):
 		qp->s_state = OP(SEND_MIDDLE);
-		fallthrough;
+		/* FALLTHROUGH */
 	case OP(SEND_MIDDLE):
 		len = qp->s_len;
 		if (len > pmtu) {
@@ -186,7 +185,7 @@ int qib_make_uc_req(struct rvt_qp *qp, unsigned long *flags)
 
 	case OP(RDMA_WRITE_FIRST):
 		qp->s_state = OP(RDMA_WRITE_MIDDLE);
-		fallthrough;
+		/* FALLTHROUGH */
 	case OP(RDMA_WRITE_MIDDLE):
 		len = qp->s_len;
 		if (len > pmtu) {
@@ -336,7 +335,7 @@ send_first:
 		if (test_and_clear_bit(RVT_R_REWIND_SGE, &qp->r_aflags))
 			qp->r_sge = qp->s_rdma_read_sge;
 		else {
-			ret = rvt_get_rwqe(qp, false);
+			ret = qib_get_rwqe(qp, 0);
 			if (ret < 0)
 				goto op_err;
 			if (!ret)
@@ -352,7 +351,7 @@ send_first:
 			goto no_immediate_data;
 		else if (opcode == OP(SEND_ONLY_WITH_IMMEDIATE))
 			goto send_last_imm;
-		fallthrough;
+		/* FALLTHROUGH */
 	case OP(SEND_MIDDLE):
 		/* Check for invalid length PMTU or posted rwqe len. */
 		if (unlikely(tlen != (hdrsize + pmtu + 4)))
@@ -360,7 +359,7 @@ send_first:
 		qp->r_rcv_len += pmtu;
 		if (unlikely(qp->r_rcv_len > qp->r_len))
 			goto rewind;
-		rvt_copy_sge(qp, &qp->r_sge, data, pmtu, false, false);
+		qib_copy_sge(&qp->r_sge, data, pmtu, 0);
 		break;
 
 	case OP(SEND_LAST_WITH_IMMEDIATE):
@@ -386,7 +385,7 @@ send_last:
 		if (unlikely(wc.byte_len > qp->r_len))
 			goto rewind;
 		wc.opcode = IB_WC_RECV;
-		rvt_copy_sge(qp, &qp->r_sge, data, tlen, false, false);
+		qib_copy_sge(&qp->r_sge, data, tlen, 0);
 		rvt_put_ss(&qp->s_rdma_read_sge);
 last_imm:
 		wc.wr_id = qp->r_wr_id;
@@ -401,7 +400,8 @@ last_imm:
 		wc.dlid_path_bits = 0;
 		wc.port_num = 0;
 		/* Signal completion event if the solicited bit is set. */
-		rvt_recv_cq(qp, &wc, ib_bth_is_solicited(ohdr));
+		rvt_cq_enter(ibcq_to_rvtcq(qp->ibqp.recv_cq), &wc,
+			     ib_bth_is_solicited(ohdr));
 		break;
 
 	case OP(RDMA_WRITE_FIRST):
@@ -441,7 +441,7 @@ rdma_first:
 			wc.ex.imm_data = ohdr->u.rc.imm_data;
 			goto rdma_last_imm;
 		}
-		fallthrough;
+		/* FALLTHROUGH */
 	case OP(RDMA_WRITE_MIDDLE):
 		/* Check for invalid length PMTU or posted rwqe len. */
 		if (unlikely(tlen != (hdrsize + pmtu + 4)))
@@ -449,7 +449,7 @@ rdma_first:
 		qp->r_rcv_len += pmtu;
 		if (unlikely(qp->r_rcv_len > qp->r_len))
 			goto drop;
-		rvt_copy_sge(qp, &qp->r_sge, data, pmtu, true, false);
+		qib_copy_sge(&qp->r_sge, data, pmtu, 1);
 		break;
 
 	case OP(RDMA_WRITE_LAST_WITH_IMMEDIATE):
@@ -471,7 +471,7 @@ rdma_last_imm:
 		if (test_and_clear_bit(RVT_R_REWIND_SGE, &qp->r_aflags))
 			rvt_put_ss(&qp->s_rdma_read_sge);
 		else {
-			ret = rvt_get_rwqe(qp, true);
+			ret = qib_get_rwqe(qp, 1);
 			if (ret < 0)
 				goto op_err;
 			if (!ret)
@@ -479,7 +479,7 @@ rdma_last_imm:
 		}
 		wc.byte_len = qp->r_len;
 		wc.opcode = IB_WC_RECV_RDMA_WITH_IMM;
-		rvt_copy_sge(qp, &qp->r_sge, data, tlen, true, false);
+		qib_copy_sge(&qp->r_sge, data, tlen, 1);
 		rvt_put_ss(&qp->r_sge);
 		goto last_imm;
 
@@ -495,7 +495,7 @@ rdma_last:
 		tlen -= (hdrsize + pad + 4);
 		if (unlikely(tlen + qp->r_rcv_len != qp->r_len))
 			goto drop;
-		rvt_copy_sge(qp, &qp->r_sge, data, tlen, true, false);
+		qib_copy_sge(&qp->r_sge, data, tlen, 1);
 		rvt_put_ss(&qp->r_sge);
 		break;
 

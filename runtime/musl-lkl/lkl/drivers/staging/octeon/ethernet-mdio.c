@@ -13,17 +13,22 @@
 #include <generated/utsrelease.h>
 #include <net/dst.h>
 
-#include "octeon-ethernet.h"
+#include <asm/octeon/octeon.h>
+
 #include "ethernet-defines.h"
+#include "octeon-ethernet.h"
 #include "ethernet-mdio.h"
 #include "ethernet-util.h"
+
+#include <asm/octeon/cvmx-gmxx-defs.h>
+#include <asm/octeon/cvmx-smix-defs.h>
 
 static void cvm_oct_get_drvinfo(struct net_device *dev,
 				struct ethtool_drvinfo *info)
 {
-	strscpy(info->driver, KBUILD_MODNAME, sizeof(info->driver));
-	strscpy(info->version, UTS_RELEASE, sizeof(info->version));
-	strscpy(info->bus_info, "Builtin", sizeof(info->bus_info));
+	strlcpy(info->driver, KBUILD_MODNAME, sizeof(info->driver));
+	strlcpy(info->version, UTS_RELEASE, sizeof(info->version));
+	strlcpy(info->bus_info, "Builtin", sizeof(info->bus_info));
 }
 
 static int cvm_oct_nway_reset(struct net_device *dev)
@@ -65,7 +70,7 @@ int cvm_oct_ioctl(struct net_device *dev, struct ifreq *rq, int cmd)
 }
 
 void cvm_oct_note_carrier(struct octeon_ethernet *priv,
-			  union cvmx_helper_link_info li)
+			  cvmx_helper_link_info_t li)
 {
 	if (li.s.link_up) {
 		pr_notice_ratelimited("%s: %u Mbps %s duplex, port %d, queue %d\n",
@@ -81,7 +86,7 @@ void cvm_oct_note_carrier(struct octeon_ethernet *priv,
 void cvm_oct_adjust_link(struct net_device *dev)
 {
 	struct octeon_ethernet *priv = netdev_priv(dev);
-	union cvmx_helper_link_info link_info;
+	cvmx_helper_link_info_t link_info;
 
 	link_info.u64		= 0;
 	link_info.s.link_up	= dev->phydev->link ? 1 : 0;
@@ -106,7 +111,7 @@ int cvm_oct_common_stop(struct net_device *dev)
 {
 	struct octeon_ethernet *priv = netdev_priv(dev);
 	int interface = INTERFACE(priv->port);
-	union cvmx_helper_link_info link_info;
+	cvmx_helper_link_info_t link_info;
 	union cvmx_gmxx_prtx_cfg gmx_cfg;
 	int index = INDEX(priv->port);
 
@@ -146,20 +151,27 @@ int cvm_oct_phy_setup_device(struct net_device *dev)
 		goto no_phy;
 
 	phy_node = of_parse_phandle(priv->of_node, "phy-handle", 0);
-	if (!phy_node && of_phy_is_fixed_link(priv->of_node))
+	if (!phy_node && of_phy_is_fixed_link(priv->of_node)) {
+		int rc;
+
+		rc = of_phy_register_fixed_link(priv->of_node);
+		if (rc)
+			return rc;
+
 		phy_node = of_node_get(priv->of_node);
+	}
 	if (!phy_node)
 		goto no_phy;
 
 	phydev = of_phy_connect(dev, phy_node, cvm_oct_adjust_link, 0,
-				priv->phy_mode);
+				PHY_INTERFACE_MODE_GMII);
 	of_node_put(phy_node);
 
 	if (!phydev)
-		return -EPROBE_DEFER;
+		return -ENODEV;
 
 	priv->last_link = 0;
-	phy_start(phydev);
+	phy_start_aneg(phydev);
 
 	return 0;
 no_phy:

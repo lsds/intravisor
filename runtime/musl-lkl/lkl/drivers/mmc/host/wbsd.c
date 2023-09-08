@@ -1,8 +1,13 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  *  linux/drivers/mmc/host/wbsd.c - Winbond W83L51xD SD/MMC driver
  *
  *  Copyright (C) 2004-2007 Pierre Ossman, All Rights Reserved.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or (at
+ * your option) any later version.
+ *
  *
  * Warning!
  *
@@ -28,8 +33,6 @@
 #include <linux/pnp.h>
 #include <linux/highmem.h>
 #include <linux/mmc/host.h>
-#include <linux/mmc/mmc.h>
-#include <linux/mmc/sd.h>
 #include <linux/scatterlist.h>
 #include <linux/slab.h>
 
@@ -265,29 +268,43 @@ static inline int wbsd_next_sg(struct wbsd_host *host)
 	return host->num_sg;
 }
 
-static inline char *wbsd_map_sg(struct wbsd_host *host)
+static inline char *wbsd_sg_to_buffer(struct wbsd_host *host)
 {
-	return kmap_atomic(sg_page(host->cur_sg)) + host->cur_sg->offset;
+	return sg_virt(host->cur_sg);
 }
 
 static inline void wbsd_sg_to_dma(struct wbsd_host *host, struct mmc_data *data)
 {
-	size_t len = 0;
-	int i;
+	unsigned int len, i;
+	struct scatterlist *sg;
+	char *dmabuf = host->dma_buffer;
+	char *sgbuf;
 
-	for (i = 0; i < data->sg_len; i++)
-		len += data->sg[i].length;
-	sg_copy_to_buffer(data->sg, data->sg_len, host->dma_buffer, len);
+	sg = data->sg;
+	len = data->sg_len;
+
+	for (i = 0; i < len; i++) {
+		sgbuf = sg_virt(&sg[i]);
+		memcpy(dmabuf, sgbuf, sg[i].length);
+		dmabuf += sg[i].length;
+	}
 }
 
 static inline void wbsd_dma_to_sg(struct wbsd_host *host, struct mmc_data *data)
 {
-	size_t len = 0;
-	int i;
+	unsigned int len, i;
+	struct scatterlist *sg;
+	char *dmabuf = host->dma_buffer;
+	char *sgbuf;
 
-	for (i = 0; i < data->sg_len; i++)
-		len += data->sg[i].length;
-	sg_copy_from_buffer(data->sg, data->sg_len, host->dma_buffer, len);
+	sg = data->sg;
+	len = data->sg_len;
+
+	for (i = 0; i < len; i++) {
+		sgbuf = sg_virt(&sg[i]);
+		memcpy(sgbuf, dmabuf, sg[i].length);
+		dmabuf += sg[i].length;
+	}
 }
 
 /*
@@ -401,7 +418,7 @@ static void wbsd_empty_fifo(struct wbsd_host *host)
 {
 	struct mmc_data *data = host->mrq->cmd->data;
 	char *buffer;
-	int i, idx, fsr, fifo;
+	int i, fsr, fifo;
 
 	/*
 	 * Handle excessive data.
@@ -409,8 +426,7 @@ static void wbsd_empty_fifo(struct wbsd_host *host)
 	if (host->num_sg == 0)
 		return;
 
-	buffer = wbsd_map_sg(host) + host->offset;
-	idx = 0;
+	buffer = wbsd_sg_to_buffer(host) + host->offset;
 
 	/*
 	 * Drain the fifo. This has a tendency to loop longer
@@ -429,7 +445,8 @@ static void wbsd_empty_fifo(struct wbsd_host *host)
 			fifo = 1;
 
 		for (i = 0; i < fifo; i++) {
-			buffer[idx++] = inb(host->base + WBSD_DFR);
+			*buffer = inb(host->base + WBSD_DFR);
+			buffer++;
 			host->offset++;
 			host->remain--;
 
@@ -439,19 +456,16 @@ static void wbsd_empty_fifo(struct wbsd_host *host)
 			 * End of scatter list entry?
 			 */
 			if (host->remain == 0) {
-				kunmap_atomic(buffer);
 				/*
 				 * Get next entry. Check if last.
 				 */
 				if (!wbsd_next_sg(host))
 					return;
 
-				buffer = wbsd_map_sg(host);
-				idx = 0;
+				buffer = wbsd_sg_to_buffer(host);
 			}
 		}
 	}
-	kunmap_atomic(buffer);
 
 	/*
 	 * This is a very dirty hack to solve a
@@ -466,7 +480,7 @@ static void wbsd_fill_fifo(struct wbsd_host *host)
 {
 	struct mmc_data *data = host->mrq->cmd->data;
 	char *buffer;
-	int i, idx, fsr, fifo;
+	int i, fsr, fifo;
 
 	/*
 	 * Check that we aren't being called after the
@@ -475,8 +489,7 @@ static void wbsd_fill_fifo(struct wbsd_host *host)
 	if (host->num_sg == 0)
 		return;
 
-	buffer = wbsd_map_sg(host) + host->offset;
-	idx = 0;
+	buffer = wbsd_sg_to_buffer(host) + host->offset;
 
 	/*
 	 * Fill the fifo. This has a tendency to loop longer
@@ -495,7 +508,8 @@ static void wbsd_fill_fifo(struct wbsd_host *host)
 			fifo = 15;
 
 		for (i = 16; i > fifo; i--) {
-			outb(buffer[idx], host->base + WBSD_DFR);
+			outb(*buffer, host->base + WBSD_DFR);
+			buffer++;
 			host->offset++;
 			host->remain--;
 
@@ -505,19 +519,16 @@ static void wbsd_fill_fifo(struct wbsd_host *host)
 			 * End of scatter list entry?
 			 */
 			if (host->remain == 0) {
-				kunmap_atomic(buffer);
 				/*
 				 * Get next entry. Check if last.
 				 */
 				if (!wbsd_next_sg(host))
 					return;
 
-				buffer = wbsd_map_sg(host);
-				idx = 0;
+				buffer = wbsd_sg_to_buffer(host);
 			}
 		}
 	}
-	kunmap_atomic(buffer);
 
 	/*
 	 * The controller stops sending interrupts for
@@ -772,22 +783,22 @@ static void wbsd_request(struct mmc_host *mmc, struct mmc_request *mrq)
 		 * interrupts.
 		 */
 		switch (cmd->opcode) {
-		case SD_SWITCH_VOLTAGE:
-		case MMC_READ_SINGLE_BLOCK:
-		case MMC_READ_MULTIPLE_BLOCK:
-		case MMC_WRITE_DAT_UNTIL_STOP:
-		case MMC_WRITE_BLOCK:
-		case MMC_WRITE_MULTIPLE_BLOCK:
-		case MMC_PROGRAM_CID:
-		case MMC_PROGRAM_CSD:
-		case MMC_SEND_WRITE_PROT:
-		case MMC_LOCK_UNLOCK:
-		case MMC_GEN_CMD:
+		case 11:
+		case 17:
+		case 18:
+		case 20:
+		case 24:
+		case 25:
+		case 26:
+		case 27:
+		case 30:
+		case 42:
+		case 56:
 			break;
 
 		/* ACMDs. We don't keep track of state, so we just treat them
 		 * like any other command. */
-		case SD_APP_SEND_SCR:
+		case 51:
 			break;
 
 		default:
@@ -987,9 +998,9 @@ static inline struct mmc_data *wbsd_get_data(struct wbsd_host *host)
 	return host->mrq->cmd->data;
 }
 
-static void wbsd_tasklet_card(struct tasklet_struct *t)
+static void wbsd_tasklet_card(unsigned long param)
 {
-	struct wbsd_host *host = from_tasklet(host, t, card_tasklet);
+	struct wbsd_host *host = (struct wbsd_host *)param;
 	u8 csr;
 	int delay = -1;
 
@@ -1036,9 +1047,9 @@ static void wbsd_tasklet_card(struct tasklet_struct *t)
 		mmc_detect_change(host->mmc, msecs_to_jiffies(delay));
 }
 
-static void wbsd_tasklet_fifo(struct tasklet_struct *t)
+static void wbsd_tasklet_fifo(unsigned long param)
 {
-	struct wbsd_host *host = from_tasklet(host, t, fifo_tasklet);
+	struct wbsd_host *host = (struct wbsd_host *)param;
 	struct mmc_data *data;
 
 	spin_lock(&host->lock);
@@ -1067,9 +1078,9 @@ end:
 	spin_unlock(&host->lock);
 }
 
-static void wbsd_tasklet_crc(struct tasklet_struct *t)
+static void wbsd_tasklet_crc(unsigned long param)
 {
-	struct wbsd_host *host = from_tasklet(host, t, crc_tasklet);
+	struct wbsd_host *host = (struct wbsd_host *)param;
 	struct mmc_data *data;
 
 	spin_lock(&host->lock);
@@ -1091,9 +1102,9 @@ end:
 	spin_unlock(&host->lock);
 }
 
-static void wbsd_tasklet_timeout(struct tasklet_struct *t)
+static void wbsd_tasklet_timeout(unsigned long param)
 {
-	struct wbsd_host *host = from_tasklet(host, t, timeout_tasklet);
+	struct wbsd_host *host = (struct wbsd_host *)param;
 	struct mmc_data *data;
 
 	spin_lock(&host->lock);
@@ -1115,9 +1126,9 @@ end:
 	spin_unlock(&host->lock);
 }
 
-static void wbsd_tasklet_finish(struct tasklet_struct *t)
+static void wbsd_tasklet_finish(unsigned long param)
 {
-	struct wbsd_host *host = from_tasklet(host, t, finish_tasklet);
+	struct wbsd_host *host = (struct wbsd_host *)param;
 	struct mmc_data *data;
 
 	spin_lock(&host->lock);
@@ -1449,11 +1460,16 @@ static int wbsd_request_irq(struct wbsd_host *host, int irq)
 	/*
 	 * Set up tasklets. Must be done before requesting interrupt.
 	 */
-	tasklet_setup(&host->card_tasklet, wbsd_tasklet_card);
-	tasklet_setup(&host->fifo_tasklet, wbsd_tasklet_fifo);
-	tasklet_setup(&host->crc_tasklet, wbsd_tasklet_crc);
-	tasklet_setup(&host->timeout_tasklet, wbsd_tasklet_timeout);
-	tasklet_setup(&host->finish_tasklet, wbsd_tasklet_finish);
+	tasklet_init(&host->card_tasklet, wbsd_tasklet_card,
+			(unsigned long)host);
+	tasklet_init(&host->fifo_tasklet, wbsd_tasklet_fifo,
+			(unsigned long)host);
+	tasklet_init(&host->crc_tasklet, wbsd_tasklet_crc,
+			(unsigned long)host);
+	tasklet_init(&host->timeout_tasklet, wbsd_tasklet_timeout,
+			(unsigned long)host);
+	tasklet_init(&host->finish_tasklet, wbsd_tasklet_finish,
+			(unsigned long)host);
 
 	/*
 	 * Allocate interrupt.
@@ -1900,7 +1916,6 @@ static struct platform_driver wbsd_driver = {
 	.resume		= wbsd_platform_resume,
 	.driver		= {
 		.name	= DRIVER_NAME,
-		.probe_type = PROBE_PREFER_ASYNCHRONOUS,
 	},
 };
 

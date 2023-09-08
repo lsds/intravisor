@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * AppArmor security module
  *
@@ -6,6 +5,11 @@
  *
  * Copyright (C) 1998-2008 Novell/SUSE
  * Copyright 2009-2017 Canonical Ltd.
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License as
+ * published by the Free Software Foundation, version 2 of the
+ * License.
  *
  * AppArmor policy namespaces, allow for different sets of policies
  * to be loaded for tasks within the namespace.
@@ -21,9 +25,6 @@
 #include "include/policy_ns.h"
 #include "include/label.h"
 #include "include/policy.h"
-
-/* kernel label */
-struct aa_label *kernel_t;
 
 /* root profile namespace */
 struct aa_ns *root_ns;
@@ -54,10 +55,10 @@ bool aa_ns_visible(struct aa_ns *curr, struct aa_ns *view, bool subns)
 }
 
 /**
- * aa_ns_name - Find the ns name to display for @view from @curr
- * @curr: current namespace (NOT NULL)
- * @view: namespace attempting to view (NOT NULL)
- * @subns: are subns visible
+ * aa_na_name - Find the ns name to display for @view from @curr
+ * @curr - current namespace (NOT NULL)
+ * @view - namespace attempting to view (NOT NULL)
+ * @subns - are subns visible
  *
  * Returns: name of @view visible from @curr
  */
@@ -78,23 +79,6 @@ const char *aa_ns_name(struct aa_ns *curr, struct aa_ns *view, bool subns)
 	}
 
 	return aa_hidden_ns_name;
-}
-
-static struct aa_profile *alloc_unconfined(const char *name)
-{
-	struct aa_profile *profile;
-
-	profile = aa_alloc_profile(name, NULL, GFP_KERNEL);
-	if (!profile)
-		return NULL;
-
-	profile->label.flags |= FLAG_IX_ON_NAME_ERROR |
-		FLAG_IMMUTIBLE | FLAG_NS_COUNT | FLAG_UNCONFINED;
-	profile->mode = APPARMOR_UNCONFINED;
-	profile->file.dfa = aa_get_dfa(nulldfa);
-	profile->policy.dfa = aa_get_dfa(nulldfa);
-
-	return profile;
 }
 
 /**
@@ -121,9 +105,16 @@ static struct aa_ns *alloc_ns(const char *prefix, const char *name)
 	init_waitqueue_head(&ns->wait);
 
 	/* released by aa_free_ns() */
-	ns->unconfined = alloc_unconfined("unconfined");
+	ns->unconfined = aa_alloc_profile("unconfined", NULL, GFP_KERNEL);
 	if (!ns->unconfined)
 		goto fail_unconfined;
+
+	ns->unconfined->label.flags |= FLAG_IX_ON_NAME_ERROR |
+		FLAG_IMMUTIBLE | FLAG_NS_COUNT | FLAG_UNCONFINED;
+	ns->unconfined->mode = APPARMOR_UNCONFINED;
+	ns->unconfined->file.dfa = aa_get_dfa(nulldfa);
+	ns->unconfined->policy.dfa = aa_get_dfa(nulldfa);
+
 	/* ns and ns->unconfined share ns->unconfined refcount */
 	ns->unconfined->ns = ns;
 
@@ -134,9 +125,9 @@ static struct aa_ns *alloc_ns(const char *prefix, const char *name)
 	return ns;
 
 fail_unconfined:
-	kfree_sensitive(ns->base.hname);
+	kzfree(ns->base.hname);
 fail_ns:
-	kfree_sensitive(ns);
+	kzfree(ns);
 	return NULL;
 }
 
@@ -158,7 +149,7 @@ void aa_free_ns(struct aa_ns *ns)
 
 	ns->unconfined->ns = NULL;
 	aa_free_profile(ns->unconfined);
-	kfree_sensitive(ns);
+	kzfree(ns);
 }
 
 /**
@@ -200,7 +191,7 @@ struct aa_ns *aa_find_ns(struct aa_ns *root, const char *name)
 
 /**
  * __aa_lookupn_ns - lookup the namespace matching @hname
- * @view: namespace to search in  (NOT NULL)
+ * @base: base list to start looking up profile name from  (NOT NULL)
  * @hname: hierarchical ns name  (NOT NULL)
  * @n: length of @hname
  *
@@ -264,7 +255,7 @@ static struct aa_ns *__aa_create_ns(struct aa_ns *parent, const char *name,
 
 	ns = alloc_ns(parent->base.hname, name);
 	if (!ns)
-		return ERR_PTR(-ENOMEM);
+		return NULL;
 	ns->level = parent->level + 1;
 	mutex_lock_nested(&ns->lock, ns->level);
 	error = __aafs_ns_mkdir(ns, ns_subns_dir(parent), name, dir);
@@ -285,7 +276,7 @@ static struct aa_ns *__aa_create_ns(struct aa_ns *parent, const char *name,
 }
 
 /**
- * __aa_find_or_create_ns - create an ns, fail if it already exists
+ * aa_create_ns - create an ns, fail if it already exists
  * @parent: the parent of the namespace being created
  * @name: the name of the namespace
  * @dir: if not null the dir to put the ns entries in
@@ -401,21 +392,10 @@ static void __ns_list_release(struct list_head *head)
  */
 int __init aa_alloc_root_ns(void)
 {
-	struct aa_profile *kernel_p;
-
 	/* released by aa_free_root_ns - used as list ref*/
 	root_ns = alloc_ns(NULL, "root");
 	if (!root_ns)
 		return -ENOMEM;
-
-	kernel_p = alloc_unconfined("kernel_t");
-	if (!kernel_p) {
-		destroy_ns(root_ns);
-		aa_free_ns(root_ns);
-		return -ENOMEM;
-	}
-	kernel_t = &kernel_p->label;
-	root_ns->unconfined->ns = aa_get_ns(root_ns);
 
 	return 0;
 }
@@ -429,7 +409,6 @@ void __init aa_free_root_ns(void)
 
 	 root_ns = NULL;
 
-	 aa_label_free(kernel_t);
 	 destroy_ns(ns);
 	 aa_put_ns(ns);
 }

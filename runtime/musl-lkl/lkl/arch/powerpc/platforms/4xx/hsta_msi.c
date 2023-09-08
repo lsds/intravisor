@@ -1,16 +1,19 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * MSI support for PPC4xx SoCs using High Speed Transfer Assist (HSTA) for
  * generation of the interrupt.
  *
  * Copyright © 2013 Alistair Popple <alistair@popple.id.au> IBM Corporation
+ *
+ * This program is free software; you can redistribute  it and/or modify it
+ * under  the terms of  the GNU General  Public License as published by the
+ * Free Software Foundation;  either version 2 of the  License, or (at your
+ * option) any later version.
  */
 
 #include <linux/kernel.h>
 #include <linux/interrupt.h>
 #include <linux/msi.h>
 #include <linux/of.h>
-#include <linux/of_irq.h>
 #include <linux/of_platform.h>
 #include <linux/pci.h>
 #include <linux/semaphore.h>
@@ -48,7 +51,7 @@ static int hsta_setup_msi_irqs(struct pci_dev *dev, int nvec, int type)
 		return -EINVAL;
 	}
 
-	msi_for_each_desc(entry, &dev->dev, MSI_DESC_NOTASSOCIATED) {
+	for_each_pci_msi_entry(entry, dev) {
 		irq = msi_bitmap_alloc_hwirqs(&ppc4xx_hsta_msi.bmp, 1);
 		if (irq < 0) {
 			pr_debug("%s: Failed to allocate msi interrupt\n",
@@ -106,7 +109,10 @@ static void hsta_teardown_msi_irqs(struct pci_dev *dev)
 	struct msi_desc *entry;
 	int irq;
 
-	msi_for_each_desc(entry, &dev->dev, MSI_DESC_ASSOCIATED) {
+	for_each_pci_msi_entry(entry, dev) {
+		if (!entry->irq)
+			continue;
+
 		irq = hsta_find_hwirq_offset(entry->irq);
 
 		/* entry->irq should always be in irq_map */
@@ -150,8 +156,7 @@ static int hsta_msi_probe(struct platform_device *pdev)
 	if (ret)
 		goto out;
 
-	ppc4xx_hsta_msi.irq_map = kmalloc_array(irq_count, sizeof(int),
-						GFP_KERNEL);
+	ppc4xx_hsta_msi.irq_map = kmalloc(sizeof(int) * irq_count, GFP_KERNEL);
 	if (!ppc4xx_hsta_msi.irq_map) {
 		ret = -ENOMEM;
 		goto out1;

@@ -1,10 +1,11 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * OF helpers for parsing display timings
  *
  * Copyright (c) 2012 Steffen Trumtrar <s.trumtrar@pengutronix.de>, Pengutronix
  *
  * based on of_videomode.c by Sascha Hauer <s.hauer@pengutronix.de>
+ *
+ * This file is released under the GPLv2
  */
 #include <linux/export.h>
 #include <linux/of.h>
@@ -52,7 +53,6 @@ static int parse_timing_property(const struct device_node *np, const char *name,
 /**
  * of_parse_display_timing - parse display_timing entry from device_node
  * @np: device_node with the properties
- * @dt: display_timing that contains the result. I may be partially written in case of errors
  **/
 static int of_parse_display_timing(const struct device_node *np,
 		struct display_timing *dt)
@@ -120,20 +120,17 @@ int of_get_display_timing(const struct device_node *np, const char *name,
 		struct display_timing *dt)
 {
 	struct device_node *timing_np;
-	int ret;
 
 	if (!np)
 		return -EINVAL;
 
 	timing_np = of_get_child_by_name(np, name);
-	if (!timing_np)
+	if (!timing_np) {
+		pr_err("%pOF: could not find node '%s'\n", np, name);
 		return -ENOENT;
+	}
 
-	ret = of_parse_display_timing(timing_np, dt);
-
-	of_node_put(timing_np);
-
-	return ret;
+	return of_parse_display_timing(timing_np, dt);
 }
 EXPORT_SYMBOL_GPL(of_get_display_timing);
 
@@ -173,7 +170,7 @@ struct display_timings *of_get_display_timings(const struct device_node *np)
 		goto entryfail;
 	}
 
-	pr_debug("%pOF: using %pOFn as default timing\n", np, entry);
+	pr_debug("%pOF: using %s as default timing\n", np, entry->name);
 
 	native_mode = entry;
 
@@ -184,9 +181,8 @@ struct display_timings *of_get_display_timings(const struct device_node *np)
 		goto entryfail;
 	}
 
-	disp->timings = kcalloc(disp->num_timings,
-				sizeof(struct display_timing *),
-				GFP_KERNEL);
+	disp->timings = kzalloc(sizeof(struct display_timing *) *
+				disp->num_timings, GFP_KERNEL);
 	if (!disp->timings) {
 		pr_err("%pOF: could not allocate timings array\n", np);
 		goto entryfail;
@@ -199,7 +195,7 @@ struct display_timings *of_get_display_timings(const struct device_node *np)
 		struct display_timing *dt;
 		int r;
 
-		dt = kmalloc(sizeof(*dt), GFP_KERNEL);
+		dt = kzalloc(sizeof(*dt), GFP_KERNEL);
 		if (!dt) {
 			pr_err("%pOF: could not allocate display_timing struct\n",
 				np);

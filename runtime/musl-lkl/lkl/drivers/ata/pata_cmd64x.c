@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * pata_cmd64x.c 	- CMD64x PATA for new ATA layer
  *			  (C) 2005 Red Hat Inc
@@ -116,7 +115,7 @@ static void cmd64x_set_timing(struct ata_port *ap, struct ata_device *adev, u8 m
 	/* ata_timing_compute is smart and will produce timings for MWDMA
 	   that don't violate the drives PIO capabilities. */
 	if (ata_timing_compute(adev, mode, &t, T, 0) < 0) {
-		ata_dev_err(adev, DRV_NAME ": mode computation failed.\n");
+		printk(KERN_ERR DRV_NAME ": mode computation failed.\n");
 		return;
 	}
 	if (ap->port_no) {
@@ -130,7 +129,7 @@ static void cmd64x_set_timing(struct ata_port *ap, struct ata_device *adev, u8 m
 		}
 	}
 
-	ata_dev_dbg(adev, DRV_NAME ": active %d recovery %d setup %d.\n",
+	printk(KERN_DEBUG DRV_NAME ": active %d recovery %d setup %d.\n",
 		t.active, t.recover, t.setup);
 	if (t.recover > 16) {
 		t.active += t.recover - 16;
@@ -461,7 +460,7 @@ static int cmd64x_init_one(struct pci_dev *pdev, const struct pci_device_id *id)
 		case 1:
 			ppi[0] = &cmd_info[4];
 			ppi[1] = &cmd_info[4];
-			fallthrough;
+			/* FALL THRU */
 		/* Early revs have no CNTRL_CH0 */
 		case 2:
 		case 0:

@@ -1,11 +1,16 @@
-// SPDX-License-Identifier: GPL-2.0+
-//
-// imx53 pinctrl driver based on imx pinmux core
-//
-// Copyright (C) 2012 Freescale Semiconductor, Inc.
-// Copyright (C) 2012 Linaro, Inc.
-//
-// Author: Dong Aisheng <dong.aisheng@linaro.org>
+/*
+ * imx53 pinctrl driver based on imx pinmux core
+ *
+ * Copyright (C) 2012 Freescale Semiconductor, Inc.
+ * Copyright (C) 2012 Linaro, Inc.
+ *
+ * Author: Dong Aisheng <dong.aisheng@linaro.org>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ */
 
 #include <linux/err.h>
 #include <linux/init.h>
@@ -463,7 +468,6 @@ static struct platform_driver imx53_pinctrl_driver = {
 	.driver = {
 		.name = "imx53-pinctrl",
 		.of_match_table = imx53_pinctrl_of_match,
-		.suppress_bind_attrs = true,
 	},
 	.probe = imx53_pinctrl_probe,
 };

@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * hdaps.c - driver for IBM's Hard Drive Active Protection System
  *
@@ -12,13 +11,26 @@
  * This driver is based on the document by Mark A. Smith available at
  * http://www.almaden.ibm.com/cs/people/marksmith/tpaps.html and a lot of trial
  * and error.
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License v2 as published by the
+ * Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+ * more details.
+ *
+ * You should have received a copy of the GNU General Public License along with
+ * this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
 #include <linux/delay.h>
 #include <linux/platform_device.h>
-#include <linux/input.h>
+#include <linux/input-polldev.h>
 #include <linux/kernel.h>
 #include <linux/mutex.h>
 #include <linux/module.h>
@@ -59,7 +71,7 @@
 #define HDAPS_BOTH_AXES		(HDAPS_X_AXIS | HDAPS_Y_AXIS)
 
 static struct platform_device *pdev;
-static struct input_dev *hdaps_idev;
+static struct input_polled_dev *hdaps_idev;
 static unsigned int hdaps_invert;
 static u8 km_activity;
 static int rest_x;
@@ -318,8 +330,9 @@ static void hdaps_calibrate(void)
 	__hdaps_read_pair(HDAPS_PORT_XPOS, HDAPS_PORT_YPOS, &rest_x, &rest_y);
 }
 
-static void hdaps_mousedev_poll(struct input_dev *input_dev)
+static void hdaps_mousedev_poll(struct input_polled_dev *dev)
 {
+	struct input_dev *input_dev = dev->input;
 	int x, y;
 
 	mutex_lock(&hdaps_mtx);
@@ -365,7 +378,7 @@ static ssize_t hdaps_variance_show(struct device *dev,
 static ssize_t hdaps_temp1_show(struct device *dev,
 				struct device_attribute *attr, char *buf)
 {
-	u8 temp;
+	u8 uninitialized_var(temp);
 	int ret;
 
 	ret = hdaps_readb_one(HDAPS_PORT_TEMP1, &temp);
@@ -378,7 +391,7 @@ static ssize_t hdaps_temp1_show(struct device *dev,
 static ssize_t hdaps_temp2_show(struct device *dev,
 				struct device_attribute *attr, char *buf)
 {
-	u8 temp;
+	u8 uninitialized_var(temp);
 	int ret;
 
 	ret = hdaps_readb_one(HDAPS_PORT_TEMP2, &temp);
@@ -462,7 +475,7 @@ static struct attribute *hdaps_attributes[] = {
 	NULL,
 };
 
-static const struct attribute_group hdaps_attribute_group = {
+static struct attribute_group hdaps_attribute_group = {
 	.attrs = hdaps_attributes,
 };
 
@@ -530,6 +543,7 @@ static const struct dmi_system_id hdaps_whitelist[] __initconst = {
 
 static int __init hdaps_init(void)
 {
+	struct input_dev *idev;
 	int ret;
 
 	if (!dmi_check_system(hdaps_whitelist)) {
@@ -547,7 +561,7 @@ static int __init hdaps_init(void)
 	if (ret)
 		goto out_region;
 
-	pdev = platform_device_register_simple("hdaps", PLATFORM_DEVID_NONE, NULL, 0);
+	pdev = platform_device_register_simple("hdaps", -1, NULL, 0);
 	if (IS_ERR(pdev)) {
 		ret = PTR_ERR(pdev);
 		goto out_driver;
@@ -557,32 +571,31 @@ static int __init hdaps_init(void)
 	if (ret)
 		goto out_device;
 
-	hdaps_idev = input_allocate_device();
+	hdaps_idev = input_allocate_polled_device();
 	if (!hdaps_idev) {
 		ret = -ENOMEM;
 		goto out_group;
 	}
 
+	hdaps_idev->poll = hdaps_mousedev_poll;
+	hdaps_idev->poll_interval = HDAPS_POLL_INTERVAL;
+
 	/* initial calibrate for the input device */
 	hdaps_calibrate();
 
 	/* initialize the input class */
-	hdaps_idev->name = "hdaps";
-	hdaps_idev->phys = "isa1600/input0";
-	hdaps_idev->id.bustype = BUS_ISA;
-	hdaps_idev->dev.parent = &pdev->dev;
-	input_set_abs_params(hdaps_idev, ABS_X,
+	idev = hdaps_idev->input;
+	idev->name = "hdaps";
+	idev->phys = "isa1600/input0";
+	idev->id.bustype = BUS_ISA;
+	idev->dev.parent = &pdev->dev;
+	idev->evbit[0] = BIT_MASK(EV_ABS);
+	input_set_abs_params(idev, ABS_X,
 			-256, 256, HDAPS_INPUT_FUZZ, HDAPS_INPUT_FLAT);
-	input_set_abs_params(hdaps_idev, ABS_Y,
+	input_set_abs_params(idev, ABS_Y,
 			-256, 256, HDAPS_INPUT_FUZZ, HDAPS_INPUT_FLAT);
 
-	ret = input_setup_polling(hdaps_idev, hdaps_mousedev_poll);
-	if (ret)
-		goto out_idev;
-
-	input_set_poll_interval(hdaps_idev, HDAPS_POLL_INTERVAL);
-
-	ret = input_register_device(hdaps_idev);
+	ret = input_register_polled_device(hdaps_idev);
 	if (ret)
 		goto out_idev;
 
@@ -590,7 +603,7 @@ static int __init hdaps_init(void)
 	return 0;
 
 out_idev:
-	input_free_device(hdaps_idev);
+	input_free_polled_device(hdaps_idev);
 out_group:
 	sysfs_remove_group(&pdev->dev.kobj, &hdaps_attribute_group);
 out_device:
@@ -606,7 +619,8 @@ out:
 
 static void __exit hdaps_exit(void)
 {
-	input_unregister_device(hdaps_idev);
+	input_unregister_polled_device(hdaps_idev);
+	input_free_polled_device(hdaps_idev);
 	sysfs_remove_group(&pdev->dev.kobj, &hdaps_attribute_group);
 	platform_device_unregister(pdev);
 	platform_driver_unregister(&hdaps_driver);

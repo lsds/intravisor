@@ -25,11 +25,6 @@ set_cfgjson()
 
 run_hijack_cfg()
 {
-    if [ -z "$LKL_HOST_CONFIG_JSMN" ]; then
-        echo "no json support"
-        exit $TEST_SKIP
-    fi
-
     lkl_test_cmd LKL_HIJACK_CONFIG_FILE=$cfgjson $hijack $@
 }
 
@@ -75,7 +70,7 @@ test_mount_and_dump()
     }
 EOF
 
-    ans=$(run_hijack_cfg $(QUIET=1 lkl_test_cmd which true))
+    ans=$(run_hijack_cfg $(lkl_test_cmd which true))
     echo "$ans"
     echo "$ans" | grep "^65536" # lo's MTU
     echo "$ans" | grep "0x0" # lo's dev_id
@@ -92,7 +87,7 @@ test_boot_cmdline()
     }
 EOF
 
-    ans=$(run_hijack_cfg $(QUIET=1 lkl_test_cmd which true))
+    ans=$(run_hijack_cfg $(lkl_test_cmd which true))
     echo "$ans"
     [ $(echo "$ans" | wc -l) = 1 ]
 }
@@ -114,7 +109,7 @@ test_pipe_setup()
                 "param":"${fifo1}|${fifo2}",
                 "ip":"$(ip_lkl)",
                 "masklen":"$TEST_IP_NETMASK",
-                "mac":"$TEST_MAC0"
+                "mac":"$TEST_MAC0",
             }
         ]
     }
@@ -150,7 +145,7 @@ test_pipe_ping()
     }
 EOF
 
-    run_hijack_cfg $(QUIET=1 lkl_test_cmd which sleep) 10 &
+    run_hijack_cfg $(lkl_test_cmd which sleep) 10 &
 
     set_cfgjson 2 << EOF
     {
@@ -232,27 +227,13 @@ test_tap_ping_host()
 
 test_tap_ping_lkl()
 {
-    # Flush the neighbour cache and without reporting errors since there might
-    # not be any entries present.
-    lkl_test_cmd sudo ip -6 neigh del $(ip6_lkl) dev $(tap_ifname)
-    lkl_test_cmd sudo ip neigh del $(ip_lkl) dev $(tap_ifname)
-
-    # no errors beyond this point
     set -e
 
-    # start LKL and wait a bit so the host can ping
-    run_hijack_cfg $(QUIET=1 lkl_test_cmd which sleep) 3 &
-
-    # wait for LKL to boot
-    sleep 2
-
-    # check if LKL is alive
-    if ! kill -0 $!; then
-      wait $!
-      exit $?
-    fi
-
     # Now let's check that the host can see LKL.
+    lkl_test_cmd sudo ip -6 neigh del $(ip6_lkl) dev $(tap_ifname)
+    lkl_test_cmd sudo ip neigh del $(ip_lkl) dev $(tap_ifname)
+    run_hijack_cfg $(lkl_test_cmd which sleep) 3 &
+    sleep 2
     lkl_test_cmd sudo ping -i 0.01 -c 65 $(ip_lkl)
     lkl_test_cmd sudo ping6 -i 0.01 -c 65 $(ip6_lkl)
 }
@@ -686,21 +667,10 @@ if [[ ! -e ${basedir}/lib/hijack/liblkl-hijack.so ]]; then
     exit 0
 fi
 
-if [ -n "${LKL_HIJACK_ZPOLINE}" ]
-then
-    if [ -z "$LKL_HOST_CONFIG_ZPOLINE_DIR" ];  then
-       lkl_test_plan 0 "zpoline tests"
-       echo "missing zpoline configuration"
-       exit $TEST_SKIP
-    fi
-    test_header=" (zpoline)"
-fi
-
-
 if [ -n "$LKL_HOST_CONFIG_ANDROID" ]; then
     wdir=$ANDROID_WDIR
     adb_push lib/hijack/liblkl-hijack.so bin/lkl-hijack.sh tests/net-setup.sh \
-             tests/run_netperf.sh tests/hijack-test.sh tests/autoconf.sh
+             tests/run_netperf.sh tests/hijack-test.sh
     ping="ping"
     ping6="ping6"
     hijack="$wdir/bin/lkl-hijack.sh"
@@ -724,7 +694,7 @@ VDESWITCH=${wdir}/vde_switch
 # And make sure we clean up when we're done
 trap "clear_wdir &>/dev/null" EXIT
 
-lkl_test_plan 5 "hijack basic tests${test_header}"
+lkl_test_plan 5 "hijack basic tests"
 lkl_test_run 1 run_hijack ip addr
 lkl_test_run 2 run_hijack ip route
 lkl_test_run 3 test_ping
@@ -746,9 +716,6 @@ tap_prepare
 if ! lkl_test_cmd test -c /dev/net/tun &>/dev/null; then
     lkl_test_plan 0 "hijack tap backend tests"
     echo "missing /dev/net/tun"
-elif [ -z "$LKL_HOST_CONFIG_JSMN" ]; then
-    lkl_test_plan 0 "hijack tap backend tests"
-    echo "no json support"
 else
     lkl_test_plan 23 "hijack tap backend tests"
     lkl_test_run 1 test_tap_setup

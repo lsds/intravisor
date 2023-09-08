@@ -17,12 +17,6 @@
 
 #undef DEBUG_CMDLINE
 
-/*
- * A 32-bit ARC PROM pass arguments and environment as 32-bit pointer.
- * These macro take care of sign extension.
- */
-#define prom_argv(index) ((char *) (long)argv[(index)])
-
 static char *ignored[] = {
 	"ConsoleIn=",
 	"ConsoleOut=",
@@ -38,14 +32,14 @@ static char *used_arc[][2] = {
 	{ "OSLoadOptions=", "" }
 };
 
-static char __init *move_firmware_args(int argc, LONG *argv, char *cp)
+static char * __init move_firmware_args(char* cp)
 {
 	char *s;
 	int actr, i;
 
 	actr = 1; /* Always ignore argv[0] */
 
-	while (actr < argc) {
+	while (actr < prom_argc) {
 		for(i = 0; i < ARRAY_SIZE(used_arc); i++) {
 			int len = strlen(used_arc[i][0]);
 
@@ -70,7 +64,7 @@ static char __init *move_firmware_args(int argc, LONG *argv, char *cp)
 	return cp;
 }
 
-void __init prom_init_cmdline(int argc, LONG *argv)
+void __init prom_init_cmdline(void)
 {
 	char *cp;
 	int actr, i;
@@ -82,9 +76,9 @@ void __init prom_init_cmdline(int argc, LONG *argv)
 	 * Move ARC variables to the beginning to make sure they can be
 	 * overridden by later arguments.
 	 */
-	cp = move_firmware_args(argc, argv, cp);
+	cp = move_firmware_args(cp);
 
-	while (actr < argc) {
+	while (actr < prom_argc) {
 		for (i = 0; i < ARRAY_SIZE(ignored); i++) {
 			int len = strlen(ignored[i]);
 

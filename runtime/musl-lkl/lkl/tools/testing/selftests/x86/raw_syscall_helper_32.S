@@ -45,5 +45,3 @@ int80_and_ret:
 
 	.type int80_and_ret, @function
 	.size int80_and_ret, .-int80_and_ret
-
-.section .note.GNU-stack,"",%progbits

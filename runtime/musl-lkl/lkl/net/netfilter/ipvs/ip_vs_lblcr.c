@@ -1,12 +1,17 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * IPVS:        Locality-Based Least-Connection with Replication scheduler
  *
  * Authors:     Wensong Zhang <wensong@gnuchina.org>
  *
+ *              This program is free software; you can redistribute it and/or
+ *              modify it under the terms of the GNU General Public License
+ *              as published by the Free Software Foundation; either version
+ *              2 of the License, or (at your option) any later version.
+ *
  * Changes:
  *     Julian Anastasov        :    Added the missing (dest->weight>0)
  *                                  condition in the ip_vs_dest_set_max.
+ *
  */
 
 /*
@@ -42,7 +47,6 @@
 #include <linux/jiffies.h>
 #include <linux/list.h>
 #include <linux/slab.h>
-#include <linux/hash.h>
 
 /* for sysctl */
 #include <linux/fs.h>
@@ -160,7 +164,7 @@ static void ip_vs_dest_set_eraseall(struct ip_vs_dest_set *set)
 /* get weighted least-connection node in the destination set */
 static inline struct ip_vs_dest *ip_vs_dest_set_min(struct ip_vs_dest_set *set)
 {
-	struct ip_vs_dest_set_elem *e;
+	register struct ip_vs_dest_set_elem *e;
 	struct ip_vs_dest *dest, *least;
 	int loh, doh;
 
@@ -209,7 +213,7 @@ static inline struct ip_vs_dest *ip_vs_dest_set_min(struct ip_vs_dest_set *set)
 /* get weighted most-connection node in the destination set */
 static inline struct ip_vs_dest *ip_vs_dest_set_max(struct ip_vs_dest_set *set)
 {
-	struct ip_vs_dest_set_elem *e;
+	register struct ip_vs_dest_set_elem *e;
 	struct ip_vs_dest *dest, *most;
 	int moh, doh;
 
@@ -319,7 +323,7 @@ ip_vs_lblcr_hashkey(int af, const union nf_inet_addr *addr)
 		addr_fold = addr->ip6[0]^addr->ip6[1]^
 			    addr->ip6[2]^addr->ip6[3];
 #endif
-	return hash_32(ntohl(addr_fold), IP_VS_LBLCR_TAB_BITS);
+	return (ntohl(addr_fold)*2654435761UL) & IP_VS_LBLCR_TAB_MASK;
 }
 
 
@@ -530,7 +534,6 @@ static int ip_vs_lblcr_init_svc(struct ip_vs_service *svc)
 	tbl->counter = 1;
 	tbl->dead = false;
 	tbl->svc = svc;
-	atomic_set(&tbl->entries, 0);
 
 	/*
 	 *    Hook periodic timer for garbage collection

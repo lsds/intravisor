@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * twl4030-vibra.c - TWL4030 Vibrator driver
  *
@@ -7,6 +6,21 @@
  * Written by Henrik Saari <henrik.saari@nokia.com>
  * Updates by Felipe Balbi <felipe.balbi@nokia.com>
  * Input by Jari Vanhala <ext-jari.vanhala@nokia.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
+ * 02110-1301 USA
+ *
  */
 
 #include <linux/module.h>
@@ -163,9 +177,13 @@ static int __maybe_unused twl4030_vibra_resume(struct device *dev)
 static SIMPLE_DEV_PM_OPS(twl4030_vibra_pm_ops,
 			 twl4030_vibra_suspend, twl4030_vibra_resume);
 
-static bool twl4030_vibra_check_coexist(struct device_node *parent)
+static bool twl4030_vibra_check_coexist(struct twl4030_vibra_data *pdata,
+			      struct device_node *parent)
 {
 	struct device_node *node;
+
+	if (pdata && pdata->coexist)
+		return true;
 
 	node = of_get_child_by_name(parent, "codec");
 	if (node) {
@@ -178,12 +196,13 @@ static bool twl4030_vibra_check_coexist(struct device_node *parent)
 
 static int twl4030_vibra_probe(struct platform_device *pdev)
 {
+	struct twl4030_vibra_data *pdata = dev_get_platdata(&pdev->dev);
 	struct device_node *twl4030_core_node = pdev->dev.parent->of_node;
 	struct vibra_info *info;
 	int ret;
 
-	if (!twl4030_core_node) {
-		dev_dbg(&pdev->dev, "twl4030 OF node is missing\n");
+	if (!pdata && !twl4030_core_node) {
+		dev_dbg(&pdev->dev, "platform_data not available\n");
 		return -EINVAL;
 	}
 
@@ -192,7 +211,7 @@ static int twl4030_vibra_probe(struct platform_device *pdev)
 		return -ENOMEM;
 
 	info->dev = &pdev->dev;
-	info->coexist = twl4030_vibra_check_coexist(twl4030_core_node);
+	info->coexist = twl4030_vibra_check_coexist(pdata, twl4030_core_node);
 	INIT_WORK(&info->play_work, vibra_play_work);
 
 	info->input_dev = devm_input_allocate_device(&pdev->dev);

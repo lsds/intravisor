@@ -3,9 +3,7 @@
 The GPBR are a set of battery-backed registers.
 
 Required properties:
-- compatible:		Should be one of the following:
-			"atmel,at91sam9260-gpbr", "syscon"
-			"microchip,sam9x60-gpbr", "syscon"
+- compatible:		"atmel,at91sam9260-gpbr", "syscon"
 - reg:			contains offset/length value of the GPBR memory
 			region.
 

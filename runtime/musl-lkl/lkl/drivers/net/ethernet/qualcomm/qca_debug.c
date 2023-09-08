@@ -60,9 +60,6 @@ static const char qcaspi_gstrings_stats[][ETH_GSTRING_LEN] = {
 	"Write buffer misses",
 	"Transmit ring full",
 	"SPI errors",
-	"Write verify errors",
-	"Buffer available errors",
-	"Bad signature",
 };
 
 #ifdef CONFIG_DEBUG_FS
@@ -127,16 +124,35 @@ qcaspi_info_show(struct seq_file *s, void *what)
 
 	return 0;
 }
-DEFINE_SHOW_ATTRIBUTE(qcaspi_info);
+
+static int
+qcaspi_info_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, qcaspi_info_show, inode->i_private);
+}
+
+static const struct file_operations qcaspi_info_ops = {
+	.open = qcaspi_info_open,
+	.read = seq_read,
+	.llseek = seq_lseek,
+	.release = single_release,
+};
 
 void
 qcaspi_init_device_debugfs(struct qcaspi *qca)
 {
-	qca->device_root = debugfs_create_dir(dev_name(&qca->net_dev->dev),
-					      NULL);
+	struct dentry *device_root;
 
-	debugfs_create_file("info", S_IFREG | 0444, qca->device_root, qca,
-			    &qcaspi_info_fops);
+	device_root = debugfs_create_dir(dev_name(&qca->net_dev->dev), NULL);
+	qca->device_root = device_root;
+
+	if (IS_ERR(device_root) || !device_root) {
+		pr_warn("failed to create debugfs directory for %s\n",
+			dev_name(&qca->net_dev->dev));
+		return;
+	}
+	debugfs_create_file("info", S_IFREG | 0444, device_root, qca,
+			    &qcaspi_info_ops);
 }
 
 void
@@ -164,10 +180,10 @@ qcaspi_get_drvinfo(struct net_device *dev, struct ethtool_drvinfo *p)
 {
 	struct qcaspi *qca = netdev_priv(dev);
 
-	strscpy(p->driver, QCASPI_DRV_NAME, sizeof(p->driver));
-	strscpy(p->version, QCASPI_DRV_VERSION, sizeof(p->version));
-	strscpy(p->fw_version, "QCA7000", sizeof(p->fw_version));
-	strscpy(p->bus_info, dev_name(&qca->spi_dev->dev),
+	strlcpy(p->driver, QCASPI_DRV_NAME, sizeof(p->driver));
+	strlcpy(p->version, QCASPI_DRV_VERSION, sizeof(p->version));
+	strlcpy(p->fw_version, "QCA7000", sizeof(p->fw_version));
+	strlcpy(p->bus_info, dev_name(&qca->spi_dev->dev),
 		sizeof(p->bus_info));
 }
 
@@ -246,9 +262,7 @@ qcaspi_get_regs(struct net_device *dev, struct ethtool_regs *regs, void *p)
 }
 
 static void
-qcaspi_get_ringparam(struct net_device *dev, struct ethtool_ringparam *ring,
-		     struct kernel_ethtool_ringparam *kernel_ring,
-		     struct netlink_ext_ack *extack)
+qcaspi_get_ringparam(struct net_device *dev, struct ethtool_ringparam *ring)
 {
 	struct qcaspi *qca = netdev_priv(dev);
 
@@ -259,9 +273,7 @@ qcaspi_get_ringparam(struct net_device *dev, struct ethtool_ringparam *ring,
 }
 
 static int
-qcaspi_set_ringparam(struct net_device *dev, struct ethtool_ringparam *ring,
-		     struct kernel_ethtool_ringparam *kernel_ring,
-		     struct netlink_ext_ack *extack)
+qcaspi_set_ringparam(struct net_device *dev, struct ethtool_ringparam *ring)
 {
 	const struct net_device_ops *ops = dev->netdev_ops;
 	struct qcaspi *qca = netdev_priv(dev);

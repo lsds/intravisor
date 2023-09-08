@@ -15,7 +15,8 @@
 
 #define RDS_IB_DEFAULT_RECV_WR		1024
 #define RDS_IB_DEFAULT_SEND_WR		256
-#define RDS_IB_DEFAULT_FR_WR		512
+#define RDS_IB_DEFAULT_FR_WR		256
+#define RDS_IB_DEFAULT_FR_INV_WR	256
 
 #define RDS_IB_DEFAULT_RETRY_COUNT	1
 
@@ -56,46 +57,16 @@ struct rds_ib_refill_cache {
 	struct list_head	 *ready;
 };
 
-/* This is the common structure for the IB private data exchange in setting up
- * an RDS connection.  The exchange is different for IPv4 and IPv6 connections.
- * The reason is that the address size is different and the addresses
- * exchanged are in the beginning of the structure.  Hence it is not possible
- * for interoperability if same structure is used.
- */
-struct rds_ib_conn_priv_cmn {
-	u8			ricpc_protocol_major;
-	u8			ricpc_protocol_minor;
-	__be16			ricpc_protocol_minor_mask;	/* bitmask */
-	u8			ricpc_dp_toss;
-	u8			ripc_reserved1;
-	__be16			ripc_reserved2;
-	__be64			ricpc_ack_seq;
-	__be32			ricpc_credit;	/* non-zero enables flow ctl */
-};
-
 struct rds_ib_connect_private {
 	/* Add new fields at the end, and don't permute existing fields. */
-	__be32				dp_saddr;
-	__be32				dp_daddr;
-	struct rds_ib_conn_priv_cmn	dp_cmn;
-};
-
-struct rds6_ib_connect_private {
-	/* Add new fields at the end, and don't permute existing fields. */
-	struct in6_addr			dp_saddr;
-	struct in6_addr			dp_daddr;
-	struct rds_ib_conn_priv_cmn	dp_cmn;
-};
-
-#define dp_protocol_major	dp_cmn.ricpc_protocol_major
-#define dp_protocol_minor	dp_cmn.ricpc_protocol_minor
-#define dp_protocol_minor_mask	dp_cmn.ricpc_protocol_minor_mask
-#define dp_ack_seq		dp_cmn.ricpc_ack_seq
-#define dp_credit		dp_cmn.ricpc_credit
-
-union rds_ib_conn_priv {
-	struct rds_ib_connect_private	ricp_v4;
-	struct rds6_ib_connect_private	ricp_v6;
+	__be32			dp_saddr;
+	__be32			dp_daddr;
+	u8			dp_protocol_major;
+	u8			dp_protocol_minor;
+	__be16			dp_protocol_minor_mask; /* bitmask */
+	__be32			dp_reserved1;
+	__be64			dp_ack_seq;
+	__be32			dp_credit;		/* non-zero enables flow ctl */
 };
 
 struct rds_ib_send_work {
@@ -156,7 +127,7 @@ struct rds_ib_connection {
 
 	/* To control the number of wrs from fastreg */
 	atomic_t		i_fastreg_wrs;
-	atomic_t		i_fastreg_inuse_count;
+	atomic_t		i_fastunreg_wrs;
 
 	/* interrupt handling */
 	struct tasklet_struct	i_send_tasklet;
@@ -165,8 +136,8 @@ struct rds_ib_connection {
 	/* tx */
 	struct rds_ib_work_ring	i_send_ring;
 	struct rm_data_op	*i_data_op;
-	struct rds_header	**i_send_hdrs;
-	dma_addr_t		*i_send_hdrs_dma;
+	struct rds_header	*i_send_hdrs;
+	dma_addr_t		i_send_hdrs_dma;
 	struct rds_ib_send_work *i_sends;
 	atomic_t		i_signaled_sends;
 
@@ -175,8 +146,8 @@ struct rds_ib_connection {
 	struct rds_ib_work_ring	i_recv_ring;
 	struct rds_ib_incoming	*i_ibinc;
 	u32			i_recv_data_rem;
-	struct rds_header	**i_recv_hdrs;
-	dma_addr_t		*i_recv_hdrs_dma;
+	struct rds_header	*i_recv_hdrs;
+	dma_addr_t		i_recv_hdrs_dma;
 	struct rds_ib_recv_work *i_recvs;
 	u64			i_ack_recv;	/* last ACK received */
 	struct rds_ib_refill_cache i_cache_incs;
@@ -220,7 +191,6 @@ struct rds_ib_connection {
 	/* Send/Recv vectors */
 	int			i_scq_vector;
 	int			i_rcq_vector;
-	u8			i_sl;
 };
 
 /* This assumes that atomic_t is at least 32 bits */
@@ -246,11 +216,12 @@ struct rds_ib_device {
 	struct list_head	conn_list;
 	struct ib_device	*dev;
 	struct ib_pd		*pd;
-	u8			odp_capable:1;
+	bool                    use_fastreg;
 
 	unsigned int		max_mrs;
 	struct rds_ib_mr_pool	*mr_1m_pool;
 	struct rds_ib_mr_pool   *mr_8k_pool;
+	unsigned int		fmr_max_remaps;
 	unsigned int		max_8k_mrs;
 	unsigned int		max_1m_mrs;
 	int			max_sge;
@@ -263,6 +234,7 @@ struct rds_ib_device {
 	int			*vector_load;
 };
 
+#define ibdev_to_node(ibdev) dev_to_node((ibdev)->dev.parent)
 #define rdsibdev_to_node(rdsibdev) ibdev_to_node(rdsibdev->dev)
 
 /* bits for i_ack_flags */
@@ -331,8 +303,10 @@ static inline void rds_ib_dma_sync_sg_for_cpu(struct ib_device *dev,
 	unsigned int i;
 
 	for_each_sg(sglist, sg, sg_dma_len, i) {
-		ib_dma_sync_single_for_cpu(dev, sg_dma_address(sg),
-					   sg_dma_len(sg), direction);
+		ib_dma_sync_single_for_cpu(dev,
+				ib_sg_dma_address(dev, sg),
+				ib_sg_dma_len(dev, sg),
+				direction);
 	}
 }
 #define ib_dma_sync_sg_for_cpu	rds_ib_dma_sync_sg_for_cpu
@@ -346,8 +320,10 @@ static inline void rds_ib_dma_sync_sg_for_device(struct ib_device *dev,
 	unsigned int i;
 
 	for_each_sg(sglist, sg, sg_dma_len, i) {
-		ib_dma_sync_single_for_device(dev, sg_dma_address(sg),
-					      sg_dma_len(sg), direction);
+		ib_dma_sync_single_for_device(dev,
+				ib_sg_dma_address(dev, sg),
+				ib_sg_dma_len(dev, sg),
+				direction);
 	}
 }
 #define ib_dma_sync_sg_for_device	rds_ib_dma_sync_sg_for_device
@@ -375,17 +351,17 @@ void rds_ib_listen_stop(void);
 __printf(2, 3)
 void __rds_ib_conn_error(struct rds_connection *conn, const char *, ...);
 int rds_ib_cm_handle_connect(struct rdma_cm_id *cm_id,
-			     struct rdma_cm_event *event, bool isv6);
-int rds_ib_cm_initiate_connect(struct rdma_cm_id *cm_id, bool isv6);
+			     struct rdma_cm_event *event);
+int rds_ib_cm_initiate_connect(struct rdma_cm_id *cm_id);
 void rds_ib_cm_connect_complete(struct rds_connection *conn,
 				struct rdma_cm_event *event);
+
 
 #define rds_ib_conn_error(conn, fmt...) \
 	__rds_ib_conn_error(conn, KERN_WARNING "RDS/IB: " fmt)
 
 /* ib_rdma.c */
-int rds_ib_update_ipaddr(struct rds_ib_device *rds_ibdev,
-			 struct in6_addr *ipaddr);
+int rds_ib_update_ipaddr(struct rds_ib_device *rds_ibdev, __be32 ipaddr);
 void rds_ib_add_conn(struct rds_ib_device *rds_ibdev, struct rds_connection *conn);
 void rds_ib_remove_conn(struct rds_ib_device *rds_ibdev, struct rds_connection *conn);
 void rds_ib_destroy_nodev_conns(void);
@@ -395,7 +371,7 @@ void rds_ib_mr_cqe_handler(struct rds_ib_connection *ic, struct ib_wc *wc);
 int rds_ib_recv_init(void);
 void rds_ib_recv_exit(void);
 int rds_ib_recv_path(struct rds_conn_path *conn);
-int rds_ib_recv_alloc_caches(struct rds_ib_connection *ic, gfp_t gfp);
+int rds_ib_recv_alloc_caches(struct rds_ib_connection *ic);
 void rds_ib_recv_free_caches(struct rds_ib_connection *ic);
 void rds_ib_recv_refill(struct rds_connection *conn, int prefill, gfp_t gfp);
 void rds_ib_inc_free(struct rds_incoming *inc);
@@ -438,7 +414,7 @@ int rds_ib_send_grab_credits(struct rds_ib_connection *ic, u32 wanted,
 int rds_ib_xmit_atomic(struct rds_connection *conn, struct rm_atomic_op *op);
 
 /* ib_stats.c */
-DECLARE_PER_CPU_SHARED_ALIGNED(struct rds_ib_statistics, rds_ib_stats);
+DECLARE_PER_CPU(struct rds_ib_statistics, rds_ib_stats);
 #define rds_ib_stats_inc(member) rds_stats_inc_which(rds_ib_stats, member)
 #define rds_ib_stats_add(member, count) \
 		rds_stats_add_which(rds_ib_stats, member, count)

@@ -11,9 +11,8 @@
 
 #include "affs.h"
 
-static int affs_symlink_read_folio(struct file *file, struct folio *folio)
+static int affs_symlink_readpage(struct file *file, struct page *page)
 {
-	struct page *page = &folio->page;
 	struct buffer_head *bh;
 	struct inode *inode = page->mapping->host;
 	char *link = page_address(page);
@@ -68,7 +67,7 @@ fail:
 }
 
 const struct address_space_operations affs_symlink_aops = {
-	.read_folio	= affs_symlink_read_folio,
+	.readpage	= affs_symlink_readpage,
 };
 
 const struct inode_operations affs_symlink_inode_operations = {

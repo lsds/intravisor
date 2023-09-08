@@ -16,11 +16,10 @@
  *  3. CPU clock rate changes.
  *
  * Please see this thread:
- *   https://lists.openwall.net/linux-kernel/2011/01/09/56
+ *   http://lists.openwall.net/linux-kernel/2011/01/09/56
  */
 
-#include <linux/math.h>
-#include <linux/sched.h>
+#include <linux/kernel.h>
 
 extern unsigned long loops_per_jiffy;
 
@@ -56,36 +55,13 @@ static inline void ndelay(unsigned long x)
 
 extern unsigned long lpj_fine;
 void calibrate_delay(void);
-void __attribute__((weak)) calibration_delay_done(void);
 void msleep(unsigned int msecs);
 unsigned long msleep_interruptible(unsigned int msecs);
-void usleep_range_state(unsigned long min, unsigned long max,
-			unsigned int state);
-
-static inline void usleep_range(unsigned long min, unsigned long max)
-{
-	usleep_range_state(min, max, TASK_UNINTERRUPTIBLE);
-}
-
-static inline void usleep_idle_range(unsigned long min, unsigned long max)
-{
-	usleep_range_state(min, max, TASK_IDLE);
-}
+void usleep_range(unsigned long min, unsigned long max);
 
 static inline void ssleep(unsigned int seconds)
 {
 	msleep(seconds * 1000);
-}
-
-/* see Documentation/timers/timers-howto.rst for the thresholds */
-static inline void fsleep(unsigned long usecs)
-{
-	if (usecs <= 10)
-		udelay(usecs);
-	else if (usecs <= 20000)
-		usleep_range(usecs, 2 * usecs);
-	else
-		msleep(DIV_ROUND_UP(usecs, 1000));
 }
 
 #endif /* defined(_LINUX_DELAY_H) */

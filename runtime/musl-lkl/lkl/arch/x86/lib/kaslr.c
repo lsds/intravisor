@@ -11,7 +11,7 @@
 #include <asm/msr.h>
 #include <asm/archrandom.h>
 #include <asm/e820/api.h>
-#include <asm/shared/io.h>
+#include <asm/io.h>
 
 /*
  * When built for the regular kernel, several functions need to be stubbed out
@@ -36,8 +36,8 @@ static inline u16 i8254(void)
 	u16 status, timer;
 
 	do {
-		outb(I8254_CMD_READBACK | I8254_SELECT_COUNTER0,
-		     I8254_PORT_CONTROL);
+		outb(I8254_PORT_CONTROL,
+		     I8254_CMD_READBACK | I8254_SELECT_COUNTER0);
 		status = inb(I8254_PORT_COUNTER0);
 		timer  = inb(I8254_PORT_COUNTER0);
 		timer |= inb(I8254_PORT_COUNTER0) << 8;
@@ -56,14 +56,11 @@ unsigned long kaslr_get_random_long(const char *purpose)
 	unsigned long raw, random = get_boot_seed();
 	bool use_i8254 = true;
 
-	if (purpose) {
-		debug_putstr(purpose);
-		debug_putstr(" KASLR using");
-	}
+	debug_putstr(purpose);
+	debug_putstr(" KASLR using");
 
 	if (has_cpuflag(X86_FEATURE_RDRAND)) {
-		if (purpose)
-			debug_putstr(" RDRAND");
+		debug_putstr(" RDRAND");
 		if (rdrand_long(&raw)) {
 			random ^= raw;
 			use_i8254 = false;
@@ -71,8 +68,7 @@ unsigned long kaslr_get_random_long(const char *purpose)
 	}
 
 	if (has_cpuflag(X86_FEATURE_TSC)) {
-		if (purpose)
-			debug_putstr(" RDTSC");
+		debug_putstr(" RDTSC");
 		raw = rdtsc();
 
 		random ^= raw;
@@ -80,8 +76,7 @@ unsigned long kaslr_get_random_long(const char *purpose)
 	}
 
 	if (use_i8254) {
-		if (purpose)
-			debug_putstr(" i8254");
+		debug_putstr(" i8254");
 		random ^= i8254();
 	}
 
@@ -91,8 +86,7 @@ unsigned long kaslr_get_random_long(const char *purpose)
 	    : "a" (random), "rm" (mix_const));
 	random += raw;
 
-	if (purpose)
-		debug_putstr("...\n");
+	debug_putstr("...\n");
 
 	return random;
 }

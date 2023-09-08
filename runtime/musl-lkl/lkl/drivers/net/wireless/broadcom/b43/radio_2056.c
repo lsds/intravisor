@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
 
   Broadcom B43 wireless driver
@@ -6,6 +5,20 @@
 
   Copyright (c) 2010 Rafał Miłecki <zajec5@gmail.com>
 
+  This program is free software; you can redistribute it and/or modify
+  it under the terms of the GNU General Public License as published by
+  the Free Software Foundation; either version 2 of the License, or
+  (at your option) any later version.
+
+  This program is distributed in the hope that it will be useful,
+  but WITHOUT ANY WARRANTY; without even the implied warranty of
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  GNU General Public License for more details.
+
+  You should have received a copy of the GNU General Public License
+  along with this program; see the file COPYING.  If not, write to
+  the Free Software Foundation, Inc., 51 Franklin Steet, Fifth Floor,
+  Boston, MA 02110-1301, USA.
 
 */
 
@@ -3072,7 +3085,7 @@ INITTABSPTS(b2056_inittab_radio_rev11);
 	.phy_regs.phy_bw5	= r4,	\
 	.phy_regs.phy_bw6	= r5
 
-/* https://bcm-v4.sipsolutions.net/802.11/Radio/2056/ChannelTable */
+/* http://bcm-v4.sipsolutions.net/802.11/Radio/2056/ChannelTable */
 static const struct b43_nphy_channeltab_entry_rev3 b43_nphy_channeltab_phy_rev3[] = {
   {	.freq			= 4920,
 	RADIOREGS3(0xff, 0x01, 0x01, 0x01, 0xec, 0x05, 0x05, 0x04,

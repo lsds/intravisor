@@ -1,8 +1,17 @@
-// SPDX-License-Identifier: GPL-2.0+
 /*
- * NILFS dat/inode allocator
+ * alloc.c - NILFS dat/inode allocator
  *
  * Copyright (C) 2006-2008 Nippon Telegraph and Telephone Corporation.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
  *
  * Originally written by Koji Sato.
  * Two allocators were unified by Ryusuke Konishi and Amagai Yoshiji.
@@ -613,10 +622,10 @@ void nilfs_palloc_commit_free_entry(struct inode *inode,
 	lock = nilfs_mdt_bgl_lock(inode, group);
 
 	if (!nilfs_clear_bit_atomic(lock, group_offset, bitmap))
-		nilfs_warn(inode->i_sb,
-			   "%s (ino=%lu): entry number %llu already freed",
-			   __func__, inode->i_ino,
-			   (unsigned long long)req->pr_entry_nr);
+		nilfs_msg(inode->i_sb, KERN_WARNING,
+			  "%s (ino=%lu): entry number %llu already freed",
+			  __func__, inode->i_ino,
+			  (unsigned long long)req->pr_entry_nr);
 	else
 		nilfs_palloc_group_desc_add_entries(desc, lock, 1);
 
@@ -654,10 +663,10 @@ void nilfs_palloc_abort_alloc_entry(struct inode *inode,
 	lock = nilfs_mdt_bgl_lock(inode, group);
 
 	if (!nilfs_clear_bit_atomic(lock, group_offset, bitmap))
-		nilfs_warn(inode->i_sb,
-			   "%s (ino=%lu): entry number %llu already freed",
-			   __func__, inode->i_ino,
-			   (unsigned long long)req->pr_entry_nr);
+		nilfs_msg(inode->i_sb, KERN_WARNING,
+			  "%s (ino=%lu): entry number %llu already freed",
+			  __func__, inode->i_ino,
+			  (unsigned long long)req->pr_entry_nr);
 	else
 		nilfs_palloc_group_desc_add_entries(desc, lock, 1);
 
@@ -763,10 +772,10 @@ int nilfs_palloc_freev(struct inode *inode, __u64 *entry_nrs, size_t nitems)
 		do {
 			if (!nilfs_clear_bit_atomic(lock, group_offset,
 						    bitmap)) {
-				nilfs_warn(inode->i_sb,
-					   "%s (ino=%lu): entry number %llu already freed",
-					   __func__, inode->i_ino,
-					   (unsigned long long)entry_nrs[j]);
+				nilfs_msg(inode->i_sb, KERN_WARNING,
+					  "%s (ino=%lu): entry number %llu already freed",
+					  __func__, inode->i_ino,
+					  (unsigned long long)entry_nrs[j]);
 			} else {
 				n++;
 			}
@@ -808,10 +817,10 @@ int nilfs_palloc_freev(struct inode *inode, __u64 *entry_nrs, size_t nitems)
 			ret = nilfs_palloc_delete_entry_block(inode,
 							      last_nrs[k]);
 			if (ret && ret != -ENOENT)
-				nilfs_warn(inode->i_sb,
-					   "error %d deleting block that object (entry=%llu, ino=%lu) belongs to",
-					   ret, (unsigned long long)last_nrs[k],
-					   inode->i_ino);
+				nilfs_msg(inode->i_sb, KERN_WARNING,
+					  "error %d deleting block that object (entry=%llu, ino=%lu) belongs to",
+					  ret, (unsigned long long)last_nrs[k],
+					  inode->i_ino);
 		}
 
 		desc_kaddr = kmap_atomic(desc_bh->b_page);
@@ -826,9 +835,9 @@ int nilfs_palloc_freev(struct inode *inode, __u64 *entry_nrs, size_t nitems)
 		if (nfree == nilfs_palloc_entries_per_group(inode)) {
 			ret = nilfs_palloc_delete_bitmap_block(inode, group);
 			if (ret && ret != -ENOENT)
-				nilfs_warn(inode->i_sb,
-					   "error %d deleting bitmap block of group=%lu, ino=%lu",
-					   ret, group, inode->i_ino);
+				nilfs_msg(inode->i_sb, KERN_WARNING,
+					  "error %d deleting bitmap block of group=%lu, ino=%lu",
+					  ret, group, inode->i_ino);
 		}
 	}
 	return 0;

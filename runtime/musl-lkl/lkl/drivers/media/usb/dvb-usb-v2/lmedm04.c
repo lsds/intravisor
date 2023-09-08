@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /* DVB USB compliant linux driver for
  *
  * DM04/QQBOX DVB-S USB BOX	LME2510C + SHARP:BS2F7HZ7395
@@ -22,7 +21,7 @@
  *
  * LME2510C + M88RS2000
  *
- * For firmware see Documentation/admin-guide/media/lmedm04.rst
+ * For firmware see Documentation/dvb/lmedm04.txt
  *
  * I2C addresses:
  * 0xd0 - STV0288	- Demodulator
@@ -34,12 +33,23 @@
  * 0xd0 - STV0299	- Demodulator
  * 0xc0 - IX2410	- Tuner
  *
+ *
  * VID = 3344  PID LME2510=1122 LME2510C=1120
  *
  * Copyright (C) 2010 Malcolm Priestley (tvboxspy@gmail.com)
  * LME2510(C)(C) Leaguerme (Shenzhen) MicroElectronics Co., Ltd.
  *
- * see Documentation/driver-api/media/drivers/dvb-usb.rst for more information
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License Version 2, as
+ * published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ *
+ * see Documentation/dvb/README.dvb-usb for more information
  *
  * Known Issues :
  *	LME2510: Non Intel USB chipsets fail to maintain High Speed on
@@ -124,9 +134,9 @@ struct lme2510_state {
 	u8 stream_on;
 	u8 pid_size;
 	u8 pid_off;
-	u8 int_buffer[128];
+	void *buffer;
 	struct urb *lme_urb;
-	u8 usb_buffer[64];
+	void *usb_buffer;
 	/* Frontend original calls */
 	int (*fe_read_status)(struct dvb_frontend *, enum fe_status *);
 	int (*fe_read_signal_strength)(struct dvb_frontend *, u16 *);
@@ -137,30 +147,59 @@ struct lme2510_state {
 	u8 dvb_usb_lme2510_firmware;
 };
 
+static int lme2510_bulk_write(struct usb_device *dev,
+				u8 *snd, int len, u8 pipe)
+{
+	int actual_l;
+
+	return usb_bulk_msg(dev, usb_sndbulkpipe(dev, pipe),
+			    snd, len, &actual_l, 100);
+}
+
+static int lme2510_bulk_read(struct usb_device *dev,
+				u8 *rev, int len, u8 pipe)
+{
+	int actual_l;
+
+	return usb_bulk_msg(dev, usb_rcvbulkpipe(dev, pipe),
+			    rev, len, &actual_l, 200);
+}
+
 static int lme2510_usb_talk(struct dvb_usb_device *d,
-			    u8 *wbuf, int wlen, u8 *rbuf, int rlen)
+		u8 *wbuf, int wlen, u8 *rbuf, int rlen)
 {
 	struct lme2510_state *st = d->priv;
+	u8 *buff;
 	int ret = 0;
 
-	if (max(wlen, rlen) > sizeof(st->usb_buffer))
-		return -EINVAL;
+	if (st->usb_buffer == NULL) {
+		st->usb_buffer = kmalloc(64, GFP_KERNEL);
+		if (st->usb_buffer == NULL) {
+			info("MEM Error no memory");
+			return -ENOMEM;
+		}
+	}
+	buff = st->usb_buffer;
 
 	ret = mutex_lock_interruptible(&d->usb_mutex);
+
 	if (ret < 0)
 		return -EAGAIN;
 
-	memcpy(st->usb_buffer, wbuf, wlen);
+	/* the read/write capped at 64 */
+	memcpy(buff, wbuf, (wlen < 64) ? wlen : 64);
 
-	ret = dvb_usbv2_generic_rw_locked(d, st->usb_buffer, wlen,
-					  st->usb_buffer, rlen);
+	ret |= lme2510_bulk_write(d->udev, buff, wlen , 0x01);
 
-	if (rlen)
-		memcpy(rbuf, st->usb_buffer, rlen);
+	ret |= lme2510_bulk_read(d->udev, buff, (rlen < 64) ?
+			rlen : 64 , 0x01);
+
+	if (rlen > 0)
+		memcpy(rbuf, buff, rlen);
 
 	mutex_unlock(&d->usb_mutex);
 
-	return ret;
+	return (ret < 0) ? -ENODEV : 0;
 }
 
 static int lme2510_stream_restart(struct dvb_usb_device *d)
@@ -298,7 +337,7 @@ static void lme2510_int_response(struct urb *lme_urb)
 
 		switch (ibuf[0]) {
 		case 0xaa:
-			debug_data_snipet(1, "INT Remote data snippet", ibuf);
+			debug_data_snipet(1, "INT Remote data snipet", ibuf);
 			if (!adap_to_d(adap)->rc_dev)
 				break;
 
@@ -336,7 +375,6 @@ static void lme2510_int_response(struct urb *lme_urb)
 				st->signal_level = ibuf[5];
 				st->signal_sn = ibuf[4];
 				st->time_key = ibuf[7];
-				break;
 			default:
 				break;
 			}
@@ -349,13 +387,13 @@ static void lme2510_int_response(struct urb *lme_urb)
 
 			lme2510_update_stats(adap);
 
-			debug_data_snipet(5, "INT Remote data snippet in", ibuf);
+			debug_data_snipet(5, "INT Remote data snipet in", ibuf);
 		break;
 		case 0xcc:
-			debug_data_snipet(1, "INT Control data snippet", ibuf);
+			debug_data_snipet(1, "INT Control data snipet", ibuf);
 			break;
 		default:
-			debug_data_snipet(1, "INT Unknown data snippet", ibuf);
+			debug_data_snipet(1, "INT Unknown data snipet", ibuf);
 		break;
 		}
 	}
@@ -374,27 +412,35 @@ static int lme2510_int_read(struct dvb_usb_adapter *adap)
 	struct lme2510_state *lme_int = adap_to_priv(adap);
 	struct usb_host_endpoint *ep;
 
-	lme_int->lme_urb = usb_alloc_urb(0, GFP_KERNEL);
+	lme_int->lme_urb = usb_alloc_urb(0, GFP_ATOMIC);
 
 	if (lme_int->lme_urb == NULL)
 			return -ENOMEM;
 
+	lme_int->buffer = usb_alloc_coherent(d->udev, 128, GFP_ATOMIC,
+					&lme_int->lme_urb->transfer_dma);
+
+	if (lme_int->buffer == NULL)
+			return -ENOMEM;
+
 	usb_fill_int_urb(lme_int->lme_urb,
-			 d->udev,
-			 usb_rcvintpipe(d->udev, 0xa),
-			 lme_int->int_buffer,
-			 sizeof(lme_int->int_buffer),
-			 lme2510_int_response,
-			 adap,
-			 8);
+				d->udev,
+				usb_rcvintpipe(d->udev, 0xa),
+				lme_int->buffer,
+				128,
+				lme2510_int_response,
+				adap,
+				8);
 
 	/* Quirk of pipe reporting PIPE_BULK but behaves as interrupt */
 	ep = usb_pipe_endpoint(d->udev, lme_int->lme_urb->pipe);
 
 	if (usb_endpoint_type(&ep->desc) == USB_ENDPOINT_XFER_BULK)
-		lme_int->lme_urb->pipe = usb_rcvbulkpipe(d->udev, 0xa);
+		lme_int->lme_urb->pipe = usb_rcvbulkpipe(d->udev, 0xa),
 
-	usb_submit_urb(lme_int->lme_urb, GFP_KERNEL);
+	lme_int->lme_urb->transfer_flags |= URB_NO_TRANSFER_DMA_MAP;
+
+	usb_submit_urb(lme_int->lme_urb, GFP_ATOMIC);
 	info("INT Interrupt Service Started");
 
 	return 0;
@@ -422,9 +468,6 @@ static int lme2510_pid_filter_ctrl(struct dvb_usb_adapter *adap, int onoff)
 	st->pid_size = 0;
 
 	mutex_unlock(&d->i2c_mutex);
-
-	if (ret)
-		return -EREMOTEIO;
 
 	return 0;
 }
@@ -490,9 +533,12 @@ static int lme2510_i2c_xfer(struct i2c_adapter *adap, struct i2c_msg msg[],
 	static u8 obuf[64], ibuf[64];
 	int i, read, read_o;
 	u16 len;
-	u8 gate;
+	u8 gate = st->i2c_gate;
 
 	mutex_lock(&d->i2c_mutex);
+
+	if (gate == 0)
+		gate = 5;
 
 	for (i = 0; i < num; i++) {
 		read_o = msg[i].flags & I2C_M_RD;
@@ -691,7 +737,7 @@ static const char *lme_firmware_switch(struct dvb_usb_device *d, int cold)
 				cold = 0;
 				break;
 			}
-			fallthrough;
+			/* fall through */
 		case TUNER_LG:
 			fw_lme = fw_lg;
 			ret = request_firmware(&fw, fw_lme, &udev->dev);
@@ -714,7 +760,7 @@ static const char *lme_firmware_switch(struct dvb_usb_device *d, int cold)
 				cold = 0;
 				break;
 			}
-			fallthrough;
+			/* fall through */
 		case TUNER_LG:
 			fw_lme = fw_c_lg;
 			ret = request_firmware(&fw, fw_lme, &udev->dev);
@@ -722,7 +768,7 @@ static const char *lme_firmware_switch(struct dvb_usb_device *d, int cold)
 				st->dvb_usb_lme2510_firmware = TUNER_LG;
 				break;
 			}
-			fallthrough;
+			/* fall through */
 		case TUNER_S0194:
 			fw_lme = fw_c_s0194;
 			ret = request_firmware(&fw, fw_lme, &udev->dev);
@@ -753,6 +799,20 @@ static const char *lme_firmware_switch(struct dvb_usb_device *d, int cold)
 	}
 
 	return fw_lme;
+}
+
+static int lme2510_kill_urb(struct usb_data_stream *stream)
+{
+	int i;
+
+	for (i = 0; i < stream->urbs_submitted; i++) {
+		deb_info(3, "killing URB no. %d.", i);
+		/* stop the URB */
+		usb_kill_urb(stream->urb_list[i]);
+	}
+	stream->urbs_submitted = 0;
+
+	return 0;
 }
 
 static struct tda10086_config tda10086_config = {
@@ -944,7 +1004,7 @@ static int lme_name(struct dvb_usb_adapter *adap)
 		" SHARP:BS2F7HZ0194", " RS2000"};
 	char *name = adap->fe[0]->ops.info.name;
 
-	strscpy(name, desc, 128);
+	strlcpy(name, desc, 128);
 	strlcat(name, fe_name[st->tuner_config], 128);
 
 	return 0;
@@ -1008,7 +1068,7 @@ static int dm04_lme2510_frontend_attach(struct dvb_usb_adapter *adap)
 			}
 			break;
 		}
-		fallthrough;
+		/* fall through */
 	case 0x22f0:
 		st->i2c_gate = 5;
 		adap->fe[0] = dvb_attach(m88rs2000_attach,
@@ -1125,6 +1185,11 @@ static int lme2510_powerup(struct dvb_usb_device *d, int onoff)
 	return ret;
 }
 
+static int lme2510_get_adapter_count(struct dvb_usb_device *d)
+{
+	return 1;
+}
+
 static int lme2510_identify_state(struct dvb_usb_device *d, const char **name)
 {
 	struct lme2510_state *st = d->priv;
@@ -1180,14 +1245,40 @@ static int lme2510_get_rc_config(struct dvb_usb_device *d,
 	return 0;
 }
 
-static void lme2510_exit(struct dvb_usb_device *d)
+static void *lme2510_exit_int(struct dvb_usb_device *d)
 {
 	struct lme2510_state *st = d->priv;
+	struct dvb_usb_adapter *adap = &d->adapter[0];
+	void *buffer = NULL;
 
-	if (st->lme_urb) {
+	if (adap != NULL) {
+		lme2510_kill_urb(&adap->stream);
+	}
+
+	if (st->usb_buffer != NULL) {
+		st->i2c_talk_onoff = 1;
+		st->signal_level = 0;
+		st->signal_sn = 0;
+		buffer = st->usb_buffer;
+	}
+
+	if (st->lme_urb != NULL) {
 		usb_kill_urb(st->lme_urb);
-		usb_free_urb(st->lme_urb);
+		usb_free_coherent(d->udev, 128, st->buffer,
+				  st->lme_urb->transfer_dma);
 		info("Interrupt Service Stopped");
+	}
+
+	return buffer;
+}
+
+static void lme2510_exit(struct dvb_usb_device *d)
+{
+	void *usb_buffer;
+
+	if (d != NULL) {
+		usb_buffer = lme2510_exit_int(d);
+		kfree(usb_buffer);
 	}
 }
 
@@ -1197,8 +1288,6 @@ static struct dvb_usb_device_properties lme2510_props = {
 	.bInterfaceNumber = 0,
 	.adapter_nr = adapter_nr,
 	.size_of_priv = sizeof(struct lme2510_state),
-	.generic_bulk_ctrl_endpoint = 0x01,
-	.generic_bulk_ctrl_endpoint_response = 0x01,
 
 	.download_firmware = lme2510_download_firmware,
 
@@ -1209,12 +1298,12 @@ static struct dvb_usb_device_properties lme2510_props = {
 	.frontend_attach  = dm04_lme2510_frontend_attach,
 	.tuner_attach = dm04_lme2510_tuner,
 	.get_stream_config = lme2510_get_stream_config,
+	.get_adapter_count = lme2510_get_adapter_count,
 	.streaming_ctrl   = lme2510_streaming_ctrl,
 
 	.get_rc_config = lme2510_get_rc_config,
 
 	.exit = lme2510_exit,
-	.num_adapters = 1,
 	.adapter = {
 		{
 			.caps = DVB_USB_ADAP_HAS_PID_FILTER|
@@ -1225,6 +1314,8 @@ static struct dvb_usb_device_properties lme2510_props = {
 			.stream =
 			DVB_USB_STREAM_BULK(0x86, 10, 4096),
 		},
+		{
+		}
 	},
 };
 

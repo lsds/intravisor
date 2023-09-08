@@ -30,12 +30,12 @@
  * SOFTWARE.
  */
 
+#include <linux/module.h>
 #include <linux/debugfs.h>
 #include <linux/mlx5/qp.h>
 #include <linux/mlx5/cq.h>
 #include <linux/mlx5/driver.h>
 #include "mlx5_core.h"
-#include "lib/eq.h"
 
 enum {
 	QP_PID,
@@ -91,6 +91,8 @@ EXPORT_SYMBOL(mlx5_debugfs_root);
 void mlx5_register_debugfs(void)
 {
 	mlx5_debugfs_root = debugfs_create_dir("mlx5", NULL);
+	if (IS_ERR_OR_NULL(mlx5_debugfs_root))
+		mlx5_debugfs_root = NULL;
 }
 
 void mlx5_unregister_debugfs(void)
@@ -98,32 +100,46 @@ void mlx5_unregister_debugfs(void)
 	debugfs_remove(mlx5_debugfs_root);
 }
 
-struct dentry *mlx5_debugfs_get_dev_root(struct mlx5_core_dev *dev)
+int mlx5_qp_debugfs_init(struct mlx5_core_dev *dev)
 {
-	return dev->priv.dbg.dbg_root;
-}
-EXPORT_SYMBOL(mlx5_debugfs_get_dev_root);
+	if (!mlx5_debugfs_root)
+		return 0;
 
-void mlx5_qp_debugfs_init(struct mlx5_core_dev *dev)
-{
-	dev->priv.dbg.qp_debugfs = debugfs_create_dir("QPs", dev->priv.dbg.dbg_root);
+	atomic_set(&dev->num_qps, 0);
+
+	dev->priv.qp_debugfs = debugfs_create_dir("QPs",  dev->priv.dbg_root);
+	if (!dev->priv.qp_debugfs)
+		return -ENOMEM;
+
+	return 0;
 }
-EXPORT_SYMBOL(mlx5_qp_debugfs_init);
 
 void mlx5_qp_debugfs_cleanup(struct mlx5_core_dev *dev)
 {
-	debugfs_remove_recursive(dev->priv.dbg.qp_debugfs);
-}
-EXPORT_SYMBOL(mlx5_qp_debugfs_cleanup);
+	if (!mlx5_debugfs_root)
+		return;
 
-void mlx5_eq_debugfs_init(struct mlx5_core_dev *dev)
+	debugfs_remove_recursive(dev->priv.qp_debugfs);
+}
+
+int mlx5_eq_debugfs_init(struct mlx5_core_dev *dev)
 {
-	dev->priv.dbg.eq_debugfs = debugfs_create_dir("EQs", dev->priv.dbg.dbg_root);
+	if (!mlx5_debugfs_root)
+		return 0;
+
+	dev->priv.eq_debugfs = debugfs_create_dir("EQs",  dev->priv.dbg_root);
+	if (!dev->priv.eq_debugfs)
+		return -ENOMEM;
+
+	return 0;
 }
 
 void mlx5_eq_debugfs_cleanup(struct mlx5_core_dev *dev)
 {
-	debugfs_remove_recursive(dev->priv.dbg.eq_debugfs);
+	if (!mlx5_debugfs_root)
+		return;
+
+	debugfs_remove_recursive(dev->priv.eq_debugfs);
 }
 
 static ssize_t average_read(struct file *filp, char __user *buf, size_t count,
@@ -134,13 +150,22 @@ static ssize_t average_read(struct file *filp, char __user *buf, size_t count,
 	int ret;
 	char tbuf[22];
 
+	if (*pos)
+		return 0;
+
 	stats = filp->private_data;
 	spin_lock_irq(&stats->lock);
 	if (stats->n)
 		field = div64_u64(stats->sum, stats->n);
 	spin_unlock_irq(&stats->lock);
 	ret = snprintf(tbuf, sizeof(tbuf), "%llu\n", field);
-	return simple_read_from_buffer(buf, count, pos, tbuf, ret);
+	if (ret > 0) {
+		if (copy_to_user(buf, tbuf, ret))
+			return -EFAULT;
+	}
+
+	*pos += ret;
+	return ret;
 }
 
 static ssize_t average_write(struct file *filp, const char __user *buf,
@@ -166,137 +191,127 @@ static const struct file_operations stats_fops = {
 	.write	= average_write,
 };
 
-static ssize_t slots_read(struct file *filp, char __user *buf, size_t count,
-			  loff_t *pos)
-{
-	struct mlx5_cmd *cmd;
-	char tbuf[6];
-	int weight;
-	int field;
-	int ret;
-
-	cmd = filp->private_data;
-	weight = bitmap_weight(&cmd->bitmask, cmd->max_reg_cmds);
-	field = cmd->max_reg_cmds - weight;
-	ret = snprintf(tbuf, sizeof(tbuf), "%d\n", field);
-	return simple_read_from_buffer(buf, count, pos, tbuf, ret);
-}
-
-static const struct file_operations slots_fops = {
-	.owner	= THIS_MODULE,
-	.open	= simple_open,
-	.read	= slots_read,
-};
-
-void mlx5_cmdif_debugfs_init(struct mlx5_core_dev *dev)
+int mlx5_cmdif_debugfs_init(struct mlx5_core_dev *dev)
 {
 	struct mlx5_cmd_stats *stats;
 	struct dentry **cmd;
 	const char *namep;
+	int err;
 	int i;
 
-	cmd = &dev->priv.dbg.cmdif_debugfs;
-	*cmd = debugfs_create_dir("commands", dev->priv.dbg.dbg_root);
+	if (!mlx5_debugfs_root)
+		return 0;
 
-	debugfs_create_file("slots_inuse", 0400, *cmd, &dev->cmd, &slots_fops);
+	cmd = &dev->priv.cmdif_debugfs;
+	*cmd = debugfs_create_dir("commands", dev->priv.dbg_root);
+	if (!*cmd)
+		return -ENOMEM;
 
-	for (i = 0; i < MLX5_CMD_OP_MAX; i++) {
+	for (i = 0; i < ARRAY_SIZE(dev->cmd.stats); i++) {
 		stats = &dev->cmd.stats[i];
 		namep = mlx5_command_str(i);
 		if (strcmp(namep, "unknown command opcode")) {
 			stats->root = debugfs_create_dir(namep, *cmd);
+			if (!stats->root) {
+				mlx5_core_warn(dev, "failed adding command %d\n",
+					       i);
+				err = -ENOMEM;
+				goto out;
+			}
 
-			debugfs_create_file("average", 0400, stats->root, stats,
-					    &stats_fops);
-			debugfs_create_u64("n", 0400, stats->root, &stats->n);
-			debugfs_create_u64("failed", 0400, stats->root, &stats->failed);
-			debugfs_create_u64("failed_mbox_status", 0400, stats->root,
-					   &stats->failed_mbox_status);
-			debugfs_create_u32("last_failed_errno", 0400, stats->root,
-					   &stats->last_failed_errno);
-			debugfs_create_u8("last_failed_mbox_status", 0400, stats->root,
-					  &stats->last_failed_mbox_status);
-			debugfs_create_x32("last_failed_syndrome", 0400, stats->root,
-					   &stats->last_failed_syndrome);
+			stats->avg = debugfs_create_file("average", 0400,
+							 stats->root, stats,
+							 &stats_fops);
+			if (!stats->avg) {
+				mlx5_core_warn(dev, "failed creating debugfs file\n");
+				err = -ENOMEM;
+				goto out;
+			}
+
+			stats->count = debugfs_create_u64("n", 0400,
+							  stats->root,
+							  &stats->n);
+			if (!stats->count) {
+				mlx5_core_warn(dev, "failed creating debugfs file\n");
+				err = -ENOMEM;
+				goto out;
+			}
 		}
 	}
+
+	return 0;
+out:
+	debugfs_remove_recursive(dev->priv.cmdif_debugfs);
+	return err;
 }
 
 void mlx5_cmdif_debugfs_cleanup(struct mlx5_core_dev *dev)
 {
-	debugfs_remove_recursive(dev->priv.dbg.cmdif_debugfs);
+	if (!mlx5_debugfs_root)
+		return;
+
+	debugfs_remove_recursive(dev->priv.cmdif_debugfs);
 }
 
-void mlx5_cq_debugfs_init(struct mlx5_core_dev *dev)
+int mlx5_cq_debugfs_init(struct mlx5_core_dev *dev)
 {
-	dev->priv.dbg.cq_debugfs = debugfs_create_dir("CQs", dev->priv.dbg.dbg_root);
+	if (!mlx5_debugfs_root)
+		return 0;
+
+	dev->priv.cq_debugfs = debugfs_create_dir("CQs",  dev->priv.dbg_root);
+	if (!dev->priv.cq_debugfs)
+		return -ENOMEM;
+
+	return 0;
 }
 
 void mlx5_cq_debugfs_cleanup(struct mlx5_core_dev *dev)
 {
-	debugfs_remove_recursive(dev->priv.dbg.cq_debugfs);
-}
+	if (!mlx5_debugfs_root)
+		return;
 
-void mlx5_pages_debugfs_init(struct mlx5_core_dev *dev)
-{
-	struct dentry *pages;
-
-	dev->priv.dbg.pages_debugfs = debugfs_create_dir("pages", dev->priv.dbg.dbg_root);
-	pages = dev->priv.dbg.pages_debugfs;
-
-	debugfs_create_u32("fw_pages_total", 0400, pages, &dev->priv.fw_pages);
-	debugfs_create_u32("fw_pages_vfs", 0400, pages, &dev->priv.vfs_pages);
-	debugfs_create_u32("fw_pages_host_pf", 0400, pages, &dev->priv.host_pf_pages);
-	debugfs_create_u32("fw_pages_alloc_failed", 0400, pages, &dev->priv.fw_pages_alloc_failed);
-	debugfs_create_u32("fw_pages_give_dropped", 0400, pages, &dev->priv.give_pages_dropped);
-	debugfs_create_u32("fw_pages_reclaim_discard", 0400, pages,
-			   &dev->priv.reclaim_pages_discard);
-}
-
-void mlx5_pages_debugfs_cleanup(struct mlx5_core_dev *dev)
-{
-	debugfs_remove_recursive(dev->priv.dbg.pages_debugfs);
+	debugfs_remove_recursive(dev->priv.cq_debugfs);
 }
 
 static u64 qp_read_field(struct mlx5_core_dev *dev, struct mlx5_core_qp *qp,
 			 int index, int *is_str)
 {
 	int outlen = MLX5_ST_SZ_BYTES(query_qp_out);
-	u32 in[MLX5_ST_SZ_DW(query_qp_in)] = {};
+	struct mlx5_qp_context *ctx;
 	u64 param = 0;
 	u32 *out;
-	int state;
-	u32 *qpc;
 	int err;
+	int no_sq;
 
 	out = kzalloc(outlen, GFP_KERNEL);
 	if (!out)
-		return 0;
+		return param;
 
-	MLX5_SET(query_qp_in, in, opcode, MLX5_CMD_OP_QUERY_QP);
-	MLX5_SET(query_qp_in, in, qpn, qp->qpn);
-	err = mlx5_cmd_exec_inout(dev, query_qp, in, out);
-	if (err)
+	err = mlx5_core_qp_query(dev, qp, out, outlen);
+	if (err) {
+		mlx5_core_warn(dev, "failed to query qp err=%d\n", err);
 		goto out;
+	}
 
 	*is_str = 0;
 
-	qpc = MLX5_ADDR_OF(query_qp_out, out, qpc);
+	/* FIXME: use MLX5_GET rather than mlx5_qp_context manual struct */
+	ctx = (struct mlx5_qp_context *)MLX5_ADDR_OF(query_qp_out, out, qpc);
+
 	switch (index) {
 	case QP_PID:
 		param = qp->pid;
 		break;
 	case QP_STATE:
-		state = MLX5_GET(qpc, qpc, state);
-		param = (unsigned long)mlx5_qp_state_str(state);
+		param = (unsigned long)mlx5_qp_state_str(be32_to_cpu(ctx->flags) >> 28);
 		*is_str = 1;
 		break;
 	case QP_XPORT:
-		param = (unsigned long)mlx5_qp_type_str(MLX5_GET(qpc, qpc, st));
+		param = (unsigned long)mlx5_qp_type_str((be32_to_cpu(ctx->flags) >> 16) & 0xff);
 		*is_str = 1;
 		break;
 	case QP_MTU:
-		switch (MLX5_GET(qpc, qpc, mtu)) {
+		switch (ctx->mtu_msgmax >> 5) {
 		case IB_MTU_256:
 			param = 256;
 			break;
@@ -317,22 +332,27 @@ static u64 qp_read_field(struct mlx5_core_dev *dev, struct mlx5_core_qp *qp,
 		}
 		break;
 	case QP_N_RECV:
-		param = 1 << MLX5_GET(qpc, qpc, log_rq_size);
+		param = 1 << ((ctx->rq_size_stride >> 3) & 0xf);
 		break;
 	case QP_RECV_SZ:
-		param = 1 << (MLX5_GET(qpc, qpc, log_rq_stride) + 4);
+		param = 1 << ((ctx->rq_size_stride & 7) + 4);
 		break;
 	case QP_N_SEND:
-		if (!MLX5_GET(qpc, qpc, no_sq))
-			param = 1 << MLX5_GET(qpc, qpc, log_sq_size);
+		no_sq = be16_to_cpu(ctx->sq_crq_size) >> 15;
+		if (!no_sq)
+			param = 1 << (be16_to_cpu(ctx->sq_crq_size) >> 11);
+		else
+			param = 0;
 		break;
 	case QP_LOG_PG_SZ:
-		param = MLX5_GET(qpc, qpc, log_page_size) + 12;
+		param = (be32_to_cpu(ctx->log_pg_sz_remote_qpn) >> 24) & 0x1f;
+		param += 12;
 		break;
 	case QP_RQPN:
-		param = MLX5_GET(qpc, qpc, remote_qpn);
+		param = be32_to_cpu(ctx->log_pg_sz_remote_qpn) & 0xffffff;
 		break;
 	}
+
 out:
 	kfree(out);
 	return param;
@@ -342,7 +362,6 @@ static u64 eq_read_field(struct mlx5_core_dev *dev, struct mlx5_eq *eq,
 			 int index)
 {
 	int outlen = MLX5_ST_SZ_BYTES(query_eq_out);
-	u32 in[MLX5_ST_SZ_DW(query_eq_in)] = {};
 	u64 param = 0;
 	void *ctx;
 	u32 *out;
@@ -352,9 +371,7 @@ static u64 eq_read_field(struct mlx5_core_dev *dev, struct mlx5_eq *eq,
 	if (!out)
 		return param;
 
-	MLX5_SET(query_eq_in, in, opcode, MLX5_CMD_OP_QUERY_EQ);
-	MLX5_SET(query_eq_in, in, eq_number, eq->eqn);
-	err = mlx5_cmd_exec_inout(dev, query_eq, in, out);
+	err = mlx5_core_eq_query(dev, eq, out, outlen);
 	if (err) {
 		mlx5_core_warn(dev, "failed to query eq\n");
 		goto out;
@@ -391,7 +408,7 @@ static u64 cq_read_field(struct mlx5_core_dev *dev, struct mlx5_core_cq *cq,
 	if (!out)
 		return param;
 
-	err = mlx5_core_query_cq(dev, cq, out);
+	err = mlx5_core_query_cq(dev, cq, out, outlen);
 	if (err) {
 		mlx5_core_warn(dev, "failed to query cq\n");
 		goto out;
@@ -425,6 +442,9 @@ static ssize_t dbg_read(struct file *filp, char __user *buf, size_t count,
 	u64 field;
 	int ret;
 
+	if (*pos)
+		return 0;
+
 	desc = filp->private_data;
 	d = (void *)(desc - desc->i) - sizeof(*d);
 	switch (d->type) {
@@ -450,7 +470,13 @@ static ssize_t dbg_read(struct file *filp, char __user *buf, size_t count,
 	else
 		ret = snprintf(tbuf, sizeof(tbuf), "0x%llx\n", field);
 
-	return simple_read_from_buffer(buf, count, pos, tbuf, ret);
+	if (ret > 0) {
+		if (copy_to_user(buf, tbuf, ret))
+			return -EFAULT;
+	}
+
+	*pos += ret;
+	return ret;
 }
 
 static const struct file_operations fops = {
@@ -465,9 +491,10 @@ static int add_res_tree(struct mlx5_core_dev *dev, enum dbg_rsc_type type,
 {
 	struct mlx5_rsc_debug *d;
 	char resn[32];
+	int err;
 	int i;
 
-	d = kzalloc(struct_size(d, fields, nfile), GFP_KERNEL);
+	d = kzalloc(sizeof(*d) + nfile * sizeof(d->fields[0]), GFP_KERNEL);
 	if (!d)
 		return -ENOMEM;
 
@@ -476,15 +503,30 @@ static int add_res_tree(struct mlx5_core_dev *dev, enum dbg_rsc_type type,
 	d->type = type;
 	sprintf(resn, "0x%x", rsn);
 	d->root = debugfs_create_dir(resn,  root);
+	if (!d->root) {
+		err = -ENOMEM;
+		goto out_free;
+	}
 
 	for (i = 0; i < nfile; i++) {
 		d->fields[i].i = i;
-		debugfs_create_file(field[i], 0400, d->root, &d->fields[i],
-				    &fops);
+		d->fields[i].dent = debugfs_create_file(field[i], 0400,
+							d->root, &d->fields[i],
+							&fops);
+		if (!d->fields[i].dent) {
+			err = -ENOMEM;
+			goto out_rem;
+		}
 	}
 	*dbg = d;
 
 	return 0;
+out_rem:
+	debugfs_remove_recursive(d->root);
+
+out_free:
+	kfree(d);
+	return err;
 }
 
 static void rem_res_tree(struct mlx5_rsc_debug *d)
@@ -500,7 +542,7 @@ int mlx5_debug_qp_add(struct mlx5_core_dev *dev, struct mlx5_core_qp *qp)
 	if (!mlx5_debugfs_root)
 		return 0;
 
-	err = add_res_tree(dev, MLX5_DBG_RSC_QP, dev->priv.dbg.qp_debugfs,
+	err = add_res_tree(dev, MLX5_DBG_RSC_QP, dev->priv.qp_debugfs,
 			   &qp->dbg, qp->qpn, qp_fields,
 			   ARRAY_SIZE(qp_fields), qp);
 	if (err)
@@ -508,7 +550,6 @@ int mlx5_debug_qp_add(struct mlx5_core_dev *dev, struct mlx5_core_qp *qp)
 
 	return err;
 }
-EXPORT_SYMBOL(mlx5_debug_qp_add);
 
 void mlx5_debug_qp_remove(struct mlx5_core_dev *dev, struct mlx5_core_qp *qp)
 {
@@ -518,7 +559,6 @@ void mlx5_debug_qp_remove(struct mlx5_core_dev *dev, struct mlx5_core_qp *qp)
 	if (qp->dbg)
 		rem_res_tree(qp->dbg);
 }
-EXPORT_SYMBOL(mlx5_debug_qp_remove);
 
 int mlx5_debug_eq_add(struct mlx5_core_dev *dev, struct mlx5_eq *eq)
 {
@@ -527,7 +567,7 @@ int mlx5_debug_eq_add(struct mlx5_core_dev *dev, struct mlx5_eq *eq)
 	if (!mlx5_debugfs_root)
 		return 0;
 
-	err = add_res_tree(dev, MLX5_DBG_RSC_EQ, dev->priv.dbg.eq_debugfs,
+	err = add_res_tree(dev, MLX5_DBG_RSC_EQ, dev->priv.eq_debugfs,
 			   &eq->dbg, eq->eqn, eq_fields,
 			   ARRAY_SIZE(eq_fields), eq);
 	if (err)
@@ -552,7 +592,7 @@ int mlx5_debug_cq_add(struct mlx5_core_dev *dev, struct mlx5_core_cq *cq)
 	if (!mlx5_debugfs_root)
 		return 0;
 
-	err = add_res_tree(dev, MLX5_DBG_RSC_CQ, dev->priv.dbg.cq_debugfs,
+	err = add_res_tree(dev, MLX5_DBG_RSC_CQ, dev->priv.cq_debugfs,
 			   &cq->dbg, cq->cqn, cq_fields,
 			   ARRAY_SIZE(cq_fields), cq);
 	if (err)
@@ -566,8 +606,6 @@ void mlx5_debug_cq_remove(struct mlx5_core_dev *dev, struct mlx5_core_cq *cq)
 	if (!mlx5_debugfs_root)
 		return;
 
-	if (cq->dbg) {
+	if (cq->dbg)
 		rem_res_tree(cq->dbg);
-		cq->dbg = NULL;
-	}
 }

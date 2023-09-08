@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /* net/sched/sch_atm.c - ATM VC selection "queueing discipline" */
 
 /* Written 1998-2000 by Werner Almesberger, EPFL ICA */
@@ -52,13 +51,13 @@ struct atm_flow_data {
 	struct atm_qdisc_data	*parent;	/* parent qdisc */
 	struct socket		*sock;		/* for closing */
 	int			ref;		/* reference count */
-	struct gnet_stats_basic_sync	bstats;
+	struct gnet_stats_basic_packed	bstats;
 	struct gnet_stats_queue	qstats;
 	struct list_head	list;
 	struct atm_flow_data	*excess;	/* flow for excess traffic;
 						   NULL to set CLP instead */
 	int			hdr_len;
-	unsigned char		hdr[];		/* header data; MUST BE LAST */
+	unsigned char		hdr[0];		/* header data; MUST BE LAST */
 };
 
 struct atm_qdisc_data {
@@ -151,7 +150,7 @@ static void atm_tc_put(struct Qdisc *sch, unsigned long cl)
 	pr_debug("atm_tc_put: destroying\n");
 	list_del_init(&flow->list);
 	pr_debug("atm_tc_put: qdisc %p\n", flow->q);
-	qdisc_put(flow->q);
+	qdisc_destroy(flow->q);
 	tcf_block_put(flow->block);
 	if (flow->sock) {
 		pr_debug("atm_tc_put: f_count %ld\n",
@@ -224,8 +223,7 @@ static int atm_tc_change(struct Qdisc *sch, u32 classid, u32 parent,
 	if (opt == NULL)
 		return -EINVAL;
 
-	error = nla_parse_nested_deprecated(tb, TCA_ATM_MAX, opt, atm_policy,
-					    NULL);
+	error = nla_parse_nested(tb, TCA_ATM_MAX, opt, atm_policy, NULL);
 	if (error < 0)
 		return error;
 
@@ -320,8 +318,7 @@ err_out:
 	return error;
 }
 
-static int atm_tc_delete(struct Qdisc *sch, unsigned long arg,
-			 struct netlink_ext_ack *extack)
+static int atm_tc_delete(struct Qdisc *sch, unsigned long arg)
 {
 	struct atm_qdisc_data *p = qdisc_priv(sch);
 	struct atm_flow_data *flow = (struct atm_flow_data *)arg;
@@ -354,8 +351,12 @@ static void atm_tc_walk(struct Qdisc *sch, struct qdisc_walker *walker)
 	if (walker->stop)
 		return;
 	list_for_each_entry(flow, &p->flows, list) {
-		if (!tc_qdisc_stats_dump(sch, (unsigned long)flow, walker))
+		if (walker->count >= walker->skip &&
+		    walker->fn(sch, (unsigned long)flow, walker) < 0) {
+			walker->stop = 1;
 			break;
+		}
+		walker->count++;
 	}
 }
 
@@ -390,7 +391,7 @@ static int atm_tc_enqueue(struct sk_buff *skb, struct Qdisc *sch,
 		list_for_each_entry(flow, &p->flows, list) {
 			fl = rcu_dereference_bh(flow->filter_list);
 			if (fl) {
-				result = tcf_classify(skb, NULL, fl, &res, true);
+				result = tcf_classify(skb, fl, &res, true);
 				if (result < 0)
 					continue;
 				flow = (struct atm_flow_data *)res.class;
@@ -463,10 +464,10 @@ drop: __maybe_unused
  * non-ATM interfaces.
  */
 
-static void sch_atm_dequeue(struct tasklet_struct *t)
+static void sch_atm_dequeue(unsigned long data)
 {
-	struct atm_qdisc_data *p = from_tasklet(p, t, task);
-	struct Qdisc *sch = qdisc_from_priv(p);
+	struct Qdisc *sch = (struct Qdisc *)data;
+	struct atm_qdisc_data *p = qdisc_priv(sch);
 	struct atm_flow_data *flow;
 	struct sk_buff *skb;
 
@@ -544,24 +545,23 @@ static int atm_tc_init(struct Qdisc *sch, struct nlattr *opt,
 	pr_debug("atm_tc_init(sch %p,[qdisc %p],opt %p)\n", sch, p, opt);
 	INIT_LIST_HEAD(&p->flows);
 	INIT_LIST_HEAD(&p->link.list);
-	gnet_stats_basic_sync_init(&p->link.bstats);
 	list_add(&p->link.list, &p->flows);
 	p->link.q = qdisc_create_dflt(sch->dev_queue,
 				      &pfifo_qdisc_ops, sch->handle, extack);
 	if (!p->link.q)
 		p->link.q = &noop_qdisc;
 	pr_debug("atm_tc_init: link (%p) qdisc %p\n", &p->link, p->link.q);
-	p->link.vcc = NULL;
-	p->link.sock = NULL;
-	p->link.common.classid = sch->handle;
-	p->link.ref = 1;
 
 	err = tcf_block_get(&p->link.block, &p->link.filter_list, sch,
 			    extack);
 	if (err)
 		return err;
 
-	tasklet_setup(&p->task, sch_atm_dequeue);
+	p->link.vcc = NULL;
+	p->link.sock = NULL;
+	p->link.common.classid = sch->handle;
+	p->link.ref = 1;
+	tasklet_init(&p->task, sch_atm_dequeue, (unsigned long)sch);
 	return 0;
 }
 
@@ -573,6 +573,7 @@ static void atm_tc_reset(struct Qdisc *sch)
 	pr_debug("atm_tc_reset(sch %p,[qdisc %p])\n", sch, p);
 	list_for_each_entry(flow, &p->flows, list)
 		qdisc_reset(flow->q);
+	sch->q.qlen = 0;
 }
 
 static void atm_tc_destroy(struct Qdisc *sch)
@@ -608,7 +609,7 @@ static int atm_tc_dump_class(struct Qdisc *sch, unsigned long cl,
 	tcm->tcm_handle = flow->common.classid;
 	tcm->tcm_info = flow->q->handle;
 
-	nest = nla_nest_start_noflag(skb, TCA_OPTIONS);
+	nest = nla_nest_start(skb, TCA_OPTIONS);
 	if (nest == NULL)
 		goto nla_put_failure;
 
@@ -648,7 +649,8 @@ atm_tc_dump_class_stats(struct Qdisc *sch, unsigned long arg,
 {
 	struct atm_flow_data *flow = (struct atm_flow_data *)arg;
 
-	if (gnet_stats_copy_basic(d, NULL, &flow->bstats, true) < 0 ||
+	if (gnet_stats_copy_basic(qdisc_root_sleeping_running(sch),
+				  d, NULL, &flow->bstats) < 0 ||
 	    gnet_stats_copy_queue(d, NULL, &flow->qstats, flow->q->q.qlen) < 0)
 		return -1;
 

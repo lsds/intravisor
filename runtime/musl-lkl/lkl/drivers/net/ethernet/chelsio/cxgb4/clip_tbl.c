@@ -106,7 +106,8 @@ int cxgb4_clip_get(const struct net_device *dev, const u32 *lip, u8 v6)
 	if (!list_empty(&ctbl->ce_free_head)) {
 		ce = list_first_entry(&ctbl->ce_free_head,
 				      struct clip_entry, list);
-		list_del_init(&ce->list);
+		list_del(&ce->list);
+		INIT_LIST_HEAD(&ce->list);
 		spin_lock_init(&ce->lock);
 		refcount_set(&ce->refcnt, 0);
 		atomic_dec(&ctbl->nfree);
@@ -178,7 +179,8 @@ found:
 	write_lock_bh(&ctbl->lock);
 	spin_lock_bh(&ce->lock);
 	if (refcount_dec_and_test(&ce->refcnt)) {
-		list_del_init(&ce->list);
+		list_del(&ce->list);
+		INIT_LIST_HEAD(&ce->list);
 		list_add_tail(&ce->list, &ctbl->ce_free_head);
 		atomic_inc(&ctbl->nfree);
 		if (v6)
@@ -287,7 +289,8 @@ struct clip_tbl *t4_init_clip_tbl(unsigned int clipt_start,
 	if (clipt_size < CLIPT_MIN_HASH_BUCKETS)
 		return NULL;
 
-	ctbl = kvzalloc(struct_size(ctbl, hash_list, clipt_size), GFP_KERNEL);
+	ctbl = kvzalloc(sizeof(*ctbl) +
+			    clipt_size*sizeof(struct list_head), GFP_KERNEL);
 	if (!ctbl)
 		return NULL;
 
@@ -301,7 +304,7 @@ struct clip_tbl *t4_init_clip_tbl(unsigned int clipt_start,
 	for (i = 0; i < ctbl->clipt_size; ++i)
 		INIT_LIST_HEAD(&ctbl->hash_list[i]);
 
-	cl_list = kvcalloc(clipt_size, sizeof(struct clip_entry), GFP_KERNEL);
+	cl_list = kvzalloc(clipt_size*sizeof(struct clip_entry), GFP_KERNEL);
 	if (!cl_list) {
 		kvfree(ctbl);
 		return NULL;
@@ -321,7 +324,8 @@ void t4_cleanup_clip_tbl(struct adapter *adap)
 	struct clip_tbl *ctbl = adap->clipt;
 
 	if (ctbl) {
-		kvfree(ctbl->cl_list);
+		if (ctbl->cl_list)
+			kvfree(ctbl->cl_list);
 		kvfree(ctbl);
 	}
 }

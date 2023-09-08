@@ -1,5 +1,15 @@
-// SPDX-License-Identifier: GPL-2.0+
-/* Copyright (C) 2016 National Instruments Corp. */
+/* Copyright (C) 2016 National Instruments Corp.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+  * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ */
 #include <linux/leds.h>
 #include <linux/phy.h>
 #include <linux/phy_led_triggers.h>
@@ -48,9 +58,8 @@ void phy_led_trigger_change_speed(struct phy_device *phy)
 		if (!phy->last_triggered)
 			led_trigger_event(&phy->led_link_trigger->trigger,
 					  LED_FULL);
-		else
-			led_trigger_event(&phy->last_triggered->trigger, LED_OFF);
 
+		led_trigger_event(&phy->last_triggered->trigger, LED_OFF);
 		led_trigger_event(&plt->trigger, LED_FULL);
 		phy->last_triggered = plt;
 	}
@@ -58,7 +67,7 @@ void phy_led_trigger_change_speed(struct phy_device *phy)
 EXPORT_SYMBOL_GPL(phy_led_trigger_change_speed);
 
 static void phy_led_trigger_format_name(struct phy_device *phy, char *buf,
-					size_t size, const char *suffix)
+					size_t size, char *suffix)
 {
 	snprintf(buf, size, PHY_ID_FMT ":%s",
 		 phy->mdio.bus->id, phy->mdio.addr, suffix);
@@ -66,11 +75,22 @@ static void phy_led_trigger_format_name(struct phy_device *phy, char *buf,
 
 static int phy_led_trigger_register(struct phy_device *phy,
 				    struct phy_led_trigger *plt,
-				    unsigned int speed,
-				    const char *suffix)
+				    unsigned int speed)
 {
+	char name_suffix[PHY_LED_TRIGGER_SPEED_SUFFIX_SIZE];
+
 	plt->speed = speed;
-	phy_led_trigger_format_name(phy, plt->name, sizeof(plt->name), suffix);
+
+	if (speed < SPEED_1000)
+		snprintf(name_suffix, sizeof(name_suffix), "%dMbps", speed);
+	else if (speed == SPEED_2500)
+		snprintf(name_suffix, sizeof(name_suffix), "2.5Gbps");
+	else
+		snprintf(name_suffix, sizeof(name_suffix), "%dGbps",
+			 DIV_ROUND_CLOSEST(speed, 1000));
+
+	phy_led_trigger_format_name(phy, plt->name, sizeof(plt->name),
+				    name_suffix);
 	plt->trigger.name = plt->name;
 
 	return led_trigger_register(&plt->trigger);
@@ -99,13 +119,18 @@ int phy_led_triggers_register(struct phy_device *phy)
 		goto out_clear;
 	}
 
-	err = phy_led_trigger_register(phy, phy->led_link_trigger, 0, "link");
+	phy_led_trigger_format_name(phy, phy->led_link_trigger->name,
+				    sizeof(phy->led_link_trigger->name),
+				    "link");
+	phy->led_link_trigger->trigger.name = phy->led_link_trigger->name;
+
+	err = led_trigger_register(&phy->led_link_trigger->trigger);
 	if (err)
 		goto out_free_link;
 
-	phy->phy_led_triggers = devm_kcalloc(&phy->mdio.dev,
-					    phy->phy_num_led_triggers,
-					    sizeof(struct phy_led_trigger),
+	phy->phy_led_triggers = devm_kzalloc(&phy->mdio.dev,
+					    sizeof(struct phy_led_trigger) *
+						   phy->phy_num_led_triggers,
 					    GFP_KERNEL);
 	if (!phy->phy_led_triggers) {
 		err = -ENOMEM;
@@ -114,8 +139,7 @@ int phy_led_triggers_register(struct phy_device *phy)
 
 	for (i = 0; i < phy->phy_num_led_triggers; i++) {
 		err = phy_led_trigger_register(phy, &phy->phy_led_triggers[i],
-					       speeds[i],
-					       phy_speed_to_str(speeds[i]));
+					       speeds[i]);
 		if (err)
 			goto out_unreg;
 	}

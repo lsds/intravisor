@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /* linux/drivers/video/s3c-fb.c
  *
  * Copyright 2008 Openmoko Inc.
@@ -7,6 +6,10 @@
  *      http://armlinux.simtec.co.uk/
  *
  * Samsung SoC Framebuffer driver
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software FoundatIon.
 */
 
 #include <linux/kernel.h>
@@ -75,7 +78,6 @@ struct s3c_fb;
  * @buf_size: Offset of buffer size registers.
  * @buf_end: Offset of buffer end registers.
  * @osd: The base for the OSD registers.
- * @osd_stride: stride of osd
  * @palette: Address of palette memory, or 0 if none.
  * @has_prtcon: Set if has PRTCON register.
  * @has_shadowcon: Set if has SHADOWCON register.
@@ -156,7 +158,7 @@ struct s3c_fb_palette {
  * @windata: The platform data supplied for the window configuration.
  * @parent: The hardware that this window is part of.
  * @fbinfo: Pointer pack to the framebuffer info for this window.
- * @variant: The variant information for this window.
+ * @varint: The variant information for this window.
  * @palette_buffer: Buffer/cache to hold palette entries.
  * @pseudo_palette: For use in TRUECOLOUR modes for entries 0..15/
  * @index: The window number of this window.
@@ -285,7 +287,7 @@ static int s3c_fb_check_var(struct fb_var_screeninfo *var,
 		/* 666 with one bit alpha/transparency */
 		var->transp.offset	= 18;
 		var->transp.length	= 1;
-		fallthrough;
+		/* drop through */
 	case 18:
 		var->bits_per_pixel	= 32;
 
@@ -313,7 +315,7 @@ static int s3c_fb_check_var(struct fb_var_screeninfo *var,
 	case 25:
 		var->transp.length	= var->bits_per_pixel - 24;
 		var->transp.offset	= 24;
-		fallthrough;
+		/* drop through */
 	case 24:
 		/* our 24bpp is unpacked, so 32bpp */
 		var->bits_per_pixel	= 32;
@@ -337,7 +339,7 @@ static int s3c_fb_check_var(struct fb_var_screeninfo *var,
 /**
  * s3c_fb_calc_pixclk() - calculate the divider to create the pixel clock.
  * @sfb: The hardware state.
- * @pixclk: The pixel clock wanted, in picoseconds.
+ * @pixclock: The pixel clock wanted, in picoseconds.
  *
  * Given the specified pixel clock, work out the necessary divider to get
  * close to the output frequency.
@@ -489,7 +491,7 @@ static int s3c_fb_set_par(struct fb_info *info)
 	struct s3c_fb_win *win = info->par;
 	struct s3c_fb *sfb = win->parent;
 	void __iomem *regs = sfb->regs;
-	void __iomem *buf;
+	void __iomem *buf = regs;
 	int win_no = win->index;
 	u32 alpha = 0;
 	u32 data;
@@ -734,7 +736,7 @@ static inline unsigned int chan_to_field(unsigned int chan,
  * @red: The red field for the palette data.
  * @green: The green field for the palette data.
  * @blue: The blue field for the palette data.
- * @transp: The transparency (alpha) field for the palette data.
+ * @trans: The transparency (alpha) field for the palette data.
  * @info: The framebuffer being changed.
  */
 static int s3c_fb_setcolreg(unsigned regno,
@@ -810,7 +812,7 @@ static int s3c_fb_blank(int blank_mode, struct fb_info *info)
 	case FB_BLANK_POWERDOWN:
 		wincon &= ~WINCONx_ENWIN;
 		sfb->enabled &= ~(1 << index);
-		fallthrough;	/* to FB_BLANK_NORMAL */
+		/* fall through to FB_BLANK_NORMAL */
 
 	case FB_BLANK_NORMAL:
 		/* disable the DMA and display 0x0 (black) */
@@ -1036,7 +1038,7 @@ static int s3c_fb_ioctl(struct fb_info *info, unsigned int cmd,
 	return ret;
 }
 
-static const struct fb_ops s3c_fb_ops = {
+static struct fb_ops s3c_fb_ops = {
 	.owner		= THIS_MODULE,
 	.fb_check_var	= s3c_fb_check_var,
 	.fb_set_par	= s3c_fb_set_par,
@@ -1103,14 +1105,14 @@ static int s3c_fb_alloc_memory(struct s3c_fb *sfb, struct s3c_fb_win *win)
 
 	dev_dbg(sfb->dev, "want %u bytes for window\n", size);
 
-	fbi->screen_buffer = dma_alloc_wc(sfb->dev, size, &map_dma, GFP_KERNEL);
-	if (!fbi->screen_buffer)
+	fbi->screen_base = dma_alloc_wc(sfb->dev, size, &map_dma, GFP_KERNEL);
+	if (!fbi->screen_base)
 		return -ENOMEM;
 
 	dev_dbg(sfb->dev, "mapped %x to %p\n",
-		(unsigned int)map_dma, fbi->screen_buffer);
+		(unsigned int)map_dma, fbi->screen_base);
 
-	memset(fbi->screen_buffer, 0x0, size);
+	memset(fbi->screen_base, 0x0, size);
 	fbi->fix.smem_start = map_dma;
 
 	return 0;
@@ -1127,14 +1129,13 @@ static void s3c_fb_free_memory(struct s3c_fb *sfb, struct s3c_fb_win *win)
 {
 	struct fb_info *fbi = win->fbinfo;
 
-	if (fbi->screen_buffer)
+	if (fbi->screen_base)
 		dma_free_wc(sfb->dev, PAGE_ALIGN(fbi->fix.smem_len),
-			    fbi->screen_buffer, fbi->fix.smem_start);
+		            fbi->screen_base, fbi->fix.smem_start);
 }
 
 /**
  * s3c_fb_release_win() - release resources for a framebuffer window.
- * @sfb: The base resources for the hardware.
  * @win: The window to cleanup the resources for.
  *
  * Release the resources that where claimed for the hardware window,
@@ -1162,7 +1163,6 @@ static void s3c_fb_release_win(struct s3c_fb *sfb, struct s3c_fb_win *win)
 /**
  * s3c_fb_probe_win() - register an hardware window
  * @sfb: The base resources for the hardware
- * @win_no: The window number
  * @variant: The variant information for this window.
  * @res: Pointer to where to place the resultant window.
  *
@@ -1173,6 +1173,7 @@ static int s3c_fb_probe_win(struct s3c_fb *sfb, unsigned int win_no,
 			    struct s3c_fb_win_variant *variant,
 			    struct s3c_fb_win **res)
 {
+	struct fb_var_screeninfo *var;
 	struct fb_videomode initmode;
 	struct s3c_fb_pd_win *windata;
 	struct s3c_fb_win *win;
@@ -1188,8 +1189,10 @@ static int s3c_fb_probe_win(struct s3c_fb *sfb, unsigned int win_no,
 
 	fbinfo = framebuffer_alloc(sizeof(struct s3c_fb_win) +
 				   palette_size * sizeof(u32), sfb->dev);
-	if (!fbinfo)
-		return -ENOMEM;
+	if (!fbinfo) {
+		dev_err(sfb->dev, "failed to allocate framebuffer\n");
+		return -ENOENT;
+	}
 
 	windata = sfb->pdata->win[win_no];
 	initmode = *sfb->pdata->vtiming;
@@ -1200,6 +1203,7 @@ static int s3c_fb_probe_win(struct s3c_fb *sfb, unsigned int win_no,
 
 	win = fbinfo->par;
 	*res = win;
+	var = &fbinfo->var;
 	win->variant = *variant;
 	win->fbinfo = fbinfo;
 	win->parent = sfb;
@@ -1360,6 +1364,7 @@ static int s3c_fb_probe(struct platform_device *pdev)
 	struct device *dev = &pdev->dev;
 	struct s3c_fb_platdata *pd;
 	struct s3c_fb *sfb;
+	struct resource *res;
 	int win;
 	int ret = 0;
 	u32 reg;
@@ -1391,17 +1396,18 @@ static int s3c_fb_probe(struct platform_device *pdev)
 	spin_lock_init(&sfb->slock);
 
 	sfb->bus_clk = devm_clk_get(dev, "lcd");
-	if (IS_ERR(sfb->bus_clk))
-		return dev_err_probe(dev, PTR_ERR(sfb->bus_clk),
-				     "failed to get bus clock\n");
+	if (IS_ERR(sfb->bus_clk)) {
+		dev_err(dev, "failed to get bus clock\n");
+		return PTR_ERR(sfb->bus_clk);
+	}
 
 	clk_prepare_enable(sfb->bus_clk);
 
 	if (!sfb->variant.has_clksel) {
 		sfb->lcd_clk = devm_clk_get(dev, "sclk_fimd");
 		if (IS_ERR(sfb->lcd_clk)) {
-			ret = dev_err_probe(dev, PTR_ERR(sfb->lcd_clk),
-					    "failed to get lcd clock\n");
+			dev_err(dev, "failed to get lcd clock\n");
+			ret = PTR_ERR(sfb->lcd_clk);
 			goto err_bus_clk;
 		}
 
@@ -1410,18 +1416,20 @@ static int s3c_fb_probe(struct platform_device *pdev)
 
 	pm_runtime_enable(sfb->dev);
 
-	sfb->regs = devm_platform_ioremap_resource(pdev, 0);
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	sfb->regs = devm_ioremap_resource(dev, res);
 	if (IS_ERR(sfb->regs)) {
 		ret = PTR_ERR(sfb->regs);
 		goto err_lcd_clk;
 	}
 
-	sfb->irq_no = platform_get_irq(pdev, 0);
-	if (sfb->irq_no < 0) {
+	res = platform_get_resource(pdev, IORESOURCE_IRQ, 0);
+	if (!res) {
+		dev_err(dev, "failed to acquire irq resource\n");
 		ret = -ENOENT;
 		goto err_lcd_clk;
 	}
-
+	sfb->irq_no = res->start;
 	ret = devm_request_irq(dev, sfb->irq_no, s3c_fb_irq,
 			  0, "s3c_fb", sfb);
 	if (ret) {
@@ -1807,3 +1815,4 @@ module_platform_driver(s3c_fb_driver);
 MODULE_AUTHOR("Ben Dooks <ben@simtec.co.uk>");
 MODULE_DESCRIPTION("Samsung S3C SoC Framebuffer driver");
 MODULE_LICENSE("GPL");
+MODULE_ALIAS("platform:s3c-fb");

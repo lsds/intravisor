@@ -15,7 +15,6 @@
 #include <linux/irq.h>
 #include <linux/wait.h>
 #include <linux/string.h>
-#include <asm/asm-extable.h>
 #include <asm/ctl_reg.h>
 #include <asm/diag.h>
 

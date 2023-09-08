@@ -141,13 +141,13 @@
 		compatible = "ti,wl1271";
 		reg = <2>;
 		interrupt-parent = <&gpio5>;
-		interrupts = <17 IRQ_TYPE_EDGE_RISING>; /* gpio 145 */
+		interrupts = <17 IRQ_TYPE_LEVEL_HIGH>; /* gpio 145 */
 		ref-clock-frequency = <38400000>;
 	};
 };
 
 &dss {
-	status = "okay";
+	status = "ok";
 
 	pinctrl-names = "default";
 	pinctrl-0 = <

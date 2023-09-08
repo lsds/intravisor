@@ -1,100 +1,41 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (C) 2014-2017 Linaro Ltd. <ard.biesheuvel@linaro.org>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 
 #include <linux/elf.h>
-#include <linux/ftrace.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/sort.h>
-
-static struct plt_entry __get_adrp_add_pair(u64 dst, u64 pc,
-					    enum aarch64_insn_register reg)
-{
-	u32 adrp, add;
-
-	adrp = aarch64_insn_gen_adr(pc, dst, reg, AARCH64_INSN_ADR_TYPE_ADRP);
-	add = aarch64_insn_gen_add_sub_imm(reg, reg, dst % SZ_4K,
-					   AARCH64_INSN_VARIANT_64BIT,
-					   AARCH64_INSN_ADSB_ADD);
-
-	return (struct plt_entry){ cpu_to_le32(adrp), cpu_to_le32(add) };
-}
-
-struct plt_entry get_plt_entry(u64 dst, void *pc)
-{
-	struct plt_entry plt;
-	static u32 br;
-
-	if (!br)
-		br = aarch64_insn_gen_branch_reg(AARCH64_INSN_REG_16,
-						 AARCH64_INSN_BRANCH_NOLINK);
-
-	plt = __get_adrp_add_pair(dst, (u64)pc, AARCH64_INSN_REG_16);
-	plt.br = cpu_to_le32(br);
-
-	return plt;
-}
-
-static bool plt_entries_equal(const struct plt_entry *a,
-			      const struct plt_entry *b)
-{
-	u64 p, q;
-
-	/*
-	 * Check whether both entries refer to the same target:
-	 * do the cheapest checks first.
-	 * If the 'add' or 'br' opcodes are different, then the target
-	 * cannot be the same.
-	 */
-	if (a->add != b->add || a->br != b->br)
-		return false;
-
-	p = ALIGN_DOWN((u64)a, SZ_4K);
-	q = ALIGN_DOWN((u64)b, SZ_4K);
-
-	/*
-	 * If the 'adrp' opcodes are the same then we just need to check
-	 * that they refer to the same 4k region.
-	 */
-	if (a->adrp == b->adrp && p == q)
-		return true;
-
-	return (p + aarch64_insn_adrp_get_offset(le32_to_cpu(a->adrp))) ==
-	       (q + aarch64_insn_adrp_get_offset(le32_to_cpu(b->adrp)));
-}
 
 static bool in_init(const struct module *mod, void *loc)
 {
 	return (u64)loc - (u64)mod->init_layout.base < mod->init_layout.size;
 }
 
-u64 module_emit_plt_entry(struct module *mod, Elf64_Shdr *sechdrs,
-			  void *loc, const Elf64_Rela *rela,
+u64 module_emit_plt_entry(struct module *mod, void *loc, const Elf64_Rela *rela,
 			  Elf64_Sym *sym)
 {
 	struct mod_plt_sec *pltsec = !in_init(mod, loc) ? &mod->arch.core :
 							  &mod->arch.init;
-	struct plt_entry *plt = (struct plt_entry *)sechdrs[pltsec->plt_shndx].sh_addr;
+	struct plt_entry *plt = (struct plt_entry *)pltsec->plt->sh_addr;
 	int i = pltsec->plt_num_entries;
-	int j = i - 1;
 	u64 val = sym->st_value + rela->r_addend;
 
-	if (is_forbidden_offset_for_adrp(&plt[i].adrp))
-		i++;
-
-	plt[i] = get_plt_entry(val, &plt[i]);
+	plt[i] = get_plt_entry(val);
 
 	/*
 	 * Check if the entry we just created is a duplicate. Given that the
 	 * relocations are sorted, this will be the last entry we allocated.
 	 * (if one exists).
 	 */
-	if (j >= 0 && plt_entries_equal(plt + i, plt + j))
-		return (u64)&plt[j];
+	if (i > 0 && plt_entries_equal(plt + i, plt + i - 1))
+		return (u64)&plt[i - 1];
 
-	pltsec->plt_num_entries += i - j;
+	pltsec->plt_num_entries++;
 	if (WARN_ON(pltsec->plt_num_entries > pltsec->plt_max_entries))
 		return 0;
 
@@ -102,37 +43,47 @@ u64 module_emit_plt_entry(struct module *mod, Elf64_Shdr *sechdrs,
 }
 
 #ifdef CONFIG_ARM64_ERRATUM_843419
-u64 module_emit_veneer_for_adrp(struct module *mod, Elf64_Shdr *sechdrs,
-				void *loc, u64 val)
+u64 module_emit_veneer_for_adrp(struct module *mod, void *loc, u64 val)
 {
 	struct mod_plt_sec *pltsec = !in_init(mod, loc) ? &mod->arch.core :
 							  &mod->arch.init;
-	struct plt_entry *plt = (struct plt_entry *)sechdrs[pltsec->plt_shndx].sh_addr;
+	struct plt_entry *plt = (struct plt_entry *)pltsec->plt->sh_addr;
 	int i = pltsec->plt_num_entries++;
-	u32 br;
+	u32 mov0, mov1, mov2, br;
 	int rd;
 
 	if (WARN_ON(pltsec->plt_num_entries > pltsec->plt_max_entries))
 		return 0;
 
-	if (is_forbidden_offset_for_adrp(&plt[i].adrp))
-		i = pltsec->plt_num_entries++;
-
 	/* get the destination register of the ADRP instruction */
 	rd = aarch64_insn_decode_register(AARCH64_INSN_REGTYPE_RD,
 					  le32_to_cpup((__le32 *)loc));
 
+	/* generate the veneer instructions */
+	mov0 = aarch64_insn_gen_movewide(rd, (u16)~val, 0,
+					 AARCH64_INSN_VARIANT_64BIT,
+					 AARCH64_INSN_MOVEWIDE_INVERSE);
+	mov1 = aarch64_insn_gen_movewide(rd, (u16)(val >> 16), 16,
+					 AARCH64_INSN_VARIANT_64BIT,
+					 AARCH64_INSN_MOVEWIDE_KEEP);
+	mov2 = aarch64_insn_gen_movewide(rd, (u16)(val >> 32), 32,
+					 AARCH64_INSN_VARIANT_64BIT,
+					 AARCH64_INSN_MOVEWIDE_KEEP);
 	br = aarch64_insn_gen_branch_imm((u64)&plt[i].br, (u64)loc + 4,
 					 AARCH64_INSN_BRANCH_NOLINK);
 
-	plt[i] = __get_adrp_add_pair(val, (u64)&plt[i], rd);
-	plt[i].br = cpu_to_le32(br);
+	plt[i] = (struct plt_entry){
+			cpu_to_le32(mov0),
+			cpu_to_le32(mov1),
+			cpu_to_le32(mov2),
+			cpu_to_le32(br)
+		};
 
 	return (u64)&plt[i];
 }
 #endif
 
-#define cmp_3way(a, b)	((a) < (b) ? -1 : (a) > (b))
+#define cmp_3way(a,b)	((a) < (b) ? -1 : (a) > (b))
 
 static int cmp_rela(const void *a, const void *b)
 {
@@ -221,7 +172,7 @@ static unsigned int count_plts(Elf64_Sym *syms, Elf64_Rela *rela, int num,
 			 * increasing the section's alignment so that the
 			 * resulting address of this instruction is guaranteed
 			 * to equal the offset in that particular bit (as well
-			 * as all less significant bits). This ensures that the
+			 * as all less signficant bits). This ensures that the
 			 * address modulo 4 KB != 0xfff8 or 0xfffc (which would
 			 * have all ones in bits [11:3])
 			 */
@@ -242,50 +193,7 @@ static unsigned int count_plts(Elf64_Sym *syms, Elf64_Rela *rela, int num,
 			break;
 		}
 	}
-
-	if (IS_ENABLED(CONFIG_ARM64_ERRATUM_843419) &&
-	    cpus_have_const_cap(ARM64_WORKAROUND_843419))
-		/*
-		 * Add some slack so we can skip PLT slots that may trigger
-		 * the erratum due to the placement of the ADRP instruction.
-		 */
-		ret += DIV_ROUND_UP(ret, (SZ_4K / sizeof(struct plt_entry)));
-
 	return ret;
-}
-
-static bool branch_rela_needs_plt(Elf64_Sym *syms, Elf64_Rela *rela,
-				  Elf64_Word dstidx)
-{
-
-	Elf64_Sym *s = syms + ELF64_R_SYM(rela->r_info);
-
-	if (s->st_shndx == dstidx)
-		return false;
-
-	return ELF64_R_TYPE(rela->r_info) == R_AARCH64_JUMP26 ||
-	       ELF64_R_TYPE(rela->r_info) == R_AARCH64_CALL26;
-}
-
-/* Group branch PLT relas at the front end of the array. */
-static int partition_branch_plt_relas(Elf64_Sym *syms, Elf64_Rela *rela,
-				      int numrels, Elf64_Word dstidx)
-{
-	int i = 0, j = numrels - 1;
-
-	if (!IS_ENABLED(CONFIG_RANDOMIZE_BASE))
-		return 0;
-
-	while (i < j) {
-		if (branch_rela_needs_plt(syms, &rela[i], dstidx))
-			i++;
-		else if (branch_rela_needs_plt(syms, &rela[j], dstidx))
-			swap(rela[i], rela[j]);
-		else
-			j--;
-	}
-
-	return i;
 }
 
 int module_frob_arch_sections(Elf_Ehdr *ehdr, Elf_Shdr *sechdrs,
@@ -294,7 +202,7 @@ int module_frob_arch_sections(Elf_Ehdr *ehdr, Elf_Shdr *sechdrs,
 	unsigned long core_plts = 0;
 	unsigned long init_plts = 0;
 	Elf64_Sym *syms = NULL;
-	Elf_Shdr *pltsec, *tramp = NULL;
+	Elf_Shdr *tramp = NULL;
 	int i;
 
 	/*
@@ -303,17 +211,18 @@ int module_frob_arch_sections(Elf_Ehdr *ehdr, Elf_Shdr *sechdrs,
 	 */
 	for (i = 0; i < ehdr->e_shnum; i++) {
 		if (!strcmp(secstrings + sechdrs[i].sh_name, ".plt"))
-			mod->arch.core.plt_shndx = i;
+			mod->arch.core.plt = sechdrs + i;
 		else if (!strcmp(secstrings + sechdrs[i].sh_name, ".init.plt"))
-			mod->arch.init.plt_shndx = i;
-		else if (!strcmp(secstrings + sechdrs[i].sh_name,
+			mod->arch.init.plt = sechdrs + i;
+		else if (IS_ENABLED(CONFIG_DYNAMIC_FTRACE) &&
+			 !strcmp(secstrings + sechdrs[i].sh_name,
 				 ".text.ftrace_trampoline"))
 			tramp = sechdrs + i;
 		else if (sechdrs[i].sh_type == SHT_SYMTAB)
 			syms = (Elf64_Sym *)sechdrs[i].sh_addr;
 	}
 
-	if (!mod->arch.core.plt_shndx || !mod->arch.init.plt_shndx) {
+	if (!mod->arch.core.plt || !mod->arch.init.plt) {
 		pr_err("%s: module PLT section(s) missing\n", mod->name);
 		return -ENOEXEC;
 	}
@@ -324,7 +233,7 @@ int module_frob_arch_sections(Elf_Ehdr *ehdr, Elf_Shdr *sechdrs,
 
 	for (i = 0; i < ehdr->e_shnum; i++) {
 		Elf64_Rela *rels = (void *)ehdr + sechdrs[i].sh_offset;
-		int nents, numrels = sechdrs[i].sh_size / sizeof(Elf64_Rela);
+		int numrels = sechdrs[i].sh_size / sizeof(Elf64_Rela);
 		Elf64_Shdr *dstsec = sechdrs + sechdrs[i].sh_info;
 
 		if (sechdrs[i].sh_type != SHT_RELA)
@@ -334,16 +243,10 @@ int module_frob_arch_sections(Elf_Ehdr *ehdr, Elf_Shdr *sechdrs,
 		if (!(dstsec->sh_flags & SHF_EXECINSTR))
 			continue;
 
-		/*
-		 * sort branch relocations requiring a PLT by type, symbol index
-		 * and addend
-		 */
-		nents = partition_branch_plt_relas(syms, rels, numrels,
-						   sechdrs[i].sh_info);
-		if (nents)
-			sort(rels, nents, sizeof(Elf64_Rela), cmp_rela, NULL);
+		/* sort by type, symbol index and addend */
+		sort(rels, numrels, sizeof(Elf64_Rela), cmp_rela, NULL);
 
-		if (!str_has_prefix(secstrings + dstsec->sh_name, ".init"))
+		if (strncmp(secstrings + dstsec->sh_name, ".init", 5) != 0)
 			core_plts += count_plts(syms, rels, numrels,
 						sechdrs[i].sh_info, dstsec);
 		else
@@ -351,19 +254,17 @@ int module_frob_arch_sections(Elf_Ehdr *ehdr, Elf_Shdr *sechdrs,
 						sechdrs[i].sh_info, dstsec);
 	}
 
-	pltsec = sechdrs + mod->arch.core.plt_shndx;
-	pltsec->sh_type = SHT_NOBITS;
-	pltsec->sh_flags = SHF_EXECINSTR | SHF_ALLOC;
-	pltsec->sh_addralign = L1_CACHE_BYTES;
-	pltsec->sh_size = (core_plts  + 1) * sizeof(struct plt_entry);
+	mod->arch.core.plt->sh_type = SHT_NOBITS;
+	mod->arch.core.plt->sh_flags = SHF_EXECINSTR | SHF_ALLOC;
+	mod->arch.core.plt->sh_addralign = L1_CACHE_BYTES;
+	mod->arch.core.plt->sh_size = (core_plts  + 1) * sizeof(struct plt_entry);
 	mod->arch.core.plt_num_entries = 0;
 	mod->arch.core.plt_max_entries = core_plts;
 
-	pltsec = sechdrs + mod->arch.init.plt_shndx;
-	pltsec->sh_type = SHT_NOBITS;
-	pltsec->sh_flags = SHF_EXECINSTR | SHF_ALLOC;
-	pltsec->sh_addralign = L1_CACHE_BYTES;
-	pltsec->sh_size = (init_plts + 1) * sizeof(struct plt_entry);
+	mod->arch.init.plt->sh_type = SHT_NOBITS;
+	mod->arch.init.plt->sh_flags = SHF_EXECINSTR | SHF_ALLOC;
+	mod->arch.init.plt->sh_addralign = L1_CACHE_BYTES;
+	mod->arch.init.plt->sh_size = (init_plts + 1) * sizeof(struct plt_entry);
 	mod->arch.init.plt_num_entries = 0;
 	mod->arch.init.plt_max_entries = init_plts;
 
@@ -371,7 +272,7 @@ int module_frob_arch_sections(Elf_Ehdr *ehdr, Elf_Shdr *sechdrs,
 		tramp->sh_type = SHT_NOBITS;
 		tramp->sh_flags = SHF_EXECINSTR | SHF_ALLOC;
 		tramp->sh_addralign = __alignof__(struct plt_entry);
-		tramp->sh_size = NR_FTRACE_PLTS * sizeof(struct plt_entry);
+		tramp->sh_size = sizeof(struct plt_entry);
 	}
 
 	return 0;

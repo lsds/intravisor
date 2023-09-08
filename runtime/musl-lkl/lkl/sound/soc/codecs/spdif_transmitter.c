@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * ALSA SoC SPDIF DIT driver
  *
@@ -9,6 +8,10 @@
  * Author:      Steve Chen,  <schen@mvista.com>
  * Copyright:   (C) 2009 MontaVista Software, Inc., <source@mvista.com>
  * Copyright:   (C) 2009  Texas Instruments, India
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 
 #include <linux/module.h>
@@ -43,6 +46,7 @@ static struct snd_soc_component_driver soc_codec_spdif_dit = {
 	.idle_bias_on		= 1,
 	.use_pmdown_time	= 1,
 	.endianness		= 1,
+	.non_legacy_dai_naming	= 1,
 };
 
 static struct snd_soc_dai_driver dit_stub_dai = {

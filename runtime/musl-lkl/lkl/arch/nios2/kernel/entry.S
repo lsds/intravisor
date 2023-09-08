@@ -185,7 +185,6 @@ ENTRY(handle_system_call)
 	ldw	r5, PT_R5(sp)
 
 local_restart:
-	stw	r2, PT_ORIG_R2(sp)
 	/* Check that the requested system call is within limits */
 	movui	r1, __NR_syscalls
 	bgeu	r2, r1, ret_invsyscall
@@ -193,6 +192,7 @@ local_restart:
 	movhi	r11, %hiadj(sys_call_table)
 	add	r1, r1, r11
 	ldw	r1, %lo(sys_call_table)(r1)
+	beq	r1, r0, ret_invsyscall
 
 	/* Check if we are being traced */
 	GET_THREAD_INFO r11
@@ -213,9 +213,6 @@ local_restart:
 translate_rc_and_ret:
 	movi	r1, 0
 	bge	r2, zero, 3f
-	ldw	r1, PT_ORIG_R2(sp)
-	addi	r1, r1, 1
-	beq	r1, zero, 3f
 	sub	r2, zero, r2
 	movi	r1, 1
 3:
@@ -258,9 +255,9 @@ traced_system_call:
 	ldw	r6, PT_R6(sp)
 	ldw	r7, PT_R7(sp)
 
-	/* Fetch the syscall function. */
-	movui	r1, __NR_syscalls
-	bgeu	r2, r1, traced_invsyscall
+	/* Fetch the syscall function, we don't need to check the boundaries
+	 * since this is already done.
+	 */
 	slli	r1, r2, 2
 	movhi	r11,%hiadj(sys_call_table)
 	add	r1, r1, r11
@@ -279,9 +276,6 @@ traced_system_call:
 translate_rc_and_ret2:
 	movi	r1, 0
 	bge	r2, zero, 4f
-	ldw	r1, PT_ORIG_R2(sp)
-	addi	r1, r1, 1
-	beq	r1, zero, 4f
 	sub	r2, zero, r2
 	movi	r1, 1
 4:
@@ -292,11 +286,6 @@ end_translate_rc_and_ret2:
 	call	do_syscall_trace_exit
 	RESTORE_SWITCH_STACK
 	br	ret_from_exception
-
-	/* If the syscall number was invalid return ENOSYS */
-traced_invsyscall:
-	movi	r2, -ENOSYS
-	br	translate_rc_and_ret2
 
 Luser_return:
 	GET_THREAD_INFO	r11			/* get thread_info pointer */
@@ -347,6 +336,9 @@ external_interrupt:
 	/* skip if no interrupt is pending */
 	beq	r12, r0, ret_from_interrupt
 
+	movi	r24, -1
+	stw	r24, PT_ORIG_R2(sp)
+
 	/*
 	 * Process an external hardware interrupt.
 	 */
@@ -373,7 +365,7 @@ ENTRY(ret_from_interrupt)
 	ldw	r1, PT_ESTATUS(sp)	/* check if returning to kernel */
 	TSTBNZ	r1, r1, ESTATUS_EU, Luser_return
 
-#ifdef CONFIG_PREEMPTION
+#ifdef CONFIG_PREEMPT
 	GET_THREAD_INFO	r1
 	ldw	r4, TI_PREEMPT_COUNT(r1)
 	bne	r4, r0, restore_all
@@ -397,10 +389,12 @@ ENTRY(ret_from_interrupt)
  */
 ENTRY(sys_clone)
 	SAVE_SWITCH_STACK
-	subi    sp, sp, 4 /* make space for tls pointer */
-	stw     r8, 0(sp) /* pass tls pointer (r8) via stack (5th argument) */
-	call	nios2_clone
-	addi    sp, sp, 4
+	addi	sp, sp, -4
+	stw	r7, 0(sp)	/* Pass 5th arg thru stack */
+	mov	r7, r6		/* 4th arg is 3rd of clone() */
+	mov	r6, zero	/* 3rd arg always 0 */
+	call	do_fork
+	addi	sp, sp, 4
 	RESTORE_SWITCH_STACK
 	ret
 

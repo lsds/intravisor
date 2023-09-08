@@ -6,13 +6,14 @@ void clear_flushed_tls(struct task_struct *task)
 {
 }
 
-int arch_set_tls(struct task_struct *t, unsigned long tls)
+int arch_copy_tls(struct task_struct *t)
 {
 	/*
 	 * If CLONE_SETTLS is set, we need to save the thread id
-	 * so it can be set during context switches.
+	 * (which is argument 5, child_tid, of clone) so it can be set
+	 * during context switches.
 	 */
-	t->thread.arch.fs = tls;
+	t->thread.arch.fs = t->thread.regs.regs.gp[R8 / sizeof(long)];
 
 	return 0;
 }

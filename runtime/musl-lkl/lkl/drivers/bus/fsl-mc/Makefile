@@ -15,8 +15,4 @@ mc-bus-driver-objs := fsl-mc-bus.o \
 		      dprc-driver.o \
 		      fsl-mc-allocator.o \
 		      fsl-mc-msi.o \
-		      dpmcp.o \
-		      obj-api.o
-
-# MC userspace support
-obj-$(CONFIG_FSL_MC_UAPI_SUPPORT) += fsl-mc-uapi.o
+		      dpmcp.o

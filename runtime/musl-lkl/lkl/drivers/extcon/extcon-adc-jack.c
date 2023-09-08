@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * drivers/extcon/extcon-adc-jack.c
  *
@@ -11,6 +10,11 @@
  * MyungJoo Ham <myungjoo.ham@samsung.com>
  *
  * Modified for calling to IIO to get adc by <anish.singh@samsung.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ *
  */
 
 #include <linux/module.h>
@@ -124,7 +128,7 @@ static int adc_jack_probe(struct platform_device *pdev)
 	for (i = 0; data->adc_conditions[i].id != EXTCON_NONE; i++);
 	data->num_conditions = i;
 
-	data->chan = devm_iio_channel_get(&pdev->dev, pdata->consumer_channel);
+	data->chan = iio_channel_get(&pdev->dev, pdata->consumer_channel);
 	if (IS_ERR(data->chan))
 		return PTR_ERR(data->chan);
 
@@ -140,8 +144,10 @@ static int adc_jack_probe(struct platform_device *pdev)
 		return err;
 
 	data->irq = platform_get_irq(pdev, 0);
-	if (data->irq < 0)
+	if (data->irq < 0) {
+		dev_err(&pdev->dev, "platform_get_irq failed\n");
 		return -ENODEV;
+	}
 
 	err = request_any_context_irq(data->irq, adc_jack_irq_thread,
 			pdata->irq_flags, pdata->name, data);
@@ -164,6 +170,7 @@ static int adc_jack_remove(struct platform_device *pdev)
 
 	free_irq(data->irq, data);
 	cancel_work_sync(&data->handler.work);
+	iio_channel_release(data->chan);
 
 	return 0;
 }

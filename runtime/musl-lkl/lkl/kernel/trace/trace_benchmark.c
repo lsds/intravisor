@@ -31,7 +31,7 @@ static bool ok_to_run;
  * it simply writes "START". As the first write is cold cache and
  * the rest is hot, we save off that time in bm_first and it is
  * reported as "first", which is shown in the second write to the
- * tracepoint. The "first" field is written within the statics from
+ * tracepoint. The "first" field is writen within the statics from
  * then on but never changes.
  */
 static void trace_do_benchmark(void)
@@ -51,7 +51,7 @@ static void trace_do_benchmark(void)
 
 	local_irq_disable();
 	start = trace_clock_local();
-	trace_benchmark_event(bm_str, bm_last);
+	trace_benchmark_event(bm_str);
 	stop = trace_clock_local();
 	local_irq_enable();
 
@@ -112,7 +112,7 @@ static void trace_do_benchmark(void)
 		int i = 0;
 		/*
 		 * stddev is the square of standard deviation but
-		 * we want the actually number. Use the average
+		 * we want the actualy number. Use the average
 		 * as our seed to find the std.
 		 *
 		 * The next try is:
@@ -155,17 +155,17 @@ static int benchmark_event_kthread(void *arg)
 
 		/*
 		 * We don't go to sleep, but let others run as well.
-		 * This is basically a "yield()" to let any task that
+		 * This is bascially a "yield()" to let any task that
 		 * wants to run, schedule in, but if the CPU is idle,
 		 * we'll keep burning cycles.
 		 *
-		 * Note the tasks_rcu_qs() version of cond_resched() will
+		 * Note the _rcu_qs() version of cond_resched() will
 		 * notify synchronize_rcu_tasks() that this thread has
 		 * passed a quiescent state for rcu_tasks. Otherwise
 		 * this thread will never voluntarily schedule which would
 		 * block synchronize_rcu_tasks() indefinitely.
 		 */
-		cond_resched_tasks_rcu_qs();
+		cond_resched();
 	}
 
 	return 0;
@@ -178,14 +178,14 @@ static int benchmark_event_kthread(void *arg)
 int trace_benchmark_reg(void)
 {
 	if (!ok_to_run) {
-		pr_warn("trace benchmark cannot be started via kernel command line\n");
+		pr_warning("trace benchmark cannot be started via kernel command line\n");
 		return -EBUSY;
 	}
 
 	bm_event_thread = kthread_run(benchmark_event_kthread,
 				      NULL, "event_benchmark");
 	if (IS_ERR(bm_event_thread)) {
-		pr_warn("trace benchmark failed to create kernel thread\n");
+		pr_warning("trace benchmark failed to create kernel thread\n");
 		return PTR_ERR(bm_event_thread);
 	}
 

@@ -33,7 +33,7 @@
  |   Results returned in the 64 bit arg and eax.                             |
  +---------------------------------------------------------------------------*/
 
-SYM_FUNC_START(FPU_shrx)
+ENTRY(FPU_shrx)
 	push	%ebp
 	movl	%esp,%ebp
 	pushl	%esi
@@ -55,7 +55,7 @@ SYM_FUNC_START(FPU_shrx)
 	popl	%ebx
 	popl	%esi
 	leave
-	RET
+	ret
 
 L_more_than_31:
 	cmpl	$64,%ecx
@@ -70,7 +70,7 @@ L_more_than_31:
 	movl	$0,4(%esi)
 	popl	%esi
 	leave
-	RET
+	ret
 
 L_more_than_63:
 	cmpl	$96,%ecx
@@ -84,7 +84,7 @@ L_more_than_63:
 	movl	%edx,4(%esi)
 	popl	%esi
 	leave
-	RET
+	ret
 
 L_more_than_95:
 	xorl	%eax,%eax
@@ -92,8 +92,8 @@ L_more_than_95:
 	movl	%eax,4(%esi)
 	popl	%esi
 	leave
-	RET
-SYM_FUNC_END(FPU_shrx)
+	ret
+ENDPROC(FPU_shrx)
 
 
 /*---------------------------------------------------------------------------+
@@ -112,7 +112,7 @@ SYM_FUNC_END(FPU_shrx)
  |   part which has been shifted out of the arg.                             |
  |   Results returned in the 64 bit arg and eax.                             |
  +---------------------------------------------------------------------------*/
-SYM_FUNC_START(FPU_shrxs)
+ENTRY(FPU_shrxs)
 	push	%ebp
 	movl	%esp,%ebp
 	pushl	%esi
@@ -146,7 +146,7 @@ SYM_FUNC_START(FPU_shrxs)
 	popl	%ebx
 	popl	%esi
 	leave
-	RET
+	ret
 
 /* Shift by [0..31] bits */
 Ls_less_than_32:
@@ -163,7 +163,7 @@ Ls_less_than_32:
 	popl	%ebx
 	popl	%esi
 	leave
-	RET
+	ret
 
 /* Shift by [64..95] bits */
 Ls_more_than_63:
@@ -189,7 +189,7 @@ Ls_more_than_63:
 	popl	%ebx
 	popl	%esi
 	leave
-	RET
+	ret
 
 Ls_more_than_95:
 /* Shift by [96..inf) bits */
@@ -203,5 +203,5 @@ Ls_more_than_95:
 	popl	%ebx
 	popl	%esi
 	leave
-	RET
-SYM_FUNC_END(FPU_shrxs)
+	ret
+ENDPROC(FPU_shrxs)

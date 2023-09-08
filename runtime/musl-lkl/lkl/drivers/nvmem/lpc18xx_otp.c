@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * NXP LPC18xx/43xx OTP memory NVMEM driver
  *
@@ -6,6 +5,10 @@
  *
  * Based on the imx ocotp driver,
  * Copyright (c) 2015 Pengutronix, Philipp Zabel <p.zabel@pengutronix.de>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2
+ * as published by the Free Software Foundation.
  *
  * TODO: add support for writing OTP register via API in boot ROM.
  */

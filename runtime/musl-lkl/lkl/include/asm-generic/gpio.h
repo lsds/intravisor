@@ -2,8 +2,10 @@
 #ifndef _ASM_GENERIC_GPIO_H
 #define _ASM_GENERIC_GPIO_H
 
+#include <linux/kernel.h>
 #include <linux/types.h>
 #include <linux/errno.h>
+#include <linux/of.h>
 
 #ifdef CONFIG_GPIOLIB
 
@@ -137,8 +139,6 @@ static inline void gpio_unexport(unsigned gpio)
 }
 
 #else	/* !CONFIG_GPIOLIB */
-
-#include <linux/kernel.h>
 
 static inline bool gpio_is_valid(int number)
 {

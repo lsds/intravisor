@@ -45,7 +45,7 @@ struct retu_dev {
 	struct regmap_irq_chip_data	*irq_data;
 };
 
-static const struct resource retu_pwrbutton_res[] = {
+static struct resource retu_pwrbutton_res[] = {
 	{
 		.name	= "retu-pwrbutton",
 		.start	= RETU_INT_PWR,
@@ -84,7 +84,7 @@ static struct regmap_irq_chip retu_irq_chip = {
 /* Retu device registered for the power off. */
 static struct retu_dev *retu_pm_power_off;
 
-static const struct resource tahvo_usb_res[] = {
+static struct resource tahvo_usb_res[] = {
 	{
 		.name	= "tahvo-usb",
 		.start	= TAHVO_INT_VBUS,
@@ -287,7 +287,7 @@ static int retu_probe(struct i2c_client *i2c, const struct i2c_device_id *id)
 	return 0;
 }
 
-static void retu_remove(struct i2c_client *i2c)
+static int retu_remove(struct i2c_client *i2c)
 {
 	struct retu_dev *rdev = i2c_get_clientdata(i2c);
 
@@ -297,6 +297,8 @@ static void retu_remove(struct i2c_client *i2c)
 	}
 	mfd_remove_devices(rdev->dev);
 	regmap_del_irq_chip(i2c->irq, rdev->irq_data);
+
+	return 0;
 }
 
 static const struct i2c_device_id retu_id[] = {

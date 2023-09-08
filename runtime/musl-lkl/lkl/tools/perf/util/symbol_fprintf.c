@@ -3,8 +3,6 @@
 #include <inttypes.h>
 #include <stdio.h>
 
-#include "dso.h"
-#include "map.h"
 #include "symbol.h"
 
 size_t symbol__fprintf(struct symbol *sym, FILE *fp)
@@ -60,15 +58,15 @@ size_t symbol__fprintf_symname(const struct symbol *sym, FILE *fp)
 }
 
 size_t dso__fprintf_symbols_by_name(struct dso *dso,
-				    FILE *fp)
+				    enum map_type type, FILE *fp)
 {
 	size_t ret = 0;
 	struct rb_node *nd;
 	struct symbol_name_rb_node *pos;
 
-	for (nd = rb_first_cached(&dso->symbol_names); nd; nd = rb_next(nd)) {
+	for (nd = rb_first(&dso->symbol_names[type]); nd; nd = rb_next(nd)) {
 		pos = rb_entry(nd, struct symbol_name_rb_node, rb_node);
-		ret += fprintf(fp, "%s\n", pos->sym.name);
+		fprintf(fp, "%s\n", pos->sym.name);
 	}
 
 	return ret;

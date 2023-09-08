@@ -92,7 +92,7 @@ struct au1100fb_regs
 	u32  lcd_pwmdiv;
 	u32  lcd_pwmhi;
 	u32  reserved[(0x0400-0x002C)/4];
-	u32  lcd_palettebase[256];
+	u32  lcd_pallettebase[256];
 };
 
 struct au1100fb_device {
@@ -110,7 +110,6 @@ struct au1100fb_device {
 	dma_addr_t    		fb_phys;
 	int			panel_idx;
 	struct clk		*lcdclk;
-	struct device		*dev;
 };
 
 /********************************************************************/

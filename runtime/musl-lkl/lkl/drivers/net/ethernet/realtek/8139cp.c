@@ -6,7 +6,7 @@
 	Copyright (C) 2000, 2001 David S. Miller (davem@redhat.com) [sungem.c]
 	Copyright 2001 Manfred Spraul				    [natsemi.c]
 	Copyright 1999-2001 by Donald Becker.			    [natsemi.c]
-	Written 1997-2001 by Donald Becker.			    [8139too.c]
+       	Written 1997-2001 by Donald Becker.			    [8139too.c]
 	Copyright 1998-2001 by Jes Sorensen, <jes@trained-monkey.org>. [acenic.c]
 
 	This software may be used and distributed according to the terms of
@@ -514,7 +514,7 @@ static int cp_rx_poll(struct napi_struct *napi, int budget)
 		}
 
 		new_mapping = dma_map_single(&cp->pdev->dev, new_skb->data, buflen,
-					 DMA_FROM_DEVICE);
+					 PCI_DMA_FROMDEVICE);
 		if (dma_mapping_error(&cp->pdev->dev, new_mapping)) {
 			dev->stats.rx_dropped++;
 			kfree_skb(new_skb);
@@ -522,7 +522,7 @@ static int cp_rx_poll(struct napi_struct *napi, int budget)
 		}
 
 		dma_unmap_single(&cp->pdev->dev, mapping,
-				 buflen, DMA_FROM_DEVICE);
+				 buflen, PCI_DMA_FROMDEVICE);
 
 		/* Handle checksum offloading for incoming packets. */
 		if (cp_rx_csum_ok(status))
@@ -571,17 +571,12 @@ static irqreturn_t cp_interrupt (int irq, void *dev_instance)
 	struct cp_private *cp;
 	int handled = 0;
 	u16 status;
-	u16 mask;
 
 	if (unlikely(dev == NULL))
 		return IRQ_NONE;
 	cp = netdev_priv(dev);
 
 	spin_lock(&cp->lock);
-
-	mask = cpr16(IntrMask);
-	if (!mask)
-		goto out_unlock;
 
 	status = cpr16(IntrStatus);
 	if (!status || (status == 0xFFFF))
@@ -666,7 +661,7 @@ static void cp_tx (struct cp_private *cp)
 
 		dma_unmap_single(&cp->pdev->dev, le64_to_cpu(txd->addr),
 				 cp->tx_opts[tx_tail] & 0xffff,
-				 DMA_TO_DEVICE);
+				 PCI_DMA_TODEVICE);
 
 		if (status & LastFrag) {
 			if (status & (TxError | TxFIFOUnder)) {
@@ -691,7 +686,7 @@ static void cp_tx (struct cp_private *cp)
 			}
 			bytes_compl += skb->len;
 			pkts_compl++;
-			dev_consume_skb_irq(skb);
+			dev_kfree_skb_irq(skb);
 		}
 
 		cp->tx_skb[tx_tail] = NULL;
@@ -724,7 +719,7 @@ static void unwind_tx_frag_mapping(struct cp_private *cp, struct sk_buff *skb,
 		txd = &cp->tx_ring[index];
 		this_frag = &skb_shinfo(skb)->frags[frag];
 		dma_unmap_single(&cp->pdev->dev, le64_to_cpu(txd->addr),
-				 skb_frag_size(this_frag), DMA_TO_DEVICE);
+				 skb_frag_size(this_frag), PCI_DMA_TODEVICE);
 	}
 }
 
@@ -781,7 +776,7 @@ static netdev_tx_t cp_start_xmit (struct sk_buff *skb,
 		dma_addr_t mapping;
 
 		len = skb->len;
-		mapping = dma_map_single(&cp->pdev->dev, skb->data, len, DMA_TO_DEVICE);
+		mapping = dma_map_single(&cp->pdev->dev, skb->data, len, PCI_DMA_TODEVICE);
 		if (dma_mapping_error(&cp->pdev->dev, mapping))
 			goto out_dma_error;
 
@@ -810,7 +805,7 @@ static netdev_tx_t cp_start_xmit (struct sk_buff *skb,
 		first_eor = eor;
 		first_len = skb_headlen(skb);
 		first_mapping = dma_map_single(&cp->pdev->dev, skb->data,
-					       first_len, DMA_TO_DEVICE);
+					       first_len, PCI_DMA_TODEVICE);
 		if (dma_mapping_error(&cp->pdev->dev, first_mapping))
 			goto out_dma_error;
 
@@ -826,7 +821,7 @@ static netdev_tx_t cp_start_xmit (struct sk_buff *skb,
 			len = skb_frag_size(this_frag);
 			mapping = dma_map_single(&cp->pdev->dev,
 						 skb_frag_address(this_frag),
-						 len, DMA_TO_DEVICE);
+						 len, PCI_DMA_TODEVICE);
 			if (dma_mapping_error(&cp->pdev->dev, mapping)) {
 				unwind_tx_frag_mapping(cp, skb, first_entry, entry);
 				goto out_dma_error;
@@ -947,8 +942,8 @@ static struct net_device_stats *cp_get_stats(struct net_device *dev)
 
 	/* The chip only need report frame silently dropped. */
 	spin_lock_irqsave(&cp->lock, flags);
-	if (netif_running(dev) && netif_device_present(dev))
-		__cp_get_stats(cp);
+ 	if (netif_running(dev) && netif_device_present(dev))
+ 		__cp_get_stats(cp);
 	spin_unlock_irqrestore(&cp->lock, flags);
 
 	return &dev->stats;
@@ -1069,7 +1064,7 @@ static int cp_refill_rx(struct cp_private *cp)
 			goto err_out;
 
 		mapping = dma_map_single(&cp->pdev->dev, skb->data,
-					 cp->rx_buf_sz, DMA_FROM_DEVICE);
+					 cp->rx_buf_sz, PCI_DMA_FROMDEVICE);
 		if (dma_mapping_error(&cp->pdev->dev, mapping)) {
 			kfree_skb(skb);
 			goto err_out;
@@ -1139,7 +1134,7 @@ static void cp_clean_rings (struct cp_private *cp)
 		if (cp->rx_skb[i]) {
 			desc = cp->rx_ring + i;
 			dma_unmap_single(&cp->pdev->dev,le64_to_cpu(desc->addr),
-					 cp->rx_buf_sz, DMA_FROM_DEVICE);
+					 cp->rx_buf_sz, PCI_DMA_FROMDEVICE);
 			dev_kfree_skb_any(cp->rx_skb[i]);
 		}
 	}
@@ -1151,7 +1146,7 @@ static void cp_clean_rings (struct cp_private *cp)
 			desc = cp->tx_ring + i;
 			dma_unmap_single(&cp->pdev->dev,le64_to_cpu(desc->addr),
 					 le32_to_cpu(desc->opts1) & 0xffff,
-					 DMA_TO_DEVICE);
+					 PCI_DMA_TODEVICE);
 			if (le32_to_cpu(desc->opts1) & LastFrag)
 				dev_kfree_skb_any(skb);
 			cp->dev->stats.tx_dropped++;
@@ -1235,11 +1230,11 @@ static int cp_close (struct net_device *dev)
 	return 0;
 }
 
-static void cp_tx_timeout(struct net_device *dev, unsigned int txqueue)
+static void cp_tx_timeout(struct net_device *dev)
 {
 	struct cp_private *cp = netdev_priv(dev);
 	unsigned long flags;
-	int i;
+	int rc, i;
 
 	netdev_warn(dev, "Transmit timeout, status %2x %4x %4x %4x\n",
 		    cpr8(Cmd), cpr16(CpCmd),
@@ -1260,7 +1255,7 @@ static void cp_tx_timeout(struct net_device *dev, unsigned int txqueue)
 
 	cp_stop_hw(cp);
 	cp_clean_rings(cp);
-	cp_init_rings(cp);
+	rc = cp_init_rings(cp);
 	cp_start_hw(cp);
 	__cp_set_rx_mode(dev);
 	cpw16_f(IntrMask, cp_norx_intr_mask);
@@ -1382,15 +1377,13 @@ static void cp_get_drvinfo (struct net_device *dev, struct ethtool_drvinfo *info
 {
 	struct cp_private *cp = netdev_priv(dev);
 
-	strscpy(info->driver, DRV_NAME, sizeof(info->driver));
-	strscpy(info->version, DRV_VERSION, sizeof(info->version));
-	strscpy(info->bus_info, pci_name(cp->pdev), sizeof(info->bus_info));
+	strlcpy(info->driver, DRV_NAME, sizeof(info->driver));
+	strlcpy(info->version, DRV_VERSION, sizeof(info->version));
+	strlcpy(info->bus_info, pci_name(cp->pdev), sizeof(info->bus_info));
 }
 
 static void cp_get_ringparam(struct net_device *dev,
-			     struct ethtool_ringparam *ring,
-			     struct kernel_ethtool_ringparam *kernel_ring,
-			     struct netlink_ext_ack *extack)
+				struct ethtool_ringparam *ring)
 {
 	ring->rx_max_pending = CP_RX_RING_SIZE;
 	ring->tx_max_pending = CP_TX_RING_SIZE;
@@ -1626,7 +1619,7 @@ static int cp_set_mac_address(struct net_device *dev, void *p)
 	if (!is_valid_ether_addr(addr->sa_data))
 		return -EADDRNOTAVAIL;
 
-	eth_hw_addr_set(dev, addr->sa_data);
+	memcpy(dev->dev_addr, addr->sa_data, dev->addr_len);
 
 	spin_lock_irq(&cp->lock);
 
@@ -1871,7 +1864,7 @@ static const struct net_device_ops cp_netdev_ops = {
 	.ndo_set_mac_address 	= cp_set_mac_address,
 	.ndo_set_rx_mode	= cp_set_rx_mode,
 	.ndo_get_stats		= cp_get_stats,
-	.ndo_eth_ioctl		= cp_ioctl,
+	.ndo_do_ioctl		= cp_ioctl,
 	.ndo_start_xmit		= cp_start_xmit,
 	.ndo_tx_timeout		= cp_tx_timeout,
 	.ndo_set_features	= cp_set_features,
@@ -1891,7 +1884,6 @@ static int cp_init_one (struct pci_dev *pdev, const struct pci_device_id *ent)
 	void __iomem *regs;
 	resource_size_t pciaddr;
 	unsigned int addr_len, i, pci_using_dac;
-	__le16 addr[ETH_ALEN / 2];
 
 	pr_info_once("%s", version);
 
@@ -1948,15 +1940,22 @@ static int cp_init_one (struct pci_dev *pdev, const struct pci_device_id *ent)
 
 	/* Configure DMA attributes. */
 	if ((sizeof(dma_addr_t) > 4) &&
-	    !dma_set_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(64))) {
+	    !pci_set_consistent_dma_mask(pdev, DMA_BIT_MASK(64)) &&
+	    !pci_set_dma_mask(pdev, DMA_BIT_MASK(64))) {
 		pci_using_dac = 1;
 	} else {
 		pci_using_dac = 0;
 
-		rc = dma_set_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(32));
+		rc = pci_set_dma_mask(pdev, DMA_BIT_MASK(32));
 		if (rc) {
 			dev_err(&pdev->dev,
 				"No usable DMA configuration, aborting\n");
+			goto err_out_res;
+		}
+		rc = pci_set_consistent_dma_mask(pdev, DMA_BIT_MASK(32));
+		if (rc) {
+			dev_err(&pdev->dev,
+				"No usable consistent DMA configuration, aborting\n");
 			goto err_out_res;
 		}
 	}
@@ -1982,11 +1981,11 @@ static int cp_init_one (struct pci_dev *pdev, const struct pci_device_id *ent)
 	/* read MAC address from EEPROM */
 	addr_len = read_eeprom (regs, 0, 8) == 0x8129 ? 8 : 6;
 	for (i = 0; i < 3; i++)
-		addr[i] = cpu_to_le16(read_eeprom (regs, i + 7, addr_len));
-	eth_hw_addr_set(dev, (u8 *)addr);
+		((__le16 *) (dev->dev_addr))[i] =
+		    cpu_to_le16(read_eeprom (regs, i + 7, addr_len));
 
 	dev->netdev_ops = &cp_netdev_ops;
-	netif_napi_add_weight(dev, &cp->napi, cp_rx_poll, 16);
+	netif_napi_add(dev, &cp->napi, cp_rx_poll, 16);
 	dev->ethtool_ops = &cp_ethtool_ops;
 	dev->watchdog_timeo = TX_TIMEOUT;
 
@@ -2050,9 +2049,10 @@ static void cp_remove_one (struct pci_dev *pdev)
 	free_netdev(dev);
 }
 
-static int __maybe_unused cp_suspend(struct device *device)
+#ifdef CONFIG_PM
+static int cp_suspend (struct pci_dev *pdev, pm_message_t state)
 {
-	struct net_device *dev = dev_get_drvdata(device);
+	struct net_device *dev = pci_get_drvdata(pdev);
 	struct cp_private *cp = netdev_priv(dev);
 	unsigned long flags;
 
@@ -2070,14 +2070,16 @@ static int __maybe_unused cp_suspend(struct device *device)
 
 	spin_unlock_irqrestore (&cp->lock, flags);
 
-	device_set_wakeup_enable(device, cp->wol_enabled);
+	pci_save_state(pdev);
+	pci_enable_wake(pdev, pci_choose_state(pdev, state), cp->wol_enabled);
+	pci_set_power_state(pdev, pci_choose_state(pdev, state));
 
 	return 0;
 }
 
-static int __maybe_unused cp_resume(struct device *device)
+static int cp_resume (struct pci_dev *pdev)
 {
-	struct net_device *dev = dev_get_drvdata(device);
+	struct net_device *dev = pci_get_drvdata (pdev);
 	struct cp_private *cp = netdev_priv(dev);
 	unsigned long flags;
 
@@ -2085,6 +2087,10 @@ static int __maybe_unused cp_resume(struct device *device)
 		return 0;
 
 	netif_device_attach (dev);
+
+	pci_set_power_state(pdev, PCI_D0);
+	pci_restore_state(pdev);
+	pci_enable_wake(pdev, PCI_D0, 0);
 
 	/* FIXME: sh*t may happen if the Rx ring buffer is depleted */
 	cp_init_rings_index (cp);
@@ -2100,6 +2106,7 @@ static int __maybe_unused cp_resume(struct device *device)
 
 	return 0;
 }
+#endif /* CONFIG_PM */
 
 static const struct pci_device_id cp_pci_tbl[] = {
         { PCI_DEVICE(PCI_VENDOR_ID_REALTEK,     PCI_DEVICE_ID_REALTEK_8139), },
@@ -2108,14 +2115,15 @@ static const struct pci_device_id cp_pci_tbl[] = {
 };
 MODULE_DEVICE_TABLE(pci, cp_pci_tbl);
 
-static SIMPLE_DEV_PM_OPS(cp_pm_ops, cp_suspend, cp_resume);
-
 static struct pci_driver cp_driver = {
 	.name         = DRV_NAME,
 	.id_table     = cp_pci_tbl,
 	.probe        =	cp_init_one,
 	.remove       = cp_remove_one,
-	.driver.pm    = &cp_pm_ops,
+#ifdef CONFIG_PM
+	.resume       = cp_resume,
+	.suspend      = cp_suspend,
+#endif
 };
 
 module_pci_driver(cp_driver);

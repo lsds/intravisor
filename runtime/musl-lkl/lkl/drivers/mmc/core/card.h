@@ -1,10 +1,11 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Private header for the mmc subsystem
  *
  * Copyright (C) 2016 Linaro Ltd
  *
  * Author: Ulf Hansson <ulf.hansson@linaro.org>
+ *
+ * License terms: GNU General Public License (GPL) version 2
  */
 
 #ifndef _MMC_CORE_CARD_H
@@ -22,13 +23,15 @@
 #define MMC_STATE_BLOCKADDR	(1<<2)		/* card uses block-addressing */
 #define MMC_CARD_SDXC		(1<<3)		/* card is SDXC */
 #define MMC_CARD_REMOVED	(1<<4)		/* card has been removed */
-#define MMC_STATE_SUSPENDED	(1<<5)		/* card is suspended */
+#define MMC_STATE_DOING_BKOPS	(1<<5)		/* card is doing BKOPS */
+#define MMC_STATE_SUSPENDED	(1<<6)		/* card is suspended */
 
 #define mmc_card_present(c)	((c)->state & MMC_STATE_PRESENT)
 #define mmc_card_readonly(c)	((c)->state & MMC_STATE_READONLY)
 #define mmc_card_blockaddr(c)	((c)->state & MMC_STATE_BLOCKADDR)
 #define mmc_card_ext_capacity(c) ((c)->state & MMC_CARD_SDXC)
 #define mmc_card_removed(c)	((c) && ((c)->state & MMC_CARD_REMOVED))
+#define mmc_card_doing_bkops(c)	((c)->state & MMC_STATE_DOING_BKOPS)
 #define mmc_card_suspended(c)	((c)->state & MMC_STATE_SUSPENDED)
 
 #define mmc_card_set_present(c)	((c)->state |= MMC_STATE_PRESENT)
@@ -36,6 +39,8 @@
 #define mmc_card_set_blockaddr(c) ((c)->state |= MMC_STATE_BLOCKADDR)
 #define mmc_card_set_ext_capacity(c) ((c)->state |= MMC_CARD_SDXC)
 #define mmc_card_set_removed(c) ((c)->state |= MMC_CARD_REMOVED)
+#define mmc_card_set_doing_bkops(c)	((c)->state |= MMC_STATE_DOING_BKOPS)
+#define mmc_card_clr_doing_bkops(c)	((c)->state &= ~MMC_STATE_DOING_BKOPS)
 #define mmc_card_set_suspended(c) ((c)->state |= MMC_STATE_SUSPENDED)
 #define mmc_card_clr_suspended(c) ((c)->state &= ~MMC_STATE_SUSPENDED)
 
@@ -59,9 +64,6 @@ struct mmc_fixup {
 	/* for MMC cards */
 	unsigned int ext_csd_rev;
 
-	/* Match against functions declared in device tree */
-	const char *of_compatible;
-
 	void (*vendor_fixup)(struct mmc_card *card, int data);
 	int data;
 };
@@ -73,7 +75,6 @@ struct mmc_fixup {
 #define EXT_CSD_REV_ANY (-1u)
 
 #define CID_MANFID_SANDISK      0x2
-#define CID_MANFID_SANDISK_SD   0x3
 #define CID_MANFID_ATP          0x9
 #define CID_MANFID_TOSHIBA      0x11
 #define CID_MANFID_MICRON       0x13
@@ -123,21 +124,6 @@ struct mmc_fixup {
 		   _vendor, _device,					\
 		   _fixup, _data, EXT_CSD_REV_ANY)			\
 
-#define SDIO_FIXUP_COMPATIBLE(_compatible, _fixup, _data)		\
-	{						\
-		.name = CID_NAME_ANY,			\
-		.manfid = CID_MANFID_ANY,		\
-		.oemid = CID_OEMID_ANY,			\
-		.rev_start = 0,				\
-		.rev_end = -1ull,			\
-		.cis_vendor = SDIO_ANY_ID,		\
-		.cis_device = SDIO_ANY_ID,		\
-		.vendor_fixup = (_fixup),		\
-		.data = (_data),			\
-		.ext_csd_rev = EXT_CSD_REV_ANY,		\
-		.of_compatible = _compatible,	\
-	}
-
 #define cid_rev(hwrev, fwrev, year, month)	\
 	(((u64) hwrev) << 40 |			\
 	 ((u64) fwrev) << 32 |			\
@@ -161,30 +147,6 @@ static inline void __maybe_unused add_quirk(struct mmc_card *card, int data)
 static inline void __maybe_unused remove_quirk(struct mmc_card *card, int data)
 {
 	card->quirks &= ~data;
-}
-
-static inline void __maybe_unused add_limit_rate_quirk(struct mmc_card *card,
-						       int data)
-{
-	card->quirk_max_rate = data;
-}
-
-static inline void __maybe_unused wl1251_quirk(struct mmc_card *card,
-					       int data)
-{
-	/*
-	 * We have TI wl1251 attached to this mmc. Pass this
-	 * information to the SDIO core because it can't be
-	 * probed by normal methods.
-	 */
-
-	dev_info(card->host->parent, "found wl1251\n");
-	card->quirks |= MMC_QUIRK_NONSTD_SDIO;
-	card->cccr.wide_bus = 1;
-	card->cis.vendor = 0x104c;
-	card->cis.device = 0x9066;
-	card->cis.blksize = 512;
-	card->cis.max_dtr = 24000000;
 }
 
 /*
@@ -257,11 +219,6 @@ static inline int mmc_card_broken_irq_polling(const struct mmc_card *c)
 static inline int mmc_card_broken_hpi(const struct mmc_card *c)
 {
 	return c->quirks & MMC_QUIRK_BROKEN_HPI;
-}
-
-static inline int mmc_card_broken_sd_discard(const struct mmc_card *c)
-{
-	return c->quirks & MMC_QUIRK_BROKEN_SD_DISCARD;
 }
 
 #endif

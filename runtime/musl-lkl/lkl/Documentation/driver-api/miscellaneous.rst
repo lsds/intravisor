@@ -16,10 +16,11 @@ Parallel Port Devices
 16x50 UART Driver
 =================
 
-.. kernel-doc:: drivers/tty/serial/8250/8250_core.c
+.. kernel-doc:: drivers/tty/serial/serial_core.c
    :export:
 
-See serial/driver.rst for related APIs.
+.. kernel-doc:: drivers/tty/serial/8250/8250_core.c
+   :export:
 
 Pulse-Width Modulation (PWM)
 ============================

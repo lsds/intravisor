@@ -1,4 +1,3 @@
-# SPDX-License-Identifier: GPL-2.0-only
 config BFS_FS
 	tristate "BFS file system support"
 	depends on BLOCK
@@ -11,7 +10,7 @@ config BFS_FS
 	  on your /stand slice from within Linux.  You then also need to say Y
 	  to "UnixWare slices support", below.  More information about the BFS
 	  file system is contained in the file
-	  <file:Documentation/filesystems/bfs.rst>.
+	  <file:Documentation/filesystems/bfs.txt>.
 
 	  If you don't know what this is about, say N.
 

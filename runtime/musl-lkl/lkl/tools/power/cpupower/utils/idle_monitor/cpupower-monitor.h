@@ -1,6 +1,8 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  *  (C) 2010,2011       Thomas Renninger <trenn@suse.de>, Novell Inc.
+ *
+ *  Licensed under the terms of the GNU GPL License version 2.
+ *
  */
 
 #ifndef __CPUIDLE_INFO_HW__
@@ -13,19 +15,10 @@
 
 #define MONITORS_MAX 20
 #define MONITOR_NAME_LEN 20
-
-/* CSTATE_NAME_LEN is limited by header field width defined
- * in cpupower-monitor.c. Header field width is defined to be
- * sum of percent width and two spaces for padding.
- */
-#ifdef __powerpc__
-#define CSTATE_NAME_LEN 7
-#else
 #define CSTATE_NAME_LEN 5
-#endif
 #define CSTATE_DESC_LEN 60
 
-extern int cpu_count;
+int cpu_count;
 
 /* Hard to define the right names ...: */
 enum power_range_e {
@@ -60,10 +53,7 @@ struct cpuidle_monitor {
 	struct cpuidle_monitor* (*do_register) (void);
 	void (*unregister)(void);
 	unsigned int overflow_s;
-	struct {
-		unsigned int needs_root:1;
-		unsigned int per_cpu_schedule:1;
-	} flags;
+	int needs_root;
 };
 
 extern long long timespec_diff_us(struct timespec start, struct timespec end);

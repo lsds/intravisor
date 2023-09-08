@@ -14,27 +14,44 @@
 #include <asm/facility.h>
 
 #include "ap_bus.h"
-#include "ap_debug.h"
-
-static void __ap_flush_queue(struct ap_queue *aq);
+#include "ap_asm.h"
 
 /**
- * ap_queue_enable_irq(): Enable interrupt support on this AP queue.
- * @aq: The AP queue
+ * ap_queue_irq_ctrl(): Control interruption on a AP queue.
+ * @qirqctrl: struct ap_qirq_ctrl (64 bit value)
+ * @ind: The notification indicator byte
+ *
+ * Returns AP queue status.
+ *
+ * Control interruption on the given AP queue.
+ * Just a simple wrapper function for the low level PQAP(AQIC)
+ * instruction available for other kernel modules.
+ */
+struct ap_queue_status ap_queue_irq_ctrl(ap_qid_t qid,
+					 struct ap_qirq_ctrl qirqctrl,
+					 void *ind)
+{
+	return ap_aqic(qid, qirqctrl, ind);
+}
+EXPORT_SYMBOL(ap_queue_irq_ctrl);
+
+/**
+ * ap_queue_enable_interruption(): Enable interruption on an AP queue.
+ * @qid: The AP queue number
  * @ind: the notification indicator byte
  *
  * Enables interruption on AP queue via ap_aqic(). Based on the return
  * value it waits a while and tests the AP queue if interrupts
  * have been switched on using ap_test_queue().
  */
-static int ap_queue_enable_irq(struct ap_queue *aq, void *ind)
+static int ap_queue_enable_interruption(struct ap_queue *aq, void *ind)
 {
 	struct ap_queue_status status;
 	struct ap_qirq_ctrl qirqctrl = { 0 };
 
 	qirqctrl.ir = 1;
 	qirqctrl.isc = AP_ISC;
-	status = ap_aqic(aq->qid, qirqctrl, virt_to_phys(ind));
+	status = ap_aqic(aq->qid, qirqctrl, ind);
 	switch (status.response_code) {
 	case AP_RESPONSE_NORMAL:
 	case AP_RESPONSE_OTHERWISE_CHANGED:
@@ -69,9 +86,9 @@ static int ap_queue_enable_irq(struct ap_queue *aq, void *ind)
  */
 static inline struct ap_queue_status
 __ap_send(ap_qid_t qid, unsigned long long psmid, void *msg, size_t length,
-	  int special)
+	  unsigned int special)
 {
-	if (special)
+	if (special == 1)
 		qid |= 0x400000UL;
 	return ap_nqap(qid, psmid, msg, length);
 }
@@ -99,9 +116,9 @@ int ap_recv(ap_qid_t qid, unsigned long long *psmid, void *msg, size_t length)
 {
 	struct ap_queue_status status;
 
-	if (!msg)
+	if (msg == NULL)
 		return -EINVAL;
-	status = ap_dqap(qid, psmid, msg, length, NULL, NULL);
+	status = ap_dqap(qid, psmid, msg, length);
 	switch (status.response_code) {
 	case AP_RESPONSE_NORMAL:
 		return 0;
@@ -119,9 +136,9 @@ EXPORT_SYMBOL(ap_recv);
 
 /* State machine definitions and helpers */
 
-static enum ap_sm_wait ap_sm_nop(struct ap_queue *aq)
+static enum ap_wait ap_sm_nop(struct ap_queue *aq)
 {
-	return AP_SM_WAIT_NONE;
+	return AP_WAIT_NONE;
 }
 
 /**
@@ -129,36 +146,18 @@ static enum ap_sm_wait ap_sm_nop(struct ap_queue *aq)
  *	not change the state of the device.
  * @aq: pointer to the AP queue
  *
- * Returns AP_SM_WAIT_NONE, AP_SM_WAIT_AGAIN, or AP_SM_WAIT_INTERRUPT
+ * Returns AP_WAIT_NONE, AP_WAIT_AGAIN, or AP_WAIT_INTERRUPT
  */
 static struct ap_queue_status ap_sm_recv(struct ap_queue *aq)
 {
 	struct ap_queue_status status;
 	struct ap_message *ap_msg;
-	bool found = false;
-	size_t reslen;
-	unsigned long resgr0 = 0;
-	int parts = 0;
 
-	/*
-	 * DQAP loop until response code and resgr0 indicate that
-	 * the msg is totally received. As we use the very same buffer
-	 * the msg is overwritten with each invocation. That's intended
-	 * and the receiver of the msg is informed with a msg rc code
-	 * of EMSGSIZE in such a case.
-	 */
-	do {
-		status = ap_dqap(aq->qid, &aq->reply->psmid,
-				 aq->reply->msg, aq->reply->bufsize,
-				 &reslen, &resgr0);
-		parts++;
-	} while (status.response_code == 0xFF && resgr0 != 0);
-
+	status = ap_dqap(aq->qid, &aq->reply->psmid,
+			 aq->reply->message, aq->reply->length);
 	switch (status.response_code) {
 	case AP_RESPONSE_NORMAL:
-		aq->queue_count = max_t(int, 0, aq->queue_count - 1);
-		if (!status.queue_empty && !aq->queue_count)
-			aq->queue_count++;
+		aq->queue_count--;
 		if (aq->queue_count > 0)
 			mod_timer(&aq->timeout,
 				  jiffies + aq->request_timeout);
@@ -167,21 +166,9 @@ static struct ap_queue_status ap_sm_recv(struct ap_queue *aq)
 				continue;
 			list_del_init(&ap_msg->list);
 			aq->pendingq_count--;
-			if (parts > 1) {
-				ap_msg->rc = -EMSGSIZE;
-				ap_msg->receive(aq, ap_msg, NULL);
-			} else {
-				ap_msg->receive(aq, ap_msg, aq->reply);
-			}
-			found = true;
+			ap_msg->receive(aq, ap_msg, aq->reply);
 			break;
 		}
-		if (!found) {
-			AP_DBF_WARN("%s unassociated reply psmid=0x%016llx on 0x%02x.%04x\n",
-				    __func__, aq->reply->psmid,
-				    AP_QID_CARD(aq->qid), AP_QID_QUEUE(aq->qid));
-		}
-		fallthrough;
 	case AP_RESPONSE_NO_PENDING_REPLY:
 		if (!status.queue_empty || aq->queue_count <= 0)
 			break;
@@ -201,36 +188,56 @@ static struct ap_queue_status ap_sm_recv(struct ap_queue *aq)
  * ap_sm_read(): Receive pending reply messages from an AP queue.
  * @aq: pointer to the AP queue
  *
- * Returns AP_SM_WAIT_NONE, AP_SM_WAIT_AGAIN, or AP_SM_WAIT_INTERRUPT
+ * Returns AP_WAIT_NONE, AP_WAIT_AGAIN, or AP_WAIT_INTERRUPT
  */
-static enum ap_sm_wait ap_sm_read(struct ap_queue *aq)
+static enum ap_wait ap_sm_read(struct ap_queue *aq)
 {
 	struct ap_queue_status status;
 
 	if (!aq->reply)
-		return AP_SM_WAIT_NONE;
+		return AP_WAIT_NONE;
 	status = ap_sm_recv(aq);
 	switch (status.response_code) {
 	case AP_RESPONSE_NORMAL:
 		if (aq->queue_count > 0) {
-			aq->sm_state = AP_SM_STATE_WORKING;
-			return AP_SM_WAIT_AGAIN;
+			aq->state = AP_STATE_WORKING;
+			return AP_WAIT_AGAIN;
 		}
-		aq->sm_state = AP_SM_STATE_IDLE;
-		return AP_SM_WAIT_NONE;
+		aq->state = AP_STATE_IDLE;
+		return AP_WAIT_NONE;
 	case AP_RESPONSE_NO_PENDING_REPLY:
 		if (aq->queue_count > 0)
-			return aq->interrupt ?
-				AP_SM_WAIT_INTERRUPT : AP_SM_WAIT_TIMEOUT;
-		aq->sm_state = AP_SM_STATE_IDLE;
-		return AP_SM_WAIT_NONE;
+			return AP_WAIT_INTERRUPT;
+		aq->state = AP_STATE_IDLE;
+		return AP_WAIT_NONE;
 	default:
-		aq->dev_state = AP_DEV_STATE_ERROR;
-		aq->last_err_rc = status.response_code;
-		AP_DBF_WARN("%s RC 0x%02x on 0x%02x.%04x -> AP_DEV_STATE_ERROR\n",
-			    __func__, status.response_code,
-			    AP_QID_CARD(aq->qid), AP_QID_QUEUE(aq->qid));
-		return AP_SM_WAIT_NONE;
+		aq->state = AP_STATE_BORKED;
+		return AP_WAIT_NONE;
+	}
+}
+
+/**
+ * ap_sm_suspend_read(): Receive pending reply messages from an AP queue
+ * without changing the device state in between. In suspend mode we don't
+ * allow sending new requests, therefore just fetch pending replies.
+ * @aq: pointer to the AP queue
+ *
+ * Returns AP_WAIT_NONE or AP_WAIT_AGAIN
+ */
+static enum ap_wait ap_sm_suspend_read(struct ap_queue *aq)
+{
+	struct ap_queue_status status;
+
+	if (!aq->reply)
+		return AP_WAIT_NONE;
+	status = ap_sm_recv(aq);
+	switch (status.response_code) {
+	case AP_RESPONSE_NORMAL:
+		if (aq->queue_count > 0)
+			return AP_WAIT_AGAIN;
+		/* fall through */
+	default:
+		return AP_WAIT_NONE;
 	}
 }
 
@@ -238,66 +245,48 @@ static enum ap_sm_wait ap_sm_read(struct ap_queue *aq)
  * ap_sm_write(): Send messages from the request queue to an AP queue.
  * @aq: pointer to the AP queue
  *
- * Returns AP_SM_WAIT_NONE, AP_SM_WAIT_AGAIN, or AP_SM_WAIT_INTERRUPT
+ * Returns AP_WAIT_NONE, AP_WAIT_AGAIN, or AP_WAIT_INTERRUPT
  */
-static enum ap_sm_wait ap_sm_write(struct ap_queue *aq)
+static enum ap_wait ap_sm_write(struct ap_queue *aq)
 {
 	struct ap_queue_status status;
 	struct ap_message *ap_msg;
-	ap_qid_t qid = aq->qid;
 
 	if (aq->requestq_count <= 0)
-		return AP_SM_WAIT_NONE;
-
+		return AP_WAIT_NONE;
 	/* Start the next request on the queue. */
 	ap_msg = list_entry(aq->requestq.next, struct ap_message, list);
-#ifdef CONFIG_ZCRYPT_DEBUG
-	if (ap_msg->fi.action == AP_FI_ACTION_NQAP_QID_INVAL) {
-		AP_DBF_WARN("%s fi cmd 0x%04x: forcing invalid qid 0xFF00\n",
-			    __func__, ap_msg->fi.cmd);
-		qid = 0xFF00;
-	}
-#endif
-	status = __ap_send(qid, ap_msg->psmid,
-			   ap_msg->msg, ap_msg->len,
-			   ap_msg->flags & AP_MSG_FLAG_SPECIAL);
+	status = __ap_send(aq->qid, ap_msg->psmid,
+			   ap_msg->message, ap_msg->length, ap_msg->special);
 	switch (status.response_code) {
 	case AP_RESPONSE_NORMAL:
-		aq->queue_count = max_t(int, 1, aq->queue_count + 1);
+		aq->queue_count++;
 		if (aq->queue_count == 1)
 			mod_timer(&aq->timeout, jiffies + aq->request_timeout);
 		list_move_tail(&ap_msg->list, &aq->pendingq);
 		aq->requestq_count--;
 		aq->pendingq_count++;
 		if (aq->queue_count < aq->card->queue_depth) {
-			aq->sm_state = AP_SM_STATE_WORKING;
-			return AP_SM_WAIT_AGAIN;
+			aq->state = AP_STATE_WORKING;
+			return AP_WAIT_AGAIN;
 		}
-		fallthrough;
+		/* fall through */
 	case AP_RESPONSE_Q_FULL:
-		aq->sm_state = AP_SM_STATE_QUEUE_FULL;
-		return aq->interrupt ?
-			AP_SM_WAIT_INTERRUPT : AP_SM_WAIT_TIMEOUT;
+		aq->state = AP_STATE_QUEUE_FULL;
+		return AP_WAIT_INTERRUPT;
 	case AP_RESPONSE_RESET_IN_PROGRESS:
-		aq->sm_state = AP_SM_STATE_RESET_WAIT;
-		return AP_SM_WAIT_TIMEOUT;
-	case AP_RESPONSE_INVALID_DOMAIN:
-		AP_DBF_WARN("%s RESPONSE_INVALID_DOMAIN on NQAP\n", __func__);
-		fallthrough;
+		aq->state = AP_STATE_RESET_WAIT;
+		return AP_WAIT_TIMEOUT;
 	case AP_RESPONSE_MESSAGE_TOO_BIG:
 	case AP_RESPONSE_REQ_FAC_NOT_INST:
 		list_del_init(&ap_msg->list);
 		aq->requestq_count--;
 		ap_msg->rc = -EINVAL;
 		ap_msg->receive(aq, ap_msg, NULL);
-		return AP_SM_WAIT_AGAIN;
+		return AP_WAIT_AGAIN;
 	default:
-		aq->dev_state = AP_DEV_STATE_ERROR;
-		aq->last_err_rc = status.response_code;
-		AP_DBF_WARN("%s RC 0x%02x on 0x%02x.%04x -> AP_DEV_STATE_ERROR\n",
-			    __func__, status.response_code,
-			    AP_QID_CARD(aq->qid), AP_QID_QUEUE(aq->qid));
-		return AP_SM_WAIT_NONE;
+		aq->state = AP_STATE_BORKED;
+		return AP_WAIT_NONE;
 	}
 }
 
@@ -305,20 +294,20 @@ static enum ap_sm_wait ap_sm_write(struct ap_queue *aq)
  * ap_sm_read_write(): Send and receive messages to/from an AP queue.
  * @aq: pointer to the AP queue
  *
- * Returns AP_SM_WAIT_NONE, AP_SM_WAIT_AGAIN, or AP_SM_WAIT_INTERRUPT
+ * Returns AP_WAIT_NONE, AP_WAIT_AGAIN, or AP_WAIT_INTERRUPT
  */
-static enum ap_sm_wait ap_sm_read_write(struct ap_queue *aq)
+static enum ap_wait ap_sm_read_write(struct ap_queue *aq)
 {
 	return min(ap_sm_read(aq), ap_sm_write(aq));
 }
 
 /**
  * ap_sm_reset(): Reset an AP queue.
- * @aq: The AP queue
+ * @qid: The AP queue number
  *
  * Submit the Reset command to an AP queue.
  */
-static enum ap_sm_wait ap_sm_reset(struct ap_queue *aq)
+static enum ap_wait ap_sm_reset(struct ap_queue *aq)
 {
 	struct ap_queue_status status;
 
@@ -326,16 +315,17 @@ static enum ap_sm_wait ap_sm_reset(struct ap_queue *aq)
 	switch (status.response_code) {
 	case AP_RESPONSE_NORMAL:
 	case AP_RESPONSE_RESET_IN_PROGRESS:
-		aq->sm_state = AP_SM_STATE_RESET_WAIT;
-		aq->interrupt = false;
-		return AP_SM_WAIT_TIMEOUT;
+		aq->state = AP_STATE_RESET_WAIT;
+		aq->interrupt = AP_INTR_DISABLED;
+		return AP_WAIT_TIMEOUT;
+	case AP_RESPONSE_BUSY:
+		return AP_WAIT_TIMEOUT;
+	case AP_RESPONSE_Q_NOT_AVAIL:
+	case AP_RESPONSE_DECONFIGURED:
+	case AP_RESPONSE_CHECKSTOPPED:
 	default:
-		aq->dev_state = AP_DEV_STATE_ERROR;
-		aq->last_err_rc = status.response_code;
-		AP_DBF_WARN("%s RC 0x%02x on 0x%02x.%04x -> AP_DEV_STATE_ERROR\n",
-			    __func__, status.response_code,
-			    AP_QID_CARD(aq->qid), AP_QID_QUEUE(aq->qid));
-		return AP_SM_WAIT_NONE;
+		aq->state = AP_STATE_BORKED;
+		return AP_WAIT_NONE;
 	}
 }
 
@@ -345,7 +335,7 @@ static enum ap_sm_wait ap_sm_reset(struct ap_queue *aq)
  *
  * Returns AP_POLL_IMMEDIATELY, AP_POLL_AFTER_TIMEROUT or 0.
  */
-static enum ap_sm_wait ap_sm_reset_wait(struct ap_queue *aq)
+static enum ap_wait ap_sm_reset_wait(struct ap_queue *aq)
 {
 	struct ap_queue_status status;
 	void *lsi_ptr;
@@ -360,25 +350,21 @@ static enum ap_sm_wait ap_sm_reset_wait(struct ap_queue *aq)
 	switch (status.response_code) {
 	case AP_RESPONSE_NORMAL:
 		lsi_ptr = ap_airq_ptr();
-		if (lsi_ptr && ap_queue_enable_irq(aq, lsi_ptr) == 0)
-			aq->sm_state = AP_SM_STATE_SETIRQ_WAIT;
+		if (lsi_ptr && ap_queue_enable_interruption(aq, lsi_ptr) == 0)
+			aq->state = AP_STATE_SETIRQ_WAIT;
 		else
-			aq->sm_state = (aq->queue_count > 0) ?
-				AP_SM_STATE_WORKING : AP_SM_STATE_IDLE;
-		return AP_SM_WAIT_AGAIN;
+			aq->state = (aq->queue_count > 0) ?
+				AP_STATE_WORKING : AP_STATE_IDLE;
+		return AP_WAIT_AGAIN;
 	case AP_RESPONSE_BUSY:
 	case AP_RESPONSE_RESET_IN_PROGRESS:
-		return AP_SM_WAIT_TIMEOUT;
+		return AP_WAIT_TIMEOUT;
 	case AP_RESPONSE_Q_NOT_AVAIL:
 	case AP_RESPONSE_DECONFIGURED:
 	case AP_RESPONSE_CHECKSTOPPED:
 	default:
-		aq->dev_state = AP_DEV_STATE_ERROR;
-		aq->last_err_rc = status.response_code;
-		AP_DBF_WARN("%s RC 0x%02x on 0x%02x.%04x -> AP_DEV_STATE_ERROR\n",
-			    __func__, status.response_code,
-			    AP_QID_CARD(aq->qid), AP_QID_QUEUE(aq->qid));
-		return AP_SM_WAIT_NONE;
+		aq->state = AP_STATE_BORKED;
+		return AP_WAIT_NONE;
 	}
 }
 
@@ -388,7 +374,7 @@ static enum ap_sm_wait ap_sm_reset_wait(struct ap_queue *aq)
  *
  * Returns AP_POLL_IMMEDIATELY, AP_POLL_AFTER_TIMEROUT or 0.
  */
-static enum ap_sm_wait ap_sm_setirq_wait(struct ap_queue *aq)
+static enum ap_wait ap_sm_setirq_wait(struct ap_queue *aq)
 {
 	struct ap_queue_status status;
 
@@ -401,103 +387,117 @@ static enum ap_sm_wait ap_sm_setirq_wait(struct ap_queue *aq)
 
 	if (status.irq_enabled == 1) {
 		/* Irqs are now enabled */
-		aq->interrupt = true;
-		aq->sm_state = (aq->queue_count > 0) ?
-			AP_SM_STATE_WORKING : AP_SM_STATE_IDLE;
+		aq->interrupt = AP_INTR_ENABLED;
+		aq->state = (aq->queue_count > 0) ?
+			AP_STATE_WORKING : AP_STATE_IDLE;
 	}
 
 	switch (status.response_code) {
 	case AP_RESPONSE_NORMAL:
 		if (aq->queue_count > 0)
-			return AP_SM_WAIT_AGAIN;
-		fallthrough;
+			return AP_WAIT_AGAIN;
+		/* fallthrough */
 	case AP_RESPONSE_NO_PENDING_REPLY:
-		return AP_SM_WAIT_TIMEOUT;
+		return AP_WAIT_TIMEOUT;
 	default:
-		aq->dev_state = AP_DEV_STATE_ERROR;
-		aq->last_err_rc = status.response_code;
-		AP_DBF_WARN("%s RC 0x%02x on 0x%02x.%04x -> AP_DEV_STATE_ERROR\n",
-			    __func__, status.response_code,
-			    AP_QID_CARD(aq->qid), AP_QID_QUEUE(aq->qid));
-		return AP_SM_WAIT_NONE;
+		aq->state = AP_STATE_BORKED;
+		return AP_WAIT_NONE;
 	}
 }
 
 /*
  * AP state machine jump table
  */
-static ap_func_t *ap_jumptable[NR_AP_SM_STATES][NR_AP_SM_EVENTS] = {
-	[AP_SM_STATE_RESET_START] = {
-		[AP_SM_EVENT_POLL] = ap_sm_reset,
-		[AP_SM_EVENT_TIMEOUT] = ap_sm_nop,
+static ap_func_t *ap_jumptable[NR_AP_STATES][NR_AP_EVENTS] = {
+	[AP_STATE_RESET_START] = {
+		[AP_EVENT_POLL] = ap_sm_reset,
+		[AP_EVENT_TIMEOUT] = ap_sm_nop,
 	},
-	[AP_SM_STATE_RESET_WAIT] = {
-		[AP_SM_EVENT_POLL] = ap_sm_reset_wait,
-		[AP_SM_EVENT_TIMEOUT] = ap_sm_nop,
+	[AP_STATE_RESET_WAIT] = {
+		[AP_EVENT_POLL] = ap_sm_reset_wait,
+		[AP_EVENT_TIMEOUT] = ap_sm_nop,
 	},
-	[AP_SM_STATE_SETIRQ_WAIT] = {
-		[AP_SM_EVENT_POLL] = ap_sm_setirq_wait,
-		[AP_SM_EVENT_TIMEOUT] = ap_sm_nop,
+	[AP_STATE_SETIRQ_WAIT] = {
+		[AP_EVENT_POLL] = ap_sm_setirq_wait,
+		[AP_EVENT_TIMEOUT] = ap_sm_nop,
 	},
-	[AP_SM_STATE_IDLE] = {
-		[AP_SM_EVENT_POLL] = ap_sm_write,
-		[AP_SM_EVENT_TIMEOUT] = ap_sm_nop,
+	[AP_STATE_IDLE] = {
+		[AP_EVENT_POLL] = ap_sm_write,
+		[AP_EVENT_TIMEOUT] = ap_sm_nop,
 	},
-	[AP_SM_STATE_WORKING] = {
-		[AP_SM_EVENT_POLL] = ap_sm_read_write,
-		[AP_SM_EVENT_TIMEOUT] = ap_sm_reset,
+	[AP_STATE_WORKING] = {
+		[AP_EVENT_POLL] = ap_sm_read_write,
+		[AP_EVENT_TIMEOUT] = ap_sm_reset,
 	},
-	[AP_SM_STATE_QUEUE_FULL] = {
-		[AP_SM_EVENT_POLL] = ap_sm_read,
-		[AP_SM_EVENT_TIMEOUT] = ap_sm_reset,
+	[AP_STATE_QUEUE_FULL] = {
+		[AP_EVENT_POLL] = ap_sm_read,
+		[AP_EVENT_TIMEOUT] = ap_sm_reset,
+	},
+	[AP_STATE_SUSPEND_WAIT] = {
+		[AP_EVENT_POLL] = ap_sm_suspend_read,
+		[AP_EVENT_TIMEOUT] = ap_sm_nop,
+	},
+	[AP_STATE_BORKED] = {
+		[AP_EVENT_POLL] = ap_sm_nop,
+		[AP_EVENT_TIMEOUT] = ap_sm_nop,
 	},
 };
 
-enum ap_sm_wait ap_sm_event(struct ap_queue *aq, enum ap_sm_event event)
+enum ap_wait ap_sm_event(struct ap_queue *aq, enum ap_event event)
 {
-	if (aq->config && !aq->chkstop &&
-	    aq->dev_state > AP_DEV_STATE_UNINITIATED)
-		return ap_jumptable[aq->sm_state][event](aq);
-	else
-		return AP_SM_WAIT_NONE;
+	return ap_jumptable[aq->state][event](aq);
 }
 
-enum ap_sm_wait ap_sm_event_loop(struct ap_queue *aq, enum ap_sm_event event)
+enum ap_wait ap_sm_event_loop(struct ap_queue *aq, enum ap_event event)
 {
-	enum ap_sm_wait wait;
+	enum ap_wait wait;
 
-	while ((wait = ap_sm_event(aq, event)) == AP_SM_WAIT_AGAIN)
+	while ((wait = ap_sm_event(aq, event)) == AP_WAIT_AGAIN)
 		;
 	return wait;
 }
 
 /*
+ * Power management for queue devices
+ */
+void ap_queue_suspend(struct ap_device *ap_dev)
+{
+	struct ap_queue *aq = to_ap_queue(&ap_dev->device);
+
+	/* Poll on the device until all requests are finished. */
+	spin_lock_bh(&aq->lock);
+	aq->state = AP_STATE_SUSPEND_WAIT;
+	while (ap_sm_event(aq, AP_EVENT_POLL) != AP_WAIT_NONE)
+		;
+	aq->state = AP_STATE_BORKED;
+	spin_unlock_bh(&aq->lock);
+}
+EXPORT_SYMBOL(ap_queue_suspend);
+
+void ap_queue_resume(struct ap_device *ap_dev)
+{
+}
+EXPORT_SYMBOL(ap_queue_resume);
+
+/*
  * AP queue related attributes.
  */
-static ssize_t request_count_show(struct device *dev,
-				  struct device_attribute *attr,
-				  char *buf)
+static ssize_t ap_req_count_show(struct device *dev,
+				 struct device_attribute *attr,
+				 char *buf)
 {
 	struct ap_queue *aq = to_ap_queue(dev);
-	bool valid = false;
-	u64 req_cnt;
+	unsigned int req_cnt;
 
 	spin_lock_bh(&aq->lock);
-	if (aq->dev_state > AP_DEV_STATE_UNINITIATED) {
-		req_cnt = aq->total_request_count;
-		valid = true;
-	}
+	req_cnt = aq->total_request_count;
 	spin_unlock_bh(&aq->lock);
-
-	if (valid)
-		return scnprintf(buf, PAGE_SIZE, "%llu\n", req_cnt);
-	else
-		return scnprintf(buf, PAGE_SIZE, "-\n");
+	return snprintf(buf, PAGE_SIZE, "%d\n", req_cnt);
 }
 
-static ssize_t request_count_store(struct device *dev,
-				   struct device_attribute *attr,
-				   const char *buf, size_t count)
+static ssize_t ap_req_count_store(struct device *dev,
+				  struct device_attribute *attr,
+				  const char *buf, size_t count)
 {
 	struct ap_queue *aq = to_ap_queue(dev);
 
@@ -508,234 +508,79 @@ static ssize_t request_count_store(struct device *dev,
 	return count;
 }
 
-static DEVICE_ATTR_RW(request_count);
+static DEVICE_ATTR(request_count, 0644, ap_req_count_show, ap_req_count_store);
 
-static ssize_t requestq_count_show(struct device *dev,
-				   struct device_attribute *attr, char *buf)
+static ssize_t ap_requestq_count_show(struct device *dev,
+				      struct device_attribute *attr, char *buf)
 {
 	struct ap_queue *aq = to_ap_queue(dev);
 	unsigned int reqq_cnt = 0;
 
 	spin_lock_bh(&aq->lock);
-	if (aq->dev_state > AP_DEV_STATE_UNINITIATED)
-		reqq_cnt = aq->requestq_count;
+	reqq_cnt = aq->requestq_count;
 	spin_unlock_bh(&aq->lock);
-	return scnprintf(buf, PAGE_SIZE, "%d\n", reqq_cnt);
+	return snprintf(buf, PAGE_SIZE, "%d\n", reqq_cnt);
 }
 
-static DEVICE_ATTR_RO(requestq_count);
+static DEVICE_ATTR(requestq_count, 0444, ap_requestq_count_show, NULL);
 
-static ssize_t pendingq_count_show(struct device *dev,
-				   struct device_attribute *attr, char *buf)
+static ssize_t ap_pendingq_count_show(struct device *dev,
+				      struct device_attribute *attr, char *buf)
 {
 	struct ap_queue *aq = to_ap_queue(dev);
 	unsigned int penq_cnt = 0;
 
 	spin_lock_bh(&aq->lock);
-	if (aq->dev_state > AP_DEV_STATE_UNINITIATED)
-		penq_cnt = aq->pendingq_count;
+	penq_cnt = aq->pendingq_count;
 	spin_unlock_bh(&aq->lock);
-	return scnprintf(buf, PAGE_SIZE, "%d\n", penq_cnt);
+	return snprintf(buf, PAGE_SIZE, "%d\n", penq_cnt);
 }
 
-static DEVICE_ATTR_RO(pendingq_count);
+static DEVICE_ATTR(pendingq_count, 0444, ap_pendingq_count_show, NULL);
 
-static ssize_t reset_show(struct device *dev,
-			  struct device_attribute *attr, char *buf)
+static ssize_t ap_reset_show(struct device *dev,
+				      struct device_attribute *attr, char *buf)
 {
 	struct ap_queue *aq = to_ap_queue(dev);
 	int rc = 0;
 
 	spin_lock_bh(&aq->lock);
-	switch (aq->sm_state) {
-	case AP_SM_STATE_RESET_START:
-	case AP_SM_STATE_RESET_WAIT:
-		rc = scnprintf(buf, PAGE_SIZE, "Reset in progress.\n");
+	switch (aq->state) {
+	case AP_STATE_RESET_START:
+	case AP_STATE_RESET_WAIT:
+		rc = snprintf(buf, PAGE_SIZE, "Reset in progress.\n");
 		break;
-	case AP_SM_STATE_WORKING:
-	case AP_SM_STATE_QUEUE_FULL:
-		rc = scnprintf(buf, PAGE_SIZE, "Reset Timer armed.\n");
+	case AP_STATE_WORKING:
+	case AP_STATE_QUEUE_FULL:
+		rc = snprintf(buf, PAGE_SIZE, "Reset Timer armed.\n");
 		break;
 	default:
-		rc = scnprintf(buf, PAGE_SIZE, "No Reset Timer set.\n");
+		rc = snprintf(buf, PAGE_SIZE, "No Reset Timer set.\n");
 	}
 	spin_unlock_bh(&aq->lock);
 	return rc;
 }
 
-static ssize_t reset_store(struct device *dev,
-			   struct device_attribute *attr,
-			   const char *buf, size_t count)
-{
-	struct ap_queue *aq = to_ap_queue(dev);
+static DEVICE_ATTR(reset, 0444, ap_reset_show, NULL);
 
-	spin_lock_bh(&aq->lock);
-	__ap_flush_queue(aq);
-	aq->sm_state = AP_SM_STATE_RESET_START;
-	ap_wait(ap_sm_event(aq, AP_SM_EVENT_POLL));
-	spin_unlock_bh(&aq->lock);
-
-	AP_DBF_INFO("%s reset queue=%02x.%04x triggered by user\n",
-		    __func__, AP_QID_CARD(aq->qid), AP_QID_QUEUE(aq->qid));
-
-	return count;
-}
-
-static DEVICE_ATTR_RW(reset);
-
-static ssize_t interrupt_show(struct device *dev,
-			      struct device_attribute *attr, char *buf)
+static ssize_t ap_interrupt_show(struct device *dev,
+				 struct device_attribute *attr, char *buf)
 {
 	struct ap_queue *aq = to_ap_queue(dev);
 	int rc = 0;
 
 	spin_lock_bh(&aq->lock);
-	if (aq->sm_state == AP_SM_STATE_SETIRQ_WAIT)
-		rc = scnprintf(buf, PAGE_SIZE, "Enable Interrupt pending.\n");
-	else if (aq->interrupt)
-		rc = scnprintf(buf, PAGE_SIZE, "Interrupts enabled.\n");
+	if (aq->state == AP_STATE_SETIRQ_WAIT)
+		rc = snprintf(buf, PAGE_SIZE, "Enable Interrupt pending.\n");
+	else if (aq->interrupt == AP_INTR_ENABLED)
+		rc = snprintf(buf, PAGE_SIZE, "Interrupts enabled.\n");
 	else
-		rc = scnprintf(buf, PAGE_SIZE, "Interrupts disabled.\n");
+		rc = snprintf(buf, PAGE_SIZE, "Interrupts disabled.\n");
 	spin_unlock_bh(&aq->lock);
 	return rc;
 }
 
-static DEVICE_ATTR_RO(interrupt);
-
-static ssize_t config_show(struct device *dev,
-			   struct device_attribute *attr, char *buf)
-{
-	struct ap_queue *aq = to_ap_queue(dev);
-	int rc;
-
-	spin_lock_bh(&aq->lock);
-	rc = scnprintf(buf, PAGE_SIZE, "%d\n", aq->config ? 1 : 0);
-	spin_unlock_bh(&aq->lock);
-	return rc;
-}
-
-static DEVICE_ATTR_RO(config);
-
-static ssize_t chkstop_show(struct device *dev,
-			    struct device_attribute *attr, char *buf)
-{
-	struct ap_queue *aq = to_ap_queue(dev);
-	int rc;
-
-	spin_lock_bh(&aq->lock);
-	rc = scnprintf(buf, PAGE_SIZE, "%d\n", aq->chkstop ? 1 : 0);
-	spin_unlock_bh(&aq->lock);
-	return rc;
-}
-
-static DEVICE_ATTR_RO(chkstop);
-
-#ifdef CONFIG_ZCRYPT_DEBUG
-static ssize_t states_show(struct device *dev,
-			   struct device_attribute *attr, char *buf)
-{
-	struct ap_queue *aq = to_ap_queue(dev);
-	int rc = 0;
-
-	spin_lock_bh(&aq->lock);
-	/* queue device state */
-	switch (aq->dev_state) {
-	case AP_DEV_STATE_UNINITIATED:
-		rc = scnprintf(buf, PAGE_SIZE, "UNINITIATED\n");
-		break;
-	case AP_DEV_STATE_OPERATING:
-		rc = scnprintf(buf, PAGE_SIZE, "OPERATING");
-		break;
-	case AP_DEV_STATE_SHUTDOWN:
-		rc = scnprintf(buf, PAGE_SIZE, "SHUTDOWN");
-		break;
-	case AP_DEV_STATE_ERROR:
-		rc = scnprintf(buf, PAGE_SIZE, "ERROR");
-		break;
-	default:
-		rc = scnprintf(buf, PAGE_SIZE, "UNKNOWN");
-	}
-	/* state machine state */
-	if (aq->dev_state) {
-		switch (aq->sm_state) {
-		case AP_SM_STATE_RESET_START:
-			rc += scnprintf(buf + rc, PAGE_SIZE - rc,
-					" [RESET_START]\n");
-			break;
-		case AP_SM_STATE_RESET_WAIT:
-			rc += scnprintf(buf + rc, PAGE_SIZE - rc,
-					" [RESET_WAIT]\n");
-			break;
-		case AP_SM_STATE_SETIRQ_WAIT:
-			rc += scnprintf(buf + rc, PAGE_SIZE - rc,
-					" [SETIRQ_WAIT]\n");
-			break;
-		case AP_SM_STATE_IDLE:
-			rc += scnprintf(buf + rc, PAGE_SIZE - rc,
-					" [IDLE]\n");
-			break;
-		case AP_SM_STATE_WORKING:
-			rc += scnprintf(buf + rc, PAGE_SIZE - rc,
-					" [WORKING]\n");
-			break;
-		case AP_SM_STATE_QUEUE_FULL:
-			rc += scnprintf(buf + rc, PAGE_SIZE - rc,
-					" [FULL]\n");
-			break;
-		default:
-			rc += scnprintf(buf + rc, PAGE_SIZE - rc,
-					" [UNKNOWN]\n");
-		}
-	}
-	spin_unlock_bh(&aq->lock);
-
-	return rc;
-}
-static DEVICE_ATTR_RO(states);
-
-static ssize_t last_err_rc_show(struct device *dev,
-				struct device_attribute *attr, char *buf)
-{
-	struct ap_queue *aq = to_ap_queue(dev);
-	int rc;
-
-	spin_lock_bh(&aq->lock);
-	rc = aq->last_err_rc;
-	spin_unlock_bh(&aq->lock);
-
-	switch (rc) {
-	case AP_RESPONSE_NORMAL:
-		return scnprintf(buf, PAGE_SIZE, "NORMAL\n");
-	case AP_RESPONSE_Q_NOT_AVAIL:
-		return scnprintf(buf, PAGE_SIZE, "Q_NOT_AVAIL\n");
-	case AP_RESPONSE_RESET_IN_PROGRESS:
-		return scnprintf(buf, PAGE_SIZE, "RESET_IN_PROGRESS\n");
-	case AP_RESPONSE_DECONFIGURED:
-		return scnprintf(buf, PAGE_SIZE, "DECONFIGURED\n");
-	case AP_RESPONSE_CHECKSTOPPED:
-		return scnprintf(buf, PAGE_SIZE, "CHECKSTOPPED\n");
-	case AP_RESPONSE_BUSY:
-		return scnprintf(buf, PAGE_SIZE, "BUSY\n");
-	case AP_RESPONSE_INVALID_ADDRESS:
-		return scnprintf(buf, PAGE_SIZE, "INVALID_ADDRESS\n");
-	case AP_RESPONSE_OTHERWISE_CHANGED:
-		return scnprintf(buf, PAGE_SIZE, "OTHERWISE_CHANGED\n");
-	case AP_RESPONSE_Q_FULL:
-		return scnprintf(buf, PAGE_SIZE, "Q_FULL/NO_PENDING_REPLY\n");
-	case AP_RESPONSE_INDEX_TOO_BIG:
-		return scnprintf(buf, PAGE_SIZE, "INDEX_TOO_BIG\n");
-	case AP_RESPONSE_NO_FIRST_PART:
-		return scnprintf(buf, PAGE_SIZE, "NO_FIRST_PART\n");
-	case AP_RESPONSE_MESSAGE_TOO_BIG:
-		return scnprintf(buf, PAGE_SIZE, "MESSAGE_TOO_BIG\n");
-	case AP_RESPONSE_REQ_FAC_NOT_INST:
-		return scnprintf(buf, PAGE_SIZE, "REQ_FAC_NOT_INST\n");
-	default:
-		return scnprintf(buf, PAGE_SIZE, "response code %d\n", rc);
-	}
-}
-static DEVICE_ATTR_RO(last_err_rc);
-#endif
+static DEVICE_ATTR(interrupt, 0444, ap_interrupt_show, NULL);
 
 static struct attribute *ap_queue_dev_attrs[] = {
 	&dev_attr_request_count.attr,
@@ -743,12 +588,6 @@ static struct attribute *ap_queue_dev_attrs[] = {
 	&dev_attr_pendingq_count.attr,
 	&dev_attr_reset.attr,
 	&dev_attr_interrupt.attr,
-	&dev_attr_config.attr,
-	&dev_attr_chkstop.attr,
-#ifdef CONFIG_ZCRYPT_DEBUG
-	&dev_attr_states.attr,
-	&dev_attr_last_err_rc.attr,
-#endif
 	NULL
 };
 
@@ -770,10 +609,11 @@ static void ap_queue_device_release(struct device *dev)
 {
 	struct ap_queue *aq = to_ap_queue(dev);
 
-	spin_lock_bh(&ap_queues_lock);
-	hash_del(&aq->hnode);
-	spin_unlock_bh(&ap_queues_lock);
-
+	if (!list_empty(&aq->list)) {
+		spin_lock_bh(&ap_list_lock);
+		list_del_init(&aq->list);
+		spin_unlock_bh(&ap_list_lock);
+	}
 	kfree(aq);
 }
 
@@ -788,8 +628,10 @@ struct ap_queue *ap_queue_create(ap_qid_t qid, int device_type)
 	aq->ap_dev.device.type = &ap_queue_type;
 	aq->ap_dev.device_type = device_type;
 	aq->qid = qid;
-	aq->interrupt = false;
+	aq->state = AP_STATE_RESET_START;
+	aq->interrupt = AP_INTR_DISABLED;
 	spin_lock_init(&aq->lock);
+	INIT_LIST_HEAD(&aq->list);
 	INIT_LIST_HEAD(&aq->pendingq);
 	INIT_LIST_HEAD(&aq->requestq);
 	timer_setup(&aq->timeout, ap_request_timeout, 0);
@@ -802,7 +644,7 @@ void ap_queue_init_reply(struct ap_queue *aq, struct ap_message *reply)
 	aq->reply = reply;
 
 	spin_lock_bh(&aq->lock);
-	ap_wait(ap_sm_event(aq, AP_SM_EVENT_POLL));
+	ap_wait(ap_sm_event(aq, AP_EVENT_POLL));
 	spin_unlock_bh(&aq->lock);
 }
 EXPORT_SYMBOL(ap_queue_init_reply);
@@ -812,31 +654,22 @@ EXPORT_SYMBOL(ap_queue_init_reply);
  * @aq: The AP device to queue the message to
  * @ap_msg: The message that is to be added
  */
-int ap_queue_message(struct ap_queue *aq, struct ap_message *ap_msg)
+void ap_queue_message(struct ap_queue *aq, struct ap_message *ap_msg)
 {
-	int rc = 0;
-
-	/* msg needs to have a valid receive-callback */
+	/* For asynchronous message handling a valid receive-callback
+	 * is required.
+	 */
 	BUG_ON(!ap_msg->receive);
 
 	spin_lock_bh(&aq->lock);
-
-	/* only allow to queue new messages if device state is ok */
-	if (aq->dev_state == AP_DEV_STATE_OPERATING) {
-		list_add_tail(&ap_msg->list, &aq->requestq);
-		aq->requestq_count++;
-		aq->total_request_count++;
-		atomic64_inc(&aq->card->total_request_count);
-	} else {
-		rc = -ENODEV;
-	}
-
+	/* Queue the message. */
+	list_add_tail(&ap_msg->list, &aq->requestq);
+	aq->requestq_count++;
+	aq->total_request_count++;
+	atomic_inc(&aq->card->total_request_count);
 	/* Send/receive as many request from the queue as possible. */
-	ap_wait(ap_sm_event_loop(aq, AP_SM_EVENT_POLL));
-
+	ap_wait(ap_sm_event_loop(aq, AP_EVENT_POLL));
 	spin_unlock_bh(&aq->lock);
-
-	return rc;
 }
 EXPORT_SYMBOL(ap_queue_message);
 
@@ -891,7 +724,6 @@ static void __ap_flush_queue(struct ap_queue *aq)
 		ap_msg->rc = -EAGAIN;
 		ap_msg->receive(aq, ap_msg, NULL);
 	}
-	aq->queue_count = 0;
 }
 
 void ap_flush_queue(struct ap_queue *aq)
@@ -902,38 +734,9 @@ void ap_flush_queue(struct ap_queue *aq)
 }
 EXPORT_SYMBOL(ap_flush_queue);
 
-void ap_queue_prepare_remove(struct ap_queue *aq)
-{
-	spin_lock_bh(&aq->lock);
-	/* flush queue */
-	__ap_flush_queue(aq);
-	/* move queue device state to SHUTDOWN in progress */
-	aq->dev_state = AP_DEV_STATE_SHUTDOWN;
-	spin_unlock_bh(&aq->lock);
-	del_timer_sync(&aq->timeout);
-}
-
 void ap_queue_remove(struct ap_queue *aq)
 {
-	/*
-	 * all messages have been flushed and the device state
-	 * is SHUTDOWN. Now reset with zero which also clears
-	 * the irq registration and move the device state
-	 * to the initial value AP_DEV_STATE_UNINITIATED.
-	 */
-	spin_lock_bh(&aq->lock);
-	ap_zapq(aq->qid);
-	aq->dev_state = AP_DEV_STATE_UNINITIATED;
-	spin_unlock_bh(&aq->lock);
+	ap_flush_queue(aq);
+	del_timer_sync(&aq->timeout);
 }
-
-void ap_queue_init_state(struct ap_queue *aq)
-{
-	spin_lock_bh(&aq->lock);
-	aq->dev_state = AP_DEV_STATE_OPERATING;
-	aq->sm_state = AP_SM_STATE_RESET_START;
-	aq->last_err_rc = 0;
-	ap_wait(ap_sm_event(aq, AP_SM_EVENT_POLL));
-	spin_unlock_bh(&aq->lock);
-}
-EXPORT_SYMBOL(ap_queue_init_state);
+EXPORT_SYMBOL(ap_queue_remove);

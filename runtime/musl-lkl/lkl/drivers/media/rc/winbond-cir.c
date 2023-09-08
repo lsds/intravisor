@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  *  winbond-cir.c - Driver for the Consumer IR functionality of Winbond
  *                  SuperI/O chips.
@@ -25,6 +24,16 @@
  *    o IR Transmit
  *    o Wake-On-CIR functionality
  *    o Carrier detection
+ *
+ *  This program is free software; you can redistribute it and/or modify
+ *  it under the terms of the GNU General Public License as published by
+ *  the Free Software Foundation; either version 2 of the License, or
+ *  (at your option) any later version.
+ *
+ *  This program is distributed in the hope that it will be useful,
+ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *  GNU General Public License for more details.
  */
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
@@ -313,11 +322,11 @@ wbcir_carrier_report(struct wbcir_data *data)
 			inb(data->ebase + WBCIR_REG_ECEIR_CNT_HI) << 8;
 
 	if (counter > 0 && counter < 0xffff) {
-		struct ir_raw_event ev = {
-			.carrier_report = 1,
-			.carrier = DIV_ROUND_CLOSEST(counter * 1000000u,
-						data->pulse_duration)
-		};
+		DEFINE_IR_RAW_EVENT(ev);
+
+		ev.carrier_report = 1;
+		ev.carrier = DIV_ROUND_CLOSEST(counter * 1000000u,
+						data->pulse_duration);
 
 		ir_raw_event_store(data->dev, &ev);
 	}
@@ -353,7 +362,8 @@ static void
 wbcir_irq_rx(struct wbcir_data *data, struct pnp_dev *device)
 {
 	u8 irdata;
-	struct ir_raw_event rawir = {};
+	DEFINE_IR_RAW_EVENT(rawir);
+	unsigned duration;
 
 	/* Since RXHDLEV is set, at least 8 bytes are in the FIFO */
 	while (inb(data->sbase + WBCIR_REG_SP3_LSR) & WBCIR_RX_AVAIL) {
@@ -361,12 +371,13 @@ wbcir_irq_rx(struct wbcir_data *data, struct pnp_dev *device)
 		if (data->rxstate == WBCIR_RXSTATE_ERROR)
 			continue;
 
-		rawir.duration = ((irdata & 0x7F) + 1) *
+		duration = ((irdata & 0x7F) + 1) *
 			(data->carrier_report_enabled ? 2 : 10);
 		rawir.pulse = irdata & 0x80 ? false : true;
+		rawir.duration = US_TO_NS(duration);
 
 		if (rawir.pulse)
-			data->pulse_duration += rawir.duration;
+			data->pulse_duration += duration;
 
 		ir_raw_event_store_with_filter(data->dev, &rawir);
 	}
@@ -470,7 +481,7 @@ wbcir_irq_handler(int irqno, void *cookie)
 		/* RX overflow? (read clears bit) */
 		if (inb(data->sbase + WBCIR_REG_SP3_LSR) & WBCIR_RX_OVERRUN) {
 			data->rxstate = WBCIR_RXSTATE_ERROR;
-			ir_raw_event_overflow(data->dev);
+			ir_raw_event_reset(data->dev);
 		}
 
 		/* TX underflow? */
@@ -517,7 +528,7 @@ wbcir_set_carrier_report(struct rc_dev *dev, int enable)
 
 	/* Set a higher sampling resolution if carrier reports are enabled */
 	wbcir_select_bank(data, WBCIR_BANK_2);
-	data->dev->rx_resolution = enable ? 2 : 10;
+	data->dev->rx_resolution = US_TO_NS(enable ? 2 : 10);
 	outb(enable ? 0x03 : 0x0f, data->sbase + WBCIR_REG_SP3_BGDL);
 	outb(0x00, data->sbase + WBCIR_REG_SP3_BGDH);
 
@@ -978,7 +989,8 @@ wbcir_init_hw(struct wbcir_data *data)
 
 	/* Clear RX state */
 	data->rxstate = WBCIR_RXSTATE_INACTIVE;
-	wbcir_idle_rx(data->dev, true);
+	ir_raw_event_reset(data->dev);
+	ir_raw_event_set_idle(data->dev, true);
 
 	/* Clear TX state */
 	if (data->txstate == WBCIR_TXSTATE_ACTIVE) {
@@ -1073,7 +1085,7 @@ wbcir_probe(struct pnp_dev *device, const struct pnp_device_id *dev_id)
 	data->dev->min_timeout = 1;
 	data->dev->timeout = IR_DEFAULT_TIMEOUT;
 	data->dev->max_timeout = 10 * IR_DEFAULT_TIMEOUT;
-	data->dev->rx_resolution = 2;
+	data->dev->rx_resolution = US_TO_NS(2);
 	data->dev->allowed_protocols = RC_PROTO_BIT_ALL_IR_DECODER;
 	data->dev->allowed_wakeup_protocols = RC_PROTO_BIT_NEC |
 		RC_PROTO_BIT_NECX | RC_PROTO_BIT_NEC32 | RC_PROTO_BIT_RC5 |

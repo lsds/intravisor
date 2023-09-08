@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * drivers/acpi/device_sysfs.c - ACPI device sysfs attributes and modalias.
  *
@@ -7,6 +6,15 @@
  * Author: Rafael J. Wysocki <rafael.j.wysocki@intel.com>
  *
  * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+ *
+ *  This program is free software; you can redistribute it and/or modify
+ *  it under the terms of the GNU General Public License version 2 as published
+ *  by the Free Software Foundation.
+ *
+ *  This program is distributed in the hope that it will be useful, but
+ *  WITHOUT ANY WARRANTY; without even the implied warranty of
+ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ *  General Public License for more details.
  *
  * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
  */
@@ -53,7 +61,6 @@ static struct attribute *acpi_data_node_default_attrs[] = {
 	&data_node_path.attr,
 	NULL
 };
-ATTRIBUTE_GROUPS(acpi_data_node_default);
 
 #define to_data_node(k) container_of(k, struct acpi_data_node, kobj)
 #define to_attr(a) container_of(a, struct acpi_data_node_attr, attr)
@@ -74,13 +81,12 @@ static const struct sysfs_ops acpi_data_node_sysfs_ops = {
 static void acpi_data_node_release(struct kobject *kobj)
 {
 	struct acpi_data_node *dn = to_data_node(kobj);
-
 	complete(&dn->kobj_done);
 }
 
 static struct kobj_type acpi_data_node_ktype = {
 	.sysfs_ops = &acpi_data_node_sysfs_ops,
-	.default_groups = acpi_data_node_default_groups,
+	.default_attrs = acpi_data_node_default_attrs,
 	.release = acpi_data_node_release,
 };
 
@@ -132,7 +138,7 @@ static void acpi_hide_nondev_subnodes(struct acpi_device_data *data)
  * Return: 0: no _HID and no _CID
  *         -EINVAL: output error
  *         -ENOMEM: output is truncated
- */
+*/
 static int create_pnp_modalias(struct acpi_device *acpi_dev, char *modalias,
 			       int size)
 {
@@ -196,15 +202,11 @@ static int create_of_modalias(struct acpi_device *acpi_dev, char *modalias,
 {
 	struct acpi_buffer buf = { ACPI_ALLOCATE_BUFFER };
 	const union acpi_object *of_compatible, *obj;
-	acpi_status status;
 	int len, count;
 	int i, nval;
 	char *c;
 
-	status = acpi_get_name(acpi_dev->handle, ACPI_SINGLE_NAME, &buf);
-	if (ACPI_FAILURE(status))
-		return -ENODEV;
-
+	acpi_get_name(acpi_dev->handle, ACPI_SINGLE_NAME, &buf);
 	/* DT strings are all in lower case */
 	for (c = buf.pointer; *c != '\0'; c++)
 		*c = tolower(*c);
@@ -253,12 +255,20 @@ int __acpi_device_uevent_modalias(struct acpi_device *adev,
 	if (add_uevent_var(env, "MODALIAS="))
 		return -ENOMEM;
 
-	if (adev->data.of_compatible)
-		len = create_of_modalias(adev, &env->buf[env->buflen - 1],
-					 sizeof(env->buf) - env->buflen);
-	else
-		len = create_pnp_modalias(adev, &env->buf[env->buflen - 1],
-					  sizeof(env->buf) - env->buflen);
+	len = create_pnp_modalias(adev, &env->buf[env->buflen - 1],
+				  sizeof(env->buf) - env->buflen);
+	if (len < 0)
+		return len;
+
+	env->buflen += len;
+	if (!adev->data.of_compatible)
+		return 0;
+
+	if (len > 0 && add_uevent_var(env, "MODALIAS="))
+		return -ENOMEM;
+
+	len = create_of_modalias(adev, &env->buf[env->buflen - 1],
+				 sizeof(env->buf) - env->buflen);
 	if (len < 0)
 		return len;
 
@@ -269,8 +279,6 @@ int __acpi_device_uevent_modalias(struct acpi_device *adev,
 
 /**
  * acpi_device_uevent_modalias - uevent modalias for ACPI-enumerated devices.
- * @dev: Struct device to get ACPI device node.
- * @env: Environment variables of the kobject uevent.
  *
  * Create the uevent modalias field for ACPI-enumerated devices.
  *
@@ -316,9 +324,6 @@ static int __acpi_device_modalias(struct acpi_device *adev, char *buf, int size)
 
 /**
  * acpi_device_modalias - modalias sysfs attribute for ACPI-enumerated devices.
- * @dev: Struct device to get ACPI device node.
- * @buf: The buffer to save pnp_modalias and of_modalias.
- * @size: Size of buffer.
  *
  * Create the modalias sysfs attribute for ACPI-enumerated devices.
  *
@@ -332,11 +337,11 @@ int acpi_device_modalias(struct device *dev, char *buf, int size)
 EXPORT_SYMBOL_GPL(acpi_device_modalias);
 
 static ssize_t
-modalias_show(struct device *dev, struct device_attribute *attr, char *buf)
+acpi_device_modalias_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
 	return __acpi_device_modalias(to_acpi_device(dev), buf, 1024);
 }
-static DEVICE_ATTR_RO(modalias);
+static DEVICE_ATTR(modalias, 0444, acpi_device_modalias_show, NULL);
 
 static ssize_t real_power_state_show(struct device *dev,
 				     struct device_attribute *attr, char *buf)
@@ -365,8 +370,8 @@ static ssize_t power_state_show(struct device *dev,
 static DEVICE_ATTR_RO(power_state);
 
 static ssize_t
-eject_store(struct device *d, struct device_attribute *attr,
-	    const char *buf, size_t count)
+acpi_eject_store(struct device *d, struct device_attribute *attr,
+		const char *buf, size_t count)
 {
 	struct acpi_device *acpi_device = to_acpi_device(d);
 	acpi_object_type not_used;
@@ -376,70 +381,67 @@ eject_store(struct device *d, struct device_attribute *attr,
 		return -EINVAL;
 
 	if ((!acpi_device->handler || !acpi_device->handler->hotplug.enabled)
-	    && !d->driver)
+	    && !acpi_device->driver)
 		return -ENODEV;
 
 	status = acpi_get_type(acpi_device->handle, &not_used);
 	if (ACPI_FAILURE(status) || !acpi_device->flags.ejectable)
 		return -ENODEV;
 
-	acpi_dev_get(acpi_device);
+	get_device(&acpi_device->dev);
 	status = acpi_hotplug_schedule(acpi_device, ACPI_OST_EC_OSPM_EJECT);
 	if (ACPI_SUCCESS(status))
 		return count;
 
-	acpi_dev_put(acpi_device);
+	put_device(&acpi_device->dev);
 	acpi_evaluate_ost(acpi_device->handle, ACPI_OST_EC_OSPM_EJECT,
 			  ACPI_OST_SC_NON_SPECIFIC_FAILURE, NULL);
 	return status == AE_NO_MEMORY ? -ENOMEM : -EAGAIN;
 }
 
-static DEVICE_ATTR_WO(eject);
+static DEVICE_ATTR(eject, 0200, NULL, acpi_eject_store);
 
 static ssize_t
-hid_show(struct device *dev, struct device_attribute *attr, char *buf)
+acpi_device_hid_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
 	struct acpi_device *acpi_dev = to_acpi_device(dev);
 
 	return sprintf(buf, "%s\n", acpi_device_hid(acpi_dev));
 }
-static DEVICE_ATTR_RO(hid);
+static DEVICE_ATTR(hid, 0444, acpi_device_hid_show, NULL);
 
-static ssize_t uid_show(struct device *dev,
-			struct device_attribute *attr, char *buf)
+static ssize_t acpi_device_uid_show(struct device *dev,
+				    struct device_attribute *attr, char *buf)
 {
 	struct acpi_device *acpi_dev = to_acpi_device(dev);
 
 	return sprintf(buf, "%s\n", acpi_dev->pnp.unique_id);
 }
-static DEVICE_ATTR_RO(uid);
+static DEVICE_ATTR(uid, 0444, acpi_device_uid_show, NULL);
 
-static ssize_t adr_show(struct device *dev,
-			struct device_attribute *attr, char *buf)
+static ssize_t acpi_device_adr_show(struct device *dev,
+				    struct device_attribute *attr, char *buf)
 {
 	struct acpi_device *acpi_dev = to_acpi_device(dev);
 
-	if (acpi_dev->pnp.bus_address > U32_MAX)
-		return sprintf(buf, "0x%016llx\n", acpi_dev->pnp.bus_address);
-	else
-		return sprintf(buf, "0x%08llx\n", acpi_dev->pnp.bus_address);
+	return sprintf(buf, "0x%08x\n",
+		       (unsigned int)(acpi_dev->pnp.bus_address));
 }
-static DEVICE_ATTR_RO(adr);
+static DEVICE_ATTR(adr, 0444, acpi_device_adr_show, NULL);
 
-static ssize_t path_show(struct device *dev,
-			 struct device_attribute *attr, char *buf)
+static ssize_t acpi_device_path_show(struct device *dev,
+				     struct device_attribute *attr, char *buf)
 {
 	struct acpi_device *acpi_dev = to_acpi_device(dev);
 
 	return acpi_object_path(acpi_dev->handle, buf);
 }
-static DEVICE_ATTR_RO(path);
+static DEVICE_ATTR(path, 0444, acpi_device_path_show, NULL);
 
 /* sysfs file that shows description text from the ACPI _STR method */
 static ssize_t description_show(struct device *dev,
 				struct device_attribute *attr,
-				char *buf)
-{
+				char *buf) {
 	struct acpi_device *acpi_dev = to_acpi_device(dev);
 	int result;
 
@@ -454,7 +456,7 @@ static ssize_t description_show(struct device *dev,
 		(wchar_t *)acpi_dev->pnp.str_obj->buffer.pointer,
 		acpi_dev->pnp.str_obj->buffer.length,
 		UTF16_LITTLE_ENDIAN, buf,
-		PAGE_SIZE - 1);
+		PAGE_SIZE);
 
 	buf[result++] = '\n';
 
@@ -463,9 +465,8 @@ static ssize_t description_show(struct device *dev,
 static DEVICE_ATTR_RO(description);
 
 static ssize_t
-sun_show(struct device *dev, struct device_attribute *attr,
-	 char *buf)
-{
+acpi_device_sun_show(struct device *dev, struct device_attribute *attr,
+		     char *buf) {
 	struct acpi_device *acpi_dev = to_acpi_device(dev);
 	acpi_status status;
 	unsigned long long sun;
@@ -476,12 +477,11 @@ sun_show(struct device *dev, struct device_attribute *attr,
 
 	return sprintf(buf, "%llu\n", sun);
 }
-static DEVICE_ATTR_RO(sun);
+static DEVICE_ATTR(sun, 0444, acpi_device_sun_show, NULL);
 
 static ssize_t
-hrv_show(struct device *dev, struct device_attribute *attr,
-	 char *buf)
-{
+acpi_device_hrv_show(struct device *dev, struct device_attribute *attr,
+		     char *buf) {
 	struct acpi_device *acpi_dev = to_acpi_device(dev);
 	acpi_status status;
 	unsigned long long hrv;
@@ -492,11 +492,10 @@ hrv_show(struct device *dev, struct device_attribute *attr,
 
 	return sprintf(buf, "%llu\n", hrv);
 }
-static DEVICE_ATTR_RO(hrv);
+static DEVICE_ATTR(hrv, 0444, acpi_device_hrv_show, NULL);
 
 static ssize_t status_show(struct device *dev, struct device_attribute *attr,
-				char *buf)
-{
+				char *buf) {
 	struct acpi_device *acpi_dev = to_acpi_device(dev);
 	acpi_status status;
 	unsigned long long sta;

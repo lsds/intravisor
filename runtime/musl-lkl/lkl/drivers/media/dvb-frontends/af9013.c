@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Afatech AF9013 demodulator driver
  *
@@ -6,6 +5,17 @@
  * Copyright (C) 2011 Antti Palosaari <crope@iki.fi>
  *
  * Thanks to Afatech who kindly provided information.
+ *
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
  */
 
 #include "af9013_priv.h"
@@ -597,7 +607,7 @@ static int af9013_read_status(struct dvb_frontend *fe, enum fe_status *status)
 			state->strength_en = 2;
 			break;
 		}
-		fallthrough;
+		/* Fall through */
 	case 1:
 		if (time_is_after_jiffies(state->strength_jiffies + msecs_to_jiffies(2000)))
 			break;
@@ -1126,9 +1136,10 @@ static const struct dvb_frontend_ops af9013_ops = {
 	.delsys = { SYS_DVBT },
 	.info = {
 		.name = "Afatech AF9013",
-		.frequency_min_hz = 174 * MHz,
-		.frequency_max_hz = 862 * MHz,
-		.frequency_stepsize_hz = 250 * kHz,
+		.frequency_min = 174000000,
+		.frequency_max = 862000000,
+		.frequency_stepsize = 250000,
+		.frequency_tolerance = 0,
 		.caps =	FE_CAN_FEC_1_2 |
 			FE_CAN_FEC_2_3 |
 			FE_CAN_FEC_3_4 |
@@ -1301,10 +1312,10 @@ static int af9013_wregs(struct i2c_client *client, u8 cmd, u16 reg,
 	memcpy(&buf[3], val, len);
 
 	if (lock)
-		i2c_lock_bus(client->adapter, I2C_LOCK_SEGMENT);
+		i2c_lock_adapter(client->adapter);
 	ret = __i2c_transfer(client->adapter, msg, 1);
 	if (lock)
-		i2c_unlock_bus(client->adapter, I2C_LOCK_SEGMENT);
+		i2c_unlock_adapter(client->adapter);
 	if (ret < 0) {
 		goto err;
 	} else if (ret != 1) {
@@ -1342,10 +1353,10 @@ static int af9013_rregs(struct i2c_client *client, u8 cmd, u16 reg,
 	buf[2] = cmd;
 
 	if (lock)
-		i2c_lock_bus(client->adapter, I2C_LOCK_SEGMENT);
+		i2c_lock_adapter(client->adapter);
 	ret = __i2c_transfer(client->adapter, msg, 2);
 	if (lock)
-		i2c_unlock_bus(client->adapter, I2C_LOCK_SEGMENT);
+		i2c_unlock_adapter(client->adapter);
 	if (ret < 0) {
 		goto err;
 	} else if (ret != 2) {
@@ -1540,7 +1551,7 @@ err:
 	return ret;
 }
 
-static void af9013_remove(struct i2c_client *client)
+static int af9013_remove(struct i2c_client *client)
 {
 	struct af9013_state *state = i2c_get_clientdata(client);
 
@@ -1551,6 +1562,8 @@ static void af9013_remove(struct i2c_client *client)
 	regmap_exit(state->regmap);
 
 	kfree(state);
+
+	return 0;
 }
 
 static const struct i2c_device_id af9013_id_table[] = {

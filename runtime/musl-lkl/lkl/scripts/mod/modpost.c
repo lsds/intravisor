@@ -12,8 +12,6 @@
  */
 
 #define _GNU_SOURCE
-#include <elf.h>
-#include <fnmatch.h>
 #include <stdio.h>
 #include <ctype.h>
 #include <string.h>
@@ -21,32 +19,33 @@
 #include <stdbool.h>
 #include <errno.h>
 #include "modpost.h"
+#include "../../include/generated/autoconf.h"
 #include "../../include/linux/license.h"
+#include "../../include/linux/export.h"
 
 /* Are we using CONFIG_MODVERSIONS? */
-static bool modversions;
+static int modversions = 0;
+/* Warn about undefined symbols? (do so if we have vmlinux) */
+static int have_vmlinux = 0;
 /* Is CONFIG_MODULE_SRCVERSION_ALL set? */
-static bool all_versions;
+static int all_versions = 0;
 /* If we are modposting external module set to 1 */
-static bool external_module;
+static int external_module = 0;
+/* Warn about section mismatch in vmlinux if set to 1 */
+static int vmlinux_section_warnings = 1;
 /* Only warn about unresolved symbols */
-static bool warn_unresolved;
-
-static int sec_mismatch_count;
-static bool sec_mismatch_warn_only = true;
+static int warn_unresolved = 0;
+/* How a symbol is exported */
+static int sec_mismatch_count = 0;
+static int sec_mismatch_verbose = 1;
+static int sec_mismatch_fatal = 0;
 /* ignore missing files */
-static bool ignore_missing_files;
-/* If set to 1, only warn (instead of error) about missing ns imports */
-static bool allow_missing_ns_imports;
+static int ignore_missing_files;
 
-static bool error_occurred;
-
-/*
- * Cut off the warnings when there are too many. This typically occurs when
- * vmlinux is missing. ('make modules' without building vmlinux.)
- */
-#define MAX_UNRESOLVED_REPORTS	10
-static unsigned int nr_unresolved;
+enum export {
+	export_plain,      export_unused,     export_gpl,
+	export_unused_gpl, export_gpl_future, export_unknown
+};
 
 /* In kernel, this size is defined in linux/module.h;
  * here we use Elf_Addr instead of long for covering cross-compile
@@ -54,35 +53,41 @@ static unsigned int nr_unresolved;
 
 #define MODULE_NAME_LEN (64 - sizeof(Elf_Addr))
 
-void __attribute__((format(printf, 2, 3)))
-modpost_log(enum loglevel loglevel, const char *fmt, ...)
+#define PRINTF __attribute__ ((format (printf, 1, 2)))
+
+PRINTF void fatal(const char *fmt, ...)
 {
 	va_list arglist;
 
-	switch (loglevel) {
-	case LOG_WARN:
-		fprintf(stderr, "WARNING: ");
-		break;
-	case LOG_ERROR:
-		fprintf(stderr, "ERROR: ");
-		break;
-	case LOG_FATAL:
-		fprintf(stderr, "FATAL: ");
-		break;
-	default: /* invalid loglevel, ignore */
-		break;
-	}
-
-	fprintf(stderr, "modpost: ");
+	fprintf(stderr, "FATAL: ");
 
 	va_start(arglist, fmt);
 	vfprintf(stderr, fmt, arglist);
 	va_end(arglist);
 
-	if (loglevel == LOG_FATAL)
-		exit(1);
-	if (loglevel == LOG_ERROR)
-		error_occurred = true;
+	exit(1);
+}
+
+PRINTF void warn(const char *fmt, ...)
+{
+	va_list arglist;
+
+	fprintf(stderr, "WARNING: ");
+
+	va_start(arglist, fmt);
+	vfprintf(stderr, fmt, arglist);
+	va_end(arglist);
+}
+
+PRINTF void merror(const char *fmt, ...)
+{
+	va_list arglist;
+
+	fprintf(stderr, "ERROR: ");
+
+	va_start(arglist, fmt);
+	vfprintf(stderr, fmt, arglist);
+	va_end(arglist);
 }
 
 static inline bool strends(const char *str, const char *postfix)
@@ -93,110 +98,61 @@ static inline bool strends(const char *str, const char *postfix)
 	return strcmp(str + strlen(str) - strlen(postfix), postfix) == 0;
 }
 
+static int is_vmlinux(const char *modname)
+{
+	const char *myname;
+
+	myname = strrchr(modname, '/');
+	if (myname)
+		myname++;
+	else
+		myname = modname;
+
+	return (strcmp(myname, "vmlinux") == 0) ||
+	       (strcmp(myname, "vmlinux.o") == 0);
+}
+
 void *do_nofail(void *ptr, const char *expr)
 {
 	if (!ptr)
-		fatal("Memory allocation failure: %s.\n", expr);
+		fatal("modpost: Memory allocation failure: %s.\n", expr);
 
 	return ptr;
 }
 
-char *read_text_file(const char *filename)
-{
-	struct stat st;
-	size_t nbytes;
-	int fd;
-	char *buf;
-
-	fd = open(filename, O_RDONLY);
-	if (fd < 0) {
-		perror(filename);
-		exit(1);
-	}
-
-	if (fstat(fd, &st) < 0) {
-		perror(filename);
-		exit(1);
-	}
-
-	buf = NOFAIL(malloc(st.st_size + 1));
-
-	nbytes = st.st_size;
-
-	while (nbytes) {
-		ssize_t bytes_read;
-
-		bytes_read = read(fd, buf, nbytes);
-		if (bytes_read < 0) {
-			perror(filename);
-			exit(1);
-		}
-
-		nbytes -= bytes_read;
-	}
-	buf[st.st_size] = '\0';
-
-	close(fd);
-
-	return buf;
-}
-
-char *get_line(char **stringp)
-{
-	char *orig = *stringp, *next;
-
-	/* do not return the unwanted extra line at EOF */
-	if (!orig || *orig == '\0')
-		return NULL;
-
-	/* don't use strsep here, it is not available everywhere */
-	next = strchr(orig, '\n');
-	if (next)
-		*next++ = '\0';
-
-	*stringp = next;
-
-	return orig;
-}
-
 /* A list of all modules we processed */
-LIST_HEAD(modules);
+static struct module *modules;
 
-static struct module *find_module(const char *modname)
+static struct module *find_module(char *modname)
 {
 	struct module *mod;
 
-	list_for_each_entry(mod, &modules, list) {
+	for (mod = modules; mod; mod = mod->next)
 		if (strcmp(mod->name, modname) == 0)
-			return mod;
-	}
-	return NULL;
+			break;
+	return mod;
 }
 
-static struct module *new_module(const char *name, size_t namelen)
+static struct module *new_module(const char *modname)
 {
 	struct module *mod;
+	char *p;
 
-	mod = NOFAIL(malloc(sizeof(*mod) + namelen + 1));
+	mod = NOFAIL(malloc(sizeof(*mod)));
 	memset(mod, 0, sizeof(*mod));
+	p = NOFAIL(strdup(modname));
 
-	INIT_LIST_HEAD(&mod->exported_symbols);
-	INIT_LIST_HEAD(&mod->unresolved_symbols);
-	INIT_LIST_HEAD(&mod->missing_namespaces);
-	INIT_LIST_HEAD(&mod->imported_namespaces);
+	/* strip trailing .o */
+	if (strends(p, ".o")) {
+		p[strlen(p) - 2] = '\0';
+		mod->is_dot_o = 1;
+	}
 
-	memcpy(mod->name, name, namelen);
-	mod->name[namelen] = '\0';
-	mod->is_vmlinux = (strcmp(mod->name, "vmlinux") == 0);
-
-	/*
-	 * Set mod->is_gpl_compatible to true by default. If MODULE_LICENSE()
-	 * is missing, do not check the use for EXPORT_SYMBOL_GPL() becasue
-	 * modpost will exit wiht error anyway.
-	 */
-	mod->is_gpl_compatible = true;
-
-	list_add_tail(&mod->list, &modules);
+	/* add to list */
+	mod->name = p;
+	mod->gpl_compatible = -1;
+	mod->next = modules;
+	modules = mod;
 
 	return mod;
 }
@@ -208,19 +164,21 @@ static struct module *new_module(const char *name, size_t namelen)
 
 struct symbol {
 	struct symbol *next;
-	struct list_head list;	/* link to module::exported_symbols or module::unresolved_symbols */
 	struct module *module;
-	char *namespace;
 	unsigned int crc;
-	bool crc_valid;
-	bool weak;
-	bool is_gpl_only;	/* exported by EXPORT_SYMBOL_GPL */
-	char name[];
+	int crc_valid;
+	unsigned int weak:1;
+	unsigned int vmlinux:1;    /* 1 if symbol is defined in vmlinux */
+	unsigned int kernel:1;     /* 1 if symbol is from kernel
+				    *  (only for external modules) **/
+	unsigned int preloaded:1;  /* 1 if symbol from Module.symvers, or crc */
+	enum export  export;       /* Type of export */
+	char name[0];
 };
 
 static struct symbol *symbolhash[SYMBOL_HASH_SIZE];
 
-/* This is based on the hash algorithm from gdbm, via tdb */
+/* This is based on the hash agorithm from gdbm, via tdb */
 static inline unsigned int tdb_hash(const char *name)
 {
 	unsigned value;	/* Used to compute the hash value.  */
@@ -237,37 +195,33 @@ static inline unsigned int tdb_hash(const char *name)
  * Allocate a new symbols for use in the hash of exported symbols or
  * the list of unresolved symbols per module
  **/
-static struct symbol *alloc_symbol(const char *name)
+static struct symbol *alloc_symbol(const char *name, unsigned int weak,
+				   struct symbol *next)
 {
 	struct symbol *s = NOFAIL(malloc(sizeof(*s) + strlen(name) + 1));
 
 	memset(s, 0, sizeof(*s));
 	strcpy(s->name, name);
-
+	s->weak = weak;
+	s->next = next;
 	return s;
 }
 
 /* For the hash of exported symbols */
-static void hash_add_symbol(struct symbol *sym)
+static struct symbol *new_symbol(const char *name, struct module *module,
+				 enum export export)
 {
 	unsigned int hash;
+	struct symbol *new;
 
-	hash = tdb_hash(sym->name) % SYMBOL_HASH_SIZE;
-	sym->next = symbolhash[hash];
-	symbolhash[hash] = sym;
+	hash = tdb_hash(name) % SYMBOL_HASH_SIZE;
+	new = symbolhash[hash] = alloc_symbol(name, 0, symbolhash[hash]);
+	new->module = module;
+	new->export = export;
+	return new;
 }
 
-static void sym_add_unresolved(const char *name, struct module *mod, bool weak)
-{
-	struct symbol *sym;
-
-	sym = alloc_symbol(name);
-	sym->weak = weak;
-
-	list_add_tail(&sym->list, &mod->unresolved_symbols);
-}
-
-static struct symbol *sym_find_with_module(const char *name, struct module *mod)
+static struct symbol *find_symbol(const char *name)
 {
 	struct symbol *s;
 
@@ -276,126 +230,135 @@ static struct symbol *sym_find_with_module(const char *name, struct module *mod)
 		name++;
 
 	for (s = symbolhash[tdb_hash(name) % SYMBOL_HASH_SIZE]; s; s = s->next) {
-		if (strcmp(s->name, name) == 0 && (!mod || s->module == mod))
+		if (strcmp(s->name, name) == 0)
 			return s;
 	}
 	return NULL;
 }
 
-static struct symbol *find_symbol(const char *name)
-{
-	return sym_find_with_module(name, NULL);
-}
-
-struct namespace_list {
-	struct list_head list;
-	char namespace[];
+static const struct {
+	const char *str;
+	enum export export;
+} export_list[] = {
+	{ .str = "EXPORT_SYMBOL",            .export = export_plain },
+	{ .str = "EXPORT_UNUSED_SYMBOL",     .export = export_unused },
+	{ .str = "EXPORT_SYMBOL_GPL",        .export = export_gpl },
+	{ .str = "EXPORT_UNUSED_SYMBOL_GPL", .export = export_unused_gpl },
+	{ .str = "EXPORT_SYMBOL_GPL_FUTURE", .export = export_gpl_future },
+	{ .str = "(unknown)",                .export = export_unknown },
 };
 
-static bool contains_namespace(struct list_head *head, const char *namespace)
-{
-	struct namespace_list *list;
 
-	list_for_each_entry(list, head, list) {
-		if (!strcmp(list->namespace, namespace))
-			return true;
+static const char *export_str(enum export ex)
+{
+	return export_list[ex].str;
+}
+
+static enum export export_no(const char *s)
+{
+	int i;
+
+	if (!s)
+		return export_unknown;
+	for (i = 0; export_list[i].export != export_unknown; i++) {
+		if (strcmp(export_list[i].str, s) == 0)
+			return export_list[i].export;
 	}
-
-	return false;
+	return export_unknown;
 }
 
-static void add_namespace(struct list_head *head, const char *namespace)
+static const char *sech_name(struct elf_info *elf, Elf_Shdr *sechdr)
 {
-	struct namespace_list *ns_entry;
-
-	if (!contains_namespace(head, namespace)) {
-		ns_entry = NOFAIL(malloc(sizeof(*ns_entry) +
-					 strlen(namespace) + 1));
-		strcpy(ns_entry->namespace, namespace);
-		list_add_tail(&ns_entry->list, head);
-	}
+	return (void *)elf->hdr +
+		elf->sechdrs[elf->secindex_strings].sh_offset +
+		sechdr->sh_name;
 }
 
-static void *sym_get_data_by_offset(const struct elf_info *info,
-				    unsigned int secindex, unsigned long offset)
+static const char *sec_name(struct elf_info *elf, int secindex)
 {
-	Elf_Shdr *sechdr = &info->sechdrs[secindex];
-
-	return (void *)info->hdr + sechdr->sh_offset + offset;
-}
-
-void *sym_get_data(const struct elf_info *info, const Elf_Sym *sym)
-{
-	return sym_get_data_by_offset(info, get_secindex(info, sym),
-				      sym->st_value);
-}
-
-static const char *sech_name(const struct elf_info *info, Elf_Shdr *sechdr)
-{
-	return sym_get_data_by_offset(info, info->secindex_strings,
-				      sechdr->sh_name);
-}
-
-static const char *sec_name(const struct elf_info *info, unsigned int secindex)
-{
-	/*
-	 * If sym->st_shndx is a special section index, there is no
-	 * corresponding section header.
-	 * Return "" if the index is out of range of info->sechdrs[] array.
-	 */
-	if (secindex >= info->num_sections)
-		return "";
-
-	return sech_name(info, &info->sechdrs[secindex]);
+	return sech_name(elf, &elf->sechdrs[secindex]);
 }
 
 #define strstarts(str, prefix) (strncmp(str, prefix, strlen(prefix)) == 0)
 
-static void sym_update_namespace(const char *symname, const char *namespace)
+static enum export export_from_secname(struct elf_info *elf, unsigned int sec)
 {
-	struct symbol *s = find_symbol(symname);
+	const char *secname = sec_name(elf, sec);
 
-	/*
-	 * That symbol should have been created earlier and thus this is
-	 * actually an assertion.
-	 */
-	if (!s) {
-		error("Could not update namespace(%s) for symbol %s\n",
-		      namespace, symname);
-		return;
-	}
-
-	free(s->namespace);
-	s->namespace = namespace[0] ? NOFAIL(strdup(namespace)) : NULL;
+	if (strstarts(secname, "___ksymtab+"))
+		return export_plain;
+	else if (strstarts(secname, "___ksymtab_unused+"))
+		return export_unused;
+	else if (strstarts(secname, "___ksymtab_gpl+"))
+		return export_gpl;
+	else if (strstarts(secname, "___ksymtab_unused_gpl+"))
+		return export_unused_gpl;
+	else if (strstarts(secname, "___ksymtab_gpl_future+"))
+		return export_gpl_future;
+	else
+		return export_unknown;
 }
 
+static enum export export_from_sec(struct elf_info *elf, unsigned int sec)
+{
+	if (sec == elf->export_sec)
+		return export_plain;
+	else if (sec == elf->export_unused_sec)
+		return export_unused;
+	else if (sec == elf->export_gpl_sec)
+		return export_gpl;
+	else if (sec == elf->export_unused_gpl_sec)
+		return export_unused_gpl;
+	else if (sec == elf->export_gpl_future_sec)
+		return export_gpl_future;
+	else
+		return export_unknown;
+}
+
+/**
+ * Add an exported symbol - it may have already been added without a
+ * CRC, in this case just update the CRC
+ **/
 static struct symbol *sym_add_exported(const char *name, struct module *mod,
-				       bool gpl_only)
+				       enum export export)
 {
 	struct symbol *s = find_symbol(name);
 
-	if (s && (!external_module || s->module->is_vmlinux || s->module == mod)) {
-		error("%s: '%s' exported twice. Previous export was in %s%s\n",
-		      mod->name, name, s->module->name,
-		      s->module->is_vmlinux ? "" : ".ko");
+	if (!s) {
+		s = new_symbol(name, mod, export);
+	} else {
+		if (!s->preloaded) {
+			warn("%s: '%s' exported twice. Previous export "
+			     "was in %s%s\n", mod->name, name,
+			     s->module->name,
+			     is_vmlinux(s->module->name) ?"":".ko");
+		} else {
+			/* In case Module.symvers was out of date */
+			s->module = mod;
+		}
 	}
-
-	s = alloc_symbol(name);
-	s->module = mod;
-	s->is_gpl_only = gpl_only;
-	list_add_tail(&s->list, &mod->exported_symbols);
-	hash_add_symbol(s);
-
+	s->preloaded = 0;
+	s->vmlinux   = is_vmlinux(mod->name);
+	s->kernel    = 0;
+	s->export    = export;
 	return s;
 }
 
-static void sym_set_crc(struct symbol *sym, unsigned int crc)
+static void sym_update_crc(const char *name, struct module *mod,
+			   unsigned int crc, enum export export)
 {
-	sym->crc = crc;
-	sym->crc_valid = true;
+	struct symbol *s = find_symbol(name);
+
+	if (!s) {
+		s = new_symbol(name, mod, export);
+		/* Don't complain when we find it later. */
+		s->preloaded = 1;
+	}
+	s->crc = crc;
+	s->crc_valid = 1;
 }
 
-static void *grab_file(const char *filename, size_t *size)
+void *grab_file(const char *filename, unsigned long *size)
 {
 	struct stat st;
 	void *map = MAP_FAILED;
@@ -417,7 +380,41 @@ failed:
 	return map;
 }
 
-static void release_file(void *file, size_t size)
+/**
+  * Return a copy of the next line in a mmap'ed file.
+  * spaces in the beginning of the line is trimmed away.
+  * Return a pointer to a static buffer.
+  **/
+char *get_next_line(unsigned long *pos, void *file, unsigned long size)
+{
+	static char line[4096];
+	int skip = 1;
+	size_t len = 0;
+	signed char *p = (signed char *)file + *pos;
+	char *s = line;
+
+	for (; *pos < size ; (*pos)++) {
+		if (skip && isspace(*p)) {
+			p++;
+			continue;
+		}
+		skip = 0;
+		if (*p != '\n' && (*pos < size)) {
+			len++;
+			*s++ = *p++;
+			if (len > 4095)
+				break; /* Too long, stop */
+		} else {
+			/* End of string */
+			*s = '\0';
+			return line;
+		}
+	}
+	/* End of buffer */
+	return NULL;
+}
+
+void release_file(void *file, unsigned long size)
 {
 	munmap(file, size);
 }
@@ -471,14 +468,11 @@ static int parse_elf(struct elf_info *info, const char *filename)
 	sechdrs = (void *)hdr + hdr->e_shoff;
 	info->sechdrs = sechdrs;
 
-	/* modpost only works for relocatable objects */
-	if (hdr->e_type != ET_REL)
-		fatal("%s: not relocatable object.", filename);
-
 	/* Check if file offset is correct */
 	if (hdr->e_shoff > info->size) {
-		fatal("section header offset=%lu in file '%s' is bigger than filesize=%zu\n",
-		      (unsigned long)hdr->e_shoff, filename, info->size);
+		fatal("section header offset=%lu in file '%s' is bigger than "
+		      "filesize=%lu\n", (unsigned long)hdr->e_shoff,
+		      filename, info->size);
 		return 0;
 	}
 
@@ -531,7 +525,16 @@ static int parse_elf(struct elf_info *info, const char *filename)
 				fatal("%s has NOBITS .modinfo\n", filename);
 			info->modinfo = (void *)hdr + sechdrs[i].sh_offset;
 			info->modinfo_len = sechdrs[i].sh_size;
-		}
+		} else if (strcmp(secname, "__ksymtab") == 0)
+			info->export_sec = i;
+		else if (strcmp(secname, "__ksymtab_unused") == 0)
+			info->export_unused_sec = i;
+		else if (strcmp(secname, "__ksymtab_gpl") == 0)
+			info->export_gpl_sec = i;
+		else if (strcmp(secname, "__ksymtab_unused_gpl") == 0)
+			info->export_unused_gpl_sec = i;
+		else if (strcmp(secname, "__ksymtab_gpl_future") == 0)
+			info->export_gpl_future_sec = i;
 
 		if (sechdrs[i].sh_type == SHT_SYMTAB) {
 			unsigned int sh_link_idx;
@@ -588,43 +591,69 @@ static void parse_elf_finish(struct elf_info *info)
 static int ignore_undef_symbol(struct elf_info *info, const char *symname)
 {
 	/* ignore __this_module, it will be resolved shortly */
-	if (strcmp(symname, "__this_module") == 0)
+	if (strcmp(symname, VMLINUX_SYMBOL_STR(__this_module)) == 0)
 		return 1;
 	/* ignore global offset table */
 	if (strcmp(symname, "_GLOBAL_OFFSET_TABLE_") == 0)
 		return 1;
 	if (info->hdr->e_machine == EM_PPC)
 		/* Special register function linked on all modules during final link of .ko */
-		if (strstarts(symname, "_restgpr_") ||
-		    strstarts(symname, "_savegpr_") ||
-		    strstarts(symname, "_rest32gpr_") ||
-		    strstarts(symname, "_save32gpr_") ||
-		    strstarts(symname, "_restvr_") ||
-		    strstarts(symname, "_savevr_"))
+		if (strncmp(symname, "_restgpr_", sizeof("_restgpr_") - 1) == 0 ||
+		    strncmp(symname, "_savegpr_", sizeof("_savegpr_") - 1) == 0 ||
+		    strncmp(symname, "_rest32gpr_", sizeof("_rest32gpr_") - 1) == 0 ||
+		    strncmp(symname, "_save32gpr_", sizeof("_save32gpr_") - 1) == 0 ||
+		    strncmp(symname, "_restvr_", sizeof("_restvr_") - 1) == 0 ||
+		    strncmp(symname, "_savevr_", sizeof("_savevr_") - 1) == 0)
 			return 1;
 	if (info->hdr->e_machine == EM_PPC64)
 		/* Special register function linked on all modules during final link of .ko */
-		if (strstarts(symname, "_restgpr0_") ||
-		    strstarts(symname, "_savegpr0_") ||
-		    strstarts(symname, "_restvr_") ||
-		    strstarts(symname, "_savevr_") ||
+		if (strncmp(symname, "_restgpr0_", sizeof("_restgpr0_") - 1) == 0 ||
+		    strncmp(symname, "_savegpr0_", sizeof("_savegpr0_") - 1) == 0 ||
+		    strncmp(symname, "_restvr_", sizeof("_restvr_") - 1) == 0 ||
+		    strncmp(symname, "_savevr_", sizeof("_savevr_") - 1) == 0 ||
 		    strcmp(symname, ".TOC.") == 0)
-			return 1;
-
-	if (info->hdr->e_machine == EM_S390)
-		/* Expoline thunks are linked on all kernel modules during final link of .ko */
-		if (strstarts(symname, "__s390_indirect_jump_r"))
 			return 1;
 	/* Do not ignore this symbol */
 	return 0;
 }
 
-static void handle_symbol(struct module *mod, struct elf_info *info,
-			  const Elf_Sym *sym, const char *symname)
+#define CRC_PFX     VMLINUX_SYMBOL_STR(__crc_)
+#define KSYMTAB_PFX VMLINUX_SYMBOL_STR(__ksymtab_)
+
+static void handle_modversions(struct module *mod, struct elf_info *info,
+			       Elf_Sym *sym, const char *symname)
 {
+	unsigned int crc;
+	enum export export;
+	bool is_crc = false;
+
+	if ((!is_vmlinux(mod->name) || mod->is_dot_o) &&
+	    strncmp(symname, "__ksymtab", 9) == 0)
+		export = export_from_secname(info, get_secindex(info, sym));
+	else
+		export = export_from_sec(info, get_secindex(info, sym));
+
+	/* CRC'd symbol */
+	if (strncmp(symname, CRC_PFX, strlen(CRC_PFX)) == 0) {
+		is_crc = true;
+		crc = (unsigned int) sym->st_value;
+		if (sym->st_shndx != SHN_UNDEF && sym->st_shndx != SHN_ABS) {
+			unsigned int *crcp;
+
+			/* symbol points to the CRC in the ELF object */
+			crcp = (void *)info->hdr + sym->st_value +
+			       info->sechdrs[sym->st_shndx].sh_offset -
+			       (info->hdr->e_type != ET_REL ?
+				info->sechdrs[sym->st_shndx].sh_addr : 0);
+			crc = *crcp;
+		}
+		sym_update_crc(symname + strlen(CRC_PFX), mod, crc,
+				export);
+	}
+
 	switch (sym->st_shndx) {
 	case SHN_COMMON:
-		if (strstarts(symname, "__gnu_lto_")) {
+		if (!strncmp(symname, "__gnu_lto_", sizeof("__gnu_lto_")-1)) {
 			/* Should warn here, but modpost runs before the linker */
 		} else
 			warn("\"%s\" [%s] is COMMON symbol\n", symname, mod->name);
@@ -636,39 +665,50 @@ static void handle_symbol(struct module *mod, struct elf_info *info,
 			break;
 		if (ignore_undef_symbol(info, symname))
 			break;
+/* cope with newer glibc (2.3.4 or higher) STT_ definition in elf.h */
+#if defined(STT_REGISTER) || defined(STT_SPARC_REGISTER)
+/* add compatibility with older glibc */
+#ifndef STT_SPARC_REGISTER
+#define STT_SPARC_REGISTER STT_REGISTER
+#endif
 		if (info->hdr->e_machine == EM_SPARC ||
 		    info->hdr->e_machine == EM_SPARCV9) {
 			/* Ignore register directives. */
 			if (ELF_ST_TYPE(sym->st_info) == STT_SPARC_REGISTER)
 				break;
 			if (symname[0] == '.') {
-				char *munged = NOFAIL(strdup(symname));
+				char *munged = strdup(symname);
 				munged[0] = '_';
 				munged[1] = toupper(munged[1]);
 				symname = munged;
 			}
 		}
+#endif
 
-		sym_add_unresolved(symname, mod,
-				   ELF_ST_BIND(sym->st_info) == STB_WEAK);
+#ifdef CONFIG_HAVE_UNDERSCORE_SYMBOL_PREFIX
+		if (symname[0] != '_')
+			break;
+		else
+			symname++;
+#endif
+		if (is_crc) {
+			const char *e = is_vmlinux(mod->name) ?"":".ko";
+			warn("EXPORT symbol \"%s\" [%s%s] version generation failed, symbol will not be versioned.\n", symname + strlen(CRC_PFX), mod->name, e);
+		}
+		mod->unres = alloc_symbol(symname,
+					  ELF_ST_BIND(sym->st_info) == STB_WEAK,
+					  mod->unres);
 		break;
 	default:
 		/* All exported symbols */
-		if (strstarts(symname, "__ksymtab_")) {
-			const char *name, *secname;
-
-			name = symname + strlen("__ksymtab_");
-			secname = sec_name(info, get_secindex(info, sym));
-
-			if (strstarts(secname, "___ksymtab_gpl+"))
-				sym_add_exported(name, mod, true);
-			else if (strstarts(secname, "___ksymtab+"))
-				sym_add_exported(name, mod, false);
+		if (strncmp(symname, KSYMTAB_PFX, strlen(KSYMTAB_PFX)) == 0) {
+			sym_add_exported(symname + strlen(KSYMTAB_PFX), mod,
+					export);
 		}
-		if (strcmp(symname, "init_module") == 0)
-			mod->has_init = true;
-		if (strcmp(symname, "cleanup_module") == 0)
-			mod->has_cleanup = true;
+		if (strcmp(symname, VMLINUX_SYMBOL_STR(init_module)) == 0)
+			mod->has_init = 1;
+		if (strcmp(symname, VMLINUX_SYMBOL_STR(cleanup_module)) == 0)
+			mod->has_cleanup = 1;
 		break;
 	}
 }
@@ -694,17 +734,16 @@ static char *next_string(char *string, unsigned long *secsize)
 	return string;
 }
 
-static char *get_next_modinfo(struct elf_info *info, const char *tag,
-			      char *prev)
+static char *get_next_modinfo(void *modinfo, unsigned long modinfo_len,
+			      const char *tag, char *info)
 {
 	char *p;
 	unsigned int taglen = strlen(tag);
-	char *modinfo = info->modinfo;
-	unsigned long size = info->modinfo_len;
+	unsigned long size = modinfo_len;
 
-	if (prev) {
-		size -= prev - modinfo;
-		modinfo = next_string(prev, &size);
+	if (info) {
+		size -= info - (char *)modinfo;
+		modinfo = next_string(info, &size);
 	}
 
 	for (p = modinfo; p; p = next_string(p, &size)) {
@@ -714,10 +753,34 @@ static char *get_next_modinfo(struct elf_info *info, const char *tag,
 	return NULL;
 }
 
-static char *get_modinfo(struct elf_info *info, const char *tag)
+static char *get_modinfo(void *modinfo, unsigned long modinfo_len,
+			 const char *tag)
 
 {
-	return get_next_modinfo(info, tag, NULL);
+	return get_next_modinfo(modinfo, modinfo_len, tag, NULL);
+}
+
+/**
+ * Test if string s ends in string sub
+ * return 0 if match
+ **/
+static int strrcmp(const char *s, const char *sub)
+{
+	int slen, sublen;
+
+	if (!s || !sub)
+		return 1;
+
+	slen = strlen(s);
+	sublen = strlen(sub);
+
+	if ((slen == 0) || (sublen == 0))
+		return 1;
+
+	if (sublen > slen)
+		return 1;
+
+	return memcmp(s + slen - sublen, sub, sublen);
 }
 
 static const char *sym_name(struct elf_info *elf, Elf_Sym *sym)
@@ -728,36 +791,54 @@ static const char *sym_name(struct elf_info *elf, Elf_Sym *sym)
 		return "(unknown)";
 }
 
-/*
- * Check whether the 'string' argument matches one of the 'patterns',
- * an array of shell wildcard patterns (glob).
- *
- * Return true is there is a match.
+/* The pattern is an array of simple patterns.
+ * "foo" will match an exact string equal to "foo"
+ * "*foo" will match a string that ends with "foo"
+ * "foo*" will match a string that begins with "foo"
+ * "*foo*" will match a string that contains "foo"
  */
-static bool match(const char *string, const char *const patterns[])
+static int match(const char *sym, const char * const pat[])
 {
-	const char *pattern;
+	const char *p;
+	while (*pat) {
+		p = *pat++;
+		const char *endp = p + strlen(p) - 1;
 
-	while ((pattern = *patterns++)) {
-		if (!fnmatch(pattern, string, 0))
-			return true;
+		/* "*foo*" */
+		if (*p == '*' && *endp == '*') {
+			char *here, *bare = strndup(p + 1, strlen(p) - 2);
+
+			here = strstr(sym, bare);
+			free(bare);
+			if (here != NULL)
+				return 1;
+		}
+		/* "*foo" */
+		else if (*p == '*') {
+			if (strrcmp(sym, p + 1) == 0)
+				return 1;
+		}
+		/* "foo*" */
+		else if (*endp == '*') {
+			if (strncmp(sym, p, strlen(p) - 1) == 0)
+				return 1;
+		}
+		/* no wildcards */
+		else {
+			if (strcmp(p, sym) == 0)
+				return 1;
+		}
 	}
-
-	return false;
+	/* no match */
+	return 0;
 }
-
-/* useful to pass patterns to match() directly */
-#define PATTERNS(...) \
-	({ \
-		static const char *const patterns[] = {__VA_ARGS__, NULL}; \
-		patterns; \
-	})
 
 /* sections that we do not want to do full section mismatch check on */
 static const char *const section_white_list[] =
 {
 	".comment*",
 	".debug*",
+	".cranges",		/* sh64 */
 	".zdebug*",		/* Compressed debug sections. */
 	".GCC.command.line",	/* record-gcc-switches */
 	".mdebug*",        /* alpha, score, mips etc. */
@@ -824,10 +905,10 @@ static void check_section(const char *modname, struct elf_info *elf,
 
 #define DATA_SECTIONS ".data", ".data.rel"
 #define TEXT_SECTIONS ".text", ".text.unlikely", ".sched.text", \
-		".kprobes.text", ".cpuidle.text", ".noinstr.text"
+		".kprobes.text", ".cpuidle.text"
 #define OTHER_TEXT_SECTIONS ".ref.text", ".head.text", ".spinlock.text", \
 		".fixup", ".entry.text", ".exception.text", ".text.*", \
-		".coldtext", ".softirqentry.text"
+		".coldtext"
 
 #define INIT_SECTIONS      ".init.*"
 #define MEM_INIT_SECTIONS  ".meminit.*"
@@ -845,11 +926,27 @@ static const char *const init_data_sections[] =
 /* all init sections */
 static const char *const init_sections[] = { ALL_INIT_SECTIONS, NULL };
 
+/* All init and exit sections (code + data) */
+static const char *const init_exit_sections[] =
+	{ALL_INIT_SECTIONS, ALL_EXIT_SECTIONS, NULL };
+
 /* all text sections */
 static const char *const text_sections[] = { ALL_TEXT_SECTIONS, NULL };
 
 /* data section */
 static const char *const data_sections[] = { DATA_SECTIONS, NULL };
+
+
+/* symbols in .data that may refer to init/exit sections */
+#define DEFAULT_SYMBOL_WHITE_LIST					\
+	"*driver",							\
+	"*_template", /* scsi uses *_template a lot */			\
+	"*_timer",    /* arm uses ops structures named _timer a lot */	\
+	"*_sht",      /* scsi also used *_sht to some extent */		\
+	"*_ops",							\
+	"*_probe",							\
+	"*_probe_one",							\
+	"*_console"
 
 static const char *const head_sections[] = { ".head.text*", NULL };
 static const char *const linker_symbols[] =
@@ -870,7 +967,7 @@ enum mismatch {
 };
 
 /**
- * Describe how to match sections on different criteria:
+ * Describe how to match sections on different criterias:
  *
  * @fromsec: Array of sections to be matched.
  *
@@ -878,9 +975,12 @@ enum mismatch {
  * this array is forbidden (black-list).  Can be empty.
  *
  * @good_tosec: Relocations applied to a section in @fromsec must be
- * targeting sections in this array (white-list).  Can be empty.
+ * targetting sections in this array (white-list).  Can be empty.
  *
  * @mismatch: Type of mismatch.
+ *
+ * @symbol_white_list: Do not match a relocation to a symbol in this list
+ * even if it is targetting a section in @bad_to_sec.
  *
  * @handler: Specific handler to call when a match is found.  If NULL,
  * default_mismatch_handler() will be called.
@@ -891,6 +991,7 @@ struct sectioncheck {
 	const char *bad_tosec[20];
 	const char *good_tosec[20];
 	enum mismatch mismatch;
+	const char *symbol_white_list[20];
 	void (*handler)(const char *modname, struct elf_info *elf,
 			const struct sectioncheck* const mismatch,
 			Elf_Rela *r, Elf_Sym *sym, const char *fromsec);
@@ -910,61 +1011,75 @@ static const struct sectioncheck sectioncheck[] = {
 	.fromsec = { TEXT_SECTIONS, NULL },
 	.bad_tosec = { ALL_INIT_SECTIONS, NULL },
 	.mismatch = TEXT_TO_ANY_INIT,
+	.symbol_white_list = { DEFAULT_SYMBOL_WHITE_LIST, NULL },
 },
 {
 	.fromsec = { DATA_SECTIONS, NULL },
 	.bad_tosec = { ALL_XXXINIT_SECTIONS, NULL },
 	.mismatch = DATA_TO_ANY_INIT,
+	.symbol_white_list = { DEFAULT_SYMBOL_WHITE_LIST, NULL },
 },
 {
 	.fromsec = { DATA_SECTIONS, NULL },
 	.bad_tosec = { INIT_SECTIONS, NULL },
 	.mismatch = DATA_TO_ANY_INIT,
+	.symbol_white_list = {
+		"*_template", "*_timer", "*_sht", "*_ops",
+		"*_probe", "*_probe_one", "*_console", NULL
+	},
 },
 {
 	.fromsec = { TEXT_SECTIONS, NULL },
 	.bad_tosec = { ALL_EXIT_SECTIONS, NULL },
 	.mismatch = TEXT_TO_ANY_EXIT,
+	.symbol_white_list = { DEFAULT_SYMBOL_WHITE_LIST, NULL },
 },
 {
 	.fromsec = { DATA_SECTIONS, NULL },
 	.bad_tosec = { ALL_EXIT_SECTIONS, NULL },
 	.mismatch = DATA_TO_ANY_EXIT,
+	.symbol_white_list = { DEFAULT_SYMBOL_WHITE_LIST, NULL },
 },
 /* Do not reference init code/data from meminit code/data */
 {
 	.fromsec = { ALL_XXXINIT_SECTIONS, NULL },
 	.bad_tosec = { INIT_SECTIONS, NULL },
 	.mismatch = XXXINIT_TO_SOME_INIT,
+	.symbol_white_list = { DEFAULT_SYMBOL_WHITE_LIST, NULL },
 },
 /* Do not reference exit code/data from memexit code/data */
 {
 	.fromsec = { ALL_XXXEXIT_SECTIONS, NULL },
 	.bad_tosec = { EXIT_SECTIONS, NULL },
 	.mismatch = XXXEXIT_TO_SOME_EXIT,
+	.symbol_white_list = { DEFAULT_SYMBOL_WHITE_LIST, NULL },
 },
 /* Do not use exit code/data from init code */
 {
 	.fromsec = { ALL_INIT_SECTIONS, NULL },
 	.bad_tosec = { ALL_EXIT_SECTIONS, NULL },
 	.mismatch = ANY_INIT_TO_ANY_EXIT,
+	.symbol_white_list = { DEFAULT_SYMBOL_WHITE_LIST, NULL },
 },
 /* Do not use init code/data from exit code */
 {
 	.fromsec = { ALL_EXIT_SECTIONS, NULL },
 	.bad_tosec = { ALL_INIT_SECTIONS, NULL },
 	.mismatch = ANY_EXIT_TO_ANY_INIT,
+	.symbol_white_list = { DEFAULT_SYMBOL_WHITE_LIST, NULL },
 },
 {
 	.fromsec = { ALL_PCI_INIT_SECTIONS, NULL },
 	.bad_tosec = { INIT_SECTIONS, NULL },
 	.mismatch = ANY_INIT_TO_ANY_EXIT,
+	.symbol_white_list = { NULL },
 },
 /* Do not export init/exit functions or data */
 {
-	.fromsec = { "___ksymtab*", NULL },
+	.fromsec = { "__ksymtab*", NULL },
 	.bad_tosec = { INIT_SECTIONS, EXIT_SECTIONS, NULL },
 	.mismatch = EXPORT_TO_INIT_EXIT,
+	.symbol_white_list = { DEFAULT_SYMBOL_WHITE_LIST, NULL },
 },
 {
 	.fromsec = { "__ex_table", NULL },
@@ -982,6 +1097,8 @@ static const struct sectioncheck *section_mismatch(
 		const char *fromsec, const char *tosec)
 {
 	int i;
+	int elems = sizeof(sectioncheck) / sizeof(struct sectioncheck);
+	const struct sectioncheck *check = &sectioncheck[0];
 
 	/*
 	 * The target section could be the SHT_NUL section when we're
@@ -992,15 +1109,14 @@ static const struct sectioncheck *section_mismatch(
 	if (*tosec == '\0')
 		return NULL;
 
-	for (i = 0; i < ARRAY_SIZE(sectioncheck); i++) {
-		const struct sectioncheck *check = &sectioncheck[i];
-
+	for (i = 0; i < elems; i++) {
 		if (match(fromsec, check->fromsec)) {
 			if (check->bad_tosec[0] && match(tosec, check->bad_tosec))
 				return check;
 			if (check->good_tosec[0] && !match(tosec, check->good_tosec))
 				return check;
 		}
+		check++;
 	}
 	return NULL;
 }
@@ -1025,6 +1141,15 @@ static const struct sectioncheck *section_mismatch(
  *   fromsec = .data*
  *   atsym   = __param_ops_*
  *
+ * Pattern 2:
+ *   Many drivers utilise a *driver container with references to
+ *   add, remove, probe functions etc.
+ *   the pattern is identified by:
+ *   tosec   = init or exit section
+ *   fromsec = data section
+ *   atsym = *driver, *_template, *_sht, *_ops, *_probe,
+ *           *probe_one, *_console, *_timer
+ *
  * Pattern 3:
  *   Whitelist all references from .head.text to any init section
  *
@@ -1048,14 +1173,6 @@ static const struct sectioncheck *section_mismatch(
  *   fromsec = text section
  *   refsymname = *.constprop.*
  *
- * Pattern 6:
- *   Hide section mismatch warnings for ELF local symbols.  The goal
- *   is to eliminate false positive modpost warnings caused by
- *   compiler-generated ELF local symbol names such as ".LANCHOR1".
- *   Autogenerated symbol names bypass modpost's "Pattern 2"
- *   whitelisting, which relies on pattern-matching against symbol
- *   names to work.  (One situation where gcc can autogenerate ELF
- *   local symbols is when "-fsection-anchors" is used.)
  **/
 static int secref_whitelist(const struct sectioncheck *mismatch,
 			    const char *fromsec, const char *fromsym,
@@ -1064,31 +1181,19 @@ static int secref_whitelist(const struct sectioncheck *mismatch,
 	/* Check for pattern 1 */
 	if (match(tosec, init_data_sections) &&
 	    match(fromsec, data_sections) &&
-	    strstarts(fromsym, "__param"))
+	    (strncmp(fromsym, "__param", strlen("__param")) == 0))
 		return 0;
 
 	/* Check for pattern 1a */
 	if (strcmp(tosec, ".init.text") == 0 &&
 	    match(fromsec, data_sections) &&
-	    strstarts(fromsym, "__param_ops_"))
+	    (strncmp(fromsym, "__param_ops_", strlen("__param_ops_")) == 0))
 		return 0;
 
-	/* symbols in data sections that may refer to any init/exit sections */
-	if (match(fromsec, PATTERNS(DATA_SECTIONS)) &&
-	    match(tosec, PATTERNS(ALL_INIT_SECTIONS, ALL_EXIT_SECTIONS)) &&
-	    match(fromsym, PATTERNS("*_template", // scsi uses *_template a lot
-				    "*_timer", // arm uses ops structures named _timer a lot
-				    "*_sht", // scsi also used *_sht to some extent
-				    "*_ops",
-				    "*_probe",
-				    "*_probe_one",
-				    "*_console")))
-		return 0;
-
-	/* symbols in data sections that may refer to meminit/exit sections */
-	if (match(fromsec, PATTERNS(DATA_SECTIONS)) &&
-	    match(tosec, PATTERNS(ALL_XXXINIT_SECTIONS, ALL_EXIT_SECTIONS)) &&
-	    match(fromsym, PATTERNS("*driver")))
+	/* Check for pattern 2 */
+	if (match(tosec, init_exit_sections) &&
+	    match(fromsec, data_sections) &&
+	    match(fromsym, mismatch->symbol_white_list))
 		return 0;
 
 	/* Check for pattern 3 */
@@ -1106,36 +1211,7 @@ static int secref_whitelist(const struct sectioncheck *mismatch,
 	    match(fromsym, optim_symbols))
 		return 0;
 
-	/* Check for pattern 6 */
-	if (strstarts(fromsym, ".L"))
-		return 0;
-
 	return 1;
-}
-
-static inline int is_arm_mapping_symbol(const char *str)
-{
-	return str[0] == '$' &&
-	       (str[1] == 'a' || str[1] == 'd' || str[1] == 't' || str[1] == 'x')
-	       && (str[2] == '\0' || str[2] == '.');
-}
-
-/*
- * If there's no name there, ignore it; likewise, ignore it if it's
- * one of the magic symbols emitted used by current ARM tools.
- *
- * Otherwise if find_symbols_between() returns those symbols, they'll
- * fail the whitelist tests and cause lots of false alarms ... fixable
- * only by merging __exit and __init sections into __text, bloating
- * the kernel (which is especially evil on embedded platforms).
- */
-static inline int is_valid_name(struct elf_info *elf, Elf_Sym *sym)
-{
-	const char *name = elf->strtab + sym->st_name;
-
-	if (!name || !strlen(name))
-		return 0;
-	return !is_arm_mapping_symbol(name);
 }
 
 /**
@@ -1163,8 +1239,6 @@ static Elf_Sym *find_elf_symbol(struct elf_info *elf, Elf64_Sword addr,
 			continue;
 		if (ELF_ST_TYPE(sym->st_info) == STT_SECTION)
 			continue;
-		if (!is_valid_name(elf, sym))
-			continue;
 		if (sym->st_value == addr)
 			return sym;
 		/* Find a symbol nearby - addr are maybe negative */
@@ -1181,6 +1255,30 @@ static Elf_Sym *find_elf_symbol(struct elf_info *elf, Elf64_Sword addr,
 		return near;
 	else
 		return NULL;
+}
+
+static inline int is_arm_mapping_symbol(const char *str)
+{
+	return str[0] == '$' && strchr("axtd", str[1])
+	       && (str[2] == '\0' || str[2] == '.');
+}
+
+/*
+ * If there's no name there, ignore it; likewise, ignore it if it's
+ * one of the magic symbols emitted used by current ARM tools.
+ *
+ * Otherwise if find_symbols_between() returns those symbols, they'll
+ * fail the whitelist tests and cause lots of false alarms ... fixable
+ * only by merging __exit and __init sections into __text, bloating
+ * the kernel (which is especially evil on embedded platforms).
+ */
+static inline int is_valid_name(struct elf_info *elf, Elf_Sym *sym)
+{
+	const char *name = elf->strtab + sym->st_name;
+
+	if (!name || !strlen(name))
+		return 0;
+	return !is_arm_mapping_symbol(name);
 }
 
 /*
@@ -1206,12 +1304,52 @@ static Elf_Sym *find_elf_symbol2(struct elf_info *elf, Elf_Addr addr,
 			continue;
 		if (!is_valid_name(elf, sym))
 			continue;
-		if (sym->st_value <= addr && addr - sym->st_value <= distance) {
-			distance = addr - sym->st_value;
-			near = sym;
+		if (sym->st_value <= addr) {
+			if ((addr - sym->st_value) < distance) {
+				distance = addr - sym->st_value;
+				near = sym;
+			} else if ((addr - sym->st_value) == distance) {
+				near = sym;
+			}
 		}
 	}
 	return near;
+}
+
+/*
+ * Convert a section name to the function/data attribute
+ * .init.text => __init
+ * .memexitconst => __memconst
+ * etc.
+ *
+ * The memory of returned value has been allocated on a heap. The user of this
+ * method should free it after usage.
+*/
+static char *sec2annotation(const char *s)
+{
+	if (match(s, init_exit_sections)) {
+		char *p = malloc(20);
+		char *r = p;
+
+		*p++ = '_';
+		*p++ = '_';
+		if (*s == '.')
+			s++;
+		while (*s && *s != '.')
+			*p++ = *s++;
+		*p = '\0';
+		if (*s == '.')
+			s++;
+		if (strstr(s, "rodata") != NULL)
+			strcat(p, "const ");
+		else if (strstr(s, "data") != NULL)
+			strcat(p, "data ");
+		else
+			strcat(p, " ");
+		return r;
+	} else {
+		return strdup("");
+	}
 }
 
 static int is_function(Elf_Sym *sym)
@@ -1220,6 +1358,19 @@ static int is_function(Elf_Sym *sym)
 		return ELF_ST_TYPE(sym->st_info) == STT_FUNC;
 	else
 		return -1;
+}
+
+static void print_section_list(const char * const list[20])
+{
+	const char *const *s = list;
+
+	while (*s) {
+		fprintf(stderr, "%s", *s);
+		s++;
+		if (*s)
+			fprintf(stderr, ", ");
+	}
+	fprintf(stderr, "\n");
 }
 
 static inline void get_pretty_name(int is_func, const char** name, const char** name_p)
@@ -1239,31 +1390,143 @@ static inline void get_pretty_name(int is_func, const char** name, const char** 
 static void report_sec_mismatch(const char *modname,
 				const struct sectioncheck *mismatch,
 				const char *fromsec,
+				unsigned long long fromaddr,
 				const char *fromsym,
-				const char *tosec, const char *tosym)
+				int from_is_func,
+				const char *tosec, const char *tosym,
+				int to_is_func)
 {
+	const char *from, *from_p;
+	const char *to, *to_p;
+	char *prl_from;
+	char *prl_to;
+
 	sec_mismatch_count++;
+	if (!sec_mismatch_verbose)
+		return;
+
+	get_pretty_name(from_is_func, &from, &from_p);
+	get_pretty_name(to_is_func, &to, &to_p);
+
+	warn("%s(%s+0x%llx): Section mismatch in reference from the %s %s%s "
+	     "to the %s %s:%s%s\n",
+	     modname, fromsec, fromaddr, from, fromsym, from_p, to, tosec,
+	     tosym, to_p);
 
 	switch (mismatch->mismatch) {
 	case TEXT_TO_ANY_INIT:
-	case DATA_TO_ANY_INIT:
-	case TEXT_TO_ANY_EXIT:
-	case DATA_TO_ANY_EXIT:
-	case XXXINIT_TO_SOME_INIT:
-	case XXXEXIT_TO_SOME_EXIT:
-	case ANY_INIT_TO_ANY_EXIT:
-	case ANY_EXIT_TO_ANY_INIT:
-		warn("%s: section mismatch in reference: %s (section: %s) -> %s (section: %s)\n",
-		     modname, fromsym, fromsec, tosym, tosec);
+		prl_from = sec2annotation(fromsec);
+		prl_to = sec2annotation(tosec);
+		fprintf(stderr,
+		"The function %s%s() references\n"
+		"the %s %s%s%s.\n"
+		"This is often because %s lacks a %s\n"
+		"annotation or the annotation of %s is wrong.\n",
+		prl_from, fromsym,
+		to, prl_to, tosym, to_p,
+		fromsym, prl_to, tosym);
+		free(prl_from);
+		free(prl_to);
 		break;
-	case EXPORT_TO_INIT_EXIT:
-		warn("%s: EXPORT_SYMBOL used for init/exit symbol: %s (section: %s)\n",
-		     modname, tosym, tosec);
-		break;
-	case EXTABLE_TO_NON_TEXT:
-		fatal("There's a special handler for this mismatch type, we should never get here.\n");
+	case DATA_TO_ANY_INIT: {
+		prl_to = sec2annotation(tosec);
+		fprintf(stderr,
+		"The variable %s references\n"
+		"the %s %s%s%s\n"
+		"If the reference is valid then annotate the\n"
+		"variable with __init* or __refdata (see linux/init.h) "
+		"or name the variable:\n",
+		fromsym, to, prl_to, tosym, to_p);
+		print_section_list(mismatch->symbol_white_list);
+		free(prl_to);
 		break;
 	}
+	case TEXT_TO_ANY_EXIT:
+		prl_to = sec2annotation(tosec);
+		fprintf(stderr,
+		"The function %s() references a %s in an exit section.\n"
+		"Often the %s %s%s has valid usage outside the exit section\n"
+		"and the fix is to remove the %sannotation of %s.\n",
+		fromsym, to, to, tosym, to_p, prl_to, tosym);
+		free(prl_to);
+		break;
+	case DATA_TO_ANY_EXIT: {
+		prl_to = sec2annotation(tosec);
+		fprintf(stderr,
+		"The variable %s references\n"
+		"the %s %s%s%s\n"
+		"If the reference is valid then annotate the\n"
+		"variable with __exit* (see linux/init.h) or "
+		"name the variable:\n",
+		fromsym, to, prl_to, tosym, to_p);
+		print_section_list(mismatch->symbol_white_list);
+		free(prl_to);
+		break;
+	}
+	case XXXINIT_TO_SOME_INIT:
+	case XXXEXIT_TO_SOME_EXIT:
+		prl_from = sec2annotation(fromsec);
+		prl_to = sec2annotation(tosec);
+		fprintf(stderr,
+		"The %s %s%s%s references\n"
+		"a %s %s%s%s.\n"
+		"If %s is only used by %s then\n"
+		"annotate %s with a matching annotation.\n",
+		from, prl_from, fromsym, from_p,
+		to, prl_to, tosym, to_p,
+		tosym, fromsym, tosym);
+		free(prl_from);
+		free(prl_to);
+		break;
+	case ANY_INIT_TO_ANY_EXIT:
+		prl_from = sec2annotation(fromsec);
+		prl_to = sec2annotation(tosec);
+		fprintf(stderr,
+		"The %s %s%s%s references\n"
+		"a %s %s%s%s.\n"
+		"This is often seen when error handling "
+		"in the init function\n"
+		"uses functionality in the exit path.\n"
+		"The fix is often to remove the %sannotation of\n"
+		"%s%s so it may be used outside an exit section.\n",
+		from, prl_from, fromsym, from_p,
+		to, prl_to, tosym, to_p,
+		prl_to, tosym, to_p);
+		free(prl_from);
+		free(prl_to);
+		break;
+	case ANY_EXIT_TO_ANY_INIT:
+		prl_from = sec2annotation(fromsec);
+		prl_to = sec2annotation(tosec);
+		fprintf(stderr,
+		"The %s %s%s%s references\n"
+		"a %s %s%s%s.\n"
+		"This is often seen when error handling "
+		"in the exit function\n"
+		"uses functionality in the init path.\n"
+		"The fix is often to remove the %sannotation of\n"
+		"%s%s so it may be used outside an init section.\n",
+		from, prl_from, fromsym, from_p,
+		to, prl_to, tosym, to_p,
+		prl_to, tosym, to_p);
+		free(prl_from);
+		free(prl_to);
+		break;
+	case EXPORT_TO_INIT_EXIT:
+		prl_to = sec2annotation(tosec);
+		fprintf(stderr,
+		"The symbol %s is exported and annotated %s\n"
+		"Fix this by removing the %sannotation of %s "
+		"or drop the export.\n",
+		tosym, prl_to, prl_to, tosym);
+		free(prl_to);
+		break;
+	case EXTABLE_TO_NON_TEXT:
+		fatal("There's a special handler for this mismatch type, "
+		      "we should never get here.");
+		break;
+	}
+	fprintf(stderr, "\n");
 }
 
 static void default_mismatch_handler(const char *modname, struct elf_info *elf,
@@ -1279,6 +1542,10 @@ static void default_mismatch_handler(const char *modname, struct elf_info *elf,
 	from = find_elf_symbol2(elf, r->r_offset, fromsec);
 	fromsym = sym_name(elf, from);
 
+	if (!strncmp(fromsym, "reference___initcall",
+		     sizeof("reference___initcall")-1))
+		return;
+
 	tosec = sec_name(elf, get_secindex(elf, sym));
 	to = find_elf_symbol(elf, r->r_addend, sym);
 	tosym = sym_name(elf, to);
@@ -1287,7 +1554,9 @@ static void default_mismatch_handler(const char *modname, struct elf_info *elf,
 	if (secref_whitelist(mismatch,
 			     fromsec, fromsym, tosec, tosym)) {
 		report_sec_mismatch(modname, mismatch,
-				    fromsec, fromsym, tosec, tosym);
+				    fromsec, r->r_offset, fromsym,
+				    is_function(from), tosec, tosym,
+				    is_function(to));
 	}
 }
 
@@ -1383,7 +1652,9 @@ static void extable_mismatch_handler(const char* modname, struct elf_info *elf,
 
 	sec_mismatch_count++;
 
-	report_extable_warnings(modname, elf, mismatch, r, sym, fromsec, tosec);
+	if (sec_mismatch_verbose)
+		report_extable_warnings(modname, elf, mismatch, r, sym,
+					fromsec, tosec);
 
 	if (match(tosec, mismatch->bad_tosec))
 		fatal("The relocation at %s+0x%lx references\n"
@@ -1429,7 +1700,11 @@ static void check_section_mismatch(const char *modname, struct elf_info *elf,
 static unsigned int *reloc_location(struct elf_info *elf,
 				    Elf_Shdr *sechdr, Elf_Rela *r)
 {
-	return sym_get_data_by_offset(elf, sechdr->sh_info, r->r_offset);
+	Elf_Shdr *sechdrs = elf->sechdrs;
+	int section = sechdr->sh_info;
+
+	return (void *)elf->hdr + sechdrs[section].sh_offset +
+		r->r_offset;
 }
 
 static int addend_386_rel(struct elf_info *elf, Elf_Shdr *sechdr, Elf_Rela *r)
@@ -1443,6 +1718,9 @@ static int addend_386_rel(struct elf_info *elf, Elf_Shdr *sechdr, Elf_Rela *r)
 		break;
 	case R_386_PC32:
 		r->r_addend = TO_NATIVE(*location) + 4;
+		/* For CONFIG_RELOCATABLE=y */
+		if (elf->hdr->e_type == ET_EXEC)
+			r->r_addend += r->r_offset;
 		break;
 	}
 	return 0;
@@ -1515,14 +1793,6 @@ static int addend_mips_rel(struct elf_info *elf, Elf_Shdr *sechdr, Elf_Rela *r)
 	return 0;
 }
 
-#ifndef EM_RISCV
-#define EM_RISCV		243
-#endif
-
-#ifndef R_RISCV_SUB32
-#define R_RISCV_SUB32		39
-#endif
-
 static void section_rela(const char *modname, struct elf_info *elf,
 			 Elf_Shdr *sechdr)
 {
@@ -1535,7 +1805,8 @@ static void section_rela(const char *modname, struct elf_info *elf,
 	Elf_Rela *start = (void *)elf->hdr + sechdr->sh_offset;
 	Elf_Rela *stop  = (void *)start + sechdr->sh_size;
 
-	fromsec = sec_name(elf, sechdr->sh_info);
+	fromsec = sech_name(elf, sechdr);
+	fromsec += strlen(".rela");
 	/* if from section (name) is know good then skip it */
 	if (match(fromsec, section_white_list))
 		return;
@@ -1558,13 +1829,6 @@ static void section_rela(const char *modname, struct elf_info *elf,
 		r_sym = ELF_R_SYM(r.r_info);
 #endif
 		r.r_addend = TO_NATIVE(rela->r_addend);
-		switch (elf->hdr->e_machine) {
-		case EM_RISCV:
-			if (!strcmp("__ex_table", fromsec) &&
-			    ELF_R_TYPE(r.r_info) == R_RISCV_SUB32)
-				continue;
-			break;
-		}
 		sym = elf->symtab_start + r_sym;
 		/* Skip special sections */
 		if (is_shndx_special(sym->st_shndx))
@@ -1587,7 +1851,8 @@ static void section_rel(const char *modname, struct elf_info *elf,
 	Elf_Rel *start = (void *)elf->hdr + sechdr->sh_offset;
 	Elf_Rel *stop  = (void *)start + sechdr->sh_size;
 
-	fromsec = sec_name(elf, sechdr->sh_info);
+	fromsec = sech_name(elf, sechdr);
+	fromsec += strlen(".rel");
 	/* if from section (name) is know good then skip it */
 	if (match(fromsec, section_white_list))
 		return;
@@ -1646,7 +1911,8 @@ static void section_rel(const char *modname, struct elf_info *elf,
  * to find all references to a section that reference a section that will
  * be discarded and warns about it.
  **/
-static void check_sec_ref(const char *modname, struct elf_info *elf)
+static void check_sec_ref(struct module *mod, const char *modname,
+			  struct elf_info *elf)
 {
 	int i;
 	Elf_Shdr *sechdrs = elf->sechdrs;
@@ -1668,116 +1934,17 @@ static char *remove_dot(char *s)
 
 	if (n && s[n]) {
 		size_t m = strspn(s + n + 1, "0123456789");
-		if (m && (s[n + m + 1] == '.' || s[n + m + 1] == 0))
+		if (m && (s[n + m] == '.' || s[n + m] == 0))
 			s[n] = 0;
 	}
 	return s;
 }
 
-/*
- * The CRCs are recorded in .*.cmd files in the form of:
- * #SYMVER <name> <crc>
- */
-static void extract_crcs_for_object(const char *object, struct module *mod)
-{
-	char cmd_file[PATH_MAX];
-	char *buf, *p;
-	const char *base;
-	int dirlen, ret;
-
-	base = strrchr(object, '/');
-	if (base) {
-		base++;
-		dirlen = base - object;
-	} else {
-		dirlen = 0;
-		base = object;
-	}
-
-	ret = snprintf(cmd_file, sizeof(cmd_file), "%.*s.%s.cmd",
-		       dirlen, object, base);
-	if (ret >= sizeof(cmd_file)) {
-		error("%s: too long path was truncated\n", cmd_file);
-		return;
-	}
-
-	buf = read_text_file(cmd_file);
-	p = buf;
-
-	while ((p = strstr(p, "\n#SYMVER "))) {
-		char *name;
-		size_t namelen;
-		unsigned int crc;
-		struct symbol *sym;
-
-		name = p + strlen("\n#SYMVER ");
-
-		p = strchr(name, ' ');
-		if (!p)
-			break;
-
-		namelen = p - name;
-		p++;
-
-		if (!isdigit(*p))
-			continue;	/* skip this line */
-
-		crc = strtol(p, &p, 0);
-		if (*p != '\n')
-			continue;	/* skip this line */
-
-		name[namelen] = '\0';
-
-		/*
-		 * sym_find_with_module() may return NULL here.
-		 * It typically occurs when CONFIG_TRIM_UNUSED_KSYMS=y.
-		 * Since commit e1327a127703, genksyms calculates CRCs of all
-		 * symbols, including trimmed ones. Ignore orphan CRCs.
-		 */
-		sym = sym_find_with_module(name, mod);
-		if (sym)
-			sym_set_crc(sym, crc);
-	}
-
-	free(buf);
-}
-
-/*
- * The symbol versions (CRC) are recorded in the .*.cmd files.
- * Parse them to retrieve CRCs for the current module.
- */
-static void mod_set_crcs(struct module *mod)
-{
-	char objlist[PATH_MAX];
-	char *buf, *p, *obj;
-	int ret;
-
-	if (mod->is_vmlinux) {
-		strcpy(objlist, ".vmlinux.objs");
-	} else {
-		/* objects for a module are listed in the *.mod file. */
-		ret = snprintf(objlist, sizeof(objlist), "%s.mod", mod->name);
-		if (ret >= sizeof(objlist)) {
-			error("%s: too long path was truncated\n", objlist);
-			return;
-		}
-	}
-
-	buf = read_text_file(objlist);
-	p = buf;
-
-	while ((obj = strsep(&p, "\n")) && obj[0])
-		extract_crcs_for_object(obj, mod);
-
-	free(buf);
-}
-
-static void read_symbols(const char *modname)
+static void read_symbols(char *modname)
 {
 	const char *symname;
 	char *version;
 	char *license;
-	char *namespace;
 	struct module *mod;
 	struct elf_info info = { };
 	Elf_Sym *sym;
@@ -1785,72 +1952,57 @@ static void read_symbols(const char *modname)
 	if (!parse_elf(&info, modname))
 		return;
 
-	if (!strends(modname, ".o")) {
-		error("%s: filename must be suffixed with .o\n", modname);
-		return;
+	mod = new_module(modname);
+
+	/* When there's no vmlinux, don't print warnings about
+	 * unresolved symbols (since there'll be too many ;) */
+	if (is_vmlinux(modname)) {
+		have_vmlinux = 1;
+		mod->skip = 1;
 	}
 
-	/* strip trailing .o */
-	mod = new_module(modname, strlen(modname) - strlen(".o"));
-
-	if (!mod->is_vmlinux) {
-		license = get_modinfo(&info, "license");
-		if (!license)
-			error("missing MODULE_LICENSE() in %s\n", modname);
-		while (license) {
-			if (!license_is_gpl_compatible(license)) {
-				mod->is_gpl_compatible = false;
-				break;
-			}
-			license = get_next_modinfo(&info, "license", license);
+	license = get_modinfo(info.modinfo, info.modinfo_len, "license");
+	if (!license && !is_vmlinux(modname))
+		warn("modpost: missing MODULE_LICENSE() in %s\n"
+		     "see include/linux/module.h for "
+		     "more information\n", modname);
+	while (license) {
+		if (license_is_gpl_compatible(license))
+			mod->gpl_compatible = 1;
+		else {
+			mod->gpl_compatible = 0;
+			break;
 		}
-
-		namespace = get_modinfo(&info, "import_ns");
-		while (namespace) {
-			add_namespace(&mod->imported_namespaces, namespace);
-			namespace = get_next_modinfo(&info, "import_ns",
-						     namespace);
-		}
+		license = get_next_modinfo(info.modinfo, info.modinfo_len,
+					   "license", license);
 	}
 
 	for (sym = info.symtab_start; sym < info.symtab_stop; sym++) {
 		symname = remove_dot(info.strtab + sym->st_name);
 
-		handle_symbol(mod, &info, sym, symname);
+		handle_modversions(mod, &info, sym, symname);
 		handle_moddevtable(mod, &info, sym, symname);
 	}
+	if (!is_vmlinux(modname) ||
+	     (is_vmlinux(modname) && vmlinux_section_warnings))
+		check_sec_ref(mod, modname, &info);
 
-	for (sym = info.symtab_start; sym < info.symtab_stop; sym++) {
-		symname = remove_dot(info.strtab + sym->st_name);
-
-		/* Apply symbol namespaces from __kstrtabns_<symbol> entries. */
-		if (strstarts(symname, "__kstrtabns_"))
-			sym_update_namespace(symname + strlen("__kstrtabns_"),
-					     sym_get_data(&info, sym));
-	}
-
-	check_sec_ref(modname, &info);
-
-	if (!mod->is_vmlinux) {
-		version = get_modinfo(&info, "version");
-		if (version || all_versions)
-			get_src_version(mod->name, mod->srcversion,
-					sizeof(mod->srcversion) - 1);
-	}
+	version = get_modinfo(info.modinfo, info.modinfo_len, "version");
+	if (version)
+		maybe_frob_rcs_version(modname, version, info.modinfo,
+				       version - (char *)info.hdr);
+	if (version || (all_versions && !is_vmlinux(modname)))
+		get_src_version(modname, mod->srcversion,
+				sizeof(mod->srcversion)-1);
 
 	parse_elf_finish(&info);
 
-	if (modversions) {
-		/*
-		 * Our trick to get versioning for module struct etc. - it's
-		 * never passed as an argument to an exported function, so
-		 * the automatic versioning doesn't pick it up, but it's really
-		 * important anyhow.
-		 */
-		sym_add_unresolved("module_layout", mod, false);
-
-		mod_set_crcs(mod);
-	}
+	/* Our trick to get versioning for module struct etc. - it's
+	 * never passed as an argument to an exported function, so
+	 * the automatic versioning doesn't pick it up, but it's really
+	 * important anyhow */
+	if (modversions)
+		mod->unres = alloc_symbol("module_layout", 0, mod->unres);
 }
 
 static void read_symbols_from_files(const char *filename)
@@ -1897,57 +2049,74 @@ void buf_write(struct buffer *buf, const char *s, int len)
 {
 	if (buf->size - buf->pos < len) {
 		buf->size += len + SZ;
-		buf->p = NOFAIL(realloc(buf->p, buf->size));
+		buf->p = realloc(buf->p, buf->size);
 	}
 	strncpy(buf->p + buf->pos, s, len);
 	buf->pos += len;
+}
+
+static void check_for_gpl_usage(enum export exp, const char *m, const char *s)
+{
+	const char *e = is_vmlinux(m) ?"":".ko";
+
+	switch (exp) {
+	case export_gpl:
+		fatal("modpost: GPL-incompatible module %s%s "
+		      "uses GPL-only symbol '%s'\n", m, e, s);
+		break;
+	case export_unused_gpl:
+		fatal("modpost: GPL-incompatible module %s%s "
+		      "uses GPL-only symbol marked UNUSED '%s'\n", m, e, s);
+		break;
+	case export_gpl_future:
+		warn("modpost: GPL-incompatible module %s%s "
+		      "uses future GPL-only symbol '%s'\n", m, e, s);
+		break;
+	case export_plain:
+	case export_unused:
+	case export_unknown:
+		/* ignore */
+		break;
+	}
+}
+
+static void check_for_unused(enum export exp, const char *m, const char *s)
+{
+	const char *e = is_vmlinux(m) ?"":".ko";
+
+	switch (exp) {
+	case export_unused:
+	case export_unused_gpl:
+		warn("modpost: module %s%s "
+		      "uses symbol '%s' marked UNUSED\n", m, e, s);
+		break;
+	default:
+		/* ignore */
+		break;
+	}
 }
 
 static void check_exports(struct module *mod)
 {
 	struct symbol *s, *exp;
 
-	list_for_each_entry(s, &mod->unresolved_symbols, list) {
+	for (s = mod->unres; s; s = s->next) {
 		const char *basename;
 		exp = find_symbol(s->name);
-		if (!exp) {
-			if (!s->weak && nr_unresolved++ < MAX_UNRESOLVED_REPORTS)
-				modpost_log(warn_unresolved ? LOG_WARN : LOG_ERROR,
-					    "\"%s\" [%s.ko] undefined!\n",
-					    s->name, mod->name);
+		if (!exp || exp->module == mod)
 			continue;
-		}
-		if (exp->module == mod) {
-			error("\"%s\" [%s.ko] was exported without definition\n",
-			      s->name, mod->name);
-			continue;
-		}
-
-		s->module = exp->module;
-		s->crc_valid = exp->crc_valid;
-		s->crc = exp->crc;
-
 		basename = strrchr(mod->name, '/');
 		if (basename)
 			basename++;
 		else
 			basename = mod->name;
-
-		if (exp->namespace &&
-		    !contains_namespace(&mod->imported_namespaces, exp->namespace)) {
-			modpost_log(allow_missing_ns_imports ? LOG_WARN : LOG_ERROR,
-				    "module %s uses symbol %s from namespace %s, but does not import it.\n",
-				    basename, exp->name, exp->namespace);
-			add_namespace(&mod->missing_namespaces, exp->namespace);
-		}
-
-		if (!mod->is_gpl_compatible && exp->is_gpl_only)
-			error("GPL-incompatible module %s.ko uses GPL-only symbol '%s'\n",
-			      basename, exp->name);
+		if (!mod->gpl_compatible)
+			check_for_gpl_usage(exp->export, basename, exp->name);
+		check_for_unused(exp->export, basename, exp->name);
 	}
 }
 
-static void check_modname_len(struct module *mod)
+static int check_modname_len(struct module *mod)
 {
 	const char *mod_name;
 
@@ -1956,8 +2125,12 @@ static void check_modname_len(struct module *mod)
 		mod_name = mod->name;
 	else
 		mod_name++;
-	if (strlen(mod_name) >= MODULE_NAME_LEN)
-		error("module name is too long [%s.ko]\n", mod->name);
+	if (strlen(mod_name) >= MODULE_NAME_LEN) {
+		merror("module name is too long [%s.ko]\n", mod->name);
+		return 1;
+	}
+
+	return 0;
 }
 
 /**
@@ -1966,25 +2139,14 @@ static void check_modname_len(struct module *mod)
 static void add_header(struct buffer *b, struct module *mod)
 {
 	buf_printf(b, "#include <linux/module.h>\n");
-	/*
-	 * Include build-salt.h after module.h in order to
-	 * inherit the definitions.
-	 */
-	buf_printf(b, "#define INCLUDE_VERMAGIC\n");
-	buf_printf(b, "#include <linux/build-salt.h>\n");
-	buf_printf(b, "#include <linux/elfnote-lto.h>\n");
-	buf_printf(b, "#include <linux/export-internal.h>\n");
 	buf_printf(b, "#include <linux/vermagic.h>\n");
 	buf_printf(b, "#include <linux/compiler.h>\n");
-	buf_printf(b, "\n");
-	buf_printf(b, "BUILD_SALT;\n");
-	buf_printf(b, "BUILD_LTO_INFO;\n");
 	buf_printf(b, "\n");
 	buf_printf(b, "MODULE_INFO(vermagic, VERMAGIC_STRING);\n");
 	buf_printf(b, "MODULE_INFO(name, KBUILD_MODNAME);\n");
 	buf_printf(b, "\n");
 	buf_printf(b, "__visible struct module __this_module\n");
-	buf_printf(b, "__section(\".gnu.linkonce.this_module\") = {\n");
+	buf_printf(b, "__attribute__((section(\".gnu.linkonce.this_module\"))) = {\n");
 	buf_printf(b, "\t.name = KBUILD_MODNAME,\n");
 	if (mod->has_init)
 		buf_printf(b, "\t.init = init_module,\n");
@@ -1994,59 +2156,67 @@ static void add_header(struct buffer *b, struct module *mod)
 			      "#endif\n");
 	buf_printf(b, "\t.arch = MODULE_ARCH_INIT,\n");
 	buf_printf(b, "};\n");
-
-	if (!external_module)
-		buf_printf(b, "\nMODULE_INFO(intree, \"Y\");\n");
-
-	buf_printf(b,
-		   "\n"
-		   "#ifdef CONFIG_RETPOLINE\n"
-		   "MODULE_INFO(retpoline, \"Y\");\n"
-		   "#endif\n");
-
-	if (strstarts(mod->name, "drivers/staging"))
-		buf_printf(b, "\nMODULE_INFO(staging, \"Y\");\n");
-
-	if (strstarts(mod->name, "tools/testing"))
-		buf_printf(b, "\nMODULE_INFO(test, \"Y\");\n");
 }
 
-static void add_exported_symbols(struct buffer *buf, struct module *mod)
+static void add_intree_flag(struct buffer *b, int is_intree)
 {
-	struct symbol *sym;
+	if (is_intree)
+		buf_printf(b, "\nMODULE_INFO(intree, \"Y\");\n");
+}
 
-	if (!modversions)
-		return;
+/* Cannot check for assembler */
+static void add_retpoline(struct buffer *b)
+{
+	buf_printf(b, "\n#ifdef RETPOLINE\n");
+	buf_printf(b, "MODULE_INFO(retpoline, \"Y\");\n");
+	buf_printf(b, "#endif\n");
+}
 
-	/* record CRCs for exported symbols */
-	buf_printf(buf, "\n");
-	list_for_each_entry(sym, &mod->exported_symbols, list) {
-		if (!sym->crc_valid)
-			warn("EXPORT symbol \"%s\" [%s%s] version generation failed, symbol will not be versioned.\n"
-			     "Is \"%s\" prototyped in <asm/asm-prototypes.h>?\n",
-			     sym->name, mod->name, mod->is_vmlinux ? "" : ".ko",
-			     sym->name);
+static void add_staging_flag(struct buffer *b, const char *name)
+{
+	static const char *staging_dir = "drivers/staging";
 
-		buf_printf(buf, "SYMBOL_CRC(%s, 0x%08x, \"%s\");\n",
-			   sym->name, sym->crc, sym->is_gpl_only ? "_gpl" : "");
-	}
+	if (strncmp(staging_dir, name, strlen(staging_dir)) == 0)
+		buf_printf(b, "\nMODULE_INFO(staging, \"Y\");\n");
 }
 
 /**
  * Record CRCs for unresolved symbols
  **/
-static void add_versions(struct buffer *b, struct module *mod)
+static int add_versions(struct buffer *b, struct module *mod)
 {
-	struct symbol *s;
+	struct symbol *s, *exp;
+	int err = 0;
+
+	for (s = mod->unres; s; s = s->next) {
+		exp = find_symbol(s->name);
+		if (!exp || exp->module == mod) {
+			if (have_vmlinux && !s->weak) {
+				if (warn_unresolved) {
+					warn("\"%s\" [%s.ko] undefined!\n",
+					     s->name, mod->name);
+				} else {
+					merror("\"%s\" [%s.ko] undefined!\n",
+					       s->name, mod->name);
+					err = 1;
+				}
+			}
+			continue;
+		}
+		s->module = exp->module;
+		s->crc_valid = exp->crc_valid;
+		s->crc = exp->crc;
+	}
 
 	if (!modversions)
-		return;
+		return err;
 
 	buf_printf(b, "\n");
 	buf_printf(b, "static const struct modversion_info ____versions[]\n");
-	buf_printf(b, "__used __section(\"__versions\") = {\n");
+	buf_printf(b, "__used\n");
+	buf_printf(b, "__attribute__((section(\"__versions\"))) = {\n");
 
-	list_for_each_entry(s, &mod->unresolved_symbols, list) {
+	for (s = mod->unres; s; s = s->next) {
 		if (!s->module)
 			continue;
 		if (!s->crc_valid) {
@@ -2055,31 +2225,36 @@ static void add_versions(struct buffer *b, struct module *mod)
 			continue;
 		}
 		if (strlen(s->name) >= MODULE_NAME_LEN) {
-			error("too long symbol \"%s\" [%s.ko]\n",
-			      s->name, mod->name);
+			merror("too long symbol \"%s\" [%s.ko]\n",
+			       s->name, mod->name);
+			err = 1;
 			break;
 		}
-		buf_printf(b, "\t{ %#8x, \"%s\" },\n",
+		buf_printf(b, "\t{ %#8x, __VMLINUX_SYMBOL_STR(%s) },\n",
 			   s->crc, s->name);
 	}
 
 	buf_printf(b, "};\n");
+
+	return err;
 }
 
-static void add_depends(struct buffer *b, struct module *mod)
+static void add_depends(struct buffer *b, struct module *mod,
+			struct module *modules)
 {
 	struct symbol *s;
+	struct module *m;
 	int first = 1;
 
-	/* Clear ->seen flag of modules that own symbols needed by this. */
-	list_for_each_entry(s, &mod->unresolved_symbols, list) {
-		if (s->module)
-			s->module->seen = s->module->is_vmlinux;
-	}
+	for (m = modules; m; m = m->next)
+		m->seen = is_vmlinux(m->name);
 
 	buf_printf(b, "\n");
-	buf_printf(b, "MODULE_INFO(depends, \"");
-	list_for_each_entry(s, &mod->unresolved_symbols, list) {
+	buf_printf(b, "static const char __module_depends[]\n");
+	buf_printf(b, "__used\n");
+	buf_printf(b, "__attribute__((section(\".modinfo\"))) =\n");
+	buf_printf(b, "\"depends=");
+	for (s = mod->unres; s; s = s->next) {
 		const char *p;
 		if (!s->module)
 			continue;
@@ -2087,7 +2262,7 @@ static void add_depends(struct buffer *b, struct module *mod)
 		if (s->module->seen)
 			continue;
 
-		s->module->seen = true;
+		s->module->seen = 1;
 		p = strrchr(s->module->name, '/');
 		if (p)
 			p++;
@@ -2096,7 +2271,7 @@ static void add_depends(struct buffer *b, struct module *mod)
 		buf_printf(b, "%s%s", first ? "" : ",", p);
 		first = 0;
 	}
-	buf_printf(b, "\");\n");
+	buf_printf(b, "\";\n");
 }
 
 static void add_srcversion(struct buffer *b, struct module *mod)
@@ -2105,28 +2280,6 @@ static void add_srcversion(struct buffer *b, struct module *mod)
 		buf_printf(b, "\n");
 		buf_printf(b, "MODULE_INFO(srcversion, \"%s\");\n",
 			   mod->srcversion);
-	}
-}
-
-static void write_buf(struct buffer *b, const char *fname)
-{
-	FILE *file;
-
-	if (error_occurred)
-		return;
-
-	file = fopen(fname, "w");
-	if (!file) {
-		perror(fname);
-		exit(1);
-	}
-	if (fwrite(b->p, 1, b->pos, file) != b->pos) {
-		perror(fname);
-		exit(1);
-	}
-	if (fclose(file) != 0) {
-		perror(fname);
-		exit(1);
 	}
 }
 
@@ -2162,70 +2315,36 @@ static void write_if_changed(struct buffer *b, const char *fname)
  close_write:
 	fclose(file);
  write:
-	write_buf(b, fname);
-}
-
-static void write_vmlinux_export_c_file(struct module *mod)
-{
-	struct buffer buf = { };
-
-	buf_printf(&buf,
-		   "#include <linux/export-internal.h>\n");
-
-	add_exported_symbols(&buf, mod);
-	write_if_changed(&buf, ".vmlinux.export.c");
-	free(buf.p);
-}
-
-/* do sanity checks, and generate *.mod.c file */
-static void write_mod_c_file(struct module *mod)
-{
-	struct buffer buf = { };
-	char fname[PATH_MAX];
-	int ret;
-
-	check_modname_len(mod);
-	check_exports(mod);
-
-	add_header(&buf, mod);
-	add_exported_symbols(&buf, mod);
-	add_versions(&buf, mod);
-	add_depends(&buf, mod);
-	add_moddevtable(&buf, mod);
-	add_srcversion(&buf, mod);
-
-	ret = snprintf(fname, sizeof(fname), "%s.mod.c", mod->name);
-	if (ret >= sizeof(fname)) {
-		error("%s: too long path was truncated\n", fname);
-		goto free;
+	file = fopen(fname, "w");
+	if (!file) {
+		perror(fname);
+		exit(1);
 	}
-
-	write_if_changed(&buf, fname);
-
-free:
-	free(buf.p);
+	if (fwrite(b->p, 1, b->pos, file) != b->pos) {
+		perror(fname);
+		exit(1);
+	}
+	fclose(file);
 }
 
 /* parse Module.symvers file. line format:
- * 0x12345678<tab>symbol<tab>module<tab>export<tab>namespace
+ * 0x12345678<tab>symbol<tab>module[[<tab>export]<tab>something]
  **/
-static void read_dump(const char *fname)
+static void read_dump(const char *fname, unsigned int kernel)
 {
-	char *buf, *pos, *line;
+	unsigned long size, pos = 0;
+	void *file = grab_file(fname, &size);
+	char *line;
 
-	buf = read_text_file(fname);
-	if (!buf)
+	if (!file)
 		/* No symbol versions, silently ignore */
 		return;
 
-	pos = buf;
-
-	while ((line = get_line(&pos))) {
-		char *symname, *namespace, *modname, *d, *export;
+	while ((line = get_next_line(&pos, file, size))) {
+		char *symname, *modname, *d, *export, *end;
 		unsigned int crc;
 		struct module *mod;
 		struct symbol *s;
-		bool gpl_only;
 
 		if (!(symname = strchr(line, '\t')))
 			goto fail;
@@ -2233,145 +2352,140 @@ static void read_dump(const char *fname)
 		if (!(modname = strchr(symname, '\t')))
 			goto fail;
 		*modname++ = '\0';
-		if (!(export = strchr(modname, '\t')))
-			goto fail;
-		*export++ = '\0';
-		if (!(namespace = strchr(export, '\t')))
-			goto fail;
-		*namespace++ = '\0';
-
+		if ((export = strchr(modname, '\t')) != NULL)
+			*export++ = '\0';
+		if (export && ((end = strchr(export, '\t')) != NULL))
+			*end = '\0';
 		crc = strtoul(line, &d, 16);
 		if (*symname == '\0' || *modname == '\0' || *d != '\0')
 			goto fail;
-
-		if (!strcmp(export, "EXPORT_SYMBOL_GPL")) {
-			gpl_only = true;
-		} else if (!strcmp(export, "EXPORT_SYMBOL")) {
-			gpl_only = false;
-		} else {
-			error("%s: unknown license %s. skip", symname, export);
-			continue;
-		}
-
 		mod = find_module(modname);
 		if (!mod) {
-			mod = new_module(modname, strlen(modname));
-			mod->from_dump = true;
+			if (is_vmlinux(modname))
+				have_vmlinux = 1;
+			mod = new_module(modname);
+			mod->skip = 1;
 		}
-		s = sym_add_exported(symname, mod, gpl_only);
-		sym_set_crc(s, crc);
-		sym_update_namespace(symname, namespace);
+		s = sym_add_exported(symname, mod, export_no(export));
+		s->kernel    = kernel;
+		s->preloaded = 1;
+		sym_update_crc(symname, mod, crc, export_no(export));
 	}
-	free(buf);
+	release_file(file, size);
 	return;
 fail:
-	free(buf);
+	release_file(file, size);
 	fatal("parse error in symbol dump file\n");
+}
+
+/* For normal builds always dump all symbols.
+ * For external modules only dump symbols
+ * that are not read from kernel Module.symvers.
+ **/
+static int dump_sym(struct symbol *sym)
+{
+	if (!external_module)
+		return 1;
+	if (sym->vmlinux || sym->kernel)
+		return 0;
+	return 1;
 }
 
 static void write_dump(const char *fname)
 {
 	struct buffer buf = { };
-	struct module *mod;
-	struct symbol *sym;
+	struct symbol *symbol;
+	int n;
 
-	list_for_each_entry(mod, &modules, list) {
-		if (mod->from_dump)
-			continue;
-		list_for_each_entry(sym, &mod->exported_symbols, list) {
-			buf_printf(&buf, "0x%08x\t%s\t%s\tEXPORT_SYMBOL%s\t%s\n",
-				   sym->crc, sym->name, mod->name,
-				   sym->is_gpl_only ? "_GPL" : "",
-				   sym->namespace ?: "");
+	for (n = 0; n < SYMBOL_HASH_SIZE ; n++) {
+		symbol = symbolhash[n];
+		while (symbol) {
+			if (dump_sym(symbol))
+				buf_printf(&buf, "0x%08x\t%s\t%s\t%s\n",
+					symbol->crc, symbol->name,
+					symbol->module->name,
+					export_str(symbol->export));
+			symbol = symbol->next;
 		}
 	}
-	write_buf(&buf, fname);
+	write_if_changed(&buf, fname);
 	free(buf.p);
 }
 
-static void write_namespace_deps_files(const char *fname)
-{
-	struct module *mod;
-	struct namespace_list *ns;
-	struct buffer ns_deps_buf = {};
-
-	list_for_each_entry(mod, &modules, list) {
-
-		if (mod->from_dump || list_empty(&mod->missing_namespaces))
-			continue;
-
-		buf_printf(&ns_deps_buf, "%s.ko:", mod->name);
-
-		list_for_each_entry(ns, &mod->missing_namespaces, list)
-			buf_printf(&ns_deps_buf, " %s", ns->namespace);
-
-		buf_printf(&ns_deps_buf, "\n");
-	}
-
-	write_if_changed(&ns_deps_buf, fname);
-	free(ns_deps_buf.p);
-}
-
-struct dump_list {
-	struct list_head list;
+struct ext_sym_list {
+	struct ext_sym_list *next;
 	const char *file;
 };
 
 int main(int argc, char **argv)
 {
 	struct module *mod;
-	char *missing_namespace_deps = NULL;
+	struct buffer buf = { };
+	char *kernel_read = NULL, *module_read = NULL;
 	char *dump_write = NULL, *files_source = NULL;
 	int opt;
-	LIST_HEAD(dump_lists);
-	struct dump_list *dl, *dl2;
+	int err;
+	struct ext_sym_list *extsym_iter;
+	struct ext_sym_list *extsym_start = NULL;
 
-	while ((opt = getopt(argc, argv, "ei:mnT:o:awENd:")) != -1) {
+	while ((opt = getopt(argc, argv, "i:I:e:mnsST:o:awM:K:E")) != -1) {
 		switch (opt) {
-		case 'e':
-			external_module = true;
-			break;
 		case 'i':
-			dl = NOFAIL(malloc(sizeof(*dl)));
-			dl->file = optarg;
-			list_add_tail(&dl->list, &dump_lists);
+			kernel_read = optarg;
+			break;
+		case 'I':
+			module_read = optarg;
+			external_module = 1;
+			break;
+		case 'e':
+			external_module = 1;
+			extsym_iter =
+			   NOFAIL(malloc(sizeof(*extsym_iter)));
+			extsym_iter->next = extsym_start;
+			extsym_iter->file = optarg;
+			extsym_start = extsym_iter;
 			break;
 		case 'm':
-			modversions = true;
+			modversions = 1;
 			break;
 		case 'n':
-			ignore_missing_files = true;
+			ignore_missing_files = 1;
 			break;
 		case 'o':
 			dump_write = optarg;
 			break;
 		case 'a':
-			all_versions = true;
+			all_versions = 1;
+			break;
+		case 's':
+			vmlinux_section_warnings = 0;
+			break;
+		case 'S':
+			sec_mismatch_verbose = 0;
 			break;
 		case 'T':
 			files_source = optarg;
 			break;
 		case 'w':
-			warn_unresolved = true;
+			warn_unresolved = 1;
 			break;
 		case 'E':
-			sec_mismatch_warn_only = false;
-			break;
-		case 'N':
-			allow_missing_ns_imports = true;
-			break;
-		case 'd':
-			missing_namespace_deps = optarg;
+			sec_mismatch_fatal = 1;
 			break;
 		default:
 			exit(1);
 		}
 	}
 
-	list_for_each_entry_safe(dl, dl2, &dump_lists, list) {
-		read_dump(dl->file);
-		list_del(&dl->list);
-		free(dl);
+	if (kernel_read)
+		read_dump(kernel_read, 1);
+	if (module_read)
+		read_dump(module_read, 0);
+	while (extsym_start) {
+		read_dump(extsym_start->file, 0);
+		extsym_iter = extsym_start->next;
+		free(extsym_start);
+		extsym_start = extsym_iter;
 	}
 
 	while (optind < argc)
@@ -2380,28 +2494,50 @@ int main(int argc, char **argv)
 	if (files_source)
 		read_symbols_from_files(files_source);
 
-	list_for_each_entry(mod, &modules, list) {
-		if (mod->from_dump)
+	for (mod = modules; mod; mod = mod->next) {
+		if (mod->skip)
 			continue;
-
-		if (mod->is_vmlinux)
-			write_vmlinux_export_c_file(mod);
-		else
-			write_mod_c_file(mod);
+		check_exports(mod);
 	}
 
-	if (missing_namespace_deps)
-		write_namespace_deps_files(missing_namespace_deps);
+	err = 0;
 
+	for (mod = modules; mod; mod = mod->next) {
+		char fname[PATH_MAX];
+
+		if (mod->skip)
+			continue;
+
+		buf.pos = 0;
+
+		err |= check_modname_len(mod);
+		add_header(&buf, mod);
+		add_intree_flag(&buf, !external_module);
+		add_retpoline(&buf);
+		add_staging_flag(&buf, mod->name);
+		err |= add_versions(&buf, mod);
+		add_depends(&buf, mod, modules);
+		add_moddevtable(&buf, mod);
+		add_srcversion(&buf, mod);
+
+		sprintf(fname, "%s.mod.c", mod->name);
+		write_if_changed(&buf, fname);
+	}
 	if (dump_write)
 		write_dump(dump_write);
-	if (sec_mismatch_count && !sec_mismatch_warn_only)
-		error("Section mismatches detected.\n"
-		      "Set CONFIG_SECTION_MISMATCH_WARN_ONLY=y to allow them.\n");
+	if (sec_mismatch_count) {
+		if (!sec_mismatch_verbose) {
+			warn("modpost: Found %d section mismatch(es).\n"
+			     "To see full details build your kernel with:\n"
+			     "'make CONFIG_DEBUG_SECTION_MISMATCH=y'\n",
+			     sec_mismatch_count);
+		}
+		if (sec_mismatch_fatal) {
+			fatal("modpost: Section mismatches detected.\n"
+			      "Set CONFIG_SECTION_MISMATCH_WARN_ONLY=y to allow them.\n");
+		}
+	}
+	free(buf.p);
 
-	if (nr_unresolved > MAX_UNRESOLVED_REPORTS)
-		warn("suppressed %u unresolved symbol warnings because there were too many)\n",
-		     nr_unresolved - MAX_UNRESOLVED_REPORTS);
-
-	return error_occurred ? 1 : 0;
+	return err;
 }

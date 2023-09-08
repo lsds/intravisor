@@ -22,6 +22,7 @@
 #include <linux/clocksource.h>
 #include <linux/rtc.h>
 #include <asm/setup.h>
+#include <asm/pgtable.h>
 #include <asm/machdep.h>
 #include <asm/MC68VZ328.h>
 
@@ -52,6 +53,7 @@
 #endif
 
 static u32 m68328_tick_cnt;
+static irq_handler_t timer_interrupt;
 
 /***************************************************************************/
 
@@ -61,9 +63,16 @@ static irqreturn_t hw_tick(int irq, void *dummy)
 	TSTAT &= 0;
 
 	m68328_tick_cnt += TICKS_PER_JIFFY;
-	legacy_timer_tick(1);
-	return IRQ_HANDLED;
+	return timer_interrupt(irq, dummy);
 }
+
+/***************************************************************************/
+
+static struct irqaction m68328_timer_irq = {
+	.name	 = "timer",
+	.flags	 = IRQF_TIMER,
+	.handler = hw_tick,
+};
 
 /***************************************************************************/
 
@@ -91,19 +100,13 @@ static struct clocksource m68328_clk = {
 
 /***************************************************************************/
 
-void hw_timer_init(void)
+void hw_timer_init(irq_handler_t handler)
 {
-	int ret;
-
 	/* disable timer 1 */
 	TCTL = 0;
 
 	/* set ISR */
-	ret = request_irq(TMR_IRQ_NUM, hw_tick, IRQF_TIMER, "timer", NULL);
-	if (ret) {
-		pr_err("Failed to request irq %d (timer): %pe\n", TMR_IRQ_NUM,
-		       ERR_PTR(ret));
-	}
+	setup_irq(TMR_IRQ_NUM, &m68328_timer_irq);
 
 	/* Restart mode, Enable int, Set clock source */
 	TCTL = TCTL_OM | TCTL_IRQEN | CLOCK_SOURCE;
@@ -113,6 +116,7 @@ void hw_timer_init(void)
 	/* Enable timer 1 */
 	TCTL |= TCTL_TEN;
 	clocksource_register_hz(&m68328_clk, TICKS_PER_JIFFY*HZ);
+	timer_interrupt = handler;
 }
 
 /***************************************************************************/
@@ -121,9 +125,7 @@ int m68328_hwclk(int set, struct rtc_time *t)
 {
 	if (!set) {
 		long now = RTCTIME;
-		t->tm_year = 1;
-		t->tm_mon = 0;
-		t->tm_mday = 1;
+		t->tm_year = t->tm_mon = t->tm_mday = 1;
 		t->tm_hour = (now >> 24) % 24;
 		t->tm_min = (now >> 16) % 60;
 		t->tm_sec = now % 60;

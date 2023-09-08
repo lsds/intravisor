@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * A framebuffer driver for VBE 2.0+ compliant video cards
  *
@@ -45,7 +44,7 @@ static const struct fb_fix_screeninfo uvesafb_fix = {
 };
 
 static int mtrr		= 3;	/* enable mtrr by default */
-static bool blank	= true;	/* enable blanking by default */
+static bool blank	= 1;	/* enable blanking by default */
 static int ypan		= 1;	/* 0: scroll, 1: ypan, 2: ywrap */
 static bool pmi_setpal	= true; /* use PMI for palette changes */
 static bool nocrtc;		/* ignore CRTC settings */
@@ -167,7 +166,7 @@ static int uvesafb_exec(struct uvesafb_ktask *task)
 	memcpy(&m->id, &uvesafb_cn_id, sizeof(m->id));
 	m->seq = seq;
 	m->len = len;
-	m->ack = get_random_u32();
+	m->ack = prandom_u32();
 
 	/* uvesafb_task structure */
 	memcpy(m + 1, &task->t, sizeof(task->t));
@@ -423,7 +422,7 @@ static int uvesafb_vbe_getinfo(struct uvesafb_ktask *task,
 	task->t.flags = TF_VBEIB;
 	task->t.buf_len = sizeof(struct vbe_ib);
 	task->buf = &par->vbe_ib;
-	memcpy(par->vbe_ib.vbe_signature, "VBE2", 4);
+	strncpy(par->vbe_ib.vbe_signature, "VBE2", 4);
 
 	err = uvesafb_exec(task);
 	if (err || (task->t.regs.eax & 0xffff) != 0x004f) {
@@ -487,9 +486,8 @@ static int uvesafb_vbe_getmodes(struct uvesafb_ktask *task,
 		mode++;
 	}
 
-	par->vbe_modes = kcalloc(par->vbe_modes_cnt,
-				 sizeof(struct vbe_mode_ib),
-				 GFP_KERNEL);
+	par->vbe_modes = kzalloc(sizeof(struct vbe_mode_ib) *
+				par->vbe_modes_cnt, GFP_KERNEL);
 	if (!par->vbe_modes)
 		return -ENOMEM;
 
@@ -560,8 +558,6 @@ static int uvesafb_vbe_getpmi(struct uvesafb_ktask *task,
 	task->t.regs.eax = 0x4f0a;
 	task->t.regs.ebx = 0x0;
 	err = uvesafb_exec(task);
-	if (err)
-		return err;
 
 	if ((task->t.regs.eax & 0xffff) != 0x4f || task->t.regs.es < 0xc000) {
 		par->pmi_setpal = par->ypan = 0;
@@ -862,7 +858,7 @@ static int uvesafb_vbe_init_mode(struct fb_info *info)
 	 * Convert the modelist into a modedb so that we can use it with
 	 * fb_find_mode().
 	 */
-	mode = kcalloc(i, sizeof(*mode), GFP_KERNEL);
+	mode = kzalloc(i * sizeof(*mode), GFP_KERNEL);
 	if (mode) {
 		i = 0;
 		list_for_each(pos, &info->modelist) {
@@ -1048,8 +1044,7 @@ static int uvesafb_setcmap(struct fb_cmap *cmap, struct fb_info *info)
 		    info->cmap.len || cmap->start < info->cmap.start)
 			return -EINVAL;
 
-		entries = kmalloc_array(cmap->len, sizeof(*entries),
-					GFP_KERNEL);
+		entries = kmalloc(sizeof(*entries) * cmap->len, GFP_KERNEL);
 		if (!entries)
 			return -ENOMEM;
 
@@ -1442,7 +1437,7 @@ static void uvesafb_init_info(struct fb_info *info, struct vbe_mode_ib *mode)
 
 	/* Disable blanking if the user requested so. */
 	if (!blank)
-		uvesafb_ops.fb_blank = NULL;
+		info->fbops->fb_blank = NULL;
 
 	/*
 	 * Find out how much IO memory is required for the mode with
@@ -1512,7 +1507,7 @@ static void uvesafb_init_info(struct fb_info *info, struct vbe_mode_ib *mode)
 			(par->ypan ? FBINFO_HWACCEL_YPAN : 0);
 
 	if (!par->ypan)
-		uvesafb_ops.fb_pan_display = NULL;
+		info->fbops->fb_pan_display = NULL;
 }
 
 static void uvesafb_init_mtrr(struct fb_info *info)
@@ -1546,7 +1541,7 @@ static void uvesafb_ioremap(struct fb_info *info)
 static ssize_t uvesafb_show_vbe_ver(struct device *dev,
 		struct device_attribute *attr, char *buf)
 {
-	struct fb_info *info = dev_get_drvdata(dev);
+	struct fb_info *info = platform_get_drvdata(to_platform_device(dev));
 	struct uvesafb_par *par = info->par;
 
 	return snprintf(buf, PAGE_SIZE, "%.4x\n", par->vbe_ib.vbe_version);
@@ -1557,12 +1552,12 @@ static DEVICE_ATTR(vbe_version, S_IRUGO, uvesafb_show_vbe_ver, NULL);
 static ssize_t uvesafb_show_vbe_modes(struct device *dev,
 		struct device_attribute *attr, char *buf)
 {
-	struct fb_info *info = dev_get_drvdata(dev);
+	struct fb_info *info = platform_get_drvdata(to_platform_device(dev));
 	struct uvesafb_par *par = info->par;
 	int ret = 0, i;
 
 	for (i = 0; i < par->vbe_modes_cnt && ret < PAGE_SIZE; i++) {
-		ret += scnprintf(buf + ret, PAGE_SIZE - ret,
+		ret += snprintf(buf + ret, PAGE_SIZE - ret,
 			"%dx%d-%d, 0x%.4x\n",
 			par->vbe_modes[i].x_res, par->vbe_modes[i].y_res,
 			par->vbe_modes[i].depth, par->vbe_modes[i].mode_id);
@@ -1576,11 +1571,11 @@ static DEVICE_ATTR(vbe_modes, S_IRUGO, uvesafb_show_vbe_modes, NULL);
 static ssize_t uvesafb_show_vendor(struct device *dev,
 		struct device_attribute *attr, char *buf)
 {
-	struct fb_info *info = dev_get_drvdata(dev);
+	struct fb_info *info = platform_get_drvdata(to_platform_device(dev));
 	struct uvesafb_par *par = info->par;
 
 	if (par->vbe_ib.oem_vendor_name_ptr)
-		return scnprintf(buf, PAGE_SIZE, "%s\n", (char *)
+		return snprintf(buf, PAGE_SIZE, "%s\n", (char *)
 			(&par->vbe_ib) + par->vbe_ib.oem_vendor_name_ptr);
 	else
 		return 0;
@@ -1591,11 +1586,11 @@ static DEVICE_ATTR(oem_vendor, S_IRUGO, uvesafb_show_vendor, NULL);
 static ssize_t uvesafb_show_product_name(struct device *dev,
 		struct device_attribute *attr, char *buf)
 {
-	struct fb_info *info = dev_get_drvdata(dev);
+	struct fb_info *info = platform_get_drvdata(to_platform_device(dev));
 	struct uvesafb_par *par = info->par;
 
 	if (par->vbe_ib.oem_product_name_ptr)
-		return scnprintf(buf, PAGE_SIZE, "%s\n", (char *)
+		return snprintf(buf, PAGE_SIZE, "%s\n", (char *)
 			(&par->vbe_ib) + par->vbe_ib.oem_product_name_ptr);
 	else
 		return 0;
@@ -1606,11 +1601,11 @@ static DEVICE_ATTR(oem_product_name, S_IRUGO, uvesafb_show_product_name, NULL);
 static ssize_t uvesafb_show_product_rev(struct device *dev,
 		struct device_attribute *attr, char *buf)
 {
-	struct fb_info *info = dev_get_drvdata(dev);
+	struct fb_info *info = platform_get_drvdata(to_platform_device(dev));
 	struct uvesafb_par *par = info->par;
 
 	if (par->vbe_ib.oem_product_rev_ptr)
-		return scnprintf(buf, PAGE_SIZE, "%s\n", (char *)
+		return snprintf(buf, PAGE_SIZE, "%s\n", (char *)
 			(&par->vbe_ib) + par->vbe_ib.oem_product_rev_ptr);
 	else
 		return 0;
@@ -1621,11 +1616,11 @@ static DEVICE_ATTR(oem_product_rev, S_IRUGO, uvesafb_show_product_rev, NULL);
 static ssize_t uvesafb_show_oem_string(struct device *dev,
 		struct device_attribute *attr, char *buf)
 {
-	struct fb_info *info = dev_get_drvdata(dev);
+	struct fb_info *info = platform_get_drvdata(to_platform_device(dev));
 	struct uvesafb_par *par = info->par;
 
 	if (par->vbe_ib.oem_string_ptr)
-		return scnprintf(buf, PAGE_SIZE, "%s\n",
+		return snprintf(buf, PAGE_SIZE, "%s\n",
 			(char *)(&par->vbe_ib) + par->vbe_ib.oem_string_ptr);
 	else
 		return 0;
@@ -1636,16 +1631,16 @@ static DEVICE_ATTR(oem_string, S_IRUGO, uvesafb_show_oem_string, NULL);
 static ssize_t uvesafb_show_nocrtc(struct device *dev,
 		struct device_attribute *attr, char *buf)
 {
-	struct fb_info *info = dev_get_drvdata(dev);
+	struct fb_info *info = platform_get_drvdata(to_platform_device(dev));
 	struct uvesafb_par *par = info->par;
 
-	return scnprintf(buf, PAGE_SIZE, "%d\n", par->nocrtc);
+	return snprintf(buf, PAGE_SIZE, "%d\n", par->nocrtc);
 }
 
 static ssize_t uvesafb_store_nocrtc(struct device *dev,
 		struct device_attribute *attr, const char *buf, size_t count)
 {
-	struct fb_info *info = dev_get_drvdata(dev);
+	struct fb_info *info = platform_get_drvdata(to_platform_device(dev));
 	struct uvesafb_par *par = info->par;
 
 	if (count > 0) {
@@ -1826,19 +1821,19 @@ static int uvesafb_setup(char *options)
 		else if (!strcmp(this_opt, "ywrap"))
 			ypan = 2;
 		else if (!strcmp(this_opt, "vgapal"))
-			pmi_setpal = false;
+			pmi_setpal = 0;
 		else if (!strcmp(this_opt, "pmipal"))
-			pmi_setpal = true;
+			pmi_setpal = 1;
 		else if (!strncmp(this_opt, "mtrr:", 5))
 			mtrr = simple_strtoul(this_opt+5, NULL, 0);
 		else if (!strcmp(this_opt, "nomtrr"))
 			mtrr = 0;
 		else if (!strcmp(this_opt, "nocrtc"))
-			nocrtc = true;
+			nocrtc = 1;
 		else if (!strcmp(this_opt, "noedid"))
-			noedid = true;
+			noedid = 1;
 		else if (!strcmp(this_opt, "noblank"))
-			blank = false;
+			blank = 0;
 		else if (!strncmp(this_opt, "vtotal:", 7))
 			vram_total = simple_strtoul(this_opt + 7, NULL, 0);
 		else if (!strncmp(this_opt, "vremap:", 7))
@@ -1873,7 +1868,7 @@ static ssize_t v86d_show(struct device_driver *dev, char *buf)
 static ssize_t v86d_store(struct device_driver *dev, const char *buf,
 		size_t count)
 {
-	strncpy(v86d_path, buf, PATH_MAX - 1);
+	strncpy(v86d_path, buf, PATH_MAX);
 	return count;
 }
 static DRIVER_ATTR_RW(v86d);
@@ -1982,7 +1977,7 @@ MODULE_PARM_DESC(noedid,
 module_param(vram_remap, uint, 0);
 MODULE_PARM_DESC(vram_remap, "Set amount of video memory to be used [MiB]");
 module_param(vram_total, uint, 0);
-MODULE_PARM_DESC(vram_total, "Set total amount of video memory [MiB]");
+MODULE_PARM_DESC(vram_total, "Set total amount of video memoery [MiB]");
 module_param(maxclk, ushort, 0);
 MODULE_PARM_DESC(maxclk, "Maximum pixelclock [MHz], overrides EDID data");
 module_param(maxhf, ushort, 0);

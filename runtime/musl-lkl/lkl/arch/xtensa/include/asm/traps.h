@@ -12,8 +12,6 @@
 
 #include <asm/ptrace.h>
 
-typedef void xtensa_exception_handler(struct pt_regs *regs);
-
 /*
  * Per-CPU exception handling data structure.
  * EXCSAVE1 points to it.
@@ -27,54 +25,39 @@ struct exc_table {
 	void *fixup;
 	/* For passing a parameter to fixup */
 	void *fixup_param;
-#if XTENSA_HAVE_COPROCESSORS
-	/* Pointers to owner struct thread_info */
-	struct thread_info *coprocessor_owner[XCHAL_CP_MAX];
-#endif
+	/* For fast syscall handler */
+	unsigned long syscall_save;
 	/* Fast user exception handlers */
 	void *fast_user_handler[EXCCAUSE_N];
 	/* Fast kernel exception handlers */
 	void *fast_kernel_handler[EXCCAUSE_N];
 	/* Default C-Handlers */
-	xtensa_exception_handler *default_handler[EXCCAUSE_N];
+	void *default_handler[EXCCAUSE_N];
 };
 
-DECLARE_PER_CPU(struct exc_table, exc_table);
-
-xtensa_exception_handler *
-__init trap_set_handler(int cause, xtensa_exception_handler *handler);
-
-asmlinkage void fast_illegal_instruction_user(void);
-asmlinkage void fast_syscall_user(void);
-asmlinkage void fast_alloca(void);
-asmlinkage void fast_unaligned(void);
-asmlinkage void fast_second_level_miss(void);
-asmlinkage void fast_store_prohibited(void);
-asmlinkage void fast_coprocessor(void);
-
-asmlinkage void kernel_exception(void);
-asmlinkage void user_exception(void);
-asmlinkage void system_call(struct pt_regs *regs);
-
-void do_IRQ(int hwirq, struct pt_regs *regs);
-void do_page_fault(struct pt_regs *regs);
-void do_unhandled(struct pt_regs *regs);
+/*
+ * handler must be either of the following:
+ *  void (*)(struct pt_regs *regs);
+ *  void (*)(struct pt_regs *regs, unsigned long exccause);
+ */
+extern void * __init trap_set_handler(int cause, void *handler);
+extern void do_unhandled(struct pt_regs *regs, unsigned long exccause);
+void fast_second_level_miss(void);
 
 /* Initialize minimal exc_table structure sufficient for basic paging */
 static inline void __init early_trap_init(void)
 {
-	static struct exc_table init_exc_table __initdata = {
+	static struct exc_table exc_table __initdata = {
 		.fast_kernel_handler[EXCCAUSE_DTLB_MISS] =
 			fast_second_level_miss,
 	};
-	xtensa_set_sr(&init_exc_table, excsave1);
+	__asm__ __volatile__("wsr  %0, excsave1\n" : : "a" (&exc_table));
 }
 
 void secondary_trap_init(void);
 
 static inline void spill_registers(void)
 {
-#if defined(__XTENSA_WINDOWED_ABI__)
 #if XCHAL_NUM_AREGS > 16
 	__asm__ __volatile__ (
 		"	call8	1f\n"
@@ -114,7 +97,6 @@ static inline void spill_registers(void)
 	__asm__ __volatile__ (
 		"	mov	a12, a12\n"
 		: : : "memory");
-#endif
 #endif
 }
 

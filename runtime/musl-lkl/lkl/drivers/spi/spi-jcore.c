@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * J-Core SPI controller driver
  *
@@ -82,8 +81,7 @@ static void jcore_spi_chipsel(struct spi_device *spi, bool value)
 
 static void jcore_spi_baudrate(struct jcore_spi *hw, int speed)
 {
-	if (speed == hw->speed_hz)
-		return;
+	if (speed == hw->speed_hz) return;
 	hw->speed_hz = speed;
 	if (speed >= hw->clock_freq / 2)
 		hw->speed_reg = 0;
@@ -171,7 +169,7 @@ static int jcore_spi_probe(struct platform_device *pdev)
 	if (!devm_request_mem_region(&pdev->dev, res->start,
 				     resource_size(res), pdev->name))
 		goto exit_busy;
-	hw->base = devm_ioremap(&pdev->dev, res->start,
+	hw->base = devm_ioremap_nocache(&pdev->dev, res->start,
 					resource_size(res));
 	if (!hw->base)
 		goto exit_busy;

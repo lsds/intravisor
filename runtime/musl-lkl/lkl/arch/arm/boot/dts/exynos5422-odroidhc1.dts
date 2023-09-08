@@ -8,7 +8,6 @@
  */
 
 /dts-v1/;
-#include <dt-bindings/leds/common.h>
 #include "exynos5422-odroid-core.dtsi"
 
 / {
@@ -16,15 +15,14 @@
 	compatible = "hardkernel,odroid-hc1", "samsung,exynos5800", \
 		     "samsung,exynos5";
 
-	led-controller {
+	pwmleds {
 		compatible = "pwm-leds";
 
-		led-1 {
-			function = LED_FUNCTION_HEARTBEAT;
-			color = <LED_COLOR_ID_BLUE>;
+		blueled {
+			label = "blue:heartbeat";
 			pwms = <&pwm 2 2000000 0>;
 			pwm-names = "pwm2";
-			max-brightness = <255>;
+			max_brightness = <255>;
 			linux,default-trigger = "heartbeat";
 		};
 	};
@@ -58,30 +56,24 @@
 				 */
 				map0 {
 					trip = <&cpu0_alert0>;
-					cooling-device = <&cpu0 0 2>,
-							 <&cpu1 0 2>,
-							 <&cpu2 0 2>,
-							 <&cpu3 0 2>,
-							 <&cpu4 0 2>,
-							 <&cpu5 0 2>,
-							 <&cpu6 0 2>,
-							 <&cpu7 0 2>;
+					cooling-device = <&cpu0 0 2>;
+				};
+				map1 {
+					trip = <&cpu0_alert0>;
+					cooling-device = <&cpu4 0 2>;
 				};
 				/*
 				 * When reaching cpu0_alert1, reduce CPU
 				 * further, down to 600 MHz (12 steps for big,
 				 * 7 steps for LITTLE).
 				 */
-				map1 {
+				map2 {
 					trip = <&cpu0_alert1>;
-					cooling-device = <&cpu0 3 8>,
-							 <&cpu1 3 8>,
-							 <&cpu2 3 8>,
-							 <&cpu3 3 8>,
-							 <&cpu4 3 14>,
-							 <&cpu5 3 14>,
-							 <&cpu6 3 14>,
-							 <&cpu7 3 14>;
+					cooling-device = <&cpu0 3 7>;
+				};
+				map3 {
+					trip = <&cpu0_alert1>;
+					cooling-device = <&cpu4 3 12>;
 				};
 			};
 		};
@@ -107,25 +99,19 @@
 			cooling-maps {
 				map0 {
 					trip = <&cpu1_alert0>;
-					cooling-device = <&cpu0 0 2>,
-							 <&cpu1 0 2>,
-							 <&cpu2 0 2>,
-							 <&cpu3 0 2>,
-							 <&cpu4 0 2>,
-							 <&cpu5 0 2>,
-							 <&cpu6 0 2>,
-							 <&cpu7 0 2>;
+					cooling-device = <&cpu0 0 2>;
 				};
 				map1 {
+					trip = <&cpu1_alert0>;
+					cooling-device = <&cpu4 0 2>;
+				};
+				map2 {
 					trip = <&cpu1_alert1>;
-					cooling-device = <&cpu0 3 8>,
-							 <&cpu1 3 8>,
-							 <&cpu2 3 8>,
-							 <&cpu3 3 8>,
-							 <&cpu4 3 14>,
-							 <&cpu5 3 14>,
-							 <&cpu6 3 14>,
-							 <&cpu7 3 14>;
+					cooling-device = <&cpu0 3 7>;
+				};
+				map3 {
+					trip = <&cpu1_alert1>;
+					cooling-device = <&cpu4 3 12>;
 				};
 			};
 		};
@@ -151,25 +137,19 @@
 			cooling-maps {
 				map0 {
 					trip = <&cpu2_alert0>;
-					cooling-device = <&cpu0 0 2>,
-							 <&cpu1 0 2>,
-							 <&cpu2 0 2>,
-							 <&cpu3 0 2>,
-							 <&cpu4 0 2>,
-							 <&cpu5 0 2>,
-							 <&cpu6 0 2>,
-							 <&cpu7 0 2>;
+					cooling-device = <&cpu0 0 2>;
 				};
 				map1 {
+					trip = <&cpu2_alert0>;
+					cooling-device = <&cpu4 0 2>;
+				};
+				map2 {
 					trip = <&cpu2_alert1>;
-					cooling-device = <&cpu0 3 8>,
-							 <&cpu1 3 8>,
-							 <&cpu2 3 8>,
-							 <&cpu3 3 8>,
-							 <&cpu4 3 14>,
-							 <&cpu5 3 14>,
-							 <&cpu6 3 14>,
-							 <&cpu7 3 14>;
+					cooling-device = <&cpu0 3 7>;
+				};
+				map3 {
+					trip = <&cpu2_alert1>;
+					cooling-device = <&cpu4 3 12>;
 				};
 			};
 		};
@@ -195,55 +175,19 @@
 			cooling-maps {
 				map0 {
 					trip = <&cpu3_alert0>;
-					cooling-device = <&cpu0 0 2>,
-							 <&cpu1 0 2>,
-							 <&cpu2 0 2>,
-							 <&cpu3 0 2>,
-							 <&cpu4 0 2>,
-							 <&cpu5 0 2>,
-							 <&cpu6 0 2>,
-							 <&cpu7 0 2>;
+					cooling-device = <&cpu0 0 2>;
 				};
 				map1 {
+					trip = <&cpu3_alert0>;
+					cooling-device = <&cpu4 0 2>;
+				};
+				map2 {
 					trip = <&cpu3_alert1>;
-					cooling-device = <&cpu0 3 8>,
-							 <&cpu1 3 8>,
-							 <&cpu2 3 8>,
-							 <&cpu3 3 8>,
-							 <&cpu4 3 14>,
-							 <&cpu5 3 14>,
-							 <&cpu6 3 14>,
-							 <&cpu7 3 14>;
+					cooling-device = <&cpu0 3 7>;
 				};
-			};
-		};
-		gpu_thermal: gpu-thermal {
-			thermal-sensors = <&tmu_gpu 0>;
-			trips {
-				gpu_alert0: gpu-alert-0 {
-					temperature = <70000>;
-					hysteresis = <10000>;
-					type = "active";
-				};
-				gpu_alert1: gpu-alert-1 {
-					temperature = <85000>;
-					hysteresis = <10000>;
-					type = "active";
-				};
-				gpu_crit0: gpu-crit-0 {
-					temperature = <120000>;
-					hysteresis = <0>;
-					type = "critical";
-				};
-			};
-			cooling-maps {
-				map0 {
-					trip = <&gpu_alert0>;
-					cooling-device = <&gpu 0 2>;
-				};
-				map1 {
-					trip = <&gpu_alert1>;
-					cooling-device = <&gpu 3 6>;
+				map3 {
+					trip = <&cpu3_alert1>;
+					cooling-device = <&cpu4 3 12>;
 				};
 			};
 		};

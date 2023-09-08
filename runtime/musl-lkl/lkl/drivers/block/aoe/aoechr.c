@@ -140,8 +140,10 @@ bail:		spin_unlock_irqrestore(&emsgs_lock, flags);
 	}
 
 	mp = kmemdup(msg, n, GFP_ATOMIC);
-	if (!mp)
+	if (mp == NULL) {
+		printk(KERN_ERR "aoe: allocation failure, len=%ld\n", n);
 		goto bail;
+	}
 
 	em->msg = mp;
 	em->flags |= EMFL_VALID;

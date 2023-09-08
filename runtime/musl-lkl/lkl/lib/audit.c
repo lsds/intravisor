@@ -45,27 +45,23 @@ int audit_classify_syscall(int abi, unsigned syscall)
 	switch(syscall) {
 #ifdef __NR_open
 	case __NR_open:
-		return AUDITSC_OPEN;
+		return 2;
 #endif
 #ifdef __NR_openat
 	case __NR_openat:
-		return AUDITSC_OPENAT;
+		return 3;
 #endif
 #ifdef __NR_socketcall
 	case __NR_socketcall:
-		return AUDITSC_SOCKETCALL;
+		return 4;
 #endif
 #ifdef __NR_execveat
 	case __NR_execveat:
 #endif
 	case __NR_execve:
-		return AUDITSC_EXECVE;
-#ifdef __NR_openat2
-	case __NR_openat2:
-		return AUDITSC_OPENAT2;
-#endif
+		return 5;
 	default:
-		return AUDITSC_NATIVE;
+		return 0;
 	}
 }
 

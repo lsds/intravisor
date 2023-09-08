@@ -1,8 +1,19 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Tegra host1x Syncpoints
  *
  * Copyright (c) 2010-2015, NVIDIA Corporation.
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms and conditions of the GNU General Public License,
+ * version 2, as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+ * more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
 #include <linux/module.h>
@@ -42,32 +53,17 @@ static void host1x_syncpt_base_free(struct host1x_syncpt_base *base)
 		base->requested = false;
 }
 
-/**
- * host1x_syncpt_alloc() - allocate a syncpoint
- * @host: host1x device data
- * @flags: bitfield of HOST1X_SYNCPT_* flags
- * @name: name for the syncpoint for use in debug prints
- *
- * Allocates a hardware syncpoint for the caller's use. The caller then has
- * the sole authority to mutate the syncpoint's value until it is freed again.
- *
- * If no free syncpoints are available, or a NULL name was specified, returns
- * NULL.
- */
-struct host1x_syncpt *host1x_syncpt_alloc(struct host1x *host,
-					  unsigned long flags,
-					  const char *name)
+static struct host1x_syncpt *host1x_syncpt_alloc(struct host1x *host,
+						 struct host1x_client *client,
+						 unsigned long flags)
 {
+	int i;
 	struct host1x_syncpt *sp = host->syncpt;
-	char *full_name;
-	unsigned int i;
-
-	if (!name)
-		return NULL;
+	char *name;
 
 	mutex_lock(&host->syncpt_mutex);
 
-	for (i = 0; i < host->info->nb_pts && kref_read(&sp->ref); i++, sp++)
+	for (i = 0; i < host->info->nb_pts && sp->name; i++, sp++)
 		;
 
 	if (i >= host->info->nb_pts)
@@ -79,18 +75,18 @@ struct host1x_syncpt *host1x_syncpt_alloc(struct host1x *host,
 			goto unlock;
 	}
 
-	full_name = kasprintf(GFP_KERNEL, "%u-%s", sp->id, name);
-	if (!full_name)
+	name = kasprintf(GFP_KERNEL, "%02u-%s", sp->id,
+			 client ? dev_name(client->dev) : NULL);
+	if (!name)
 		goto free_base;
 
-	sp->name = full_name;
+	sp->client = client;
+	sp->name = name;
 
 	if (flags & HOST1X_SYNCPT_CLIENT_MANAGED)
 		sp->client_managed = true;
 	else
 		sp->client_managed = false;
-
-	kref_init(&sp->ref);
 
 	mutex_unlock(&host->syncpt_mutex);
 	return sp;
@@ -102,7 +98,6 @@ unlock:
 	mutex_unlock(&host->syncpt_mutex);
 	return NULL;
 }
-EXPORT_SYMBOL(host1x_syncpt_alloc);
 
 /**
  * host1x_syncpt_id() - retrieve syncpoint ID
@@ -137,20 +132,11 @@ void host1x_syncpt_restore(struct host1x *host)
 	struct host1x_syncpt *sp_base = host->syncpt;
 	unsigned int i;
 
-	for (i = 0; i < host1x_syncpt_nb_pts(host); i++) {
-		/*
-		 * Unassign syncpt from channels for purposes of Tegra186
-		 * syncpoint protection. This prevents any channel from
-		 * accessing it until it is reassigned.
-		 */
-		host1x_hw_syncpt_assign_to_channel(host, sp_base + i, NULL);
+	for (i = 0; i < host1x_syncpt_nb_pts(host); i++)
 		host1x_hw_syncpt_restore(host, sp_base + i);
-	}
 
 	for (i = 0; i < host1x_syncpt_nb_bases(host); i++)
 		host1x_hw_syncpt_restore_wait_base(host, sp_base + i);
-
-	host1x_hw_syncpt_enable_protection(host);
 
 	wmb();
 }
@@ -234,12 +220,27 @@ int host1x_syncpt_wait(struct host1x_syncpt *sp, u32 thresh, long timeout,
 	void *ref;
 	struct host1x_waitlist *waiter;
 	int err = 0, check_count = 0;
+	u32 val;
 
 	if (value)
-		*value = host1x_syncpt_load(sp);
+		*value = 0;
 
-	if (host1x_syncpt_is_expired(sp, thresh))
+	/* first check cache */
+	if (host1x_syncpt_is_expired(sp, thresh)) {
+		if (value)
+			*value = host1x_syncpt_load(sp);
+
 		return 0;
+	}
+
+	/* try to read from register */
+	val = host1x_hw_syncpt_load(sp->host, sp);
+	if (host1x_syncpt_is_expired(sp, thresh)) {
+		if (value)
+			*value = val;
+
+		goto done;
+	}
 
 	if (!timeout) {
 		err = -EAGAIN;
@@ -254,7 +255,7 @@ int host1x_syncpt_wait(struct host1x_syncpt *sp, u32 thresh, long timeout,
 	}
 
 	/* schedule a wakeup when the syncpoint value is reached */
-	err = host1x_intr_add_action(sp->host, sp, thresh,
+	err = host1x_intr_add_action(sp->host, sp->id, thresh,
 				     HOST1X_INTR_ACTION_WAKEUP_INTERRUPTIBLE,
 				     &wq, waiter, &ref);
 	if (err)
@@ -304,7 +305,7 @@ int host1x_syncpt_wait(struct host1x_syncpt *sp, u32 thresh, long timeout,
 		}
 	}
 
-	host1x_intr_put_ref(sp->host, sp->id, ref, true);
+	host1x_intr_put_ref(sp->host, sp->id, ref);
 
 done:
 	return err;
@@ -317,12 +318,65 @@ EXPORT_SYMBOL(host1x_syncpt_wait);
 bool host1x_syncpt_is_expired(struct host1x_syncpt *sp, u32 thresh)
 {
 	u32 current_val;
+	u32 future_val;
 
 	smp_rmb();
 
 	current_val = (u32)atomic_read(&sp->min_val);
+	future_val = (u32)atomic_read(&sp->max_val);
 
-	return ((current_val - thresh) & 0x80000000U) == 0U;
+	/* Note the use of unsigned arithmetic here (mod 1<<32).
+	 *
+	 * c = current_val = min_val	= the current value of the syncpoint.
+	 * t = thresh			= the value we are checking
+	 * f = future_val  = max_val	= the value c will reach when all
+	 *				  outstanding increments have completed.
+	 *
+	 * Note that c always chases f until it reaches f.
+	 *
+	 * Dtf = (f - t)
+	 * Dtc = (c - t)
+	 *
+	 *  Consider all cases:
+	 *
+	 *	A) .....c..t..f.....	Dtf < Dtc	need to wait
+	 *	B) .....c.....f..t..	Dtf > Dtc	expired
+	 *	C) ..t..c.....f.....	Dtf > Dtc	expired	   (Dct very large)
+	 *
+	 *  Any case where f==c: always expired (for any t).	Dtf == Dcf
+	 *  Any case where t==c: always expired (for any f).	Dtf >= Dtc (because Dtc==0)
+	 *  Any case where t==f!=c: always wait.		Dtf <  Dtc (because Dtf==0,
+	 *							Dtc!=0)
+	 *
+	 *  Other cases:
+	 *
+	 *	A) .....t..f..c.....	Dtf < Dtc	need to wait
+	 *	A) .....f..c..t.....	Dtf < Dtc	need to wait
+	 *	A) .....f..t..c.....	Dtf > Dtc	expired
+	 *
+	 *   So:
+	 *	   Dtf >= Dtc implies EXPIRED	(return true)
+	 *	   Dtf <  Dtc implies WAIT	(return false)
+	 *
+	 * Note: If t is expired then we *cannot* wait on it. We would wait
+	 * forever (hang the system).
+	 *
+	 * Note: do NOT get clever and remove the -thresh from both sides. It
+	 * is NOT the same.
+	 *
+	 * If future valueis zero, we have a client managed sync point. In that
+	 * case we do a direct comparison.
+	 */
+	if (!host1x_syncpt_client_managed(sp))
+		return future_val - thresh >= current_val - thresh;
+	else
+		return (s32)(current_val - thresh) >= 0;
+}
+
+/* remove a wait pointed to by patch_addr */
+int host1x_syncpt_patch_wait(struct host1x_syncpt *sp, void *patch_addr)
+{
+	return host1x_hw_syncpt_patch_wait(sp->host, sp, patch_addr);
 }
 
 int host1x_syncpt_init(struct host1x *host)
@@ -344,6 +398,13 @@ int host1x_syncpt_init(struct host1x *host)
 	for (i = 0; i < host->info->nb_pts; i++) {
 		syncpt[i].id = i;
 		syncpt[i].host = host;
+
+		/*
+		 * Unassign syncpt from channels for purposes of Tegra186
+		 * syncpoint protection. This prevents any channel from
+		 * accessing it until it is reassigned.
+		 */
+		host1x_hw_syncpt_assign_to_channel(host, &syncpt[i], NULL);
 	}
 
 	for (i = 0; i < host->info->nb_bases; i++)
@@ -353,15 +414,13 @@ int host1x_syncpt_init(struct host1x *host)
 	host->syncpt = syncpt;
 	host->bases = bases;
 
+	host1x_syncpt_restore(host);
+	host1x_hw_syncpt_enable_protection(host);
+
 	/* Allocate sync point to use for clearing waits for expired fences */
-	host->nop_sp = host1x_syncpt_alloc(host, 0, "reserved-nop");
+	host->nop_sp = host1x_syncpt_alloc(host, NULL, 0);
 	if (!host->nop_sp)
 		return -ENOMEM;
-
-	if (host->info->reserve_vblank_syncpts) {
-		kref_init(&host->syncpt[26].ref);
-		kref_init(&host->syncpt[27].ref);
-	}
 
 	return 0;
 }
@@ -374,52 +433,44 @@ int host1x_syncpt_init(struct host1x *host)
  * host1x client drivers can use this function to allocate a syncpoint for
  * subsequent use. A syncpoint returned by this function will be reserved for
  * use by the client exclusively. When no longer using a syncpoint, a host1x
- * client driver needs to release it using host1x_syncpt_put().
+ * client driver needs to release it using host1x_syncpt_free().
  */
 struct host1x_syncpt *host1x_syncpt_request(struct host1x_client *client,
 					    unsigned long flags)
 {
-	struct host1x *host = dev_get_drvdata(client->host->parent);
+	struct host1x *host = dev_get_drvdata(client->parent->parent);
 
-	return host1x_syncpt_alloc(host, flags, dev_name(client->dev));
+	return host1x_syncpt_alloc(host, client, flags);
 }
 EXPORT_SYMBOL(host1x_syncpt_request);
 
-static void syncpt_release(struct kref *ref)
+/**
+ * host1x_syncpt_free() - free a requested syncpoint
+ * @sp: host1x syncpoint
+ *
+ * Release a syncpoint previously allocated using host1x_syncpt_request(). A
+ * host1x client driver should call this when the syncpoint is no longer in
+ * use. Note that client drivers must ensure that the syncpoint doesn't remain
+ * under the control of hardware after calling this function, otherwise two
+ * clients may end up trying to access the same syncpoint concurrently.
+ */
+void host1x_syncpt_free(struct host1x_syncpt *sp)
 {
-	struct host1x_syncpt *sp = container_of(ref, struct host1x_syncpt, ref);
-
-	atomic_set(&sp->max_val, host1x_syncpt_read(sp));
-
-	sp->locked = false;
+	if (!sp)
+		return;
 
 	mutex_lock(&sp->host->syncpt_mutex);
 
 	host1x_syncpt_base_free(sp->base);
 	kfree(sp->name);
 	sp->base = NULL;
+	sp->client = NULL;
 	sp->name = NULL;
 	sp->client_managed = false;
 
 	mutex_unlock(&sp->host->syncpt_mutex);
 }
-
-/**
- * host1x_syncpt_put() - free a requested syncpoint
- * @sp: host1x syncpoint
- *
- * Release a syncpoint previously allocated using host1x_syncpt_request(). A
- * host1x client driver should call this when the syncpoint is no longer in
- * use.
- */
-void host1x_syncpt_put(struct host1x_syncpt *sp)
-{
-	if (!sp)
-		return;
-
-	kref_put(&sp->ref, syncpt_release);
-}
-EXPORT_SYMBOL(host1x_syncpt_put);
+EXPORT_SYMBOL(host1x_syncpt_free);
 
 void host1x_syncpt_deinit(struct host1x *host)
 {
@@ -486,48 +537,16 @@ unsigned int host1x_syncpt_nb_mlocks(struct host1x *host)
 }
 
 /**
- * host1x_syncpt_get_by_id() - obtain a syncpoint by ID
+ * host1x_syncpt_get() - obtain a syncpoint by ID
  * @host: host1x controller
  * @id: syncpoint ID
  */
-struct host1x_syncpt *host1x_syncpt_get_by_id(struct host1x *host,
-					      unsigned int id)
+struct host1x_syncpt *host1x_syncpt_get(struct host1x *host, unsigned int id)
 {
 	if (id >= host->info->nb_pts)
 		return NULL;
 
-	if (kref_get_unless_zero(&host->syncpt[id].ref))
-		return &host->syncpt[id];
-	else
-		return NULL;
-}
-EXPORT_SYMBOL(host1x_syncpt_get_by_id);
-
-/**
- * host1x_syncpt_get_by_id_noref() - obtain a syncpoint by ID but don't
- * 	increase the refcount.
- * @host: host1x controller
- * @id: syncpoint ID
- */
-struct host1x_syncpt *host1x_syncpt_get_by_id_noref(struct host1x *host,
-						    unsigned int id)
-{
-	if (id >= host->info->nb_pts)
-		return NULL;
-
-	return &host->syncpt[id];
-}
-EXPORT_SYMBOL(host1x_syncpt_get_by_id_noref);
-
-/**
- * host1x_syncpt_get() - increment syncpoint refcount
- * @sp: syncpoint
- */
-struct host1x_syncpt *host1x_syncpt_get(struct host1x_syncpt *sp)
-{
-	kref_get(&sp->ref);
-
-	return sp;
+	return host->syncpt + id;
 }
 EXPORT_SYMBOL(host1x_syncpt_get);
 
@@ -550,31 +569,3 @@ u32 host1x_syncpt_base_id(struct host1x_syncpt_base *base)
 	return base->id;
 }
 EXPORT_SYMBOL(host1x_syncpt_base_id);
-
-static void do_nothing(struct kref *ref)
-{
-}
-
-/**
- * host1x_syncpt_release_vblank_reservation() - Make VBLANK syncpoint
- *   available for allocation
- *
- * @client: host1x bus client
- * @syncpt_id: syncpoint ID to make available
- *
- * Makes VBLANK<i> syncpoint available for allocatation if it was
- * reserved at initialization time. This should be called by the display
- * driver after it has ensured that any VBLANK increment programming configured
- * by the boot chain has been disabled.
- */
-void host1x_syncpt_release_vblank_reservation(struct host1x_client *client,
-					      u32 syncpt_id)
-{
-	struct host1x *host = dev_get_drvdata(client->host->parent);
-
-	if (!host->info->reserve_vblank_syncpts)
-		return;
-
-	kref_put(&host->syncpt[syncpt_id].ref, do_nothing);
-}
-EXPORT_SYMBOL(host1x_syncpt_release_vblank_reservation);

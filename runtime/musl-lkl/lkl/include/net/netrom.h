@@ -13,8 +13,6 @@
 #include <linux/slab.h>
 #include <net/sock.h>
 #include <linux/refcount.h>
-#include <linux/seq_file.h>
-#include <net/ax25.h>
 
 #define	NR_NETWORK_LEN			15
 #define	NR_TRANSPORT_LEN		5
@@ -218,8 +216,8 @@ struct net_device *nr_dev_get(ax25_address *);
 int nr_rt_ioctl(unsigned int, void __user *);
 void nr_link_failed(ax25_cb *, int);
 int nr_route_frame(struct sk_buff *, ax25_cb *);
-extern const struct seq_operations nr_node_seqops;
-extern const struct seq_operations nr_neigh_seqops;
+extern const struct file_operations nr_nodes_fops;
+extern const struct file_operations nr_neigh_fops;
 void nr_rt_free(void);
 
 /* nr_subr.c */
@@ -267,7 +265,7 @@ void nr_stop_idletimer(struct sock *);
 int nr_t1timer_running(struct sock *);
 
 /* sysctl_net_netrom.c */
-int nr_register_sysctl(void);
+void nr_register_sysctl(void);
 void nr_unregister_sysctl(void);
 
 #endif

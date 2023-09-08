@@ -3,7 +3,7 @@
  *
  * Module Name: tbdata - Table manager data structure functions
  *
- * Copyright (C) 2000 - 2022, Intel Corp.
+ * Copyright (C) 2000 - 2018, Intel Corp.
  *
  *****************************************************************************/
 
@@ -89,27 +89,14 @@ acpi_tb_init_table_descriptor(struct acpi_table_desc *table_desc,
 {
 
 	/*
-	 * Initialize the table descriptor. Set the pointer to NULL for external
-	 * tables, since the table is not fully mapped at this time.
+	 * Initialize the table descriptor. Set the pointer to NULL, since the
+	 * table is not fully mapped at this time.
 	 */
 	memset(table_desc, 0, sizeof(struct acpi_table_desc));
 	table_desc->address = address;
 	table_desc->length = table->length;
 	table_desc->flags = flags;
 	ACPI_MOVE_32_TO_32(table_desc->signature.ascii, table->signature);
-
-	switch (table_desc->flags & ACPI_TABLE_ORIGIN_MASK) {
-	case ACPI_TABLE_ORIGIN_INTERNAL_VIRTUAL:
-	case ACPI_TABLE_ORIGIN_EXTERNAL_VIRTUAL:
-
-		table_desc->pointer = table;
-		break;
-
-	case ACPI_TABLE_ORIGIN_INTERNAL_PHYSICAL:
-	default:
-
-		break;
-	}
 }
 
 /*******************************************************************************
@@ -145,7 +132,9 @@ acpi_tb_acquire_table(struct acpi_table_desc *table_desc,
 	case ACPI_TABLE_ORIGIN_INTERNAL_VIRTUAL:
 	case ACPI_TABLE_ORIGIN_EXTERNAL_VIRTUAL:
 
-		table = table_desc->pointer;
+		table = ACPI_CAST_PTR(struct acpi_table_header,
+				      ACPI_PHYSADDR_TO_PTR(table_desc->
+							   address));
 		break;
 
 	default:
@@ -207,8 +196,6 @@ acpi_tb_release_table(struct acpi_table_header *table,
  * PARAMETERS:  table_desc          - Table descriptor to be acquired
  *              address             - Address of the table
  *              flags               - Allocation flags of the table
- *              table               - Pointer to the table (required for virtual
- *                                    origins, optional for physical)
  *
  * RETURN:      Status
  *
@@ -221,52 +208,49 @@ acpi_tb_release_table(struct acpi_table_header *table,
 
 acpi_status
 acpi_tb_acquire_temp_table(struct acpi_table_desc *table_desc,
-			   acpi_physical_address address,
-			   u8 flags, struct acpi_table_header *table)
+			   acpi_physical_address address, u8 flags)
 {
-	u8 mapped_table = FALSE;
+	struct acpi_table_header *table_header;
 
 	switch (flags & ACPI_TABLE_ORIGIN_MASK) {
 	case ACPI_TABLE_ORIGIN_INTERNAL_PHYSICAL:
 
 		/* Get the length of the full table from the header */
 
-		if (!table) {
-			table =
-			    acpi_os_map_memory(address,
-					       sizeof(struct
-						      acpi_table_header));
-			if (!table) {
-				return (AE_NO_MEMORY);
-			}
-
-			mapped_table = TRUE;
+		table_header =
+		    acpi_os_map_memory(address,
+				       sizeof(struct acpi_table_header));
+		if (!table_header) {
+			return (AE_NO_MEMORY);
 		}
 
-		break;
+		acpi_tb_init_table_descriptor(table_desc, address, flags,
+					      table_header);
+		acpi_os_unmap_memory(table_header,
+				     sizeof(struct acpi_table_header));
+		return (AE_OK);
 
 	case ACPI_TABLE_ORIGIN_INTERNAL_VIRTUAL:
 	case ACPI_TABLE_ORIGIN_EXTERNAL_VIRTUAL:
 
-		if (!table) {
-			return (AE_BAD_PARAMETER);
+		table_header = ACPI_CAST_PTR(struct acpi_table_header,
+					     ACPI_PHYSADDR_TO_PTR(address));
+		if (!table_header) {
+			return (AE_NO_MEMORY);
 		}
 
-		break;
+		acpi_tb_init_table_descriptor(table_desc, address, flags,
+					      table_header);
+		return (AE_OK);
 
 	default:
 
-		/* Table is not valid yet */
-
-		return (AE_NO_MEMORY);
+		break;
 	}
 
-	acpi_tb_init_table_descriptor(table_desc, address, flags, table);
-	if (mapped_table) {
-		acpi_os_unmap_memory(table, sizeof(struct acpi_table_header));
-	}
+	/* Table is not valid yet */
 
-	return (AE_OK);
+	return (AE_NO_MEMORY);
 }
 
 /*******************************************************************************
@@ -351,19 +335,7 @@ void acpi_tb_invalidate_table(struct acpi_table_desc *table_desc)
 
 	acpi_tb_release_table(table_desc->pointer, table_desc->length,
 			      table_desc->flags);
-
-	switch (table_desc->flags & ACPI_TABLE_ORIGIN_MASK) {
-	case ACPI_TABLE_ORIGIN_INTERNAL_PHYSICAL:
-
-		table_desc->pointer = NULL;
-		break;
-
-	case ACPI_TABLE_ORIGIN_INTERNAL_VIRTUAL:
-	case ACPI_TABLE_ORIGIN_EXTERNAL_VIRTUAL:
-	default:
-
-		break;
-	}
+	table_desc->pointer = NULL;
 
 	return_VOID;
 }
@@ -508,8 +480,7 @@ acpi_tb_verify_temp_table(struct acpi_table_desc *table_desc,
 
 	/* If a particular signature is expected (DSDT/FACS), it must match */
 
-	if (signature &&
-	    !ACPI_COMPARE_NAMESEG(&table_desc->signature, signature)) {
+	if (signature && !ACPI_COMPARE_NAME(&table_desc->signature, signature)) {
 		ACPI_BIOS_ERROR((AE_INFO,
 				 "Invalid signature 0x%X for ACPI table, expected [%s]",
 				 table_desc->signature.integer, signature));
@@ -545,9 +516,9 @@ acpi_tb_verify_temp_table(struct acpi_table_desc *table_desc,
 			    acpi_tb_check_duplication(table_desc, table_index);
 			if (ACPI_FAILURE(status)) {
 				if (status != AE_CTRL_TERMINATE) {
-					ACPI_EXCEPTION((AE_INFO, status,
+					ACPI_EXCEPTION((AE_INFO, AE_NO_MEMORY,
 							"%4.4s 0x%8.8X%8.8X"
-							" Table is already loaded",
+							" Table is duplicated",
 							acpi_ut_valid_nameseg
 							(table_desc->signature.
 							 ascii) ? table_desc->
@@ -778,7 +749,6 @@ acpi_status acpi_tb_delete_namespace_by_owner(u32 table_index)
 	if (ACPI_FAILURE(status)) {
 		return_ACPI_STATUS(status);
 	}
-
 	acpi_ns_delete_namespace_by_owner(owner_id);
 	acpi_ut_release_write_lock(&acpi_gbl_namespace_rw_lock);
 	return_ACPI_STATUS(status);
@@ -961,9 +931,19 @@ acpi_tb_load_table(u32 table_index, struct acpi_namespace_node *parent_node)
 	}
 
 	status = acpi_ns_load_table(table_index, parent_node);
-	if (ACPI_FAILURE(status)) {
-		return_ACPI_STATUS(status);
-	}
+
+	/*
+	 * This case handles the legacy option that groups all module-level
+	 * code blocks together and defers execution until all of the tables
+	 * are loaded. Execute all of these blocks at this time.
+	 * Execute any module-level code that was detected during the table
+	 * load phase.
+	 *
+	 * Note: this option is deprecated and will be eliminated in the
+	 * future. Use of this option can cause problems with AML code that
+	 * depends upon in-order immediate execution of module-level code.
+	 */
+	acpi_ns_exec_module_code_list();
 
 	/*
 	 * Update GPEs for any new _Lxx/_Exx methods. Ignore errors. The host is
@@ -987,9 +967,6 @@ acpi_tb_load_table(u32 table_index, struct acpi_namespace_node *parent_node)
  *
  * PARAMETERS:  address                 - Physical address of the table
  *              flags                   - Allocation flags of the table
- *              table                   - Pointer to the table (required for
- *                                        virtual origins, optional for
- *                                        physical)
  *              override                - Whether override should be performed
  *              table_index             - Where table index is returned
  *
@@ -1001,9 +978,7 @@ acpi_tb_load_table(u32 table_index, struct acpi_namespace_node *parent_node)
 
 acpi_status
 acpi_tb_install_and_load_table(acpi_physical_address address,
-			       u8 flags,
-			       struct acpi_table_header *table,
-			       u8 override, u32 *table_index)
+			       u8 flags, u8 override, u32 *table_index)
 {
 	acpi_status status;
 	u32 i;
@@ -1012,7 +987,7 @@ acpi_tb_install_and_load_table(acpi_physical_address address,
 
 	/* Install the table and load it into the namespace */
 
-	status = acpi_tb_install_standard_table(address, flags, table, TRUE,
+	status = acpi_tb_install_standard_table(address, flags, TRUE,
 						override, &i);
 	if (ACPI_FAILURE(status)) {
 		goto exit;

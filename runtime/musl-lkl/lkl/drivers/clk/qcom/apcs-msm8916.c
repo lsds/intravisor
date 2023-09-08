@@ -19,9 +19,9 @@
 
 static const u32 gpll0_a53cc_map[] = { 4, 5 };
 
-static const struct clk_parent_data pdata[] = {
-	{ .fw_name = "aux", .name = "gpll0_vote", },
-	{ .fw_name = "pll", .name = "a53pll", },
+static const char * const gpll0_a53cc[] = {
+	"gpll0_vote",
+	"a53pll",
 };
 
 /*
@@ -46,7 +46,6 @@ static int qcom_apcs_msm8916_clk_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
 	struct device *parent = dev->parent;
-	struct device_node *np = parent->of_node;
 	struct clk_regmap_mux_div *a53cc;
 	struct regmap *regmap;
 	struct clk_init_data init = { };
@@ -62,16 +61,11 @@ static int qcom_apcs_msm8916_clk_probe(struct platform_device *pdev)
 	if (!a53cc)
 		return -ENOMEM;
 
-	/* Use an unique name by appending parent's @unit-address */
-	init.name = devm_kasprintf(dev, GFP_KERNEL, "a53mux%s",
-				   strchrnul(np->full_name, '@'));
-	if (!init.name)
-		return -ENOMEM;
-
-	init.parent_data = pdata;
-	init.num_parents = ARRAY_SIZE(pdata);
+	init.name = "a53mux";
+	init.parent_names = gpll0_a53cc;
+	init.num_parents = ARRAY_SIZE(gpll0_a53cc);
 	init.ops = &clk_regmap_mux_div_ops;
-	init.flags = CLK_IS_CRITICAL | CLK_SET_RATE_PARENT;
+	init.flags = CLK_SET_RATE_PARENT;
 
 	a53cc->clkr.hw.init = &init;
 	a53cc->clkr.regmap = regmap;
@@ -85,8 +79,7 @@ static int qcom_apcs_msm8916_clk_probe(struct platform_device *pdev)
 	a53cc->pclk = devm_clk_get(parent, NULL);
 	if (IS_ERR(a53cc->pclk)) {
 		ret = PTR_ERR(a53cc->pclk);
-		if (ret != -EPROBE_DEFER)
-			dev_err(dev, "failed to get clk: %d\n", ret);
+		dev_err(dev, "failed to get clk: %d\n", ret);
 		return ret;
 	}
 
@@ -103,8 +96,8 @@ static int qcom_apcs_msm8916_clk_probe(struct platform_device *pdev)
 		goto err;
 	}
 
-	ret = devm_of_clk_add_hw_provider(dev, of_clk_hw_simple_get,
-					  &a53cc->clkr.hw);
+	ret = of_clk_add_hw_provider(parent->of_node, of_clk_hw_simple_get,
+				     &a53cc->clkr.hw);
 	if (ret) {
 		dev_err(dev, "failed to add clock provider: %d\n", ret);
 		goto err;
@@ -122,8 +115,10 @@ err:
 static int qcom_apcs_msm8916_clk_remove(struct platform_device *pdev)
 {
 	struct clk_regmap_mux_div *a53cc = platform_get_drvdata(pdev);
+	struct device *parent = pdev->dev.parent;
 
 	clk_notifier_unregister(a53cc->pclk, &a53cc->clk_nb);
+	of_clk_del_provider(parent->of_node);
 
 	return 0;
 }

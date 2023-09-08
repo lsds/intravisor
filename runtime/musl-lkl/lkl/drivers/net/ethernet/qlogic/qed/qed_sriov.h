@@ -1,7 +1,33 @@
-/* SPDX-License-Identifier: (GPL-2.0-only OR BSD-3-Clause) */
 /* QLogic qed NIC Driver
  * Copyright (c) 2015-2017  QLogic Corporation
- * Copyright (c) 2019-2020 Marvell International Ltd.
+ *
+ * This software is available to you under a choice of one of two
+ * licenses.  You may choose to be licensed under the terms of the GNU
+ * General Public License (GPL) Version 2, available from the file
+ * COPYING in the main directory of this source tree, or the
+ * OpenIB.org BSD license below:
+ *
+ *     Redistribution and use in source and binary forms, with or
+ *     without modification, are permitted provided that the following
+ *     conditions are met:
+ *
+ *      - Redistributions of source code must retain the above
+ *        copyright notice, this list of conditions and the following
+ *        disclaimer.
+ *
+ *      - Redistributions in binary form must reproduce the above
+ *        copyright notice, this list of conditions and the following
+ *        disclaimer in the documentation and /or other materials
+ *        provided with the distribution.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+ * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+ * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS
+ * BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
+ * ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+ * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
  */
 
 #ifndef _QED_SRIOV_H
@@ -62,7 +88,6 @@ struct qed_public_vf_info {
 	bool is_trusted_request;
 	u8 rx_accept_mode;
 	u8 tx_accept_mode;
-	bool accept_any_vlan;
 };
 
 struct qed_iov_vf_init_params {
@@ -143,7 +168,7 @@ struct qed_vf_queue {
 
 enum vf_state {
 	VF_FREE = 0,		/* VF ready to be acquired holds no resc */
-	VF_ACQUIRED,		/* VF, acquired, but not initialized */
+	VF_ACQUIRED,		/* VF, acquired, but not initalized */
 	VF_ENABLED,		/* VF, Enabled */
 	VF_RESET,		/* VF, FLR'd, pending cleanup */
 	VF_STOPPED		/* VF, Stopped */
@@ -247,35 +272,31 @@ enum qed_iov_wq_flag {
 	QED_IOV_WQ_VF_FORCE_LINK_QUERY_FLAG,
 };
 
-extern const struct qed_iov_hv_ops qed_iov_ops_pass;
-
 #ifdef CONFIG_QED_SRIOV
 /**
- * qed_iov_is_valid_vfid(): Check if given VF ID @vfid is valid
- *                          w.r.t. @b_enabled_only value
- *                          if b_enabled_only = true - only enabled
- *                          VF id is valid.
- *                          else any VF id less than max_vfs is valid.
+ * @brief Check if given VF ID @vfid is valid
+ *        w.r.t. @b_enabled_only value
+ *        if b_enabled_only = true - only enabled VF id is valid
+ *        else any VF id less than max_vfs is valid
  *
- * @p_hwfn: HW device data.
- * @rel_vf_id: Relative VF ID.
- * @b_enabled_only: consider only enabled VF.
- * @b_non_malicious: true iff we want to validate vf isn't malicious.
+ * @param p_hwfn
+ * @param rel_vf_id - Relative VF ID
+ * @param b_enabled_only - consider only enabled VF
+ * @param b_non_malicious - true iff we want to validate vf isn't malicious.
  *
- * Return: bool - true for valid VF ID
+ * @return bool - true for valid VF ID
  */
 bool qed_iov_is_valid_vfid(struct qed_hwfn *p_hwfn,
 			   int rel_vf_id,
 			   bool b_enabled_only, bool b_non_malicious);
 
 /**
- * qed_iov_get_next_active_vf(): Given a VF index, return index of
- *                               next [including that] active VF.
+ * @brief - Given a VF index, return index of next [including that] active VF.
  *
- * @p_hwfn: HW device data.
- * @rel_vf_id: VF ID.
+ * @param p_hwfn
+ * @param rel_vf_id
  *
- * Return: MAX_NUM_VFS in case no further active VFs, otherwise index.
+ * @return MAX_NUM_VFS in case no further active VFs, otherwise index.
  */
 u16 qed_iov_get_next_active_vf(struct qed_hwfn *p_hwfn, u16 rel_vf_id);
 
@@ -283,117 +304,83 @@ void qed_iov_bulletin_set_udp_ports(struct qed_hwfn *p_hwfn,
 				    int vfid, u16 vxlan_port, u16 geneve_port);
 
 /**
- * qed_iov_hw_info(): Read sriov related information and allocated resources
- *                    reads from configuration space, shmem, etc.
+ * @brief Read sriov related information and allocated resources
+ *  reads from configuraiton space, shmem, etc.
  *
- * @p_hwfn: HW device data.
+ * @param p_hwfn
  *
- * Return: Int.
+ * @return int
  */
 int qed_iov_hw_info(struct qed_hwfn *p_hwfn);
 
 /**
- * qed_add_tlv(): place a given tlv on the tlv buffer at next offset
+ * @brief qed_add_tlv - place a given tlv on the tlv buffer at next offset
  *
- * @p_hwfn: HW device data.
- * @offset: offset.
- * @type: Type
- * @length: Length.
+ * @param p_hwfn
+ * @param p_iov
+ * @param type
+ * @param length
  *
- * Return: pointer to the newly placed tlv
+ * @return pointer to the newly placed tlv
  */
 void *qed_add_tlv(struct qed_hwfn *p_hwfn, u8 **offset, u16 type, u16 length);
 
 /**
- * qed_dp_tlv_list(): list the types and lengths of the tlvs on the buffer
+ * @brief list the types and lengths of the tlvs on the buffer
  *
- * @p_hwfn: HW device data.
- * @tlvs_list: Tlvs_list.
- *
- * Return: Void.
+ * @param p_hwfn
+ * @param tlvs_list
  */
 void qed_dp_tlv_list(struct qed_hwfn *p_hwfn, void *tlvs_list);
 
 /**
- * qed_sriov_vfpf_malicious(): Handle malicious VF/PF.
+ * @brief qed_iov_alloc - allocate sriov related resources
  *
- * @p_hwfn: HW device data.
- * @p_data: Pointer to data.
+ * @param p_hwfn
  *
- * Return: Void.
- */
-void qed_sriov_vfpf_malicious(struct qed_hwfn *p_hwfn,
-			      struct fw_err_data *p_data);
-
-/**
- * qed_sriov_eqe_event(): Callback for SRIOV events.
- *
- * @p_hwfn: HW device data.
- * @opcode: Opcode.
- * @echo: Echo.
- * @data: data
- * @fw_return_code: FW return code.
- *
- * Return: Int.
- */
-int qed_sriov_eqe_event(struct qed_hwfn *p_hwfn, u8 opcode, __le16 echo,
-			union event_ring_data *data, u8  fw_return_code);
-
-/**
- * qed_iov_alloc(): allocate sriov related resources
- *
- * @p_hwfn: HW device data.
- *
- * Return: Int.
+ * @return int
  */
 int qed_iov_alloc(struct qed_hwfn *p_hwfn);
 
 /**
- * qed_iov_setup(): setup sriov related resources
+ * @brief qed_iov_setup - setup sriov related resources
  *
- * @p_hwfn: HW device data.
- *
- * Return: Void.
+ * @param p_hwfn
  */
 void qed_iov_setup(struct qed_hwfn *p_hwfn);
 
 /**
- * qed_iov_free(): free sriov related resources
+ * @brief qed_iov_free - free sriov related resources
  *
- * @p_hwfn: HW device data.
- *
- * Return: Void.
+ * @param p_hwfn
  */
 void qed_iov_free(struct qed_hwfn *p_hwfn);
 
 /**
- * qed_iov_free_hw_info(): free sriov related memory that was
- *                          allocated during hw_prepare
+ * @brief free sriov related memory that was allocated during hw_prepare
  *
- * @cdev: Qed dev pointer.
- *
- * Return: Void.
+ * @param cdev
  */
 void qed_iov_free_hw_info(struct qed_dev *cdev);
 
 /**
- * qed_iov_mark_vf_flr(): Mark structs of vfs that have been FLR-ed.
+ * @brief Mark structs of vfs that have been FLR-ed.
  *
- * @p_hwfn: HW device data.
- * @disabled_vfs: bitmask of all VFs on path that were FLRed
+ * @param p_hwfn
+ * @param disabled_vfs - bitmask of all VFs on path that were FLRed
  *
- * Return: true iff one of the PF's vfs got FLRed. false otherwise.
+ * @return true iff one of the PF's vfs got FLRed. false otherwise.
  */
 bool qed_iov_mark_vf_flr(struct qed_hwfn *p_hwfn, u32 *disabled_vfs);
 
 /**
- * qed_iov_search_list_tlvs(): Search extended TLVs in request/reply buffer.
+ * @brief Search extended TLVs in request/reply buffer.
  *
- * @p_hwfn: HW device data.
- * @p_tlvs_list: Pointer to tlvs list
- * @req_type: Type of TLV
+ * @param p_hwfn
+ * @param p_tlvs_list - Pointer to tlvs list
+ * @param req_type - Type of TLV
  *
- * Return: pointer to tlv type if found, otherwise returns NULL.
+ * @return pointer to tlv type if found, otherwise returns NULL.
  */
 void *qed_iov_search_list_tlvs(struct qed_hwfn *p_hwfn,
 			       void *p_tlvs_list, u16 req_type);
@@ -478,18 +465,6 @@ static inline int qed_sriov_disable(struct qed_dev *cdev, bool pci_enabled)
 
 static inline void qed_inform_vf_link_state(struct qed_hwfn *hwfn)
 {
-}
-
-static inline void qed_sriov_vfpf_malicious(struct qed_hwfn *p_hwfn,
-					    struct fw_err_data *p_data)
-{
-}
-
-static inline int qed_sriov_eqe_event(struct qed_hwfn *p_hwfn, u8 opcode,
-				      __le16 echo, union event_ring_data *data,
-				      u8  fw_return_code)
-{
-	return 0;
 }
 #endif
 

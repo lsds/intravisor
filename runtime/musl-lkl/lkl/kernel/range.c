@@ -2,9 +2,8 @@
 /*
  * Range add and subtract
  */
+#include <linux/kernel.h>
 #include <linux/init.h>
-#include <linux/minmax.h>
-#include <linux/printk.h>
 #include <linux/sort.h>
 #include <linux/string.h>
 #include <linux/range.h>

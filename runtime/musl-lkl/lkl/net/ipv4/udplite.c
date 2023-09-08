@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  *  UDPLITE     An implementation of the UDP-Lite protocol (RFC 3828).
  *
@@ -6,39 +5,35 @@
  *
  *  Changes:
  *  Fixes:
+ *		This program is free software; you can redistribute it and/or
+ *		modify it under the terms of the GNU General Public License
+ *		as published by the Free Software Foundation; either version
+ *		2 of the License, or (at your option) any later version.
  */
 
 #define pr_fmt(fmt) "UDPLite: " fmt
 
 #include <linux/export.h>
-#include <linux/proc_fs.h>
 #include "udp_impl.h"
 
 struct udp_table 	udplite_table __read_mostly;
 EXPORT_SYMBOL(udplite_table);
-
-/* Designate sk as UDP-Lite socket */
-static int udplite_sk_init(struct sock *sk)
-{
-	udp_init_sock(sk);
-	udp_sk(sk)->pcflag = UDPLITE_BIT;
-	return 0;
-}
 
 static int udplite_rcv(struct sk_buff *skb)
 {
 	return __udp4_lib_rcv(skb, &udplite_table, IPPROTO_UDPLITE);
 }
 
-static int udplite_err(struct sk_buff *skb, u32 info)
+static void udplite_err(struct sk_buff *skb, u32 info)
 {
-	return __udp4_lib_err(skb, info, &udplite_table);
+	__udp4_lib_err(skb, info, &udplite_table);
 }
 
 static const struct net_protocol udplite_protocol = {
 	.handler	= udplite_rcv,
 	.err_handler	= udplite_err,
 	.no_policy	= 1,
+	.netns_ok	= 1,
 };
 
 struct proto 	udplite_prot = {
@@ -57,15 +52,15 @@ struct proto 	udplite_prot = {
 	.sendpage	   = udp_sendpage,
 	.hash		   = udp_lib_hash,
 	.unhash		   = udp_lib_unhash,
-	.rehash		   = udp_v4_rehash,
 	.get_port	   = udp_v4_get_port,
-
 	.memory_allocated  = &udp_memory_allocated,
-	.per_cpu_fw_alloc  = &udp_memory_per_cpu_fw_alloc,
-
 	.sysctl_mem	   = sysctl_udp_mem,
 	.obj_size	   = sizeof(struct udp_sock),
 	.h.udp_table	   = &udplite_table,
+#ifdef CONFIG_COMPAT
+	.compat_setsockopt = compat_udp_setsockopt,
+	.compat_getsockopt = compat_udp_getsockopt,
+#endif
 };
 EXPORT_SYMBOL(udplite_prot);
 
@@ -78,22 +73,32 @@ static struct inet_protosw udplite4_protosw = {
 };
 
 #ifdef CONFIG_PROC_FS
+
+static const struct file_operations udplite_afinfo_seq_fops = {
+	.open     = udp_seq_open,
+	.read     = seq_read,
+	.llseek   = seq_lseek,
+	.release  = seq_release_net
+};
+
 static struct udp_seq_afinfo udplite4_seq_afinfo = {
+	.name		= "udplite",
 	.family		= AF_INET,
 	.udp_table 	= &udplite_table,
+	.seq_fops	= &udplite_afinfo_seq_fops,
+	.seq_ops	= {
+		.show		= udp4_seq_show,
+	},
 };
 
 static int __net_init udplite4_proc_init_net(struct net *net)
 {
-	if (!proc_create_net_data("udplite", 0444, net->proc_net, &udp_seq_ops,
-			sizeof(struct udp_iter_state), &udplite4_seq_afinfo))
-		return -ENOMEM;
-	return 0;
+	return udp_proc_register(net, &udplite4_seq_afinfo);
 }
 
 static void __net_exit udplite4_proc_exit_net(struct net *net)
 {
-	remove_proc_entry("udplite", net->proc_net);
+	udp_proc_unregister(net, &udplite4_seq_afinfo);
 }
 
 static struct pernet_operations udplite4_net_ops = {

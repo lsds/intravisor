@@ -1,7 +1,22 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  *  Hardware dependent layer
  *  Copyright (c) by Jaroslav Kysela <perex@perex.cz>
+ *
+ *
+ *   This program is free software; you can redistribute it and/or modify
+ *   it under the terms of the GNU General Public License as published by
+ *   the Free Software Foundation; either version 2 of the License, or
+ *   (at your option) any later version.
+ *
+ *   This program is distributed in the hope that it will be useful,
+ *   but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *   GNU General Public License for more details.
+ *
+ *   You should have received a copy of the GNU General Public License
+ *   along with this program; if not, write to the Free Software
+ *   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307 USA
+ *
  */
 
 #include <linux/major.h>
@@ -177,8 +192,8 @@ static int snd_hwdep_info(struct snd_hwdep *hw,
 	
 	memset(&info, 0, sizeof(info));
 	info.card = hw->card->number;
-	strscpy(info.id, hw->id, sizeof(info.id));
-	strscpy(info.name, hw->name, sizeof(info.name));
+	strlcpy(info.id, hw->id, sizeof(info.id));	
+	strlcpy(info.name, hw->name, sizeof(info.name));
 	info.iface = hw->iface;
 	if (copy_to_user(_info, &info, sizeof(info)))
 		return -EFAULT;
@@ -195,8 +210,7 @@ static int snd_hwdep_dsp_status(struct snd_hwdep *hw,
 		return -ENXIO;
 	memset(&info, 0, sizeof(info));
 	info.dsp_loaded = hw->dsp_loaded;
-	err = hw->ops.dsp_status(hw, &info);
-	if (err < 0)
+	if ((err = hw->ops.dsp_status(hw, &info)) < 0)
 		return err;
 	if (copy_to_user(_info, &info, sizeof(info)))
 		return -EFAULT;
@@ -204,34 +218,27 @@ static int snd_hwdep_dsp_status(struct snd_hwdep *hw,
 }
 
 static int snd_hwdep_dsp_load(struct snd_hwdep *hw,
-			      struct snd_hwdep_dsp_image *info)
+			      struct snd_hwdep_dsp_image __user *_info)
 {
+	struct snd_hwdep_dsp_image info;
 	int err;
 	
 	if (! hw->ops.dsp_load)
 		return -ENXIO;
-	if (info->index >= 32)
-		return -EINVAL;
-	/* check whether the dsp was already loaded */
-	if (hw->dsp_loaded & (1u << info->index))
-		return -EBUSY;
-	err = hw->ops.dsp_load(hw, info);
-	if (err < 0)
-		return err;
-	hw->dsp_loaded |= (1u << info->index);
-	return 0;
-}
-
-static int snd_hwdep_dsp_load_user(struct snd_hwdep *hw,
-				   struct snd_hwdep_dsp_image __user *_info)
-{
-	struct snd_hwdep_dsp_image info = {};
-
+	memset(&info, 0, sizeof(info));
 	if (copy_from_user(&info, _info, sizeof(info)))
 		return -EFAULT;
-	return snd_hwdep_dsp_load(hw, &info);
+	if (info.index >= 32)
+		return -EINVAL;
+	/* check whether the dsp was already loaded */
+	if (hw->dsp_loaded & (1 << info.index))
+		return -EBUSY;
+	err = hw->ops.dsp_load(hw, &info);
+	if (err < 0)
+		return err;
+	hw->dsp_loaded |= (1 << info.index);
+	return 0;
 }
-
 
 static long snd_hwdep_ioctl(struct file * file, unsigned int cmd,
 			    unsigned long arg)
@@ -246,7 +253,7 @@ static long snd_hwdep_ioctl(struct file * file, unsigned int cmd,
 	case SNDRV_HWDEP_IOCTL_DSP_STATUS:
 		return snd_hwdep_dsp_status(hw, argp);
 	case SNDRV_HWDEP_IOCTL_DSP_LOAD:
-		return snd_hwdep_dsp_load_user(hw, argp);
+		return snd_hwdep_dsp_load(hw, argp);
 	}
 	if (hw->ops.ioctl)
 		return hw->ops.ioctl(hw, file, cmd, arg);
@@ -361,7 +368,7 @@ int snd_hwdep_new(struct snd_card *card, char *id, int device,
 {
 	struct snd_hwdep *hwdep;
 	int err;
-	static const struct snd_device_ops ops = {
+	static struct snd_device_ops ops = {
 		.dev_free = snd_hwdep_dev_free,
 		.dev_register = snd_hwdep_dev_register,
 		.dev_disconnect = snd_hwdep_dev_disconnect,
@@ -380,7 +387,7 @@ int snd_hwdep_new(struct snd_card *card, char *id, int device,
 	hwdep->card = card;
 	hwdep->device = device;
 	if (id)
-		strscpy(hwdep->id, id, sizeof(hwdep->id));
+		strlcpy(hwdep->id, id, sizeof(hwdep->id));
 
 	snd_device_initialize(&hwdep->dev, card);
 	hwdep->dev.release = release_hwdep_device;
@@ -501,8 +508,7 @@ static void __init snd_hwdep_proc_init(void)
 {
 	struct snd_info_entry *entry;
 
-	entry = snd_info_create_module_entry(THIS_MODULE, "hwdep", NULL);
-	if (entry) {
+	if ((entry = snd_info_create_module_entry(THIS_MODULE, "hwdep", NULL)) != NULL) {
 		entry->c.text.read = snd_hwdep_proc_read;
 		if (snd_info_register(entry) < 0) {
 			snd_info_free_entry(entry);

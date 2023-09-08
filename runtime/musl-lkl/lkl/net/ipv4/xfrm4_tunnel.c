@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /* xfrm4_tunnel.c: Generic IP tunnel transformer.
  *
  * Copyright (C) 2003 David S. Miller (davem@redhat.com)
@@ -8,7 +7,9 @@
 
 #include <linux/skbuff.h>
 #include <linux/module.h>
+#include <linux/mutex.h>
 #include <net/xfrm.h>
+#include <net/ip.h>
 #include <net/protocol.h>
 
 static int ipip_output(struct xfrm_state *x, struct sk_buff *skb)
@@ -22,17 +23,13 @@ static int ipip_xfrm_rcv(struct xfrm_state *x, struct sk_buff *skb)
 	return ip_hdr(skb)->protocol;
 }
 
-static int ipip_init_state(struct xfrm_state *x, struct netlink_ext_ack *extack)
+static int ipip_init_state(struct xfrm_state *x)
 {
-	if (x->props.mode != XFRM_MODE_TUNNEL) {
-		NL_SET_ERR_MSG(extack, "IPv4 tunnel can only be used with tunnel mode");
+	if (x->props.mode != XFRM_MODE_TUNNEL)
 		return -EINVAL;
-	}
 
-	if (x->encap) {
-		NL_SET_ERR_MSG(extack, "IPv4 tunnel is not compatible with encapsulation");
+	if (x->encap)
 		return -EINVAL;
-	}
 
 	x->props.header_len = sizeof(struct iphdr);
 
@@ -44,6 +41,7 @@ static void ipip_destroy(struct xfrm_state *x)
 }
 
 static const struct xfrm_type ipip_type = {
+	.description	= "IPIP",
 	.owner		= THIS_MODULE,
 	.proto	     	= IPPROTO_IPIP,
 	.init_state	= ipip_init_state,
@@ -65,14 +63,14 @@ static int xfrm_tunnel_err(struct sk_buff *skb, u32 info)
 static struct xfrm_tunnel xfrm_tunnel_handler __read_mostly = {
 	.handler	=	xfrm_tunnel_rcv,
 	.err_handler	=	xfrm_tunnel_err,
-	.priority	=	4,
+	.priority	=	3,
 };
 
 #if IS_ENABLED(CONFIG_IPV6)
 static struct xfrm_tunnel xfrm64_tunnel_handler __read_mostly = {
 	.handler	=	xfrm_tunnel_rcv,
 	.err_handler	=	xfrm_tunnel_err,
-	.priority	=	3,
+	.priority	=	2,
 };
 #endif
 
@@ -109,7 +107,8 @@ static void __exit ipip_fini(void)
 	if (xfrm4_tunnel_deregister(&xfrm_tunnel_handler, AF_INET))
 		pr_info("%s: can't remove xfrm handler for AF_INET\n",
 			__func__);
-	xfrm_unregister_type(&ipip_type, AF_INET);
+	if (xfrm_unregister_type(&ipip_type, AF_INET) < 0)
+		pr_info("%s: can't remove xfrm type\n", __func__);
 }
 
 module_init(ipip_init);

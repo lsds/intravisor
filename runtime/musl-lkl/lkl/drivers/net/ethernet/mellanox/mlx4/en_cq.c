@@ -54,8 +54,11 @@ int mlx4_en_create_cq(struct mlx4_en_priv *priv,
 
 	cq = kzalloc_node(sizeof(*cq), GFP_KERNEL, node);
 	if (!cq) {
-		en_err(priv, "Failed to allocate CQ structure\n");
-		return -ENOMEM;
+		cq = kzalloc(sizeof(*cq), GFP_KERNEL);
+		if (!cq) {
+			en_err(priv, "Failed to allocate CQ structure\n");
+			return -ENOMEM;
+		}
 	}
 
 	cq->size = entries;
@@ -90,7 +93,7 @@ int mlx4_en_activate_cq(struct mlx4_en_priv *priv, struct mlx4_en_cq *cq,
 			int cq_idx)
 {
 	struct mlx4_en_dev *mdev = priv->mdev;
-	int irq, err = 0;
+	int err = 0;
 	int timestamp_en = 0;
 	bool assigned_eq = false;
 
@@ -116,8 +119,10 @@ int mlx4_en_activate_cq(struct mlx4_en_priv *priv, struct mlx4_en_cq *cq,
 
 			assigned_eq = true;
 		}
-		irq = mlx4_eq_get_irq(mdev->dev, cq->vector);
-		cq->aff_mask = irq_get_effective_affinity_mask(irq);
+
+		cq->irq_desc =
+			irq_to_desc(mlx4_eq_get_irq(mdev->dev,
+						    cq->vector));
 	} else {
 		/* For TX we use the same irq per
 		ring we assigned for the RX    */
@@ -138,7 +143,7 @@ int mlx4_en_activate_cq(struct mlx4_en_priv *priv, struct mlx4_en_cq *cq,
 	cq->mcq.usage = MLX4_RES_USAGE_DRIVER;
 	err = mlx4_cq_alloc(mdev->dev, cq->size, &cq->wqres.mtt,
 			    &mdev->priv_uar, cq->wqres.db.dma, &cq->mcq,
-			    cq->vector, 0, timestamp_en, &cq->wqres.buf, false);
+			    cq->vector, 0, timestamp_en);
 	if (err)
 		goto free_eq;
 
@@ -147,12 +152,13 @@ int mlx4_en_activate_cq(struct mlx4_en_priv *priv, struct mlx4_en_cq *cq,
 	switch (cq->type) {
 	case TX:
 		cq->mcq.comp = mlx4_en_tx_irq;
-		netif_napi_add_tx(cq->dev, &cq->napi, mlx4_en_poll_tx_cq);
+		netif_tx_napi_add(cq->dev, &cq->napi, mlx4_en_poll_tx_cq,
+				  NAPI_POLL_WEIGHT);
 		napi_enable(&cq->napi);
 		break;
 	case RX:
 		cq->mcq.comp = mlx4_en_rx_irq;
-		netif_napi_add(cq->dev, &cq->napi, mlx4_en_poll_rx_cq);
+		netif_napi_add(cq->dev, &cq->napi, mlx4_en_poll_rx_cq, 64);
 		napi_enable(&cq->napi);
 		break;
 	case TX_XDP:

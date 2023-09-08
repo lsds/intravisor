@@ -96,7 +96,7 @@ static void qmi_recv_del_server(struct qmi_handle *qmi,
  * @node:	id of the dying node
  *
  * Signals the client that all previously registered services on this node are
- * now gone and then calls the bye callback to allow the client further
+ * now gone and then calls the bye callback to allow the client client further
  * cleaning up resources associated with this remote.
  */
 static void qmi_recv_bye(struct qmi_handle *qmi,
@@ -305,7 +305,7 @@ EXPORT_SYMBOL(qmi_add_server);
  * Return: Transaction id on success, negative errno on failure.
  */
 int qmi_txn_init(struct qmi_handle *qmi, struct qmi_txn *txn,
-		 const struct qmi_elem_info *ei, void *c_struct)
+		 struct qmi_elem_info *ei, void *c_struct)
 {
 	int ret;
 
@@ -318,7 +318,7 @@ int qmi_txn_init(struct qmi_handle *qmi, struct qmi_txn *txn,
 	txn->dest = c_struct;
 
 	mutex_lock(&qmi->txn_lock);
-	ret = idr_alloc_cyclic(&qmi->txns, txn, 0, U16_MAX, GFP_KERNEL);
+	ret = idr_alloc_cyclic(&qmi->txns, txn, 0, INT_MAX, GFP_KERNEL);
 	if (ret < 0)
 		pr_err("failed to allocate transaction id\n");
 
@@ -345,7 +345,8 @@ int qmi_txn_wait(struct qmi_txn *txn, unsigned long timeout)
 	struct qmi_handle *qmi = txn->qmi;
 	int ret;
 
-	ret = wait_for_completion_timeout(&txn->completion, timeout);
+	ret = wait_for_completion_interruptible_timeout(&txn->completion,
+							timeout);
 
 	mutex_lock(&qmi->txn_lock);
 	mutex_lock(&txn->lock);
@@ -353,7 +354,9 @@ int qmi_txn_wait(struct qmi_txn *txn, unsigned long timeout)
 	mutex_unlock(&txn->lock);
 	mutex_unlock(&qmi->txn_lock);
 
-	if (ret == 0)
+	if (ret < 0)
+		return ret;
+	else if (ret == 0)
 		return -ETIMEDOUT;
 	else
 		return txn->result;
@@ -636,11 +639,10 @@ int qmi_handle_init(struct qmi_handle *qmi, size_t recv_buf_size,
 	if (ops)
 		qmi->ops = *ops;
 
-	/* Make room for the header */
-	recv_buf_size += sizeof(struct qmi_header);
-	/* Must also be sufficient to hold a control packet */
 	if (recv_buf_size < sizeof(struct qrtr_ctrl_pkt))
 		recv_buf_size = sizeof(struct qrtr_ctrl_pkt);
+	else
+		recv_buf_size += sizeof(struct qmi_header);
 
 	qmi->recv_buf_size = recv_buf_size;
 	qmi->recv_buf = kzalloc(recv_buf_size, GFP_KERNEL);
@@ -655,12 +657,8 @@ int qmi_handle_init(struct qmi_handle *qmi, size_t recv_buf_size,
 
 	qmi->sock = qmi_sock_create(qmi, &qmi->sq);
 	if (IS_ERR(qmi->sock)) {
-		if (PTR_ERR(qmi->sock) == -EAFNOSUPPORT) {
-			ret = -EPROBE_DEFER;
-		} else {
-			pr_err("failed to create QMI socket\n");
-			ret = PTR_ERR(qmi->sock);
-		}
+		pr_err("failed to create QMI socket\n");
+		ret = PTR_ERR(qmi->sock);
 		goto err_destroy_wq;
 	}
 
@@ -736,8 +734,7 @@ EXPORT_SYMBOL(qmi_handle_release);
 static ssize_t qmi_send_message(struct qmi_handle *qmi,
 				struct sockaddr_qrtr *sq, struct qmi_txn *txn,
 				int type, int msg_id, size_t len,
-				const struct qmi_elem_info *ei,
-				const void *c_struct)
+				struct qmi_elem_info *ei, const void *c_struct)
 {
 	struct msghdr msghdr = {};
 	struct kvec iv;
@@ -788,7 +785,7 @@ static ssize_t qmi_send_message(struct qmi_handle *qmi,
  */
 ssize_t qmi_send_request(struct qmi_handle *qmi, struct sockaddr_qrtr *sq,
 			 struct qmi_txn *txn, int msg_id, size_t len,
-			 const struct qmi_elem_info *ei, const void *c_struct)
+			 struct qmi_elem_info *ei, const void *c_struct)
 {
 	return qmi_send_message(qmi, sq, txn, QMI_REQUEST, msg_id, len, ei,
 				c_struct);
@@ -809,7 +806,7 @@ EXPORT_SYMBOL(qmi_send_request);
  */
 ssize_t qmi_send_response(struct qmi_handle *qmi, struct sockaddr_qrtr *sq,
 			  struct qmi_txn *txn, int msg_id, size_t len,
-			  const struct qmi_elem_info *ei, const void *c_struct)
+			  struct qmi_elem_info *ei, const void *c_struct)
 {
 	return qmi_send_message(qmi, sq, txn, QMI_RESPONSE, msg_id, len, ei,
 				c_struct);
@@ -828,8 +825,7 @@ EXPORT_SYMBOL(qmi_send_response);
  * Return: 0 on success, negative errno on failure.
  */
 ssize_t qmi_send_indication(struct qmi_handle *qmi, struct sockaddr_qrtr *sq,
-			    int msg_id, size_t len,
-			    const struct qmi_elem_info *ei,
+			    int msg_id, size_t len, struct qmi_elem_info *ei,
 			    const void *c_struct)
 {
 	struct qmi_txn txn;

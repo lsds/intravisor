@@ -1,6 +1,10 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Copyright (C) 2012 Stefan Roese <sr@denx.de>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
  */
 
 #include <linux/device.h>
@@ -67,6 +71,7 @@ static void firmware_load(const struct firmware *fw, void *context)
 	struct spi_device *spi = (struct spi_device *)context;
 	struct fpga_data *data = spi_get_drvdata(spi);
 	u8 *buffer;
+	int ret;
 	u8 txbuf[8];
 	u8 rxbuf[8];
 	int rx_len = 8;
@@ -76,12 +81,12 @@ static void firmware_load(const struct firmware *fw, void *context)
 
 	if (fw == NULL) {
 		dev_err(&spi->dev, "Cannot load firmware, aborting\n");
-		goto out;
+		return;
 	}
 
 	if (fw->size == 0) {
 		dev_err(&spi->dev, "Error: Firmware size is 0!\n");
-		goto out;
+		return;
 	}
 
 	/* Fill dummy data (24 stuffing bits for commands) */
@@ -91,7 +96,7 @@ static void firmware_load(const struct firmware *fw, void *context)
 
 	/* Trying to speak with the FPGA via SPI... */
 	txbuf[0] = FPGA_CMD_READ_ID;
-	spi_write_then_read(spi, txbuf, 8, rxbuf, rx_len);
+	ret = spi_write_then_read(spi, txbuf, 8, rxbuf, rx_len);
 	jedec_id = get_unaligned_be32(&rxbuf[4]);
 	dev_dbg(&spi->dev, "FPGA JTAG ID=%08x\n", jedec_id);
 
@@ -103,20 +108,20 @@ static void firmware_load(const struct firmware *fw, void *context)
 		dev_err(&spi->dev,
 			"Error: No supported FPGA detected (JEDEC_ID=%08x)!\n",
 			jedec_id);
-		goto out;
+		return;
 	}
 
 	dev_info(&spi->dev, "FPGA %s detected\n", ecp3_dev[i].name);
 
 	txbuf[0] = FPGA_CMD_READ_STATUS;
-	spi_write_then_read(spi, txbuf, 8, rxbuf, rx_len);
+	ret = spi_write_then_read(spi, txbuf, 8, rxbuf, rx_len);
 	status = get_unaligned_be32(&rxbuf[4]);
 	dev_dbg(&spi->dev, "FPGA Status=%08x\n", status);
 
 	buffer = kzalloc(fw->size + 8, GFP_KERNEL);
 	if (!buffer) {
 		dev_err(&spi->dev, "Error: Can't allocate memory!\n");
-		goto out;
+		return;
 	}
 
 	/*
@@ -129,20 +134,20 @@ static void firmware_load(const struct firmware *fw, void *context)
 	memcpy(buffer + 4, fw->data, fw->size);
 
 	txbuf[0] = FPGA_CMD_REFRESH;
-	spi_write(spi, txbuf, 4);
+	ret = spi_write(spi, txbuf, 4);
 
 	txbuf[0] = FPGA_CMD_WRITE_EN;
-	spi_write(spi, txbuf, 4);
+	ret = spi_write(spi, txbuf, 4);
 
 	txbuf[0] = FPGA_CMD_CLEAR;
-	spi_write(spi, txbuf, 4);
+	ret = spi_write(spi, txbuf, 4);
 
 	/*
 	 * Wait for FPGA memory to become cleared
 	 */
 	for (i = 0; i < FPGA_CLEAR_LOOP_COUNT; i++) {
 		txbuf[0] = FPGA_CMD_READ_STATUS;
-		spi_write_then_read(spi, txbuf, 8, rxbuf, rx_len);
+		ret = spi_write_then_read(spi, txbuf, 8, rxbuf, rx_len);
 		status = get_unaligned_be32(&rxbuf[4]);
 		if (status == FPGA_STATUS_CLEARED)
 			break;
@@ -155,17 +160,17 @@ static void firmware_load(const struct firmware *fw, void *context)
 			"Error: Timeout waiting for FPGA to clear (status=%08x)!\n",
 			status);
 		kfree(buffer);
-		goto out;
+		return;
 	}
 
 	dev_info(&spi->dev, "Configuring the FPGA...\n");
-	spi_write(spi, buffer, fw->size + 8);
+	ret = spi_write(spi, buffer, fw->size + 8);
 
 	txbuf[0] = FPGA_CMD_WRITE_DIS;
-	spi_write(spi, txbuf, 4);
+	ret = spi_write(spi, txbuf, 4);
 
 	txbuf[0] = FPGA_CMD_READ_STATUS;
-	spi_write_then_read(spi, txbuf, 8, rxbuf, rx_len);
+	ret = spi_write_then_read(spi, txbuf, 8, rxbuf, rx_len);
 	status = get_unaligned_be32(&rxbuf[4]);
 	dev_dbg(&spi->dev, "FPGA Status=%08x\n", status);
 
@@ -181,7 +186,7 @@ static void firmware_load(const struct firmware *fw, void *context)
 	release_firmware(fw);
 
 	kfree(buffer);
-out:
+
 	complete(&data->fw_loaded);
 }
 
@@ -198,7 +203,7 @@ static int lattice_ecp3_probe(struct spi_device *spi)
 	spi_set_drvdata(spi, data);
 
 	init_completion(&data->fw_loaded);
-	err = request_firmware_nowait(THIS_MODULE, FW_ACTION_UEVENT,
+	err = request_firmware_nowait(THIS_MODULE, FW_ACTION_HOTPLUG,
 				      FIRMWARE_NAME, &spi->dev,
 				      GFP_KERNEL, spi, firmware_load);
 	if (err) {
@@ -211,11 +216,13 @@ static int lattice_ecp3_probe(struct spi_device *spi)
 	return 0;
 }
 
-static void lattice_ecp3_remove(struct spi_device *spi)
+static int lattice_ecp3_remove(struct spi_device *spi)
 {
 	struct fpga_data *data = spi_get_drvdata(spi);
 
 	wait_for_completion(&data->fw_loaded);
+
+	return 0;
 }
 
 static const struct spi_device_id lattice_ecp3_id[] = {

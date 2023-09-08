@@ -19,7 +19,7 @@ struct reiserfs_xattr_header {
 struct reiserfs_security_handle {
 	const char *name;
 	void *value;
-	__kernel_size_t length;
+	size_t length;
 };
 
 #endif  /*  _LINUX_REISERFS_XATTR_H  */

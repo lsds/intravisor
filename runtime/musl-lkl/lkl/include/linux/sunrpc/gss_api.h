@@ -13,6 +13,7 @@
 #ifndef _LINUX_SUNRPC_GSS_API_H
 #define _LINUX_SUNRPC_GSS_API_H
 
+#ifdef __KERNEL__
 #include <linux/sunrpc/xdr.h>
 #include <linux/sunrpc/msg_prot.h>
 #include <linux/uio.h>
@@ -21,7 +22,6 @@
 struct gss_ctx {
 	struct gss_api_mech	*mech_type;
 	void			*internal_ctx_id;
-	unsigned int		slack, align;
 };
 
 #define GSS_C_NO_BUFFER		((struct xdr_netobj) 0)
@@ -49,7 +49,7 @@ int gss_import_sec_context(
 		size_t			bufsize,
 		struct gss_api_mech	*mech,
 		struct gss_ctx		**ctx_id,
-		time64_t		*endtime,
+		time_t			*endtime,
 		gfp_t			gfp_mask);
 u32 gss_get_mic(
 		struct gss_ctx		*ctx_id,
@@ -67,7 +67,6 @@ u32 gss_wrap(
 u32 gss_unwrap(
 		struct gss_ctx		*ctx_id,
 		int			offset,
-		int			len,
 		struct xdr_buf		*inbuf);
 u32 gss_delete_sec_context(
 		struct gss_ctx		**ctx_id);
@@ -84,7 +83,6 @@ struct pf_desc {
 	u32	service;
 	char	*name;
 	char	*auth_domain_name;
-	struct auth_domain *domain;
 	bool	datatouch;
 };
 
@@ -111,7 +109,7 @@ struct gss_api_ops {
 			const void		*input_token,
 			size_t			bufsize,
 			struct gss_ctx		*ctx_id,
-			time64_t		*endtime,
+			time_t			*endtime,
 			gfp_t			gfp_mask);
 	u32 (*gss_get_mic)(
 			struct gss_ctx		*ctx_id,
@@ -129,7 +127,6 @@ struct gss_api_ops {
 	u32 (*gss_unwrap)(
 			struct gss_ctx		*ctx_id,
 			int			offset,
-			int			len,
 			struct xdr_buf		*buf);
 	void (*gss_delete_sec_context)(
 			void			*internal_ctx_id);
@@ -154,11 +151,15 @@ struct gss_api_mech *gss_mech_get_by_name(const char *);
 /* Similar, but get by pseudoflavor. */
 struct gss_api_mech *gss_mech_get_by_pseudoflavor(u32);
 
+/* Fill in an array with a list of supported pseudoflavors */
+int gss_mech_list_pseudoflavors(rpc_authflavor_t *, int);
+
 struct gss_api_mech * gss_mech_get(struct gss_api_mech *);
 
 /* For every successful gss_mech_get or gss_mech_get_by_* call there must be a
  * corresponding call to gss_mech_put. */
 void gss_mech_put(struct gss_api_mech *);
 
+#endif /* __KERNEL__ */
 #endif /* _LINUX_SUNRPC_GSS_API_H */
 

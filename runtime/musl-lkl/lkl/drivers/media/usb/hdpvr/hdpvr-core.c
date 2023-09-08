@@ -1,10 +1,14 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Hauppauge HD PVR USB driver
  *
  * Copyright (C) 2001-2004 Greg Kroah-Hartman (greg@kroah.com)
  * Copyright (C) 2008      Janne Grunau (j@jannau.net)
  * Copyright (C) 2008      John Poet
+ *
+ *	This program is free software; you can redistribute it and/or
+ *	modify it under the terms of the GNU General Public License as
+ *	published by the Free Software Foundation, version 2.
+ *
  */
 
 #include <linux/kernel.h>
@@ -137,7 +141,6 @@ static int device_authorization(struct hdpvr_device *dev)
 
 	dev->fw_ver = dev->usbc_buf[1];
 
-	dev->usbc_buf[46] = '\0';
 	v4l2_info(&dev->v4l2_dev, "firmware version 0x%x dated %s\n",
 			  dev->fw_ver, &dev->usbc_buf[2]);
 
@@ -272,7 +275,6 @@ static int hdpvr_probe(struct usb_interface *interface,
 #endif
 	size_t buffer_size;
 	int i;
-	int dev_num;
 	int retval = -ENOMEM;
 
 	/* allocate memory for our device state and initialize it */
@@ -363,24 +365,15 @@ static int hdpvr_probe(struct usb_interface *interface,
 	}
 
 	client = hdpvr_register_ir_i2c(dev);
-	if (IS_ERR(client)) {
+	if (!client) {
 		v4l2_err(&dev->v4l2_dev, "i2c IR device register failed\n");
-		retval = PTR_ERR(client);
+		retval = -ENODEV;
 		goto reg_fail;
 	}
 #endif
 
-	dev_num = atomic_inc_return(&dev_nr);
-	if (dev_num >= HDPVR_MAX) {
-		v4l2_err(&dev->v4l2_dev,
-			 "max device number reached, device register failed\n");
-		atomic_dec(&dev_nr);
-		retval = -ENODEV;
-		goto reg_fail;
-	}
-
 	retval = hdpvr_register_videodev(dev, &interface->dev,
-				    video_nr[dev_num]);
+				    video_nr[atomic_inc_return(&dev_nr)]);
 	if (retval < 0) {
 		v4l2_err(&dev->v4l2_dev, "registering videodev failed\n");
 		goto reg_fail;

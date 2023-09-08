@@ -1,5 +1,8 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version
+ * 2 of the License, or (at your option) any later version.
  */
 
 #include <linux/kernel.h>
@@ -15,9 +18,9 @@ int machine_check_8xx(struct pt_regs *regs)
 	pr_err("Machine check in kernel mode.\n");
 	pr_err("Caused by (from SRR1=%lx): ", reason);
 	if (reason & 0x40000000)
-		pr_cont("Fetch error at address %lx\n", regs->nip);
+		pr_err("Fetch error at address %lx\n", regs->nip);
 	else
-		pr_cont("Data access error at address %lx\n", regs->dar);
+		pr_err("Data access error at address %lx\n", regs->dar);
 
 #ifdef CONFIG_PCI
 	/* the qspan pci read routines can cause machine checks -- Cort
@@ -26,7 +29,7 @@ int machine_check_8xx(struct pt_regs *regs)
 	 * to deal with that than having a wart in the mcheck handler.
 	 * -- BenH
 	 */
-	bad_page_fault(regs, SIGBUS);
+	bad_page_fault(regs, regs->dar, SIGBUS);
 	return 1;
 #else
 	return 0;

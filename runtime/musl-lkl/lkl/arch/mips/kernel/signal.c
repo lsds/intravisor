@@ -25,7 +25,7 @@
 #include <linux/compiler.h>
 #include <linux/syscalls.h>
 #include <linux/uaccess.h>
-#include <linux/resume_user_mode.h>
+#include <linux/tracehook.h>
 
 #include <asm/abi.h>
 #include <asm/asm.h>
@@ -35,6 +35,7 @@
 #include <asm/sim.h>
 #include <asm/ucontext.h>
 #include <asm/cpu-features.h>
+#include <asm/war.h>
 #include <asm/dsp.h>
 #include <asm/inst.h>
 #include <asm/msa.h>
@@ -51,7 +52,7 @@ struct sigframe {
 	/* Matches struct ucontext from its uc_mcontext field onwards */
 	struct sigcontext sf_sc;
 	sigset_t sf_mask;
-	unsigned long long sf_extcontext[];
+	unsigned long long sf_extcontext[0];
 };
 
 struct rt_sigframe {
@@ -60,8 +61,6 @@ struct rt_sigframe {
 	struct siginfo rs_info;
 	struct ucontext rs_uc;
 };
-
-#ifdef CONFIG_MIPS_FP_SUPPORT
 
 /*
  * Thread saved context copy to/from a signal context presumed to be on the
@@ -105,20 +104,6 @@ static int copy_fp_from_sigcontext(void __user *sc)
 	return err;
 }
 
-#else /* !CONFIG_MIPS_FP_SUPPORT */
-
-static int copy_fp_to_sigcontext(void __user *sc)
-{
-	return 0;
-}
-
-static int copy_fp_from_sigcontext(void __user *sc)
-{
-	return 0;
-}
-
-#endif /* !CONFIG_MIPS_FP_SUPPORT */
-
 /*
  * Wrappers for the assembly _{save,restore}_fp_context functions.
  */
@@ -156,8 +141,6 @@ static inline void __user *sc_to_extcontext(void __user *sc)
 	uc = container_of(sc, struct ucontext, uc_mcontext);
 	return &uc->uc_extcontext;
 }
-
-#ifdef CONFIG_CPU_HAS_MSA
 
 static int save_msa_extcontext(void __user *buf)
 {
@@ -212,6 +195,9 @@ static int restore_msa_extcontext(void __user *buf, unsigned int size)
 	unsigned int csr;
 	int i, err;
 
+	if (!IS_ENABLED(CONFIG_CPU_HAS_MSA))
+		return SIGSYS;
+
 	if (size != sizeof(*msa))
 		return -EINVAL;
 
@@ -247,20 +233,6 @@ static int restore_msa_extcontext(void __user *buf, unsigned int size)
 
 	return err;
 }
-
-#else /* !CONFIG_CPU_HAS_MSA */
-
-static int save_msa_extcontext(void __user *buf)
-{
-	return 0;
-}
-
-static int restore_msa_extcontext(void __user *buf, unsigned int size)
-{
-	return SIGSYS;
-}
-
-#endif /* !CONFIG_CPU_HAS_MSA */
 
 static int save_extcontext(void __user *buf)
 {
@@ -544,12 +516,6 @@ int restore_sigcontext(struct pt_regs *regs, struct sigcontext __user *sc)
 	return err ?: protected_restore_fp_context(sc);
 }
 
-#ifdef CONFIG_WAR_ICACHE_REFILLS
-#define SIGMASK		~(cpu_icache_line_size()-1)
-#else
-#define SIGMASK		ALMASK
-#endif
-
 void __user *get_sigframe(struct ksignal *ksig, struct pt_regs *regs,
 			  size_t frame_size)
 {
@@ -562,13 +528,6 @@ void __user *get_sigframe(struct ksignal *ksig, struct pt_regs *regs,
 	sp = regs->regs[29];
 
 	/*
-	 * If we are on the alternate signal stack and would overflow it, don't.
-	 * Return an always-bogus address instead so we will die with SIGSEGV.
-	 */
-	if (on_sig_stack(sp) && !likely(on_sig_stack(sp - frame_size)))
-		return (void __user __force *)(-1UL);
-
-	/*
 	 * FPU emulator may have it's own trampoline active just
 	 * above the user stack, 16-bytes before the next lowest
 	 * 16 byte boundary.  Try to avoid trashing it.
@@ -577,7 +536,7 @@ void __user *get_sigframe(struct ksignal *ksig, struct pt_regs *regs,
 
 	sp = sigsp(sp, ksig);
 
-	return (void __user *)((sp - frame_size) & SIGMASK);
+	return (void __user *)((sp - frame_size) & (ICACHE_REFILLS_WORKAROUND_WAR ? ~(cpu_icache_line_size()-1) : ALMASK));
 }
 
 /*
@@ -602,7 +561,7 @@ SYSCALL_DEFINE3(sigaction, int, sig, const struct sigaction __user *, act,
 	if (act) {
 		old_sigset_t mask;
 
-		if (!access_ok(act, sizeof(*act)))
+		if (!access_ok(VERIFY_READ, act, sizeof(*act)))
 			return -EFAULT;
 		err |= __get_user(new_ka.sa.sa_handler, &act->sa_handler);
 		err |= __get_user(new_ka.sa.sa_flags, &act->sa_flags);
@@ -616,7 +575,7 @@ SYSCALL_DEFINE3(sigaction, int, sig, const struct sigaction __user *, act,
 	ret = do_sigaction(sig, act ? &new_ka : NULL, oact ? &old_ka : NULL);
 
 	if (!ret && oact) {
-		if (!access_ok(oact, sizeof(*oact)))
+		if (!access_ok(VERIFY_WRITE, oact, sizeof(*oact)))
 			return -EFAULT;
 		err |= __put_user(old_ka.sa.sa_flags, &oact->sa_flags);
 		err |= __put_user(old_ka.sa.sa_handler, &oact->sa_handler);
@@ -633,27 +592,25 @@ SYSCALL_DEFINE3(sigaction, int, sig, const struct sigaction __user *, act,
 #endif
 
 #ifdef CONFIG_TRAD_SIGNALS
-asmlinkage void sys_sigreturn(void)
+asmlinkage void sys_sigreturn(nabi_no_regargs struct pt_regs regs)
 {
 	struct sigframe __user *frame;
-	struct pt_regs *regs;
 	sigset_t blocked;
 	int sig;
 
-	regs = current_pt_regs();
-	frame = (struct sigframe __user *)regs->regs[29];
-	if (!access_ok(frame, sizeof(*frame)))
+	frame = (struct sigframe __user *) regs.regs[29];
+	if (!access_ok(VERIFY_READ, frame, sizeof(*frame)))
 		goto badframe;
 	if (__copy_from_user(&blocked, &frame->sf_mask, sizeof(blocked)))
 		goto badframe;
 
 	set_current_blocked(&blocked);
 
-	sig = restore_sigcontext(regs, &frame->sf_sc);
+	sig = restore_sigcontext(&regs, &frame->sf_sc);
 	if (sig < 0)
 		goto badframe;
 	else if (sig)
-		force_sig(sig);
+		force_sig(sig, current);
 
 	/*
 	 * Don't let your children do this ...
@@ -661,36 +618,34 @@ asmlinkage void sys_sigreturn(void)
 	__asm__ __volatile__(
 		"move\t$29, %0\n\t"
 		"j\tsyscall_exit"
-		: /* no outputs */
-		: "r" (regs));
+		:/* no outputs */
+		:"r" (&regs));
 	/* Unreached */
 
 badframe:
-	force_sig(SIGSEGV);
+	force_sig(SIGSEGV, current);
 }
 #endif /* CONFIG_TRAD_SIGNALS */
 
-asmlinkage void sys_rt_sigreturn(void)
+asmlinkage void sys_rt_sigreturn(nabi_no_regargs struct pt_regs regs)
 {
 	struct rt_sigframe __user *frame;
-	struct pt_regs *regs;
 	sigset_t set;
 	int sig;
 
-	regs = current_pt_regs();
-	frame = (struct rt_sigframe __user *)regs->regs[29];
-	if (!access_ok(frame, sizeof(*frame)))
+	frame = (struct rt_sigframe __user *) regs.regs[29];
+	if (!access_ok(VERIFY_READ, frame, sizeof(*frame)))
 		goto badframe;
 	if (__copy_from_user(&set, &frame->rs_uc.uc_sigmask, sizeof(set)))
 		goto badframe;
 
 	set_current_blocked(&set);
 
-	sig = restore_sigcontext(regs, &frame->rs_uc.uc_mcontext);
+	sig = restore_sigcontext(&regs, &frame->rs_uc.uc_mcontext);
 	if (sig < 0)
 		goto badframe;
 	else if (sig)
-		force_sig(sig);
+		force_sig(sig, current);
 
 	if (restore_altstack(&frame->rs_uc.uc_stack))
 		goto badframe;
@@ -701,12 +656,12 @@ asmlinkage void sys_rt_sigreturn(void)
 	__asm__ __volatile__(
 		"move\t$29, %0\n\t"
 		"j\tsyscall_exit"
-		: /* no outputs */
-		: "r" (regs));
+		:/* no outputs */
+		:"r" (&regs));
 	/* Unreached */
 
 badframe:
-	force_sig(SIGSEGV);
+	force_sig(SIGSEGV, current);
 }
 
 #ifdef CONFIG_TRAD_SIGNALS
@@ -717,7 +672,7 @@ static int setup_frame(void *sig_return, struct ksignal *ksig,
 	int err = 0;
 
 	frame = get_sigframe(ksig, regs, sizeof(*frame));
-	if (!access_ok(frame, sizeof (*frame)))
+	if (!access_ok(VERIFY_WRITE, frame, sizeof (*frame)))
 		return -EFAULT;
 
 	err |= setup_sigcontext(regs, &frame->sf_sc);
@@ -753,25 +708,23 @@ static int setup_rt_frame(void *sig_return, struct ksignal *ksig,
 			  struct pt_regs *regs, sigset_t *set)
 {
 	struct rt_sigframe __user *frame;
+	int err = 0;
 
 	frame = get_sigframe(ksig, regs, sizeof(*frame));
-	if (!access_ok(frame, sizeof (*frame)))
+	if (!access_ok(VERIFY_WRITE, frame, sizeof (*frame)))
 		return -EFAULT;
 
 	/* Create siginfo.  */
-	if (copy_siginfo_to_user(&frame->rs_info, &ksig->info))
-		return -EFAULT;
+	err |= copy_siginfo_to_user(&frame->rs_info, &ksig->info);
 
 	/* Create the ucontext.	 */
-	if (__put_user(0, &frame->rs_uc.uc_flags))
-		return -EFAULT;
-	if (__put_user(NULL, &frame->rs_uc.uc_link))
-		return -EFAULT;
-	if (__save_altstack(&frame->rs_uc.uc_stack, regs->regs[29]))
-		return -EFAULT;
-	if (setup_sigcontext(regs, &frame->rs_uc.uc_mcontext))
-		return -EFAULT;
-	if (__copy_to_user(&frame->rs_uc.uc_sigmask, set, sizeof(*set)))
+	err |= __put_user(0, &frame->rs_uc.uc_flags);
+	err |= __put_user(NULL, &frame->rs_uc.uc_link);
+	err |= __save_altstack(&frame->rs_uc.uc_stack, regs->regs[29]);
+	err |= setup_sigcontext(regs, &frame->rs_uc.uc_mcontext);
+	err |= __copy_to_user(&frame->rs_uc.uc_sigmask, set, sizeof(*set));
+
+	if (err)
 		return -EFAULT;
 
 	/*
@@ -838,7 +791,7 @@ static void handle_signal(struct ksignal *ksig, struct pt_regs *regs)
 				regs->regs[2] = EINTR;
 				break;
 			}
-			fallthrough;
+		/* fallthrough */
 		case ERESTARTNOINTR:
 			regs->regs[7] = regs->regs[26];
 			regs->regs[2] = regs->regs[0];
@@ -847,8 +800,6 @@ static void handle_signal(struct ksignal *ksig, struct pt_regs *regs)
 
 		regs->regs[0] = 0;		/* Don't deal with this again.	*/
 	}
-
-	rseq_signal_deliver(ksig, regs);
 
 	if (sig_uses_siginfo(&ksig->ka, abi))
 		ret = abi->setup_rt_frame(vdso + abi->vdso->off_rt_sigreturn,
@@ -911,16 +862,18 @@ asmlinkage void do_notify_resume(struct pt_regs *regs, void *unused,
 		uprobe_notify_resume(regs);
 
 	/* deal with pending signal delivery */
-	if (thread_info_flags & (_TIF_SIGPENDING | _TIF_NOTIFY_SIGNAL))
+	if (thread_info_flags & _TIF_SIGPENDING)
 		do_signal(regs);
 
-	if (thread_info_flags & _TIF_NOTIFY_RESUME)
-		resume_user_mode_work(regs);
+	if (thread_info_flags & _TIF_NOTIFY_RESUME) {
+		clear_thread_flag(TIF_NOTIFY_RESUME);
+		tracehook_notify_resume(regs);
+	}
 
 	user_enter();
 }
 
-#if defined(CONFIG_SMP) && defined(CONFIG_MIPS_FP_SUPPORT)
+#ifdef CONFIG_SMP
 static int smp_save_fp_context(void __user *sc)
 {
 	return raw_cpu_has_fpu
@@ -948,7 +901,7 @@ static int signal_setup(void)
 		     (offsetof(struct rt_sigframe, rs_uc.uc_extcontext) -
 		      offsetof(struct rt_sigframe, rs_uc.uc_mcontext)));
 
-#if defined(CONFIG_SMP) && defined(CONFIG_MIPS_FP_SUPPORT)
+#ifdef CONFIG_SMP
 	/* For now just do the cpu_has_fpu check when the functions are invoked */
 	save_fp_context = smp_save_fp_context;
 	restore_fp_context = smp_restore_fp_context;

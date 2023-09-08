@@ -1,7 +1,10 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
 /* industrial I/O data types needed both in and out of kernel
  *
  * Copyright (c) 2008 Jonathan Cameron
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License version 2 as published by
+ * the Free Software Foundation.
  */
 
 #ifndef _IIO_TYPES_H_
@@ -16,9 +19,6 @@ enum iio_event_info {
 	IIO_EV_INFO_PERIOD,
 	IIO_EV_INFO_HIGH_PASS_FILTER_3DB,
 	IIO_EV_INFO_LOW_PASS_FILTER_3DB,
-	IIO_EV_INFO_TIMEOUT,
-	IIO_EV_INFO_RESET_TIMEOUT,
-	IIO_EV_INFO_TAP2_MIN_DELAY,
 };
 
 #define IIO_VAL_INT 1
@@ -26,10 +26,8 @@ enum iio_event_info {
 #define IIO_VAL_INT_PLUS_NANO 3
 #define IIO_VAL_INT_PLUS_MICRO_DB 4
 #define IIO_VAL_INT_MULTIPLE 5
-#define IIO_VAL_INT_64 6 /* 64-bit data, val is lower 32 bits */
 #define IIO_VAL_FRACTIONAL 10
 #define IIO_VAL_FRACTIONAL_LOG2 11
-#define IIO_VAL_CHAR 12
 
 enum iio_available_type {
 	IIO_AVAIL_LIST,
@@ -54,7 +52,6 @@ enum iio_chan_info_enum {
 	IIO_CHAN_INFO_PHASE,
 	IIO_CHAN_INFO_HARDWAREGAIN,
 	IIO_CHAN_INFO_HYSTERESIS,
-	IIO_CHAN_INFO_HYSTERESIS_RELATIVE,
 	IIO_CHAN_INFO_INT_TIME,
 	IIO_CHAN_INFO_ENABLE,
 	IIO_CHAN_INFO_CALIBHEIGHT,
@@ -63,9 +60,6 @@ enum iio_chan_info_enum {
 	IIO_CHAN_INFO_DEBOUNCE_TIME,
 	IIO_CHAN_INFO_CALIBEMISSIVITY,
 	IIO_CHAN_INFO_OVERSAMPLING_RATIO,
-	IIO_CHAN_INFO_THERMOCOUPLE_TYPE,
-	IIO_CHAN_INFO_CALIBAMBIENT,
-	IIO_CHAN_INFO_ZEROPOINT,
 };
 
 #endif /* _IIO_TYPES_H_ */

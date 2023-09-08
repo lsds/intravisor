@@ -1,8 +1,11 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  *  arch/arm/include/asm/domain.h
  *
  *  Copyright (C) 1999 Russell King.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 #ifndef __ASM_PROC_DOMAIN_H
 #define __ASM_PROC_DOMAIN_H
@@ -82,7 +85,7 @@
 #ifndef __ASSEMBLY__
 
 #ifdef CONFIG_CPU_CP15_MMU
-static __always_inline unsigned int get_domain(void)
+static inline unsigned int get_domain(void)
 {
 	unsigned int domain;
 
@@ -94,7 +97,7 @@ static __always_inline unsigned int get_domain(void)
 	return domain;
 }
 
-static __always_inline void set_domain(unsigned int val)
+static inline void set_domain(unsigned val)
 {
 	asm volatile(
 	"mcr	p15, 0, %0, c3, c0	@ set domain"
@@ -102,14 +105,27 @@ static __always_inline void set_domain(unsigned int val)
 	isb();
 }
 #else
-static __always_inline unsigned int get_domain(void)
+static inline unsigned int get_domain(void)
 {
 	return 0;
 }
 
-static __always_inline void set_domain(unsigned int val)
+static inline void set_domain(unsigned val)
 {
 }
+#endif
+
+#ifdef CONFIG_CPU_USE_DOMAINS
+#define modify_domain(dom,type)					\
+	do {							\
+		unsigned int domain = get_domain();		\
+		domain &= ~domain_mask(dom);			\
+		domain = domain | domain_val(dom, type);	\
+		set_domain(domain);				\
+	} while (0)
+
+#else
+static inline void modify_domain(unsigned dom, unsigned type)	{ }
 #endif
 
 /*
@@ -117,11 +133,9 @@ static __always_inline void set_domain(unsigned int val)
  * instructions (inline assembly)
  */
 #ifdef CONFIG_CPU_USE_DOMAINS
-#define TUSER(instr)		TUSERCOND(instr, )
-#define TUSERCOND(instr, cond)	#instr "t" #cond
+#define TUSER(instr)	#instr "t"
 #else
-#define TUSER(instr)		TUSERCOND(instr, )
-#define TUSERCOND(instr, cond)	#instr #cond
+#define TUSER(instr)	#instr
 #endif
 
 #else /* __ASSEMBLY__ */

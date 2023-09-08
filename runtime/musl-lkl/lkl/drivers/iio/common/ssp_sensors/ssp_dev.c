@@ -1,16 +1,26 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  *  Copyright (C) 2014, Samsung Electronics Co. Ltd. All Rights Reserved.
+ *
+ *  This program is free software; you can redistribute it and/or modify
+ *  it under the terms of the GNU General Public License as published by
+ *  the Free Software Foundation; either version 2 of the License, or
+ *  (at your option) any later version.
+ *
+ *  This program is distributed in the hope that it will be useful,
+ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *  GNU General Public License for more details.
+ *
  */
 
 #include <linux/iio/iio.h>
 #include <linux/interrupt.h>
 #include <linux/io.h>
 #include <linux/mfd/core.h>
-#include <linux/mod_devicetable.h>
 #include <linux/module.h>
-#include <linux/property.h>
-
+#include <linux/of.h>
+#include <linux/of_gpio.h>
+#include <linux/of_platform.h>
 #include "ssp.h"
 
 #define SSP_WDT_TIME			10000
@@ -61,9 +71,9 @@ static const struct mfd_cell sensorhub_sensor_devs[] = {
 
 static void ssp_toggle_mcu_reset_gpio(struct ssp_data *data)
 {
-	gpiod_set_value(data->mcu_reset_gpiod, 0);
+	gpio_set_value(data->mcu_reset_gpio, 0);
 	usleep_range(1000, 1200);
-	gpiod_set_value(data->mcu_reset_gpiod, 1);
+	gpio_set_value(data->mcu_reset_gpio, 1);
 	msleep(50);
 }
 
@@ -205,7 +215,7 @@ u32 ssp_get_sensor_delay(struct ssp_data *data, enum ssp_sensor_type type)
 {
 	return data->delay_buf[type];
 }
-EXPORT_SYMBOL_NS(ssp_get_sensor_delay, IIO_SSP_SENSORS);
+EXPORT_SYMBOL(ssp_get_sensor_delay);
 
 /**
  * ssp_enable_sensor() - enables data acquisition for sensor
@@ -267,7 +277,7 @@ int ssp_enable_sensor(struct ssp_data *data, enum ssp_sensor_type type,
 derror:
 	return ret;
 }
-EXPORT_SYMBOL_NS(ssp_enable_sensor, IIO_SSP_SENSORS);
+EXPORT_SYMBOL(ssp_enable_sensor);
 
 /**
  * ssp_change_delay() - changes data acquisition for sensor
@@ -298,7 +308,7 @@ int ssp_change_delay(struct ssp_data *data, enum ssp_sensor_type type,
 
 	return 0;
 }
-EXPORT_SYMBOL_NS(ssp_change_delay, IIO_SSP_SENSORS);
+EXPORT_SYMBOL(ssp_change_delay);
 
 /**
  * ssp_disable_sensor() - disables sensor
@@ -335,7 +345,7 @@ int ssp_disable_sensor(struct ssp_data *data, enum ssp_sensor_type type)
 
 	return 0;
 }
-EXPORT_SYMBOL_NS(ssp_disable_sensor, IIO_SSP_SENSORS);
+EXPORT_SYMBOL(ssp_disable_sensor);
 
 static irqreturn_t ssp_irq_thread_fn(int irq, void *dev_id)
 {
@@ -426,6 +436,7 @@ int ssp_queue_ssp_refresh_task(struct ssp_data *data, unsigned int delay)
 				  msecs_to_jiffies(delay));
 }
 
+#ifdef CONFIG_OF
 static const struct of_device_id ssp_of_match[] = {
 	{
 		.compatible	= "samsung,sensorhub-rinato",
@@ -440,31 +451,61 @@ MODULE_DEVICE_TABLE(of, ssp_of_match);
 
 static struct ssp_data *ssp_parse_dt(struct device *dev)
 {
+	int ret;
 	struct ssp_data *data;
+	struct device_node *node = dev->of_node;
+	const struct of_device_id *match;
 
 	data = devm_kzalloc(dev, sizeof(*data), GFP_KERNEL);
 	if (!data)
 		return NULL;
 
-	data->mcu_ap_gpiod = devm_gpiod_get(dev, "mcu-ap", GPIOD_IN);
-	if (IS_ERR(data->mcu_ap_gpiod))
-		return NULL;
+	data->mcu_ap_gpio = of_get_named_gpio(node, "mcu-ap-gpios", 0);
+	if (data->mcu_ap_gpio < 0)
+		goto err_free_pd;
 
-	data->ap_mcu_gpiod = devm_gpiod_get(dev, "ap-mcu", GPIOD_OUT_HIGH);
-	if (IS_ERR(data->ap_mcu_gpiod))
-		return NULL;
+	data->ap_mcu_gpio = of_get_named_gpio(node, "ap-mcu-gpios", 0);
+	if (data->ap_mcu_gpio < 0)
+		goto err_free_pd;
 
-	data->mcu_reset_gpiod = devm_gpiod_get(dev, "mcu-reset",
-					       GPIOD_OUT_HIGH);
-	if (IS_ERR(data->mcu_reset_gpiod))
-		return NULL;
+	data->mcu_reset_gpio = of_get_named_gpio(node, "mcu-reset-gpios", 0);
+	if (data->mcu_reset_gpio < 0)
+		goto err_free_pd;
 
-	data->sensorhub_info = device_get_match_data(dev);
+	ret = devm_gpio_request_one(dev, data->ap_mcu_gpio, GPIOF_OUT_INIT_HIGH,
+				    "ap-mcu-gpios");
+	if (ret)
+		goto err_free_pd;
+
+	ret = devm_gpio_request_one(dev, data->mcu_reset_gpio,
+				    GPIOF_OUT_INIT_HIGH, "mcu-reset-gpios");
+	if (ret)
+		goto err_ap_mcu;
+
+	match = of_match_node(ssp_of_match, node);
+	if (!match)
+		goto err_mcu_reset_gpio;
+
+	data->sensorhub_info = match->data;
 
 	dev_set_drvdata(dev, data);
 
 	return data;
+
+err_mcu_reset_gpio:
+	devm_gpio_free(dev, data->mcu_reset_gpio);
+err_ap_mcu:
+	devm_gpio_free(dev, data->ap_mcu_gpio);
+err_free_pd:
+	devm_kfree(dev, data);
+	return NULL;
 }
+#else
+static struct ssp_data *ssp_parse_dt(struct device *pdev)
+{
+	return NULL;
+}
+#endif
 
 /**
  * ssp_register_consumer() - registers iio consumer in ssp framework
@@ -478,7 +519,7 @@ void ssp_register_consumer(struct iio_dev *indio_dev, enum ssp_sensor_type type)
 
 	data->sensor_devs[type] = indio_dev;
 }
-EXPORT_SYMBOL_NS(ssp_register_consumer, IIO_SSP_SENSORS);
+EXPORT_SYMBOL(ssp_register_consumer);
 
 static int ssp_probe(struct spi_device *spi)
 {
@@ -491,8 +532,7 @@ static int ssp_probe(struct spi_device *spi)
 		return -ENODEV;
 	}
 
-	ret = mfd_add_devices(&spi->dev, PLATFORM_DEVID_NONE,
-			      sensorhub_sensor_devs,
+	ret = mfd_add_devices(&spi->dev, -1, sensorhub_sensor_devs,
 			      ARRAY_SIZE(sensorhub_sensor_devs), NULL, 0, NULL);
 	if (ret < 0) {
 		dev_err(&spi->dev, "mfd add devices fail\n");
@@ -574,7 +614,7 @@ err_setup_irq:
 	return ret;
 }
 
-static void ssp_remove(struct spi_device *spi)
+static int ssp_remove(struct spi_device *spi)
 {
 	struct ssp_data *data = spi_get_drvdata(spi);
 
@@ -596,8 +636,11 @@ static void ssp_remove(struct spi_device *spi)
 	mutex_destroy(&data->pending_lock);
 
 	mfd_remove_devices(&spi->dev);
+
+	return 0;
 }
 
+#ifdef CONFIG_PM_SLEEP
 static int ssp_suspend(struct device *dev)
 {
 	int ret;
@@ -646,15 +689,18 @@ static int ssp_resume(struct device *dev)
 
 	return 0;
 }
+#endif /* CONFIG_PM_SLEEP */
 
-static DEFINE_SIMPLE_DEV_PM_OPS(ssp_pm_ops, ssp_suspend, ssp_resume);
+static const struct dev_pm_ops ssp_pm_ops = {
+	SET_SYSTEM_SLEEP_PM_OPS(ssp_suspend, ssp_resume)
+};
 
 static struct spi_driver ssp_driver = {
 	.probe = ssp_probe,
 	.remove = ssp_remove,
 	.driver = {
-		.pm = pm_sleep_ptr(&ssp_pm_ops),
-		.of_match_table = ssp_of_match,
+		.pm = &ssp_pm_ops,
+		.of_match_table = of_match_ptr(ssp_of_match),
 		.name = "sensorhub"
 	},
 };

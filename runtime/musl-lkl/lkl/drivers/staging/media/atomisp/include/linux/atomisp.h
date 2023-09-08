@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0 */
 /*
  * Support for Medifield PNW Camera Imaging ISP subsystem.
  *
@@ -15,6 +14,9 @@
  *
  *
  */
+#ifdef CSS15
+#include <linux/atomisp_css15.h>
+#else
 
 #ifndef _ATOM_ISP_H
 #define _ATOM_ISP_H
@@ -174,14 +176,14 @@ struct atomisp_3a_config {
 };
 
 struct atomisp_dvs_grid_info {
-	u32 enable;
-	u32 width;
-	u32 aligned_width;
-	u32 height;
-	u32 aligned_height;
-	u32 bqs_per_grid_cell;
-	u32 num_hor_coefs;
-	u32 num_ver_coefs;
+	uint32_t enable;
+	uint32_t width;
+	uint32_t aligned_width;
+	uint32_t height;
+	uint32_t aligned_height;
+	uint32_t bqs_per_grid_cell;
+	uint32_t num_hor_coefs;
+	uint32_t num_ver_coefs;
 };
 
 struct atomisp_dvs_envelop {
@@ -190,22 +192,23 @@ struct atomisp_dvs_envelop {
 };
 
 struct atomisp_grid_info {
-	u32 enable;
-	u32 use_dmem;
-	u32 has_histogram;
-	u32 s3a_width;
-	u32 s3a_height;
-	u32 aligned_width;
-	u32 aligned_height;
-	u32 s3a_bqs_per_grid_cell;
-	u32 deci_factor_log2;
-	u32 elem_bit_depth;
+	uint32_t enable;
+	uint32_t use_dmem;
+	uint32_t has_histogram;
+	uint32_t s3a_width;
+	uint32_t s3a_height;
+	uint32_t aligned_width;
+	uint32_t aligned_height;
+	uint32_t s3a_bqs_per_grid_cell;
+	uint32_t deci_factor_log2;
+	uint32_t elem_bit_depth;
 };
 
 struct atomisp_dis_vector {
 	int x;
 	int y;
 };
+
 
 /* DVS 2.0 Coefficient types. This structure contains 4 pointers to
  *  arrays that contain the coeffients for each type.
@@ -242,14 +245,14 @@ struct atomisp_dvs2_statistics {
 
 struct atomisp_dis_statistics {
 	struct atomisp_dvs2_statistics dvs2_stat;
-	u32 exp_id;
+	uint32_t exp_id;
 };
 
 struct atomisp_3a_rgby_output {
-	u32 r;
-	u32 g;
-	u32 b;
-	u32 y;
+	uint32_t r;
+	uint32_t g;
+	uint32_t b;
+	uint32_t y;
 };
 
 /*
@@ -270,33 +273,33 @@ struct atomisp_metadata_with_type {
 	/* to specify which type of metadata to get */
 	enum atomisp_metadata_type type;
 	void __user *data;
-	u32 width;
-	u32 height;
-	u32 stride; /* in bytes */
-	u32 exp_id; /* exposure ID */
-	u32 *effective_width; /* mipi packets valid data size */
+	uint32_t width;
+	uint32_t height;
+	uint32_t stride; /* in bytes */
+	uint32_t exp_id; /* exposure ID */
+	uint32_t *effective_width; /* mipi packets valid data size */
 };
 
 struct atomisp_metadata {
 	void __user *data;
-	u32 width;
-	u32 height;
-	u32 stride; /* in bytes */
-	u32 exp_id; /* exposure ID */
-	u32 *effective_width; /* mipi packets valid data size */
+	uint32_t width;
+	uint32_t height;
+	uint32_t stride; /* in bytes */
+	uint32_t exp_id; /* exposure ID */
+	uint32_t *effective_width; /* mipi packets valid data size */
 };
 
 struct atomisp_ext_isp_ctrl {
-	u32 id;
-	u32 data;
+	uint32_t id;
+	uint32_t data;
 };
 
 struct atomisp_3a_statistics {
 	struct atomisp_grid_info  grid_info;
 	struct atomisp_3a_output __user *data;
 	struct atomisp_3a_rgby_output __user *rgby_data;
-	u32 exp_id; /* exposure ID */
-	u32 isp_config_id; /* isp config ID */
+	uint32_t exp_id; /* exposure ID */
+	uint32_t isp_config_id; /* isp config ID */
 };
 
 /**
@@ -381,38 +384,37 @@ struct atomisp_xnr_config {
 
 /* metadata config */
 struct atomisp_metadata_config {
-	u32 metadata_height;
-	u32 metadata_stride;
+	uint32_t metadata_height;
+	uint32_t metadata_stride;
 };
 
 /*
  * Generic resolution structure.
  */
 struct atomisp_resolution {
-	u32 width;  /** Width */
-	u32 height; /** Height */
+	uint32_t width;  /** Width */
+	uint32_t height; /** Height */
 };
 
 /*
  * This specifies the coordinates (x,y)
  */
 struct atomisp_zoom_point {
-	s32 x; /** x coordinate */
-	s32 y; /** y coordinate */
+	int32_t x; /** x coordinate */
+	int32_t y; /** y coordinate */
 };
 
 /*
  * This specifies the region
  */
 struct atomisp_zoom_region {
-	struct atomisp_zoom_point
-		origin; /* Starting point coordinates for the region */
+	struct atomisp_zoom_point origin; /* Starting point coordinates for the region */
 	struct atomisp_resolution resolution; /* Region resolution */
 };
 
 struct atomisp_dz_config {
-	u32 dx; /** Horizontal zoom factor */
-	u32 dy; /** Vertical zoom factor */
+	uint32_t dx; /** Horizontal zoom factor */
+	uint32_t dy; /** Vertical zoom factor */
 	struct atomisp_zoom_region zoom_region; /** region for zoom */
 };
 
@@ -452,19 +454,19 @@ struct atomisp_dvs2_bq_resolutions {
 };
 
 struct atomisp_dvs_6axis_config {
-	u32 exp_id;
-	u32 width_y;
-	u32 height_y;
-	u32 width_uv;
-	u32 height_uv;
-	u32 *xcoords_y;
-	u32 *ycoords_y;
-	u32 *xcoords_uv;
-	u32 *ycoords_uv;
+	uint32_t exp_id;
+	uint32_t width_y;
+	uint32_t height_y;
+	uint32_t width_uv;
+	uint32_t height_uv;
+	uint32_t *xcoords_y;
+	uint32_t *ycoords_y;
+	uint32_t *xcoords_uv;
+	uint32_t *ycoords_uv;
 };
 
 struct atomisp_formats_config {
-	u32 video_full_range_flag;
+	uint32_t video_full_range_flag;
 };
 
 struct atomisp_parameters {
@@ -507,7 +509,7 @@ struct atomisp_parameters {
 	struct atomisp_shading_table *shading_table;
 	struct atomisp_morph_table   *morph_table;
 	struct atomisp_dvs_coefficients *dvs_coefs; /* DVS 1.0 coefficients */
-	struct atomisp_dis_coefficients *dvs2_coefs; /* DVS 2.0 coefficients */
+	struct atomisp_dvs2_coefficients *dvs2_coefs; /* DVS 2.0 coefficients */
 	struct atomisp_capture_config   *capture_config;
 	struct atomisp_anr_thres   *anr_thres;
 
@@ -541,7 +543,7 @@ struct atomisp_parameters {
 	 * Unique ID to track which config was actually applied to a particular
 	 * frame, driver will send this id back with output frame together.
 	 */
-	u32	isp_config_id;
+	uint32_t	isp_config_id;
 
 	/*
 	 * Switch to control per_frame setting:
@@ -549,7 +551,7 @@ struct atomisp_parameters {
 	 * 1: this is a per_frame setting
 	 * PLEASE KEEP THIS AT THE END OF THE STRUCTURE!!
 	 */
-	u32	per_frame_setting;
+	uint32_t	per_frame_setting;
 };
 
 #define ATOMISP_GAMMA_TABLE_SIZE        1024
@@ -572,7 +574,7 @@ struct atomisp_morph_table {
 };
 
 #define ATOMISP_NUM_SC_COLORS	4
-#define ATOMISP_SC_FLAG_QUERY	BIT(0)
+#define ATOMISP_SC_FLAG_QUERY	(1 << 0)
 
 struct atomisp_shading_table {
 	__u32 enable;
@@ -667,9 +669,9 @@ struct atomisp_sensor_mode_data {
 	unsigned int crop_vertical_end;
 	unsigned int output_width; /* input size to ISP after binning/scaling */
 	unsigned int output_height;
-	u8 binning_factor_x; /* horizontal binning factor used */
-	u8 binning_factor_y; /* vertical binning factor used */
-	u16 hts;
+	uint8_t binning_factor_x; /* horizontal binning factor used */
+	uint8_t binning_factor_y; /* vertical binning factor used */
+	uint16_t hts;
 };
 
 struct atomisp_exposure {
@@ -694,8 +696,8 @@ enum atomisp_focus_hp {
 };
 
 /* Masks */
-#define ATOMISP_FOCUS_STATUS_MOVING           BIT(0)
-#define ATOMISP_FOCUS_STATUS_ACCEPTS_NEW_MOVE BIT(1)
+#define ATOMISP_FOCUS_STATUS_MOVING           (1U << 0)
+#define ATOMISP_FOCUS_STATUS_ACCEPTS_NEW_MOVE (1U << 1)
 #define ATOMISP_FOCUS_STATUS_HOME_POSITION    (3U << 2)
 
 enum atomisp_camera_port {
@@ -738,6 +740,38 @@ enum atomisp_frame_status {
 	ATOMISP_FRAME_STATUS_FLASH_EXPOSED,
 	ATOMISP_FRAME_STATUS_FLASH_PARTIAL,
 	ATOMISP_FRAME_STATUS_FLASH_FAILED,
+};
+
+enum atomisp_acc_type {
+	ATOMISP_ACC_STANDALONE,	/* Stand-alone acceleration */
+	ATOMISP_ACC_OUTPUT,	/* Accelerator stage on output frame */
+	ATOMISP_ACC_VIEWFINDER	/* Accelerator stage on viewfinder frame */
+};
+
+enum atomisp_acc_arg_type {
+	ATOMISP_ACC_ARG_SCALAR_IN,    /* Scalar input argument */
+	ATOMISP_ACC_ARG_SCALAR_OUT,   /* Scalar output argument */
+	ATOMISP_ACC_ARG_SCALAR_IO,    /* Scalar in/output argument */
+	ATOMISP_ACC_ARG_PTR_IN,	     /* Pointer input argument */
+	ATOMISP_ACC_ARG_PTR_OUT,	     /* Pointer output argument */
+	ATOMISP_ACC_ARG_PTR_IO,	     /* Pointer in/output argument */
+	ATOMISP_ARG_PTR_NOFLUSH,  /* Pointer argument will not be flushed */
+	ATOMISP_ARG_PTR_STABLE,   /* Pointer input argument that is stable */
+	ATOMISP_ACC_ARG_FRAME	     /* Frame argument */
+};
+
+/* ISP memories, isp2400 */
+enum atomisp_acc_memory {
+	ATOMISP_ACC_MEMORY_PMEM0 = 0,
+	ATOMISP_ACC_MEMORY_DMEM0,
+	/* for backward compatibility */
+	ATOMISP_ACC_MEMORY_DMEM = ATOMISP_ACC_MEMORY_DMEM0,
+	ATOMISP_ACC_MEMORY_VMEM0,
+	ATOMISP_ACC_MEMORY_VAMEM0,
+	ATOMISP_ACC_MEMORY_VAMEM1,
+	ATOMISP_ACC_MEMORY_VAMEM2,
+	ATOMISP_ACC_MEMORY_HMEM0,
+	ATOMISP_ACC_NR_MEMORY
 };
 
 enum atomisp_ext_isp_id {
@@ -804,11 +838,89 @@ enum atomisp_burst_capture_options {
 #define EXT_ISP_SHOT_MODE_ANIMATED_PHOTO	10
 #define EXT_ISP_SHOT_MODE_SPORTS	11
 
+struct atomisp_sp_arg {
+	enum atomisp_acc_arg_type type;	/* Type  of SP argument */
+	void                    *value;	/* Value of SP argument */
+	unsigned int             size;	/* Size  of SP argument */
+};
+
+/* Acceleration API */
+
+/* For CSS 1.0 only */
+struct atomisp_acc_fw_arg {
+	unsigned int fw_handle;
+	unsigned int index;
+	void __user *value;
+	size_t size;
+};
+
+/*
+ * Set arguments after first mapping with ATOMISP_IOC_ACC_S_MAPPED_ARG.
+ */
+struct atomisp_acc_s_mapped_arg {
+	unsigned int fw_handle;
+	__u32 memory;			/* one of enum atomisp_acc_memory */
+	size_t length;
+	unsigned long css_ptr;
+};
+
+struct atomisp_acc_fw_abort {
+	unsigned int fw_handle;
+	/* Timeout in us */
+	unsigned int timeout;
+};
+
+struct atomisp_acc_fw_load {
+	unsigned int size;
+	unsigned int fw_handle;
+	void __user *data;
+};
+
+/*
+ * Load firmware to specified pipeline.
+ */
+struct atomisp_acc_fw_load_to_pipe {
+	__u32 flags;			/* Flags, see below for valid values */
+	unsigned int fw_handle;		/* Handle, filled by kernel. */
+	__u32 size;			/* Firmware binary size */
+	void __user *data;		/* Pointer to firmware */
+	__u32 type;			/* Binary type */
+	__u32 reserved[3];		/* Set to zero */
+};
 /*
  * Set Senor run mode
  */
 struct atomisp_s_runmode {
 	__u32 mode;
+};
+
+#define ATOMISP_ACC_FW_LOAD_FL_PREVIEW		(1 << 0)
+#define ATOMISP_ACC_FW_LOAD_FL_COPY		(1 << 1)
+#define ATOMISP_ACC_FW_LOAD_FL_VIDEO		(1 << 2)
+#define ATOMISP_ACC_FW_LOAD_FL_CAPTURE		(1 << 3)
+#define ATOMISP_ACC_FW_LOAD_FL_ACC		(1 << 4)
+#define ATOMISP_ACC_FW_LOAD_FL_ENABLE		(1 << 16)
+
+#define ATOMISP_ACC_FW_LOAD_TYPE_NONE		0 /* Normal binary: don't use */
+#define ATOMISP_ACC_FW_LOAD_TYPE_OUTPUT		1 /* Stage on output */
+#define ATOMISP_ACC_FW_LOAD_TYPE_VIEWFINDER	2 /* Stage on viewfinder */
+#define ATOMISP_ACC_FW_LOAD_TYPE_STANDALONE	3 /* Stand-alone acceleration */
+
+struct atomisp_acc_map {
+	__u32 flags;			/* Flags, see list below */
+	__u32 length;			/* Length of data in bytes */
+	void __user *user_ptr;		/* Pointer into user space */
+	unsigned long css_ptr;		/* Pointer into CSS address space */
+	__u32 reserved[4];		/* Set to zero */
+};
+
+#define ATOMISP_MAP_FLAG_NOFLUSH	0x0001	/* Do not flush cache */
+#define ATOMISP_MAP_FLAG_CACHED		0x0002	/* Enable cache */
+
+struct atomisp_acc_state {
+	__u32 flags;			/* Flags, see list below */
+#define ATOMISP_STATE_FLAG_ENABLE	ATOMISP_ACC_FW_LOAD_FL_ENABLE
+	unsigned int fw_handle;
 };
 
 struct atomisp_update_exposure {
@@ -978,6 +1090,29 @@ struct atomisp_sensor_ae_bracketing_lut {
 #define ATOMISP_IOC_S_3A_CONFIG \
 	_IOW('v', BASE_VIDIOC_PRIVATE + 23, struct atomisp_3a_config)
 
+/* Accelerate ioctls */
+#define ATOMISP_IOC_ACC_LOAD \
+	_IOWR('v', BASE_VIDIOC_PRIVATE + 24, struct atomisp_acc_fw_load)
+
+#define ATOMISP_IOC_ACC_UNLOAD \
+	_IOWR('v', BASE_VIDIOC_PRIVATE + 24, unsigned int)
+
+/* For CSS 1.0 only */
+#define ATOMISP_IOC_ACC_S_ARG \
+	_IOW('v', BASE_VIDIOC_PRIVATE + 24, struct atomisp_acc_fw_arg)
+
+#define ATOMISP_IOC_ACC_START \
+	_IOW('v', BASE_VIDIOC_PRIVATE + 24, unsigned int)
+
+#define ATOMISP_IOC_ACC_WAIT \
+	_IOW('v', BASE_VIDIOC_PRIVATE + 25, unsigned int)
+
+#define ATOMISP_IOC_ACC_ABORT \
+	_IOW('v', BASE_VIDIOC_PRIVATE + 25, struct atomisp_acc_fw_abort)
+
+#define ATOMISP_IOC_ACC_DESTAB \
+	_IOW('v', BASE_VIDIOC_PRIVATE + 25, struct atomisp_acc_fw_arg)
+
 /* sensor OTP memory read */
 #define ATOMISP_IOC_G_SENSOR_PRIV_INT_DATA \
 	_IOWR('v', BASE_VIDIOC_PRIVATE + 26, struct v4l2_private_int_data)
@@ -996,6 +1131,24 @@ struct atomisp_sensor_ae_bracketing_lut {
 /* motor internal memory read */
 #define ATOMISP_IOC_G_MOTOR_PRIV_INT_DATA \
 	_IOWR('v', BASE_VIDIOC_PRIVATE + 29, struct v4l2_private_int_data)
+
+/*
+ * Ioctls to map and unmap user buffers to CSS address space for acceleration.
+ * User fills fields length and user_ptr and sets other fields to zero,
+ * kernel may modify the flags and sets css_ptr.
+ */
+#define ATOMISP_IOC_ACC_MAP \
+	_IOWR('v', BASE_VIDIOC_PRIVATE + 30, struct atomisp_acc_map)
+
+/* User fills fields length, user_ptr, and css_ptr and zeroes other fields. */
+#define ATOMISP_IOC_ACC_UNMAP \
+	_IOW('v', BASE_VIDIOC_PRIVATE + 30, struct atomisp_acc_map)
+
+#define ATOMISP_IOC_ACC_S_MAPPED_ARG \
+	_IOW('v', BASE_VIDIOC_PRIVATE + 30, struct atomisp_acc_s_mapped_arg)
+
+#define ATOMISP_IOC_ACC_LOAD_TO_PIPE \
+	_IOWR('v', BASE_VIDIOC_PRIVATE + 31, struct atomisp_acc_fw_load_to_pipe)
 
 #define ATOMISP_IOC_S_PARAMETERS \
 	_IOW('v', BASE_VIDIOC_PRIVATE + 32, struct atomisp_parameters)
@@ -1029,6 +1182,12 @@ struct atomisp_sensor_ae_bracketing_lut {
 
 #define ATOMISP_IOC_S_EXPOSURE_WINDOW \
 	_IOW('v', BASE_VIDIOC_PRIVATE + 40, struct atomisp_ae_window)
+
+#define ATOMISP_IOC_S_ACC_STATE \
+	_IOW('v', BASE_VIDIOC_PRIVATE + 41, struct atomisp_acc_state)
+
+#define ATOMISP_IOC_G_ACC_STATE \
+	_IOR('v', BASE_VIDIOC_PRIVATE + 41, struct atomisp_acc_state)
 
 #define ATOMISP_IOC_INJECT_A_FAKE_EVENT \
 	_IOW('v', BASE_VIDIOC_PRIVATE + 42, int)
@@ -1112,7 +1271,7 @@ struct atomisp_sensor_ae_bracketing_lut {
 /* VCM slew control */
 #define V4L2_CID_VCM_SLEW                  (V4L2_CID_CAMERA_LASTP1 + 11)
 /* VCM step time */
-#define V4L2_CID_VCM_TIMING                (V4L2_CID_CAMERA_LASTP1 + 12)
+#define V4L2_CID_VCM_TIMEING               (V4L2_CID_CAMERA_LASTP1 + 12)
 
 /* Query Focus Status */
 #define V4L2_CID_FOCUS_STATUS              (V4L2_CID_CAMERA_LASTP1 + 14)
@@ -1126,8 +1285,8 @@ struct atomisp_sensor_ae_bracketing_lut {
 
 /* Query sensor's 2A status */
 #define V4L2_CID_2A_STATUS                 (V4L2_CID_CAMERA_LASTP1 + 18)
-#define V4L2_2A_STATUS_AE_READY            BIT(0)
-#define V4L2_2A_STATUS_AWB_READY           BIT(1)
+#define V4L2_2A_STATUS_AE_READY            (1 << 0)
+#define V4L2_2A_STATUS_AWB_READY           (1 << 1)
 
 #define V4L2_CID_FMT_AUTO			(V4L2_CID_CAMERA_LASTP1 + 19)
 
@@ -1197,3 +1356,4 @@ enum {
 };
 
 #endif /* _ATOM_ISP_H */
+#endif /* CSS15*/

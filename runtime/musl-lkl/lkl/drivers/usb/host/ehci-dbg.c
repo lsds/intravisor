@@ -823,7 +823,7 @@ static ssize_t fill_registers_buffer(struct debug_buffer *buf)
 				break;
 			case 0:		/* illegal reserved capability */
 				cap = 0;
-				fallthrough;
+				/* FALLTHROUGH */
 			default:		/* unknown */
 				break;
 			}
@@ -931,7 +931,7 @@ static struct debug_buffer *alloc_buffer(struct usb_bus *bus,
 
 static int fill_buffer(struct debug_buffer *buf)
 {
-	int ret;
+	int ret = 0;
 
 	if (!buf->output_buf)
 		buf->output_buf = vmalloc(buf->alloc_size);
@@ -956,7 +956,7 @@ static ssize_t debug_output(struct file *file, char __user *user_buf,
 		size_t len, loff_t *offset)
 {
 	struct debug_buffer *buf = file->private_data;
-	int ret;
+	int ret = 0;
 
 	mutex_lock(&buf->mutex);
 	if (buf->count == 0) {
@@ -1028,15 +1028,29 @@ static inline void create_debug_files(struct ehci_hcd *ehci)
 	struct usb_bus *bus = &ehci_to_hcd(ehci)->self;
 
 	ehci->debug_dir = debugfs_create_dir(bus->bus_name, ehci_debug_root);
+	if (!ehci->debug_dir)
+		return;
 
-	debugfs_create_file("async", S_IRUGO, ehci->debug_dir, bus,
-			    &debug_async_fops);
-	debugfs_create_file("bandwidth", S_IRUGO, ehci->debug_dir, bus,
-			    &debug_bandwidth_fops);
-	debugfs_create_file("periodic", S_IRUGO, ehci->debug_dir, bus,
-			    &debug_periodic_fops);
-	debugfs_create_file("registers", S_IRUGO, ehci->debug_dir, bus,
-			    &debug_registers_fops);
+	if (!debugfs_create_file("async", S_IRUGO, ehci->debug_dir, bus,
+						&debug_async_fops))
+		goto file_error;
+
+	if (!debugfs_create_file("bandwidth", S_IRUGO, ehci->debug_dir, bus,
+						&debug_bandwidth_fops))
+		goto file_error;
+
+	if (!debugfs_create_file("periodic", S_IRUGO, ehci->debug_dir, bus,
+						&debug_periodic_fops))
+		goto file_error;
+
+	if (!debugfs_create_file("registers", S_IRUGO, ehci->debug_dir, bus,
+						    &debug_registers_fops))
+		goto file_error;
+
+	return;
+
+file_error:
+	debugfs_remove_recursive(ehci->debug_dir);
 }
 
 static inline void remove_debug_files(struct ehci_hcd *ehci)

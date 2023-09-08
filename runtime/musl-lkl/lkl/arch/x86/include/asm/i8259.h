@@ -3,7 +3,6 @@
 #define _ASM_X86_I8259_H
 
 #include <linux/delay.h>
-#include <asm/io.h>
 
 extern unsigned int cached_irq_mask;
 
@@ -19,8 +18,6 @@ extern unsigned int cached_irq_mask;
 #define PIC_MASTER_OCW3		PIC_MASTER_ISR
 #define PIC_SLAVE_CMD		0xa0
 #define PIC_SLAVE_IMR		0xa1
-#define PIC_ELCR1		0x4d0
-#define PIC_ELCR2		0x4d1
 
 /* i8259A PIC related value */
 #define PIC_CASCADE_IR		2

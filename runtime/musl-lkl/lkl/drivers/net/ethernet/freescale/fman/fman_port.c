@@ -1,6 +1,33 @@
-// SPDX-License-Identifier: BSD-3-Clause OR GPL-2.0-or-later
 /*
  * Copyright 2008 - 2015 Freescale Semiconductor Inc.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are met:
+ *     * Redistributions of source code must retain the above copyright
+ *       notice, this list of conditions and the following disclaimer.
+ *     * Redistributions in binary form must reproduce the above copyright
+ *       notice, this list of conditions and the following disclaimer in the
+ *       documentation and/or other materials provided with the distribution.
+ *     * Neither the name of Freescale Semiconductor nor the
+ *       names of its contributors may be used to endorse or promote products
+ *       derived from this software without specific prior written permission.
+ *
+ *
+ * ALTERNATIVELY, this software may be distributed under the terms of the
+ * GNU General Public License ("GPL") as published by the Free Software
+ * Foundation, either version 2 of that License or (at your option) any
+ * later version.
+ *
+ * THIS SOFTWARE IS PROVIDED BY Freescale Semiconductor ``AS IS'' AND ANY
+ * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+ * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+ * DISCLAIMED. IN NO EVENT SHALL Freescale Semiconductor BE LIABLE FOR ANY
+ * DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+ * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+ * ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+ * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
@@ -297,10 +324,6 @@ struct fman_port_qmi_regs {
 #define HWP_HXS_PHE_REPORT 0x00000800
 #define HWP_HXS_PCAC_PSTAT 0x00000100
 #define HWP_HXS_PCAC_PSTOP 0x00000001
-#define HWP_HXS_TCP_OFFSET 0xA
-#define HWP_HXS_UDP_OFFSET 0xB
-#define HWP_HXS_SH_PAD_REM 0x80000000
-
 struct fman_port_hwp_regs {
 	struct {
 		u32 ssa; /* Soft Sequence Attachment */
@@ -408,6 +431,7 @@ struct fman_port_cfg {
 
 struct fman_port_rx_pools_params {
 	u8 num_of_pools;
+	u16 second_largest_buf_size;
 	u16 largest_buf_size;
 };
 
@@ -704,10 +728,6 @@ static void init_hwp(struct fman_port *port)
 		iowrite32be(0xffffffff, &regs->pmda[i].lcv);
 	}
 
-	/* Short packet padding removal from checksum calculation */
-	iowrite32be(HWP_HXS_SH_PAD_REM, &regs->pmda[HWP_HXS_TCP_OFFSET].ssa);
-	iowrite32be(HWP_HXS_SH_PAD_REM, &regs->pmda[HWP_HXS_UDP_OFFSET].ssa);
-
 	start_port_hwp(port);
 }
 
@@ -918,6 +938,8 @@ static int set_ext_buffer_pools(struct fman_port *port)
 	port->rx_pools_params.num_of_pools = ext_buf_pools->num_of_pools_used;
 	port->rx_pools_params.largest_buf_size =
 	    sizes_array[ordered_array[ext_buf_pools->num_of_pools_used - 1]];
+	port->rx_pools_params.second_largest_buf_size =
+	    sizes_array[ordered_array[ext_buf_pools->num_of_pools_used - 2]];
 
 	/* FMBM_RMPD reg. - pool depletion */
 	if (buf_pool_depletion->pools_grp_mode_enable) {
@@ -1317,10 +1339,10 @@ int fman_port_config(struct fman_port *port, struct fman_port_params *params)
 	switch (port->port_type) {
 	case FMAN_PORT_TYPE_RX:
 		set_rx_dflt_cfg(port, params);
-		fallthrough;
+		/* fall through */
 	case FMAN_PORT_TYPE_TX:
 		set_tx_dflt_cfg(port, params, &port->dts_params);
-		fallthrough;
+		/* fall through */
 	default:
 		set_dflt_cfg(port, params);
 	}
@@ -1369,10 +1391,12 @@ int fman_port_config(struct fman_port *port, struct fman_port_params *params)
 		/* FM_WRONG_RESET_VALUES_ERRATA_FMAN_A005127 Errata
 		 * workaround
 		 */
-		u32 reg;
+		if (port->rev_info.major >= 6) {
+			u32 reg;
 
-		reg = 0x00001013;
-		iowrite32be(reg, &port->bmi_regs->tx.fmbm_tfp);
+			reg = 0x00001013;
+			iowrite32be(reg, &port->bmi_regs->tx.fmbm_tfp);
+		}
 	}
 
 	return 0;
@@ -1383,11 +1407,9 @@ err_port_cfg:
 }
 EXPORT_SYMBOL(fman_port_config);
 
-/*
+/**
  * fman_port_use_kg_hash
- * @port: A pointer to a FM Port module.
- * @enable: enable or disable
- *
+ * port:        A pointer to a FM Port module.
  * Sets the HW KeyGen or the BMI as HW Parser next engine, enabling
  * or bypassing the KeyGen hashing of Rx traffic
  */
@@ -1405,8 +1427,7 @@ EXPORT_SYMBOL(fman_port_use_kg_hash);
 
 /**
  * fman_port_init
- * @port:	A pointer to a FM Port module.
- *
+ * port:	A pointer to a FM Port module.
  * Initializes the FM PORT module by defining the software structure and
  * configuring the hardware registers.
  *
@@ -1500,8 +1521,8 @@ EXPORT_SYMBOL(fman_port_init);
 
 /**
  * fman_port_cfg_buf_prefix_content
- * @port:			A pointer to a FM Port module.
- * @buffer_prefix_content:	A structure of parameters describing
+ * @port			A pointer to a FM Port module.
+ * @buffer_prefix_content	A structure of parameters describing
  *				the structure of the buffer.
  *				Out parameter:
  *				Start margin - offset of data from
@@ -1546,7 +1567,7 @@ EXPORT_SYMBOL(fman_port_cfg_buf_prefix_content);
 
 /**
  * fman_port_disable
- * @port:	A pointer to a FM Port module.
+ * port:	A pointer to a FM Port module.
  *
  * Gracefully disable an FM port. The port will not start new	tasks after all
  * tasks associated with the port are terminated.
@@ -1627,7 +1648,7 @@ EXPORT_SYMBOL(fman_port_disable);
 
 /**
  * fman_port_enable
- * @port:	A pointer to a FM Port module.
+ * port:	A pointer to a FM Port module.
  *
  * A runtime routine provided to allow disable/enable of port.
  *
@@ -1673,7 +1694,7 @@ EXPORT_SYMBOL(fman_port_enable);
 
 /**
  * fman_port_bind
- * @dev:		FMan Port OF device pointer
+ * dev:		FMan Port OF device pointer
  *
  * Bind to a specific FMan Port.
  *
@@ -1689,7 +1710,7 @@ EXPORT_SYMBOL(fman_port_bind);
 
 /**
  * fman_port_get_qman_channel_id
- * @port:	Pointer to the FMan port devuce
+ * port:	Pointer to the FMan port devuce
  *
  * Get the QMan channel ID for the specific port
  *
@@ -1700,20 +1721,6 @@ u32 fman_port_get_qman_channel_id(struct fman_port *port)
 	return port->dts_params.qman_channel_id;
 }
 EXPORT_SYMBOL(fman_port_get_qman_channel_id);
-
-/**
- * fman_port_get_device
- * @port:	Pointer to the FMan port device
- *
- * Get the 'struct device' associated to the specified FMan port device
- *
- * Return: pointer to associated 'struct device'
- */
-struct device *fman_port_get_device(struct fman_port *port)
-{
-	return port->dev;
-}
-EXPORT_SYMBOL(fman_port_get_device);
 
 int fman_port_get_hash_result_offset(struct fman_port *port, u32 *offset)
 {
@@ -1726,24 +1733,11 @@ int fman_port_get_hash_result_offset(struct fman_port *port, u32 *offset)
 }
 EXPORT_SYMBOL(fman_port_get_hash_result_offset);
 
-int fman_port_get_tstamp(struct fman_port *port, const void *data, u64 *tstamp)
-{
-	if (port->buffer_offsets.time_stamp_offset == ILLEGAL_BASE)
-		return -EINVAL;
-
-	*tstamp = be64_to_cpu(*(__be64 *)(data +
-			port->buffer_offsets.time_stamp_offset));
-
-	return 0;
-}
-EXPORT_SYMBOL(fman_port_get_tstamp);
-
 static int fman_port_probe(struct platform_device *of_dev)
 {
 	struct fman_port *port;
 	struct fman *fman;
 	struct device_node *fm_node, *port_node;
-	struct platform_device *fm_pdev;
 	struct resource res;
 	struct resource *dev_res;
 	u32 val;
@@ -1768,17 +1762,11 @@ static int fman_port_probe(struct platform_device *of_dev)
 		goto return_err;
 	}
 
-	fm_pdev = of_find_device_by_node(fm_node);
+	fman = dev_get_drvdata(&of_find_device_by_node(fm_node)->dev);
 	of_node_put(fm_node);
-	if (!fm_pdev) {
-		err = -EINVAL;
-		goto return_err;
-	}
-
-	fman = dev_get_drvdata(&fm_pdev->dev);
 	if (!fman) {
 		err = -EINVAL;
-		goto put_device;
+		goto return_err;
 	}
 
 	err = of_property_read_u32(port_node, "cell-index", &val);
@@ -1786,7 +1774,7 @@ static int fman_port_probe(struct platform_device *of_dev)
 		dev_err(port->dev, "%s: reading cell-index for %pOF failed\n",
 			__func__, port_node);
 		err = -EINVAL;
-		goto put_device;
+		goto return_err;
 	}
 	port_id = (u8)val;
 	port->dts_params.id = port_id;
@@ -1820,7 +1808,7 @@ static int fman_port_probe(struct platform_device *of_dev)
 	}  else {
 		dev_err(port->dev, "%s: Illegal port type\n", __func__);
 		err = -EINVAL;
-		goto put_device;
+		goto return_err;
 	}
 
 	port->dts_params.type = port_type;
@@ -1834,7 +1822,7 @@ static int fman_port_probe(struct platform_device *of_dev)
 			dev_err(port->dev, "%s: incorrect qman-channel-id\n",
 				__func__);
 			err = -EINVAL;
-			goto put_device;
+			goto return_err;
 		}
 		port->dts_params.qman_channel_id = qman_channel_id;
 	}
@@ -1844,7 +1832,7 @@ static int fman_port_probe(struct platform_device *of_dev)
 		dev_err(port->dev, "%s: of_address_to_resource() failed\n",
 			__func__);
 		err = -ENOMEM;
-		goto put_device;
+		goto return_err;
 	}
 
 	port->dts_params.fman = fman;
@@ -1869,8 +1857,6 @@ static int fman_port_probe(struct platform_device *of_dev)
 
 	return 0;
 
-put_device:
-	put_device(&fm_pdev->dev);
 return_err:
 	of_node_put(port_node);
 free_port:

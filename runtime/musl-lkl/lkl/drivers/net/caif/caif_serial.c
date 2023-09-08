@@ -1,7 +1,7 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (C) ST-Ericsson AB 2010
  * Author:	Sjur Brendeland
+ * License terms: GNU General Public License (GPL) version 2
  */
 
 #include <linux/hardirq.h>
@@ -87,26 +87,33 @@ static void ldisc_tx_wakeup(struct tty_struct *tty);
 static inline void update_tty_status(struct ser_device *ser)
 {
 	ser->tty_status =
-		ser->tty->flow.stopped << 5 |
-		ser->tty->flow.tco_stopped << 3 |
-		ser->tty->ctrl.packet << 2;
+		ser->tty->stopped << 5 |
+		ser->tty->flow_stopped << 3 |
+		ser->tty->packet << 2 |
+		ser->tty->port->low_latency << 1;
 }
 static inline void debugfs_init(struct ser_device *ser, struct tty_struct *tty)
 {
-	ser->debugfs_tty_dir = debugfs_create_dir(tty->name, debugfsdir);
+	ser->debugfs_tty_dir =
+			debugfs_create_dir(tty->name, debugfsdir);
+	if (!IS_ERR(ser->debugfs_tty_dir)) {
+		debugfs_create_blob("last_tx_msg", 0400,
+				    ser->debugfs_tty_dir,
+				    &ser->tx_blob);
 
-	debugfs_create_blob("last_tx_msg", 0400, ser->debugfs_tty_dir,
-			    &ser->tx_blob);
+		debugfs_create_blob("last_rx_msg", 0400,
+				    ser->debugfs_tty_dir,
+				    &ser->rx_blob);
 
-	debugfs_create_blob("last_rx_msg", 0400, ser->debugfs_tty_dir,
-			    &ser->rx_blob);
+		debugfs_create_x32("ser_state", 0400,
+				   ser->debugfs_tty_dir,
+				   (u32 *)&ser->state);
 
-	debugfs_create_xul("ser_state", 0400, ser->debugfs_tty_dir,
-			   &ser->state);
+		debugfs_create_x8("tty_status", 0400,
+				  ser->debugfs_tty_dir,
+				  &ser->tty_status);
 
-	debugfs_create_x8("tty_status", 0400, ser->debugfs_tty_dir,
-			  &ser->tty_status);
-
+	}
 	ser->tx_blob.data = ser->tx_data;
 	ser->tx_blob.size = 0;
 	ser->rx_blob.data = ser->rx_data;
@@ -159,7 +166,7 @@ static inline void debugfs_tx(struct ser_device *ser, const u8 *data, int size)
 #endif
 
 static void ldisc_receive(struct tty_struct *tty, const u8 *data,
-			const char *flags, int count)
+			char *flags, int count)
 {
 	struct sk_buff *skb = NULL;
 	struct ser_device *ser;
@@ -196,7 +203,7 @@ static void ldisc_receive(struct tty_struct *tty, const u8 *data,
 	skb_reset_mac_header(skb);
 	debugfs_rx(ser, data, count);
 	/* Push received packet up the stack. */
-	ret = netif_rx(skb);
+	ret = netif_rx_ni(skb);
 	if (!ret) {
 		ser->dev->stats.rx_packets++;
 		ser->dev->stats.rx_bytes += count;
@@ -250,7 +257,10 @@ static int handle_tx(struct ser_device *ser)
 		if (skb->len == 0) {
 			struct sk_buff *tmp = skb_dequeue(&ser->head);
 			WARN_ON(tmp != skb);
-			dev_consume_skb_any(skb);
+			if (in_interrupt())
+				dev_kfree_skb_irq(skb);
+			else
+				kfree_skb(skb);
 		}
 	}
 	/* Send flow off if queue is empty */
@@ -265,10 +275,11 @@ error:
 	return tty_wr;
 }
 
-static netdev_tx_t caif_xmit(struct sk_buff *skb, struct net_device *dev)
+static int caif_xmit(struct sk_buff *skb, struct net_device *dev)
 {
 	struct ser_device *ser;
 
+	BUG_ON(dev == NULL);
 	ser = netdev_priv(dev);
 
 	/* Send flow off once, on high water mark */
@@ -350,7 +361,6 @@ static int ldisc_open(struct tty_struct *tty)
 	rtnl_lock();
 	result = register_netdevice(dev);
 	if (result) {
-		tty_kref_put(tty);
 		rtnl_unlock();
 		free_netdev(dev);
 		return -ENODEV;
@@ -380,7 +390,7 @@ static void ldisc_close(struct tty_struct *tty)
 /* The line discipline structure. */
 static struct tty_ldisc_ops caif_ldisc = {
 	.owner =	THIS_MODULE,
-	.num =		N_CAIF,
+	.magic =	TTY_LDISC_MAGIC,
 	.name =		"n_caif",
 	.open =		ldisc_open,
 	.close =	ldisc_close,
@@ -388,6 +398,18 @@ static struct tty_ldisc_ops caif_ldisc = {
 	.write_wakeup =	ldisc_tx_wakeup
 };
 
+static int register_ldisc(void)
+{
+	int result;
+
+	result = tty_register_ldisc(N_CAIF, &caif_ldisc);
+	if (result < 0) {
+		pr_err("cannot register CAIF ldisc=%d err=%d\n", N_CAIF,
+			result);
+		return result;
+	}
+	return result;
+}
 static const struct net_device_ops netdev_ops = {
 	.ndo_open = caif_net_open,
 	.ndo_stop = caif_net_close,
@@ -430,10 +452,7 @@ static int __init caif_ser_init(void)
 {
 	int ret;
 
-	ret = tty_register_ldisc(&caif_ldisc);
-	if (ret < 0)
-		pr_err("cannot register CAIF ldisc=%d err=%d\n", N_CAIF, ret);
-
+	ret = register_ldisc();
 	debugfsdir = debugfs_create_dir("caif_serial", NULL);
 	return ret;
 }
@@ -445,7 +464,7 @@ static void __exit caif_ser_exit(void)
 	spin_unlock(&ser_lock);
 	ser_release(NULL);
 	cancel_work_sync(&ser_release_work);
-	tty_unregister_ldisc(&caif_ldisc);
+	tty_unregister_ldisc(N_CAIF);
 	debugfs_remove_recursive(debugfsdir);
 }
 

@@ -71,7 +71,6 @@ static void destroy_priv(struct kref *kref)
 
 	dev_dbg(&priv->usbdev->dev, "destroying priv datastructure\n");
 	usb_put_dev(priv->usbdev);
-	priv->usbdev = NULL;
 	kfree(priv);
 }
 
@@ -370,7 +369,7 @@ static unsigned char parport_uss720_frob_control(struct parport *pp, unsigned ch
 	mask &= 0x0f;
 	val &= 0x0f;
 	d = (priv->reg[1] & (~mask)) ^ val;
-	if (set_1284_register(pp, 2, d, GFP_ATOMIC))
+	if (set_1284_register(pp, 2, d, GFP_KERNEL))
 		return 0;
 	priv->reg[1] = d;
 	return d & 0xf;
@@ -380,7 +379,7 @@ static unsigned char parport_uss720_read_status(struct parport *pp)
 {
 	unsigned char ret;
 
-	if (get_1284_register(pp, 1, &ret, GFP_ATOMIC))
+	if (get_1284_register(pp, 1, &ret, GFP_KERNEL))
 		return 0;
 	return ret & 0xf8;
 }
@@ -502,7 +501,7 @@ static size_t parport_uss720_epp_write_data(struct parport *pp, const void *buf,
 #else
 	struct parport_uss720_private *priv = pp->private_data;
 	struct usb_device *usbdev = priv->usbdev;
-	int rlen = 0;
+	int rlen;
 	int i;
 
 	if (!usbdev)
@@ -563,7 +562,7 @@ static size_t parport_uss720_ecp_write_data(struct parport *pp, const void *buff
 {
 	struct parport_uss720_private *priv = pp->private_data;
 	struct usb_device *usbdev = priv->usbdev;
-	int rlen = 0;
+	int rlen;
 	int i;
 
 	if (!usbdev)
@@ -581,7 +580,7 @@ static size_t parport_uss720_ecp_read_data(struct parport *pp, void *buffer, siz
 {
 	struct parport_uss720_private *priv = pp->private_data;
 	struct usb_device *usbdev = priv->usbdev;
-	int rlen = 0;
+	int rlen;
 	int i;
 
 	if (!usbdev)
@@ -614,7 +613,7 @@ static size_t parport_uss720_write_compat(struct parport *pp, const void *buffer
 {
 	struct parport_uss720_private *priv = pp->private_data;
 	struct usb_device *usbdev = priv->usbdev;
-	int rlen = 0;
+	int rlen;
 	int i;
 
 	if (!usbdev)
@@ -749,11 +748,14 @@ static void uss720_disconnect(struct usb_interface *intf)
 {
 	struct parport *pp = usb_get_intfdata(intf);
 	struct parport_uss720_private *priv;
+	struct usb_device *usbdev;
 
 	dev_dbg(&intf->dev, "disconnect\n");
 	usb_set_intfdata(intf, NULL);
 	if (pp) {
 		priv = pp->private_data;
+		usbdev = priv->usbdev;
+		priv->usbdev = NULL;
 		priv->pp = NULL;
 		dev_dbg(&intf->dev, "parport_remove_port\n");
 		parport_remove_port(pp);

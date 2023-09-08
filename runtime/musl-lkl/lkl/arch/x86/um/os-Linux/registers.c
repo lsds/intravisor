@@ -15,7 +15,6 @@
 #include <sys/uio.h>
 #include <asm/sigcontext.h>
 #include <linux/elf.h>
-#include <registers.h>
 
 int have_xstate_support;
 

@@ -34,27 +34,28 @@ struct vb2_vmalloc_buf {
 
 static void vb2_vmalloc_put(void *buf_priv);
 
-static void *vb2_vmalloc_alloc(struct vb2_buffer *vb, struct device *dev,
-			       unsigned long size)
+static void *vb2_vmalloc_alloc(struct device *dev, unsigned long attrs,
+			       unsigned long size, enum dma_data_direction dma_dir,
+			       gfp_t gfp_flags)
 {
 	struct vb2_vmalloc_buf *buf;
 
-	buf = kzalloc(sizeof(*buf), GFP_KERNEL | vb->vb2_queue->gfp_flags);
+	buf = kzalloc(sizeof(*buf), GFP_KERNEL | gfp_flags);
 	if (!buf)
 		return ERR_PTR(-ENOMEM);
 
 	buf->size = size;
 	buf->vaddr = vmalloc_user(buf->size);
+	buf->dma_dir = dma_dir;
+	buf->handler.refcount = &buf->refcount;
+	buf->handler.put = vb2_vmalloc_put;
+	buf->handler.arg = buf;
+
 	if (!buf->vaddr) {
 		pr_debug("vmalloc of size %ld failed\n", buf->size);
 		kfree(buf);
 		return ERR_PTR(-ENOMEM);
 	}
-
-	buf->dma_dir = vb->vb2_queue->dma_dir;
-	buf->handler.refcount = &buf->refcount;
-	buf->handler.put = vb2_vmalloc_put;
-	buf->handler.arg = buf;
 
 	refcount_set(&buf->refcount, 1);
 	return buf;
@@ -70,8 +71,9 @@ static void vb2_vmalloc_put(void *buf_priv)
 	}
 }
 
-static void *vb2_vmalloc_get_userptr(struct vb2_buffer *vb, struct device *dev,
-				     unsigned long vaddr, unsigned long size)
+static void *vb2_vmalloc_get_userptr(struct device *dev, unsigned long vaddr,
+				     unsigned long size,
+				     enum dma_data_direction dma_dir)
 {
 	struct vb2_vmalloc_buf *buf;
 	struct frame_vector *vec;
@@ -82,10 +84,11 @@ static void *vb2_vmalloc_get_userptr(struct vb2_buffer *vb, struct device *dev,
 	if (!buf)
 		return ERR_PTR(-ENOMEM);
 
-	buf->dma_dir = vb->vb2_queue->dma_dir;
+	buf->dma_dir = dma_dir;
 	offset = vaddr & ~PAGE_MASK;
 	buf->size = size;
-	vec = vb2_create_framevec(vaddr, size);
+	vec = vb2_create_framevec(vaddr, size, dma_dir == DMA_FROM_DEVICE ||
+					       dma_dir == DMA_BIDIRECTIONAL);
 	if (IS_ERR(vec)) {
 		ret = PTR_ERR(vec);
 		goto fail_pfnvec_create;
@@ -103,9 +106,10 @@ static void *vb2_vmalloc_get_userptr(struct vb2_buffer *vb, struct device *dev,
 			if (nums[i-1] + 1 != nums[i])
 				goto fail_map;
 		buf->vaddr = (__force void *)
-			ioremap(__pfn_to_phys(nums[0]), size + offset);
+			ioremap_nocache(__pfn_to_phys(nums[0]), size + offset);
 	} else {
-		buf->vaddr = vm_map_ram(frame_vector_pages(vec), n_pages, -1);
+		buf->vaddr = vm_map_ram(frame_vector_pages(vec), n_pages, -1,
+					PAGE_KERNEL);
 	}
 
 	if (!buf->vaddr)
@@ -145,7 +149,7 @@ static void vb2_vmalloc_put_userptr(void *buf_priv)
 	kfree(buf);
 }
 
-static void *vb2_vmalloc_vaddr(struct vb2_buffer *vb, void *buf_priv)
+static void *vb2_vmalloc_vaddr(void *buf_priv)
 {
 	struct vb2_vmalloc_buf *buf = buf_priv;
 
@@ -205,7 +209,7 @@ struct vb2_vmalloc_attachment {
 	enum dma_data_direction dma_dir;
 };
 
-static int vb2_vmalloc_dmabuf_ops_attach(struct dma_buf *dbuf,
+static int vb2_vmalloc_dmabuf_ops_attach(struct dma_buf *dbuf, struct device *dev,
 	struct dma_buf_attachment *dbuf_attach)
 {
 	struct vb2_vmalloc_attachment *attach;
@@ -227,7 +231,7 @@ static int vb2_vmalloc_dmabuf_ops_attach(struct dma_buf *dbuf,
 		kfree(attach);
 		return ret;
 	}
-	for_each_sgtable_sg(sgt, sg, i) {
+	for_each_sg(sgt->sgl, sg, sgt->nents, i) {
 		struct page *page = vmalloc_to_page(vaddr);
 
 		if (!page) {
@@ -257,7 +261,8 @@ static void vb2_vmalloc_dmabuf_ops_detach(struct dma_buf *dbuf,
 
 	/* release the scatterlist cache */
 	if (attach->dma_dir != DMA_NONE)
-		dma_unmap_sgtable(db_attach->dev, sgt, attach->dma_dir, 0);
+		dma_unmap_sg(db_attach->dev, sgt->sgl, sgt->orig_nents,
+			attach->dma_dir);
 	sg_free_table(sgt);
 	kfree(attach);
 	db_attach->priv = NULL;
@@ -282,12 +287,15 @@ static struct sg_table *vb2_vmalloc_dmabuf_ops_map(
 
 	/* release any previous cache */
 	if (attach->dma_dir != DMA_NONE) {
-		dma_unmap_sgtable(db_attach->dev, sgt, attach->dma_dir, 0);
+		dma_unmap_sg(db_attach->dev, sgt->sgl, sgt->orig_nents,
+			attach->dma_dir);
 		attach->dma_dir = DMA_NONE;
 	}
 
 	/* mapping to the client with new direction */
-	if (dma_map_sgtable(db_attach->dev, sgt, dma_dir, 0)) {
+	sgt->nents = dma_map_sg(db_attach->dev, sgt->sgl, sgt->orig_nents,
+				dma_dir);
+	if (!sgt->nents) {
 		pr_err("failed to map scatterlist\n");
 		mutex_unlock(lock);
 		return ERR_PTR(-EIO);
@@ -312,14 +320,18 @@ static void vb2_vmalloc_dmabuf_ops_release(struct dma_buf *dbuf)
 	vb2_vmalloc_put(dbuf->priv);
 }
 
-static int vb2_vmalloc_dmabuf_ops_vmap(struct dma_buf *dbuf,
-				       struct iosys_map *map)
+static void *vb2_vmalloc_dmabuf_ops_kmap(struct dma_buf *dbuf, unsigned long pgnum)
 {
 	struct vb2_vmalloc_buf *buf = dbuf->priv;
 
-	iosys_map_set_vaddr(map, buf->vaddr);
+	return buf->vaddr + pgnum * PAGE_SIZE;
+}
 
-	return 0;
+static void *vb2_vmalloc_dmabuf_ops_vmap(struct dma_buf *dbuf)
+{
+	struct vb2_vmalloc_buf *buf = dbuf->priv;
+
+	return buf->vaddr;
 }
 
 static int vb2_vmalloc_dmabuf_ops_mmap(struct dma_buf *dbuf,
@@ -333,14 +345,14 @@ static const struct dma_buf_ops vb2_vmalloc_dmabuf_ops = {
 	.detach = vb2_vmalloc_dmabuf_ops_detach,
 	.map_dma_buf = vb2_vmalloc_dmabuf_ops_map,
 	.unmap_dma_buf = vb2_vmalloc_dmabuf_ops_unmap,
+	.map = vb2_vmalloc_dmabuf_ops_kmap,
+	.map_atomic = vb2_vmalloc_dmabuf_ops_kmap,
 	.vmap = vb2_vmalloc_dmabuf_ops_vmap,
 	.mmap = vb2_vmalloc_dmabuf_ops_mmap,
 	.release = vb2_vmalloc_dmabuf_ops_release,
 };
 
-static struct dma_buf *vb2_vmalloc_get_dmabuf(struct vb2_buffer *vb,
-					      void *buf_priv,
-					      unsigned long flags)
+static struct dma_buf *vb2_vmalloc_get_dmabuf(void *buf_priv, unsigned long flags)
 {
 	struct vb2_vmalloc_buf *buf = buf_priv;
 	struct dma_buf *dbuf;
@@ -373,41 +385,32 @@ static struct dma_buf *vb2_vmalloc_get_dmabuf(struct vb2_buffer *vb,
 static int vb2_vmalloc_map_dmabuf(void *mem_priv)
 {
 	struct vb2_vmalloc_buf *buf = mem_priv;
-	struct iosys_map map;
-	int ret;
 
-	ret = dma_buf_vmap(buf->dbuf, &map);
-	if (ret)
-		return -EFAULT;
-	buf->vaddr = map.vaddr;
+	buf->vaddr = dma_buf_vmap(buf->dbuf);
 
-	return 0;
+	return buf->vaddr ? 0 : -EFAULT;
 }
 
 static void vb2_vmalloc_unmap_dmabuf(void *mem_priv)
 {
 	struct vb2_vmalloc_buf *buf = mem_priv;
-	struct iosys_map map = IOSYS_MAP_INIT_VADDR(buf->vaddr);
 
-	dma_buf_vunmap(buf->dbuf, &map);
+	dma_buf_vunmap(buf->dbuf, buf->vaddr);
 	buf->vaddr = NULL;
 }
 
 static void vb2_vmalloc_detach_dmabuf(void *mem_priv)
 {
 	struct vb2_vmalloc_buf *buf = mem_priv;
-	struct iosys_map map = IOSYS_MAP_INIT_VADDR(buf->vaddr);
 
 	if (buf->vaddr)
-		dma_buf_vunmap(buf->dbuf, &map);
+		dma_buf_vunmap(buf->dbuf, buf->vaddr);
 
 	kfree(buf);
 }
 
-static void *vb2_vmalloc_attach_dmabuf(struct vb2_buffer *vb,
-				       struct device *dev,
-				       struct dma_buf *dbuf,
-				       unsigned long size)
+static void *vb2_vmalloc_attach_dmabuf(struct device *dev, struct dma_buf *dbuf,
+	unsigned long size, enum dma_data_direction dma_dir)
 {
 	struct vb2_vmalloc_buf *buf;
 
@@ -419,7 +422,7 @@ static void *vb2_vmalloc_attach_dmabuf(struct vb2_buffer *vb,
 		return ERR_PTR(-ENOMEM);
 
 	buf->dbuf = dbuf;
-	buf->dma_dir = vb->vb2_queue->dma_dir;
+	buf->dma_dir = dma_dir;
 	buf->size = size;
 
 	return buf;
@@ -447,4 +450,3 @@ EXPORT_SYMBOL_GPL(vb2_vmalloc_memops);
 MODULE_DESCRIPTION("vmalloc memory handling routines for videobuf2");
 MODULE_AUTHOR("Pawel Osciak <pawel@osciak.com>");
 MODULE_LICENSE("GPL");
-MODULE_IMPORT_NS(DMA_BUF);

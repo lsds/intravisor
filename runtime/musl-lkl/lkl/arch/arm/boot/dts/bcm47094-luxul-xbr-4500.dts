@@ -1,6 +1,7 @@
-// SPDX-License-Identifier: GPL-2.0-or-later OR MIT
 /*
  * Copyright (C) 2017 Luxul Inc.
+ *
+ * Licensed under the ISC license.
  */
 
 /dts-v1/;
@@ -16,15 +17,9 @@
 		bootargs = "earlycon";
 	};
 
-	memory@0 {
-		device_type = "memory";
-		reg = <0x00000000 0x08000000>,
-		      <0x88000000 0x18000000>;
-	};
-
-	nvram@1eff0000 {
-		compatible = "brcm,nvram";
-		reg = <0x1eff0000 0x10000>;
+	memory {
+		reg = <0x00000000 0x08000000
+		       0x88000000 0x18000000>;
 	};
 
 	leds {
@@ -48,8 +43,10 @@
 
 	gpio-keys {
 		compatible = "gpio-keys";
+		#address-cells = <1>;
+		#size-cells = <0>;
 
-		button-restart {
+		restart {
 			label = "Reset";
 			linux,code = <KEY_RESTART>;
 			gpios = <&chipcommon 17 GPIO_ACTIVE_LOW>;
@@ -63,45 +60,4 @@
 
 &spi_nor {
 	status = "okay";
-};
-
-&usb3_phy {
-	status = "okay";
-};
-
-&srab {
-	status = "okay";
-
-	ports {
-		port@0 {
-			reg = <0>;
-			label = "wan";
-		};
-
-		port@1 {
-			reg = <1>;
-			label = "lan4";
-		};
-
-		port@2 {
-			reg = <2>;
-			label = "lan3";
-		};
-
-		port@3 {
-			reg = <3>;
-			label = "lan2";
-		};
-
-		port@4 {
-			reg = <4>;
-			label = "lan1";
-		};
-
-		port@5 {
-			reg = <5>;
-			label = "cpu";
-			ethernet = <&gmac0>;
-		};
-	};
 };

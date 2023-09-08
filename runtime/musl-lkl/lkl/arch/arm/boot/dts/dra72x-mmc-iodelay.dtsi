@@ -1,8 +1,16 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * MMC IOdelay values for TI's DRA72x, DRA71x and AM571x SoCs.
  *
- * Copyright (C) 2017 Texas Instruments Incorporated - https://www.ti.com/
+ * Copyright (C) 2017 Texas Instruments Incorporated - http://www.ti.com/
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License as
+ * published by the Free Software Foundation version 2.
+ *
+ * This program is distributed "as is" WITHOUT ANY WARRANTY of any
+ * kind, whether express or implied; without even the implied warranty
+ * of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
  */
 
 /*
@@ -192,17 +200,6 @@
 			DRA7XX_CORE_IOPAD(0x3490, PIN_INPUT_PULLUP | MODE_SELECT | MUX_MODE1) /* gpmc_a20.mmc2_dat5 */
 			DRA7XX_CORE_IOPAD(0x3494, PIN_INPUT_PULLUP | MODE_SELECT | MUX_MODE1) /* gpmc_a21.mmc2_dat6 */
 			DRA7XX_CORE_IOPAD(0x3498, PIN_INPUT_PULLUP | MODE_SELECT | MUX_MODE1) /* gpmc_a22.mmc2_dat7 */
-		>;
-	};
-
-	mmc4_pins_default: mmc4_pins_default {
-		pinctrl-single,pins = <
-			DRA7XX_CORE_IOPAD(0x37e8, PIN_INPUT_PULLUP | MUX_MODE3) /* uart1_ctsn.mmc4_clk */
-			DRA7XX_CORE_IOPAD(0x37ec, PIN_INPUT_PULLUP | MUX_MODE3) /* uart1_rtsn.mmc4_cmd */
-			DRA7XX_CORE_IOPAD(0x37f0, PIN_INPUT_PULLUP | MUX_MODE3) /* uart2_rxd.mmc4_dat0 */
-			DRA7XX_CORE_IOPAD(0x37f4, PIN_INPUT_PULLUP | MUX_MODE3) /* uart2_txd.mmc4_dat1 */
-			DRA7XX_CORE_IOPAD(0x37f8, PIN_INPUT_PULLUP | MUX_MODE3) /* uart2_ctsn.mmc4_dat2 */
-			DRA7XX_CORE_IOPAD(0x37fc, PIN_INPUT_PULLUP | MUX_MODE3) /* uart2_rtsn.mmc4_dat3 */
 		>;
 	};
 };

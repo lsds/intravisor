@@ -93,6 +93,7 @@ void arch_trigger_cpumask_backtrace(const struct cpumask *mask,
 
 extern void *hardirq_stack[NR_CPUS];
 extern void *softirq_stack[NR_CPUS];
+#define __ARCH_HAS_DO_SOFTIRQ
 
 #define NO_IRQ		0xffffffff
 

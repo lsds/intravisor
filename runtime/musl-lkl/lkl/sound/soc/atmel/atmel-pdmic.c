@@ -1,9 +1,12 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /* Atmel PDMIC driver
  *
  * Copyright (C) 2015 Atmel
  *
  * Author: Songjun Wu <songjun.wu@atmel.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 or later
+ * as published by the Free Software Foundation.
  */
 
 #include <linux/of.h>
@@ -104,7 +107,7 @@ static struct atmel_pdmic_pdata *atmel_pdmic_dt_init(struct device *dev)
 static int atmel_pdmic_cpu_dai_startup(struct snd_pcm_substream *substream,
 					struct snd_soc_dai *cpu_dai)
 {
-	struct snd_soc_pcm_runtime *rtd = asoc_substream_to_rtd(substream);
+	struct snd_soc_pcm_runtime *rtd = substream->private_data;
 	struct atmel_pdmic *dd = snd_soc_card_get_drvdata(rtd->card);
 	int ret;
 
@@ -132,7 +135,7 @@ static int atmel_pdmic_cpu_dai_startup(struct snd_pcm_substream *substream,
 static void atmel_pdmic_cpu_dai_shutdown(struct snd_pcm_substream *substream,
 					struct snd_soc_dai *cpu_dai)
 {
-	struct snd_soc_pcm_runtime *rtd = asoc_substream_to_rtd(substream);
+	struct snd_soc_pcm_runtime *rtd = substream->private_data;
 	struct atmel_pdmic *dd = snd_soc_card_get_drvdata(rtd->card);
 
 	/* Disable the overrun error interrupt */
@@ -145,28 +148,34 @@ static void atmel_pdmic_cpu_dai_shutdown(struct snd_pcm_substream *substream,
 static int atmel_pdmic_cpu_dai_prepare(struct snd_pcm_substream *substream,
 					struct snd_soc_dai *cpu_dai)
 {
-	struct snd_soc_pcm_runtime *rtd = asoc_substream_to_rtd(substream);
+	struct snd_soc_pcm_runtime *rtd = substream->private_data;
 	struct atmel_pdmic *dd = snd_soc_card_get_drvdata(rtd->card);
-	struct snd_soc_component *component = cpu_dai->component;
 	u32 val;
-	int ret;
 
 	/* Clean the PDMIC Converted Data Register */
-	ret = regmap_read(dd->regmap, PDMIC_CDR, &val);
-	if (ret < 0)
-		return 0;
-
-	ret = snd_soc_component_update_bits(component, PDMIC_CR,
-					    PDMIC_CR_ENPDM_MASK,
-					    PDMIC_CR_ENPDM_DIS <<
-					    PDMIC_CR_ENPDM_SHIFT);
-	if (ret < 0)
-		return ret;
-
-	return 0;
+	return regmap_read(dd->regmap, PDMIC_CDR, &val);
 }
 
+static const struct snd_soc_dai_ops atmel_pdmic_cpu_dai_ops = {
+	.startup	= atmel_pdmic_cpu_dai_startup,
+	.shutdown	= atmel_pdmic_cpu_dai_shutdown,
+	.prepare	= atmel_pdmic_cpu_dai_prepare,
+};
+
 #define ATMEL_PDMIC_FORMATS (SNDRV_PCM_FMTBIT_S16_LE | SNDRV_PCM_FMTBIT_S32_LE)
+
+static struct snd_soc_dai_driver atmel_pdmic_cpu_dai = {
+	.capture = {
+		.channels_min	= 1,
+		.channels_max	= 1,
+		.rates		= SNDRV_PCM_RATE_KNOT,
+		.formats	= ATMEL_PDMIC_FORMATS,},
+	.ops = &atmel_pdmic_cpu_dai_ops,
+};
+
+static const struct snd_soc_component_driver atmel_pdmic_cpu_dai_component = {
+	.name = "atmel-pdmic",
+};
 
 /* platform */
 #define ATMEL_PDMIC_MAX_BUF_SIZE  (64 * 1024)
@@ -191,7 +200,7 @@ atmel_pdmic_platform_configure_dma(struct snd_pcm_substream *substream,
 				struct snd_pcm_hw_params *params,
 				struct dma_slave_config *slave_config)
 {
-	struct snd_soc_pcm_runtime *rtd = asoc_substream_to_rtd(substream);
+	struct snd_soc_pcm_runtime *rtd = substream->private_data;
 	struct atmel_pdmic *dd = snd_soc_card_get_drvdata(rtd->card);
 	int ret;
 
@@ -284,10 +293,10 @@ static int pdmic_get_mic_volsw(struct snd_kcontrol *kcontrol,
 	unsigned int dgain_val, scale_val;
 	int i;
 
-	dgain_val = (snd_soc_component_read(component, PDMIC_DSPR1) & PDMIC_DSPR1_DGAIN_MASK)
+	dgain_val = (snd_soc_component_read32(component, PDMIC_DSPR1) & PDMIC_DSPR1_DGAIN_MASK)
 		    >> PDMIC_DSPR1_DGAIN_SHIFT;
 
-	scale_val = (snd_soc_component_read(component, PDMIC_DSPR0) & PDMIC_DSPR0_SCALE_MASK)
+	scale_val = (snd_soc_component_read32(component, PDMIC_DSPR0) & PDMIC_DSPR0_SCALE_MASK)
 		    >> PDMIC_DSPR0_SCALE_SHIFT;
 
 	for (i = 0; i < ARRAY_SIZE(mic_gain_table); i++) {
@@ -349,16 +358,27 @@ static int atmel_pdmic_component_probe(struct snd_soc_component *component)
 	return 0;
 }
 
+static struct snd_soc_component_driver soc_component_dev_pdmic = {
+	.probe			= atmel_pdmic_component_probe,
+	.controls		= atmel_pdmic_snd_controls,
+	.num_controls		= ARRAY_SIZE(atmel_pdmic_snd_controls),
+	.idle_bias_on		= 1,
+	.use_pmdown_time	= 1,
+	.endianness		= 1,
+	.non_legacy_dai_naming	= 1,
+};
+
+/* codec dai component */
 #define PDMIC_MR_PRESCAL_MAX_VAL 127
 
 static int
-atmel_pdmic_cpu_dai_hw_params(struct snd_pcm_substream *substream,
-			      struct snd_pcm_hw_params *params,
-			      struct snd_soc_dai *cpu_dai)
+atmel_pdmic_codec_dai_hw_params(struct snd_pcm_substream *substream,
+			    struct snd_pcm_hw_params *params,
+			    struct snd_soc_dai *codec_dai)
 {
-	struct snd_soc_pcm_runtime *rtd = asoc_substream_to_rtd(substream);
+	struct snd_soc_pcm_runtime *rtd = substream->private_data;
 	struct atmel_pdmic *dd = snd_soc_card_get_drvdata(rtd->card);
-	struct snd_soc_component *component = cpu_dai->component;
+	struct snd_soc_component *component = codec_dai->component;
 	unsigned int rate_min = substream->runtime->hw.rate_min;
 	unsigned int rate_max = substream->runtime->hw.rate_max;
 	int fs = params_rate(params);
@@ -428,10 +448,21 @@ atmel_pdmic_cpu_dai_hw_params(struct snd_pcm_substream *substream,
 	return 0;
 }
 
-static int atmel_pdmic_cpu_dai_trigger(struct snd_pcm_substream *substream,
-				       int cmd, struct snd_soc_dai *cpu_dai)
+static int atmel_pdmic_codec_dai_prepare(struct snd_pcm_substream *substream,
+					struct snd_soc_dai *codec_dai)
 {
-	struct snd_soc_component *component = cpu_dai->component;
+	struct snd_soc_component *component = codec_dai->component;
+
+	snd_soc_component_update_bits(component, PDMIC_CR, PDMIC_CR_ENPDM_MASK,
+			    PDMIC_CR_ENPDM_DIS << PDMIC_CR_ENPDM_SHIFT);
+
+	return 0;
+}
+
+static int atmel_pdmic_codec_dai_trigger(struct snd_pcm_substream *substream,
+					int cmd, struct snd_soc_dai *codec_dai)
+{
+	struct snd_soc_component *component = codec_dai->component;
 	u32 val;
 
 	switch (cmd) {
@@ -454,16 +485,16 @@ static int atmel_pdmic_cpu_dai_trigger(struct snd_pcm_substream *substream,
 	return 0;
 }
 
-static const struct snd_soc_dai_ops atmel_pdmic_cpu_dai_ops = {
-	.startup	= atmel_pdmic_cpu_dai_startup,
-	.shutdown	= atmel_pdmic_cpu_dai_shutdown,
-	.prepare	= atmel_pdmic_cpu_dai_prepare,
-	.hw_params	= atmel_pdmic_cpu_dai_hw_params,
-	.trigger	= atmel_pdmic_cpu_dai_trigger,
+static const struct snd_soc_dai_ops atmel_pdmic_codec_dai_ops = {
+	.hw_params	= atmel_pdmic_codec_dai_hw_params,
+	.prepare	= atmel_pdmic_codec_dai_prepare,
+	.trigger	= atmel_pdmic_codec_dai_trigger,
 };
 
+#define ATMEL_PDMIC_CODEC_DAI_NAME  "atmel-pdmic-hifi"
 
-static struct snd_soc_dai_driver atmel_pdmic_cpu_dai = {
+static struct snd_soc_dai_driver atmel_pdmic_codec_dai = {
+	.name = ATMEL_PDMIC_CODEC_DAI_NAME,
 	.capture = {
 		.stream_name	= "Capture",
 		.channels_min	= 1,
@@ -471,17 +502,7 @@ static struct snd_soc_dai_driver atmel_pdmic_cpu_dai = {
 		.rates		= SNDRV_PCM_RATE_KNOT,
 		.formats	= ATMEL_PDMIC_FORMATS,
 	},
-	.ops = &atmel_pdmic_cpu_dai_ops,
-};
-
-static const struct snd_soc_component_driver atmel_pdmic_cpu_dai_component = {
-	.name			= "atmel-pdmic",
-	.probe			= atmel_pdmic_component_probe,
-	.controls		= atmel_pdmic_snd_controls,
-	.num_controls		= ARRAY_SIZE(atmel_pdmic_snd_controls),
-	.idle_bias_on		= 1,
-	.use_pmdown_time	= 1,
-	.legacy_dai_naming	= 1,
+	.ops = &atmel_pdmic_codec_dai_ops,
 };
 
 /* ASoC sound card */
@@ -490,30 +511,17 @@ static int atmel_pdmic_asoc_card_init(struct device *dev,
 {
 	struct snd_soc_dai_link *dai_link;
 	struct atmel_pdmic *dd = snd_soc_card_get_drvdata(card);
-	struct snd_soc_dai_link_component *comp;
 
 	dai_link = devm_kzalloc(dev, sizeof(*dai_link), GFP_KERNEL);
 	if (!dai_link)
 		return -ENOMEM;
 
-	comp = devm_kzalloc(dev, 3 * sizeof(*comp), GFP_KERNEL);
-	if (!comp)
-		return -ENOMEM;
-
-	dai_link->cpus		= &comp[0];
-	dai_link->codecs	= &comp[1];
-	dai_link->platforms	= &comp[2];
-
-	dai_link->num_cpus	= 1;
-	dai_link->num_codecs	= 1;
-	dai_link->num_platforms	= 1;
-
 	dai_link->name			= "PDMIC";
 	dai_link->stream_name		= "PDMIC PCM";
-	dai_link->codecs->dai_name	= "snd-soc-dummy-dai";
-	dai_link->cpus->dai_name	= dev_name(dev);
-	dai_link->codecs->name		= "snd-soc-dummy";
-	dai_link->platforms->name	= dev_name(dev);
+	dai_link->codec_dai_name	= ATMEL_PDMIC_CODEC_DAI_NAME;
+	dai_link->cpu_dai_name		= dev_name(dev);
+	dai_link->codec_name		= dev_name(dev);
+	dai_link->platform_name		= dev_name(dev);
 
 	card->dai_link	= dai_link;
 	card->num_links	= 1;
@@ -594,8 +602,11 @@ static int atmel_pdmic_probe(struct platform_device *pdev)
 	dd->dev = dev;
 
 	dd->irq = platform_get_irq(pdev, 0);
-	if (dd->irq < 0)
-		return dd->irq;
+	if (dd->irq < 0) {
+		ret = dd->irq;
+		dev_err(dev, "failed to get irq: %d\n", ret);
+		return ret;
+	}
 
 	dd->pclk = devm_clk_get(dev, "pclk");
 	if (IS_ERR(dd->pclk)) {
@@ -620,7 +631,8 @@ static int atmel_pdmic_probe(struct platform_device *pdev)
 		return ret;
 	}
 
-	io_base = devm_platform_get_and_ioremap_resource(pdev, 0, &res);
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	io_base = devm_ioremap_resource(dev, res);
 	if (IS_ERR(io_base))
 		return PTR_ERR(io_base);
 
@@ -662,6 +674,16 @@ static int atmel_pdmic_probe(struct platform_device *pdev)
 					     0);
 	if (ret) {
 		dev_err(dev, "could not register platform: %d\n", ret);
+		return ret;
+	}
+
+	/* register codec and codec dai */
+	atmel_pdmic_codec_dai.capture.rate_min = rate_min;
+	atmel_pdmic_codec_dai.capture.rate_max = rate_max;
+	ret = devm_snd_soc_register_component(dev, &soc_component_dev_pdmic,
+				     &atmel_pdmic_codec_dai, 1);
+	if (ret) {
+		dev_err(dev, "could not register component: %d\n", ret);
 		return ret;
 	}
 

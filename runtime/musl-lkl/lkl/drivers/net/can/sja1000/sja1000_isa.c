@@ -1,6 +1,17 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (C) 2009 Wolfgang Grandegger <wg@grandegger.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the version 2 of the GNU General Public License
+ * as published by the Free Software Foundation
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, see <http://www.gnu.org/licenses/>.
  */
 
 #include <linux/kernel.h>
@@ -130,7 +141,7 @@ static int sja1000_isa_probe(struct platform_device *pdev)
 			err = -EBUSY;
 			goto exit;
 		}
-		base = ioremap(mem[idx], iosize);
+		base = ioremap_nocache(mem[idx], iosize);
 		if (!base) {
 			err = -ENOMEM;
 			goto exit_release;
@@ -202,24 +213,22 @@ static int sja1000_isa_probe(struct platform_device *pdev)
 	if (err) {
 		dev_err(&pdev->dev, "registering %s failed (err=%d)\n",
 			DRV_NAME, err);
-		goto exit_free;
+		goto exit_unmap;
 	}
 
 	dev_info(&pdev->dev, "%s device registered (reg_base=0x%p, irq=%d)\n",
 		 DRV_NAME, priv->reg_base, dev->irq);
 	return 0;
 
-exit_free:
-	free_sja1000dev(dev);
-exit_unmap:
+ exit_unmap:
 	if (mem[idx])
 		iounmap(base);
-exit_release:
+ exit_release:
 	if (mem[idx])
 		release_mem_region(mem[idx], iosize);
 	else
 		release_region(port[idx], iosize);
-exit:
+ exit:
 	return err;
 }
 

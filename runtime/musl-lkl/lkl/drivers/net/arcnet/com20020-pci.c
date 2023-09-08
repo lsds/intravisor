@@ -127,8 +127,6 @@ static int com20020pci_probe(struct pci_dev *pdev,
 	int i, ioaddr, ret;
 	struct resource *r;
 
-	ret = 0;
-
 	if (pci_enable_device(pdev))
 		return -EIO;
 
@@ -138,13 +136,8 @@ static int com20020pci_probe(struct pci_dev *pdev,
 		return -ENOMEM;
 
 	ci = (struct com20020_pci_card_info *)id->driver_data;
-	if (!ci)
-		return -EINVAL;
-
 	priv->ci = ci;
 	mm = &ci->misc_map;
-
-	pci_set_drvdata(pdev, priv);
 
 	INIT_LIST_HEAD(&priv->list_dev);
 
@@ -168,7 +161,7 @@ static int com20020pci_probe(struct pci_dev *pdev,
 		dev = alloc_arcdev(device);
 		if (!dev) {
 			ret = -ENOMEM;
-			break;
+			goto out_port;
 		}
 		dev->dev_port = i;
 
@@ -185,7 +178,7 @@ static int com20020pci_probe(struct pci_dev *pdev,
 			pr_err("IO region %xh-%xh already allocated\n",
 			       ioaddr, ioaddr + cm->size - 1);
 			ret = -EBUSY;
-			goto err_free_arcdev;
+			goto out_port;
 		}
 
 		/* Dummy access after Reset
@@ -197,7 +190,7 @@ static int com20020pci_probe(struct pci_dev *pdev,
 
 		SET_NETDEV_DEV(dev, &pdev->dev);
 		dev->base_addr = ioaddr;
-		arcnet_set_addr(dev, node);
+		dev->dev_addr[0] = node;
 		dev->sysfs_groups[0] = &com20020_state_group;
 		dev->irq = pdev->irq;
 		lp->card_name = "PCI COM20020";
@@ -223,18 +216,18 @@ static int com20020pci_probe(struct pci_dev *pdev,
 		if (arcnet_inb(ioaddr, COM20020_REG_R_STATUS) == 0xFF) {
 			pr_err("IO address %Xh is empty!\n", ioaddr);
 			ret = -EIO;
-			goto err_free_arcdev;
+			goto out_port;
 		}
 		if (com20020_check(dev)) {
 			ret = -EIO;
-			goto err_free_arcdev;
+			goto out_port;
 		}
 
 		card = devm_kzalloc(&pdev->dev, sizeof(struct com20020_dev),
 				    GFP_KERNEL);
 		if (!card) {
 			ret = -ENOMEM;
-			goto err_free_arcdev;
+			goto out_port;
 		}
 
 		card->index = i;
@@ -260,29 +253,29 @@ static int com20020pci_probe(struct pci_dev *pdev,
 
 		ret = devm_led_classdev_register(&pdev->dev, &card->tx_led);
 		if (ret)
-			goto err_free_arcdev;
+			goto out_port;
 
 		ret = devm_led_classdev_register(&pdev->dev, &card->recon_led);
 		if (ret)
-			goto err_free_arcdev;
+			goto out_port;
 
 		dev_set_drvdata(&dev->dev, card);
 
 		ret = com20020_found(dev, IRQF_SHARED);
 		if (ret)
-			goto err_free_arcdev;
+			goto out_port;
 
 		devm_arcnet_led_init(dev, dev->dev_id, i);
 
 		list_add(&card->list, &priv->list_dev);
-		continue;
-
-err_free_arcdev:
-		free_arcdev(dev);
-		break;
 	}
-	if (ret)
-		com20020pci_remove(pdev);
+
+	pci_set_drvdata(pdev, priv);
+
+	return 0;
+
+out_port:
+	com20020pci_remove(pdev);
 	return ret;
 }
 
@@ -298,7 +291,7 @@ static void com20020pci_remove(struct pci_dev *pdev)
 
 		unregister_netdev(dev);
 		free_irq(dev->irq, dev);
-		free_arcdev(dev);
+		free_netdev(dev);
 	}
 }
 

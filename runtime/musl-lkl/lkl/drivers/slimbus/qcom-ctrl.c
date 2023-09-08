@@ -439,12 +439,13 @@ static int slim_get_current_rxbuf(struct qcom_slim_ctrl *ctrl, void *buf)
 static void qcom_slim_rxwq(struct work_struct *work)
 {
 	u8 buf[SLIM_MSGQ_BUF_LEN];
-	u8 mc, mt;
+	u8 mc, mt, len;
 	int ret;
 	struct qcom_slim_ctrl *ctrl = container_of(work, struct qcom_slim_ctrl,
 						 wd);
 
 	while ((slim_get_current_rxbuf(ctrl, buf)) != -ENODATA) {
+		len = SLIM_HEADER_GET_RL(buf[0]);
 		mt = SLIM_HEADER_GET_MT(buf[0]);
 		mc = SLIM_HEADER_GET_MC(buf[1]);
 		if (mt == SLIM_MSG_MT_CORE &&
@@ -472,10 +473,15 @@ static void qcom_slim_rxwq(struct work_struct *work)
 static void qcom_slim_prg_slew(struct platform_device *pdev,
 				struct qcom_slim_ctrl *ctrl)
 {
+	struct resource	*slew_mem;
+
 	if (!ctrl->slew_reg) {
 		/* SLEW RATE register for this SLIMbus */
-		ctrl->slew_reg = devm_platform_ioremap_resource_byname(pdev, "slew");
-		if (IS_ERR(ctrl->slew_reg))
+		slew_mem = platform_get_resource_byname(pdev, IORESOURCE_MEM,
+				"slew");
+		ctrl->slew_reg = devm_ioremap(&pdev->dev, slew_mem->start,
+				resource_size(slew_mem));
+		if (!ctrl->slew_reg)
 			return;
 	}
 
@@ -510,8 +516,10 @@ static int qcom_slim_probe(struct platform_device *pdev)
 	}
 
 	ctrl->irq = platform_get_irq(pdev, 0);
-	if (ctrl->irq < 0)
-		return ctrl->irq;
+	if (!ctrl->irq) {
+		dev_err(&pdev->dev, "no slimbus IRQ\n");
+		return -ENODEV;
+	}
 
 	sctrl = &ctrl->ctrl;
 	sctrl->dev = &pdev->dev;
@@ -521,8 +529,10 @@ static int qcom_slim_probe(struct platform_device *pdev)
 
 	slim_mem = platform_get_resource_byname(pdev, IORESOURCE_MEM, "ctrl");
 	ctrl->base = devm_ioremap_resource(ctrl->dev, slim_mem);
-	if (IS_ERR(ctrl->base))
+	if (IS_ERR(ctrl->base)) {
+		dev_err(&pdev->dev, "IOremap failed\n");
 		return PTR_ERR(ctrl->base);
+	}
 
 	sctrl->set_laddr = qcom_set_laddr;
 	sctrl->xfer_msg = qcom_xfer_msg;
@@ -531,7 +541,7 @@ static int qcom_slim_probe(struct platform_device *pdev)
 	ctrl->tx.sl_sz = SLIM_MSGQ_BUF_LEN;
 	ctrl->rx.n = QCOM_RX_MSGS;
 	ctrl->rx.sl_sz = SLIM_MSGQ_BUF_LEN;
-	ctrl->wr_comp = kcalloc(QCOM_TX_MSGS, sizeof(struct completion *),
+	ctrl->wr_comp = kzalloc(sizeof(struct completion *) * QCOM_TX_MSGS,
 				GFP_KERNEL);
 	if (!ctrl->wr_comp)
 		return -ENOMEM;
@@ -634,8 +644,6 @@ static int qcom_slim_remove(struct platform_device *pdev)
 
 	pm_runtime_disable(&pdev->dev);
 	slim_unregister_controller(&ctrl->ctrl);
-	clk_disable_unprepare(ctrl->rclk);
-	clk_disable_unprepare(ctrl->hclk);
 	destroy_workqueue(ctrl->rxwq);
 	return 0;
 }
@@ -647,7 +655,8 @@ static int qcom_slim_remove(struct platform_device *pdev)
 #ifdef CONFIG_PM
 static int qcom_slim_runtime_suspend(struct device *device)
 {
-	struct qcom_slim_ctrl *ctrl = dev_get_drvdata(device);
+	struct platform_device *pdev = to_platform_device(device);
+	struct qcom_slim_ctrl *ctrl = platform_get_drvdata(pdev);
 	int ret;
 
 	dev_dbg(device, "pm_runtime: suspending...\n");
@@ -664,7 +673,8 @@ static int qcom_slim_runtime_suspend(struct device *device)
 
 static int qcom_slim_runtime_resume(struct device *device)
 {
-	struct qcom_slim_ctrl *ctrl = dev_get_drvdata(device);
+	struct platform_device *pdev = to_platform_device(device);
+	struct qcom_slim_ctrl *ctrl = platform_get_drvdata(pdev);
 	int ret = 0;
 
 	dev_dbg(device, "pm_runtime: resuming...\n");

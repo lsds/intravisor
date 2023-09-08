@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Shared Memory Communications over RDMA (SMC-R) and RoCE
  *
@@ -22,38 +21,34 @@
 #include "smc.h"
 #include "smc_core.h"
 
-struct smc_diag_dump_ctx {
-	int pos[2];
-};
-
-static struct smc_diag_dump_ctx *smc_dump_context(struct netlink_callback *cb)
+static void smc_gid_be16_convert(__u8 *buf, u8 *gid_raw)
 {
-	return (struct smc_diag_dump_ctx *)cb->ctx;
+	sprintf(buf, "%04x:%04x:%04x:%04x:%04x:%04x:%04x:%04x",
+		be16_to_cpu(((__be16 *)gid_raw)[0]),
+		be16_to_cpu(((__be16 *)gid_raw)[1]),
+		be16_to_cpu(((__be16 *)gid_raw)[2]),
+		be16_to_cpu(((__be16 *)gid_raw)[3]),
+		be16_to_cpu(((__be16 *)gid_raw)[4]),
+		be16_to_cpu(((__be16 *)gid_raw)[5]),
+		be16_to_cpu(((__be16 *)gid_raw)[6]),
+		be16_to_cpu(((__be16 *)gid_raw)[7]));
 }
 
 static void smc_diag_msg_common_fill(struct smc_diag_msg *r, struct sock *sk)
 {
 	struct smc_sock *smc = smc_sk(sk);
 
-	memset(r, 0, sizeof(*r));
 	r->diag_family = sk->sk_family;
-	sock_diag_save_cookie(sk, r->id.idiag_cookie);
 	if (!smc->clcsock)
 		return;
 	r->id.idiag_sport = htons(smc->clcsock->sk->sk_num);
 	r->id.idiag_dport = smc->clcsock->sk->sk_dport;
 	r->id.idiag_if = smc->clcsock->sk->sk_bound_dev_if;
-	if (sk->sk_protocol == SMCPROTO_SMC) {
-		r->id.idiag_src[0] = smc->clcsock->sk->sk_rcv_saddr;
-		r->id.idiag_dst[0] = smc->clcsock->sk->sk_daddr;
-#if IS_ENABLED(CONFIG_IPV6)
-	} else if (sk->sk_protocol == SMCPROTO_SMC6) {
-		memcpy(&r->id.idiag_src, &smc->clcsock->sk->sk_v6_rcv_saddr,
-		       sizeof(smc->clcsock->sk->sk_v6_rcv_saddr));
-		memcpy(&r->id.idiag_dst, &smc->clcsock->sk->sk_v6_daddr,
-		       sizeof(smc->clcsock->sk->sk_v6_daddr));
-#endif
-	}
+	sock_diag_save_cookie(sk, r->id.idiag_cookie);
+	memset(&r->id.idiag_src, 0, sizeof(r->id.idiag_src));
+	memset(&r->id.idiag_dst, 0, sizeof(r->id.idiag_dst));
+	r->id.idiag_src[0] = smc->clcsock->sk->sk_rcv_saddr;
+	r->id.idiag_dst[0] = smc->clcsock->sk->sk_daddr;
 }
 
 static int smc_diag_msg_attrs_fill(struct sock *sk, struct sk_buff *skb,
@@ -74,7 +69,6 @@ static int __smc_diag_dump(struct sock *sk, struct sk_buff *skb,
 			   struct nlattr *bc)
 {
 	struct smc_sock *smc = smc_sk(sk);
-	struct smc_diag_fallback fallback;
 	struct user_namespace *user_ns;
 	struct smc_diag_msg *r;
 	struct nlmsghdr *nlh;
@@ -87,19 +81,9 @@ static int __smc_diag_dump(struct sock *sk, struct sk_buff *skb,
 	r = nlmsg_data(nlh);
 	smc_diag_msg_common_fill(r, sk);
 	r->diag_state = sk->sk_state;
-	if (smc->use_fallback)
-		r->diag_mode = SMC_DIAG_MODE_FALLBACK_TCP;
-	else if (smc_conn_lgr_valid(&smc->conn) && smc->conn.lgr->is_smcd)
-		r->diag_mode = SMC_DIAG_MODE_SMCD;
-	else
-		r->diag_mode = SMC_DIAG_MODE_SMCR;
+	r->diag_fallback = smc->use_fallback;
 	user_ns = sk_user_ns(NETLINK_CB(cb->skb).sk);
 	if (smc_diag_msg_attrs_fill(sk, skb, r, user_ns))
-		goto errout;
-
-	fallback.reason = smc->fallback_rsn;
-	fallback.peer_diagnosis = smc->peer_diagnosis;
-	if (nla_put(skb, SMC_DIAG_FALLBACK, sizeof(fallback), &fallback) < 0)
 		goto errout;
 
 	if ((req->diag_ext & (1 << (SMC_DIAG_CONNINFO - 1))) &&
@@ -107,9 +91,8 @@ static int __smc_diag_dump(struct sock *sk, struct sk_buff *skb,
 		struct smc_connection *conn = &smc->conn;
 		struct smc_diag_conninfo cinfo = {
 			.token = conn->alert_token_local,
-			.sndbuf_size = conn->sndbuf_desc ?
-				conn->sndbuf_desc->len : 0,
-			.rmbe_size = conn->rmb_desc ? conn->rmb_desc->len : 0,
+			.sndbuf_size = conn->sndbuf_size,
+			.rmbe_size = conn->rmbe_size,
 			.peer_rmbe_size = conn->peer_rmbe_size,
 
 			.rx_prod.wrap = conn->local_rx_ctrl.prod.wrap,
@@ -142,41 +125,23 @@ static int __smc_diag_dump(struct sock *sk, struct sk_buff *skb,
 			goto errout;
 	}
 
-	if (smc_conn_lgr_valid(&smc->conn) && !smc->conn.lgr->is_smcd &&
-	    (req->diag_ext & (1 << (SMC_DIAG_LGRINFO - 1))) &&
+	if ((req->diag_ext & (1 << (SMC_DIAG_LGRINFO - 1))) && smc->conn.lgr &&
 	    !list_empty(&smc->conn.lgr->list)) {
-		struct smc_link *link = smc->conn.lnk;
-
 		struct smc_diag_lgrinfo linfo = {
 			.role = smc->conn.lgr->role,
-			.lnk[0].ibport = link->ibport,
-			.lnk[0].link_id = link->link_id,
+			.lnk[0].ibport = smc->conn.lgr->lnk[0].ibport,
+			.lnk[0].link_id = smc->conn.lgr->lnk[0].link_id,
 		};
 
 		memcpy(linfo.lnk[0].ibname,
 		       smc->conn.lgr->lnk[0].smcibdev->ibdev->name,
-		       sizeof(link->smcibdev->ibdev->name));
-		smc_gid_be16_convert(linfo.lnk[0].gid, link->gid);
-		smc_gid_be16_convert(linfo.lnk[0].peer_gid, link->peer_gid);
+		       sizeof(smc->conn.lgr->lnk[0].smcibdev->ibdev->name));
+		smc_gid_be16_convert(linfo.lnk[0].gid,
+				     smc->conn.lgr->lnk[0].gid.raw);
+		smc_gid_be16_convert(linfo.lnk[0].peer_gid,
+				     smc->conn.lgr->lnk[0].peer_gid);
 
 		if (nla_put(skb, SMC_DIAG_LGRINFO, sizeof(linfo), &linfo) < 0)
-			goto errout;
-	}
-	if (smc_conn_lgr_valid(&smc->conn) && smc->conn.lgr->is_smcd &&
-	    (req->diag_ext & (1 << (SMC_DIAG_DMBINFO - 1))) &&
-	    !list_empty(&smc->conn.lgr->list)) {
-		struct smc_connection *conn = &smc->conn;
-		struct smcd_diag_dmbinfo dinfo;
-
-		memset(&dinfo, 0, sizeof(dinfo));
-
-		dinfo.linkid = *((u32 *)conn->lgr->id);
-		dinfo.peer_gid = conn->lgr->peer_gid;
-		dinfo.my_gid = conn->lgr->smcd->local_gid;
-		dinfo.token = conn->rmb_desc->token;
-		dinfo.peer_token = conn->peer_token;
-
-		if (nla_put(skb, SMC_DIAG_DMBINFO, sizeof(dinfo), &dinfo) < 0)
 			goto errout;
 	}
 
@@ -188,48 +153,30 @@ errout:
 	return -EMSGSIZE;
 }
 
-static int smc_diag_dump_proto(struct proto *prot, struct sk_buff *skb,
-			       struct netlink_callback *cb, int p_type)
+static int smc_diag_dump(struct sk_buff *skb, struct netlink_callback *cb)
 {
-	struct smc_diag_dump_ctx *cb_ctx = smc_dump_context(cb);
 	struct net *net = sock_net(skb->sk);
-	int snum = cb_ctx->pos[p_type];
 	struct nlattr *bc = NULL;
 	struct hlist_head *head;
-	int rc = 0, num = 0;
 	struct sock *sk;
+	int rc = 0;
 
-	read_lock(&prot->h.smc_hash->lock);
-	head = &prot->h.smc_hash->ht;
+	read_lock(&smc_proto.h.smc_hash->lock);
+	head = &smc_proto.h.smc_hash->ht;
 	if (hlist_empty(head))
 		goto out;
 
 	sk_for_each(sk, head) {
 		if (!net_eq(sock_net(sk), net))
 			continue;
-		if (num < snum)
-			goto next;
 		rc = __smc_diag_dump(sk, skb, cb, nlmsg_data(cb->nlh), bc);
-		if (rc < 0)
-			goto out;
-next:
-		num++;
+		if (rc)
+			break;
 	}
 
 out:
-	read_unlock(&prot->h.smc_hash->lock);
-	cb_ctx->pos[p_type] = num;
+	read_unlock(&smc_proto.h.smc_hash->lock);
 	return rc;
-}
-
-static int smc_diag_dump(struct sk_buff *skb, struct netlink_callback *cb)
-{
-	int rc = 0;
-
-	rc = smc_diag_dump_proto(&smc_proto, skb, cb, SMCPROTO_SMC);
-	if (!rc)
-		smc_diag_dump_proto(&smc_proto6, skb, cb, SMCPROTO_SMC6);
-	return skb->len;
 }
 
 static int smc_diag_handler_dump(struct sk_buff *skb, struct nlmsghdr *h)
@@ -268,4 +215,3 @@ module_init(smc_diag_init);
 module_exit(smc_diag_exit);
 MODULE_LICENSE("GPL");
 MODULE_ALIAS_NET_PF_PROTO_TYPE(PF_NETLINK, NETLINK_SOCK_DIAG, 43 /* AF_SMC */);
-MODULE_ALIAS_GENL_FAMILY(SMCR_GENL_FAMILY_NAME);

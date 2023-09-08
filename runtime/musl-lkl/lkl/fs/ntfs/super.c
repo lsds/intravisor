@@ -1,9 +1,23 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * super.c - NTFS kernel super block handling. Part of the Linux-NTFS project.
  *
  * Copyright (c) 2001-2012 Anton Altaparmakov and Tuxera Inc.
  * Copyright (c) 2001,2002 Richard Russon
+ *
+ * This program/include file is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License as published
+ * by the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program/include file is distributed in the hope that it will be
+ * useful, but WITHOUT ANY WARRANTY; without even the implied warranty
+ * of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program (in the main directory of the Linux-NTFS
+ * distribution in the file COPYING); if not, write to the Free Software
+ * Foundation,Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  */
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
@@ -1475,7 +1489,7 @@ not_enabled:
 	kfree(name);
 	/* Get the inode. */
 	tmp_ino = ntfs_iget(vol->sb, MREF(mref));
-	if (IS_ERR(tmp_ino) || unlikely(is_bad_inode(tmp_ino))) {
+	if (unlikely(IS_ERR(tmp_ino) || is_bad_inode(tmp_ino))) {
 		if (!IS_ERR(tmp_ino))
 			iput(tmp_ino);
 		ntfs_error(vol->sb, "Failed to load $UsnJrnl.");
@@ -2092,8 +2106,7 @@ get_ctx_vol_failed:
 	// TODO: Initialize security.
 	/* Get the extended system files' directory inode. */
 	vol->extend_ino = ntfs_iget(sb, FILE_Extend);
-	if (IS_ERR(vol->extend_ino) || is_bad_inode(vol->extend_ino) ||
-	    !S_ISDIR(vol->extend_ino->i_mode)) {
+	if (IS_ERR(vol->extend_ino) || is_bad_inode(vol->extend_ino)) {
 		if (!IS_ERR(vol->extend_ino))
 			iput(vol->extend_ino);
 		ntfs_error(sb, "Failed to load $Extend.");
@@ -2644,7 +2657,8 @@ static int ntfs_statfs(struct dentry *dentry, struct kstatfs *sfs)
 	 * the least significant 32-bits in f_fsid[0] and the most significant
 	 * 32-bits in f_fsid[1].
 	 */
-	sfs->f_fsid = u64_to_fsid(vol->serial_no);
+	sfs->f_fsid.val[0] = vol->serial_no & 0xffffffff;
+	sfs->f_fsid.val[1] = (vol->serial_no >> 32) & 0xffffffff;
 	/* Maximum length of filenames. */
 	sfs->f_namelen	   = NTFS_MAX_NAME_LEN;
 	return 0;
@@ -2662,7 +2676,7 @@ static int ntfs_write_inode(struct inode *vi, struct writeback_control *wbc)
  */
 static const struct super_operations ntfs_sops = {
 	.alloc_inode	= ntfs_alloc_big_inode,	  /* VFS: Allocate new inode. */
-	.free_inode	= ntfs_free_big_inode, /* VFS: Deallocate inode. */
+	.destroy_inode	= ntfs_destroy_big_inode, /* VFS: Deallocate inode. */
 #ifdef NTFS_RW
 	.write_inode	= ntfs_write_inode,	/* VFS: Write dirty inode to
 						   disk. */
@@ -2773,12 +2787,13 @@ static int ntfs_fill_super(struct super_block *sb, void *opt, const int silent)
 	ntfs_debug("Set device block size to %i bytes (block size bits %i).",
 			blocksize, sb->s_blocksize_bits);
 	/* Determine the size of the device in units of block_size bytes. */
-	vol->nr_blocks = sb_bdev_nr_blocks(sb);
-	if (!vol->nr_blocks) {
+	if (!i_size_read(sb->s_bdev->bd_inode)) {
 		if (!silent)
 			ntfs_error(sb, "Unable to determine device size.");
 		goto err_out_now;
 	}
+	vol->nr_blocks = i_size_read(sb->s_bdev->bd_inode) >>
+			sb->s_blocksize_bits;
 	/* Read the boot sector and return unlocked buffer head to it. */
 	if (!(bh = read_ntfs_boot_sector(sb, silent))) {
 		if (!silent)
@@ -2816,7 +2831,8 @@ static int ntfs_fill_super(struct super_block *sb, void *opt, const int silent)
 			goto err_out_now;
 		}
 		BUG_ON(blocksize != sb->s_blocksize);
-		vol->nr_blocks = sb_bdev_nr_blocks(sb);
+		vol->nr_blocks = i_size_read(sb->s_bdev->bd_inode) >>
+				sb->s_blocksize_bits;
 		ntfs_debug("Changed device block size to %i bytes (block size "
 				"bits %i) to match volume sector size.",
 				blocksize, sb->s_blocksize_bits);

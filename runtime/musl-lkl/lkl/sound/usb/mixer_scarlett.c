@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  *   Scarlett Driver for ALSA
  *
@@ -13,6 +12,17 @@
  *
  *   Code cleanup:
  *   David Henningsson <david.henningsson at canonical.com>
+ *
+ *   This program is free software; you can redistribute it and/or modify
+ *   it under the terms of the GNU General Public License as published by
+ *   the Free Software Foundation; either version 2 of the License, or
+ *   (at your option) any later version.
+ *
+ *   This program is distributed in the hope that it will be useful,
+ *   but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *   GNU General Public License for more details.
+ *
  */
 
 /*
@@ -21,7 +31,7 @@
  * Auto-detection via UAC2 is not feasible to properly discover the vast
  * majority of features. It's related to both Linux/ALSA's UAC2 as well as
  * Focusrite's implementation of it. Eventually quirks may be sufficient but
- * right now it's a major headache to work around these things.
+ * right now it's a major headache to work arount these things.
  *
  * NB. Neither the OSX nor the win driver provided by Focusrite performs
  * discovery, they seem to operate the same as this driver.
@@ -142,7 +152,6 @@ enum {
 	SCARLETT_OUTPUTS,
 	SCARLETT_SWITCH_IMPEDANCE,
 	SCARLETT_SWITCH_PAD,
-	SCARLETT_SWITCH_GAIN,
 };
 
 enum {
@@ -190,15 +199,6 @@ static const struct scarlett_mixer_elem_enum_info opt_pad = {
 	.offsets = {},
 	.names = (char const * const []){
 		"0dB", "-10dB"
-	}
-};
-
-static const struct scarlett_mixer_elem_enum_info opt_gain = {
-	.start = 0,
-	.len = 2,
-	.offsets = {},
-	.names = (char const * const []){
-		"Lo", "Hi"
 	}
 };
 
@@ -287,7 +287,8 @@ static int scarlett_ctl_switch_put(struct snd_kcontrol *kctl,
 
 static int scarlett_ctl_resume(struct usb_mixer_elem_list *list)
 {
-	struct usb_mixer_elem_info *elem = mixer_elem_list_to_info(list);
+	struct usb_mixer_elem_info *elem =
+		container_of(list, struct usb_mixer_elem_info, head);
 	int i;
 
 	for (i = 0; i < elem->channels; i++)
@@ -446,7 +447,8 @@ static int scarlett_ctl_enum_put(struct snd_kcontrol *kctl,
 
 static int scarlett_ctl_enum_resume(struct usb_mixer_elem_list *list)
 {
-	struct usb_mixer_elem_info *elem = mixer_elem_list_to_info(list);
+	struct usb_mixer_elem_info *elem =
+		container_of(list, struct usb_mixer_elem_info, head);
 
 	if (elem->cached)
 		snd_usb_set_cur_mix_value(elem, 0, 0, *elem->cache_val);
@@ -569,7 +571,7 @@ static int add_new_ctl(struct usb_mixer_interface *mixer,
 	}
 	kctl->private_free = snd_usb_mixer_elem_free;
 
-	strscpy(kctl->id.name, name, sizeof(kctl->id.name));
+	strlcpy(kctl->id.name, name, sizeof(kctl->id.name));
 
 	err = snd_usb_mixer_add_control(&elem->head, kctl);
 	if (err < 0)
@@ -633,7 +635,7 @@ static int add_output_ctls(struct usb_mixer_interface *mixer,
 /********************** device-specific config *************************/
 
 /*  untested...  */
-static const struct scarlett_device_info s6i6_info = {
+static struct scarlett_device_info s6i6_info = {
 	.matrix_in = 18,
 	.matrix_out = 8,
 	.input_len = 6,
@@ -662,8 +664,8 @@ static const struct scarlett_device_info s6i6_info = {
 		{ .num = 1, .type = SCARLETT_SWITCH_PAD, .name = NULL},
 		{ .num = 2, .type = SCARLETT_SWITCH_IMPEDANCE, .name = NULL},
 		{ .num = 2, .type = SCARLETT_SWITCH_PAD, .name = NULL},
-		{ .num = 3, .type = SCARLETT_SWITCH_GAIN, .name = NULL},
-		{ .num = 4, .type = SCARLETT_SWITCH_GAIN, .name = NULL},
+		{ .num = 3, .type = SCARLETT_SWITCH_PAD, .name = NULL},
+		{ .num = 4, .type = SCARLETT_SWITCH_PAD, .name = NULL},
 	},
 
 	.matrix_mux_init = {
@@ -675,7 +677,7 @@ static const struct scarlett_device_info s6i6_info = {
 };
 
 /*  untested...  */
-static const struct scarlett_device_info s8i6_info = {
+static struct scarlett_device_info s8i6_info = {
 	.matrix_in = 18,
 	.matrix_out = 6,
 	.input_len = 8,
@@ -714,7 +716,7 @@ static const struct scarlett_device_info s8i6_info = {
 	}
 };
 
-static const struct scarlett_device_info s18i6_info = {
+static struct scarlett_device_info s18i6_info = {
 	.matrix_in = 18,
 	.matrix_out = 6,
 	.input_len = 18,
@@ -751,7 +753,7 @@ static const struct scarlett_device_info s18i6_info = {
 	}
 };
 
-static const struct scarlett_device_info s18i8_info = {
+static struct scarlett_device_info s18i8_info = {
 	.matrix_in = 18,
 	.matrix_out = 8,
 	.input_len = 18,
@@ -793,7 +795,7 @@ static const struct scarlett_device_info s18i8_info = {
 	}
 };
 
-static const struct scarlett_device_info s18i20_info = {
+static struct scarlett_device_info s18i20_info = {
 	.matrix_in = 18,
 	.matrix_out = 8,
 	.input_len = 18,
@@ -843,7 +845,7 @@ static const struct scarlett_device_info s18i20_info = {
 
 
 static int scarlett_controls_create_generic(struct usb_mixer_interface *mixer,
-	const struct scarlett_device_info *info)
+	struct scarlett_device_info *info)
 {
 	int i, err;
 	char mx[SNDRV_CTL_ELEM_ID_NAME_MAXLEN];
@@ -893,15 +895,6 @@ static int scarlett_controls_create_generic(struct usb_mixer_interface *mixer,
 			if (err < 0)
 				return err;
 			break;
-		case SCARLETT_SWITCH_GAIN:
-			sprintf(mx, "Input %d Gain Switch", ctl->num);
-			err = add_new_ctl(mixer, &usb_scarlett_ctl_enum,
-					  scarlett_ctl_enum_resume, 0x01,
-					  0x08, ctl->num, USB_MIXER_S16, 1, mx,
-					  &opt_gain, &elem);
-			if (err < 0)
-				return err;
-			break;
 		}
 	}
 
@@ -915,7 +908,7 @@ int snd_scarlett_controls_create(struct usb_mixer_interface *mixer)
 {
 	int err, i, o;
 	char mx[SNDRV_CTL_ELEM_ID_NAME_MAXLEN];
-	const struct scarlett_device_info *info;
+	struct scarlett_device_info *info;
 	struct usb_mixer_elem_info *elem;
 	static char sample_rate_buffer[4] = { '\x80', '\xbb', '\x00', '\x00' };
 

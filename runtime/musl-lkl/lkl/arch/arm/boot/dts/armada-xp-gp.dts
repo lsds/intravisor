@@ -160,15 +160,12 @@
 				status = "okay";
 			};
 
-			nand-controller@d0000 {
+			nand@d0000 {
 				status = "okay";
-
-				nand@0 {
-					reg = <0>;
-					label = "pxa3xx_nand-0";
-					nand-rb = <0>;
-					nand-on-flash-bbt;
-				};
+				num-cs = <1>;
+				marvell,nand-keep-config;
+				marvell,nand-enable-arbiter;
+				nand-on-flash-bbt;
 			};
 		};
 
@@ -220,7 +217,7 @@
 &spi0 {
 	status = "okay";
 
-	flash@0 {
+	spi-flash@0 {
 		#address-cells = <1>;
 		#size-cells = <1>;
 		compatible = "n25q128a13", "jedec,spi-nor";

@@ -11,6 +11,8 @@
 
 #include <bpf/bpf.h>
 
+#include "bpf_rlimit.h"
+
 #define LOG_SIZE (1 << 20)
 
 #define err(str...)	printf("ERROR: " str)
@@ -138,9 +140,6 @@ int main(int argc, char **argv)
 	int i;
 
 	memset(log, 1, LOG_SIZE);
-
-	/* Use libbpf 1.0 API mode */
-	libbpf_set_strict_mode(LIBBPF_STRICT_ALL);
 
 	/* Test incorrect attr */
 	printf("Test log_level 0...\n");

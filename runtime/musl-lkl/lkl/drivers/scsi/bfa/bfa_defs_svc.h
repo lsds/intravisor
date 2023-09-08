@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2005-2014 Brocade Communications Systems, Inc.
  * Copyright (c) 2014- QLogic Corporation.
@@ -6,6 +5,15 @@
  * www.qlogic.com
  *
  * Linux driver for QLogic BR-series Fibre Channel Host Bus Adapter.
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License (GPL) Version 2 as
+ * published by the Free Software Foundation
+ *
+ * This program is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * General Public License for more details.
  */
 
 #ifndef __BFA_DEFS_SVC_H__
@@ -871,7 +879,7 @@ enum bfa_port_linkstate_rsn {
 
 /*
  * Initially flash content may be fff. On making LUN mask enable and disable
- * state change.  when report lun command is being processed it goes from
+ * state chnage.  when report lun command is being processed it goes from
  * BFA_LUN_MASK_ACTIVE to BFA_LUN_MASK_FETCH and comes back to
  * BFA_LUN_MASK_ACTIVE.
  */
@@ -1445,7 +1453,7 @@ union bfa_aen_data_u {
 struct bfa_aen_entry_s {
 	struct list_head	qe;
 	enum bfa_aen_category   aen_category;
-	int                     aen_type;
+	u32                     aen_type;
 	union bfa_aen_data_u    aen_data;
 	u64			aen_tv_sec;
 	u64			aen_tv_usec;

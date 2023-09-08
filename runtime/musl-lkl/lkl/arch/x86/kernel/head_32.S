@@ -23,7 +23,6 @@
 #include <asm/cpufeatures.h>
 #include <asm/percpu.h>
 #include <asm/nops.h>
-#include <asm/nospec-branch.h>
 #include <asm/bootparam.h>
 #include <asm/export.h>
 #include <asm/pgtable_32.h>
@@ -65,9 +64,14 @@ RESERVE_BRK(pagetables, INIT_MAP_SIZE)
  * can.
  */
 __HEAD
-SYM_CODE_START(startup_32)
+ENTRY(startup_32)
 	movl pa(initial_stack),%ecx
 	
+	/* test KEEP_SEGMENTS flag to see if the bootloader is asking
+		us to not reload segments */
+	testb $KEEP_SEGMENTS, BP_loadflags(%esi)
+	jnz 2f
+
 /*
  * Set segments to known values.
  */
@@ -78,6 +82,7 @@ SYM_CODE_START(startup_32)
 	movl %eax,%fs
 	movl %eax,%gs
 	movl %eax,%ss
+2:
 	leal -__PAGE_OFFSET(%ecx),%esp
 
 /*
@@ -135,8 +140,38 @@ SYM_CODE_START(startup_32)
 	movl %eax,pa(initial_page_table+0xffc)
 #endif
 
+#ifdef CONFIG_PARAVIRT
+	/* This is can only trip for a broken bootloader... */
+	cmpw $0x207, pa(boot_params + BP_version)
+	jb .Ldefault_entry
+
+	/* Paravirt-compatible boot parameters.  Look to see what architecture
+		we're booting under. */
+	movl pa(boot_params + BP_hardware_subarch), %eax
+	cmpl $num_subarch_entries, %eax
+	jae .Lbad_subarch
+
+	movl pa(subarch_entries)(,%eax,4), %eax
+	subl $__PAGE_OFFSET, %eax
+	jmp *%eax
+
+.Lbad_subarch:
+WEAK(xen_entry)
+	/* Unknown implementation; there's really
+	   nothing we can do at this point. */
+	ud2a
+
+	__INITDATA
+
+subarch_entries:
+	.long .Ldefault_entry		/* normal x86/PC */
+	.long xen_entry			/* Xen hypervisor */
+	.long .Ldefault_entry		/* Moorestown MID */
+num_subarch_entries = (. - subarch_entries) / 4
+.previous
+#else
 	jmp .Ldefault_entry
-SYM_CODE_END(startup_32)
+#endif /* CONFIG_PARAVIRT */
 
 #ifdef CONFIG_HOTPLUG_CPU
 /*
@@ -144,12 +179,12 @@ SYM_CODE_END(startup_32)
  * up already except stack. We just set up stack here. Then call
  * start_secondary().
  */
-SYM_FUNC_START(start_cpu0)
+ENTRY(start_cpu0)
 	movl initial_stack, %ecx
 	movl %ecx, %esp
 	call *(initial_code)
 1:	jmp 1b
-SYM_FUNC_END(start_cpu0)
+ENDPROC(start_cpu0)
 #endif
 
 /*
@@ -160,7 +195,7 @@ SYM_FUNC_END(start_cpu0)
  * If cpu hotplug is not supported then this code can go in init section
  * which will be freed later
  */
-SYM_FUNC_START(startup_32_smp)
+ENTRY(startup_32_smp)
 	cld
 	movl $(__BOOT_DS),%eax
 	movl %eax,%ds
@@ -319,15 +354,15 @@ SYM_FUNC_START(startup_32_smp)
 	movl $(__KERNEL_PERCPU), %eax
 	movl %eax,%fs			# set this cpu's percpu
 
-	xorl %eax,%eax
-	movl %eax,%gs			# clear possible garbage in %gs
+	movl $(__KERNEL_STACK_CANARY),%eax
+	movl %eax,%gs
 
 	xorl %eax,%eax			# Clear LDT
 	lldt %ax
 
 	call *(initial_code)
 1:	jmp 1b
-SYM_FUNC_END(startup_32_smp)
+ENDPROC(startup_32_smp)
 
 #include "verify_cpu.S"
 
@@ -340,10 +375,24 @@ SYM_FUNC_END(startup_32_smp)
  */
 __INIT
 setup_once:
-	andl $0,setup_once_ref	/* Once is enough, thanks */
-	RET
+#ifdef CONFIG_CC_STACKPROTECTOR
+	/*
+	 * Configure the stack canary. The linker can't handle this by
+	 * relocation.  Manually set base address in stack canary
+	 * segment descriptor.
+	 */
+	movl $gdt_page,%eax
+	movl $stack_canary,%ecx
+	movw %cx, 8 * GDT_ENTRY_STACK_CANARY + 2(%eax)
+	shrl $16, %ecx
+	movb %cl, 8 * GDT_ENTRY_STACK_CANARY + 4(%eax)
+	movb %ch, 8 * GDT_ENTRY_STACK_CANARY + 7(%eax)
+#endif
 
-SYM_FUNC_START(early_idt_handler_array)
+	andl $0,setup_once_ref	/* Once is enough, thanks */
+	ret
+
+ENTRY(early_idt_handler_array)
 	# 36(%esp) %eflags
 	# 32(%esp) %cs
 	# 28(%esp) %eip
@@ -358,9 +407,9 @@ SYM_FUNC_START(early_idt_handler_array)
 	i = i + 1
 	.fill early_idt_handler_array + i*EARLY_IDT_HANDLER_SIZE - ., 1, 0xcc
 	.endr
-SYM_FUNC_END(early_idt_handler_array)
+ENDPROC(early_idt_handler_array)
 	
-SYM_CODE_START_LOCAL(early_idt_handler_common)
+early_idt_handler_common:
 	/*
 	 * The stack is the hardware frame, an error code or zero, and the
 	 * vector number.
@@ -411,10 +460,10 @@ SYM_CODE_START_LOCAL(early_idt_handler_common)
 	decl	%ss:early_recursion_flag
 	addl	$4, %esp	/* pop pt_regs->orig_ax */
 	iret
-SYM_CODE_END(early_idt_handler_common)
+ENDPROC(early_idt_handler_common)
 
 /* This is the default interrupt "handler" :-) */
-SYM_FUNC_START(early_ignore_irq)
+ENTRY(early_ignore_irq)
 	cld
 #ifdef CONFIG_PRINTK
 	pushl %eax
@@ -433,7 +482,7 @@ SYM_FUNC_START(early_ignore_irq)
 	pushl 32(%esp)
 	pushl 40(%esp)
 	pushl $int_msg
-	call _printk
+	call printk
 
 	call dump_stack
 
@@ -449,29 +498,25 @@ SYM_FUNC_START(early_ignore_irq)
 hlt_loop:
 	hlt
 	jmp hlt_loop
-SYM_FUNC_END(early_ignore_irq)
+ENDPROC(early_ignore_irq)
 
 __INITDATA
 	.align 4
-SYM_DATA(early_recursion_flag, .long 0)
+GLOBAL(early_recursion_flag)
+	.long 0
 
 __REFDATA
 	.align 4
-SYM_DATA(initial_code,		.long i386_start_kernel)
-SYM_DATA(setup_once_ref,	.long setup_once)
+ENTRY(initial_code)
+	.long i386_start_kernel
+ENTRY(setup_once_ref)
+	.long setup_once
 
-#ifdef CONFIG_PAGE_TABLE_ISOLATION
-#define	PGD_ALIGN	(2 * PAGE_SIZE)
-#define PTI_USER_PGD_FILL	1024
-#else
-#define	PGD_ALIGN	(PAGE_SIZE)
-#define PTI_USER_PGD_FILL	0
-#endif
 /*
  * BSS section
  */
 __PAGE_ALIGNED_BSS
-	.align PGD_ALIGN
+	.align PAGE_SIZE
 #ifdef CONFIG_X86_PAE
 .globl initial_pg_pmd
 initial_pg_pmd:
@@ -481,17 +526,14 @@ initial_pg_pmd:
 initial_page_table:
 	.fill 1024,4,0
 #endif
-	.align PGD_ALIGN
 initial_pg_fixmap:
 	.fill 1024,4,0
-.globl swapper_pg_dir
-	.align PGD_ALIGN
-swapper_pg_dir:
-	.fill 1024,4,0
-	.fill PTI_USER_PGD_FILL,4,0
 .globl empty_zero_page
 empty_zero_page:
 	.fill 4096,1,0
+.globl swapper_pg_dir
+swapper_pg_dir:
+	.fill 1024,4,0
 EXPORT_SYMBOL(empty_zero_page)
 
 /*
@@ -500,8 +542,8 @@ EXPORT_SYMBOL(empty_zero_page)
 #ifdef CONFIG_X86_PAE
 __PAGE_ALIGNED_DATA
 	/* Page-aligned for the benefit of paravirt? */
-	.align PGD_ALIGN
-SYM_DATA_START(initial_page_table)
+	.align PAGE_SIZE
+ENTRY(initial_page_table)
 	.long	pa(initial_pg_pmd+PGD_IDENT_ATTR),0	/* low identity map */
 # if KPMDS == 3
 	.long	pa(initial_pg_pmd+PGD_IDENT_ATTR),0
@@ -519,28 +561,17 @@ SYM_DATA_START(initial_page_table)
 #  error "Kernel PMDs should be 1, 2 or 3"
 # endif
 	.align PAGE_SIZE		/* needs to be page-sized too */
-
-#ifdef CONFIG_PAGE_TABLE_ISOLATION
-	/*
-	 * PTI needs another page so sync_initial_pagetable() works correctly
-	 * and does not scribble over the data which is placed behind the
-	 * actual initial_page_table. See clone_pgd_range().
-	 */
-	.fill 1024, 4, 0
-#endif
-
-SYM_DATA_END(initial_page_table)
 #endif
 
 .data
 .balign 4
-/*
- * The SIZEOF_PTREGS gap is a convention which helps the in-kernel unwinder
- * reliably detect the end of the stack.
- */
-SYM_DATA(initial_stack,
-		.long init_thread_union + THREAD_SIZE -
-		SIZEOF_PTREGS - TOP_OF_KERNEL_STACK_PADDING)
+ENTRY(initial_stack)
+	/*
+	 * The SIZEOF_PTREGS gap is a convention which helps the in-kernel
+	 * unwinder reliably detect the end of the stack.
+	 */
+	.long init_thread_union + THREAD_SIZE - SIZEOF_PTREGS - \
+	      TOP_OF_KERNEL_STACK_PADDING;
 
 __INITRODATA
 int_msg:
@@ -556,28 +587,27 @@ int_msg:
  */
 
 	.data
+.globl boot_gdt_descr
+
 	ALIGN
 # early boot GDT descriptor (must use 1:1 address mapping)
 	.word 0				# 32 bit align gdt_desc.address
-SYM_DATA_START_LOCAL(boot_gdt_descr)
+boot_gdt_descr:
 	.word __BOOT_DS+7
 	.long boot_gdt - __PAGE_OFFSET
-SYM_DATA_END(boot_gdt_descr)
 
 # boot GDT descriptor (later on used by CPU#0):
 	.word 0				# 32 bit align gdt_desc.address
-SYM_DATA_START(early_gdt_descr)
+ENTRY(early_gdt_descr)
 	.word GDT_ENTRIES*8-1
 	.long gdt_page			/* Overwritten for secondary CPUs */
-SYM_DATA_END(early_gdt_descr)
 
 /*
  * The boot_gdt must mirror the equivalent in setup.S and is
  * used only for booting.
  */
 	.align L1_CACHE_BYTES
-SYM_DATA_START(boot_gdt)
+ENTRY(boot_gdt)
 	.fill GDT_ENTRY_BOOT_CS,8,0
 	.quad 0x00cf9a000000ffff	/* kernel 4GB code at 0x00000000 */
 	.quad 0x00cf92000000ffff	/* kernel 4GB data at 0x00000000 */
-SYM_DATA_END(boot_gdt)

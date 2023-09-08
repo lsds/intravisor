@@ -100,7 +100,6 @@ static int config_load(void)
 		perror("config buf malloc");
 		return -1;
 	}
-	memset(buf, 0, len * sizeof(char) + 1);
 	ret = read(fd, buf, len);
 	if (ret < 0) {
 		perror("config file read");
@@ -112,8 +111,8 @@ static int config_load(void)
 	return ret;
 }
 
-void
-__hijack_init(void)
+void __attribute__((constructor))
+hijack_init(void)
 {
 	int ret, i, dev_null;
 	int single_cpu_mode = 0;
@@ -122,12 +121,6 @@ __hijack_init(void)
 	ret = config_load();
 	if (ret < 0)
 		return;
-
-	ret = lkl_init(&lkl_host_ops);
-	if (ret) {
-		fprintf(stderr, "can't init lkl: %s\n", lkl_strerror(ret));
-		return;
-	}
 
 	/* reflect pre-configuration */
 	lkl_load_config_pre(cfg);
@@ -185,10 +178,9 @@ __hijack_init(void)
 	}
 #endif
 
-	ret = lkl_start_kernel(cfg->boot_cmdline);
+	ret = lkl_start_kernel(&lkl_host_ops, cfg->boot_cmdline);
 	if (ret) {
 		fprintf(stderr, "can't start kernel: %s\n", lkl_strerror(ret));
-		lkl_cleanup();
 		return;
 	}
 
@@ -225,17 +217,8 @@ __hijack_init(void)
 	lkl_load_config_post(cfg);
 }
 
-void __attribute__((constructor))
-hijack_init(void)
-{
-	if (getenv("LKL_HIJACK_ZPOLINE"))
-		return;
-
-	return __hijack_init();
-}
-
-void
-__hijack_fini(void)
+void __attribute__((destructor))
+hijack_fini(void)
 {
 	int i;
 	int err;
@@ -248,11 +231,7 @@ __hijack_fini(void)
 			pause();
 	}
 
-	if (!cfg)
-		return;
-
 	lkl_unload_config(cfg);
-	free(cfg);
 
 	if (!lkl_running)
 		return;
@@ -263,15 +242,4 @@ __hijack_fini(void)
 	err = lkl_sys_halt();
 	if (err)
 		fprintf(stderr, "lkl_sys_halt: %s\n", lkl_strerror(err));
-
-	lkl_cleanup();
-}
-
-void __attribute__((destructor))
-hijack_fini(void)
-{
-	if (getenv("LKL_HIJACK_ZPOLINE"))
-		return;
-
-	return __hijack_fini();
 }

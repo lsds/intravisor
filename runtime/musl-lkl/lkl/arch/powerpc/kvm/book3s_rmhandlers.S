@@ -1,5 +1,16 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
 /*
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License, version 2, as
+ * published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
  *
  * Copyright SUSE Linux Products GmbH 2009
  *
@@ -12,7 +23,6 @@
 #include <asm/mmu.h>
 #include <asm/page.h>
 #include <asm/asm-offsets.h>
-#include <asm/asm-compat.h>
 
 #ifdef CONFIG_PPC_BOOK3S_64
 #include <asm/exception-64s.h>
@@ -26,7 +36,7 @@
 
 #if defined(CONFIG_PPC_BOOK3S_64)
 
-#ifdef CONFIG_PPC64_ELF_ABI_V2
+#ifdef PPC64_ELF_ABI_v2
 #define FUNC(name) 		name
 #else
 #define FUNC(name) 		GLUE(.,name)
@@ -36,8 +46,8 @@
 
 #define FUNC(name)		name
 
-#define RFI_TO_KERNEL	rfi
-#define RFI_TO_GUEST	rfi
+#define RFI_TO_KERNEL	RFI
+#define RFI_TO_GUEST	RFI
 
 .macro INTERRUPT_TRAMPOLINE intno
 

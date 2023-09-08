@@ -79,7 +79,7 @@ struct hdlcdrv_ops {
 	 */
 	int (*open)(struct net_device *);
 	int (*close)(struct net_device *);
-	int (*ioctl)(struct net_device *, void __user *,
+	int (*ioctl)(struct net_device *, struct ifreq *, 
 		     struct hdlcdrv_ioctl *, int);
 };
 

@@ -1,7 +1,11 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Copyright (C) 2004 Benjamin Herrenschmuidt (benh@kernel.crashing.org),
  *		      IBM Corp.
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version
+ * 2 of the License, or (at your option) any later version.
  */
 
 #undef DEBUG
@@ -12,10 +16,10 @@
 #include <linux/string.h>
 #include <linux/init.h>
 #include <linux/irq.h>
-#include <linux/of_irq.h>
 
 #include <asm/sections.h>
 #include <asm/io.h>
+#include <asm/prom.h>
 #include <asm/pci-bridge.h>
 #include <asm/machdep.h>
 #include <asm/iommu.h>
@@ -34,7 +38,7 @@ static struct pci_controller *u3_agp, *u3_ht, *u4_pcie;
 
 static int __init fixup_one_level_bus_range(struct device_node *node, int higher)
 {
-	for (; node; node = node->sibling) {
+	for (; node != 0;node = node->sibling) {
 		const int *bus_range;
 		const unsigned int *class_code;
 		int len;
@@ -536,9 +540,6 @@ static int __init maple_add_bridge(struct device_node *dev)
 	/* Check for legacy IOs */
 	isa_bridge_find_early(hose);
 
-	/* create pci_dn's for DT nodes under this PHB */
-	pci_devs_phb_init_dynamic(hose);
-
 	return 0;
 }
 
@@ -603,8 +604,10 @@ void __init maple_pci_init(void)
 		printk(KERN_CRIT "maple_find_bridges: can't find root of device tree\n");
 		return;
 	}
-	for_each_child_of_node(root, np) {
-		if (!of_node_is_type(np, "pci") && !of_node_is_type(np, "ht"))
+	for (np = NULL; (np = of_get_next_child(root, np)) != NULL;) {
+		if (!np->type)
+			continue;
+		if (strcmp(np->type, "pci") && strcmp(np->type, "ht"))
 			continue;
 		if ((of_device_is_compatible(np, "u4-pcie") ||
 		     of_device_is_compatible(np, "u3-agp")) &&

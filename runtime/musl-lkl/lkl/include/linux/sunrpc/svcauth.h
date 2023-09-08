@@ -10,6 +10,8 @@
 #ifndef _LINUX_SUNRPC_SVCAUTH_H_
 #define _LINUX_SUNRPC_SVCAUTH_H_
 
+#ifdef __KERNEL__
+
 #include <linux/string.h>
 #include <linux/sunrpc/msg_prot.h>
 #include <linux/sunrpc/cache.h>
@@ -29,7 +31,6 @@ struct svc_cred {
 	/* name of form servicetype@hostname, passed down by
 	 * rpc.svcgssd, or computed from the above: */
 	char			*cr_principal;
-	char			*cr_targ_princ;
 	struct gss_api_mech	*cr_gss_mech;
 };
 
@@ -38,7 +39,6 @@ static inline void init_svc_cred(struct svc_cred *cred)
 	cred->cr_group_info = NULL;
 	cred->cr_raw_principal = NULL;
 	cred->cr_principal = NULL;
-	cred->cr_targ_princ = NULL;
 	cred->cr_gss_mech = NULL;
 }
 
@@ -48,7 +48,6 @@ static inline void free_svc_cred(struct svc_cred *cred)
 		put_group_info(cred->cr_group_info);
 	kfree(cred->cr_raw_principal);
 	kfree(cred->cr_principal);
-	kfree(cred->cr_targ_princ);
 	gss_mech_put(cred->cr_gss_mech);
 	init_svc_cred(cred);
 }
@@ -80,7 +79,6 @@ struct auth_domain {
 	struct hlist_node	hash;
 	char			*name;
 	struct auth_ops		*flavour;
-	struct rcu_head		rcu_head;
 };
 
 /*
@@ -127,7 +125,7 @@ struct auth_ops {
 	char *	name;
 	struct module *owner;
 	int	flavour;
-	int	(*accept)(struct svc_rqst *rq);
+	int	(*accept)(struct svc_rqst *rq, __be32 *authp);
 	int	(*release)(struct svc_rqst *rq);
 	void	(*domain_release)(struct auth_domain *);
 	int	(*set_client)(struct svc_rqst *rq);
@@ -149,7 +147,7 @@ struct auth_ops {
 
 struct svc_xprt;
 
-extern int	svc_authenticate(struct svc_rqst *rqstp);
+extern int	svc_authenticate(struct svc_rqst *rqstp, __be32 *authp);
 extern int	svc_authorise(struct svc_rqst *rqstp);
 extern int	svc_set_client(struct svc_rqst *rqstp);
 extern int	svc_auth_register(rpc_authflavor_t flavor, struct auth_ops *aops);
@@ -182,5 +180,7 @@ static inline unsigned long hash_mem(char const *buf, int length, int bits)
 {
 	return full_name_hash(NULL, buf, length) >> (32 - bits);
 }
+
+#endif /* __KERNEL__ */
 
 #endif /* _LINUX_SUNRPC_SVCAUTH_H_ */

@@ -23,4 +23,7 @@ static inline bool rcode_is_permanent_error(int rcode)
 	return rcode == RCODE_TYPE_ERROR || rcode == RCODE_ADDRESS_ERROR;
 }
 
+void snd_fw_schedule_registration(struct fw_unit *unit,
+				  struct delayed_work *dwork);
+
 #endif

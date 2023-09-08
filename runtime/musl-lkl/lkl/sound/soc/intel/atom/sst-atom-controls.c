@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
  /*
  *  sst-atom-controls.c - Intel MID Platform driver DPCM ALSA controls for Mrfld
  *
@@ -6,6 +5,15 @@
  *  Author: Omair Mohammed Abdullah <omair.m.abdullah@intel.com>
  *	Vinod Koul <vinod.koul@intel.com>
  *  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+ *
+ *  This program is free software; you can redistribute it and/or modify
+ *  it under the terms of the GNU General Public License as published by
+ *  the Free Software Foundation; version 2 of the License.
+ *
+ *  This program is distributed in the hope that it will be useful, but
+ *  WITHOUT ANY WARRANTY; without even the implied warranty of
+ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ *  General Public License for more details.
  *
  *  In the dpcm driver modelling when a particular FE/BE/Mixer/Pipe is active
  *  we forward the settings and parameters, rest we keep the values  in
@@ -50,8 +58,6 @@ static int sst_fill_and_send_cmd_unlocked(struct sst_data *drv,
 {
 	int ret = 0;
 
-	WARN_ON(!mutex_is_locked(&drv->lock));
-
 	ret = sst_fill_byte_control(drv, ipc_msg,
 				block, task_id, pipe_id, len, cmd_data);
 	if (ret < 0)
@@ -61,13 +67,8 @@ static int sst_fill_and_send_cmd_unlocked(struct sst_data *drv,
 
 /**
  * sst_fill_and_send_cmd - generate the IPC message and send it to the FW
- * @drv: sst_data
- * @ipc_msg: type of IPC (CMD, SET_PARAMS, GET_PARAMS)
- * @block: block index
- * @task_id: task index
- * @pipe_id: pipe index
- * @cmd_data: the IPC payload
- * @len: length of data to be sent
+ * @ipc_msg:	type of IPC (CMD, SET_PARAMS, GET_PARAMS)
+ * @cmd_data:	the IPC payload
  */
 static int sst_fill_and_send_cmd(struct sst_data *drv,
 				 u8 ipc_msg, u8 block, u8 task_id, u8 pipe_id,
@@ -83,7 +84,7 @@ static int sst_fill_and_send_cmd(struct sst_data *drv,
 	return ret;
 }
 
-/*
+/**
  * tx map value is a bitfield where each bit represents a FW channel
  *
  *			3 2 1 0		# 0 = codec0, 1 = codec1
@@ -95,7 +96,7 @@ static u8 sst_ssp_tx_map[SST_MAX_TDM_SLOTS] = {
 	0x1, 0x2, 0x4, 0x8, 0x10, 0x20, 0x40, 0x80, /* default rx map */
 };
 
-/*
+/**
  * rx map value is a bitfield where each bit represents a slot
  *
  *			  76543210	# 0 = slot 0, 1 = slot 1
@@ -106,7 +107,7 @@ static u8 sst_ssp_rx_map[SST_MAX_TDM_SLOTS] = {
 	0x1, 0x2, 0x4, 0x8, 0x10, 0x20, 0x40, 0x80, /* default tx map */
 };
 
-/*
+/**
  * NOTE: this is invoked with lock held
  */
 static int sst_send_slot_map(struct sst_data *drv)
@@ -150,8 +151,7 @@ static int sst_slot_enum_info(struct snd_kcontrol *kcontrol,
 
 /**
  * sst_slot_get - get the status of the interleaver/deinterleaver control
- * @kcontrol: control pointer
- * @ucontrol: User data
+ *
  * Searches the map where the control status is stored, and gets the
  * channel/slot which is currently set for this enumerated control. Since it is
  * an enumerated control, there is only one possible value.
@@ -203,8 +203,7 @@ static int sst_check_and_send_slot_map(struct sst_data *drv, struct snd_kcontrol
 
 /**
  * sst_slot_put - set the status of interleaver/deinterleaver control
- * @kcontrol: control pointer
- * @ucontrol: User data
+ *
  * (de)interleaver controls are defined in opposite sense to be user-friendly
  *
  * Instead of the enum value being the value written to the register, it is the
@@ -287,9 +286,7 @@ static int sst_send_algo_cmd(struct sst_data *drv,
 
 /**
  * sst_find_and_send_pipe_algo - send all the algo parameters for a pipe
- * @drv: sst_data
- * @pipe: string identifier
- * @ids: list of algorithms
+ *
  * The algos which are in each pipeline are sent to the firmware one by one
  *
  * Called with lock held
@@ -299,7 +296,7 @@ static int sst_find_and_send_pipe_algo(struct sst_data *drv,
 {
 	int ret = 0;
 	struct sst_algo_control *bc;
-	struct sst_module *algo;
+	struct sst_module *algo = NULL;
 
 	dev_dbg(&drv->pdev->dev, "Enter: widget=%s\n", pipe);
 
@@ -388,15 +385,11 @@ static int sst_gain_ctl_info(struct snd_kcontrol *kcontrol,
 
 /**
  * sst_send_gain_cmd - send the gain algorithm IPC to the FW
- * @drv: sst_data
- * @gv:the stored value of gain (also contains rampduration)
- * @task_id: task index
- * @loc_id: location/position index
- * @module_id: module index
- * @mute: flag that indicates whether this was called from the
- *  digital_mute callback or directly. If called from the
- *  digital_mute callback, module will be muted/unmuted based on this
- *  flag. The flag is always 0 if called directly.
+ * @gv:		the stored value of gain (also contains rampduration)
+ * @mute:	flag that indicates whether this was called from the
+ *		digital_mute callback or directly. If called from the
+ *		digital_mute callback, module will be muted/unmuted based on this
+ *		flag. The flag is always 0 if called directly.
  *
  * Called with sst_data.lock held
  *
@@ -557,12 +550,9 @@ static const uint swm_mixer_input_ids[SST_SWM_INPUT_COUNT] = {
 
 /**
  * fill_swm_input - fill in the SWM input ids given the register
- * @cmpnt: ASoC component
- * @swm_input: array of swm_input_ids
- * @reg: the register value is a bit-field inicated which mixer inputs are ON.
  *
- * Use the lookup table to get the input-id and fill it in the
- * structure.
+ * The register value is a bit-field inicated which mixer inputs are ON. Use the
+ * lookup table to get the input-id and fill it in the structure.
  */
 static int fill_swm_input(struct snd_soc_component *cmpnt,
 		struct swm_input_ids *swm_input, unsigned int reg)
@@ -593,7 +583,7 @@ static int fill_swm_input(struct snd_soc_component *cmpnt,
 }
 
 
-/*
+/**
  * called with lock held
  */
 static int sst_set_pipe_gain(struct sst_ids *ids,
@@ -602,7 +592,7 @@ static int sst_set_pipe_gain(struct sst_ids *ids,
 	int ret = 0;
 	struct sst_gain_mixer_control *mc;
 	struct sst_gain_value *gv;
-	struct sst_module *gain;
+	struct sst_module *gain = NULL;
 
 	list_for_each_entry(gain, &ids->gain_list, node) {
 		struct snd_kcontrol *kctl = gain->kctl;
@@ -657,7 +647,7 @@ static int sst_swm_mixer_event(struct snd_soc_dapm_widget *w,
 		set_mixer = false;
 	}
 
-	if (!set_mixer)
+	if (set_mixer == false)
 		return 0;
 
 	if (SND_SOC_DAPM_EVENT_ON(event) ||
@@ -723,7 +713,7 @@ SST_SBA_DECLARE_MIX_CONTROLS(sst_mix_pcm2_controls);
 SST_SBA_DECLARE_MIX_CONTROLS(sst_mix_sprot_l0_controls);
 SST_SBA_DECLARE_MIX_CONTROLS(sst_mix_media_l1_controls);
 SST_SBA_DECLARE_MIX_CONTROLS(sst_mix_media_l2_controls);
-SST_SBA_DECLARE_MIX_CONTROLS(__maybe_unused sst_mix_voip_controls);
+SST_SBA_DECLARE_MIX_CONTROLS(sst_mix_voip_controls);
 SST_SBA_DECLARE_MIX_CONTROLS(sst_mix_codec0_controls);
 SST_SBA_DECLARE_MIX_CONTROLS(sst_mix_codec1_controls);
 SST_SBA_DECLARE_MIX_CONTROLS(sst_mix_modem_controls);
@@ -827,14 +817,14 @@ static int sst_get_ssp_mode(struct snd_soc_dai *dai, unsigned int fmt)
 {
 	int format;
 
-	format = (fmt & SND_SOC_DAIFMT_CLOCK_PROVIDER_MASK);
+	format = (fmt & SND_SOC_DAIFMT_MASTER_MASK);
 	dev_dbg(dai->dev, "Enter:%s, format=%x\n", __func__, format);
 
 	switch (format) {
-	case SND_SOC_DAIFMT_BP_FP:
-		return SSP_MODE_PROVIDER;
-	case SND_SOC_DAIFMT_BC_FC:
-		return SSP_MODE_CONSUMER;
+	case SND_SOC_DAIFMT_CBS_CFS:
+		return SSP_MODE_MASTER;
+	case SND_SOC_DAIFMT_CBM_CFM:
+		return SSP_MODE_SLAVE;
 	default:
 		dev_err(dai->dev, "Invalid ssp protocol: %d\n", format);
 	}
@@ -897,7 +887,7 @@ int sst_fill_ssp_config(struct snd_soc_dai *dai, unsigned int fmt)
 	return 0;
 }
 
-/*
+/**
  * sst_ssp_config - contains SSP configuration for media UC
  * this can be overwritten by set_dai_xxx APIs
  */
@@ -905,7 +895,7 @@ static const struct sst_ssp_config sst_ssp_configs = {
 	.ssp_id = SSP_CODEC,
 	.bits_per_slot = 24,
 	.slots = 4,
-	.ssp_mode = SSP_MODE_PROVIDER,
+	.ssp_mode = SSP_MODE_MASTER,
 	.pcm_mode = SSP_PCM_MODE_NETWORK,
 	.duplex = SSP_DUPLEX,
 	.ssp_protocol = SSP_MODE_PCM,
@@ -984,9 +974,7 @@ static int sst_set_be_modules(struct snd_soc_dapm_widget *w,
 	dev_dbg(c->dev, "Enter: widget=%s\n", w->name);
 
 	if (SND_SOC_DAPM_EVENT_ON(event)) {
-		mutex_lock(&drv->lock);
 		ret = sst_send_slot_map(drv);
-		mutex_unlock(&drv->lock);
 		if (ret)
 			return ret;
 		ret = sst_send_pipe_module_params(w, k);
@@ -1316,9 +1304,6 @@ static bool is_sst_dapm_widget(struct snd_soc_dapm_widget *w)
 
 /**
  * sst_send_pipe_gains - send gains for the front-end DAIs
- * @dai: front-end dai
- * @stream: direction
- * @mute: boolean indicating mute status
  *
  * The gains in the pipes connected to the front-ends are muted/unmuted
  * automatically via the digital_mute() DAPM callback. This function sends the
@@ -1328,7 +1313,7 @@ int sst_send_pipe_gains(struct snd_soc_dai *dai, int stream, int mute)
 {
 	struct sst_data *drv = snd_soc_dai_get_drvdata(dai);
 	struct snd_soc_dapm_widget *w;
-	struct snd_soc_dapm_path *p;
+	struct snd_soc_dapm_path *p = NULL;
 
 	dev_dbg(dai->dev, "enter, dai-name=%s dir=%d\n", dai->name, stream);
 
@@ -1356,7 +1341,7 @@ int sst_send_pipe_gains(struct snd_soc_dai *dai, int stream, int mute)
 				dai->capture_widget->name);
 		w = dai->capture_widget;
 		snd_soc_dapm_widget_for_each_source_path(w, p) {
-			if (p->connected && !p->connected(w, p->source))
+			if (p->connected && !p->connected(w, p->sink))
 				continue;
 
 			if (p->connect &&  p->source->power &&
@@ -1376,9 +1361,7 @@ int sst_send_pipe_gains(struct snd_soc_dai *dai, int stream, int mute)
 
 /**
  * sst_fill_module_list - populate the list of modules/gains for a pipe
- * @kctl: kcontrol pointer
- * @w: dapm widget
- * @type: widget type
+ *
  *
  * Fills the widget pointer in the kcontrol private data, and also fills the
  * kcontrol pointer in the widget private data.
@@ -1392,7 +1375,7 @@ int sst_send_pipe_gains(struct snd_soc_dai *dai, int stream, int mute)
 static int sst_fill_module_list(struct snd_kcontrol *kctl,
 	 struct snd_soc_dapm_widget *w, int type)
 {
-	struct sst_module *module;
+	struct sst_module *module = NULL;
 	struct snd_soc_component *c = snd_soc_dapm_to_component(w->dapm);
 	struct sst_ids *ids = w->priv;
 	int ret = 0;
@@ -1424,8 +1407,7 @@ static int sst_fill_module_list(struct snd_kcontrol *kctl,
 
 /**
  * sst_fill_widget_module_info - fill list of gains/algos for the pipe
- * @w: pipe modeled as a DAPM widget
- * @component: ASoC component
+ * @widget:	pipe modelled as a DAPM widget
  *
  * Fill the list of gains/algos for the widget by looking at all the card
  * controls and comparing the name of the widget with the first part of control
@@ -1485,8 +1467,6 @@ static int sst_fill_widget_module_info(struct snd_soc_dapm_widget *w,
 
 /**
  * sst_fill_linked_widgets - fill the parent pointer for the linked widget
- * @component: ASoC component
- * @ids: sst_ids array
  */
 static void sst_fill_linked_widgets(struct snd_soc_component *component,
 						struct sst_ids *ids)
@@ -1504,7 +1484,6 @@ static void sst_fill_linked_widgets(struct snd_soc_component *component,
 
 /**
  * sst_map_modules_to_pipe - fill algo/gains list for all pipes
- * @component: ASoC component
  */
 static int sst_map_modules_to_pipe(struct snd_soc_component *component)
 {

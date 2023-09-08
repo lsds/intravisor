@@ -3,7 +3,7 @@
  *
  * Module Name: nsdump - table dumping routines for debug
  *
- * Copyright (C) 2000 - 2022, Intel Corp.
+ * Copyright (C) 2000 - 2018, Intel Corp.
  *
  *****************************************************************************/
 
@@ -70,7 +70,7 @@ void acpi_ns_print_pathname(u32 num_segments, const char *pathname)
 			    acpi_os_printf("?");
 		}
 
-		pathname += ACPI_NAMESEG_SIZE;
+		pathname += ACPI_NAME_SIZE;
 		num_segments--;
 		if (num_segments) {
 			acpi_os_printf(".");
@@ -170,7 +170,6 @@ acpi_ns_dump_one_object(acpi_handle obj_handle,
 	}
 
 	type = this_node->type;
-	info->count++;
 
 	/* Check if the owner matches */
 
@@ -197,7 +196,7 @@ acpi_ns_dump_one_object(acpi_handle obj_handle,
 
 	/* Now we can print out the pertinent information */
 
-	acpi_os_printf(" %-12s %p %3.3X ",
+	acpi_os_printf(" %-12s %p %2.2X ",
 		       acpi_ut_get_type_name(type), this_node,
 		       this_node->owner_id);
 
@@ -291,7 +290,7 @@ acpi_ns_dump_one_object(acpi_handle obj_handle,
 					for (i = 0;
 					     (i < obj_desc->buffer.length
 					      && i < 12); i++) {
-						acpi_os_printf(" %2.2X",
+						acpi_os_printf(" %.2hX",
 							       obj_desc->buffer.
 							       pointer[i]);
 					}
@@ -404,7 +403,7 @@ acpi_ns_dump_one_object(acpi_handle obj_handle,
 		case ACPI_TYPE_LOCAL_BANK_FIELD:
 		case ACPI_TYPE_LOCAL_INDEX_FIELD:
 
-			acpi_os_printf(" Off %.3X Len %.2X Acc %.2X\n",
+			acpi_os_printf(" Off %.3X Len %.2X Acc %.2hd\n",
 				       (obj_desc->common_field.
 					base_byte_offset * 8)
 				       +
@@ -589,6 +588,8 @@ acpi_ns_dump_one_object(acpi_handle obj_handle,
 
 			goto cleanup;
 		}
+
+		obj_type = ACPI_TYPE_INVALID;	/* Terminate loop after next pass */
 	}
 
 cleanup:
@@ -638,7 +639,6 @@ acpi_ns_dump_objects(acpi_object_type type,
 		return;
 	}
 
-	info.count = 0;
 	info.debug_level = ACPI_LV_TABLES;
 	info.owner_id = owner_id;
 	info.display_type = display_type;
@@ -649,7 +649,6 @@ acpi_ns_dump_objects(acpi_object_type type,
 				     acpi_ns_dump_one_object, NULL,
 				     (void *)&info, NULL);
 
-	acpi_os_printf("\nNamespace node count: %u\n\n", info.count);
 	(void)acpi_ut_release_mutex(ACPI_MTX_NAMESPACE);
 }
 

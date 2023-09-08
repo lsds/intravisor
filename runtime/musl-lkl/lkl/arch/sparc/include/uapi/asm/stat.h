@@ -8,18 +8,18 @@
 /* 64 bit sparc */
 struct stat {
 	unsigned int st_dev;
-	__kernel_ino_t st_ino;
-	__kernel_mode_t st_mode;
+	ino_t   st_ino;
+	mode_t  st_mode;
 	short   st_nlink;
-	__kernel_uid32_t st_uid;
-	__kernel_gid32_t st_gid;
+	uid_t   st_uid;
+	gid_t   st_gid;
 	unsigned int st_rdev;
-	long    st_size;
-	long    st_atime;
-	long    st_mtime;
-	long    st_ctime;
-	long    st_blksize;
-	long    st_blocks;
+	off_t   st_size;
+	time_t  st_atime;
+	time_t  st_mtime;
+	time_t  st_ctime;
+	off_t   st_blksize;
+	off_t   st_blocks;
 	unsigned long  __unused4[2];
 };
 
@@ -51,21 +51,21 @@ struct stat64 {
 /* 32 bit sparc */
 struct stat {
 	unsigned short	st_dev;
-	__kernel_ino_t	st_ino;
-	__kernel_mode_t	st_mode;
+	ino_t		st_ino;
+	mode_t		st_mode;
 	short		st_nlink;
 	unsigned short	st_uid;
 	unsigned short	st_gid;
 	unsigned short	st_rdev;
-	long		st_size;
-	long		st_atime;
+	off_t		st_size;
+	time_t		st_atime;
 	unsigned long	st_atime_nsec;
-	long		st_mtime;
+	time_t		st_mtime;
 	unsigned long	st_mtime_nsec;
-	long		st_ctime;
+	time_t		st_ctime;
 	unsigned long	st_ctime_nsec;
-	long		st_blksize;
-	long		st_blocks;
+	off_t		st_blksize;
+	off_t		st_blocks;
 	unsigned long	__unused4[2];
 };
 

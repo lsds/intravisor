@@ -35,11 +35,9 @@ MODULE_DEVICE_TABLE(usb, skel_table);
 
 /* our private defines. if this grows any larger, use your own .h file */
 #define MAX_TRANSFER		(PAGE_SIZE - 512)
-/*
- * MAX_TRANSFER is chosen so that the VM is not stressed by
- * allocations > PAGE_SIZE and the number of packets in a page
- * is an integer 512 is the largest possible packet on EHCI
- */
+/* MAX_TRANSFER is chosen so that the VM is not stressed by
+   allocations > PAGE_SIZE and the number of packets in a page
+   is an integer 512 is the largest possible packet on EHCI */
 #define WRITES_IN_FLIGHT	8
 /* arbitrarily chosen */
 
@@ -61,7 +59,6 @@ struct usb_skel {
 	spinlock_t		err_lock;		/* lock for errors */
 	struct kref		kref;
 	struct mutex		io_mutex;		/* synchronize I/O with disconnect */
-	unsigned long		disconnected:1;
 	wait_queue_head_t	bulk_in_wait;		/* to wait for an ongoing read */
 };
 #define to_skel_dev(d) container_of(d, struct usb_skel, kref)
@@ -74,7 +71,6 @@ static void skel_delete(struct kref *kref)
 	struct usb_skel *dev = to_skel_dev(kref);
 
 	usb_free_urb(dev->bulk_in_urb);
-	usb_put_intf(dev->interface);
 	usb_put_dev(dev->udev);
 	kfree(dev->bulk_in_buffer);
 	kfree(dev);
@@ -126,7 +122,10 @@ static int skel_release(struct inode *inode, struct file *file)
 		return -ENODEV;
 
 	/* allow the device to be autosuspended */
-	usb_autopm_put_interface(dev->interface);
+	mutex_lock(&dev->io_mutex);
+	if (dev->interface)
+		usb_autopm_put_interface(dev->interface);
+	mutex_unlock(&dev->io_mutex);
 
 	/* decrement the count on our device */
 	kref_put(&dev->kref, skel_delete);
@@ -160,11 +159,10 @@ static int skel_flush(struct file *file, fl_owner_t id)
 static void skel_read_bulk_callback(struct urb *urb)
 {
 	struct usb_skel *dev;
-	unsigned long flags;
 
 	dev = urb->context;
 
-	spin_lock_irqsave(&dev->err_lock, flags);
+	spin_lock(&dev->err_lock);
 	/* sync/async unlink faults aren't errors */
 	if (urb->status) {
 		if (!(urb->status == -ENOENT ||
@@ -179,7 +177,7 @@ static void skel_read_bulk_callback(struct urb *urb)
 		dev->bulk_in_filled = urb->actual_length;
 	}
 	dev->ongoing_read = 0;
-	spin_unlock_irqrestore(&dev->err_lock, flags);
+	spin_unlock(&dev->err_lock);
 
 	wake_up_interruptible(&dev->bulk_in_wait);
 }
@@ -230,7 +228,8 @@ static ssize_t skel_read(struct file *file, char *buffer, size_t count,
 
 	dev = file->private_data;
 
-	if (!count)
+	/* if we cannot read at all, return EOF */
+	if (!dev->bulk_in_urb || !count)
 		return 0;
 
 	/* no concurrent readers */
@@ -238,7 +237,7 @@ static ssize_t skel_read(struct file *file, char *buffer, size_t count,
 	if (rv < 0)
 		return rv;
 
-	if (dev->disconnected) {		/* disconnect() was called */
+	if (!dev->interface) {		/* disconnect() was called */
 		rv = -ENODEV;
 		goto exit;
 	}
@@ -332,7 +331,6 @@ exit:
 static void skel_write_bulk_callback(struct urb *urb)
 {
 	struct usb_skel *dev;
-	unsigned long flags;
 
 	dev = urb->context;
 
@@ -345,9 +343,9 @@ static void skel_write_bulk_callback(struct urb *urb)
 				"%s - nonzero write bulk status received: %d\n",
 				__func__, urb->status);
 
-		spin_lock_irqsave(&dev->err_lock, flags);
+		spin_lock(&dev->err_lock);
 		dev->errors = urb->status;
-		spin_unlock_irqrestore(&dev->err_lock, flags);
+		spin_unlock(&dev->err_lock);
 	}
 
 	/* free up our allocated buffer */
@@ -363,7 +361,7 @@ static ssize_t skel_write(struct file *file, const char *user_buffer,
 	int retval = 0;
 	struct urb *urb = NULL;
 	char *buf = NULL;
-	size_t writesize = min_t(size_t, count, MAX_TRANSFER);
+	size_t writesize = min(count, (size_t)MAX_TRANSFER);
 
 	dev = file->private_data;
 
@@ -420,7 +418,7 @@ static ssize_t skel_write(struct file *file, const char *user_buffer,
 
 	/* this lock makes sure we don't submit URBs to gone devices */
 	mutex_lock(&dev->io_mutex);
-	if (dev->disconnected) {		/* disconnect() was called */
+	if (!dev->interface) {		/* disconnect() was called */
 		mutex_unlock(&dev->io_mutex);
 		retval = -ENODEV;
 		goto error;
@@ -505,7 +503,7 @@ static int skel_probe(struct usb_interface *interface,
 	init_waitqueue_head(&dev->bulk_in_wait);
 
 	dev->udev = usb_get_dev(interface_to_usbdev(interface));
-	dev->interface = usb_get_intf(interface);
+	dev->interface = interface;
 
 	/* set up the endpoint information */
 	/* use only the first bulk-in and bulk-out endpoints */
@@ -571,10 +569,9 @@ static void skel_disconnect(struct usb_interface *interface)
 
 	/* prevent more I/O from starting */
 	mutex_lock(&dev->io_mutex);
-	dev->disconnected = 1;
+	dev->interface = NULL;
 	mutex_unlock(&dev->io_mutex);
 
-	usb_kill_urb(dev->bulk_in_urb);
 	usb_kill_anchored_urbs(&dev->submitted);
 
 	/* decrement our usage count */

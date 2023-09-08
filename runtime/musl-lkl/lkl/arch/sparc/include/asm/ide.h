@@ -13,11 +13,12 @@
 
 #include <asm/io.h>
 #ifdef CONFIG_SPARC64
+#include <asm/pgalloc.h>
 #include <asm/spitfire.h>
 #include <asm/cacheflush.h>
 #include <asm/page.h>
 #else
-#include <linux/pgtable.h>
+#include <asm/pgtable.h>
 #include <asm/psr.h>
 #endif
 

@@ -56,7 +56,7 @@ static ssize_t show_admin_alias_guid(struct device *dev,
 					      mlx4_ib_iov_dentry->entry_num,
 					      port->num);
 
-	return sysfs_emit(buf, "%llx\n", be64_to_cpu(sysadmin_ag_val));
+	return sprintf(buf, "%llx\n", be64_to_cpu(sysadmin_ag_val));
 }
 
 /* store_admin_alias_guid stores the (new) administratively assigned value of that GUID.
@@ -117,24 +117,22 @@ static ssize_t show_port_gid(struct device *dev,
 	struct mlx4_ib_iov_port *port = mlx4_ib_iov_dentry->ctx;
 	struct mlx4_ib_dev *mdev = port->dev;
 	union ib_gid gid;
-	int ret;
-	__be16 *raw;
+	ssize_t ret;
 
 	ret = __mlx4_ib_query_gid(&mdev->ib_dev, port->num,
 				  mlx4_ib_iov_dentry->entry_num, &gid, 1);
 	if (ret)
 		return ret;
-
-	raw = (__be16 *)gid.raw;
-	return sysfs_emit(buf, "%04x:%04x:%04x:%04x:%04x:%04x:%04x:%04x\n",
-			  be16_to_cpu(raw[0]),
-			  be16_to_cpu(raw[1]),
-			  be16_to_cpu(raw[2]),
-			  be16_to_cpu(raw[3]),
-			  be16_to_cpu(raw[4]),
-			  be16_to_cpu(raw[5]),
-			  be16_to_cpu(raw[6]),
-			  be16_to_cpu(raw[7]));
+	ret = sprintf(buf, "%04x:%04x:%04x:%04x:%04x:%04x:%04x:%04x\n",
+		      be16_to_cpu(((__be16 *) gid.raw)[0]),
+		      be16_to_cpu(((__be16 *) gid.raw)[1]),
+		      be16_to_cpu(((__be16 *) gid.raw)[2]),
+		      be16_to_cpu(((__be16 *) gid.raw)[3]),
+		      be16_to_cpu(((__be16 *) gid.raw)[4]),
+		      be16_to_cpu(((__be16 *) gid.raw)[5]),
+		      be16_to_cpu(((__be16 *) gid.raw)[6]),
+		      be16_to_cpu(((__be16 *) gid.raw)[7]));
+	return ret;
 }
 
 static ssize_t show_phys_port_pkey(struct device *dev,
@@ -153,7 +151,7 @@ static ssize_t show_phys_port_pkey(struct device *dev,
 	if (ret)
 		return ret;
 
-	return sysfs_emit(buf, "0x%04x\n", pkey);
+	return sprintf(buf, "0x%04x\n", pkey);
 }
 
 #define DENTRY_REMOVE(_dentry)						\
@@ -355,12 +353,16 @@ err:
 
 static void get_name(struct mlx4_ib_dev *dev, char *name, int i, int max)
 {
-	/* pci_name format is: bus:dev:func -> xxxx:yy:zz.n
-	 * with no ARI only 3 last bits are used so when the fn is higher than 8
+	char base_name[9];
+
+	/* pci_name format is: bus:dev:func -> xxxx:yy:zz.n */
+	strlcpy(name, pci_name(dev->dev->persist->pdev), max);
+	strncpy(base_name, name, 8); /*till xxxx:yy:*/
+	base_name[8] = '\0';
+	/* with no ARI only 3 last bits are used so when the fn is higher than 8
 	 * need to add it to the dev num, so count in the last number will be
 	 * modulo 8 */
-	snprintf(name, max, "%.8s%.2d.%d", pci_name(dev->dev->persist->pdev),
-		 i / 8, i % 8);
+	sprintf(name, "%s%.2d.%d", base_name, (i/8), (i%8));
 }
 
 struct mlx4_port {
@@ -443,12 +445,16 @@ static ssize_t show_port_pkey(struct mlx4_port *p, struct port_attribute *attr,
 {
 	struct port_table_attribute *tab_attr =
 		container_of(attr, struct port_table_attribute, attr);
-	struct pkey_mgt *m = &p->dev->pkeys;
-	u8 key = m->virt2phys_pkey[p->slave][p->port_num - 1][tab_attr->index];
+	ssize_t ret = -ENODEV;
 
-	if (key >= p->dev->dev->caps.pkey_table_len[p->port_num])
-		return sysfs_emit(buf, "none\n");
-	return sysfs_emit(buf, "%d\n", key);
+	if (p->dev->pkeys.virt2phys_pkey[p->slave][p->port_num - 1][tab_attr->index] >=
+	    (p->dev->dev->caps.pkey_table_len[p->port_num]))
+		ret = sprintf(buf, "none\n");
+	else
+		ret = sprintf(buf, "%d\n",
+			      p->dev->pkeys.virt2phys_pkey[p->slave]
+			      [p->port_num - 1][tab_attr->index]);
+	return ret;
 }
 
 static ssize_t store_port_pkey(struct mlx4_port *p, struct port_attribute *attr,
@@ -486,7 +492,7 @@ static ssize_t store_port_pkey(struct mlx4_port *p, struct port_attribute *attr,
 static ssize_t show_port_gid_idx(struct mlx4_port *p,
 				 struct port_attribute *attr, char *buf)
 {
-	return sysfs_emit(buf, "%d\n", p->slave);
+	return sprintf(buf, "%d\n", p->slave);
 }
 
 static struct attribute **
@@ -540,10 +546,14 @@ static ssize_t sysfs_show_smi_enabled(struct device *dev,
 {
 	struct mlx4_port *p =
 		container_of(attr, struct mlx4_port, smi_enabled);
+	ssize_t len = 0;
 
-	return sysfs_emit(buf, "%d\n",
-			  !!mlx4_vf_smi_enabled(p->dev->dev, p->slave,
-						p->port_num));
+	if (mlx4_vf_smi_enabled(p->dev->dev, p->slave, p->port_num))
+		len = sprintf(buf, "%d\n", 1);
+	else
+		len = sprintf(buf, "%d\n", 0);
+
+	return len;
 }
 
 static ssize_t sysfs_show_enable_smi_admin(struct device *dev,
@@ -552,10 +562,14 @@ static ssize_t sysfs_show_enable_smi_admin(struct device *dev,
 {
 	struct mlx4_port *p =
 		container_of(attr, struct mlx4_port, enable_smi_admin);
+	ssize_t len = 0;
 
-	return sysfs_emit(buf, "%d\n",
-			  !!mlx4_vf_get_enable_smi_admin(p->dev->dev, p->slave,
-							 p->port_num));
+	if (mlx4_vf_get_enable_smi_admin(p->dev->dev, p->slave, p->port_num))
+		len = sprintf(buf, "%d\n", 1);
+	else
+		len = sprintf(buf, "%d\n", 0);
+
+	return len;
 }
 
 static ssize_t sysfs_store_enable_smi_admin(struct device *dev,
@@ -798,13 +812,15 @@ static void unregister_pkey_tree(struct mlx4_ib_dev *device)
 
 int mlx4_ib_device_register_sysfs(struct mlx4_ib_dev *dev)
 {
-	unsigned int i;
+	int i;
 	int ret = 0;
 
 	if (!mlx4_is_master(dev->dev))
 		return 0;
 
-	dev->iov_parent = kobject_create_and_add("iov", &dev->ib_dev.dev.kobj);
+	dev->iov_parent =
+		kobject_create_and_add("iov",
+				       kobject_get(dev->ib_dev.ports_parent->parent));
 	if (!dev->iov_parent) {
 		ret = -ENOMEM;
 		goto err;
@@ -817,7 +833,7 @@ int mlx4_ib_device_register_sysfs(struct mlx4_ib_dev *dev)
 		goto err_ports;
 	}
 
-	rdma_for_each_port(&dev->ib_dev, i) {
+	for (i = 1; i <= dev->ib_dev.phys_port_cnt; ++i) {
 		ret = add_port_entries(dev, i);
 		if (ret)
 			goto err_add_entries;
@@ -834,6 +850,7 @@ err_add_entries:
 err_ports:
 	kobject_put(dev->iov_parent);
 err:
+	kobject_put(dev->ib_dev.ports_parent->parent);
 	pr_err("mlx4_ib_device_register_sysfs error (%d)\n", ret);
 	return ret;
 }
@@ -869,4 +886,5 @@ void mlx4_ib_device_unregister_sysfs(struct mlx4_ib_dev *device)
 	kobject_put(device->ports_parent);
 	kobject_put(device->iov_parent);
 	kobject_put(device->iov_parent);
+	kobject_put(device->ib_dev.ports_parent->parent);
 }

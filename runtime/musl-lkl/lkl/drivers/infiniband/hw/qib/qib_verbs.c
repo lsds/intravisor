@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012 - 2018 Intel Corporation.  All rights reserved.
+ * Copyright (c) 2012, 2013 Intel Corporation.  All rights reserved.
  * Copyright (c) 2006 - 2012 QLogic Corporation. All rights reserved.
  * Copyright (c) 2005, 2006 PathScale, Inc. All rights reserved.
  *
@@ -39,6 +39,7 @@
 #include <linux/utsname.h>
 #include <linux/rculist.h>
 #include <linux/mm.h>
+#include <linux/random.h>
 #include <linux/vmalloc.h>
 #include <rdma/rdma_vt.h>
 
@@ -130,6 +131,27 @@ const enum ib_wc_opcode ib_qib_wc_opcode[] = {
  */
 __be64 ib_qib_sys_image_guid;
 
+/**
+ * qib_copy_sge - copy data to SGE memory
+ * @ss: the SGE state
+ * @data: the data to copy
+ * @length: the length of the data
+ */
+void qib_copy_sge(struct rvt_sge_state *ss, void *data, u32 length, int release)
+{
+	struct rvt_sge *sge = &ss->sge;
+
+	while (length) {
+		u32 len = rvt_get_sge_length(sge, length);
+
+		WARN_ON_ONCE(len == 0);
+		memcpy(sge->vaddr, data, len);
+		rvt_update_sge(ss, len, release);
+		data += len;
+		length -= len;
+	}
+}
+
 /*
  * Count the number of DMA descriptors needed to send length bytes of data.
  * Don't modify the qib_sge_state to get the count.
@@ -143,8 +165,13 @@ static u32 qib_count_sge(struct rvt_sge_state *ss, u32 length)
 	u32 ndesc = 1;  /* count the header */
 
 	while (length) {
-		u32 len = rvt_get_sge_length(&sge, length);
+		u32 len = sge.length;
 
+		if (len > length)
+			len = length;
+		if (len > sge.sge_length)
+			len = sge.sge_length;
+		BUG_ON(len == 0);
 		if (((long) sge.vaddr & (sizeof(u32) - 1)) ||
 		    (len != length && (len & (sizeof(u32) - 1)))) {
 			ndesc = 0;
@@ -181,8 +208,13 @@ static void qib_copy_from_sge(void *data, struct rvt_sge_state *ss, u32 length)
 	struct rvt_sge *sge = &ss->sge;
 
 	while (length) {
-		u32 len = rvt_get_sge_length(sge, length);
+		u32 len = sge->length;
 
+		if (len > length)
+			len = length;
+		if (len > sge->sge_length)
+			len = sge->sge_length;
+		BUG_ON(len == 0);
 		memcpy(data, sge->vaddr, len);
 		sge->vaddr += len;
 		sge->length -= len;
@@ -237,7 +269,7 @@ static void qib_qp_rcv(struct qib_ctxtdata *rcd, struct ib_header *hdr,
 	case IB_QPT_GSI:
 		if (ib_qib_disable_sma)
 			break;
-		fallthrough;
+		/* FALLTHROUGH */
 	case IB_QPT_UD:
 		qib_ud_rcv(ibp, hdr, has_grh, data, tlen, qp);
 		break;
@@ -328,10 +360,8 @@ void qib_ib_rcv(struct qib_ctxtdata *rcd, void *rhdr, void *data, u32 tlen)
 		if (mcast == NULL)
 			goto drop;
 		this_cpu_inc(ibp->pmastats->n_multicast_rcv);
-		rcu_read_lock();
 		list_for_each_entry_rcu(p, &mcast->qp_list, list)
 			qib_qp_rcv(rcd, hdr, 1, data, tlen, p->qp);
-		rcu_read_unlock();
 		/*
 		 * Notify rvt_multicast_detach() if it is waiting for us
 		 * to finish.
@@ -425,7 +455,7 @@ static inline u32 clear_upper_bytes(u32 data, u32 n, u32 off)
 }
 #endif
 
-static void qib_copy_io(u32 __iomem *piobuf, struct rvt_sge_state *ss,
+static void copy_io(u32 __iomem *piobuf, struct rvt_sge_state *ss,
 		    u32 length, unsigned flush_wc)
 {
 	u32 extra = 0;
@@ -433,9 +463,14 @@ static void qib_copy_io(u32 __iomem *piobuf, struct rvt_sge_state *ss,
 	u32 last;
 
 	while (1) {
-		u32 len = rvt_get_sge_length(&ss->sge, length);
+		u32 len = ss->sge.length;
 		u32 off;
 
+		if (len > length)
+			len = length;
+		if (len > ss->sge.sge_length)
+			len = ss->sge.sge_length;
+		BUG_ON(len == 0);
 		/* If the source address is not aligned, try to align it. */
 		off = (unsigned long)ss->sge.vaddr & (sizeof(u32) - 1);
 		if (off) {
@@ -717,7 +752,7 @@ static void sdma_complete(struct qib_sdma_txreq *cookie, int status)
 
 	spin_lock(&qp->s_lock);
 	if (tx->wqe)
-		rvt_send_complete(qp, tx->wqe, IB_WC_SUCCESS);
+		qib_send_complete(qp, tx->wqe, IB_WC_SUCCESS);
 	else if (qp->ibqp.qp_type == IB_QPT_RC) {
 		struct ib_header *hdr;
 
@@ -975,7 +1010,7 @@ static int qib_verbs_send_pio(struct rvt_qp *qp, struct ib_header *ibhdr,
 			qib_pio_copy(piobuf, addr, dwords);
 		goto done;
 	}
-	qib_copy_io(piobuf, ss, len, flush_wc);
+	copy_io(piobuf, ss, len, flush_wc);
 done:
 	if (dd->flags & QIB_USE_SPCL_TRIG) {
 		u32 spcl_off = (pbufn >= dd->piobcnt2k) ? 2047 : 1023;
@@ -990,7 +1025,7 @@ done:
 	}
 	if (qp->s_wqe) {
 		spin_lock_irqsave(&qp->s_lock, flags);
-		rvt_send_complete(qp, qp->s_wqe, IB_WC_SUCCESS);
+		qib_send_complete(qp, qp->s_wqe, IB_WC_SUCCESS);
 		spin_unlock_irqrestore(&qp->s_lock, flags);
 	} else if (qp->ibqp.qp_type == IB_QPT_RC) {
 		spin_lock_irqsave(&qp->s_lock, flags);
@@ -1067,7 +1102,7 @@ bail:
 
 /**
  * qib_get_counters - get various chip counters
- * @ppd: the qlogic_ib device
+ * @dd: the qlogic_ib device
  * @cntrs: counters are placed here
  *
  * Return the counters needed by recv_pma_get_portcounters().
@@ -1188,7 +1223,7 @@ full:
 	}
 }
 
-static int qib_query_port(struct rvt_dev_info *rdi, u32 port_num,
+static int qib_query_port(struct rvt_dev_info *rdi, u8 port_num,
 			  struct ib_port_attr *props)
 {
 	struct qib_ibdev *ibdev = container_of(rdi, struct qib_ibdev, rdi);
@@ -1273,7 +1308,7 @@ bail:
 	return ret;
 }
 
-static int qib_shut_down_port(struct rvt_dev_info *rdi, u32 port_num)
+static int qib_shut_down_port(struct rvt_dev_info *rdi, u8 port_num)
 {
 	struct qib_ibdev *ibdev = container_of(rdi, struct qib_ibdev, rdi);
 	struct qib_devdata *dd = dd_from_dev(ibdev);
@@ -1342,7 +1377,7 @@ struct ib_ah *qib_create_qp0_ah(struct qib_ibport *ibp, u16 dlid)
 	struct rvt_qp *qp0;
 	struct qib_pportdata *ppd = ppd_from_ibp(ibp);
 	struct qib_devdata *dd = dd_from_ppd(ppd);
-	u32 port_num = ppd->port;
+	u8 port_num = ppd->port;
 
 	memset(&attr, 0, sizeof(attr));
 	attr.type = rdma_ah_find_type(&dd->verbs_dev.rdi.ibdev, port_num);
@@ -1351,7 +1386,7 @@ struct ib_ah *qib_create_qp0_ah(struct qib_ibport *ibp, u16 dlid)
 	rcu_read_lock();
 	qp0 = rcu_dereference(ibp->rvp.qp[0]);
 	if (qp0)
-		ah = rdma_create_ah(qp0->ibqp.pd, &attr, 0);
+		ah = rdma_create_ah(qp0->ibqp.pd, &attr);
 	rcu_read_unlock();
 	return ah;
 }
@@ -1454,12 +1489,14 @@ static void qib_fill_device_attr(struct qib_devdata *dd)
 	rdi->dparms.props.max_mr_size = ~0ULL;
 	rdi->dparms.props.max_qp = ib_qib_max_qps;
 	rdi->dparms.props.max_qp_wr = ib_qib_max_qp_wrs;
-	rdi->dparms.props.max_send_sge = ib_qib_max_sges;
-	rdi->dparms.props.max_recv_sge = ib_qib_max_sges;
+	rdi->dparms.props.max_sge = ib_qib_max_sges;
 	rdi->dparms.props.max_sge_rd = ib_qib_max_sges;
 	rdi->dparms.props.max_cq = ib_qib_max_cqs;
 	rdi->dparms.props.max_cqe = ib_qib_max_cqes;
 	rdi->dparms.props.max_ah = ib_qib_max_ahs;
+	rdi->dparms.props.max_mr = rdi->lkey_table.max;
+	rdi->dparms.props.max_fmr = rdi->lkey_table.max;
+	rdi->dparms.props.max_map_per_fmr = 32767;
 	rdi->dparms.props.max_qp_rd_atom = QIB_MAX_RDMA_ATOMIC;
 	rdi->dparms.props.max_qp_init_rd_atom = 255;
 	rdi->dparms.props.max_srq = ib_qib_max_srqs;
@@ -1474,20 +1511,7 @@ static void qib_fill_device_attr(struct qib_devdata *dd)
 					rdi->dparms.props.max_mcast_grp;
 	/* post send table */
 	dd->verbs_dev.rdi.post_parms = qib_post_parms;
-
-	/* opcode translation table */
-	dd->verbs_dev.rdi.wc_opcode = ib_qib_wc_opcode;
 }
-
-static const struct ib_device_ops qib_dev_ops = {
-	.owner = THIS_MODULE,
-	.driver_id = RDMA_DRIVER_QIB,
-
-	.port_groups = qib_attr_port_groups,
-	.device_group = &qib_attr_group,
-	.modify_device = qib_modify_device,
-	.process_mad = qib_process_mad,
-};
 
 /**
  * qib_register_ib_device - register our device with the infiniband core
@@ -1502,6 +1526,7 @@ int qib_register_ib_device(struct qib_devdata *dd)
 	unsigned i, ctxt;
 	int ret;
 
+	get_random_bytes(&dev->qp_rnd, sizeof(dev->qp_rnd));
 	for (i = 0; i < dd->num_pports; i++)
 		init_ibport(ppd + i);
 
@@ -1546,9 +1571,12 @@ int qib_register_ib_device(struct qib_devdata *dd)
 	if (!ib_qib_sys_image_guid)
 		ib_qib_sys_image_guid = ppd->guid;
 
+	ibdev->owner = THIS_MODULE;
 	ibdev->node_guid = ppd->guid;
 	ibdev->phys_port_cnt = dd->num_pports;
 	ibdev->dev.parent = &dd->pcidev->dev;
+	ibdev->modify_device = qib_modify_device;
+	ibdev->process_mad = qib_process_mad;
 
 	snprintf(ibdev->node_desc, sizeof(ibdev->node_desc),
 		 "Intel Infiniband HCA %s", init_utsname()->nodename);
@@ -1556,9 +1584,10 @@ int qib_register_ib_device(struct qib_devdata *dd)
 	/*
 	 * Fill in rvt info object.
 	 */
+	dd->verbs_dev.rdi.driver_f.port_callback = qib_create_port_files;
 	dd->verbs_dev.rdi.driver_f.get_pci_dev = qib_get_pci_dev;
 	dd->verbs_dev.rdi.driver_f.check_ah = qib_check_ah;
-	dd->verbs_dev.rdi.driver_f.setup_wqe = qib_check_send_wqe;
+	dd->verbs_dev.rdi.driver_f.check_send_wqe = qib_check_send_wqe;
 	dd->verbs_dev.rdi.driver_f.notify_new_ah = qib_notify_new_ah;
 	dd->verbs_dev.rdi.driver_f.alloc_qpn = qib_alloc_qpn;
 	dd->verbs_dev.rdi.driver_f.qp_priv_alloc = qib_qp_priv_alloc;
@@ -1601,7 +1630,10 @@ int qib_register_ib_device(struct qib_devdata *dd)
 	dd->verbs_dev.rdi.dparms.node = dd->assigned_node_id;
 	dd->verbs_dev.rdi.dparms.core_cap_flags = RDMA_CORE_PORT_IBA_IB;
 	dd->verbs_dev.rdi.dparms.max_mad_size = IB_MGMT_MAD_SIZE;
-	dd->verbs_dev.rdi.dparms.sge_copy_mode = RVT_SGE_COPY_MEMCPY;
+
+	snprintf(dd->verbs_dev.rdi.dparms.cq_name,
+		 sizeof(dd->verbs_dev.rdi.dparms.cq_name),
+		 "qib_cq%d", dd->unit);
 
 	qib_fill_device_attr(dd);
 
@@ -1614,13 +1646,18 @@ int qib_register_ib_device(struct qib_devdata *dd)
 			      dd->rcd[ctxt]->pkeys);
 	}
 
-	ib_set_device_ops(ibdev, &qib_dev_ops);
-	ret = rvt_register_device(&dd->verbs_dev.rdi);
+	ret = rvt_register_device(&dd->verbs_dev.rdi, RDMA_DRIVER_QIB);
 	if (ret)
 		goto err_tx;
 
+	ret = qib_verbs_register_sysfs(dd);
+	if (ret)
+		goto err_class;
+
 	return ret;
 
+err_class:
+	rvt_unregister_device(&dd->verbs_dev.rdi);
 err_tx:
 	while (!list_empty(&dev->txreq_free)) {
 		struct list_head *l = dev->txreq_free.next;
@@ -1643,6 +1680,8 @@ err_hdrs:
 void qib_unregister_ib_device(struct qib_devdata *dd)
 {
 	struct qib_ibdev *dev = &dd->verbs_dev;
+
+	qib_verbs_unregister_sysfs(dd);
 
 	rvt_unregister_device(&dd->verbs_dev.rdi);
 
@@ -1673,33 +1712,32 @@ void qib_unregister_ib_device(struct qib_devdata *dd)
 
 /**
  * _qib_schedule_send - schedule progress
- * @qp: the qp
+ * @qp - the qp
  *
  * This schedules progress w/o regard to the s_flags.
  *
  * It is only used in post send, which doesn't hold
  * the s_lock.
  */
-bool _qib_schedule_send(struct rvt_qp *qp)
+void _qib_schedule_send(struct rvt_qp *qp)
 {
 	struct qib_ibport *ibp =
 		to_iport(qp->ibqp.device, qp->port_num);
 	struct qib_pportdata *ppd = ppd_from_ibp(ibp);
 	struct qib_qp_priv *priv = qp->priv;
 
-	return queue_work(ppd->qib_wq, &priv->s_work);
+	queue_work(ppd->qib_wq, &priv->s_work);
 }
 
 /**
  * qib_schedule_send - schedule progress
- * @qp: the qp
+ * @qp - the qp
  *
  * This schedules qp progress.  The s_lock
  * should be held.
  */
-bool qib_schedule_send(struct rvt_qp *qp)
+void qib_schedule_send(struct rvt_qp *qp)
 {
 	if (qib_send_ok(qp))
-		return _qib_schedule_send(qp);
-	return false;
+		_qib_schedule_send(qp);
 }

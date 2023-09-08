@@ -31,7 +31,7 @@ static int __init kstack_setup(char *s)
 }
 __setup("kstack=", kstack_setup);
 
-void show_stack(struct task_struct *task, unsigned long *sp, const char *loglvl)
+void show_stack(struct task_struct *task, unsigned long *sp)
 {
 	unsigned long words_to_show;
 	u32 fp = (u32) sp;
@@ -50,7 +50,7 @@ void show_stack(struct task_struct *task, unsigned long *sp, const char *loglvl)
 	if (kstack_depth_to_print && (words_to_show > kstack_depth_to_print))
 		words_to_show = kstack_depth_to_print;
 
-	printk("%sKernel Stack:\n", loglvl);
+	pr_info("Kernel Stack:\n");
 
 	/*
 	 * Make the first line an 'odd' size if necessary to get
@@ -65,11 +65,11 @@ void show_stack(struct task_struct *task, unsigned long *sp, const char *loglvl)
 			words_to_show -= line1_words;
 		}
 	}
-	print_hex_dump(loglvl, "", DUMP_PREFIX_ADDRESS, 32, 4, (void *)fp,
+	print_hex_dump(KERN_INFO, "", DUMP_PREFIX_ADDRESS, 32, 4, (void *)fp,
 		       words_to_show << 2, 0);
-	printk("%s\n\nCall Trace:\n", loglvl);
-	microblaze_unwind(task, NULL, loglvl);
-	printk("%s\n", loglvl);
+	pr_info("\n\nCall Trace:\n");
+	microblaze_unwind(task, NULL);
+	pr_info("\n");
 
 	if (!task)
 		task = current;

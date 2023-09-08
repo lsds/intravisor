@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*******************************************************************************
  * IBM Virtual SCSI Target Driver
  * Copyright (C) 2003-2005 Dave Boutcher (boutcher@us.ibm.com) IBM Corp.
@@ -11,6 +10,16 @@
  * Authors: Bryant G. Ly <bryantly@linux.vnet.ibm.com>
  * Authors: Michael Cyr <mikecyr@linux.vnet.ibm.com>
  *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
  ****************************************************************************/
 
 #define pr_fmt(fmt)	KBUILD_MODNAME ": " fmt
@@ -22,7 +31,6 @@
 #include <linux/list.h>
 #include <linux/string.h>
 #include <linux/delay.h>
-#include <linux/of.h>
 
 #include <target/target_core_base.h>
 #include <target/target_core_fabric.h>
@@ -36,7 +44,7 @@
 
 #define IBMVSCSIS_VERSION	"v0.2"
 
-#define	INITIAL_SRP_LIMIT	1024
+#define	INITIAL_SRP_LIMIT	800
 #define	DEFAULT_MAX_SECTORS	256
 #define MAX_TXU			1024 * 1024
 
@@ -129,10 +137,10 @@ static bool connection_broken(struct scsi_info *vscsi)
  * This function calls h_free_q then frees the interrupt bit etc.
  * It must release the lock before doing so because of the time it can take
  * for h_free_crq in PHYP
- * NOTE: * the caller must make sure that state and or flags will prevent
- *	   interrupt handler from scheduling work.
- *       * anyone calling this function may need to set the CRQ_CLOSED flag
- *	   we can't do it here, because we don't have the lock
+ * NOTE: the caller must make sure that state and or flags will prevent
+ *	 interrupt handler from scheduling work.
+ * NOTE: anyone calling this function may need to set the CRQ_CLOSED flag
+ *	 we can't do it here, because we don't have the lock
  *
  * EXECUTION ENVIRONMENT:
  *	Process level
@@ -444,7 +452,7 @@ static void ibmvscsis_disconnect(struct work_struct *work)
 		break;
 
 	/*
-	 * Can transition from this state to unconfiguring
+	 * Can transition from this state to to unconfiguring
 	 * or err disconnect.
 	 */
 	case ERR_DISCONNECT_RECONNECT:
@@ -1582,7 +1590,6 @@ static long ibmvscsis_adapter_info(struct scsi_info *vscsi,
 	case H_PERMISSION:
 		if (connection_broken(vscsi))
 			flag_bits = (RESPONSE_Q_DOWN | CLIENT_FAILED);
-		fallthrough;
 	default:
 		dev_err(&vscsi->dev, "adapter_info: h_copy_rdma to client failed, rc %ld\n",
 			rc);
@@ -1872,9 +1879,13 @@ static void srp_snd_msg_failed(struct scsi_info *vscsi, long rc)
  */
 static void ibmvscsis_send_messages(struct scsi_info *vscsi)
 {
-	struct viosrp_crq empty_crq = { };
-	struct viosrp_crq *crq = &empty_crq;
+	u64 msg_hi = 0;
+	/* note do not attempt to access the IU_data_ptr with this pointer
+	 * it is not valid
+	 */
+	struct viosrp_crq *crq = (struct viosrp_crq *)&msg_hi;
 	struct ibmvscsis_cmd *cmd, *nxt;
+	struct iu_entry *iue;
 	long rc = ADAPT_SUCCESS;
 	bool retry = false;
 
@@ -1928,6 +1939,8 @@ static void ibmvscsis_send_messages(struct scsi_info *vscsi)
 					 */
 					vscsi->credit += 1;
 				} else {
+					iue = cmd->iue;
+
 					crq->valid = VALID_CMD_RESP_EL;
 					crq->format = cmd->rsp.format;
 
@@ -1937,7 +1950,7 @@ static void ibmvscsis_send_messages(struct scsi_info *vscsi)
 					crq->IU_length = cpu_to_be16(cmd->rsp.len);
 
 					rc = h_send_crq(vscsi->dma_dev->unit_address,
-							be64_to_cpu(crq->high),
+							be64_to_cpu(msg_hi),
 							be64_to_cpu(cmd->rsp.tag));
 
 					dev_dbg(&vscsi->dev, "send_messages: cmd %p, tag 0x%llx, rc %ld\n",
@@ -2220,7 +2233,7 @@ static int ibmvscsis_make_nexus(struct ibmvscsis_tport *tport)
 		return -ENOMEM;
 	}
 
-	nexus->se_sess = target_setup_session(&tport->se_tpg, 0, 0,
+	nexus->se_sess = target_alloc_session(&tport->se_tpg, 0, 0,
 					      TARGET_PROT_NORMAL, name, nexus,
 					      NULL);
 	if (IS_ERR(nexus->se_sess)) {
@@ -2253,7 +2266,9 @@ static int ibmvscsis_drop_nexus(struct ibmvscsis_tport *tport)
 	/*
 	 * Release the SCSI I_T Nexus to the emulated ibmvscsis Target Port
 	 */
-	target_remove_session(se_sess);
+	target_wait_for_sess_cmds(se_sess);
+	transport_deregister_session_configfs(se_sess);
+	transport_deregister_session(se_sess);
 	tport->ibmv_nexus = NULL;
 	kfree(nexus);
 
@@ -2349,6 +2364,7 @@ static long ibmvscsis_srp_i_logout(struct scsi_info *vscsi,
 {
 	struct iu_entry *iue = cmd->iue;
 	struct srp_i_logout *log_out = &vio_iu(iue)->srp.i_logout;
+	long rc = ADAPT_SUCCESS;
 
 	if ((vscsi->debit > 0) || !list_empty(&vscsi->schedule_q) ||
 	    !list_empty(&vscsi->waiting_rsp)) {
@@ -2364,7 +2380,7 @@ static long ibmvscsis_srp_i_logout(struct scsi_info *vscsi,
 		ibmvscsis_post_disconnect(vscsi, WAIT_IDLE, 0);
 	}
 
-	return ADAPT_SUCCESS;
+	return rc;
 }
 
 /* Called with intr lock held */
@@ -2487,10 +2503,8 @@ static long ibmvscsis_ping_response(struct scsi_info *vscsi)
 		break;
 	case H_CLOSED:
 		vscsi->flags |= CLIENT_FAILED;
-		fallthrough;
 	case H_DROPPED:
 		vscsi->flags |= RESPONSE_Q_DOWN;
-		fallthrough;
 	case H_REMOTE_PARM:
 		dev_err(&vscsi->dev, "ping_response: h_send_crq failed, rc %ld\n",
 			rc);
@@ -2668,6 +2682,7 @@ static void ibmvscsis_parse_cmd(struct scsi_info *vscsi,
 	u64 data_len = 0;
 	enum dma_data_direction dir;
 	int attr = 0;
+	int rc = 0;
 
 	nexus = vscsi->tport.ibmv_nexus;
 	/*
@@ -2722,9 +2737,17 @@ static void ibmvscsis_parse_cmd(struct scsi_info *vscsi,
 
 	srp->lun.scsi_lun[0] &= 0x3f;
 
-	target_submit_cmd(&cmd->se_cmd, nexus->se_sess, srp->cdb,
-			  cmd->sense_buf, scsilun_to_int(&srp->lun),
-			  data_len, attr, dir, 0);
+	rc = target_submit_cmd(&cmd->se_cmd, nexus->se_sess, srp->cdb,
+			       cmd->sense_buf, scsilun_to_int(&srp->lun),
+			       data_len, attr, dir, 0);
+	if (rc) {
+		dev_err(&vscsi->dev, "target_submit_cmd failed, rc %d\n", rc);
+		spin_lock_bh(&vscsi->intr_lock);
+		list_del(&cmd->list);
+		ibmvscsis_free_cmd_resources(vscsi, cmd);
+		spin_unlock_bh(&vscsi->intr_lock);
+		goto fail;
+	}
 	return;
 
 fail:
@@ -3452,10 +3475,11 @@ static int ibmvscsis_probe(struct vio_dev *vdev,
 		vscsi->dds.window[LOCAL].liobn,
 		vscsi->dds.window[REMOTE].liobn);
 
-	snprintf(vscsi->eye, sizeof(vscsi->eye), "VSCSI %s", vdev->name);
+	strcpy(vscsi->eye, "VSCSI ");
+	strncat(vscsi->eye, vdev->name, MAX_EYE);
 
 	vscsi->dds.unit_id = vdev->unit_address;
-	strscpy(vscsi->dds.partition_name, partition_name,
+	strncpy(vscsi->dds.partition_name, partition_name,
 		sizeof(vscsi->dds.partition_name));
 	vscsi->dds.partition_num = partition_number;
 
@@ -3584,7 +3608,7 @@ free_adapter:
 	return rc;
 }
 
-static void ibmvscsis_remove(struct vio_dev *vdev)
+static int ibmvscsis_remove(struct vio_dev *vdev)
 {
 	struct scsi_info *vscsi = dev_get_drvdata(&vdev->dev);
 
@@ -3611,6 +3635,8 @@ static void ibmvscsis_remove(struct vio_dev *vdev)
 	list_del(&vscsi->list);
 	spin_unlock_bh(&ibmvscsis_dev_lock);
 	kfree(vscsi);
+
+	return 0;
 }
 
 static ssize_t system_id_show(struct device *dev,
@@ -3670,6 +3696,11 @@ static int ibmvscsis_get_system_info(void)
 	}
 
 	return 0;
+}
+
+static char *ibmvscsis_get_fabric_name(void)
+{
+	return "ibmvscsis";
 }
 
 static char *ibmvscsis_get_fabric_wwn(struct se_portal_group *se_tpg)
@@ -3765,6 +3796,11 @@ static int ibmvscsis_write_pending(struct se_cmd *se_cmd)
 	return 0;
 }
 
+static int ibmvscsis_write_pending_status(struct se_cmd *se_cmd)
+{
+	return 0;
+}
+
 static void ibmvscsis_set_default_node_attrs(struct se_node_acl *nacl)
 {
 }
@@ -3780,6 +3816,7 @@ static int ibmvscsis_queue_data_in(struct se_cmd *se_cmd)
 						 se_cmd);
 	struct iu_entry *iue = cmd->iue;
 	struct scsi_info *vscsi = cmd->adapter;
+	char *sd;
 	uint len = 0;
 	int rc;
 
@@ -3787,6 +3824,7 @@ static int ibmvscsis_queue_data_in(struct se_cmd *se_cmd)
 			       1);
 	if (rc) {
 		dev_err(&vscsi->dev, "srp_transfer_data failed: %d\n", rc);
+		sd = se_cmd->sense_buffer;
 		se_cmd->scsi_sense_length = 18;
 		memset(se_cmd->sense_buffer, 0, se_cmd->scsi_sense_length);
 		/* Logical Unit Communication Time-out asc/ascq = 0x0801 */
@@ -3890,6 +3928,7 @@ static void ibmvscsis_drop_tport(struct se_wwn *wwn)
 }
 
 static struct se_portal_group *ibmvscsis_make_tpg(struct se_wwn *wwn,
+						  struct config_group *group,
 						  const char *name)
 {
 	struct ibmvscsis_tport *tport =
@@ -3945,16 +3984,41 @@ static struct configfs_attribute *ibmvscsis_wwn_attrs[] = {
 	NULL,
 };
 
-
-static int ibmvscsis_enable_tpg(struct se_portal_group *se_tpg, bool enable)
+static ssize_t ibmvscsis_tpg_enable_show(struct config_item *item,
+					 char *page)
 {
+	struct se_portal_group *se_tpg = to_tpg(item);
+	struct ibmvscsis_tport *tport = container_of(se_tpg,
+						     struct ibmvscsis_tport,
+						     se_tpg);
+
+	return snprintf(page, PAGE_SIZE, "%d\n", (tport->enabled) ? 1 : 0);
+}
+
+static ssize_t ibmvscsis_tpg_enable_store(struct config_item *item,
+					  const char *page, size_t count)
+{
+	struct se_portal_group *se_tpg = to_tpg(item);
 	struct ibmvscsis_tport *tport = container_of(se_tpg,
 						     struct ibmvscsis_tport,
 						     se_tpg);
 	struct scsi_info *vscsi = container_of(tport, struct scsi_info, tport);
+	unsigned long tmp;
+	int rc;
 	long lrc;
 
-	if (enable) {
+	rc = kstrtoul(page, 0, &tmp);
+	if (rc < 0) {
+		dev_err(&vscsi->dev, "Unable to extract srpt_tpg_store_enable\n");
+		return -EINVAL;
+	}
+
+	if ((tmp != 0) && (tmp != 1)) {
+		dev_err(&vscsi->dev, "Illegal value for srpt_tpg_store_enable\n");
+		return -EINVAL;
+	}
+
+	if (tmp) {
 		spin_lock_bh(&vscsi->intr_lock);
 		tport->enabled = true;
 		lrc = ibmvscsis_enable_change_state(vscsi);
@@ -3970,13 +4034,23 @@ static int ibmvscsis_enable_tpg(struct se_portal_group *se_tpg, bool enable)
 		spin_unlock_bh(&vscsi->intr_lock);
 	}
 
-	return 0;
+	dev_dbg(&vscsi->dev, "tpg_enable_store, tmp %ld, state %d\n", tmp,
+		vscsi->state);
+
+	return count;
 }
+CONFIGFS_ATTR(ibmvscsis_tpg_, enable);
+
+static struct configfs_attribute *ibmvscsis_tpg_attrs[] = {
+	&ibmvscsis_tpg_attr_enable,
+	NULL,
+};
 
 static const struct target_core_fabric_ops ibmvscsis_ops = {
 	.module				= THIS_MODULE,
-	.fabric_name			= "ibmvscsis",
+	.name				= "ibmvscsis",
 	.max_data_sg_nents		= MAX_TXU / PAGE_SIZE,
+	.get_fabric_name		= ibmvscsis_get_fabric_name,
 	.tpg_get_wwn			= ibmvscsis_get_fabric_wwn,
 	.tpg_get_tag			= ibmvscsis_get_tag,
 	.tpg_get_default_depth		= ibmvscsis_get_default_depth,
@@ -3989,6 +4063,7 @@ static const struct target_core_fabric_ops ibmvscsis_ops = {
 	.release_cmd			= ibmvscsis_release_cmd,
 	.sess_get_index			= ibmvscsis_sess_get_index,
 	.write_pending			= ibmvscsis_write_pending,
+	.write_pending_status		= ibmvscsis_write_pending_status,
 	.set_default_node_attributes	= ibmvscsis_set_default_node_attrs,
 	.get_cmd_state			= ibmvscsis_get_cmd_state,
 	.queue_data_in			= ibmvscsis_queue_data_in,
@@ -4001,10 +4076,10 @@ static const struct target_core_fabric_ops ibmvscsis_ops = {
 	.fabric_make_wwn		= ibmvscsis_make_tport,
 	.fabric_drop_wwn		= ibmvscsis_drop_tport,
 	.fabric_make_tpg		= ibmvscsis_make_tpg,
-	.fabric_enable_tpg		= ibmvscsis_enable_tpg,
 	.fabric_drop_tpg		= ibmvscsis_drop_tpg,
 
 	.tfc_wwn_attrs			= ibmvscsis_wwn_attrs,
+	.tfc_tpg_base_attrs		= ibmvscsis_tpg_attrs,
 };
 
 static void ibmvscsis_dev_release(struct device *dev) {};

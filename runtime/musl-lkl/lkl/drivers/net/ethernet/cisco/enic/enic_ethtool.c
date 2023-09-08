@@ -1,5 +1,20 @@
-// SPDX-License-Identifier: GPL-2.0-only
-// Copyright 2013 Cisco Systems, Inc.  All rights reserved.
+/**
+ * Copyright 2013 Cisco Systems, Inc.  All rights reserved.
+ *
+ * This program is free software; you may redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; version 2 of the License.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+ * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+ * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS
+ * BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
+ * ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+ * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ *
+ */
 
 #include <linux/netdevice.h>
 #include <linux/ethtool.h>
@@ -124,17 +139,18 @@ static void enic_get_drvinfo(struct net_device *netdev,
 	int err;
 
 	err = enic_dev_fw_info(enic, &fw_info);
-	/* return only when dma_alloc_coherent fails in vnic_dev_fw_info
+	/* return only when pci_zalloc_consistent fails in vnic_dev_fw_info
 	 * For other failures, like devcmd failure, we return previously
 	 * recorded info.
 	 */
 	if (err == -ENOMEM)
 		return;
 
-	strscpy(drvinfo->driver, DRV_NAME, sizeof(drvinfo->driver));
-	strscpy(drvinfo->fw_version, fw_info->fw_version,
+	strlcpy(drvinfo->driver, DRV_NAME, sizeof(drvinfo->driver));
+	strlcpy(drvinfo->version, DRV_VERSION, sizeof(drvinfo->version));
+	strlcpy(drvinfo->fw_version, fw_info->fw_version,
 		sizeof(drvinfo->fw_version));
-	strscpy(drvinfo->bus_info, pci_name(enic->pdev),
+	strlcpy(drvinfo->bus_info, pci_name(enic->pdev),
 		sizeof(drvinfo->bus_info));
 }
 
@@ -162,9 +178,7 @@ static void enic_get_strings(struct net_device *netdev, u32 stringset,
 }
 
 static void enic_get_ringparam(struct net_device *netdev,
-			       struct ethtool_ringparam *ring,
-			       struct kernel_ethtool_ringparam *kernel_ring,
-			       struct netlink_ext_ack *extack)
+			       struct ethtool_ringparam *ring)
 {
 	struct enic *enic = netdev_priv(netdev);
 	struct vnic_enet_config *c = &enic->config;
@@ -176,9 +190,7 @@ static void enic_get_ringparam(struct net_device *netdev,
 }
 
 static int enic_set_ringparam(struct net_device *netdev,
-			      struct ethtool_ringparam *ring,
-			      struct kernel_ethtool_ringparam *kernel_ring,
-			      struct netlink_ext_ack *extack)
+			      struct ethtool_ringparam *ring)
 {
 	struct enic *enic = netdev_priv(netdev);
 	struct vnic_enet_config *c = &enic->config;
@@ -229,7 +241,7 @@ static int enic_set_ringparam(struct net_device *netdev,
 	}
 	enic_init_vnic_resources(enic);
 	if (running) {
-		err = dev_open(netdev, NULL);
+		err = dev_open(netdev);
 		if (err)
 			goto err_out;
 	}
@@ -259,7 +271,7 @@ static void enic_get_ethtool_stats(struct net_device *netdev,
 	int err;
 
 	err = enic_dev_stats_dump(enic, &vstats);
-	/* return only when dma_alloc_coherent fails in vnic_dev_stats_dump
+	/* return only when pci_zalloc_consistent fails in vnic_dev_stats_dump
 	 * For other failures, like devcmd failure, we return previously
 	 * recorded stats.
 	 */
@@ -287,9 +299,7 @@ static void enic_set_msglevel(struct net_device *netdev, u32 value)
 }
 
 static int enic_get_coalesce(struct net_device *netdev,
-			     struct ethtool_coalesce *ecmd,
-			     struct kernel_ethtool_coalesce *kernel_coal,
-			     struct netlink_ext_ack *extack)
+	struct ethtool_coalesce *ecmd)
 {
 	struct enic *enic = netdev_priv(netdev);
 	struct enic_rx_coal *rxcoal = &enic->rx_coalesce_setting;
@@ -314,6 +324,25 @@ static int enic_coalesce_valid(struct enic *enic,
 	u32 rx_coalesce_usecs_low = min_t(u32, coalesce_usecs_max,
 					  ec->rx_coalesce_usecs_low);
 
+	if (ec->rx_max_coalesced_frames		||
+	    ec->rx_coalesce_usecs_irq		||
+	    ec->rx_max_coalesced_frames_irq	||
+	    ec->tx_max_coalesced_frames		||
+	    ec->tx_coalesce_usecs_irq		||
+	    ec->tx_max_coalesced_frames_irq	||
+	    ec->stats_block_coalesce_usecs	||
+	    ec->use_adaptive_tx_coalesce	||
+	    ec->pkt_rate_low			||
+	    ec->rx_max_coalesced_frames_low	||
+	    ec->tx_coalesce_usecs_low		||
+	    ec->tx_max_coalesced_frames_low	||
+	    ec->pkt_rate_high			||
+	    ec->rx_max_coalesced_frames_high	||
+	    ec->tx_coalesce_usecs_high		||
+	    ec->tx_max_coalesced_frames_high	||
+	    ec->rate_sample_interval)
+		return -EINVAL;
+
 	if ((vnic_dev_get_intr_mode(enic->vdev) != VNIC_DEV_INTR_MODE_MSIX) &&
 	    ec->tx_coalesce_usecs)
 		return -EINVAL;
@@ -334,9 +363,7 @@ static int enic_coalesce_valid(struct enic *enic,
 }
 
 static int enic_set_coalesce(struct net_device *netdev,
-			     struct ethtool_coalesce *ecmd,
-			     struct kernel_ethtool_coalesce *kernel_coal,
-			     struct netlink_ext_ack *extack)
+	struct ethtool_coalesce *ecmd)
 {
 	struct enic *enic = netdev_priv(netdev);
 	u32 tx_coalesce_usecs;
@@ -427,6 +454,7 @@ static int enic_grxclsrule(struct enic *enic, struct ethtool_rxnfc *cmd)
 		break;
 	default:
 		return -EINVAL;
+		break;
 	}
 
 	fsp->h_u.tcp_ip4_spec.ip4src = flow_get_u32_src(&n->keys);
@@ -448,28 +476,18 @@ static int enic_grxclsrule(struct enic *enic, struct ethtool_rxnfc *cmd)
 
 static int enic_get_rx_flow_hash(struct enic *enic, struct ethtool_rxnfc *cmd)
 {
-	u8 rss_hash_type = 0;
 	cmd->data = 0;
 
-	spin_lock_bh(&enic->devcmd_lock);
-	(void)vnic_dev_capable_rss_hash_type(enic->vdev, &rss_hash_type);
-	spin_unlock_bh(&enic->devcmd_lock);
 	switch (cmd->flow_type) {
 	case TCP_V6_FLOW:
 	case TCP_V4_FLOW:
-		cmd->data |= RXH_L4_B_0_1 | RXH_L4_B_2_3 |
-			     RXH_IP_SRC | RXH_IP_DST;
-		break;
+		cmd->data |= RXH_L4_B_0_1 | RXH_L4_B_2_3;
+		/* Fall through */
 	case UDP_V6_FLOW:
-		cmd->data |= RXH_IP_SRC | RXH_IP_DST;
-		if (rss_hash_type & NIC_CFG_RSS_HASH_TYPE_UDP_IPV6)
-			cmd->data |= RXH_L4_B_0_1 | RXH_L4_B_2_3;
-		break;
 	case UDP_V4_FLOW:
-		cmd->data |= RXH_IP_SRC | RXH_IP_DST;
-		if (rss_hash_type & NIC_CFG_RSS_HASH_TYPE_UDP_IPV4)
+		if (vnic_dev_capable_udp_rss(enic->vdev))
 			cmd->data |= RXH_L4_B_0_1 | RXH_L4_B_2_3;
-		break;
+		/* Fall through */
 	case SCTP_V4_FLOW:
 	case AH_ESP_V4_FLOW:
 	case AH_V4_FLOW:
@@ -608,10 +626,6 @@ static int enic_get_ts_info(struct net_device *netdev,
 }
 
 static const struct ethtool_ops enic_ethtool_ops = {
-	.supported_coalesce_params = ETHTOOL_COALESCE_USECS |
-				     ETHTOOL_COALESCE_USE_ADAPTIVE_RX |
-				     ETHTOOL_COALESCE_RX_USECS_LOW |
-				     ETHTOOL_COALESCE_RX_USECS_HIGH,
 	.get_drvinfo = enic_get_drvinfo,
 	.get_msglevel = enic_get_msglevel,
 	.set_msglevel = enic_set_msglevel,

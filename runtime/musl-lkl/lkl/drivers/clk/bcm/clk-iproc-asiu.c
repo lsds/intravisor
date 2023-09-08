@@ -1,5 +1,15 @@
-// SPDX-License-Identifier: GPL-2.0-only
-// Copyright (C) 2014 Broadcom Corporation
+/*
+ * Copyright (C) 2014 Broadcom Corporation
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License as
+ * published by the Free Software Foundation version 2.
+ *
+ * This program is distributed "as is" WITHOUT ANY WARRANTY of any
+ * kind, whether express or implied; without even the implied warranty
+ * of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ */
 
 #include <linux/kernel.h>
 #include <linux/err.h>
@@ -109,7 +119,7 @@ static long iproc_asiu_clk_round_rate(struct clk_hw *hw, unsigned long rate,
 	if (rate == *parent_rate)
 		return *parent_rate;
 
-	div = DIV_ROUND_CLOSEST(*parent_rate, rate);
+	div = DIV_ROUND_UP(*parent_rate, rate);
 	if (div < 2)
 		return *parent_rate;
 
@@ -135,7 +145,7 @@ static int iproc_asiu_clk_set_rate(struct clk_hw *hw, unsigned long rate,
 		return 0;
 	}
 
-	div = DIV_ROUND_CLOSEST(parent_rate, rate);
+	div = DIV_ROUND_UP(parent_rate, rate);
 	if (div < 2)
 		return -EINVAL;
 
@@ -187,8 +197,8 @@ void __init iproc_asiu_setup(struct device_node *node,
 	if (WARN_ON(!asiu))
 		return;
 
-	asiu->clk_data = kzalloc(struct_size(asiu->clk_data, hws, num_clks),
-				 GFP_KERNEL);
+	asiu->clk_data = kzalloc(sizeof(*asiu->clk_data->hws) * num_clks +
+				 sizeof(*asiu->clk_data), GFP_KERNEL);
 	if (WARN_ON(!asiu->clk_data))
 		goto err_clks;
 	asiu->clk_data->num = num_clks;

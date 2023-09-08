@@ -1,59 +1,29 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Based on arch/arm/include/asm/ptrace.h
  *
  * Copyright (C) 1996-2003 Russell King
  * Copyright (C) 2012 ARM Ltd.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 #ifndef __ASM_PTRACE_H
 #define __ASM_PTRACE_H
-
-#include <asm/cpufeature.h>
 
 #include <uapi/asm/ptrace.h>
 
 /* Current Exception Level values, as contained in CurrentEL */
 #define CurrentEL_EL1		(1 << 2)
 #define CurrentEL_EL2		(2 << 2)
-
-#define INIT_PSTATE_EL1 \
-	(PSR_D_BIT | PSR_A_BIT | PSR_I_BIT | PSR_F_BIT | PSR_MODE_EL1h)
-#define INIT_PSTATE_EL2 \
-	(PSR_D_BIT | PSR_A_BIT | PSR_I_BIT | PSR_F_BIT | PSR_MODE_EL2h)
-
-/*
- * PMR values used to mask/unmask interrupts.
- *
- * GIC priority masking works as follows: if an IRQ's priority is a higher value
- * than the value held in PMR, that IRQ is masked. Lowering the value of PMR
- * means masking more IRQs (or at least that the same IRQs remain masked).
- *
- * To mask interrupts, we clear the most significant bit of PMR.
- *
- * Some code sections either automatically switch back to PSR.I or explicitly
- * require to not use priority masking. If bit GIC_PRIO_PSR_I_SET is included
- * in the priority mask, it indicates that PSR.I should be set and
- * interrupt disabling temporarily does not rely on IRQ priorities.
- */
-#define GIC_PRIO_IRQON			0xe0
-#define __GIC_PRIO_IRQOFF		(GIC_PRIO_IRQON & ~0x80)
-#define __GIC_PRIO_IRQOFF_NS		0xa0
-#define GIC_PRIO_PSR_I_SET		(1 << 4)
-
-#define GIC_PRIO_IRQOFF							\
-	({								\
-		extern struct static_key_false gic_nonsecure_priorities;\
-		u8 __prio = __GIC_PRIO_IRQOFF;				\
-									\
-		if (static_branch_unlikely(&gic_nonsecure_priorities))	\
-			__prio = __GIC_PRIO_IRQOFF_NS;			\
-									\
-		__prio;							\
-	})
-
-/* Additional SPSR bits not exposed in the UABI */
-#define PSR_MODE_THREAD_BIT	(1 << 0)
-#define PSR_IL_BIT		(1 << 20)
 
 /* AArch32-specific ptrace requests */
 #define COMPAT_PTRACE_GETREGS		12
@@ -65,40 +35,35 @@
 #define COMPAT_PTRACE_GETHBPREGS	29
 #define COMPAT_PTRACE_SETHBPREGS	30
 
-/* SPSR_ELx bits for exceptions taken from AArch32 */
-#define PSR_AA32_MODE_MASK	0x0000001f
-#define PSR_AA32_MODE_USR	0x00000010
-#define PSR_AA32_MODE_FIQ	0x00000011
-#define PSR_AA32_MODE_IRQ	0x00000012
-#define PSR_AA32_MODE_SVC	0x00000013
-#define PSR_AA32_MODE_ABT	0x00000017
-#define PSR_AA32_MODE_HYP	0x0000001a
-#define PSR_AA32_MODE_UND	0x0000001b
-#define PSR_AA32_MODE_SYS	0x0000001f
-#define PSR_AA32_T_BIT		0x00000020
-#define PSR_AA32_F_BIT		0x00000040
-#define PSR_AA32_I_BIT		0x00000080
-#define PSR_AA32_A_BIT		0x00000100
-#define PSR_AA32_E_BIT		0x00000200
-#define PSR_AA32_PAN_BIT	0x00400000
-#define PSR_AA32_SSBS_BIT	0x00800000
-#define PSR_AA32_DIT_BIT	0x01000000
-#define PSR_AA32_Q_BIT		0x08000000
-#define PSR_AA32_V_BIT		0x10000000
-#define PSR_AA32_C_BIT		0x20000000
-#define PSR_AA32_Z_BIT		0x40000000
-#define PSR_AA32_N_BIT		0x80000000
-#define PSR_AA32_IT_MASK	0x0600fc00	/* If-Then execution state mask */
-#define PSR_AA32_GE_MASK	0x000f0000
+/* AArch32 CPSR bits */
+#define COMPAT_PSR_MODE_MASK	0x0000001f
+#define COMPAT_PSR_MODE_USR	0x00000010
+#define COMPAT_PSR_MODE_FIQ	0x00000011
+#define COMPAT_PSR_MODE_IRQ	0x00000012
+#define COMPAT_PSR_MODE_SVC	0x00000013
+#define COMPAT_PSR_MODE_ABT	0x00000017
+#define COMPAT_PSR_MODE_HYP	0x0000001a
+#define COMPAT_PSR_MODE_UND	0x0000001b
+#define COMPAT_PSR_MODE_SYS	0x0000001f
+#define COMPAT_PSR_T_BIT	0x00000020
+#define COMPAT_PSR_F_BIT	0x00000040
+#define COMPAT_PSR_I_BIT	0x00000080
+#define COMPAT_PSR_A_BIT	0x00000100
+#define COMPAT_PSR_E_BIT	0x00000200
+#define COMPAT_PSR_J_BIT	0x01000000
+#define COMPAT_PSR_Q_BIT	0x08000000
+#define COMPAT_PSR_V_BIT	0x10000000
+#define COMPAT_PSR_C_BIT	0x20000000
+#define COMPAT_PSR_Z_BIT	0x40000000
+#define COMPAT_PSR_N_BIT	0x80000000
+#define COMPAT_PSR_IT_MASK	0x0600fc00	/* If-Then execution state mask */
+#define COMPAT_PSR_GE_MASK	0x000f0000
 
 #ifdef CONFIG_CPU_BIG_ENDIAN
-#define PSR_AA32_ENDSTATE	PSR_AA32_E_BIT
+#define COMPAT_PSR_ENDSTATE	COMPAT_PSR_E_BIT
 #else
-#define PSR_AA32_ENDSTATE	0
+#define COMPAT_PSR_ENDSTATE	0
 #endif
-
-/* AArch32 CPSR bits, as seen in AArch32 */
-#define COMPAT_PSR_DIT_BIT	0x00200000
 
 /*
  * These are 'magic' values for PTRACE_PEEKUSR that return info about where a
@@ -146,30 +111,6 @@
 #define compat_sp_fiq	regs[29]
 #define compat_lr_fiq	regs[30]
 
-static inline unsigned long compat_psr_to_pstate(const unsigned long psr)
-{
-	unsigned long pstate;
-
-	pstate = psr & ~COMPAT_PSR_DIT_BIT;
-
-	if (psr & COMPAT_PSR_DIT_BIT)
-		pstate |= PSR_AA32_DIT_BIT;
-
-	return pstate;
-}
-
-static inline unsigned long pstate_to_compat_psr(const unsigned long pstate)
-{
-	unsigned long psr;
-
-	psr = pstate & ~PSR_AA32_DIT_BIT;
-
-	if (pstate & PSR_AA32_DIT_BIT)
-		psr |= COMPAT_PSR_DIT_BIT;
-
-	return psr;
-}
-
 /*
  * This struct defines the way the registers are stored on the stack during an
  * exception. Note that sizeof(struct pt_regs) has to be a multiple of 16 (for
@@ -193,14 +134,10 @@ struct pt_regs {
 	s32 syscallno;
 	u32 unused2;
 #endif
-	u64 sdei_ttbr1;
-	/* Only valid when ARM64_HAS_IRQ_PRIO_MASKING is enabled. */
-	u64 pmr_save;
-	u64 stackframe[2];
 
-	/* Only valid for some EL1 exceptions. */
-	u64 lockdep_hardirqs;
-	u64 exit_rcu;
+	u64 orig_addr_limit;
+	u64 unused;	// maintain 16 byte alignment
+	u64 stackframe[2];
 };
 
 static inline bool in_syscall(struct pt_regs const *regs)
@@ -219,7 +156,7 @@ static inline void forget_syscall(struct pt_regs *regs)
 
 #ifdef CONFIG_COMPAT
 #define compat_thumb_mode(regs) \
-	(((regs)->pstate & PSR_AA32_T_BIT))
+	(((regs)->pstate & COMPAT_PSR_T_BIT))
 #else
 #define compat_thumb_mode(regs) (0)
 #endif
@@ -234,23 +171,17 @@ static inline void forget_syscall(struct pt_regs *regs)
 #define processor_mode(regs) \
 	((regs)->pstate & PSR_MODE_MASK)
 
-#define irqs_priority_unmasked(regs)					\
-	(system_uses_irq_prio_masking() ?				\
-		(regs)->pmr_save == GIC_PRIO_IRQON :			\
-		true)
-
-#define interrupts_enabled(regs)			\
-	(!((regs)->pstate & PSR_I_BIT) && irqs_priority_unmasked(regs))
+#define interrupts_enabled(regs) \
+	(!((regs)->pstate & PSR_I_BIT))
 
 #define fast_interrupts_enabled(regs) \
 	(!((regs)->pstate & PSR_F_BIT))
 
-static inline unsigned long user_stack_pointer(struct pt_regs *regs)
-{
-	if (compat_user_mode(regs))
-		return regs->compat_sp;
-	return regs->sp;
-}
+#define GET_USP(regs) \
+	(!compat_user_mode(regs) ? (regs)->sp : (regs)->compat_sp)
+
+#define SET_USP(ptregs, value) \
+	(!compat_user_mode(regs) ? ((regs)->sp = value) : ((regs)->compat_sp = value))
 
 extern int regs_query_register_offset(const char *name);
 extern unsigned long regs_get_kernel_stack_nth(struct pt_regs *regs,
@@ -320,64 +251,20 @@ static inline unsigned long kernel_stack_pointer(struct pt_regs *regs)
 
 static inline unsigned long regs_return_value(struct pt_regs *regs)
 {
-	unsigned long val = regs->regs[0];
-
-	/*
-	 * Audit currently uses regs_return_value() instead of
-	 * syscall_get_return_value(). Apply the same sign-extension here until
-	 * audit is updated to use syscall_get_return_value().
-	 */
-	if (compat_user_mode(regs))
-		val = sign_extend64(val, 31);
-
-	return val;
-}
-
-static inline void regs_set_return_value(struct pt_regs *regs, unsigned long rc)
-{
-	regs->regs[0] = rc;
-}
-
-/**
- * regs_get_kernel_argument() - get Nth function argument in kernel
- * @regs:	pt_regs of that context
- * @n:		function argument number (start from 0)
- *
- * regs_get_argument() returns @n th argument of the function call.
- *
- * Note that this chooses the most likely register mapping. In very rare
- * cases this may not return correct data, for example, if one of the
- * function parameters is 16 bytes or bigger. In such cases, we cannot
- * get access the parameter correctly and the register assignment of
- * subsequent parameters will be shifted.
- */
-static inline unsigned long regs_get_kernel_argument(struct pt_regs *regs,
-						     unsigned int n)
-{
-#define NR_REG_ARGUMENTS 8
-	if (n < NR_REG_ARGUMENTS)
-		return pt_regs_read_reg(regs, n);
-	return 0;
+	return regs->regs[0];
 }
 
 /* We must avoid circular header include via sched.h */
 struct task_struct;
 int valid_user_regs(struct user_pt_regs *regs, struct task_struct *task);
 
-static inline unsigned long instruction_pointer(struct pt_regs *regs)
-{
-	return regs->pc;
-}
-static inline void instruction_pointer_set(struct pt_regs *regs,
-		unsigned long val)
-{
-	regs->pc = val;
-}
+#define GET_IP(regs)		((unsigned long)(regs)->pc)
+#define SET_IP(regs, value)	((regs)->pc = ((u64) (value)))
 
-static inline unsigned long frame_pointer(struct pt_regs *regs)
-{
-	return regs->regs[29];
-}
+#define GET_FP(ptregs)		((unsigned long)(ptregs)->regs[29])
+#define SET_FP(ptregs, value)	((ptregs)->regs[29] = ((u64) (value)))
+
+#include <asm-generic/ptrace.h>
 
 #define procedure_link_pointer(regs)	((regs)->regs[30])
 
@@ -387,6 +274,7 @@ static inline void procedure_link_pointer_set(struct pt_regs *regs,
 	procedure_link_pointer(regs) = val;
 }
 
+#undef profile_pc
 extern unsigned long profile_pc(struct pt_regs *regs);
 
 #endif /* __ASSEMBLY__ */

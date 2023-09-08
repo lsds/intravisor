@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * wm8711.c  --  WM8711 ALSA SoC Audio driver
  *
@@ -7,6 +6,10 @@
  * Author: Mike Arthur <Mike.Arthur@wolfsonmicro.com>
  *
  * Based on wm8731.c by Richard Purdie
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 
 #include <linux/module.h>
@@ -158,7 +161,7 @@ static int wm8711_hw_params(struct snd_pcm_substream *substream,
 {
 	struct snd_soc_component *component = dai->component;
 	struct wm8711_priv *wm8711 =  snd_soc_component_get_drvdata(component);
-	u16 iface = snd_soc_component_read(component, WM8711_IFACE) & 0xfff3;
+	u16 iface = snd_soc_component_read32(component, WM8711_IFACE) & 0xfff3;
 	int i = get_coeff(wm8711->sysclk, params_rate(params));
 	u16 srate = (coeff_div[i].sr << 2) |
 		(coeff_div[i].bosr << 1) | coeff_div[i].usb;
@@ -198,16 +201,16 @@ static void wm8711_shutdown(struct snd_pcm_substream *substream,
 	struct snd_soc_component *component = dai->component;
 
 	/* deactivate */
-	if (!snd_soc_component_active(component)) {
+	if (!snd_soc_component_is_active(component)) {
 		udelay(50);
 		snd_soc_component_write(component, WM8711_ACTIVE, 0x0);
 	}
 }
 
-static int wm8711_mute(struct snd_soc_dai *dai, int mute, int direction)
+static int wm8711_mute(struct snd_soc_dai *dai, int mute)
 {
 	struct snd_soc_component *component = dai->component;
-	u16 mute_reg = snd_soc_component_read(component, WM8711_APDIGI) & 0xfff7;
+	u16 mute_reg = snd_soc_component_read32(component, WM8711_APDIGI) & 0xfff7;
 
 	if (mute)
 		snd_soc_component_write(component, WM8711_APDIGI, mute_reg | 0x8);
@@ -239,7 +242,7 @@ static int wm8711_set_dai_fmt(struct snd_soc_dai *codec_dai,
 		unsigned int fmt)
 {
 	struct snd_soc_component *component = codec_dai->component;
-	u16 iface = snd_soc_component_read(component, WM8711_IFACE) & 0x000c;
+	u16 iface = snd_soc_component_read32(component, WM8711_IFACE) & 0x000c;
 
 	/* set master/slave audio interface */
 	switch (fmt & SND_SOC_DAIFMT_MASTER_MASK) {
@@ -298,7 +301,7 @@ static int wm8711_set_bias_level(struct snd_soc_component *component,
 	enum snd_soc_bias_level level)
 {
 	struct wm8711_priv *wm8711 = snd_soc_component_get_drvdata(component);
-	u16 reg = snd_soc_component_read(component, WM8711_PWR) & 0xff7f;
+	u16 reg = snd_soc_component_read32(component, WM8711_PWR) & 0xff7f;
 
 	switch (level) {
 	case SND_SOC_BIAS_ON:
@@ -329,10 +332,9 @@ static const struct snd_soc_dai_ops wm8711_ops = {
 	.prepare = wm8711_pcm_prepare,
 	.hw_params = wm8711_hw_params,
 	.shutdown = wm8711_shutdown,
-	.mute_stream = wm8711_mute,
+	.digital_mute = wm8711_mute,
 	.set_sysclk = wm8711_set_dai_sysclk,
 	.set_fmt = wm8711_set_dai_fmt,
-	.no_capture_mute = 1,
 };
 
 static struct snd_soc_dai_driver wm8711_dai = {
@@ -378,6 +380,7 @@ static const struct snd_soc_component_driver soc_component_dev_wm8711 = {
 	.idle_bias_on		= 1,
 	.use_pmdown_time	= 1,
 	.endianness		= 1,
+	.non_legacy_dai_naming	= 1,
 };
 
 static const struct of_device_id wm8711_of_match[] = {
@@ -431,7 +434,8 @@ static struct spi_driver wm8711_spi_driver = {
 #endif /* CONFIG_SPI_MASTER */
 
 #if IS_ENABLED(CONFIG_I2C)
-static int wm8711_i2c_probe(struct i2c_client *client)
+static int wm8711_i2c_probe(struct i2c_client *client,
+			    const struct i2c_device_id *id)
 {
 	struct wm8711_priv *wm8711;
 	int ret;
@@ -464,7 +468,7 @@ static struct i2c_driver wm8711_i2c_driver = {
 		.name = "wm8711",
 		.of_match_table = wm8711_of_match,
 	},
-	.probe_new = wm8711_i2c_probe,
+	.probe =    wm8711_i2c_probe,
 	.id_table = wm8711_i2c_id,
 };
 #endif

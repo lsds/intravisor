@@ -1,9 +1,20 @@
-// SPDX-License-Identifier: GPL-2.0-or-later OR MIT
 /*
  * Broadcom BCM470X / BCM5301X ARM platform code.
  * DTS for D-Link DIR-885L
  *
  * Copyright (C) 2016 Rafał Miłecki <zajec5@gmail.com>
+ *
+ * Permission to use, copy, modify, and/or distribute this software for any
+ * purpose with or without fee is hereby granted, provided that the above
+ * copyright notice and this permission notice appear in all copies.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH
+ * REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY
+ * AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT,
+ * INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM
+ * LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE
+ * OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
+ * PERFORMANCE OF THIS SOFTWARE.
  */
 
 /dts-v1/;
@@ -19,23 +30,16 @@
 		bootargs = "console=ttyS0,115200 earlycon";
 	};
 
-	memory@0 {
-		device_type = "memory";
-		reg = <0x00000000 0x08000000>,
-		      <0x88000000 0x08000000>;
+	memory {
+		reg = <0x00000000 0x08000000
+		       0x88000000 0x08000000>;
 	};
 
-	nand_controller: nand-controller@18028000 {
-		nand@0 {
-			partitions {
-				compatible = "fixed-partitions";
-				#address-cells = <1>;
-				#size-cells = <1>;
-
-				partition@0 {
-					label = "firmware";
-					reg = <0x00000000 0x08000000>;
-				};
+	nand: nand@18028000 {
+		nandcs@0 {
+			partition@0 {
+				label = "firmware";
+				reg = <0x00000000 0x08000000>;
 			};
 		};
 	};
@@ -85,21 +89,23 @@
 
 	gpio-keys {
 		compatible = "gpio-keys";
+		#address-cells = <1>;
+		#size-cells = <0>;
 
-		button-wps {
+		wps {
 			label = "WPS";
 			linux,code = <KEY_WPS_BUTTON>;
 			gpios = <&chipcommon 7 GPIO_ACTIVE_LOW>;
 		};
 
 		/* Switch: router / extender */
-		button-extender {
+		extender {
 			label = "Extender";
 			linux,code = <BTN_0>;
 			gpios = <&chipcommon 10 GPIO_ACTIVE_LOW>;
 		};
 
-		button-restart {
+		restart {
 			label = "Reset";
 			linux,code = <KEY_RESTART>;
 			gpios = <&chipcommon 17 GPIO_ACTIVE_LOW>;
@@ -113,50 +119,4 @@
 
 &spi_nor {
 	status = "okay";
-};
-
-&usb3_phy {
-	status = "okay";
-};
-
-&srab {
-	status = "okay";
-
-	ports {
-		port@0 {
-			reg = <0>;
-			label = "lan4";
-		};
-
-		port@1 {
-			reg = <1>;
-			label = "lan3";
-		};
-
-		port@2 {
-			reg = <2>;
-			label = "lan2";
-		};
-
-		port@3 {
-			reg = <3>;
-			label = "lan1";
-		};
-
-		port@4 {
-			reg = <4>;
-			label = "wan";
-		};
-
-		port@8 {
-			reg = <8>;
-			label = "cpu";
-			ethernet = <&gmac2>;
-
-			fixed-link {
-				speed = <1000>;
-				full-duplex;
-			};
-		};
-	};
 };

@@ -114,7 +114,8 @@ void machine_halt(void)
 
 void machine_power_off(void)
 {
-	do_kernel_power_off();
+	if (pm_power_off)
+		pm_power_off();
 
 #ifdef CONFIG_SMP
 	preempt_disable();

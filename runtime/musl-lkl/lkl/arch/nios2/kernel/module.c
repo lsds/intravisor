@@ -19,6 +19,7 @@
 #include <linux/string.h>
 #include <linux/kernel.h>
 
+#include <asm/pgtable.h>
 #include <asm/cacheflush.h>
 
 /*

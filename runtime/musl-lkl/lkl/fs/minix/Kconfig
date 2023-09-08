@@ -1,4 +1,3 @@
-# SPDX-License-Identifier: GPL-2.0-only
 config MINIX_FS
 	tristate "Minix file system support"
 	depends on BLOCK

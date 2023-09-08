@@ -1,8 +1,11 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Acer Wireless Radio Control Driver
  *
  * Copyright (C) 2017 Endless Mobile, Inc.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 
 #include <linux/acpi.h>
@@ -28,7 +31,6 @@ static void acer_wireless_notify(struct acpi_device *adev, u32 event)
 		return;
 	}
 	input_report_key(idev, KEY_RFKILL, 1);
-	input_sync(idev);
 	input_report_key(idev, KEY_RFKILL, 0);
 	input_sync(idev);
 }

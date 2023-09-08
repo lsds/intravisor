@@ -71,7 +71,7 @@ static u16 ocrdma_hdr_type_to_proto_num(int devid, u8 hdr_type)
 }
 
 static inline int set_av_attr(struct ocrdma_dev *dev, struct ocrdma_ah *ah,
-			struct rdma_ah_attr *attr, const union ib_gid *sgid,
+			struct rdma_ah_attr *attr, union ib_gid *sgid,
 			int pdid, bool *isvlan, u16 vlan_tag)
 {
 	int status;
@@ -83,6 +83,7 @@ static inline int set_av_attr(struct ocrdma_dev *dev, struct ocrdma_ah *ah,
 	struct iphdr ipv4;
 	const struct ib_global_route *ib_grh;
 	union {
+		struct sockaddr     _sockaddr;
 		struct sockaddr_in  _sockaddr_in;
 		struct sockaddr_in6 _sockaddr_in6;
 	} sgid_addr, dgid_addr;
@@ -132,9 +133,9 @@ static inline int set_av_attr(struct ocrdma_dev *dev, struct ocrdma_ah *ah,
 		ipv4.tot_len = htons(0);
 		ipv4.ttl = ib_grh->hop_limit;
 		ipv4.protocol = nxthdr;
-		rdma_gid2ip((struct sockaddr *)&sgid_addr, sgid);
+		rdma_gid2ip(&sgid_addr._sockaddr, sgid);
 		ipv4.saddr = sgid_addr._sockaddr_in.sin_addr.s_addr;
-		rdma_gid2ip((struct sockaddr*)&dgid_addr, &ib_grh->dgid);
+		rdma_gid2ip(&dgid_addr._sockaddr, &ib_grh->dgid);
 		ipv4.daddr = dgid_addr._sockaddr_in.sin_addr.s_addr;
 		memcpy((u8 *)ah->av + eth_sz, &ipv4, sizeof(struct iphdr));
 	} else {
@@ -155,40 +156,50 @@ static inline int set_av_attr(struct ocrdma_dev *dev, struct ocrdma_ah *ah,
 	return status;
 }
 
-int ocrdma_create_ah(struct ib_ah *ibah, struct rdma_ah_init_attr *init_attr,
-		     struct ib_udata *udata)
+struct ib_ah *ocrdma_create_ah(struct ib_pd *ibpd, struct rdma_ah_attr *attr,
+			       struct ib_udata *udata)
 {
 	u32 *ahid_addr;
 	int status;
-	struct ocrdma_ah *ah = get_ocrdma_ah(ibah);
+	struct ocrdma_ah *ah;
 	bool isvlan = false;
 	u16 vlan_tag = 0xffff;
-	const struct ib_gid_attr *sgid_attr;
-	struct ocrdma_pd *pd = get_ocrdma_pd(ibah->pd);
-	struct rdma_ah_attr *attr = init_attr->ah_attr;
-	struct ocrdma_dev *dev = get_ocrdma_dev(ibah->device);
+	struct ib_gid_attr sgid_attr;
+	struct ocrdma_pd *pd = get_ocrdma_pd(ibpd);
+	struct ocrdma_dev *dev = get_ocrdma_dev(ibpd->device);
+	const struct ib_global_route *grh;
+	union ib_gid sgid;
 
 	if ((attr->type != RDMA_AH_ATTR_TYPE_ROCE) ||
 	    !(rdma_ah_get_ah_flags(attr) & IB_AH_GRH))
-		return -EINVAL;
+		return ERR_PTR(-EINVAL);
 
+	grh = rdma_ah_read_grh(attr);
 	if (atomic_cmpxchg(&dev->update_sl, 1, 0))
 		ocrdma_init_service_level(dev);
 
-	sgid_attr = attr->grh.sgid_attr;
-	status = rdma_read_gid_l2_fields(sgid_attr, &vlan_tag, NULL);
-	if (status)
-		return status;
+	ah = kzalloc(sizeof(*ah), GFP_ATOMIC);
+	if (!ah)
+		return ERR_PTR(-ENOMEM);
 
 	status = ocrdma_alloc_av(dev, ah);
 	if (status)
 		goto av_err;
 
+	status = ib_get_cached_gid(&dev->ibdev, 1, grh->sgid_index, &sgid,
+				   &sgid_attr);
+	if (status) {
+		pr_err("%s(): Failed to query sgid, status = %d\n",
+		      __func__, status);
+		goto av_conf_err;
+	}
+	if (is_vlan_dev(sgid_attr.ndev))
+		vlan_tag = vlan_dev_vlan_id(sgid_attr.ndev);
+	dev_put(sgid_attr.ndev);
 	/* Get network header type for this GID */
-	ah->hdr_type = rdma_gid_attr_network_type(sgid_attr);
+	ah->hdr_type = ib_gid_to_network_type(sgid_attr.gid_type, &sgid);
 
-	status = set_av_attr(dev, ah, attr, &sgid_attr->gid, pd->id,
-			     &isvlan, vlan_tag);
+	status = set_av_attr(dev, ah, attr, &sgid, pd->id, &isvlan, vlan_tag);
 	if (status)
 		goto av_conf_err;
 
@@ -207,20 +218,22 @@ int ocrdma_create_ah(struct ib_ah *ibah, struct rdma_ah_init_attr *init_attr,
 				       OCRDMA_AH_VLAN_VALID_SHIFT);
 	}
 
-	return 0;
+	return &ah->ibah;
 
 av_conf_err:
 	ocrdma_free_av(dev, ah);
 av_err:
-	return status;
+	kfree(ah);
+	return ERR_PTR(status);
 }
 
-int ocrdma_destroy_ah(struct ib_ah *ibah, u32 flags)
+int ocrdma_destroy_ah(struct ib_ah *ibah)
 {
 	struct ocrdma_ah *ah = get_ocrdma_ah(ibah);
 	struct ocrdma_dev *dev = get_ocrdma_dev(ibah->device);
 
 	ocrdma_free_av(dev, ah);
+	kfree(ah);
 	return 0;
 }
 
@@ -249,20 +262,41 @@ int ocrdma_query_ah(struct ib_ah *ibah, struct rdma_ah_attr *attr)
 	return 0;
 }
 
-int ocrdma_process_mad(struct ib_device *ibdev, int process_mad_flags,
-		       u32 port_num, const struct ib_wc *in_wc,
-		       const struct ib_grh *in_grh, const struct ib_mad *in,
-		       struct ib_mad *out, size_t *out_mad_size,
+int ocrdma_modify_ah(struct ib_ah *ibah, struct rdma_ah_attr *attr)
+{
+	/* modify_ah is unsupported */
+	return -ENOSYS;
+}
+
+int ocrdma_process_mad(struct ib_device *ibdev,
+		       int process_mad_flags,
+		       u8 port_num,
+		       const struct ib_wc *in_wc,
+		       const struct ib_grh *in_grh,
+		       const struct ib_mad_hdr *in, size_t in_mad_size,
+		       struct ib_mad_hdr *out, size_t *out_mad_size,
 		       u16 *out_mad_pkey_index)
 {
-	int status = IB_MAD_RESULT_SUCCESS;
+	int status;
 	struct ocrdma_dev *dev;
+	const struct ib_mad *in_mad = (const struct ib_mad *)in;
+	struct ib_mad *out_mad = (struct ib_mad *)out;
 
-	if (in->mad_hdr.mgmt_class == IB_MGMT_CLASS_PERF_MGMT) {
+	if (WARN_ON_ONCE(in_mad_size != sizeof(*in_mad) ||
+			 *out_mad_size != sizeof(*out_mad)))
+		return IB_MAD_RESULT_FAILURE;
+
+	switch (in_mad->mad_hdr.mgmt_class) {
+	case IB_MGMT_CLASS_PERF_MGMT:
 		dev = get_ocrdma_dev(ibdev);
-		ocrdma_pma_counters(dev, out);
-		status |= IB_MAD_RESULT_REPLY;
+		if (!ocrdma_pma_counters(dev, out_mad))
+			status = IB_MAD_RESULT_SUCCESS | IB_MAD_RESULT_REPLY;
+		else
+			status = IB_MAD_RESULT_SUCCESS;
+		break;
+	default:
+		status = IB_MAD_RESULT_SUCCESS;
+		break;
 	}
-
 	return status;
 }

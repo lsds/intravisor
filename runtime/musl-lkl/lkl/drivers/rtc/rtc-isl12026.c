@@ -454,9 +454,9 @@ static int isl12026_probe_new(struct i2c_client *client)
 
 	isl12026_force_power_modes(client);
 
-	priv->nvm_client = i2c_new_dummy_device(client->adapter, ISL12026_EEPROM_ADDR);
-	if (IS_ERR(priv->nvm_client))
-		return PTR_ERR(priv->nvm_client);
+	priv->nvm_client = i2c_new_dummy(client->adapter, ISL12026_EEPROM_ADDR);
+	if (!priv->nvm_client)
+		return -ENOMEM;
 
 	priv->rtc = devm_rtc_allocate_device(&client->dev);
 	ret = PTR_ERR_OR_ZERO(priv->rtc);
@@ -465,18 +465,19 @@ static int isl12026_probe_new(struct i2c_client *client)
 
 	priv->rtc->ops = &isl12026_rtc_ops;
 	nvm_cfg.priv = priv;
-	ret = devm_rtc_nvmem_register(priv->rtc, &nvm_cfg);
+	ret = rtc_nvmem_register(priv->rtc, &nvm_cfg);
 	if (ret)
 		return ret;
 
-	return devm_rtc_register_device(priv->rtc);
+	return rtc_register_device(priv->rtc);
 }
 
-static void isl12026_remove(struct i2c_client *client)
+static int isl12026_remove(struct i2c_client *client)
 {
 	struct isl12026 *priv = i2c_get_clientdata(client);
 
 	i2c_unregister_device(priv->nvm_client);
+	return 0;
 }
 
 static const struct of_device_id isl12026_dt_match[] = {

@@ -1,8 +1,11 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  *  arch/arm/include/asm/thread_info.h
  *
  *  Copyright (C) 2002 Russell King.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 #ifndef __ASM_ARM_THREAD_INFO_H
 #define __ASM_ARM_THREAD_INFO_H
@@ -13,33 +16,17 @@
 #include <asm/fpstate.h>
 #include <asm/page.h>
 
-#ifdef CONFIG_KASAN
-/*
- * KASan uses a lot of extra stack space so the thread size order needs to
- * be increased.
- */
-#define THREAD_SIZE_ORDER	2
-#else
 #define THREAD_SIZE_ORDER	1
-#endif
 #define THREAD_SIZE		(PAGE_SIZE << THREAD_SIZE_ORDER)
 #define THREAD_START_SP		(THREAD_SIZE - 8)
-
-#ifdef CONFIG_VMAP_STACK
-#define THREAD_ALIGN		(2 * THREAD_SIZE)
-#else
-#define THREAD_ALIGN		THREAD_SIZE
-#endif
-
-#define OVERFLOW_STACK_SIZE	SZ_4K
 
 #ifndef __ASSEMBLY__
 
 struct task_struct;
 
-DECLARE_PER_CPU(struct task_struct *, __entry_task);
-
 #include <asm/types.h>
+
+typedef unsigned long mm_segment_t;
 
 struct cpu_context_save {
 	__u32	r4;
@@ -62,12 +49,17 @@ struct cpu_context_save {
 struct thread_info {
 	unsigned long		flags;		/* low level flags */
 	int			preempt_count;	/* 0 => preemptable, <0 => bug */
+	mm_segment_t		addr_limit;	/* address limit */
+	struct task_struct	*task;		/* main task structure */
 	__u32			cpu;		/* cpu */
 	__u32			cpu_domain;	/* cpu domain */
 	struct cpu_context_save	cpu_context;	/* cpu context */
-	__u32			abi_syscall;	/* ABI type and syscall nr */
+	__u32			syscall;	/* syscall number */
 	__u8			used_cp[16];	/* thread used copro */
 	unsigned long		tp_value[2];	/* TLS registers */
+#ifdef CONFIG_CRUNCH
+	struct crunch_state	crunchstate;
+#endif
 	union fp_state		fpstate __attribute__((aligned(8)));
 	union vfp_state		vfpstate;
 #ifdef CONFIG_ARM_THUMBEE
@@ -77,13 +69,26 @@ struct thread_info {
 
 #define INIT_THREAD_INFO(tsk)						\
 {									\
+	.task		= &tsk,						\
 	.flags		= 0,						\
 	.preempt_count	= INIT_PREEMPT_COUNT,				\
+	.addr_limit	= KERNEL_DS,					\
 }
 
-static inline struct task_struct *thread_task(struct thread_info* ti)
+/*
+ * how to get the current stack pointer in C
+ */
+register unsigned long current_stack_pointer asm ("sp");
+
+/*
+ * how to get the thread information struct from C
+ */
+static inline struct thread_info *current_thread_info(void) __attribute_const__;
+
+static inline struct thread_info *current_thread_info(void)
 {
-	return (struct task_struct *)ti;
+	return (struct thread_info *)
+		(current_stack_pointer & ~(THREAD_SIZE - 1));
 }
 
 #define thread_saved_pc(tsk)	\
@@ -99,6 +104,11 @@ static inline struct task_struct *thread_task(struct thread_info* ti)
 	((unsigned long)(task_thread_info(tsk)->cpu_context.r7))
 #endif
 
+extern void crunch_task_disable(struct thread_info *);
+extern void crunch_task_copy(struct thread_info *, void *);
+extern void crunch_task_restore(struct thread_info *, void *);
+extern void crunch_task_release(struct thread_info *);
+
 extern void iwmmxt_task_disable(struct thread_info *);
 extern void iwmmxt_task_copy(struct thread_info *, void *);
 extern void iwmmxt_task_restore(struct thread_info *, void *);
@@ -111,18 +121,16 @@ extern void vfp_flush_hwstate(struct thread_info *);
 struct user_vfp;
 struct user_vfp_exc;
 
-extern int vfp_preserve_user_clear_hwstate(struct user_vfp *,
-					   struct user_vfp_exc *);
-extern int vfp_restore_user_hwstate(struct user_vfp *,
-				    struct user_vfp_exc *);
+extern int vfp_preserve_user_clear_hwstate(struct user_vfp __user *,
+					   struct user_vfp_exc __user *);
+extern int vfp_restore_user_hwstate(struct user_vfp __user *,
+				    struct user_vfp_exc __user *);
 #endif
 
 /*
  * thread information flags:
  *  TIF_USEDFPU		- FPU was used by this task this quantum (SMP)
  *  TIF_POLLING_NRFLAG	- true if poll_idle() is polling TIF_NEED_RESCHED
- *
- * Any bit in the range of 0..15 will cause do_work_pending() to be invoked.
  */
 #define TIF_SIGPENDING		0	/* signal pending */
 #define TIF_NEED_RESCHED	1	/* rescheduling necessary */
@@ -132,8 +140,8 @@ extern int vfp_restore_user_hwstate(struct user_vfp *,
 #define TIF_SYSCALL_AUDIT	5	/* syscall auditing active */
 #define TIF_SYSCALL_TRACEPOINT	6	/* syscall tracepoint instrumentation */
 #define TIF_SECCOMP		7	/* seccomp syscall filtering active */
-#define TIF_NOTIFY_SIGNAL	8	/* signal notifications exist */
 
+#define TIF_NOHZ		12	/* in adaptive nohz mode */
 #define TIF_USING_IWMMXT	17
 #define TIF_MEMDIE		18	/* is terminating due to OOM killer */
 #define TIF_RESTORE_SIGMASK	20
@@ -146,7 +154,6 @@ extern int vfp_restore_user_hwstate(struct user_vfp *,
 #define _TIF_SYSCALL_AUDIT	(1 << TIF_SYSCALL_AUDIT)
 #define _TIF_SYSCALL_TRACEPOINT	(1 << TIF_SYSCALL_TRACEPOINT)
 #define _TIF_SECCOMP		(1 << TIF_SECCOMP)
-#define _TIF_NOTIFY_SIGNAL	(1 << TIF_NOTIFY_SIGNAL)
 #define _TIF_USING_IWMMXT	(1 << TIF_USING_IWMMXT)
 
 /* Checks for any syscall work in entry-common.S */
@@ -157,8 +164,7 @@ extern int vfp_restore_user_hwstate(struct user_vfp *,
  * Change these and you break ASM code in entry-common.S
  */
 #define _TIF_WORK_MASK		(_TIF_NEED_RESCHED | _TIF_SIGPENDING | \
-				 _TIF_NOTIFY_RESUME | _TIF_UPROBE | \
-				 _TIF_NOTIFY_SIGNAL)
+				 _TIF_NOTIFY_RESUME | _TIF_UPROBE)
 
 #endif /* __KERNEL__ */
 #endif /* __ASM_ARM_THREAD_INFO_H */

@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (C) 2004 IBM Corporation
  * Authors:
@@ -11,6 +10,12 @@
  * Jason Gunthorpe <jgunthorpe@obsidianresearch.com>
  *
  * Device file system interface to the TPM
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License as
+ * published by the Free Software Foundation, version 2 of the
+ * License.
+ *
  */
 #include <linux/slab.h>
 #include "tpm-dev.h"
@@ -34,13 +39,19 @@ static int tpm_open(struct inode *inode, struct file *file)
 	if (priv == NULL)
 		goto out;
 
-	tpm_common_open(file, chip, priv, NULL);
+	tpm_common_open(file, chip, priv);
 
 	return 0;
 
  out:
 	clear_bit(0, &chip->is_open);
 	return -ENOMEM;
+}
+
+static ssize_t tpm_write(struct file *file, const char __user *buf,
+			 size_t size, loff_t *off)
+{
+	return tpm_common_write(file, buf, size, off, NULL);
 }
 
 /*
@@ -62,7 +73,6 @@ const struct file_operations tpm_fops = {
 	.llseek = no_llseek,
 	.open = tpm_open,
 	.read = tpm_common_read,
-	.write = tpm_common_write,
-	.poll = tpm_common_poll,
+	.write = tpm_write,
 	.release = tpm_release,
 };

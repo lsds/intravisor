@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * File: pn_dev.c
  *
@@ -8,6 +7,20 @@
  *
  * Authors: Sakari Ailus <sakari.ailus@nokia.com>
  *          Rémi Denis-Courmont
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * version 2 as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
+ * 02110-1301 USA
  */
 
 #include <linux/kernel.h>
@@ -35,6 +48,8 @@ static unsigned int phonet_net_id __read_mostly;
 
 static struct phonet_net *phonet_pernet(struct net *net)
 {
+	BUG_ON(!net);
+
 	return net_generic(net, phonet_net_id);
 }
 
@@ -122,7 +137,8 @@ struct net_device *phonet_device_get(struct net *net)
 			break;
 		dev = NULL;
 	}
-	dev_hold(dev);
+	if (dev)
+		dev_hold(dev);
 	rcu_read_unlock();
 	return dev;
 }
@@ -232,11 +248,11 @@ static int phonet_device_autoconf(struct net_device *dev)
 	struct if_phonet_req req;
 	int ret;
 
-	if (!dev->netdev_ops->ndo_siocdevprivate)
+	if (!dev->netdev_ops->ndo_do_ioctl)
 		return -EOPNOTSUPP;
 
-	ret = dev->netdev_ops->ndo_siocdevprivate(dev, (struct ifreq *)&req,
-						  NULL, SIOCPNGAUTOCONF);
+	ret = dev->netdev_ops->ndo_do_ioctl(dev, (struct ifreq *)&req,
+						SIOCPNGAUTOCONF);
 	if (ret < 0)
 		return ret;
 
@@ -304,8 +320,7 @@ static int __net_init phonet_init_net(struct net *net)
 {
 	struct phonet_net *pnn = phonet_pernet(net);
 
-	if (!proc_create_net("phonet", 0, net->proc_net, &pn_sock_seq_ops,
-			sizeof(struct seq_net_private)))
+	if (!proc_create("phonet", 0, net->proc_net, &pn_sock_seq_fops))
 		return -ENOMEM;
 
 	INIT_LIST_HEAD(&pnn->pndevs.list);
@@ -336,8 +351,7 @@ int __init phonet_device_init(void)
 	if (err)
 		return err;
 
-	proc_create_net("pnresource", 0, init_net.proc_net, &pn_res_seq_ops,
-			sizeof(struct seq_net_private));
+	proc_create("pnresource", 0, init_net.proc_net, &pn_res_seq_fops);
 	register_netdevice_notifier(&phonet_device_notifier);
 	err = phonet_netlink_register();
 	if (err)
@@ -410,7 +424,8 @@ struct net_device *phonet_route_output(struct net *net, u8 daddr)
 	daddr >>= 2;
 	rcu_read_lock();
 	dev = rcu_dereference(routes->table[daddr]);
-	dev_hold(dev);
+	if (dev)
+		dev_hold(dev);
 	rcu_read_unlock();
 
 	if (!dev)

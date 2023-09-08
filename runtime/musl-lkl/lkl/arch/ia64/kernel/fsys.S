@@ -28,7 +28,7 @@
 #include <asm/native/inst.h>
 
 /*
- * See Documentation/ia64/fsys.rst for details on fsyscalls.
+ * See Documentation/ia64/fsys.txt for details on fsyscalls.
  *
  * On entry to an fsyscall handler:
  *   r10	= 0 (i.e., defaults to "successful syscall return")
@@ -62,16 +62,16 @@ ENTRY(fsys_getpid)
 	.prologue
 	.altrp b6
 	.body
-	add r17=IA64_TASK_SIGNAL_OFFSET,r16
+	add r17=IA64_TASK_GROUP_LEADER_OFFSET,r16
 	;;
-	ld8 r17=[r17]				// r17 = current->signal
+	ld8 r17=[r17]				// r17 = current->group_leader
 	add r9=TI_FLAGS+IA64_TASK_SIZE,r16
 	;;
 	ld4 r9=[r9]
-	add r17=IA64_SIGNAL_PIDS_TGID_OFFSET,r17
+	add r17=IA64_TASK_TGIDLINK_OFFSET,r17
 	;;
 	and r9=TIF_ALLWORK_MASK,r9
-	ld8 r17=[r17]				// r17 = current->signal->pids[PIDTYPE_TGID]
+	ld8 r17=[r17]				// r17 = current->group_leader->pids[PIDTYPE_PID].pid
 	;;
 	add r8=IA64_PID_LEVEL_OFFSET,r17
 	;;
@@ -96,11 +96,11 @@ ENTRY(fsys_set_tid_address)
 	.altrp b6
 	.body
 	add r9=TI_FLAGS+IA64_TASK_SIZE,r16
-	add r17=IA64_TASK_THREAD_PID_OFFSET,r16
+	add r17=IA64_TASK_TGIDLINK_OFFSET,r16
 	;;
 	ld4 r9=[r9]
 	tnat.z p6,p7=r32		// check argument register for being NaT
-	ld8 r17=[r17]				// r17 = current->thread_pid
+	ld8 r17=[r17]				// r17 = current->pids[PIDTYPE_PID].pid
 	;;
 	and r9=TIF_ALLWORK_MASK,r9
 	add r8=IA64_PID_LEVEL_OFFSET,r17
@@ -172,7 +172,7 @@ ENTRY(fsys_gettimeofday)
 	// r25 = itc_lastcycle value
 	// r26 = address clocksource cycle_last
 	// r27 = (not used)
-	// r28 = sequence number at the beginning of critical section
+	// r28 = sequence number at the beginning of critcal section
 	// r29 = address of itc_jitter
 	// r30 = time processing flags / memory address
 	// r31 = pointer to result
@@ -432,7 +432,7 @@ GLOBAL_ENTRY(fsys_bubble_down)
 	 *	- r29: psr
 	 *
 	 * We used to clear some PSR bits here but that requires slow
-	 * serialization.  Fortunately, that isn't really necessary.
+	 * serialization.  Fortuntely, that isn't really necessary.
 	 * The rationale is as follows: we used to clear bits
 	 * ~PSR_PRESERVED_BITS in PSR.L.  Since
 	 * PSR_PRESERVED_BITS==PSR.{UP,MFL,MFH,PK,DT,PP,SP,RT,IC}, we

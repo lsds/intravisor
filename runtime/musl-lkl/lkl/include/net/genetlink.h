@@ -11,11 +11,9 @@
 /**
  * struct genl_multicast_group - generic netlink multicast group
  * @name: name of the multicast group, names are per-family
- * @flags: GENL_* flags (%GENL_ADMIN_PERM or %GENL_UNS_ADMIN_PERM)
  */
 struct genl_multicast_group {
 	char			name[GENL_NAMSIZ];
-	u8			flags;
 };
 
 struct genl_ops;
@@ -28,7 +26,6 @@ struct genl_info;
  * @name: name of family
  * @version: protocol version
  * @maxattr: maximum number of attributes supported
- * @policy: netlink policy
  * @netnsok: set to true if the family can handle network
  *	namespaces and should be presented in all of them
  * @parallel_ops: operations can be called in parallel and aren't
@@ -37,25 +34,19 @@ struct genl_info;
  *	do additional, common, filtering and return an error
  * @post_doit: called after an operation's doit callback, it may
  *	undo operations done by pre_doit, for example release locks
- * @module: pointer to the owning module (set to THIS_MODULE)
+ * @mcast_bind: a socket bound to the given multicast group (which
+ *	is given as the offset into the groups array)
+ * @mcast_unbind: a socket was unbound from the given multicast group.
+ *	Note that unbind() will not be called symmetrically if the
+ *	generic netlink family is removed while there are still open
+ *	sockets.
+ * @attrbuf: buffer to store parsed attributes (private)
  * @mcgrps: multicast groups used by this family
  * @n_mcgrps: number of multicast groups
- * @resv_start_op: first operation for which reserved fields of the header
- *	can be validated and policies are required (see below);
- *	new families should leave this field at zero
  * @mcgrp_offset: starting number of multicast group IDs in this family
  *	(private)
  * @ops: the operations supported by this family
  * @n_ops: number of operations supported by this family
- * @small_ops: the small-struct operations supported by this family
- * @n_small_ops: number of small-struct operations supported by this family
- *
- * Attribute policies (the combination of @policy and @maxattr fields)
- * can be attached at the family level or at the operation level.
- * If both are present the per-operation policy takes precedence.
- * For operations before @resv_start_op lack of policy means that the core
- * will perform no attribute parsing or validation. For newer operations
- * if policy is not provided core will reject all TLV attributes.
  */
 struct genl_family {
 	int			id;		/* private */
@@ -63,25 +54,26 @@ struct genl_family {
 	char			name[GENL_NAMSIZ];
 	unsigned int		version;
 	unsigned int		maxattr;
-	unsigned int		mcgrp_offset;	/* private */
-	u8			netnsok:1;
-	u8			parallel_ops:1;
-	u8			n_ops;
-	u8			n_small_ops;
-	u8			n_mcgrps;
-	u8			resv_start_op;
-	const struct nla_policy *policy;
+	bool			netnsok;
+	bool			parallel_ops;
 	int			(*pre_doit)(const struct genl_ops *ops,
 					    struct sk_buff *skb,
 					    struct genl_info *info);
 	void			(*post_doit)(const struct genl_ops *ops,
 					     struct sk_buff *skb,
 					     struct genl_info *info);
+	int			(*mcast_bind)(struct net *net, int group);
+	void			(*mcast_unbind)(struct net *net, int group);
+	struct nlattr **	attrbuf;	/* private */
 	const struct genl_ops *	ops;
-	const struct genl_small_ops *small_ops;
 	const struct genl_multicast_group *mcgrps;
+	unsigned int		n_ops;
+	unsigned int		n_mcgrps;
+	unsigned int		mcgrp_offset;	/* private */
 	struct module		*module;
 };
+
+struct nlattr **genl_family_attrbuf(const struct genl_family *family);
 
 /**
  * struct genl_info - receiving information
@@ -119,85 +111,37 @@ static inline void genl_info_net_set(struct genl_info *info, struct net *net)
 
 #define GENL_SET_ERR_MSG(info, msg) NL_SET_ERR_MSG((info)->extack, msg)
 
-/* Report that a root attribute is missing */
-#define GENL_REQ_ATTR_CHECK(info, attr) ({				\
-	struct genl_info *__info = (info);				\
-									\
-	NL_REQ_ATTR_CHECK(__info->extack, NULL, __info->attrs, (attr)); \
-})
+static inline int genl_err_attr(struct genl_info *info, int err,
+				struct nlattr *attr)
+{
+	info->extack->bad_attr = attr;
 
-enum genl_validate_flags {
-	GENL_DONT_VALIDATE_STRICT		= BIT(0),
-	GENL_DONT_VALIDATE_DUMP			= BIT(1),
-	GENL_DONT_VALIDATE_DUMP_STRICT		= BIT(2),
-};
-
-/**
- * struct genl_small_ops - generic netlink operations (small version)
- * @cmd: command identifier
- * @internal_flags: flags used by the family
- * @flags: GENL_* flags (%GENL_ADMIN_PERM or %GENL_UNS_ADMIN_PERM)
- * @validate: validation flags from enum genl_validate_flags
- * @doit: standard command callback
- * @dumpit: callback for dumpers
- *
- * This is a cut-down version of struct genl_ops for users who don't need
- * most of the ancillary infra and want to save space.
- */
-struct genl_small_ops {
-	int	(*doit)(struct sk_buff *skb, struct genl_info *info);
-	int	(*dumpit)(struct sk_buff *skb, struct netlink_callback *cb);
-	u8	cmd;
-	u8	internal_flags;
-	u8	flags;
-	u8	validate;
-};
+	return err;
+}
 
 /**
  * struct genl_ops - generic netlink operations
  * @cmd: command identifier
  * @internal_flags: flags used by the family
- * @flags: GENL_* flags (%GENL_ADMIN_PERM or %GENL_UNS_ADMIN_PERM)
- * @maxattr: maximum number of attributes supported
- * @policy: netlink policy (takes precedence over family policy)
- * @validate: validation flags from enum genl_validate_flags
+ * @flags: flags
+ * @policy: attribute validation policy
  * @doit: standard command callback
  * @start: start callback for dumps
  * @dumpit: callback for dumpers
  * @done: completion callback for dumps
  */
 struct genl_ops {
+	const struct nla_policy	*policy;
 	int		       (*doit)(struct sk_buff *skb,
 				       struct genl_info *info);
 	int		       (*start)(struct netlink_callback *cb);
 	int		       (*dumpit)(struct sk_buff *skb,
 					 struct netlink_callback *cb);
 	int		       (*done)(struct netlink_callback *cb);
-	const struct nla_policy *policy;
-	unsigned int		maxattr;
 	u8			cmd;
 	u8			internal_flags;
 	u8			flags;
-	u8			validate;
 };
-
-/**
- * struct genl_dumpit_info - info that is available during dumpit op call
- * @family: generic netlink family - for internal genl code usage
- * @op: generic netlink ops - for internal genl code usage
- * @attrs: netlink attributes
- */
-struct genl_dumpit_info {
-	const struct genl_family *family;
-	struct genl_ops op;
-	struct nlattr **attrs;
-};
-
-static inline const struct genl_dumpit_info *
-genl_dumpit_info(struct netlink_callback *cb)
-{
-	return cb->data;
-}
 
 int genl_register_family(struct genl_family *family);
 int genl_unregister_family(const struct genl_family *family);
@@ -221,25 +165,6 @@ static inline struct nlmsghdr *genlmsg_nlhdr(void *user_hdr)
 }
 
 /**
- * genlmsg_parse_deprecated - parse attributes of a genetlink message
- * @nlh: netlink message header
- * @family: genetlink message family
- * @tb: destination array with maxtype+1 elements
- * @maxtype: maximum attribute type to be expected
- * @policy: validation policy
- * @extack: extended ACK report struct
- */
-static inline int genlmsg_parse_deprecated(const struct nlmsghdr *nlh,
-					   const struct genl_family *family,
-					   struct nlattr *tb[], int maxtype,
-					   const struct nla_policy *policy,
-					   struct netlink_ext_ack *extack)
-{
-	return __nlmsg_parse(nlh, family->hdrsize + GENL_HDRLEN, tb, maxtype,
-			     policy, NL_VALIDATE_LIBERAL, extack);
-}
-
-/**
  * genlmsg_parse - parse attributes of a genetlink message
  * @nlh: netlink message header
  * @family: genetlink message family
@@ -254,8 +179,8 @@ static inline int genlmsg_parse(const struct nlmsghdr *nlh,
 				const struct nla_policy *policy,
 				struct netlink_ext_ack *extack)
 {
-	return __nlmsg_parse(nlh, family->hdrsize + GENL_HDRLEN, tb, maxtype,
-			     policy, NL_VALIDATE_STRICT, extack);
+	return nlmsg_parse(nlh, family->hdrsize + GENL_HDRLEN, tb, maxtype,
+			   policy, extack);
 }
 
 /**
@@ -363,7 +288,6 @@ int genlmsg_multicast_allns(const struct genl_family *family,
 
 /**
  * genlmsg_unicast - unicast a netlink message
- * @net: network namespace to look up @portid in
  * @skb: netlink message as socket buffer
  * @portid: netlink portid of the destination socket
  */
@@ -383,7 +307,7 @@ static inline int genlmsg_reply(struct sk_buff *skb, struct genl_info *info)
 }
 
 /**
- * genlmsg_data - head of message payload
+ * gennlmsg_data - head of message payload
  * @gnlh: genetlink message header
  */
 static inline void *genlmsg_data(const struct genlmsghdr *gnlh)

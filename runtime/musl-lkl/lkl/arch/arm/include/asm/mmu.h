@@ -10,7 +10,7 @@ typedef struct {
 #else
 	int		switch_pending;
 #endif
-	atomic_t	vmalloc_seq;
+	unsigned int	vmalloc_seq;
 	unsigned long	sigpage;
 #ifdef CONFIG_VDSO
 	unsigned long	vdso;

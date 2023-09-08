@@ -1,8 +1,21 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Kernel traps/events for Hexagon processor
  *
  * Copyright (c) 2010-2014, The Linux Foundation. All rights reserved.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 and
+ * only version 2 as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+ * 02110-1301, USA.
  */
 
 #include <linux/init.h>
@@ -14,7 +27,7 @@
 #include <linux/kdebug.h>
 #include <linux/syscalls.h>
 #include <linux/signal.h>
-#include <linux/ptrace.h>
+#include <linux/tracehook.h>
 #include <asm/traps.h>
 #include <asm/vm_fault.h>
 #include <asm/syscall.h>
@@ -27,6 +40,10 @@
 
 #define TRAP_SYSCALL	1
 #define TRAP_DEBUG	0xdb
+
+void __init trap_init(void)
+{
+}
 
 #ifdef CONFIG_GENERIC_BUG
 /* Maybe should resemble arch/sh/kernel/traps.c ?? */
@@ -75,7 +92,7 @@ static const char *ex_name(int ex)
 }
 
 static void do_show_stack(struct task_struct *task, unsigned long *fp,
-			  unsigned long ip, const char *loglvl)
+			  unsigned long ip)
 {
 	int kstack_depth_to_print = 24;
 	unsigned long offset, size;
@@ -89,8 +106,9 @@ static void do_show_stack(struct task_struct *task, unsigned long *fp,
 	if (task == NULL)
 		task = current;
 
-	printk("%sCPU#%d, %s/%d, Call Trace:\n", loglvl, raw_smp_processor_id(),
-		task->comm, task_pid_nr(task));
+	printk(KERN_INFO "CPU#%d, %s/%d, Call Trace:\n",
+	       raw_smp_processor_id(), task->comm,
+	       task_pid_nr(task));
 
 	if (fp == NULL) {
 		if (task == current) {
@@ -103,7 +121,7 @@ static void do_show_stack(struct task_struct *task, unsigned long *fp,
 	}
 
 	if ((((unsigned long) fp) & 0x3) || ((unsigned long) fp < 0x1000)) {
-		printk("%s-- Corrupt frame pointer %p\n", loglvl, fp);
+		printk(KERN_INFO "-- Corrupt frame pointer %p\n", fp);
 		return;
 	}
 
@@ -120,7 +138,8 @@ static void do_show_stack(struct task_struct *task, unsigned long *fp,
 
 		name = kallsyms_lookup(ip, &size, &offset, &modname, tmpstr);
 
-		printk("%s[%p] 0x%lx: %s + 0x%lx", loglvl, fp, ip, name, offset);
+		printk(KERN_INFO "[%p] 0x%lx: %s + 0x%lx", fp, ip, name,
+			offset);
 		if (((unsigned long) fp < low) || (high < (unsigned long) fp))
 			printk(KERN_CONT " (FP out of bounds!)");
 		if (modname)
@@ -130,7 +149,8 @@ static void do_show_stack(struct task_struct *task, unsigned long *fp,
 		newfp = (unsigned long *) *fp;
 
 		if (((unsigned long) newfp) & 0x3) {
-			printk("%s-- Corrupt frame pointer %p\n", loglvl, newfp);
+			printk(KERN_INFO "-- Corrupt frame pointer %p\n",
+				newfp);
 			break;
 		}
 
@@ -140,7 +160,7 @@ static void do_show_stack(struct task_struct *task, unsigned long *fp,
 						+ 8);
 
 			if (regs->syscall_nr != -1) {
-				printk("%s-- trap0 -- syscall_nr: %ld", loglvl,
+				printk(KERN_INFO "-- trap0 -- syscall_nr: %ld",
 					regs->syscall_nr);
 				printk(KERN_CONT "  psp: %lx  elr: %lx\n",
 					 pt_psp(regs), pt_elr(regs));
@@ -148,7 +168,7 @@ static void do_show_stack(struct task_struct *task, unsigned long *fp,
 			} else {
 				/* really want to see more ... */
 				kstack_depth_to_print += 6;
-				printk("%s-- %s (0x%lx)  badva: %lx\n", loglvl,
+				printk(KERN_INFO "-- %s (0x%lx)  badva: %lx\n",
 					ex_name(pt_cause(regs)), pt_cause(regs),
 					pt_badva(regs));
 			}
@@ -171,10 +191,10 @@ static void do_show_stack(struct task_struct *task, unsigned long *fp,
 	}
 }
 
-void show_stack(struct task_struct *task, unsigned long *fp, const char *loglvl)
+void show_stack(struct task_struct *task, unsigned long *fp)
 {
 	/* Saved link reg is one word above FP */
-	do_show_stack(task, fp, 0, loglvl);
+	do_show_stack(task, fp, 0);
 }
 
 int die(const char *str, struct pt_regs *regs, long err)
@@ -200,7 +220,7 @@ int die(const char *str, struct pt_regs *regs, long err)
 
 	print_modules();
 	show_regs(regs);
-	do_show_stack(current, &regs->r30, pt_elr(regs), KERN_EMERG);
+	do_show_stack(current, &regs->r30, pt_elr(regs));
 
 	bust_spinlocks(0);
 	add_taint(TAINT_DIE, LOCKDEP_NOW_UNRELIABLE);
@@ -214,7 +234,7 @@ int die(const char *str, struct pt_regs *regs, long err)
 		panic("Fatal exception");
 
 	oops_exit();
-	make_task_dead(err);
+	do_exit(err);
 	return 0;
 }
 
@@ -232,7 +252,7 @@ int die_if_kernel(char *str, struct pt_regs *regs, long err)
 static void misaligned_instruction(struct pt_regs *regs)
 {
 	die_if_kernel("Misaligned Instruction", regs, 0);
-	force_sig(SIGBUS);
+	force_sig(SIGBUS, current);
 }
 
 /*
@@ -243,19 +263,19 @@ static void misaligned_instruction(struct pt_regs *regs)
 static void misaligned_data_load(struct pt_regs *regs)
 {
 	die_if_kernel("Misaligned Data Load", regs, 0);
-	force_sig(SIGBUS);
+	force_sig(SIGBUS, current);
 }
 
 static void misaligned_data_store(struct pt_regs *regs)
 {
 	die_if_kernel("Misaligned Data Store", regs, 0);
-	force_sig(SIGBUS);
+	force_sig(SIGBUS, current);
 }
 
 static void illegal_instruction(struct pt_regs *regs)
 {
 	die_if_kernel("Illegal Instruction", regs, 0);
-	force_sig(SIGILL);
+	force_sig(SIGILL, current);
 }
 
 /*
@@ -265,7 +285,7 @@ static void illegal_instruction(struct pt_regs *regs)
 static void precise_bus_error(struct pt_regs *regs)
 {
 	die_if_kernel("Precise Bus Error", regs, 0);
-	force_sig(SIGBUS);
+	force_sig(SIGBUS, current);
 }
 
 /*
@@ -348,7 +368,7 @@ void do_trap0(struct pt_regs *regs)
 
 		/* allow strace to catch syscall args  */
 		if (unlikely(test_thread_flag(TIF_SYSCALL_TRACE) &&
-			ptrace_report_syscall_entry(regs)))
+			tracehook_report_syscall_entry(regs)))
 			return;  /*  return -ENOSYS somewhere?  */
 
 		/* Interrupts should be re-enabled for syscall processing */
@@ -386,12 +406,16 @@ void do_trap0(struct pt_regs *regs)
 
 		/* allow strace to get the syscall return state  */
 		if (unlikely(test_thread_flag(TIF_SYSCALL_TRACE)))
-			ptrace_report_syscall_exit(regs, 0);
+			tracehook_report_syscall_exit(regs, 0);
 
 		break;
 	case TRAP_DEBUG:
 		/* Trap0 0xdb is debug breakpoint */
 		if (user_mode(regs)) {
+			struct siginfo info;
+
+			info.si_signo = SIGTRAP;
+			info.si_errno = 0;
 			/*
 			 * Some architecures add some per-thread state
 			 * to distinguish between breakpoint traps and
@@ -399,8 +423,9 @@ void do_trap0(struct pt_regs *regs)
 			 * set the si_code value appropriately, or we
 			 * may want to use a different trap0 flavor.
 			 */
-			force_sig_fault(SIGTRAP, TRAP_BRKPT,
-					(void __user *) pt_elr(regs));
+			info.si_code = TRAP_BRKPT;
+			info.si_addr = (void __user *) pt_elr(regs);
+			force_sig_info(SIGTRAP, &info, current);
 		} else {
 #ifdef CONFIG_KGDB
 			kgdb_handle_exception(pt_cause(regs), SIGTRAP,

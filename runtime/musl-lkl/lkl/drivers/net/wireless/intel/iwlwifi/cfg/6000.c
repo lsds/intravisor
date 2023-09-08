@@ -1,8 +1,27 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /******************************************************************************
  *
  * Copyright(c) 2008 - 2014 Intel Corporation. All rights reserved.
- * Copyright(c) 2018 - 2020 Intel Corporation
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of version 2 of the GNU General Public License as
+ * published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+ * more details.
+ *
+ * You should have received a copy of the GNU General Public License along with
+ * this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110, USA
+ *
+ * The full GNU General Public License is included in this distribution in the
+ * file called LICENSE.
+ *
+ * Contact Information:
+ *  Intel Linux Wireless <linuxwifi@intel.com>
+ * Intel Corporation, 5200 N.E. Elam Young Parkway, Hillsboro, OR 97124-6497
+ *
  *****************************************************************************/
 
 #include <linux/module.h>
@@ -50,9 +69,8 @@
 #define IWL6030_MODULE_FIRMWARE(api) IWL6030_FW_PRE __stringify(api) ".ucode"
 
 static const struct iwl_base_params iwl6000_base_params = {
-	.eeprom_size = OTP_LOW_IMAGE_SIZE_2K,
+	.eeprom_size = OTP_LOW_IMAGE_SIZE,
 	.num_of_queues = IWLAGN_NUM_QUEUES,
-	.max_tfd_queue_size = 256,
 	.max_ll_items = OTP_MAX_LL_ITEMS_6x00,
 	.shadow_ram_support = true,
 	.led_compensation = 51,
@@ -63,9 +81,8 @@ static const struct iwl_base_params iwl6000_base_params = {
 };
 
 static const struct iwl_base_params iwl6050_base_params = {
-	.eeprom_size = OTP_LOW_IMAGE_SIZE_2K,
+	.eeprom_size = OTP_LOW_IMAGE_SIZE,
 	.num_of_queues = IWLAGN_NUM_QUEUES,
-	.max_tfd_queue_size = 256,
 	.max_ll_items = OTP_MAX_LL_ITEMS_6x50,
 	.shadow_ram_support = true,
 	.led_compensation = 51,
@@ -76,9 +93,8 @@ static const struct iwl_base_params iwl6050_base_params = {
 };
 
 static const struct iwl_base_params iwl6000_g2_base_params = {
-	.eeprom_size = OTP_LOW_IMAGE_SIZE_2K,
+	.eeprom_size = OTP_LOW_IMAGE_SIZE,
 	.num_of_queues = IWLAGN_NUM_QUEUES,
-	.max_tfd_queue_size = 256,
 	.max_ll_items = OTP_MAX_LL_ITEMS_6x00,
 	.shadow_ram_support = true,
 	.led_compensation = 57,
@@ -111,14 +127,15 @@ static const struct iwl_eeprom_params iwl6000_eeprom_params = {
 	.fw_name_pre = IWL6005_FW_PRE,				\
 	.ucode_api_max = IWL6000G2_UCODE_API_MAX,		\
 	.ucode_api_min = IWL6000G2_UCODE_API_MIN,		\
-	.trans.device_family = IWL_DEVICE_FAMILY_6005,		\
+	.device_family = IWL_DEVICE_FAMILY_6005,		\
 	.max_inst_size = IWL60_RTC_INST_SIZE,			\
 	.max_data_size = IWL60_RTC_DATA_SIZE,			\
 	.nvm_ver = EEPROM_6005_EEPROM_VERSION,		\
 	.nvm_calib_ver = EEPROM_6005_TX_POWER_VERSION,	\
-	.trans.base_params = &iwl6000_g2_base_params,		\
+	.base_params = &iwl6000_g2_base_params,			\
 	.eeprom_params = &iwl6000_eeprom_params,		\
-	.led_mode = IWL_LED_RF_STATE
+	.led_mode = IWL_LED_RF_STATE,				\
+	.max_ht_ampdu_exponent = IEEE80211_HT_MAX_AMPDU_64K
 
 const struct iwl_cfg iwl6005_2agn_cfg = {
 	.name = "Intel(R) Centrino(R) Advanced-N 6205 AGN",
@@ -164,14 +181,15 @@ const struct iwl_cfg iwl6005_2agn_mow2_cfg = {
 	.fw_name_pre = IWL6030_FW_PRE,				\
 	.ucode_api_max = IWL6000G2_UCODE_API_MAX,		\
 	.ucode_api_min = IWL6000G2_UCODE_API_MIN,		\
-	.trans.device_family = IWL_DEVICE_FAMILY_6030,		\
+	.device_family = IWL_DEVICE_FAMILY_6030,		\
 	.max_inst_size = IWL60_RTC_INST_SIZE,			\
 	.max_data_size = IWL60_RTC_DATA_SIZE,			\
 	.nvm_ver = EEPROM_6030_EEPROM_VERSION,		\
 	.nvm_calib_ver = EEPROM_6030_TX_POWER_VERSION,	\
-	.trans.base_params = &iwl6000_g2_base_params,		\
+	.base_params = &iwl6000_g2_base_params,			\
 	.eeprom_params = &iwl6000_eeprom_params,		\
-	.led_mode = IWL_LED_RF_STATE
+	.led_mode = IWL_LED_RF_STATE,				\
+	.max_ht_ampdu_exponent = IEEE80211_HT_MAX_AMPDU_64K
 
 const struct iwl_cfg iwl6030_2agn_cfg = {
 	.name = "Intel(R) Centrino(R) Advanced-N 6230 AGN",
@@ -199,14 +217,15 @@ const struct iwl_cfg iwl6030_2bg_cfg = {
 	.fw_name_pre = IWL6030_FW_PRE,				\
 	.ucode_api_max = IWL6035_UCODE_API_MAX,			\
 	.ucode_api_min = IWL6035_UCODE_API_MIN,			\
-	.trans.device_family = IWL_DEVICE_FAMILY_6030,		\
+	.device_family = IWL_DEVICE_FAMILY_6030,		\
 	.max_inst_size = IWL60_RTC_INST_SIZE,			\
 	.max_data_size = IWL60_RTC_DATA_SIZE,			\
 	.nvm_ver = EEPROM_6030_EEPROM_VERSION,		\
 	.nvm_calib_ver = EEPROM_6030_TX_POWER_VERSION,	\
-	.trans.base_params = &iwl6000_g2_base_params,		\
+	.base_params = &iwl6000_g2_base_params,			\
 	.eeprom_params = &iwl6000_eeprom_params,		\
-	.led_mode = IWL_LED_RF_STATE
+	.led_mode = IWL_LED_RF_STATE,				\
+	.max_ht_ampdu_exponent = IEEE80211_HT_MAX_AMPDU_64K
 
 const struct iwl_cfg iwl6035_2agn_cfg = {
 	.name = "Intel(R) Centrino(R) Advanced-N 6235 AGN",
@@ -251,16 +270,17 @@ const struct iwl_cfg iwl130_bg_cfg = {
 	.fw_name_pre = IWL6000_FW_PRE,				\
 	.ucode_api_max = IWL6000_UCODE_API_MAX,			\
 	.ucode_api_min = IWL6000_UCODE_API_MIN,			\
-	.trans.device_family = IWL_DEVICE_FAMILY_6000i,		\
+	.device_family = IWL_DEVICE_FAMILY_6000i,		\
 	.max_inst_size = IWL60_RTC_INST_SIZE,			\
 	.max_data_size = IWL60_RTC_DATA_SIZE,			\
 	.valid_tx_ant = ANT_BC,		/* .cfg overwrite */	\
 	.valid_rx_ant = ANT_BC,		/* .cfg overwrite */	\
 	.nvm_ver = EEPROM_6000_EEPROM_VERSION,		\
 	.nvm_calib_ver = EEPROM_6000_TX_POWER_VERSION,	\
-	.trans.base_params = &iwl6000_base_params,		\
+	.base_params = &iwl6000_base_params,			\
 	.eeprom_params = &iwl6000_eeprom_params,		\
-	.led_mode = IWL_LED_BLINK
+	.led_mode = IWL_LED_BLINK,				\
+	.max_ht_ampdu_exponent = IEEE80211_HT_MAX_AMPDU_64K
 
 const struct iwl_cfg iwl6000i_2agn_cfg = {
 	.name = "Intel(R) Centrino(R) Advanced-N 6200 AGN",
@@ -282,17 +302,18 @@ const struct iwl_cfg iwl6000i_2bg_cfg = {
 	.fw_name_pre = IWL6050_FW_PRE,				\
 	.ucode_api_max = IWL6050_UCODE_API_MAX,			\
 	.ucode_api_min = IWL6050_UCODE_API_MIN,			\
-	.trans.device_family = IWL_DEVICE_FAMILY_6050,		\
+	.device_family = IWL_DEVICE_FAMILY_6050,		\
 	.max_inst_size = IWL60_RTC_INST_SIZE,			\
 	.max_data_size = IWL60_RTC_DATA_SIZE,			\
 	.valid_tx_ant = ANT_AB,		/* .cfg overwrite */	\
 	.valid_rx_ant = ANT_AB,		/* .cfg overwrite */	\
 	.nvm_ver = EEPROM_6050_EEPROM_VERSION,		\
 	.nvm_calib_ver = EEPROM_6050_TX_POWER_VERSION,	\
-	.trans.base_params = &iwl6050_base_params,		\
+	.base_params = &iwl6050_base_params,			\
 	.eeprom_params = &iwl6000_eeprom_params,		\
 	.led_mode = IWL_LED_BLINK,				\
-	.internal_wimax_coex = true
+	.internal_wimax_coex = true,				\
+	.max_ht_ampdu_exponent = IEEE80211_HT_MAX_AMPDU_64K
 
 const struct iwl_cfg iwl6050_2agn_cfg = {
 	.name = "Intel(R) Centrino(R) Advanced-N + WiMAX 6250 AGN",
@@ -309,15 +330,16 @@ const struct iwl_cfg iwl6050_2abg_cfg = {
 	.fw_name_pre = IWL6050_FW_PRE,				\
 	.ucode_api_max = IWL6050_UCODE_API_MAX,			\
 	.ucode_api_min = IWL6050_UCODE_API_MIN,			\
-	.trans.device_family = IWL_DEVICE_FAMILY_6150,		\
+	.device_family = IWL_DEVICE_FAMILY_6150,		\
 	.max_inst_size = IWL60_RTC_INST_SIZE,			\
 	.max_data_size = IWL60_RTC_DATA_SIZE,			\
 	.nvm_ver = EEPROM_6150_EEPROM_VERSION,		\
 	.nvm_calib_ver = EEPROM_6150_TX_POWER_VERSION,	\
-	.trans.base_params = &iwl6050_base_params,		\
+	.base_params = &iwl6050_base_params,			\
 	.eeprom_params = &iwl6000_eeprom_params,		\
 	.led_mode = IWL_LED_BLINK,				\
-	.internal_wimax_coex = true
+	.internal_wimax_coex = true,				\
+	.max_ht_ampdu_exponent = IEEE80211_HT_MAX_AMPDU_64K
 
 const struct iwl_cfg iwl6150_bgn_cfg = {
 	.name = "Intel(R) Centrino(R) Wireless-N + WiMAX 6150 BGN",
@@ -335,12 +357,12 @@ const struct iwl_cfg iwl6000_3agn_cfg = {
 	.fw_name_pre = IWL6000_FW_PRE,
 	.ucode_api_max = IWL6000_UCODE_API_MAX,
 	.ucode_api_min = IWL6000_UCODE_API_MIN,
-	.trans.device_family = IWL_DEVICE_FAMILY_6000,
+	.device_family = IWL_DEVICE_FAMILY_6000,
 	.max_inst_size = IWL60_RTC_INST_SIZE,
 	.max_data_size = IWL60_RTC_DATA_SIZE,
 	.nvm_ver = EEPROM_6000_EEPROM_VERSION,
 	.nvm_calib_ver = EEPROM_6000_TX_POWER_VERSION,
-	.trans.base_params = &iwl6000_base_params,
+	.base_params = &iwl6000_base_params,
 	.eeprom_params = &iwl6000_eeprom_params,
 	.ht_params = &iwl6000_ht_params,
 	.led_mode = IWL_LED_BLINK,

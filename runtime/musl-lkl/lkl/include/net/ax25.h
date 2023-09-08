@@ -15,7 +15,6 @@
 #include <linux/refcount.h>
 #include <net/neighbour.h>
 #include <net/sock.h>
-#include <linux/seq_file.h>
 
 #define	AX25_T1CLAMPLO  		1
 #define	AX25_T1CLAMPHI 			(30 * HZ)
@@ -187,24 +186,24 @@ typedef struct {
 
 typedef struct ax25_route {
 	struct ax25_route	*next;
+	refcount_t		refcount;
 	ax25_address		callsign;
 	struct net_device	*dev;
 	ax25_digi		*digipeat;
 	char			ip_mode;
 } ax25_route;
 
-void __ax25_put_route(ax25_route *ax25_rt);
-
-extern rwlock_t ax25_route_lock;
-
-static inline void ax25_route_lock_use(void)
+static inline void ax25_hold_route(ax25_route *ax25_rt)
 {
-	read_lock(&ax25_route_lock);
+	refcount_inc(&ax25_rt->refcount);
 }
 
-static inline void ax25_route_lock_unuse(void)
+void __ax25_put_route(ax25_route *ax25_rt);
+
+static inline void ax25_put_route(ax25_route *ax25_rt)
 {
-	read_unlock(&ax25_route_lock);
+	if (refcount_dec_and_test(&ax25_rt->refcount))
+		__ax25_put_route(ax25_rt);
 }
 
 typedef struct {
@@ -217,18 +216,13 @@ struct ctl_table;
 
 typedef struct ax25_dev {
 	struct ax25_dev		*next;
-
 	struct net_device	*dev;
-	netdevice_tracker	dev_tracker;
-
 	struct net_device	*forward;
 	struct ctl_table_header *sysheader;
 	int			values[AX25_MAX_VALUES];
 #if defined(CONFIG_AX25_DAMA_SLAVE) || defined(CONFIG_AX25_DAMA_MASTER)
 	ax25_dama_info		dama;
 #endif
-	refcount_t		refcount;
-	bool device_up;
 } ax25_dev;
 
 typedef struct ax25_cb {
@@ -236,7 +230,6 @@ typedef struct ax25_cb {
 	ax25_address		source_addr, dest_addr;
 	ax25_digi		*digipeat;
 	ax25_dev		*ax25_dev;
-	netdevice_tracker	dev_tracker;
 	unsigned char		iamdigi;
 	unsigned char		state, modulus, pidincl;
 	unsigned short		vs, vr, va;
@@ -284,17 +277,6 @@ static __inline__ void ax25_cb_put(ax25_cb *ax25)
 	}
 }
 
-static inline void ax25_dev_hold(ax25_dev *ax25_dev)
-{
-	refcount_inc(&ax25_dev->refcount);
-}
-
-static inline void ax25_dev_put(ax25_dev *ax25_dev)
-{
-	if (refcount_dec_and_test(&ax25_dev->refcount)) {
-		kfree(ax25_dev);
-	}
-}
 static inline __be16 ax25_type_trans(struct sk_buff *skb, struct net_device *dev)
 {
 	skb->dev      = dev;
@@ -309,7 +291,7 @@ extern spinlock_t ax25_list_lock;
 void ax25_cb_add(ax25_cb *);
 struct sock *ax25_find_listener(ax25_address *, int, struct net_device *, int);
 struct sock *ax25_get_socket(ax25_address *, ax25_address *, int);
-ax25_cb *ax25_find_cb(const ax25_address *, ax25_address *, ax25_digi *,
+ax25_cb *ax25_find_cb(ax25_address *, ax25_address *, ax25_digi *,
 		      struct net_device *);
 void ax25_send_to_raw(ax25_address *, struct sk_buff *, int);
 void ax25_destroy_socket(ax25_cb *);
@@ -389,11 +371,10 @@ struct ax25_linkfail {
 
 void ax25_linkfail_register(struct ax25_linkfail *lf);
 void ax25_linkfail_release(struct ax25_linkfail *lf);
-int __must_check ax25_listen_register(const ax25_address *,
-				      struct net_device *);
-void ax25_listen_release(const ax25_address *, struct net_device *);
+int __must_check ax25_listen_register(ax25_address *, struct net_device *);
+void ax25_listen_release(ax25_address *, struct net_device *);
 int(*ax25_protocol_function(unsigned int))(struct sk_buff *, ax25_cb *);
-int ax25_listen_mine(const ax25_address *, struct net_device *);
+int ax25_listen_mine(ax25_address *, struct net_device *);
 void ax25_link_failed(ax25_cb *, int);
 int ax25_protocol_is_registered(unsigned int);
 
@@ -407,8 +388,8 @@ netdev_tx_t ax25_ip_xmit(struct sk_buff *skb);
 extern const struct header_ops ax25_header_ops;
 
 /* ax25_out.c */
-ax25_cb *ax25_send_frame(struct sk_buff *, int, const ax25_address *,
-			 ax25_address *, ax25_digi *, struct net_device *);
+ax25_cb *ax25_send_frame(struct sk_buff *, int, ax25_address *, ax25_address *,
+			 ax25_digi *, struct net_device *);
 void ax25_output(ax25_cb *, int, struct sk_buff *);
 void ax25_kick(ax25_cb *);
 void ax25_transmit_buffer(ax25_cb *, struct sk_buff *, int);
@@ -418,7 +399,7 @@ int ax25_check_iframes_acked(ax25_cb *, unsigned short);
 /* ax25_route.c */
 void ax25_rt_device_down(struct net_device *);
 int ax25_rt_ioctl(unsigned int, void __user *);
-extern const struct seq_operations ax25_rt_seqops;
+extern const struct file_operations ax25_route_fops;
 ax25_route *ax25_get_route(ax25_address *addr, struct net_device *dev);
 int ax25_rt_autobind(ax25_cb *, ax25_address *);
 struct sk_buff *ax25_rt_build_path(struct sk_buff *, ax25_address *,
@@ -474,7 +455,7 @@ unsigned long ax25_display_timer(struct timer_list *);
 extern int  ax25_uid_policy;
 ax25_uid_assoc *ax25_findbyuid(kuid_t);
 int __must_check ax25_uid_ioctl(int, struct sockaddr_ax25 *);
-extern const struct seq_operations ax25_uid_seqops;
+extern const struct file_operations ax25_uid_fops;
 void ax25_uid_free(void);
 
 /* sysctl_net_ax25.c */

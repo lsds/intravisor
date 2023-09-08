@@ -1,8 +1,17 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * TechnoTrend USB IR Receiver
  *
  * Copyright (C) 2012 Sean Young <sean@mess.org>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
  */
 
 #include <linux/module.h>
@@ -20,8 +29,8 @@
  * messages per second (!), whether IR is idle or not.
  */
 #define NUM_URBS	4
-#define US_PER_BYTE	62
-#define US_PER_BIT	(US_PER_BYTE / 8)
+#define NS_PER_BYTE	62500
+#define NS_PER_BIT	(NS_PER_BYTE/8)
 
 struct ttusbir {
 	struct rc_dev *rc;
@@ -90,6 +99,7 @@ static void ttusbir_bulk_complete(struct urb *urb)
 	case -ECONNRESET:
 	case -ENOENT:
 	case -ESHUTDOWN:
+		usb_unlink_urb(urb);
 		return;
 	case -EPIPE:
 	default:
@@ -107,22 +117,24 @@ static void ttusbir_bulk_complete(struct urb *urb)
  */
 static void ttusbir_process_ir_data(struct ttusbir *tt, uint8_t *buf)
 {
-	struct ir_raw_event rawir = {};
+	struct ir_raw_event rawir;
 	unsigned i, v, b;
 	bool event = false;
+
+	init_ir_raw_event(&rawir);
 
 	for (i = 0; i < 128; i++) {
 		v = buf[i] & 0xfe;
 		switch (v) {
 		case 0xfe:
 			rawir.pulse = false;
-			rawir.duration = US_PER_BYTE;
+			rawir.duration = NS_PER_BYTE;
 			if (ir_raw_event_store_with_filter(tt->rc, &rawir))
 				event = true;
 			break;
 		case 0:
 			rawir.pulse = true;
-			rawir.duration = US_PER_BYTE;
+			rawir.duration = NS_PER_BYTE;
 			if (ir_raw_event_store_with_filter(tt->rc, &rawir))
 				event = true;
 			break;
@@ -136,12 +148,12 @@ static void ttusbir_process_ir_data(struct ttusbir *tt, uint8_t *buf)
 				rawir.pulse = false;
 			}
 
-			rawir.duration = US_PER_BIT * (8 - b);
+			rawir.duration = NS_PER_BIT * (8 - b);
 			if (ir_raw_event_store_with_filter(tt->rc, &rawir))
 				event = true;
 
 			rawir.pulse = !rawir.pulse;
-			rawir.duration = US_PER_BIT * b;
+			rawir.duration = NS_PER_BIT * b;
 			if (ir_raw_event_store_with_filter(tt->rc, &rawir))
 				event = true;
 			break;
@@ -165,6 +177,7 @@ static void ttusbir_urb_complete(struct urb *urb)
 	case -ECONNRESET:
 	case -ENOENT:
 	case -ESHUTDOWN:
+		usb_unlink_urb(urb);
 		return;
 	case -EPIPE:
 	default:
@@ -309,10 +322,10 @@ static int ttusbir_probe(struct usb_interface *intf,
 	rc->max_timeout = 10 * IR_DEFAULT_TIMEOUT;
 
 	/*
-	 * The precision is US_PER_BIT, but since every 8th bit can be
-	 * overwritten with garbage the accuracy is at best 2 * US_PER_BIT.
+	 * The precision is NS_PER_BIT, but since every 8th bit can be
+	 * overwritten with garbage the accuracy is at best 2 * NS_PER_BIT.
 	 */
-	rc->rx_resolution = 2 * US_PER_BIT;
+	rc->rx_resolution = NS_PER_BIT;
 
 	ret = rc_register_device(rc);
 	if (ret) {
@@ -400,7 +413,7 @@ static int ttusbir_resume(struct usb_interface *intf)
 	led_classdev_resume(&tt->led);
 
 	for (i = 0; i < NUM_URBS; i++) {
-		rc = usb_submit_urb(tt->urb[i], GFP_NOIO);
+		rc = usb_submit_urb(tt->urb[i], GFP_KERNEL);
 		if (rc) {
 			dev_warn(tt->dev, "failed to submit urb: %d\n", rc);
 			break;

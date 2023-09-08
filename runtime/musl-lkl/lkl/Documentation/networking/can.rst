@@ -164,18 +164,18 @@ The Linux network devices (by default) just can handle the
 transmission and reception of media dependent frames. Due to the
 arbitration on the CAN bus the transmission of a low prio CAN-ID
 may be delayed by the reception of a high prio CAN frame. To
-reflect the correct [#f1]_ traffic on the node the loopback of the sent
+reflect the correct [*]_ traffic on the node the loopback of the sent
 data has to be performed right after a successful transmission. If
 the CAN network interface is not capable of performing the loopback for
 some reason the SocketCAN core can do this task as a fallback solution.
-See :ref:`socketcan-local-loopback2` for details (recommended).
+See :ref:`socketcan-local-loopback1` for details (recommended).
 
 The loopback functionality is enabled by default to reflect standard
 networking behaviour for CAN applications. Due to some requests from
 the RT-SocketCAN group the loopback optionally may be disabled for each
 separate socket. See sockopts from the CAN RAW sockets in :ref:`socketcan-raw-sockets`.
 
-.. [#f1] you really like to have this when you're running analyser
+.. [*] you really like to have this when you're running analyser
        tools like 'candump' or 'cansniffer' on the (same) node.
 
 
@@ -228,35 +228,19 @@ send(2), sendto(2), sendmsg(2) and the recv* counterpart operations
 on the socket as usual. There are also CAN specific socket options
 described below.
 
-The Classical CAN frame structure (aka CAN 2.0B), the CAN FD frame structure
-and the sockaddr structure are defined in include/linux/can.h:
+The basic CAN frame structure and the sockaddr structure are defined
+in include/linux/can.h:
 
 .. code-block:: C
 
     struct can_frame {
             canid_t can_id;  /* 32 bit CAN_ID + EFF/RTR/ERR flags */
-            union {
-                    /* CAN frame payload length in byte (0 .. CAN_MAX_DLEN)
-                     * was previously named can_dlc so we need to carry that
-                     * name for legacy support
-                     */
-                    __u8 len;
-                    __u8 can_dlc; /* deprecated */
-            };
+            __u8    can_dlc; /* frame payload length in byte (0 .. 8) */
             __u8    __pad;   /* padding */
             __u8    __res0;  /* reserved / padding */
-            __u8    len8_dlc; /* optional DLC for 8 byte payload length (9 .. 15) */
+            __u8    __res1;  /* reserved / padding */
             __u8    data[8] __attribute__((aligned(8)));
     };
-
-Remark: The len element contains the payload length in bytes and should be
-used instead of can_dlc. The deprecated can_dlc was misleadingly named as
-it always contained the plain payload length in bytes and not the so called
-'data length code' (DLC).
-
-To pass the raw DLC from/to a Classical CAN network device the len8_dlc
-element can contain values 9 .. 15 when the len element is 8 (the real
-payload length for all DLC values greater or equal to 8).
 
 The alignment of the (linear) payload data[] to a 64bit boundary
 allows the user to define their own structs and unions to easily access
@@ -275,23 +259,6 @@ PF_PACKET socket, that also binds to a specific interface:
             union {
                     /* transport protocol class address info (e.g. ISOTP) */
                     struct { canid_t rx_id, tx_id; } tp;
-
-                    /* J1939 address information */
-                    struct {
-                            /* 8 byte name when using dynamic addressing */
-                            __u64 name;
-
-                            /* pgn:
-                             * 8 bit: PS in PDU2 case, else 0
-                             * 8 bit: PF
-                             * 1 bit: DP
-                             * 1 bit: reserved
-                             */
-                            __u32 pgn;
-
-                            /* 1 byte address */
-                            __u8 addr;
-                    } j1939;
 
                     /* reserved for future CAN protocols address information */
             } can_addr;
@@ -404,7 +371,7 @@ kernel interfaces (ABI) which heavily rely on the CAN frame with fixed eight
 bytes of payload (struct can_frame) like the CAN_RAW socket. Therefore e.g.
 the CAN_RAW socket supports a new socket option CAN_RAW_FD_FRAMES that
 switches the socket into a mode that allows the handling of CAN FD frames
-and Classical CAN frames simultaneously (see :ref:`socketcan-rawfd`).
+and (legacy) CAN frames simultaneously (see :ref:`socketcan-rawfd`).
 
 The struct canfd_frame is defined in include/linux/can.h:
 
@@ -430,7 +397,7 @@ code (DLC) of the struct can_frame was used as a length information as the
 length and the DLC has a 1:1 mapping in the range of 0 .. 8. To preserve
 the easy handling of the length information the canfd_frame.len element
 contains a plain length value from 0 .. 64. So both canfd_frame.len and
-can_frame.len are equal and contain a length information and no DLC.
+can_frame.can_dlc are equal and contain a length information and no DLC.
 For details about the distinction of CAN and CAN FD capable devices and
 the mapping to the bus-relevant data length code (DLC), see :ref:`socketcan-can-fd-driver`.
 
@@ -440,7 +407,7 @@ definitions are specified for CAN specific MTUs in include/linux/can.h:
 
 .. code-block:: C
 
-  #define CAN_MTU   (sizeof(struct can_frame))   == 16  => Classical CAN frame
+  #define CAN_MTU   (sizeof(struct can_frame))   == 16  => 'legacy' CAN frame
   #define CANFD_MTU (sizeof(struct canfd_frame)) == 72  => CAN FD frame
 
 
@@ -608,8 +575,6 @@ demand:
     setsockopt(s, SOL_CAN_RAW, CAN_RAW_RECV_OWN_MSGS,
                &recv_own_msgs, sizeof(recv_own_msgs));
 
-Note that reception of a socket's own CAN frames are subject to the same
-filtering as other CAN frames (see :ref:`socketcan-rawfilter`).
 
 .. _socketcan-rawfd:
 
@@ -644,7 +609,7 @@ Example:
             printf("got CAN FD frame with length %d\n", cfd.len);
             /* cfd.flags contains valid data */
     } else if (nbytes == CAN_MTU) {
-            printf("got Classical CAN frame with length %d\n", cfd.len);
+            printf("got legacy CAN frame with length %d\n", cfd.len);
             /* cfd.flags is undefined */
     } else {
             fprintf(stderr, "read: invalid CAN(FD) frame\n");
@@ -658,7 +623,7 @@ Example:
             printf("%02X ", cfd.data[i]);
 
 When reading with size CANFD_MTU only returns CAN_MTU bytes that have
-been received from the socket a Classical CAN frame has been read into the
+been received from the socket a legacy CAN frame has been read into the
 provided CAN FD structure. Note that the canfd_frame.flags data field is
 not specified in the struct can_frame and therefore it is only valid in
 CANFD_MTU sized CAN FD frames.
@@ -668,7 +633,7 @@ Implementation hint for new CAN applications:
 To build a CAN FD aware application use struct canfd_frame as basic CAN
 data structure for CAN_RAW based applications. When the application is
 executed on an older Linux kernel and switching the CAN_RAW_FD_FRAMES
-socket option returns an error: No problem. You'll get Classical CAN frames
+socket option returns an error: No problem. You'll get legacy CAN frames
 or CAN FD frames and can process them the same way.
 
 When sending to CAN devices make sure that the device is capable to handle
@@ -877,8 +842,6 @@ TX_RESET_MULTI_IDX:
 RX_RTR_FRAME:
 	Send reply for RTR-request (placed in op->frames[0]).
 
-CAN_FD_FRAME:
-	The CAN frames following the bcm_msg_head are struct canfd_frame's
 
 Broadcast Manager Transmission Timers
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -1063,7 +1026,7 @@ Additional procfs files in /proc/net/can::
 
     stats       - SocketCAN core statistics (rx/tx frames, match ratios, ...)
     reset_stats - manual statistic reset
-    version     - prints SocketCAN core and ABI version (removed in Linux 5.10)
+    version     - prints the SocketCAN core version and the ABI version
 
 
 Writing Own CAN Protocol Modules
@@ -1095,7 +1058,7 @@ drivers you mainly have to deal with:
 - TX: Put the CAN frame from the socket buffer to the CAN controller.
 - RX: Put the CAN frame from the CAN controller to the socket buffer.
 
-See e.g. at Documentation/networking/netdevices.rst . The differences
+See e.g. at Documentation/networking/netdevices.txt . The differences
 for writing CAN network device driver are described below:
 
 
@@ -1107,7 +1070,7 @@ General Settings
     dev->type  = ARPHRD_CAN; /* the netdevice hardware type */
     dev->flags = IFF_NOARP;  /* CAN has no arp */
 
-    dev->mtu = CAN_MTU; /* sizeof(struct can_frame) -> Classical CAN interface */
+    dev->mtu = CAN_MTU; /* sizeof(struct can_frame) -> legacy CAN interface */
 
     or alternative, when the controller supports CAN with flexible data rate:
     dev->mtu = CANFD_MTU; /* sizeof(struct canfd_frame) -> CAN FD interface */
@@ -1221,7 +1184,6 @@ Setting CAN device properties::
         [ fd { on | off } ]
         [ fd-non-iso { on | off } ]
         [ presume-ack { on | off } ]
-        [ cc-len8-dlc { on | off } ]
 
         [ restart-ms TIME-MS ]
         [ restart ]
@@ -1364,22 +1326,22 @@ arbitration phase and the payload phase of the CAN FD frame. Therefore a
 second bit timing has to be specified in order to enable the CAN FD bitrate.
 
 Additionally CAN FD capable CAN controllers support up to 64 bytes of
-payload. The representation of this length in can_frame.len and
+payload. The representation of this length in can_frame.can_dlc and
 canfd_frame.len for userspace applications and inside the Linux network
 layer is a plain value from 0 .. 64 instead of the CAN 'data length code'.
-The data length code was a 1:1 mapping to the payload length in the Classical
+The data length code was a 1:1 mapping to the payload length in the legacy
 CAN frames anyway. The payload length to the bus-relevant DLC mapping is
 only performed inside the CAN drivers, preferably with the helper
-functions can_fd_dlc2len() and can_fd_len2dlc().
+functions can_dlc2len() and can_len2dlc().
 
 The CAN netdevice driver capabilities can be distinguished by the network
 devices maximum transfer unit (MTU)::
 
-  MTU = 16 (CAN_MTU)   => sizeof(struct can_frame)   => Classical CAN device
+  MTU = 16 (CAN_MTU)   => sizeof(struct can_frame)   => 'legacy' CAN device
   MTU = 72 (CANFD_MTU) => sizeof(struct canfd_frame) => CAN FD capable device
 
 The CAN device MTU can be retrieved e.g. with a SIOCGIFMTU ioctl() syscall.
-N.B. CAN FD capable devices can also handle and send Classical CAN frames.
+N.B. CAN FD capable devices can also handle and send legacy CAN frames.
 
 When configuring CAN FD capable CAN controllers an additional 'data' bitrate
 has to be set. This bitrate for the data phase of the CAN FD frame has to be

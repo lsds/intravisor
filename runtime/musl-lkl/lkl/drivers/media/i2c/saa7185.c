@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * saa7185 - Philips SAA7185B video encoder driver version 0.0.3
  *
@@ -9,6 +8,16 @@
  *
  * Changes by Ronald Bultje <rbultje@ronald.bitfreak.net>
  *    - moved over to linux>=2.4.x i2c protocol (1/1/2003)
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
  */
 
 #include <linux/module.h>
@@ -322,7 +331,7 @@ static int saa7185_probe(struct i2c_client *client,
 	return 0;
 }
 
-static void saa7185_remove(struct i2c_client *client)
+static int saa7185_remove(struct i2c_client *client)
 {
 	struct v4l2_subdev *sd = i2c_get_clientdata(client);
 	struct saa7185 *encoder = to_saa7185(sd);
@@ -330,6 +339,7 @@ static void saa7185_remove(struct i2c_client *client)
 	v4l2_device_unregister_subdev(sd);
 	/* SW: output off is active */
 	saa7185_write(sd, 0x61, (encoder->reg[0x61]) | 0x40);
+	return 0;
 }
 
 /* ----------------------------------------------------------------------- */

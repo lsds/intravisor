@@ -1,9 +1,34 @@
-// SPDX-License-Identifier: (GPL-2.0-only OR BSD-3-Clause)
 /* QLogic qedr NIC Driver
  * Copyright (c) 2015-2017  QLogic Corporation
- * Copyright (c) 2019-2020 Marvell International Ltd.
+ *
+ * This software is available to you under a choice of one of two
+ * licenses.  You may choose to be licensed under the terms of the GNU
+ * General Public License (GPL) Version 2, available from the file
+ * COPYING in the main directory of this source tree, or the
+ * OpenIB.org BSD license below:
+ *
+ *     Redistribution and use in source and binary forms, with or
+ *     without modification, are permitted provided that the following
+ *     conditions are met:
+ *
+ *      - Redistributions of source code must retain the above
+ *        copyright notice, this list of conditions and the following
+ *        disclaimer.
+ *
+ *      - Redistributions in binary form must reproduce the above
+ *        copyright notice, this list of conditions and the following
+ *        disclaimer in the documentation and /or other materials
+ *        provided with the distribution.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+ * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+ * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS
+ * BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
+ * ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+ * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
  */
-
 #include <linux/pci.h>
 #include <linux/netdevice.h>
 #include <linux/list.h>
@@ -25,8 +50,6 @@ static void _qede_rdma_dev_add(struct qede_dev *edev)
 	if (!qedr_drv)
 		return;
 
-	/* Leftovers from previous error recovery */
-	edev->rdma_info.exp_recovery = false;
 	edev->rdma_info.qedr_dev = qedr_drv->add(edev->cdev, edev->pdev,
 						 edev->ndev);
 }
@@ -34,9 +57,6 @@ static void _qede_rdma_dev_add(struct qede_dev *edev)
 static int qede_rdma_create_wq(struct qede_dev *edev)
 {
 	INIT_LIST_HEAD(&edev->rdma_info.rdma_event_list);
-	kref_init(&edev->rdma_info.refcnt);
-	init_completion(&edev->rdma_info.event_comp);
-
 	edev->rdma_info.rdma_wq = create_singlethread_workqueue("rdma_wq");
 	if (!edev->rdma_info.rdma_wq) {
 		DP_NOTICE(edev, "qedr: Could not create workqueue\n");
@@ -61,48 +81,27 @@ static void qede_rdma_cleanup_event(struct qede_dev *edev)
 	}
 }
 
-static void qede_rdma_complete_event(struct kref *ref)
-{
-	struct qede_rdma_dev *rdma_dev =
-		container_of(ref, struct qede_rdma_dev, refcnt);
-
-	/* no more events will be added after this */
-	complete(&rdma_dev->event_comp);
-}
-
 static void qede_rdma_destroy_wq(struct qede_dev *edev)
 {
-	/* Avoid race with add_event flow, make sure it finishes before
-	 * we start accessing the list and cleaning up the work
-	 */
-	kref_put(&edev->rdma_info.refcnt, qede_rdma_complete_event);
-	wait_for_completion(&edev->rdma_info.event_comp);
-
 	qede_rdma_cleanup_event(edev);
 	destroy_workqueue(edev->rdma_info.rdma_wq);
-	edev->rdma_info.rdma_wq = NULL;
 }
 
-int qede_rdma_dev_add(struct qede_dev *edev, bool recovery)
+int qede_rdma_dev_add(struct qede_dev *edev)
 {
-	int rc;
+	int rc = 0;
 
-	if (!qede_rdma_supported(edev))
-		return 0;
+	if (qede_rdma_supported(edev)) {
+		rc = qede_rdma_create_wq(edev);
+		if (rc)
+			return rc;
 
-	/* Cannot start qedr while recovering since it wasn't fully stopped */
-	if (recovery)
-		return 0;
-
-	rc = qede_rdma_create_wq(edev);
-	if (rc)
-		return rc;
-
-	INIT_LIST_HEAD(&edev->rdma_info.entry);
-	mutex_lock(&qedr_dev_list_lock);
-	list_add_tail(&edev->rdma_info.entry, &qedr_dev_list);
-	_qede_rdma_dev_add(edev);
-	mutex_unlock(&qedr_dev_list_lock);
+		INIT_LIST_HEAD(&edev->rdma_info.entry);
+		mutex_lock(&qedr_dev_list_lock);
+		list_add_tail(&edev->rdma_info.entry, &qedr_dev_list);
+		_qede_rdma_dev_add(edev);
+		mutex_unlock(&qedr_dev_list_lock);
+	}
 
 	return rc;
 }
@@ -111,30 +110,19 @@ static void _qede_rdma_dev_remove(struct qede_dev *edev)
 {
 	if (qedr_drv && qedr_drv->remove && edev->rdma_info.qedr_dev)
 		qedr_drv->remove(edev->rdma_info.qedr_dev);
+	edev->rdma_info.qedr_dev = NULL;
 }
 
-void qede_rdma_dev_remove(struct qede_dev *edev, bool recovery)
+void qede_rdma_dev_remove(struct qede_dev *edev)
 {
 	if (!qede_rdma_supported(edev))
 		return;
 
-	/* Cannot remove qedr while recovering since it wasn't fully stopped */
-	if (!recovery) {
-		qede_rdma_destroy_wq(edev);
-		mutex_lock(&qedr_dev_list_lock);
-		if (!edev->rdma_info.exp_recovery)
-			_qede_rdma_dev_remove(edev);
-		edev->rdma_info.qedr_dev = NULL;
-		list_del(&edev->rdma_info.entry);
-		mutex_unlock(&qedr_dev_list_lock);
-	} else {
-		if (!edev->rdma_info.exp_recovery) {
-			mutex_lock(&qedr_dev_list_lock);
-			_qede_rdma_dev_remove(edev);
-			mutex_unlock(&qedr_dev_list_lock);
-		}
-		edev->rdma_info.exp_recovery = true;
-	}
+	qede_rdma_destroy_wq(edev);
+	mutex_lock(&qedr_dev_list_lock);
+	_qede_rdma_dev_remove(edev);
+	list_del(&edev->rdma_info.entry);
+	mutex_unlock(&qedr_dev_list_lock);
 }
 
 static void _qede_rdma_dev_open(struct qede_dev *edev)
@@ -216,8 +204,7 @@ void qede_rdma_unregister_driver(struct qedr_driver *drv)
 
 	mutex_lock(&qedr_dev_list_lock);
 	list_for_each_entry(edev, &qedr_dev_list, rdma_info.entry) {
-		/* If device has experienced recovery it was already removed */
-		if (edev->rdma_info.qedr_dev && !edev->rdma_info.exp_recovery)
+		if (edev->rdma_info.qedr_dev)
 			_qede_rdma_dev_remove(edev);
 	}
 	qedr_drv = NULL;
@@ -234,23 +221,16 @@ static void qede_rdma_changeaddr(struct qede_dev *edev)
 		qedr_drv->notify(edev->rdma_info.qedr_dev, QEDE_CHANGE_ADDR);
 }
 
-static void qede_rdma_change_mtu(struct qede_dev *edev)
-{
-	if (qede_rdma_supported(edev)) {
-		if (qedr_drv && edev->rdma_info.qedr_dev && qedr_drv->notify)
-			qedr_drv->notify(edev->rdma_info.qedr_dev,
-					 QEDE_CHANGE_MTU);
-	}
-}
-
 static struct qede_rdma_event_work *
 qede_rdma_get_free_event_node(struct qede_dev *edev)
 {
 	struct qede_rdma_event_work *event_node = NULL;
+	struct list_head *list_node = NULL;
 	bool found = false;
 
-	list_for_each_entry(event_node, &edev->rdma_info.rdma_event_list,
-			    list) {
+	list_for_each(list_node, &edev->rdma_info.rdma_event_list) {
+		event_node = list_entry(list_node, struct qede_rdma_event_work,
+					list);
 		if (!work_pending(&event_node->work)) {
 			found = true;
 			break;
@@ -294,9 +274,6 @@ static void qede_rdma_handle_event(struct work_struct *work)
 	case QEDE_CHANGE_ADDR:
 		qede_rdma_changeaddr(edev);
 		break;
-	case QEDE_CHANGE_MTU:
-		qede_rdma_change_mtu(edev);
-		break;
 	default:
 		DP_NOTICE(edev, "Invalid rdma event %d", event);
 	}
@@ -307,31 +284,18 @@ static void qede_rdma_add_event(struct qede_dev *edev,
 {
 	struct qede_rdma_event_work *event_node;
 
-	/* If a recovery was experienced avoid adding the event */
-	if (edev->rdma_info.exp_recovery)
+	if (!edev->rdma_info.qedr_dev)
 		return;
-
-	if (!edev->rdma_info.qedr_dev || !edev->rdma_info.rdma_wq)
-		return;
-
-	/* We don't want the cleanup flow to start while we're allocating and
-	 * scheduling the work
-	 */
-	if (!kref_get_unless_zero(&edev->rdma_info.refcnt))
-		return; /* already being destroyed */
 
 	event_node = qede_rdma_get_free_event_node(edev);
 	if (!event_node)
-		goto out;
+		return;
 
 	event_node->event = event;
 	event_node->ptr = edev;
 
 	INIT_WORK(&event_node->work, qede_rdma_handle_event);
 	queue_work(edev->rdma_info.rdma_wq, &event_node->work);
-
-out:
-	kref_put(&edev->rdma_info.refcnt, qede_rdma_complete_event);
 }
 
 void qede_rdma_dev_event_open(struct qede_dev *edev)
@@ -347,9 +311,4 @@ void qede_rdma_dev_event_close(struct qede_dev *edev)
 void qede_rdma_event_changeaddr(struct qede_dev *edev)
 {
 	qede_rdma_add_event(edev, QEDE_CHANGE_ADDR);
-}
-
-void qede_rdma_event_change_mtu(struct qede_dev *edev)
-{
-	qede_rdma_add_event(edev, QEDE_CHANGE_MTU);
 }

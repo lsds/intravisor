@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Linux device driver for RTL8187
  *
@@ -15,6 +14,10 @@
  *
  * Magic delays and register offsets below are taken from the original
  * r8187 driver sources.  Thanks to Realtek for their support!
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 
 #include <linux/usb.h>
@@ -441,13 +444,12 @@ static int rtl8187_init_urbs(struct ieee80211_hw *dev)
 		skb_queue_tail(&priv->rx_queue, skb);
 		usb_anchor_urb(entry, &priv->anchored);
 		ret = usb_submit_urb(entry, GFP_KERNEL);
+		usb_put_urb(entry);
 		if (ret) {
 			skb_unlink(skb, &priv->rx_queue);
 			usb_unanchor_urb(entry);
-			usb_put_urb(entry);
 			goto err;
 		}
-		usb_put_urb(entry);
 	}
 	return ret;
 
@@ -497,7 +499,7 @@ static void rtl8187b_status_cb(struct urb *urb)
 	if (cmd_type == 1) {
 		unsigned int pkt_rc, seq_no;
 		bool tok;
-		struct sk_buff *skb, *iter;
+		struct sk_buff *skb;
 		struct ieee80211_hdr *ieee80211hdr;
 		unsigned long flags;
 
@@ -506,9 +508,8 @@ static void rtl8187b_status_cb(struct urb *urb)
 		seq_no = (val >> 16) & 0xFFF;
 
 		spin_lock_irqsave(&priv->b_tx_status.queue.lock, flags);
-		skb = NULL;
-		skb_queue_reverse_walk(&priv->b_tx_status.queue, iter) {
-			ieee80211hdr = (struct ieee80211_hdr *)iter->data;
+		skb_queue_reverse_walk(&priv->b_tx_status.queue, skb) {
+			ieee80211hdr = (struct ieee80211_hdr *)skb->data;
 
 			/*
 			 * While testing, it was discovered that the seq_no
@@ -521,12 +522,10 @@ static void rtl8187b_status_cb(struct urb *urb)
 			 * it's unlikely we wrongly ack some sent data
 			 */
 			if ((le16_to_cpu(ieee80211hdr->seq_ctrl)
-			     & 0xFFF) == seq_no) {
-				skb = iter;
+			    & 0xFFF) == seq_no)
 				break;
-			}
 		}
-		if (skb) {
+		if (skb != (struct sk_buff *) &priv->b_tx_status.queue) {
 			struct ieee80211_tx_info *info = IEEE80211_SKB_CB(skb);
 
 			__skb_unlink(skb, &priv->b_tx_status.queue);
@@ -1075,7 +1074,7 @@ static void rtl8187_beacon_work(struct work_struct *work)
 		goto resched;
 
 	/* grab a fresh beacon */
-	skb = ieee80211_beacon_get(dev, vif, 0);
+	skb = ieee80211_beacon_get(dev, vif);
 	if (!skb)
 		goto resched;
 
@@ -1251,7 +1250,7 @@ static void rtl8187_conf_erp(struct rtl8187_priv *priv, bool use_short_slot,
 static void rtl8187_bss_info_changed(struct ieee80211_hw *dev,
 				     struct ieee80211_vif *vif,
 				     struct ieee80211_bss_conf *info,
-				     u64 changed)
+				     u32 changed)
 {
 	struct rtl8187_priv *priv = dev->priv;
 	struct rtl8187_vif *vif_priv;
@@ -1338,8 +1337,7 @@ static void rtl8187_configure_filter(struct ieee80211_hw *dev,
 }
 
 static int rtl8187_conf_tx(struct ieee80211_hw *dev,
-			   struct ieee80211_vif *vif,
-			   unsigned int link_id, u16 queue,
+			   struct ieee80211_vif *vif, u16 queue,
 			   const struct ieee80211_tx_queue_params *params)
 {
 	struct rtl8187_priv *priv = dev->priv;

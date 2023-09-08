@@ -1,7 +1,10 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (C) 2014-15 Synopsys, Inc. (www.synopsys.com)
  * Copyright (C) 2004, 2007-2010, 2011-2012 Synopsys, Inc. (www.synopsys.com)
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 
 #ifndef __ASM_IRQFLAGS_ARCOMPACT_H
@@ -50,12 +53,8 @@
  * are redone after IRQs are re-enabled (and gcc doesn't reuse stale register)
  *
  * Noted at the time of Abilis Timer List corruption
- *
- * Orig Bug + Rejected solution:
- * https://lore.kernel.org/lkml/1364553218-31255-1-git-send-email-vgupta@synopsys.com
- *
- * Reasoning:
- * https://lore.kernel.org/lkml/CA+55aFyFWjpSVQM6M266tKrG_ZXJzZ-nYejpmXYQXbrr42mGPQ@mail.gmail.com
+ *	Orig Bug + Rejected solution	: https://lkml.org/lkml/2013/3/29/67
+ *	Reasoning			: https://lkml.org/lkml/2013/4/8/15
  *
  ******************************************************************/
 
@@ -94,9 +93,6 @@ static inline void arch_local_irq_restore(unsigned long flags)
 /*
  * Unconditionally Enable IRQs
  */
-#ifdef CONFIG_ARC_COMPACT_IRQ_LEVELS
-extern void arch_local_irq_enable(void);
-#else
 static inline void arch_local_irq_enable(void)
 {
 	unsigned long temp;
@@ -109,7 +105,7 @@ static inline void arch_local_irq_enable(void)
 	: "n"((STATUS_E1_MASK | STATUS_E2_MASK))
 	: "cc", "memory");
 }
-#endif
+
 
 /*
  * Unconditionally Disable IRQs

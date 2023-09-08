@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * PIKA FPGA based Watchdog Timer
  *
@@ -119,7 +118,7 @@ static int pikawdt_open(struct inode *inode, struct file *file)
 
 	pikawdt_start();
 
-	return stream_open(inode, file);
+	return nonseekable_open(inode, file);
 }
 
 /*
@@ -214,7 +213,6 @@ static const struct file_operations pikawdt_fops = {
 	.release	= pikawdt_release,
 	.write		= pikawdt_write,
 	.unlocked_ioctl	= pikawdt_ioctl,
-	.compat_ioctl	= compat_ptr_ioctl,
 };
 
 static struct miscdevice pikawdt_miscdev = {
@@ -227,7 +225,7 @@ static int __init pikawdt_init(void)
 {
 	struct device_node *np;
 	void __iomem *fpga;
-	u32 post1;
+	static u32 post1;
 	int ret;
 
 	np = of_find_compatible_node(NULL, NULL, "pika,fpga");

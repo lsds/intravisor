@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Keystone Queue Manager subsystem driver
  *
@@ -6,6 +5,15 @@
  * Authors:	Sandeep Nair <sandeep_n@ti.com>
  *		Cyril Chemparathy <cyril@ti.com>
  *		Santosh Shilimkar <santosh.shilimkar@ti.com>
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * version 2 as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * General Public License for more details.
  */
 
 #include <linux/debugfs.h>
@@ -25,8 +33,6 @@
 
 static struct knav_device *kdev;
 static DEFINE_MUTEX(knav_dev_lock);
-#define knav_dev_lock_held() \
-	lockdep_is_held(&knav_dev_lock)
 
 /* Queue manager register indices in DTS */
 #define KNAV_QUEUE_PEEK_REG_INDEX	0
@@ -35,15 +41,6 @@ static DEFINE_MUTEX(knav_dev_lock);
 #define KNAV_QUEUE_REGION_REG_INDEX	3
 #define KNAV_QUEUE_PUSH_REG_INDEX	4
 #define KNAV_QUEUE_POP_REG_INDEX	5
-
-/* Queue manager register indices in DTS for QMSS in K2G NAVSS.
- * There are no status and vbusm push registers on this version
- * of QMSS. Push registers are same as pop, So all indices above 1
- * are to be re-defined
- */
-#define KNAV_L_QUEUE_CONFIG_REG_INDEX	1
-#define KNAV_L_QUEUE_REGION_REG_INDEX	2
-#define KNAV_L_QUEUE_PUSH_REG_INDEX	3
 
 /* PDSP register indices in DTS */
 #define KNAV_QUEUE_PDSP_IRAM_REG_INDEX	0
@@ -54,9 +51,8 @@ static DEFINE_MUTEX(knav_dev_lock);
 #define knav_queue_idx_to_inst(kdev, idx)			\
 	(kdev->instances + (idx << kdev->inst_shift))
 
-#define for_each_handle_rcu(qh, inst)				\
-	list_for_each_entry_rcu(qh, &inst->handles, list,	\
-				knav_dev_lock_held())
+#define for_each_handle_rcu(qh, inst)			\
+	list_for_each_entry_rcu(qh, &inst->handles, list)
 
 #define for_each_instance(idx, inst, kdev)		\
 	for (idx = 0, inst = kdev->instances;		\
@@ -69,17 +65,10 @@ static DEFINE_MUTEX(knav_dev_lock);
  */
 const char *knav_acc_firmwares[] = {"ks2_qmss_pdsp_acc48.bin"};
 
-static bool device_ready;
-bool knav_qmss_device_ready(void)
-{
-	return device_ready;
-}
-EXPORT_SYMBOL_GPL(knav_qmss_device_ready);
-
 /**
  * knav_queue_notify: qmss queue notfier call
  *
- * @inst:		- qmss queue instance like accumulator
+ * @inst:		qmss queue instance like accumulator
  */
 void knav_queue_notify(struct knav_queue_inst *inst)
 {
@@ -94,7 +83,7 @@ void knav_queue_notify(struct knav_queue_inst *inst)
 			continue;
 		if (WARN_ON(!qh->notifier_fn))
 			continue;
-		this_cpu_inc(qh->stats->notifies);
+		atomic_inc(&qh->stats.notifies);
 		qh->notifier_fn(qh->notifier_fn_arg);
 	}
 	rcu_read_unlock();
@@ -113,17 +102,19 @@ static int knav_queue_setup_irq(struct knav_range_info *range,
 			  struct knav_queue_inst *inst)
 {
 	unsigned queue = inst->id - range->queue_base;
+	unsigned long cpu_map;
 	int ret = 0, irq;
 
 	if (range->flags & RANGE_HAS_IRQ) {
 		irq = range->irqs[queue].irq;
+		cpu_map = range->irqs[queue].cpu_map;
 		ret = request_irq(irq, knav_queue_int_handler, 0,
 					inst->irq_name, inst);
 		if (ret)
 			return ret;
 		disable_irq(irq);
-		if (range->irqs[queue].cpu_mask) {
-			ret = irq_set_affinity_hint(irq, range->irqs[queue].cpu_mask);
+		if (cpu_map) {
+			ret = irq_set_affinity_hint(irq, to_cpumask(&cpu_map));
 			if (ret) {
 				dev_warn(range->kdev->dev,
 					 "Failed to set IRQ affinity\n");
@@ -223,12 +214,6 @@ static struct knav_queue *__knav_queue_open(struct knav_queue_inst *inst,
 	if (!qh)
 		return ERR_PTR(-ENOMEM);
 
-	qh->stats = alloc_percpu(struct knav_queue_stats);
-	if (!qh->stats) {
-		ret = -ENOMEM;
-		goto err;
-	}
-
 	qh->flags = flags;
 	qh->inst = inst;
 	id = inst->id - inst->qmgr->start_queue;
@@ -244,17 +229,13 @@ static struct knav_queue *__knav_queue_open(struct knav_queue_inst *inst,
 		if (range->ops && range->ops->open_queue)
 			ret = range->ops->open_queue(range, inst, flags);
 
-		if (ret)
-			goto err;
+		if (ret) {
+			devm_kfree(inst->kdev->dev, qh);
+			return ERR_PTR(ret);
+		}
 	}
 	list_add_tail_rcu(&qh->list, &inst->handles);
 	return qh;
-
-err:
-	if (qh->stats)
-		free_percpu(qh->stats);
-	devm_kfree(inst->kdev->dev, qh);
-	return ERR_PTR(ret);
 }
 
 static struct knav_queue *
@@ -409,7 +390,7 @@ static int knav_gp_close_queue(struct knav_range_info *range,
 	return 0;
 }
 
-static struct knav_range_ops knav_gp_range_ops = {
+struct knav_range_ops knav_gp_range_ops = {
 	.set_notify	= knav_gp_set_notify,
 	.open_queue	= knav_gp_open_queue,
 	.close_queue	= knav_gp_close_queue,
@@ -430,12 +411,6 @@ static void knav_queue_debug_show_instance(struct seq_file *s,
 {
 	struct knav_device *kdev = inst->kdev;
 	struct knav_queue *qh;
-	int cpu = 0;
-	int pushes = 0;
-	int pops = 0;
-	int push_errors = 0;
-	int pop_errors = 0;
-	int notifies = 0;
 
 	if (!knav_queue_is_busy(inst))
 		return;
@@ -443,22 +418,19 @@ static void knav_queue_debug_show_instance(struct seq_file *s,
 	seq_printf(s, "\tqueue id %d (%s)\n",
 		   kdev->base_id + inst->id, inst->name);
 	for_each_handle_rcu(qh, inst) {
-		for_each_possible_cpu(cpu) {
-			pushes += per_cpu_ptr(qh->stats, cpu)->pushes;
-			pops += per_cpu_ptr(qh->stats, cpu)->pops;
-			push_errors += per_cpu_ptr(qh->stats, cpu)->push_errors;
-			pop_errors += per_cpu_ptr(qh->stats, cpu)->pop_errors;
-			notifies += per_cpu_ptr(qh->stats, cpu)->notifies;
-		}
-
-		seq_printf(s, "\t\thandle %p: pushes %8d, pops %8d, count %8d, notifies %8d, push errors %8d, pop errors %8d\n",
-				qh,
-				pushes,
-				pops,
-				knav_queue_get_count(qh),
-				notifies,
-				push_errors,
-				pop_errors);
+		seq_printf(s, "\t\thandle %p: ", qh);
+		seq_printf(s, "pushes %8d, ",
+			   atomic_read(&qh->stats.pushes));
+		seq_printf(s, "pops %8d, ",
+			   atomic_read(&qh->stats.pops));
+		seq_printf(s, "count %8d, ",
+			   knav_queue_get_count(qh));
+		seq_printf(s, "notifies %8d, ",
+			   atomic_read(&qh->stats.notifies));
+		seq_printf(s, "push errors %8d, ",
+			   atomic_read(&qh->stats.push_errors));
+		seq_printf(s, "pop errors %8d\n",
+			   atomic_read(&qh->stats.pop_errors));
 	}
 }
 
@@ -478,7 +450,17 @@ static int knav_queue_debug_show(struct seq_file *s, void *v)
 	return 0;
 }
 
-DEFINE_SHOW_ATTRIBUTE(knav_queue_debug);
+static int knav_queue_debug_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, knav_queue_debug_show, NULL);
+}
+
+static const struct file_operations knav_queue_debug_ops = {
+	.open		= knav_queue_debug_open,
+	.read		= seq_read,
+	.llseek		= seq_lseek,
+	.release	= single_release,
+};
 
 static inline int knav_queue_pdsp_wait(u32 * __iomem addr, unsigned timeout,
 					u32 flags)
@@ -511,10 +493,10 @@ static int knav_queue_flush(struct knav_queue *qh)
 
 /**
  * knav_queue_open()	- open a hardware queue
- * @name:		- name to give the queue handle
- * @id:			- desired queue number if any or specifes the type
+ * @name		- name to give the queue handle
+ * @id			- desired queue number if any or specifes the type
  *			  of queue
- * @flags:		- the following flags are applicable to queues:
+ * @flags		- the following flags are applicable to queues:
  *	KNAV_QUEUE_SHARED - allow the queue to be shared. Queues are
  *			     exclusive by default.
  *			     Subsequent attempts to open a shared queue should
@@ -545,7 +527,7 @@ EXPORT_SYMBOL_GPL(knav_queue_open);
 
 /**
  * knav_queue_close()	- close a hardware queue handle
- * @qhandle:		- handle to close
+ * @qh			- handle to close
  */
 void knav_queue_close(void *qhandle)
 {
@@ -565,16 +547,15 @@ void knav_queue_close(void *qhandle)
 		if (range->ops && range->ops->close_queue)
 			range->ops->close_queue(range, inst);
 	}
-	free_percpu(qh->stats);
 	devm_kfree(inst->kdev->dev, qh);
 }
 EXPORT_SYMBOL_GPL(knav_queue_close);
 
 /**
  * knav_queue_device_control()	- Perform control operations on a queue
- * @qhandle:			- queue handle
- * @cmd:			- control commands
- * @arg:			- command argument
+ * @qh				- queue handle
+ * @cmd				- control commands
+ * @arg				- command argument
  *
  * Returns 0 on success, errno otherwise.
  */
@@ -623,10 +604,10 @@ EXPORT_SYMBOL_GPL(knav_queue_device_control);
 
 /**
  * knav_queue_push()	- push data (or descriptor) to the tail of a queue
- * @qhandle:		- hardware queue handle
- * @dma:		- DMA data to push
- * @size:		- size of data to push
- * @flags:		- can be used to pass additional information
+ * @qh			- hardware queue handle
+ * @data		- data to push
+ * @size		- size of data to push
+ * @flags		- can be used to pass additional information
  *
  * Returns 0 on success, errno otherwise.
  */
@@ -639,15 +620,15 @@ int knav_queue_push(void *qhandle, dma_addr_t dma,
 	val = (u32)dma | ((size / 16) - 1);
 	writel_relaxed(val, &qh->reg_push[0].ptr_size_thresh);
 
-	this_cpu_inc(qh->stats->pushes);
+	atomic_inc(&qh->stats.pushes);
 	return 0;
 }
 EXPORT_SYMBOL_GPL(knav_queue_push);
 
 /**
  * knav_queue_pop()	- pop data (or descriptor) from the head of a queue
- * @qhandle:		- hardware queue handle
- * @size:		- (optional) size of the data pop'ed.
+ * @qh			- hardware queue handle
+ * @size		- (optional) size of the data pop'ed.
  *
  * Returns a DMA address on success, 0 on failure.
  */
@@ -677,7 +658,7 @@ dma_addr_t knav_queue_pop(void *qhandle, unsigned *size)
 	if (size)
 		*size = ((val & DESC_SIZE_MASK) + 1) * 16;
 
-	this_cpu_inc(qh->stats->pops);
+	atomic_inc(&qh->stats.pops);
 	return dma;
 }
 EXPORT_SYMBOL_GPL(knav_queue_pop);
@@ -746,9 +727,9 @@ EXPORT_SYMBOL_GPL(knav_pool_desc_dma_to_virt);
 
 /**
  * knav_pool_create()	- Create a pool of descriptors
- * @name:		- name to give the pool handle
- * @num_desc:		- numbers of descriptors in the pool
- * @region_id:		- QMSS region id from which the descriptors are to be
+ * @name		- name to give the pool handle
+ * @num_desc		- numbers of descriptors in the pool
+ * @region_id		- QMSS region id from which the descriptors are to be
  *			  allocated.
  *
  * Returns a pool handle on success.
@@ -758,9 +739,10 @@ void *knav_pool_create(const char *name,
 					int num_desc, int region_id)
 {
 	struct knav_region *reg_itr, *region = NULL;
-	struct knav_pool *pool, *pi = NULL, *iter;
+	struct knav_pool *pool, *pi;
 	struct list_head *node;
 	unsigned last_offset;
+	bool slot_found;
 	int ret;
 
 	if (!kdev)
@@ -789,7 +771,7 @@ void *knav_pool_create(const char *name,
 	}
 
 	pool->queue = knav_queue_open(name, KNAV_QUEUE_GP, 0);
-	if (IS_ERR(pool->queue)) {
+	if (IS_ERR_OR_NULL(pool->queue)) {
 		dev_err(kdev->dev,
 			"failed to open queue for pool(%s), error %ld\n",
 			name, PTR_ERR(pool->queue));
@@ -815,17 +797,18 @@ void *knav_pool_create(const char *name,
 	 * the request
 	 */
 	last_offset = 0;
+	slot_found = false;
 	node = &region->pools;
-	list_for_each_entry(iter, &region->pools, region_inst) {
-		if ((iter->region_offset - last_offset) >= num_desc) {
-			pi = iter;
+	list_for_each_entry(pi, &region->pools, region_inst) {
+		if ((pi->region_offset - last_offset) >= num_desc) {
+			slot_found = true;
 			break;
 		}
-		last_offset = iter->region_offset + iter->num_desc;
+		last_offset = pi->region_offset + pi->num_desc;
 	}
+	node = &pi->region_inst;
 
-	if (pi) {
-		node = &pi->region_inst;
+	if (slot_found) {
 		pool->region = region;
 		pool->num_desc = num_desc;
 		pool->region_offset = last_offset;
@@ -854,7 +837,7 @@ EXPORT_SYMBOL_GPL(knav_pool_create);
 
 /**
  * knav_pool_destroy()	- Free a pool of descriptors
- * @ph:		- pool handle
+ * @pool		- pool handle
  */
 void knav_pool_destroy(void *ph)
 {
@@ -882,7 +865,7 @@ EXPORT_SYMBOL_GPL(knav_pool_destroy);
 
 /**
  * knav_pool_desc_get()	- Get a descriptor from the pool
- * @ph:		- pool handle
+ * @pool			- pool handle
  *
  * Returns descriptor from the pool.
  */
@@ -903,8 +886,7 @@ EXPORT_SYMBOL_GPL(knav_pool_desc_get);
 
 /**
  * knav_pool_desc_put()	- return a descriptor to the pool
- * @ph:		- pool handle
- * @desc:	- virtual address
+ * @pool			- pool handle
  */
 void knav_pool_desc_put(void *ph, void *desc)
 {
@@ -917,11 +899,11 @@ EXPORT_SYMBOL_GPL(knav_pool_desc_put);
 
 /**
  * knav_pool_desc_map()	- Map descriptor for DMA transfer
- * @ph:				- pool handle
- * @desc:			- address of descriptor to map
- * @size:			- size of descriptor to map
- * @dma:			- DMA address return pointer
- * @dma_sz:			- adjusted return pointer
+ * @pool			- pool handle
+ * @desc			- address of descriptor to map
+ * @size			- size of descriptor to map
+ * @dma				- DMA address return pointer
+ * @dma_sz			- adjusted return pointer
  *
  * Returns 0 on success, errno otherwise.
  */
@@ -944,9 +926,9 @@ EXPORT_SYMBOL_GPL(knav_pool_desc_map);
 
 /**
  * knav_pool_desc_unmap()	- Unmap descriptor after DMA transfer
- * @ph:				- pool handle
- * @dma:			- DMA address of descriptor to unmap
- * @dma_sz:			- size of descriptor to unmap
+ * @pool			- pool handle
+ * @dma				- DMA address of descriptor to unmap
+ * @dma_sz			- size of descriptor to unmap
  *
  * Returns descriptor address on success, Use IS_ERR_OR_NULL() to identify
  * error values on return.
@@ -967,7 +949,7 @@ EXPORT_SYMBOL_GPL(knav_pool_desc_unmap);
 
 /**
  * knav_pool_count()	- Get the number of descriptors in pool.
- * @ph:			- pool handle
+ * @pool		- pool handle
  * Returns number of elements in the pool.
  */
 int knav_pool_count(void *ph)
@@ -1085,7 +1067,6 @@ static int knav_queue_setup_regions(struct knav_device *kdev,
 	for_each_child_of_node(regions, child) {
 		region = devm_kzalloc(dev, sizeof(*region), GFP_KERNEL);
 		if (!region) {
-			of_node_put(child);
 			dev_err(dev, "out of memory allocating region\n");
 			return -ENOMEM;
 		}
@@ -1188,12 +1169,8 @@ static int knav_queue_setup_link_ram(struct knav_device *kdev)
 		dev_dbg(kdev->dev, "linkram0: dma:%pad, virt:%p, size:%x\n",
 			&block->dma, block->virt, block->size);
 		writel_relaxed((u32)block->dma, &qmgr->reg_config->link_ram_base0);
-		if (kdev->version == QMSS_66AK2G)
-			writel_relaxed(block->size,
-				       &qmgr->reg_config->link_ram_size0);
-		else
-			writel_relaxed(block->size - 1,
-				       &qmgr->reg_config->link_ram_size0);
+		writel_relaxed(block->size, &qmgr->reg_config->link_ram_size0);
+
 		block++;
 		if (!block->size)
 			continue;
@@ -1245,19 +1222,9 @@ static int knav_setup_queue_range(struct knav_device *kdev,
 
 		range->num_irqs++;
 
-		if (IS_ENABLED(CONFIG_SMP) && oirq.args_count == 3) {
-			unsigned long mask;
-			int bit;
-
-			range->irqs[i].cpu_mask = devm_kzalloc(dev,
-							       cpumask_size(), GFP_KERNEL);
-			if (!range->irqs[i].cpu_mask)
-				return -ENOMEM;
-
-			mask = (oirq.args[2] & 0x0000ff00) >> 8;
-			for_each_set_bit(bit, &mask, BITS_PER_LONG)
-				cpumask_set_cpu(bit, range->irqs[i].cpu_mask);
-		}
+		if (IS_ENABLED(CONFIG_SMP) && oirq.args_count == 3)
+			range->irqs[i].cpu_map =
+				(oirq.args[2] & 0x0000ff00) >> 8;
 	}
 
 	range->num_irqs = min(range->num_irqs, range->num_queues);
@@ -1307,11 +1274,12 @@ static int knav_setup_queue_pools(struct knav_device *kdev,
 				   struct device_node *queue_pools)
 {
 	struct device_node *type, *range;
+	int ret;
 
 	for_each_child_of_node(queue_pools, type) {
 		for_each_child_of_node(type, range) {
+			ret = knav_setup_queue_range(kdev, range);
 			/* return value ignored, we init the rest... */
-			knav_setup_queue_range(kdev, range);
 		}
 	}
 
@@ -1374,15 +1342,15 @@ static void __iomem *knav_queue_map_reg(struct knav_device *kdev,
 
 	ret = of_address_to_resource(node, index, &res);
 	if (ret) {
-		dev_err(kdev->dev, "Can't translate of node(%pOFn) address for index(%d)\n",
-			node, index);
+		dev_err(kdev->dev, "Can't translate of node(%s) address for index(%d)\n",
+			node->name, index);
 		return ERR_PTR(ret);
 	}
 
 	regs = devm_ioremap_resource(kdev->dev, &res);
 	if (IS_ERR(regs))
-		dev_err(kdev->dev, "Failed to map register base for index(%d) node(%pOFn)\n",
-			index, node);
+		dev_err(kdev->dev, "Failed to map register base for index(%d) node(%s)\n",
+			index, node->name);
 	return regs;
 }
 
@@ -1398,7 +1366,6 @@ static int knav_queue_init_qmgrs(struct knav_device *kdev,
 	for_each_child_of_node(qmgrs, child) {
 		qmgr = devm_kzalloc(dev, sizeof(*qmgr), GFP_KERNEL);
 		if (!qmgr) {
-			of_node_put(child);
 			dev_err(dev, "out of memory allocating qmgr\n");
 			return -ENOMEM;
 		}
@@ -1420,63 +1387,41 @@ static int knav_queue_init_qmgrs(struct knav_device *kdev,
 		qmgr->reg_peek =
 			knav_queue_map_reg(kdev, child,
 					   KNAV_QUEUE_PEEK_REG_INDEX);
-
-		if (kdev->version == QMSS) {
-			qmgr->reg_status =
-				knav_queue_map_reg(kdev, child,
-						   KNAV_QUEUE_STATUS_REG_INDEX);
-		}
-
+		qmgr->reg_status =
+			knav_queue_map_reg(kdev, child,
+					   KNAV_QUEUE_STATUS_REG_INDEX);
 		qmgr->reg_config =
 			knav_queue_map_reg(kdev, child,
-					   (kdev->version == QMSS_66AK2G) ?
-					   KNAV_L_QUEUE_CONFIG_REG_INDEX :
 					   KNAV_QUEUE_CONFIG_REG_INDEX);
 		qmgr->reg_region =
 			knav_queue_map_reg(kdev, child,
-					   (kdev->version == QMSS_66AK2G) ?
-					   KNAV_L_QUEUE_REGION_REG_INDEX :
 					   KNAV_QUEUE_REGION_REG_INDEX);
-
 		qmgr->reg_push =
 			knav_queue_map_reg(kdev, child,
-					   (kdev->version == QMSS_66AK2G) ?
-					    KNAV_L_QUEUE_PUSH_REG_INDEX :
-					    KNAV_QUEUE_PUSH_REG_INDEX);
+					   KNAV_QUEUE_PUSH_REG_INDEX);
+		qmgr->reg_pop =
+			knav_queue_map_reg(kdev, child,
+					   KNAV_QUEUE_POP_REG_INDEX);
 
-		if (kdev->version == QMSS) {
-			qmgr->reg_pop =
-				knav_queue_map_reg(kdev, child,
-						   KNAV_QUEUE_POP_REG_INDEX);
-		}
-
-		if (IS_ERR(qmgr->reg_peek) ||
-		    ((kdev->version == QMSS) &&
-		    (IS_ERR(qmgr->reg_status) || IS_ERR(qmgr->reg_pop))) ||
+		if (IS_ERR(qmgr->reg_peek) || IS_ERR(qmgr->reg_status) ||
 		    IS_ERR(qmgr->reg_config) || IS_ERR(qmgr->reg_region) ||
-		    IS_ERR(qmgr->reg_push)) {
+		    IS_ERR(qmgr->reg_push) || IS_ERR(qmgr->reg_pop)) {
 			dev_err(dev, "failed to map qmgr regs\n");
-			if (kdev->version == QMSS) {
-				if (!IS_ERR(qmgr->reg_status))
-					devm_iounmap(dev, qmgr->reg_status);
-				if (!IS_ERR(qmgr->reg_pop))
-					devm_iounmap(dev, qmgr->reg_pop);
-			}
 			if (!IS_ERR(qmgr->reg_peek))
 				devm_iounmap(dev, qmgr->reg_peek);
+			if (!IS_ERR(qmgr->reg_status))
+				devm_iounmap(dev, qmgr->reg_status);
 			if (!IS_ERR(qmgr->reg_config))
 				devm_iounmap(dev, qmgr->reg_config);
 			if (!IS_ERR(qmgr->reg_region))
 				devm_iounmap(dev, qmgr->reg_region);
 			if (!IS_ERR(qmgr->reg_push))
 				devm_iounmap(dev, qmgr->reg_push);
+			if (!IS_ERR(qmgr->reg_pop))
+				devm_iounmap(dev, qmgr->reg_pop);
 			devm_kfree(dev, qmgr);
 			continue;
 		}
-
-		/* Use same push register for pop as well */
-		if (kdev->version == QMSS_66AK2G)
-			qmgr->reg_pop = qmgr->reg_push;
 
 		list_add_tail(&qmgr->list, &kdev->qmgrs);
 		dev_info(dev, "added qmgr start queue %d, num of queues %d, reg_peek %p, reg_status %p, reg_config %p, reg_region %p, reg_push %p, reg_pop %p\n",
@@ -1498,7 +1443,6 @@ static int knav_queue_init_pdsps(struct knav_device *kdev,
 	for_each_child_of_node(pdsps, child) {
 		pdsp = devm_kzalloc(dev, sizeof(*pdsp), GFP_KERNEL);
 		if (!pdsp) {
-			of_node_put(child);
 			dev_err(dev, "out of memory allocating pdsp\n");
 			return -ENOMEM;
 		}
@@ -1737,24 +1681,10 @@ static int knav_queue_init_queues(struct knav_device *kdev)
 	return 0;
 }
 
-/* Match table for of_platform binding */
-static const struct of_device_id keystone_qmss_of_match[] = {
-	{
-		.compatible = "ti,keystone-navigator-qmss",
-	},
-	{
-		.compatible = "ti,66ak2g-navss-qm",
-		.data	= (void *)QMSS_66AK2G,
-	},
-	{},
-};
-MODULE_DEVICE_TABLE(of, keystone_qmss_of_match);
-
 static int knav_queue_probe(struct platform_device *pdev)
 {
 	struct device_node *node = pdev->dev.of_node;
 	struct device_node *qmgrs, *queue_pools, *regions, *pdsps;
-	const struct of_device_id *match;
 	struct device *dev = &pdev->dev;
 	u32 temp[2];
 	int ret;
@@ -1770,10 +1700,6 @@ static int knav_queue_probe(struct platform_device *pdev)
 		return -ENOMEM;
 	}
 
-	match = of_match_device(of_match_ptr(keystone_qmss_of_match), dev);
-	if (match && match->data)
-		kdev->version = QMSS_66AK2G;
-
 	platform_set_drvdata(pdev, kdev);
 	kdev->dev = dev;
 	INIT_LIST_HEAD(&kdev->queue_ranges);
@@ -1783,7 +1709,7 @@ static int knav_queue_probe(struct platform_device *pdev)
 	INIT_LIST_HEAD(&kdev->pdsps);
 
 	pm_runtime_enable(&pdev->dev);
-	ret = pm_runtime_resume_and_get(&pdev->dev);
+	ret = pm_runtime_get_sync(&pdev->dev);
 	if (ret < 0) {
 		dev_err(dev, "Failed to enable QMSS\n");
 		return ret;
@@ -1852,10 +1778,9 @@ static int knav_queue_probe(struct platform_device *pdev)
 	if (ret)
 		goto err;
 
-	regions = of_get_child_by_name(node, "descriptor-regions");
+	regions =  of_get_child_by_name(node, "descriptor-regions");
 	if (!regions) {
 		dev_err(dev, "descriptor-regions not specified\n");
-		ret = -ENODEV;
 		goto err;
 	}
 	ret = knav_queue_setup_regions(kdev, regions);
@@ -1870,8 +1795,7 @@ static int knav_queue_probe(struct platform_device *pdev)
 	}
 
 	debugfs_create_file("qmss", S_IFREG | S_IRUGO, NULL, NULL,
-			    &knav_queue_debug_fops);
-	device_ready = true;
+			    &knav_queue_debug_ops);
 	return 0;
 
 err:
@@ -1890,6 +1814,13 @@ static int knav_queue_remove(struct platform_device *pdev)
 	pm_runtime_disable(&pdev->dev);
 	return 0;
 }
+
+/* Match table for of_platform binding */
+static struct of_device_id keystone_qmss_of_match[] = {
+	{ .compatible = "ti,keystone-navigator-qmss", },
+	{},
+};
+MODULE_DEVICE_TABLE(of, keystone_qmss_of_match);
 
 static struct platform_driver keystone_qmss_driver = {
 	.probe		= knav_queue_probe,

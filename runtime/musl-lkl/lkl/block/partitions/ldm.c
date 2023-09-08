@@ -1,5 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
-/*
+/**
  * ldm - Support for Windows Logical Disk Manager (Dynamic Disks)
  *
  * Copyright (C) 2001,2002 Richard Russon <ldm@flatcap.org>
@@ -7,6 +6,21 @@
  * Copyright (C) 2001,2002 Jakob Kemi <jakob.kemi@telia.com>
  *
  * Documentation is available at http://www.linux-ntfs.org/doku.php?id=downloads 
+ *
+ * This program is free software; you can redistribute it and/or modify it under
+ * the terms of the GNU General Public License as published by the Free Software
+ * Foundation; either version 2 of the License, or (at your option) any later
+ * version.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+ * FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
+ * details.
+ *
+ * You should have received a copy of the GNU General Public License along with
+ * this program (in the main directory of the source in the file COPYING); if
+ * not, write to the Free Software Foundation, Inc., 59 Temple Place, Suite 330,
+ * Boston, MA  02111-1307  USA
  */
 
 #include <linux/slab.h>
@@ -14,12 +28,12 @@
 #include <linux/stringify.h>
 #include <linux/kernel.h>
 #include <linux/uuid.h>
-#include <linux/msdos_partition.h>
 
 #include "ldm.h"
 #include "check.h"
+#include "msdos.h"
 
-/*
+/**
  * ldm_debug/info/error/crit - Output an error message
  * @f:    A printf format string containing the message
  * @...:  Variables to substitute into @f
@@ -304,7 +318,7 @@ static bool ldm_validate_privheads(struct parsed_partitions *state,
 		}
 	}
 
-	num_sects = get_capacity(state->disk);
+	num_sects = state->bdev->bd_inode->i_size >> 9;
 
 	if ((ph[0]->config_start > num_sects) ||
 	   ((ph[0]->config_start + ph[0]->config_size) > num_sects)) {
@@ -339,11 +353,11 @@ out:
 /**
  * ldm_validate_tocblocks - Validate the table of contents and its backups
  * @state: Partition check state including device holding the LDM Database
- * @base:  Offset, into @state->disk, of the database
+ * @base:  Offset, into @state->bdev, of the database
  * @ldb:   Cache of the database structures
  *
  * Find and compare the four tables of contents of the LDM Database stored on
- * @state->disk and return the parsed information into @toc1.
+ * @state->bdev and return the parsed information into @toc1.
  *
  * The offsets and sizes of the configs are range-checked against a privhead.
  *
@@ -364,7 +378,7 @@ static bool ldm_validate_tocblocks(struct parsed_partitions *state,
 	BUG_ON(!state || !ldb);
 	ph = &ldb->ph;
 	tb[0] = &ldb->toc;
-	tb[1] = kmalloc_array(3, sizeof(*tb[1]), GFP_KERNEL);
+	tb[1] = kmalloc(sizeof(*tb[1]) * 3, GFP_KERNEL);
 	if (!tb[1]) {
 		ldm_crit("Out of memory.");
 		goto err;
@@ -486,14 +500,14 @@ out:
  *       only likely to happen if the underlying device is strange.  If that IS
  *       the case we should return zero to let someone else try.
  *
- * Return:  'true'   @state->disk is a dynamic disk
- *          'false'  @state->disk is not a dynamic disk, or an error occurred
+ * Return:  'true'   @state->bdev is a dynamic disk
+ *          'false'  @state->bdev is not a dynamic disk, or an error occurred
  */
 static bool ldm_validate_partition_table(struct parsed_partitions *state)
 {
 	Sector sect;
 	u8 *data;
-	struct msdos_partition *p;
+	struct partition *p;
 	int i;
 	bool result = false;
 
@@ -508,9 +522,9 @@ static bool ldm_validate_partition_table(struct parsed_partitions *state)
 	if (*(__le16*) (data + 0x01FE) != cpu_to_le16 (MSDOS_LABEL_MAGIC))
 		goto out;
 
-	p = (struct msdos_partition *)(data + 0x01BE);
+	p = (struct partition*)(data + 0x01BE);
 	for (i = 0; i < 4; i++, p++)
-		if (p->sys_ind == LDM_PARTITION) {
+		if (SYS_IND (p) == LDM_PARTITION) {
 			result = true;
 			break;
 		}
@@ -736,6 +750,7 @@ static bool ldm_parse_cmp3 (const u8 *buffer, int buflen, struct vblk *vb)
 		len = r_cols;
 	} else {
 		r_stripe = 0;
+		r_cols   = 0;
 		len = r_parent;
 	}
 	if (len < 0)
@@ -782,8 +797,11 @@ static int ldm_parse_dgr3 (const u8 *buffer, int buflen, struct vblk *vb)
 		r_id1 = ldm_relative (buffer, buflen, 0x24, r_diskid);
 		r_id2 = ldm_relative (buffer, buflen, 0x24, r_id1);
 		len = r_id2;
-	} else
+	} else {
+		r_id1 = 0;
+		r_id2 = 0;
 		len = r_diskid;
+	}
 	if (len < 0)
 		return false;
 
@@ -812,6 +830,7 @@ static bool ldm_parse_dgr4 (const u8 *buffer, int buflen, struct vblk *vb)
 {
 	char buf[64];
 	int r_objid, r_name, r_id1, r_id2, len;
+	struct vblk_dgrp *dgrp;
 
 	BUG_ON (!buffer || !vb);
 
@@ -822,14 +841,19 @@ static bool ldm_parse_dgr4 (const u8 *buffer, int buflen, struct vblk *vb)
 		r_id1 = ldm_relative (buffer, buflen, 0x44, r_name);
 		r_id2 = ldm_relative (buffer, buflen, 0x44, r_id1);
 		len = r_id2;
-	} else
+	} else {
+		r_id1 = 0;
+		r_id2 = 0;
 		len = r_name;
+	}
 	if (len < 0)
 		return false;
 
 	len += VBLK_SIZE_DGR4;
 	if (len != get_unaligned_be32(buffer + 0x14))
 		return false;
+
+	dgrp = &vb->vblk.dgrp;
 
 	ldm_get_vstr (buffer + 0x18 + r_objid, buf, sizeof (buf));
 	return true;
@@ -903,7 +927,7 @@ static bool ldm_parse_dsk4 (const u8 *buffer, int buflen, struct vblk *vb)
 		return false;
 
 	disk = &vb->vblk.disk;
-	import_uuid(&disk->disk_id, buffer + 0x18 + r_name);
+	uuid_copy(&disk->disk_id, (uuid_t *)(buffer + 0x18 + r_name));
 	return true;
 }
 
@@ -956,8 +980,10 @@ static bool ldm_parse_prt3(const u8 *buffer, int buflen, struct vblk *vb)
 			return false;
 		}
 		len = r_index;
-	} else
+	} else {
+		r_index = 0;
 		len = r_diskid;
+	}
 	if (len < 0) {
 		ldm_error("len %d < 0", len);
 		return false;
@@ -1224,7 +1250,7 @@ static bool ldm_frag_add (const u8 *data, int size, struct list_head *frags)
 	BUG_ON (!data || !frags);
 
 	if (size < 2 * VBLK_SIZE_HEAD) {
-		ldm_error("Value of size is too small.");
+		ldm_error("Value of size is to small.");
 		return false;
 	}
 
@@ -1331,7 +1357,7 @@ static bool ldm_frag_commit (struct list_head *frags, struct ldmdb *ldb)
 /**
  * ldm_get_vblks - Read the on-disk database of VBLKs into memory
  * @state: Partition check state including device holding the LDM Database
- * @base:  Offset, into @state->disk, of the database
+ * @base:  Offset, into @state->bdev, of the database
  * @ldb:   Cache of the database structures
  *
  * To use the information from the VBLKs, they need to be read from the disk,
@@ -1423,10 +1449,10 @@ static void ldm_free_vblks (struct list_head *lh)
  * example, if the device is hda, we would have: hda1: LDM database, hda2, hda3,
  * and so on: the actual data containing partitions.
  *
- * Return:  1 Success, @state->disk is a dynamic disk and we handled it
- *          0 Success, @state->disk is not a dynamic disk
+ * Return:  1 Success, @state->bdev is a dynamic disk and we handled it
+ *          0 Success, @state->bdev is not a dynamic disk
  *         -1 An error occurred before enough information had been read
- *            Or @state->disk is a dynamic disk, but it may be corrupted
+ *            Or @state->bdev is a dynamic disk, but it may be corrupted
  */
 int ldm_partition(struct parsed_partitions *state)
 {

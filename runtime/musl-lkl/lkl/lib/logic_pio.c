@@ -3,7 +3,6 @@
  * Copyright (C) 2017 HiSilicon Limited, All Rights Reserved.
  * Author: Gabriele Paoloni <gabriele.paoloni@huawei.com>
  * Author: Zhichang Yuan <yuanzhichang@hisilicon.com>
- * Author: John Garry <john.garry@huawei.com>
  */
 
 #define pr_fmt(fmt)	"LOGIC PIO: " fmt
@@ -28,8 +27,6 @@ static DEFINE_MUTEX(io_range_mutex);
  * @new_range: pointer to the IO range to be registered.
  *
  * Returns 0 on success, the error code in case of failure.
- * If the range already exists, -EEXIST will be returned, which should be
- * considered a success.
  *
  * Register a new IO range node in the IO range list.
  */
@@ -38,22 +35,20 @@ int logic_pio_register_range(struct logic_pio_hwaddr *new_range)
 	struct logic_pio_hwaddr *range;
 	resource_size_t start;
 	resource_size_t end;
-	resource_size_t mmio_end = 0;
+	resource_size_t mmio_sz = 0;
 	resource_size_t iio_sz = MMIO_UPPER_LIMIT;
 	int ret = 0;
 
-	if (!new_range || !new_range->fwnode || !new_range->size ||
-	    (new_range->flags == LOGIC_PIO_INDIRECT && !new_range->ops))
+	if (!new_range || !new_range->fwnode || !new_range->size)
 		return -EINVAL;
 
 	start = new_range->hw_start;
 	end = new_range->hw_start + new_range->size;
 
 	mutex_lock(&io_range_mutex);
-	list_for_each_entry(range, &io_range_list, list) {
+	list_for_each_entry_rcu(range, &io_range_list, list) {
 		if (range->fwnode == new_range->fwnode) {
 			/* range already there */
-			ret = -EEXIST;
 			goto end_register;
 		}
 		if (range->flags == LOGIC_PIO_CPU_MMIO &&
@@ -61,7 +56,7 @@ int logic_pio_register_range(struct logic_pio_hwaddr *new_range)
 			/* for MMIO ranges we need to check for overlap */
 			if (start >= range->hw_start + range->size ||
 			    end < range->hw_start) {
-				mmio_end = range->io_start + range->size;
+				mmio_sz += range->size;
 			} else {
 				ret = -EFAULT;
 				goto end_register;
@@ -74,16 +69,16 @@ int logic_pio_register_range(struct logic_pio_hwaddr *new_range)
 
 	/* range not registered yet, check for available space */
 	if (new_range->flags == LOGIC_PIO_CPU_MMIO) {
-		if (mmio_end + new_range->size - 1 > MMIO_UPPER_LIMIT) {
+		if (mmio_sz + new_range->size - 1 > MMIO_UPPER_LIMIT) {
 			/* if it's too big check if 64K space can be reserved */
-			if (mmio_end + SZ_64K - 1 > MMIO_UPPER_LIMIT) {
+			if (mmio_sz + SZ_64K - 1 > MMIO_UPPER_LIMIT) {
 				ret = -E2BIG;
 				goto end_register;
 			}
 			new_range->size = SZ_64K;
 			pr_warn("Requested IO range too big, new size set to 64K\n");
 		}
-		new_range->io_start = mmio_end;
+		new_range->io_start = mmio_sz;
 	} else if (new_range->flags == LOGIC_PIO_INDIRECT) {
 		if (iio_sz + new_range->size - 1 > IO_SPACE_LIMIT) {
 			ret = -E2BIG;
@@ -104,20 +99,6 @@ end_register:
 }
 
 /**
- * logic_pio_unregister_range - unregister a logical PIO range for a host
- * @range: pointer to the IO range which has been already registered.
- *
- * Unregister a previously-registered IO range node.
- */
-void logic_pio_unregister_range(struct logic_pio_hwaddr *range)
-{
-	mutex_lock(&io_range_mutex);
-	list_del_rcu(&range->list);
-	mutex_unlock(&io_range_mutex);
-	synchronize_rcu();
-}
-
-/**
  * find_io_range_by_fwnode - find logical PIO range for given FW node
  * @fwnode: FW node handle associated with logical PIO range
  *
@@ -127,38 +108,26 @@ void logic_pio_unregister_range(struct logic_pio_hwaddr *range)
  */
 struct logic_pio_hwaddr *find_io_range_by_fwnode(struct fwnode_handle *fwnode)
 {
-	struct logic_pio_hwaddr *range, *found_range = NULL;
+	struct logic_pio_hwaddr *range;
 
-	rcu_read_lock();
 	list_for_each_entry_rcu(range, &io_range_list, list) {
-		if (range->fwnode == fwnode) {
-			found_range = range;
-			break;
-		}
+		if (range->fwnode == fwnode)
+			return range;
 	}
-	rcu_read_unlock();
-
-	return found_range;
+	return NULL;
 }
 
 /* Return a registered range given an input PIO token */
 static struct logic_pio_hwaddr *find_io_range(unsigned long pio)
 {
-	struct logic_pio_hwaddr *range, *found_range = NULL;
+	struct logic_pio_hwaddr *range;
 
-	rcu_read_lock();
 	list_for_each_entry_rcu(range, &io_range_list, list) {
-		if (in_range(pio, range->io_start, range->size)) {
-			found_range = range;
-			break;
-		}
+		if (in_range(pio, range->io_start, range->size))
+			return range;
 	}
-	rcu_read_unlock();
-
-	if (!found_range)
-		pr_err("PIO entry token 0x%lx invalid\n", pio);
-
-	return found_range;
+	pr_err("PIO entry token %lx invalid\n", pio);
+	return NULL;
 }
 
 /**
@@ -211,38 +180,29 @@ unsigned long logic_pio_trans_cpuaddr(resource_size_t addr)
 {
 	struct logic_pio_hwaddr *range;
 
-	rcu_read_lock();
 	list_for_each_entry_rcu(range, &io_range_list, list) {
 		if (range->flags != LOGIC_PIO_CPU_MMIO)
 			continue;
-		if (in_range(addr, range->hw_start, range->size)) {
-			unsigned long cpuaddr;
-
-			cpuaddr = addr - range->hw_start + range->io_start;
-
-			rcu_read_unlock();
-			return cpuaddr;
-		}
+		if (in_range(addr, range->hw_start, range->size))
+			return addr - range->hw_start + range->io_start;
 	}
-	rcu_read_unlock();
-
-	pr_err("addr %pa not registered in io_range_list\n", &addr);
-
+	pr_err("addr %llx not registered in io_range_list\n",
+	       (unsigned long long) addr);
 	return ~0UL;
 }
 
 #if defined(CONFIG_INDIRECT_PIO) && defined(PCI_IOBASE)
-#define BUILD_LOGIC_IO(bwl, type)					\
-type logic_in##bwl(unsigned long addr)					\
+#define BUILD_LOGIC_IO(bw, type)					\
+type logic_in##bw(unsigned long addr)					\
 {									\
 	type ret = (type)~0;						\
 									\
 	if (addr < MMIO_UPPER_LIMIT) {					\
-		ret = _in##bwl(addr);					\
+		ret = read##bw(PCI_IOBASE + addr);			\
 	} else if (addr >= MMIO_UPPER_LIMIT && addr < IO_SPACE_LIMIT) { \
 		struct logic_pio_hwaddr *entry = find_io_range(addr);	\
 									\
-		if (entry)						\
+		if (entry && entry->ops)				\
 			ret = entry->ops->in(entry->hostdata,		\
 					addr, sizeof(type));		\
 		else							\
@@ -251,14 +211,14 @@ type logic_in##bwl(unsigned long addr)					\
 	return ret;							\
 }									\
 									\
-void logic_out##bwl(type value, unsigned long addr)			\
+void logic_out##bw(type value, unsigned long addr)			\
 {									\
 	if (addr < MMIO_UPPER_LIMIT) {					\
-		_out##bwl(value, addr);				\
+		write##bw(value, PCI_IOBASE + addr);			\
 	} else if (addr >= MMIO_UPPER_LIMIT && addr < IO_SPACE_LIMIT) {	\
 		struct logic_pio_hwaddr *entry = find_io_range(addr);	\
 									\
-		if (entry)						\
+		if (entry && entry->ops)				\
 			entry->ops->out(entry->hostdata,		\
 					addr, value, sizeof(type));	\
 		else							\
@@ -266,15 +226,15 @@ void logic_out##bwl(type value, unsigned long addr)			\
 	}								\
 }									\
 									\
-void logic_ins##bwl(unsigned long addr, void *buffer,			\
-		    unsigned int count)					\
+void logic_ins##bw(unsigned long addr, void *buffer,		\
+		   unsigned int count)					\
 {									\
 	if (addr < MMIO_UPPER_LIMIT) {					\
-		reads##bwl(PCI_IOBASE + addr, buffer, count);		\
+		reads##bw(PCI_IOBASE + addr, buffer, count);		\
 	} else if (addr >= MMIO_UPPER_LIMIT && addr < IO_SPACE_LIMIT) {	\
 		struct logic_pio_hwaddr *entry = find_io_range(addr);	\
 									\
-		if (entry)						\
+		if (entry && entry->ops)				\
 			entry->ops->ins(entry->hostdata,		\
 				addr, buffer, sizeof(type), count);	\
 		else							\
@@ -283,15 +243,15 @@ void logic_ins##bwl(unsigned long addr, void *buffer,			\
 									\
 }									\
 									\
-void logic_outs##bwl(unsigned long addr, const void *buffer,		\
-		     unsigned int count)				\
+void logic_outs##bw(unsigned long addr, const void *buffer,		\
+		    unsigned int count)					\
 {									\
 	if (addr < MMIO_UPPER_LIMIT) {					\
-		writes##bwl(PCI_IOBASE + addr, buffer, count);		\
+		writes##bw(PCI_IOBASE + addr, buffer, count);		\
 	} else if (addr >= MMIO_UPPER_LIMIT && addr < IO_SPACE_LIMIT) {	\
 		struct logic_pio_hwaddr *entry = find_io_range(addr);	\
 									\
-		if (entry)						\
+		if (entry && entry->ops)				\
 			entry->ops->outs(entry->hostdata,		\
 				addr, buffer, sizeof(type), count);	\
 		else							\

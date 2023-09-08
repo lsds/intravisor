@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * linux/net/sunrpc/sunrpc_syms.c
  *
@@ -23,8 +22,6 @@
 #include <linux/sunrpc/rpc_pipe_fs.h>
 #include <linux/sunrpc/xprtsock.h>
 
-#include "sunrpc.h"
-#include "sysfs.h"
 #include "netns.h"
 
 unsigned int sunrpc_net_id;
@@ -104,10 +101,6 @@ init_sunrpc(void)
 	if (err)
 		goto out4;
 
-	err = rpc_sysfs_init();
-	if (err)
-		goto out5;
-
 	sunrpc_debugfs_init();
 #if IS_ENABLED(CONFIG_SUNRPC_DEBUG)
 	rpc_register_sysctl();
@@ -116,8 +109,6 @@ init_sunrpc(void)
 	init_socket_xprt();	/* clnt sock transport */
 	return 0;
 
-out5:
-	unregister_rpc_pipefs();
 out4:
 	unregister_pernet_subsys(&sunrpc_net_ops);
 out3:
@@ -131,10 +122,7 @@ out:
 static void __exit
 cleanup_sunrpc(void)
 {
-	rpc_sysfs_exit();
 	rpc_cleanup_clids();
-	xprt_cleanup_ids();
-	xprt_multipath_cleanup_ids();
 	rpcauth_remove_module();
 	cleanup_socket_xprt();
 	svc_cleanup_xprt_sock();
@@ -142,7 +130,6 @@ cleanup_sunrpc(void)
 	unregister_rpc_pipefs();
 	rpc_destroy_mempool();
 	unregister_pernet_subsys(&sunrpc_net_ops);
-	auth_domain_cleanup();
 #if IS_ENABLED(CONFIG_SUNRPC_DEBUG)
 	rpc_unregister_sysctl();
 #endif

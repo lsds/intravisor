@@ -25,9 +25,10 @@
 #include <linux/personality.h>
 #include <linux/binfmts.h>
 #include <linux/io.h>
-#include <linux/resume_user_mode.h>
+#include <linux/tracehook.h>
 #include <asm/ucontext.h>
 #include <linux/uaccess.h>
+#include <asm/pgtable.h>
 #include <asm/cacheflush.h>
 #include <asm/syscalls.h>
 #include <asm/fpu.h>
@@ -159,7 +160,7 @@ asmlinkage int sys_sigreturn(void)
         /* Always make any pending restarted system calls return -EINTR */
 	current->restart_block.fn = do_no_restart_syscall;
 
-	if (!access_ok(frame, sizeof(*frame)))
+	if (!access_ok(VERIFY_READ, frame, sizeof(*frame)))
 		goto badframe;
 
 	if (__get_user(set.sig[0], &frame->sc.oldmask)
@@ -175,7 +176,7 @@ asmlinkage int sys_sigreturn(void)
 	return r0;
 
 badframe:
-	force_sig(SIGSEGV);
+	force_sig(SIGSEGV, current);
 	return 0;
 }
 
@@ -189,7 +190,7 @@ asmlinkage int sys_rt_sigreturn(void)
 	/* Always make any pending restarted system calls return -EINTR */
 	current->restart_block.fn = do_no_restart_syscall;
 
-	if (!access_ok(frame, sizeof(*frame)))
+	if (!access_ok(VERIFY_READ, frame, sizeof(*frame)))
 		goto badframe;
 
 	if (__copy_from_user(&set, &frame->uc.uc_sigmask, sizeof(set)))
@@ -206,7 +207,7 @@ asmlinkage int sys_rt_sigreturn(void)
 	return r0;
 
 badframe:
-	force_sig(SIGSEGV);
+	force_sig(SIGSEGV, current);
 	return 0;
 }
 
@@ -271,7 +272,7 @@ static int setup_frame(struct ksignal *ksig, sigset_t *set,
 
 	frame = get_sigframe(&ksig->ka, regs->regs[15], sizeof(*frame));
 
-	if (!access_ok(frame, sizeof(*frame)))
+	if (!access_ok(VERIFY_WRITE, frame, sizeof(*frame)))
 		return -EFAULT;
 
 	err |= setup_sigcontext(&frame->sc, regs, set->sig[0]);
@@ -337,7 +338,7 @@ static int setup_rt_frame(struct ksignal *ksig, sigset_t *set,
 
 	frame = get_sigframe(&ksig->ka, regs->regs[15], sizeof(*frame));
 
-	if (!access_ok(frame, sizeof(*frame)))
+	if (!access_ok(VERIFY_WRITE, frame, sizeof(*frame)))
 		return -EFAULT;
 
 	err |= copy_siginfo_to_user(&frame->info, &ksig->info);
@@ -418,7 +419,7 @@ handle_syscall_restart(unsigned long save_r0, struct pt_regs *regs,
 		case -ERESTARTSYS:
 			if (!(sa->sa_flags & SA_RESTART))
 				goto no_system_call_restart;
-			fallthrough;
+		/* fallthrough */
 		case -ERESTARTNOINTR:
 			regs->regs[0] = save_r0;
 			regs->pc -= instruction_size(__raw_readw(regs->pc - 4));
@@ -499,9 +500,11 @@ asmlinkage void do_notify_resume(struct pt_regs *regs, unsigned int save_r0,
 				 unsigned long thread_info_flags)
 {
 	/* deal with pending signal delivery */
-	if (thread_info_flags & (_TIF_SIGPENDING | _TIF_NOTIFY_SIGNAL))
+	if (thread_info_flags & _TIF_SIGPENDING)
 		do_signal(regs, save_r0);
 
-	if (thread_info_flags & _TIF_NOTIFY_RESUME)
-		resume_user_mode_work(regs);
+	if (thread_info_flags & _TIF_NOTIFY_RESUME) {
+		clear_thread_flag(TIF_NOTIFY_RESUME);
+		tracehook_notify_resume(regs);
+	}
 }

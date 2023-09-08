@@ -8,15 +8,9 @@
 #include <linux/netdevice.h>
 #include <uapi/linux/bpf.h>
 #include <linux/version.h>
-#include <bpf/bpf_helpers.h>
-#include <bpf/bpf_tracing.h>
+#include "bpf_helpers.h"
 
-#define _(P)                                                                   \
-	({                                                                     \
-		typeof(P) val = 0;                                             \
-		bpf_probe_read_kernel(&val, sizeof(val), &(P));                \
-		val;                                                           \
-	})
+#define _(P) ({typeof(P) val = 0; bpf_probe_read(&val, sizeof(val), &P); val;})
 
 /* kprobe is NOT a stable ABI
  * kernel functions can be removed, renamed or completely change semantics.
@@ -26,7 +20,7 @@
 SEC("kprobe/__netif_receive_skb_core")
 int bpf_prog1(struct pt_regs *ctx)
 {
-	/* attaches to kprobe __netif_receive_skb_core,
+	/* attaches to kprobe netif_receive_skb,
 	 * looks for packets on loobpack device and prints them
 	 */
 	char devname[IFNAMSIZ];
@@ -35,11 +29,11 @@ int bpf_prog1(struct pt_regs *ctx)
 	int len;
 
 	/* non-portable! works for the given kernel only */
-	bpf_probe_read_kernel(&skb, sizeof(skb), (void *)PT_REGS_PARM1(ctx));
+	skb = (struct sk_buff *) PT_REGS_PARM1(ctx);
 	dev = _(skb->dev);
 	len = _(skb->len);
 
-	bpf_probe_read_kernel(devname, sizeof(devname), dev->name);
+	bpf_probe_read(devname, sizeof(devname), dev->name);
 
 	if (devname[0] == 'l' && devname[1] == 'o') {
 		char fmt[] = "skb %p len %d\n";

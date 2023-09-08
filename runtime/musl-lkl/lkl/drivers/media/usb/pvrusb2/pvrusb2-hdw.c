@@ -1,7 +1,17 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  *
+ *
  *  Copyright (C) 2005 Mike Isely <isely@pobox.com>
+ *
+ *  This program is free software; you can redistribute it and/or modify
+ *  it under the terms of the GNU General Public License as published by
+ *  the Free Software Foundation; either version 2 of the License
+ *
+ *  This program is distributed in the hope that it will be useful,
+ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *  GNU General Public License for more details.
+ *
  */
 
 #include <linux/errno.h>
@@ -306,8 +316,6 @@ static const struct pvr2_fx2cmd_descdef pvr2_fx2cmd_desc[] = {
 	{FX2CMD_ONAIR_DTV_STREAMING_OFF, "onair dtv stream off"},
 	{FX2CMD_ONAIR_DTV_POWER_ON, "onair dtv power on"},
 	{FX2CMD_ONAIR_DTV_POWER_OFF, "onair dtv power off"},
-	{FX2CMD_HCW_DEMOD_RESET_PIN, "hcw demod reset pin"},
-	{FX2CMD_HCW_MAKO_SLEEP_PIN, "hcw mako sleep pin"},
 };
 
 
@@ -658,9 +666,7 @@ static int ctrl_get_input(struct pvr2_ctrl *cptr,int *vp)
 
 static int ctrl_check_input(struct pvr2_ctrl *cptr,int v)
 {
-	if (v < 0 || v > PVR2_CVAL_INPUT_MAX)
-		return 0;
-	return ((1UL << v) & cptr->hdw->input_allowed_mask) != 0;
+	return ((1 << v) & cptr->hdw->input_allowed_mask) != 0;
 }
 
 static int ctrl_set_input(struct pvr2_ctrl *cptr,int m,int v)
@@ -784,7 +790,7 @@ static int ctrl_cx2341x_set(struct pvr2_ctrl *cptr,int m,int v)
 
 static unsigned int ctrl_cx2341x_getv4lflags(struct pvr2_ctrl *cptr)
 {
-	struct v4l2_queryctrl qctrl = {};
+	struct v4l2_queryctrl qctrl;
 	struct pvr2_ctl_info *info;
 	qctrl.id = cptr->info->v4l_id;
 	cx2341x_ctrl_query(&cptr->hdw->enc_ctl_state,&qctrl);
@@ -864,9 +870,10 @@ static int ctrl_std_sym_to_val(struct pvr2_ctrl *cptr,
 			       const char *bufPtr,unsigned int bufSize,
 			       int *mskp,int *valp)
 {
+	int ret;
 	v4l2_std_id id;
-	if (!pvr2_std_str_to_id(&id, bufPtr, bufSize))
-		return -EINVAL;
+	ret = pvr2_std_str_to_id(&id,bufPtr,bufSize);
+	if (ret < 0) return ret;
 	if (mskp) *mskp = id;
 	if (valp) *valp = id;
 	return 0;
@@ -1467,7 +1474,7 @@ static int pvr2_upload_firmware1(struct pvr2_hdw *hdw)
 	for (address = 0; address < fwsize; address += 0x800) {
 		memcpy(fw_ptr, fw_entry->data + address, 0x800);
 		ret += usb_control_msg(hdw->usb_dev, pipe, 0xa0, 0x40, address,
-				       0, fw_ptr, 0x800, 1000);
+				       0, fw_ptr, 0x800, HZ);
 	}
 
 	trace_firmware("Upload done, releasing device's CPU");
@@ -1605,7 +1612,7 @@ int pvr2_upload_firmware2(struct pvr2_hdw *hdw)
 			((u32 *)fw_ptr)[icnt] = swab32(((u32 *)fw_ptr)[icnt]);
 
 		ret |= usb_bulk_msg(hdw->usb_dev, pipe, fw_ptr,bcnt,
-				    &actual_length, 1000);
+				    &actual_length, HZ);
 		ret |= (actual_length != bcnt);
 		if (ret) break;
 		fw_done += bcnt;
@@ -1671,7 +1678,7 @@ static int pvr2_decoder_enable(struct pvr2_hdw *hdw,int enablefl)
 	}
 	if (!hdw->flag_decoder_missed) {
 		pvr2_trace(PVR2_TRACE_ERROR_LEGS,
-			   "***WARNING*** No decoder present");
+			   "WARNING: No decoder present");
 		hdw->flag_decoder_missed = !0;
 		trace_stbit("flag_decoder_missed",
 			    hdw->flag_decoder_missed);
@@ -1691,7 +1698,7 @@ static int pvr2_hdw_untrip_unlocked(struct pvr2_hdw *hdw)
 	if (!hdw->flag_tripped) return 0;
 	hdw->flag_tripped = 0;
 	pvr2_trace(PVR2_TRACE_ERROR_LEGS,
-		   "Clearing driver error status");
+		   "Clearing driver error statuss");
 	return !0;
 }
 
@@ -1718,16 +1725,16 @@ int pvr2_hdw_get_streaming(struct pvr2_hdw *hdw)
 int pvr2_hdw_set_streaming(struct pvr2_hdw *hdw,int enable_flag)
 {
 	int ret,st;
-	LOCK_TAKE(hdw->big_lock);
-	pvr2_hdw_untrip_unlocked(hdw);
-	if (!enable_flag != !hdw->state_pipeline_req) {
-		hdw->state_pipeline_req = enable_flag != 0;
-		pvr2_trace(PVR2_TRACE_START_STOP,
-			   "/*--TRACE_STREAM--*/ %s",
-			   enable_flag ? "enable" : "disable");
-	}
-	pvr2_hdw_state_sched(hdw);
-	LOCK_GIVE(hdw->big_lock);
+	LOCK_TAKE(hdw->big_lock); do {
+		pvr2_hdw_untrip_unlocked(hdw);
+		if ((!enable_flag) != !(hdw->state_pipeline_req)) {
+			hdw->state_pipeline_req = enable_flag != 0;
+			pvr2_trace(PVR2_TRACE_START_STOP,
+				   "/*--TRACE_STREAM--*/ %s",
+				   enable_flag ? "enable" : "disable");
+		}
+		pvr2_hdw_state_sched(hdw);
+	} while (0); LOCK_GIVE(hdw->big_lock);
 	if ((ret = pvr2_hdw_wait(hdw,0)) < 0) return ret;
 	if (enable_flag) {
 		while ((st = hdw->master_state) != PVR2_STATE_RUN) {
@@ -2130,27 +2137,9 @@ static void pvr2_hdw_setup_low(struct pvr2_hdw *hdw)
 				      ((0) << 16));
 	}
 
-	/* This step MUST happen after the earlier powerup step */
+	// This step MUST happen after the earlier powerup step.
 	pvr2_i2c_core_init(hdw);
 	if (!pvr2_hdw_dev_ok(hdw)) return;
-
-	/* Reset demod only on Hauppauge 160xxx platform */
-	if (le16_to_cpu(hdw->usb_dev->descriptor.idVendor) == 0x2040 &&
-	    (le16_to_cpu(hdw->usb_dev->descriptor.idProduct) == 0x7502 ||
-	     le16_to_cpu(hdw->usb_dev->descriptor.idProduct) == 0x7510)) {
-		pr_info("%s(): resetting 160xxx demod\n", __func__);
-		/* TODO: not sure this is proper place to reset once only */
-		pvr2_issue_simple_cmd(hdw,
-				      FX2CMD_HCW_DEMOD_RESET_PIN |
-				      (1 << 8) |
-				      ((0) << 16));
-		usleep_range(10000, 10500);
-		pvr2_issue_simple_cmd(hdw,
-				      FX2CMD_HCW_DEMOD_RESET_PIN |
-				      (1 << 8) |
-				      ((1) << 16));
-		usleep_range(10000, 10500);
-	}
 
 	pvr2_hdw_load_modules(hdw);
 	if (!pvr2_hdw_dev_ok(hdw)) return;
@@ -2375,7 +2364,7 @@ struct pvr2_hdw *pvr2_hdw_create(struct usb_interface *intf,
 	if (hdw_desc->flag_is_experimental) {
 		pvr2_trace(PVR2_TRACE_INFO, "**********");
 		pvr2_trace(PVR2_TRACE_INFO,
-			   "***WARNING*** Support for this device (%s) is experimental.",
+			   "WARNING: Support for this device (%s) is experimental.",
 							      hdw_desc->description);
 		pvr2_trace(PVR2_TRACE_INFO,
 			   "Important functionality might not be entirely working.");
@@ -2424,7 +2413,7 @@ struct pvr2_hdw *pvr2_hdw_create(struct usb_interface *intf,
 
 	hdw->control_cnt = CTRLDEF_COUNT;
 	hdw->control_cnt += MPEGDEF_COUNT;
-	hdw->controls = kcalloc(hdw->control_cnt, sizeof(struct pvr2_ctrl),
+	hdw->controls = kzalloc(sizeof(struct pvr2_ctrl) * hdw->control_cnt,
 				GFP_KERNEL);
 	if (!hdw->controls) goto fail;
 	hdw->hdw_desc = hdw_desc;
@@ -2444,7 +2433,7 @@ struct pvr2_hdw *pvr2_hdw_create(struct usb_interface *intf,
 	/* Ensure that default input choice is a valid one. */
 	m = hdw->input_avail_mask;
 	if (m) for (idx = 0; idx < (sizeof(m) << 3); idx++) {
-		if (!((1UL << idx) & m)) continue;
+		if (!((1 << idx) & m)) continue;
 		hdw->input_val = idx;
 		break;
 	}
@@ -2470,8 +2459,9 @@ struct pvr2_hdw *pvr2_hdw_create(struct usb_interface *intf,
 		if (!(qctrl.flags & V4L2_CTRL_FLAG_READ_ONLY)) {
 			ciptr->set_value = ctrl_cx2341x_set;
 		}
-		strscpy(hdw->mpeg_ctrl_info[idx].desc, qctrl.name,
-			sizeof(hdw->mpeg_ctrl_info[idx].desc));
+		strncpy(hdw->mpeg_ctrl_info[idx].desc,qctrl.name,
+			PVR2_CTLD_INFO_DESC_SIZE);
+		hdw->mpeg_ctrl_info[idx].desc[PVR2_CTLD_INFO_DESC_SIZE-1] = 0;
 		ciptr->default_value = qctrl.default_value;
 		switch (qctrl.type) {
 		default:
@@ -2500,11 +2490,11 @@ struct pvr2_hdw *pvr2_hdw_create(struct usb_interface *intf,
 	// Initialize control data regarding video standard masks
 	valid_std_mask = pvr2_std_get_usable();
 	for (idx = 0; idx < 32; idx++) {
-		if (!(valid_std_mask & (1UL << idx))) continue;
+		if (!(valid_std_mask & (1 << idx))) continue;
 		cnt1 = pvr2_std_id_to_str(
 			hdw->std_mask_names[idx],
 			sizeof(hdw->std_mask_names[idx])-1,
-			1UL << idx);
+			1 << idx);
 		hdw->std_mask_names[idx][cnt1] = 0;
 	}
 	cptr = pvr2_hdw_get_ctrl_by_id(hdw,PVR2_CID_STDAVAIL);
@@ -2569,11 +2559,6 @@ struct pvr2_hdw *pvr2_hdw_create(struct usb_interface *intf,
 	} while (0);
 	mutex_unlock(&pvr2_unit_mtx);
 
-	INIT_WORK(&hdw->workpoll, pvr2_hdw_worker_poll);
-
-	if (hdw->unit_number == -1)
-		goto fail;
-
 	cnt1 = 0;
 	cnt2 = scnprintf(hdw->name+cnt1,sizeof(hdw->name)-cnt1,"pvrusb2");
 	cnt1 += cnt2;
@@ -2584,6 +2569,8 @@ struct pvr2_hdw *pvr2_hdw_create(struct usb_interface *intf,
 	}
 	if (cnt1 >= sizeof(hdw->name)) cnt1 = sizeof(hdw->name)-1;
 	hdw->name[cnt1] = 0;
+
+	INIT_WORK(&hdw->workpoll,pvr2_hdw_worker_poll);
 
 	pvr2_trace(PVR2_TRACE_INIT,"Driver unit number is %d, name is %s",
 		   hdw->unit_number,hdw->name);
@@ -2610,7 +2597,6 @@ struct pvr2_hdw *pvr2_hdw_create(struct usb_interface *intf,
 		del_timer_sync(&hdw->encoder_run_timer);
 		del_timer_sync(&hdw->encoder_wait_timer);
 		flush_work(&hdw->workpoll);
-		v4l2_device_unregister(&hdw->v4l2_dev);
 		usb_free_urb(hdw->ctl_read_urb);
 		usb_free_urb(hdw->ctl_write_urb);
 		kfree(hdw->ctl_read_buffer);
@@ -2680,8 +2666,9 @@ void pvr2_hdw_destroy(struct pvr2_hdw *hdw)
 		pvr2_stream_destroy(hdw->vid_stream);
 		hdw->vid_stream = NULL;
 	}
+	pvr2_i2c_core_done(hdw);
 	v4l2_device_unregister(&hdw->v4l2_dev);
-	pvr2_hdw_disconnect(hdw);
+	pvr2_hdw_remove_usb_stuff(hdw);
 	mutex_lock(&pvr2_unit_mtx);
 	do {
 		if ((hdw->unit_number >= 0) &&
@@ -2708,7 +2695,6 @@ void pvr2_hdw_disconnect(struct pvr2_hdw *hdw)
 {
 	pvr2_trace(PVR2_TRACE_INIT,"pvr2_hdw_disconnect(hdw=%p)",hdw);
 	LOCK_TAKE(hdw->big_lock);
-	pvr2_i2c_core_done(hdw);
 	LOCK_TAKE(hdw->ctl_lock);
 	pvr2_hdw_remove_usb_stuff(hdw);
 	LOCK_GIVE(hdw->ctl_lock);
@@ -3307,12 +3293,12 @@ void pvr2_hdw_trigger_module_log(struct pvr2_hdw *hdw)
 	int nr = pvr2_hdw_get_unit_number(hdw);
 	LOCK_TAKE(hdw->big_lock);
 	do {
-		pr_info("pvrusb2: =================  START STATUS CARD #%d  =================\n", nr);
+		printk(KERN_INFO "pvrusb2: =================  START STATUS CARD #%d  =================\n", nr);
 		v4l2_device_call_all(&hdw->v4l2_dev, 0, core, log_status);
 		pvr2_trace(PVR2_TRACE_INFO,"cx2341x config:");
 		cx2341x_log_status(&hdw->enc_ctl_state, "pvrusb2");
 		pvr2_hdw_state_log_state(hdw);
-		pr_info("pvrusb2: ==================  END STATUS CARD #%d  ==================\n", nr);
+		printk(KERN_INFO "pvrusb2: ==================  END STATUS CARD #%d  ==================\n", nr);
 	} while (0);
 	LOCK_GIVE(hdw->big_lock);
 }
@@ -3332,7 +3318,7 @@ static u8 *pvr2_full_eeprom_fetch(struct pvr2_hdw *hdw)
 	int ret;
 	int mode16 = 0;
 	unsigned pcnt,tcnt;
-	eeprom = kzalloc(EEPROM_SIZE, GFP_KERNEL);
+	eeprom = kmalloc(EEPROM_SIZE,GFP_KERNEL);
 	if (!eeprom) {
 		pvr2_trace(PVR2_TRACE_ERROR_LEGS,
 			   "Failed to allocate memory required to read eeprom");
@@ -3367,6 +3353,7 @@ static u8 *pvr2_full_eeprom_fetch(struct pvr2_hdw *hdw)
 	   (1) we're only fetching part of the eeprom, and (2) if we were
 	   getting the whole thing our I2C driver can't grab it in one
 	   pass - which is what tveeprom is otherwise going to attempt */
+	memset(eeprom,0,EEPROM_SIZE);
 	for (tcnt = 0; tcnt < EEPROM_SIZE; tcnt += pcnt) {
 		pcnt = 16;
 		if (pcnt + tcnt > EEPROM_SIZE) pcnt = EEPROM_SIZE-tcnt;
@@ -3398,8 +3385,7 @@ void pvr2_hdw_cpufw_set_enabled(struct pvr2_hdw *hdw,
 	int ret;
 	u16 address;
 	unsigned int pipe;
-	LOCK_TAKE(hdw->big_lock);
-	do {
+	LOCK_TAKE(hdw->big_lock); do {
 		if ((hdw->fw_buffer == NULL) == !enable_flag) break;
 
 		if (!enable_flag) {
@@ -3443,7 +3429,7 @@ void pvr2_hdw_cpufw_set_enabled(struct pvr2_hdw *hdw,
 						      0xa0,0xc0,
 						      address,0,
 						      hdw->fw_buffer+address,
-						      0x800,1000);
+						      0x800,HZ);
 				if (ret < 0) break;
 			}
 
@@ -3462,8 +3448,8 @@ void pvr2_hdw_cpufw_set_enabled(struct pvr2_hdw *hdw,
 			pvr2_trace(PVR2_TRACE_FIRMWARE,
 				   "Done sucking down EEPROM contents");
 		}
-	} while (0);
-	LOCK_GIVE(hdw->big_lock);
+
+	} while (0); LOCK_GIVE(hdw->big_lock);
 }
 
 
@@ -3478,8 +3464,7 @@ int pvr2_hdw_cpufw_get(struct pvr2_hdw *hdw,unsigned int offs,
 		       char *buf,unsigned int cnt)
 {
 	int ret = -EINVAL;
-	LOCK_TAKE(hdw->big_lock);
-	do {
+	LOCK_TAKE(hdw->big_lock); do {
 		if (!buf) break;
 		if (!cnt) break;
 
@@ -3504,8 +3489,7 @@ int pvr2_hdw_cpufw_get(struct pvr2_hdw *hdw,unsigned int offs,
 			   "Read firmware data offs=%d cnt=%d",
 			   offs,cnt);
 		ret = cnt;
-	} while (0);
-	LOCK_GIVE(hdw->big_lock);
+	} while (0); LOCK_GIVE(hdw->big_lock);
 
 	return ret;
 }
@@ -3984,7 +3968,7 @@ void pvr2_hdw_cpureset_assert(struct pvr2_hdw *hdw,int val)
 	/* Write the CPUCS register on the 8051.  The lsb of the register
 	   is the reset bit; a 1 asserts reset while a 0 clears it. */
 	pipe = usb_sndctrlpipe(hdw->usb_dev, 0);
-	ret = usb_control_msg(hdw->usb_dev,pipe,0xa0,0x40,0xe600,0,da,1,1000);
+	ret = usb_control_msg(hdw->usb_dev,pipe,0xa0,0x40,0xe600,0,da,1,HZ);
 	if (ret < 0) {
 		pvr2_trace(PVR2_TRACE_ERROR_LEGS,
 			   "cpureset_assert(%d) error=%d",val,ret);
@@ -4027,20 +4011,6 @@ int pvr2_hdw_cmd_decoder_reset(struct pvr2_hdw *hdw)
 static int pvr2_hdw_cmd_hcw_demod_reset(struct pvr2_hdw *hdw, int onoff)
 {
 	hdw->flag_ok = !0;
-
-	/* Use this for Hauppauge 160xxx only */
-	if (le16_to_cpu(hdw->usb_dev->descriptor.idVendor) == 0x2040 &&
-	    (le16_to_cpu(hdw->usb_dev->descriptor.idProduct) == 0x7502 ||
-	     le16_to_cpu(hdw->usb_dev->descriptor.idProduct) == 0x7510)) {
-		pr_debug("%s(): resetting demod on Hauppauge 160xxx platform skipped\n",
-			 __func__);
-		/* Can't reset 160xxx or it will trash Demod tristate */
-		return pvr2_issue_simple_cmd(hdw,
-					     FX2CMD_HCW_MAKO_SLEEP_PIN |
-					     (1 << 8) |
-					     ((onoff ? 1 : 0) << 16));
-	}
-
 	return pvr2_issue_simple_cmd(hdw,
 				     FX2CMD_HCW_DEMOD_RESETIN |
 				     (1 << 8) |
@@ -4678,7 +4648,7 @@ static unsigned int print_input_mask(unsigned int msk,
 	unsigned int idx,ccnt;
 	unsigned int tcnt = 0;
 	for (idx = 0; idx < ARRAY_SIZE(control_values_input); idx++) {
-		if (!((1UL << idx) & msk)) continue;
+		if (!((1 << idx) & msk)) continue;
 		ccnt = scnprintf(buf+tcnt,
 				 acnt-tcnt,
 				 "%s%s",
@@ -4881,7 +4851,7 @@ static void pvr2_hdw_state_log_state(struct pvr2_hdw *hdw)
 	for (idx = 0; ; idx++) {
 		ccnt = pvr2_hdw_report_unlocked(hdw,idx,buf,sizeof(buf));
 		if (!ccnt) break;
-		pr_info("%s %.*s\n", hdw->name, ccnt, buf);
+		printk(KERN_INFO "%s %.*s\n",hdw->name,ccnt,buf);
 	}
 	ccnt = pvr2_hdw_report_clients(hdw, buf, sizeof(buf));
 	if (ccnt >= sizeof(buf))
@@ -4893,7 +4863,7 @@ static void pvr2_hdw_state_log_state(struct pvr2_hdw *hdw)
 		while ((lcnt + ucnt < ccnt) && (buf[lcnt + ucnt] != '\n')) {
 			lcnt++;
 		}
-		pr_info("%s %.*s\n", hdw->name, lcnt, buf + ucnt);
+		printk(KERN_INFO "%s %.*s\n", hdw->name, lcnt, buf + ucnt);
 		ucnt += lcnt + 1;
 	}
 }
@@ -5041,7 +5011,7 @@ void pvr2_hdw_status_poll(struct pvr2_hdw *hdw)
 	/* Note: There apparently is no replacement for VIDIOC_CROPCAP
 	   using v4l2-subdev - therefore we can't support that AT ALL right
 	   now.  (Of course, no sub-drivers seem to implement it either.
-	   But now it's a chicken and egg problem...) */
+	   But now it's a a chicken and egg problem...) */
 	v4l2_device_call_all(&hdw->v4l2_dev, 0, tuner, g_tuner, vtp);
 	pvr2_trace(PVR2_TRACE_CHIPS, "subdev status poll type=%u strength=%u audio=0x%x cap=0x%x low=%u hi=%u",
 		   vtp->type,
@@ -5105,7 +5075,7 @@ int pvr2_hdw_set_input_allowed(struct pvr2_hdw *hdw,
 			break;
 		}
 		hdw->input_allowed_mask = nv;
-		if ((1UL << hdw->input_val) & hdw->input_allowed_mask) {
+		if ((1 << hdw->input_val) & hdw->input_allowed_mask) {
 			/* Current mode is still in the allowed mask, so
 			   we're done. */
 			break;
@@ -5118,7 +5088,7 @@ int pvr2_hdw_set_input_allowed(struct pvr2_hdw *hdw,
 		}
 		m = hdw->input_allowed_mask;
 		for (idx = 0; idx < (sizeof(m) << 3); idx++) {
-			if (!((1UL << idx) & m)) continue;
+			if (!((1 << idx) & m)) continue;
 			pvr2_hdw_set_input(hdw,idx);
 			break;
 		}

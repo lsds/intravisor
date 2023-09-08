@@ -56,7 +56,6 @@
 #include <linux/types.h>
 #include <linux/errno.h>
 #include <linux/time.h>
-#include <linux/time_namespace.h>
 #include <linux/kernel.h>
 #include <linux/kernel_stat.h>
 #include <linux/tty.h>
@@ -69,6 +68,7 @@
 #include <linux/sched/cputime.h>
 #include <linux/proc_fs.h>
 #include <linux/ioport.h>
+#include <linux/uaccess.h>
 #include <linux/io.h>
 #include <linux/mm.h>
 #include <linux/hugetlb.h>
@@ -87,33 +87,31 @@
 #include <linux/pid_namespace.h>
 #include <linux/prctl.h>
 #include <linux/ptrace.h>
+#include <linux/tracehook.h>
 #include <linux/string_helpers.h>
 #include <linux/user_namespace.h>
 #include <linux/fs_struct.h>
-#include <linux/kthread.h>
 
+#include <asm/pgtable.h>
 #include <asm/processor.h>
 #include "internal.h"
 
-void proc_task_name(struct seq_file *m, struct task_struct *p, bool escape)
+static inline void task_name(struct seq_file *m, struct task_struct *p)
 {
-	char tcomm[64];
+	char *buf;
+	size_t size;
+	char tcomm[sizeof(p->comm)];
+	int ret;
 
-	/*
-	 * Test before PF_KTHREAD because all workqueue worker threads are
-	 * kernel threads.
-	 */
-	if (p->flags & PF_WQ_WORKER)
-		wq_worker_comm(tcomm, sizeof(tcomm), p);
-	else if (p->flags & PF_KTHREAD)
-		get_kthread_comm(tcomm, sizeof(tcomm), p);
-	else
-		__get_task_comm(tcomm, sizeof(tcomm), p);
+	get_task_comm(tcomm, p);
 
-	if (escape)
-		seq_escape_str(m, tcomm, ESCAPE_SPACE | ESCAPE_SPECIAL, "\n\\");
-	else
-		seq_printf(m, "%.64s", tcomm);
+	seq_puts(m, "Name:\t");
+
+	size = seq_get_buf(m, &buf);
+	ret = string_escape_str(tcomm, buf, size, ESCAPE_SPACE | ESCAPE_SPECIAL, "\n\\");
+	seq_commit(m, ret < size ? ret : -1);
+
+	seq_putc(m, '\n');
 }
 
 /*
@@ -243,8 +241,8 @@ void render_sigset_t(struct seq_file *m, const char *header,
 	seq_putc(m, '\n');
 }
 
-static void collect_sigign_sigcatch(struct task_struct *p, sigset_t *sigign,
-				    sigset_t *sigcatch)
+static void collect_sigign_sigcatch(struct task_struct *p, sigset_t *ign,
+				    sigset_t *catch)
 {
 	struct k_sigaction *k;
 	int i;
@@ -252,9 +250,9 @@ static void collect_sigign_sigcatch(struct task_struct *p, sigset_t *sigign,
 	k = p->sighand->action;
 	for (i = 1; i <= _NSIG; ++i, ++k) {
 		if (k->sa.sa_handler == SIG_IGN)
-			sigaddset(sigign, i);
+			sigaddset(ign, i);
 		else if (k->sa.sa_handler != SIG_DFL)
-			sigaddset(sigcatch, i);
+			sigaddset(catch, i);
 	}
 }
 
@@ -263,7 +261,7 @@ static inline void task_sig(struct seq_file *m, struct task_struct *p)
 	unsigned long flags;
 	sigset_t pending, shpending, blocked, ignored, caught;
 	int num_threads = 0;
-	unsigned int qsize = 0;
+	unsigned long qsize = 0;
 	unsigned long qlim = 0;
 
 	sigemptyset(&pending);
@@ -279,7 +277,7 @@ static inline void task_sig(struct seq_file *m, struct task_struct *p)
 		collect_sigign_sigcatch(p, &ignored, &caught);
 		num_threads = get_nr_threads(p);
 		rcu_read_lock();  /* FIXME: is this correct? */
-		qsize = get_rlimit_value(task_ucounts(p), UCOUNT_RLIMIT_SIGPENDING);
+		qsize = atomic_read(&__task_cred(p)->user->sigpending);
 		rcu_read_unlock();
 		qlim = task_rlimit(p, RLIMIT_SIGPENDING);
 		unlock_task_sighand(p, &flags);
@@ -337,61 +335,29 @@ static inline void task_seccomp(struct seq_file *m, struct task_struct *p)
 	seq_put_decimal_ull(m, "NoNewPrivs:\t", task_no_new_privs(p));
 #ifdef CONFIG_SECCOMP
 	seq_put_decimal_ull(m, "\nSeccomp:\t", p->seccomp.mode);
-#ifdef CONFIG_SECCOMP_FILTER
-	seq_put_decimal_ull(m, "\nSeccomp_filters:\t",
-			    atomic_read(&p->seccomp.filter_count));
 #endif
-#endif
-	seq_puts(m, "\nSpeculation_Store_Bypass:\t");
+	seq_printf(m, "\nSpeculation_Store_Bypass:\t");
 	switch (arch_prctl_spec_ctrl_get(p, PR_SPEC_STORE_BYPASS)) {
 	case -EINVAL:
-		seq_puts(m, "unknown");
+		seq_printf(m, "unknown");
 		break;
 	case PR_SPEC_NOT_AFFECTED:
-		seq_puts(m, "not vulnerable");
+		seq_printf(m, "not vulnerable");
 		break;
 	case PR_SPEC_PRCTL | PR_SPEC_FORCE_DISABLE:
-		seq_puts(m, "thread force mitigated");
+		seq_printf(m, "thread force mitigated");
 		break;
 	case PR_SPEC_PRCTL | PR_SPEC_DISABLE:
-		seq_puts(m, "thread mitigated");
+		seq_printf(m, "thread mitigated");
 		break;
 	case PR_SPEC_PRCTL | PR_SPEC_ENABLE:
-		seq_puts(m, "thread vulnerable");
+		seq_printf(m, "thread vulnerable");
 		break;
 	case PR_SPEC_DISABLE:
-		seq_puts(m, "globally mitigated");
+		seq_printf(m, "globally mitigated");
 		break;
 	default:
-		seq_puts(m, "vulnerable");
-		break;
-	}
-
-	seq_puts(m, "\nSpeculationIndirectBranch:\t");
-	switch (arch_prctl_spec_ctrl_get(p, PR_SPEC_INDIRECT_BRANCH)) {
-	case -EINVAL:
-		seq_puts(m, "unsupported");
-		break;
-	case PR_SPEC_NOT_AFFECTED:
-		seq_puts(m, "not affected");
-		break;
-	case PR_SPEC_PRCTL | PR_SPEC_FORCE_DISABLE:
-		seq_puts(m, "conditional force disabled");
-		break;
-	case PR_SPEC_PRCTL | PR_SPEC_DISABLE:
-		seq_puts(m, "conditional disabled");
-		break;
-	case PR_SPEC_PRCTL | PR_SPEC_ENABLE:
-		seq_puts(m, "conditional enabled");
-		break;
-	case PR_SPEC_ENABLE:
-		seq_puts(m, "always enabled");
-		break;
-	case PR_SPEC_DISABLE:
-		seq_puts(m, "always disabled");
-		break;
-	default:
-		seq_puts(m, "unknown");
+		seq_printf(m, "vulnerable");
 		break;
 	}
 	seq_putc(m, '\n');
@@ -408,24 +374,15 @@ static inline void task_context_switch_counts(struct seq_file *m,
 static void task_cpus_allowed(struct seq_file *m, struct task_struct *task)
 {
 	seq_printf(m, "Cpus_allowed:\t%*pb\n",
-		   cpumask_pr_args(&task->cpus_mask));
+		   cpumask_pr_args(&task->cpus_allowed));
 	seq_printf(m, "Cpus_allowed_list:\t%*pbl\n",
-		   cpumask_pr_args(&task->cpus_mask));
+		   cpumask_pr_args(&task->cpus_allowed));
 }
 
-static inline void task_core_dumping(struct seq_file *m, struct task_struct *task)
+static inline void task_core_dumping(struct seq_file *m, struct mm_struct *mm)
 {
-	seq_put_decimal_ull(m, "CoreDumping:\t", !!task->signal->core_state);
+	seq_put_decimal_ull(m, "CoreDumping:\t", !!mm->core_state);
 	seq_putc(m, '\n');
-}
-
-static inline void task_thp_status(struct seq_file *m, struct mm_struct *mm)
-{
-	bool thp_enabled = IS_ENABLED(CONFIG_TRANSPARENT_HUGEPAGE);
-
-	if (thp_enabled)
-		thp_enabled = !test_bit(MMF_DISABLE_THP, &mm->flags);
-	seq_printf(m, "THP_enabled:\t%d\n", thp_enabled);
 }
 
 int proc_pid_status(struct seq_file *m, struct pid_namespace *ns,
@@ -433,16 +390,12 @@ int proc_pid_status(struct seq_file *m, struct pid_namespace *ns,
 {
 	struct mm_struct *mm = get_task_mm(task);
 
-	seq_puts(m, "Name:\t");
-	proc_task_name(m, task, true);
-	seq_putc(m, '\n');
-
+	task_name(m, task);
 	task_state(m, ns, pid, task);
 
 	if (mm) {
 		task_mem(m, mm);
-		task_core_dumping(m, task);
-		task_thp_status(m, mm);
+		task_core_dumping(m, mm);
 		mmput(mm);
 	}
 	task_sig(m, task);
@@ -472,8 +425,8 @@ static int do_task_stat(struct seq_file *m, struct pid_namespace *ns,
 	u64 cutime, cstime, utime, stime;
 	u64 cgtime, gtime;
 	unsigned long rsslim = 0;
+	char tcomm[sizeof(task->comm)];
 	unsigned long flags;
-	int exit_code = task->exit_code;
 
 	state = *get_task_state(task);
 	vsize = eip = esp = 0;
@@ -490,7 +443,7 @@ static int do_task_stat(struct seq_file *m, struct pid_namespace *ns,
 		 * a program is not able to use ptrace(2) in that case. It is
 		 * safe because the task has stopped executing permanently.
 		 */
-		if (permitted && (task->flags & (PF_EXITING|PF_DUMPCORE))) {
+		if (permitted && (task->flags & PF_DUMPCORE)) {
 			if (try_get_task_stack(task)) {
 				eip = KSTK_EIP(task);
 				esp = KSTK_ESP(task);
@@ -498,6 +451,8 @@ static int do_task_stat(struct seq_file *m, struct pid_namespace *ns,
 			}
 		}
 	}
+
+	get_task_comm(tcomm, task);
 
 	sigemptyset(&sigign);
 	sigemptyset(&sigcatch);
@@ -537,9 +492,6 @@ static int do_task_stat(struct seq_file *m, struct pid_namespace *ns,
 			maj_flt += sig->maj_flt;
 			thread_group_cputime_adjusted(task, &utime, &stime);
 			gtime += sig->gtime;
-
-			if (sig->flags & (SIGNAL_GROUP_EXIT | SIGNAL_STOP_STOPPED))
-				exit_code = sig->group_exit_code;
 		}
 
 		sid = task_session_nr_ns(task, ns);
@@ -550,7 +502,7 @@ static int do_task_stat(struct seq_file *m, struct pid_namespace *ns,
 	}
 
 	if (permitted && (!whole || num_threads < 2))
-		wchan = !task_is_running(task);
+		wchan = get_wchan(task);
 	if (!whole) {
 		min_flt = task->min_flt;
 		maj_flt = task->maj_flt;
@@ -563,13 +515,12 @@ static int do_task_stat(struct seq_file *m, struct pid_namespace *ns,
 	priority = task_prio(task);
 	nice = task_nice(task);
 
-	/* apply timens offset for boottime and convert nsec -> ticks */
-	start_time =
-		nsec_to_clock_t(timens_add_boottime_ns(task->start_boottime));
+	/* convert nsec -> ticks */
+	start_time = nsec_to_clock_t(task->real_start_time);
 
 	seq_put_decimal_ull(m, "", pid_nr_ns(pid, ns));
 	seq_puts(m, " (");
-	proc_task_name(m, task, false);
+	seq_puts(m, tcomm);
 	seq_puts(m, ") ");
 	seq_putc(m, state);
 	seq_put_decimal_ll(m, " ", ppid);
@@ -615,7 +566,10 @@ static int do_task_stat(struct seq_file *m, struct pid_namespace *ns,
 	 *
 	 * This works with older implementations of procps as well.
 	 */
-	seq_put_decimal_ull(m, " ", wchan);
+	if (wchan)
+		seq_puts(m, " 1");
+	else
+		seq_puts(m, " 0");
 
 	seq_put_decimal_ull(m, " ", 0);
 	seq_put_decimal_ull(m, " ", 0);
@@ -639,7 +593,7 @@ static int do_task_stat(struct seq_file *m, struct pid_namespace *ns,
 		seq_puts(m, " 0 0 0 0 0 0 0");
 
 	if (permitted)
-		seq_put_decimal_ll(m, " ", exit_code);
+		seq_put_decimal_ll(m, " ", task->exit_code);
 	else
 		seq_puts(m, " 0");
 
@@ -664,35 +618,28 @@ int proc_tgid_stat(struct seq_file *m, struct pid_namespace *ns,
 int proc_pid_statm(struct seq_file *m, struct pid_namespace *ns,
 			struct pid *pid, struct task_struct *task)
 {
+	unsigned long size = 0, resident = 0, shared = 0, text = 0, data = 0;
 	struct mm_struct *mm = get_task_mm(task);
 
 	if (mm) {
-		unsigned long size;
-		unsigned long resident = 0;
-		unsigned long shared = 0;
-		unsigned long text = 0;
-		unsigned long data = 0;
-
 		size = task_statm(mm, &shared, &text, &data, &resident);
 		mmput(mm);
-
-		/*
-		 * For quick read, open code by putting numbers directly
-		 * expected format is
-		 * seq_printf(m, "%lu %lu %lu %lu 0 %lu 0\n",
-		 *               size, resident, shared, text, data);
-		 */
-		seq_put_decimal_ull(m, "", size);
-		seq_put_decimal_ull(m, " ", resident);
-		seq_put_decimal_ull(m, " ", shared);
-		seq_put_decimal_ull(m, " ", text);
-		seq_put_decimal_ull(m, " ", 0);
-		seq_put_decimal_ull(m, " ", data);
-		seq_put_decimal_ull(m, " ", 0);
-		seq_putc(m, '\n');
-	} else {
-		seq_write(m, "0 0 0 0 0 0 0\n", 14);
 	}
+	/*
+	 * For quick read, open code by putting numbers directly
+	 * expected format is
+	 * seq_printf(m, "%lu %lu %lu %lu 0 %lu 0\n",
+	 *               size, resident, shared, text, data);
+	 */
+	seq_put_decimal_ull(m, "", size);
+	seq_put_decimal_ull(m, " ", resident);
+	seq_put_decimal_ull(m, " ", shared);
+	seq_put_decimal_ull(m, " ", text);
+	seq_put_decimal_ull(m, " ", 0);
+	seq_put_decimal_ull(m, " ", data);
+	seq_put_decimal_ull(m, " ", 0);
+	seq_putc(m, '\n');
+
 	return 0;
 }
 
@@ -755,22 +702,25 @@ out:
 
 static int children_seq_show(struct seq_file *seq, void *v)
 {
-	struct inode *inode = file_inode(seq->file);
+	struct inode *inode = seq->private;
+	pid_t pid;
 
-	seq_printf(seq, "%d ", pid_nr_ns(v, proc_pid_ns(inode->i_sb)));
+	pid = pid_nr_ns(v, inode->i_sb->s_fs_info);
+	seq_printf(seq, "%d ", pid);
+
 	return 0;
 }
 
 static void *children_seq_start(struct seq_file *seq, loff_t *pos)
 {
-	return get_children_pid(file_inode(seq->file), NULL, *pos);
+	return get_children_pid(seq->private, NULL, *pos);
 }
 
 static void *children_seq_next(struct seq_file *seq, void *v, loff_t *pos)
 {
 	struct pid *pid;
 
-	pid = get_children_pid(file_inode(seq->file), v, *pos + 1);
+	pid = get_children_pid(seq->private, v, *pos + 1);
 	put_pid(v);
 
 	++*pos;
@@ -791,7 +741,17 @@ static const struct seq_operations children_seq_ops = {
 
 static int children_seq_open(struct inode *inode, struct file *file)
 {
-	return seq_open(file, &children_seq_ops);
+	struct seq_file *m;
+	int ret;
+
+	ret = seq_open(file, &children_seq_ops);
+	if (ret)
+		return ret;
+
+	m = file->private_data;
+	m->private = inode;
+
+	return ret;
 }
 
 const struct file_operations proc_tid_children_operations = {

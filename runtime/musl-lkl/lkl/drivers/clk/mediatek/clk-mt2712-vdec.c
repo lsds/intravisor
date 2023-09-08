@@ -1,7 +1,15 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2017 MediaTek Inc.
  * Author: Weiyi Lu <weiyi.lu@mediatek.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
  */
 
 #include <linux/clk-provider.h>
@@ -50,23 +58,33 @@ static const struct mtk_gate vdec_clks[] = {
 	GATE_VDEC1(CLK_VDEC_IMGRZ_CKEN, "vdec_imgrz_cken", "vdec_sel", 1),
 };
 
-static const struct mtk_clk_desc vdec_desc = {
-	.clks = vdec_clks,
-	.num_clks = ARRAY_SIZE(vdec_clks),
-};
+static int clk_mt2712_vdec_probe(struct platform_device *pdev)
+{
+	struct clk_onecell_data *clk_data;
+	int r;
+	struct device_node *node = pdev->dev.of_node;
+
+	clk_data = mtk_alloc_clk_data(CLK_VDEC_NR_CLK);
+
+	mtk_clk_register_gates(node, vdec_clks, ARRAY_SIZE(vdec_clks),
+			clk_data);
+
+	r = of_clk_add_provider(node, of_clk_src_onecell_get, clk_data);
+
+	if (r != 0)
+		pr_err("%s(): could not register clock provider: %d\n",
+			__func__, r);
+
+	return r;
+}
 
 static const struct of_device_id of_match_clk_mt2712_vdec[] = {
-	{
-		.compatible = "mediatek,mt2712-vdecsys",
-		.data = &vdec_desc,
-	}, {
-		/* sentinel */
-	}
+	{ .compatible = "mediatek,mt2712-vdecsys", },
+	{}
 };
 
 static struct platform_driver clk_mt2712_vdec_drv = {
-	.probe = mtk_clk_simple_probe,
-	.remove = mtk_clk_simple_remove,
+	.probe = clk_mt2712_vdec_probe,
 	.driver = {
 		.name = "clk-mt2712-vdec",
 		.of_match_table = of_match_clk_mt2712_vdec,

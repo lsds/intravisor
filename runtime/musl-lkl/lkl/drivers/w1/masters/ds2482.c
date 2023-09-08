@@ -1,5 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-only
-/*
+/**
  * ds2482.c - provides i2c to w1-master bridge(s)
  * Copyright (C) 2005  Ben Gardner <bgardner@wabtec.com>
  *
@@ -8,6 +7,10 @@
  * There are two variations: -100 and -800, which have 1 or 8 1-wire ports.
  * The complete datasheet can be obtained from MAXIM's website at:
  *   http://www.maxim-ic.com/quick_view2.cfm/qv_pk/4382
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; version 2 of the License.
  */
 
 #include <linux/module.h>
@@ -19,7 +22,7 @@
 
 #include <linux/w1.h>
 
-/*
+/**
  * Allow the active pullup to be disabled, default is enabled.
  *
  * Note from the DS2482 datasheet:
@@ -34,12 +37,7 @@ module_param_named(active_pullup, ds2482_active_pullup, int, 0644);
 MODULE_PARM_DESC(active_pullup, "Active pullup (apply to all buses): " \
 				"0-disable, 1-enable (default)");
 
-/* extra configurations - e.g. 1WS */
-static int extra_config;
-module_param(extra_config, int, S_IRUGO | S_IWUSR);
-MODULE_PARM_DESC(extra_config, "Extra Configuration settings 1=APU,2=PPM,3=SPU,8=1WS");
-
-/*
+/**
  * The DS2482 registers - there are 3 registers that are addressed by a read
  * pointer. The read pointer is set by the last command executed.
  *
@@ -62,7 +60,7 @@ MODULE_PARM_DESC(extra_config, "Extra Configuration settings 1=APU,2=PPM,3=SPU,8
 #define DS2482_PTR_CODE_CHANNEL		0xD2	/* DS2482-800 only */
 #define DS2482_PTR_CODE_CONFIG		0xC3
 
-/*
+/**
  * Configure Register bit definitions
  * The top 4 bits always read 0.
  * To write, the top nibble must be the 1's compl. of the low nibble.
@@ -72,8 +70,10 @@ MODULE_PARM_DESC(extra_config, "Extra Configuration settings 1=APU,2=PPM,3=SPU,8
 #define DS2482_REG_CFG_PPM		0x02	/* presence pulse masking */
 #define DS2482_REG_CFG_APU		0x01	/* active pull-up */
 
+/* extra configurations - e.g. 1WS */
+int extra_config;
 
-/*
+/**
  * Write and verify codes for the CHANNEL_SELECT command (DS2482-800 only).
  * To set the channel, write the value at the index of the channel.
  * Read and compare against the corresponding value to verify the change.
@@ -84,7 +84,7 @@ static const u8 ds2482_chan_rd[8] =
 	{ 0xB8, 0xB1, 0xAA, 0xA3, 0x9C, 0x95, 0x8E, 0x87 };
 
 
-/*
+/**
  * Status Register bit definitions (read only)
  */
 #define DS2482_REG_STS_DIR		0x80
@@ -124,14 +124,12 @@ struct ds2482_data {
 
 
 /**
- * ds2482_calculate_config - Helper to calculate values for configuration register
- * @conf: the raw config value
- * Return: the value w/ complements that can be written to register
+ * Helper to calculate values for configuration register
+ * @param conf the raw config value
+ * @return the value w/ complements that can be written to register
  */
 static inline u8 ds2482_calculate_config(u8 conf)
 {
-	conf |= extra_config;
-
 	if (ds2482_active_pullup)
 		conf |= DS2482_REG_CFG_APU;
 
@@ -140,10 +138,10 @@ static inline u8 ds2482_calculate_config(u8 conf)
 
 
 /**
- * ds2482_select_register - Sets the read pointer.
- * @pdev:		The ds2482 client pointer
- * @read_ptr:	see DS2482_PTR_CODE_xxx above
- * Return: -1 on failure, 0 on success
+ * Sets the read pointer.
+ * @param pdev		The ds2482 client pointer
+ * @param read_ptr	see DS2482_PTR_CODE_xxx above
+ * @return -1 on failure, 0 on success
  */
 static inline int ds2482_select_register(struct ds2482_data *pdev, u8 read_ptr)
 {
@@ -159,12 +157,12 @@ static inline int ds2482_select_register(struct ds2482_data *pdev, u8 read_ptr)
 }
 
 /**
- * ds2482_send_cmd - Sends a command without a parameter
- * @pdev:	The ds2482 client pointer
- * @cmd:	DS2482_CMD_RESET,
+ * Sends a command without a parameter
+ * @param pdev	The ds2482 client pointer
+ * @param cmd	DS2482_CMD_RESET,
  *		DS2482_CMD_1WIRE_RESET,
  *		DS2482_CMD_1WIRE_READ_BYTE
- * Return: -1 on failure, 0 on success
+ * @return -1 on failure, 0 on success
  */
 static inline int ds2482_send_cmd(struct ds2482_data *pdev, u8 cmd)
 {
@@ -176,14 +174,14 @@ static inline int ds2482_send_cmd(struct ds2482_data *pdev, u8 cmd)
 }
 
 /**
- * ds2482_send_cmd_data - Sends a command with a parameter
- * @pdev:	The ds2482 client pointer
- * @cmd:	DS2482_CMD_WRITE_CONFIG,
+ * Sends a command with a parameter
+ * @param pdev	The ds2482 client pointer
+ * @param cmd	DS2482_CMD_WRITE_CONFIG,
  *		DS2482_CMD_1WIRE_SINGLE_BIT,
  *		DS2482_CMD_1WIRE_WRITE_BYTE,
  *		DS2482_CMD_1WIRE_TRIPLET
- * @byte:	The data to send
- * Return: -1 on failure, 0 on success
+ * @param byte	The data to send
+ * @return -1 on failure, 0 on success
  */
 static inline int ds2482_send_cmd_data(struct ds2482_data *pdev,
 				       u8 cmd, u8 byte)
@@ -205,10 +203,10 @@ static inline int ds2482_send_cmd_data(struct ds2482_data *pdev,
 #define DS2482_WAIT_IDLE_TIMEOUT	100
 
 /**
- * ds2482_wait_1wire_idle - Waits until the 1-wire interface is idle (not busy)
+ * Waits until the 1-wire interface is idle (not busy)
  *
- * @pdev: Pointer to the device structure
- * Return: the last value read from status or -1 (failure)
+ * @param pdev Pointer to the device structure
+ * @return the last value read from status or -1 (failure)
  */
 static int ds2482_wait_1wire_idle(struct ds2482_data *pdev)
 {
@@ -230,12 +228,12 @@ static int ds2482_wait_1wire_idle(struct ds2482_data *pdev)
 }
 
 /**
- * ds2482_set_channel - Selects a w1 channel.
+ * Selects a w1 channel.
  * The 1-wire interface must be idle before calling this function.
  *
- * @pdev:		The ds2482 client pointer
- * @channel:		0-7
- * Return:		-1 (failure) or 0 (success)
+ * @param pdev		The ds2482 client pointer
+ * @param channel	0-7
+ * @return		-1 (failure) or 0 (success)
  */
 static int ds2482_set_channel(struct ds2482_data *pdev, u8 channel)
 {
@@ -254,11 +252,11 @@ static int ds2482_set_channel(struct ds2482_data *pdev, u8 channel)
 
 
 /**
- * ds2482_w1_touch_bit - Performs the touch-bit function, which writes a 0 or 1 and reads the level.
+ * Performs the touch-bit function, which writes a 0 or 1 and reads the level.
  *
- * @data:	The ds2482 channel pointer
- * @bit:	The level to write: 0 or non-zero
- * Return:	The level read: 0 or 1
+ * @param data	The ds2482 channel pointer
+ * @param bit	The level to write: 0 or non-zero
+ * @return	The level read: 0 or 1
  */
 static u8 ds2482_w1_touch_bit(void *data, u8 bit)
 {
@@ -284,13 +282,13 @@ static u8 ds2482_w1_touch_bit(void *data, u8 bit)
 }
 
 /**
- * ds2482_w1_triplet - Performs the triplet function, which reads two bits and writes a bit.
+ * Performs the triplet function, which reads two bits and writes a bit.
  * The bit written is determined by the two reads:
  *   00 => dbit, 01 => 0, 10 => 1
  *
- * @data:	The ds2482 channel pointer
- * @dbit:	The direction to choose if both branches are valid
- * Return:	b0=read1 b1=read2 b3=bit written
+ * @param data	The ds2482 channel pointer
+ * @param dbit	The direction to choose if both branches are valid
+ * @return	b0=read1 b1=read2 b3=bit written
  */
 static u8 ds2482_w1_triplet(void *data, u8 dbit)
 {
@@ -317,10 +315,10 @@ static u8 ds2482_w1_triplet(void *data, u8 dbit)
 }
 
 /**
- * ds2482_w1_write_byte - Performs the write byte function.
+ * Performs the write byte function.
  *
- * @data:	The ds2482 channel pointer
- * @byte:	The value to write
+ * @param data	The ds2482 channel pointer
+ * @param byte	The value to write
  */
 static void ds2482_w1_write_byte(void *data, u8 byte)
 {
@@ -341,10 +339,10 @@ static void ds2482_w1_write_byte(void *data, u8 byte)
 }
 
 /**
- * ds2482_w1_read_byte - Performs the read byte function.
+ * Performs the read byte function.
  *
- * @data:	The ds2482 channel pointer
- * Return:	The value read
+ * @param data	The ds2482 channel pointer
+ * @return	The value read
  */
 static u8 ds2482_w1_read_byte(void *data)
 {
@@ -378,10 +376,10 @@ static u8 ds2482_w1_read_byte(void *data)
 
 
 /**
- * ds2482_w1_reset_bus - Sends a reset on the 1-wire interface
+ * Sends a reset on the 1-wire interface
  *
- * @data:	The ds2482 channel pointer
- * Return:	0=Device present, 1=No device present or error
+ * @param data	The ds2482 channel pointer
+ * @return	0=Device present, 1=No device present or error
  */
 static u8 ds2482_w1_reset_bus(void *data)
 {
@@ -407,7 +405,7 @@ static u8 ds2482_w1_reset_bus(void *data)
 		/* If the chip did reset since detect, re-config it */
 		if (err & DS2482_REG_STS_RST)
 			ds2482_send_cmd_data(pdev, DS2482_CMD_WRITE_CONFIG,
-					     ds2482_calculate_config(0x00));
+					ds2482_calculate_config(extra_config));
 	}
 
 	mutex_unlock(&pdev->access_lock);
@@ -433,8 +431,7 @@ static u8 ds2482_w1_set_pullup(void *data, int delay)
 		ds2482_wait_1wire_idle(pdev);
 		/* note: it seems like both SPU and APU have to be set! */
 		retval = ds2482_send_cmd_data(pdev, DS2482_CMD_WRITE_CONFIG,
-			ds2482_calculate_config(DS2482_REG_CFG_SPU |
-						DS2482_REG_CFG_APU));
+			ds2482_calculate_config(extra_config|DS2482_REG_CFG_SPU|DS2482_REG_CFG_APU));
 		ds2482_wait_1wire_idle(pdev);
 	}
 
@@ -487,7 +484,7 @@ static int ds2482_probe(struct i2c_client *client,
 
 	/* Set all config items to 0 (off) */
 	ds2482_send_cmd_data(data, DS2482_CMD_WRITE_CONFIG,
-		ds2482_calculate_config(0x00));
+		ds2482_calculate_config(extra_config));
 
 	mutex_init(&data->access_lock);
 
@@ -525,7 +522,7 @@ exit:
 	return err;
 }
 
-static void ds2482_remove(struct i2c_client *client)
+static int ds2482_remove(struct i2c_client *client)
 {
 	struct ds2482_data   *data = i2c_get_clientdata(client);
 	int idx;
@@ -538,9 +535,10 @@ static void ds2482_remove(struct i2c_client *client)
 
 	/* Free the memory */
 	kfree(data);
+	return 0;
 }
 
-/*
+/**
  * Driver data (common to all clients)
  */
 static const struct i2c_device_id ds2482_id[] = {
@@ -561,5 +559,7 @@ module_i2c_driver(ds2482_driver);
 
 MODULE_AUTHOR("Ben Gardner <bgardner@wabtec.com>");
 MODULE_DESCRIPTION("DS2482 driver");
+module_param(extra_config, int, S_IRUGO | S_IWUSR);
+MODULE_PARM_DESC(extra_config, "Extra Configuration settings 1=APU,2=PPM,3=SPU,8=1WS");
 
 MODULE_LICENSE("GPL");

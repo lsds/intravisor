@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * PS/2 driver library
  *
@@ -6,13 +5,17 @@
  * Copyright (c) 2004 Dmitry Torokhov
  */
 
+/*
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License version 2 as published by
+ * the Free Software Foundation.
+ */
 
 #include <linux/delay.h>
 #include <linux/module.h>
 #include <linux/sched.h>
 #include <linux/interrupt.h>
 #include <linux/input.h>
-#include <linux/kmsan-checks.h>
 #include <linux/serio.h>
 #include <linux/i8042.h>
 #include <linux/libps2.h>
@@ -295,11 +298,9 @@ int __ps2_command(struct ps2dev *ps2dev, u8 *param, unsigned int command)
 
 	serio_pause_rx(ps2dev->serio);
 
-	if (param) {
+	if (param)
 		for (i = 0; i < receive; i++)
 			param[i] = ps2dev->cmdbuf[(receive - 1) - i];
-		kmsan_unpoison_memory(param, receive);
-	}
 
 	if (ps2dev->cmdcnt &&
 	    (command != PS2_CMD_RESET_BAT || ps2dev->cmdcnt != 1)) {
@@ -408,7 +409,6 @@ bool ps2_handle_ack(struct ps2dev *ps2dev, u8 data)
 			ps2dev->nak = PS2_RET_ERR;
 			break;
 		}
-		fallthrough;
 
 	/*
 	 * Workaround for mice which don't ACK the Get ID command.
@@ -421,7 +421,7 @@ bool ps2_handle_ack(struct ps2dev *ps2dev, u8 data)
 			ps2dev->nak = 0;
 			break;
 		}
-		fallthrough;
+		/* Fall through */
 	default:
 		/*
 		 * Do not signal errors if we get unexpected reply while

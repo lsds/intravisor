@@ -1,9 +1,12 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * ARC Cache Management
  *
  * Copyright (C) 2014-15 Synopsys, Inc. (www.synopsys.com)
  * Copyright (C) 2004, 2007-2010, 2011-2012 Synopsys, Inc. (www.synopsys.com)
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 
 #include <linux/module.h>
@@ -62,7 +65,7 @@ char *arc_cache_mumbojumbo(int c, char *buf, int len)
 
 	n += scnprintf(buf + n, len - n, "Peripherals\t: %#lx%s%s\n",
 		       perip_base,
-		       IS_AVAIL3(ioc_exists, ioc_enable, ", IO-Coherency (per-device) "));
+		       IS_AVAIL3(ioc_exists, ioc_enable, ", IO-Coherency "));
 
 	return buf;
 }
@@ -110,24 +113,10 @@ static void read_decode_cache_bcr_arcv2(int cpu)
 	}
 
 	READ_BCR(ARC_REG_CLUSTER_BCR, cbcr);
-	if (cbcr.c) {
+	if (cbcr.c)
 		ioc_exists = 1;
-
-		/*
-		 * As for today we don't support both IOC and ZONE_HIGHMEM enabled
-		 * simultaneously. This happens because as of today IOC aperture covers
-		 * only ZONE_NORMAL (low mem) and any dma transactions outside this
-		 * region won't be HW coherent.
-		 * If we want to use both IOC and ZONE_HIGHMEM we can use
-		 * bounce_buffer to handle dma transactions to HIGHMEM.
-		 * Also it is possible to modify dma_direct cache ops or increase IOC
-		 * aperture size if we are planning to use HIGHMEM without PAE.
-		 */
-		if (IS_ENABLED(CONFIG_HIGHMEM) || is_pae40_enabled())
-			ioc_enable = 0;
-	} else {
+	else
 		ioc_enable = 0;
-	}
 
 	/* HS 2.0 didn't have AUX_VOL */
 	if (cpuinfo_arc700[cpu].core.family > 0x51) {
@@ -205,23 +194,92 @@ slc_chk:
 #define OP_INV_IC	0x4
 
 /*
- * Cache Flush programming model
+ *		I-Cache Aliasing in ARC700 VIPT caches (MMU v1-v3)
  *
- * ARC700 MMUv3 I$ and D$ are both VIPT and can potentially alias.
- * Programming model requires both paddr and vaddr irrespecive of aliasing
- * considerations:
- *  - vaddr in {I,D}C_IV?L
- *  - paddr in {I,D}C_PTAG
+ * ARC VIPT I-cache uses vaddr to index into cache and paddr to match the tag.
+ * The orig Cache Management Module "CDU" only required paddr to invalidate a
+ * certain line since it sufficed as index in Non-Aliasing VIPT cache-geometry.
+ * Infact for distinct V1,V2,P: all of {V1-P},{V2-P},{P-P} would end up fetching
+ * the exact same line.
  *
- * In HS38x (MMUv4), D$ is PIPT, I$ is VIPT and can still alias.
- * Programming model is different for aliasing vs. non-aliasing I$
- *  - D$ / Non-aliasing I$: only paddr in {I,D}C_IV?L
- *  - Aliasing I$: same as ARC700 above (so MMUv3 routine used for MMUv4 I$)
+ * However for larger Caches (way-size > page-size) - i.e. in Aliasing config,
+ * paddr alone could not be used to correctly index the cache.
  *
- *  - If PAE40 is enabled, independent of aliasing considerations, the higher
- *    bits needs to be written into PTAG_HI
+ * ------------------
+ * MMU v1/v2 (Fixed Page Size 8k)
+ * ------------------
+ * The solution was to provide CDU with these additonal vaddr bits. These
+ * would be bits [x:13], x would depend on cache-geometry, 13 comes from
+ * standard page size of 8k.
+ * H/w folks chose [17:13] to be a future safe range, and moreso these 5 bits
+ * of vaddr could easily be "stuffed" in the paddr as bits [4:0] since the
+ * orig 5 bits of paddr were anyways ignored by CDU line ops, as they
+ * represent the offset within cache-line. The adv of using this "clumsy"
+ * interface for additional info was no new reg was needed in CDU programming
+ * model.
+ *
+ * 17:13 represented the max num of bits passable, actual bits needed were
+ * fewer, based on the num-of-aliases possible.
+ * -for 2 alias possibility, only bit 13 needed (32K cache)
+ * -for 4 alias possibility, bits 14:13 needed (64K cache)
+ *
+ * ------------------
+ * MMU v3
+ * ------------------
+ * This ver of MMU supports variable page sizes (1k-16k): although Linux will
+ * only support 8k (default), 16k and 4k.
+ * However from hardware perspective, smaller page sizes aggravate aliasing
+ * meaning more vaddr bits needed to disambiguate the cache-line-op ;
+ * the existing scheme of piggybacking won't work for certain configurations.
+ * Two new registers IC_PTAG and DC_PTAG inttoduced.
+ * "tag" bits are provided in PTAG, index bits in existing IVIL/IVDL/FLDL regs
  */
 
+static inline
+void __cache_line_loop_v2(phys_addr_t paddr, unsigned long vaddr,
+			  unsigned long sz, const int op, const int full_page)
+{
+	unsigned int aux_cmd;
+	int num_lines;
+
+	if (op == OP_INV_IC) {
+		aux_cmd = ARC_REG_IC_IVIL;
+	} else {
+		/* d$ cmd: INV (discard or wback-n-discard) OR FLUSH (wback) */
+		aux_cmd = op & OP_INV ? ARC_REG_DC_IVDL : ARC_REG_DC_FLDL;
+	}
+
+	/* Ensure we properly floor/ceil the non-line aligned/sized requests
+	 * and have @paddr - aligned to cache line and integral @num_lines.
+	 * This however can be avoided for page sized since:
+	 *  -@paddr will be cache-line aligned already (being page aligned)
+	 *  -@sz will be integral multiple of line size (being page sized).
+	 */
+	if (!full_page) {
+		sz += paddr & ~CACHE_LINE_MASK;
+		paddr &= CACHE_LINE_MASK;
+		vaddr &= CACHE_LINE_MASK;
+	}
+
+	num_lines = DIV_ROUND_UP(sz, L1_CACHE_BYTES);
+
+	/* MMUv2 and before: paddr contains stuffed vaddrs bits */
+	paddr |= (vaddr >> PAGE_SHIFT) & 0x1F;
+
+	while (num_lines-- > 0) {
+		write_aux_reg(aux_cmd, paddr);
+		paddr += L1_CACHE_BYTES;
+	}
+}
+
+/*
+ * For ARC700 MMUv3 I-cache and D-cache flushes
+ *  - ARC700 programming model requires paddr and vaddr be passed in seperate
+ *    AUX registers (*_IV*L and *_PTAG respectively) irrespective of whether the
+ *    caches actually alias or not.
+ * -  For HS38, only the aliasing I-cache configuration uses the PTAG reg
+ *    (non aliasing I-cache version doesn't; while D-cache can't possibly alias)
+ */
 static inline
 void __cache_line_loop_v3(phys_addr_t paddr, unsigned long vaddr,
 			  unsigned long sz, const int op, const int full_page)
@@ -281,6 +339,17 @@ void __cache_line_loop_v3(phys_addr_t paddr, unsigned long vaddr,
 #ifndef USE_RGN_FLSH
 
 /*
+ * In HS38x (MMU v4), I-cache is VIPT (can alias), D-cache is PIPT
+ * Here's how cache ops are implemented
+ *
+ *  - D-cache: only paddr needed (in DC_IVDL/DC_FLDL)
+ *  - I-cache Non Aliasing: Despite VIPT, only paddr needed (in IC_IVIL)
+ *  - I-cache Aliasing: Both vaddr and paddr needed (in IC_IVIL, IC_PTAG
+ *    respectively, similar to MMU v3 programming model, hence
+ *    __cache_line_loop_v3() is used)
+ *
+ * If PAE40 is enabled, independent of aliasing considerations, the higher bits
+ * needs to be written into PTAG_HI
  */
 static inline
 void __cache_line_loop_v4(phys_addr_t paddr, unsigned long vaddr,
@@ -380,9 +449,11 @@ void __cache_line_loop_v4(phys_addr_t paddr, unsigned long vaddr,
 
 #endif
 
-#ifdef CONFIG_ARC_MMU_V3
+#if (CONFIG_ARC_MMU_VER < 3)
+#define __cache_line_loop	__cache_line_loop_v2
+#elif (CONFIG_ARC_MMU_VER == 3)
 #define __cache_line_loop	__cache_line_loop_v3
-#else
+#elif (CONFIG_ARC_MMU_VER > 3)
 #define __cache_line_loop	__cache_line_loop_v4
 #endif
 
@@ -401,7 +472,7 @@ static inline void __before_dc_op(const int op)
 {
 	if (op == OP_FLUSH_N_INV) {
 		/* Dcache provides 2 cmd: FLUSH or INV
-		 * INV in turn has sub-modes: DISCARD or FLUSH-BEFORE
+		 * INV inturn has sub-modes: DISCARD or FLUSH-BEFORE
 		 * flush-n-inv is achieved by INV cmd but with IM=1
 		 * So toggle INV sub-mode depending on op request and default
 		 */
@@ -750,7 +821,7 @@ static inline void arc_slc_enable(void)
  *  -In SMP, if hardware caches are coherent
  *
  * There's a corollary case, where kernel READs from a userspace mapped page.
- * If the U-mapping is not congruent to K-mapping, former needs flushing.
+ * If the U-mapping is not congruent to to K-mapping, former needs flushing.
  */
 void flush_dcache_page(struct page *page)
 {
@@ -824,6 +895,15 @@ static void __dma_cache_wback_slc(phys_addr_t start, unsigned long sz)
 	__dc_line_op_k(start, sz, OP_FLUSH);
 	slc_op(start, sz, OP_FLUSH);
 }
+
+/*
+ * DMA ops for systems with IOC
+ * IOC hardware snoops all DMA traffic keeping the caches consistent with
+ * memory - eliding need for any explicit cache maintenance of DMA buffers
+ */
+static void __dma_cache_wback_inv_ioc(phys_addr_t start, unsigned long sz) {}
+static void __dma_cache_inv_ioc(phys_addr_t start, unsigned long sz) {}
+static void __dma_cache_wback_ioc(phys_addr_t start, unsigned long sz) {}
 
 /*
  * Exported DMA API
@@ -910,7 +990,7 @@ EXPORT_SYMBOL(flush_icache_range);
  * @vaddr is typically user vaddr (breakpoint) or kernel vaddr (vmalloc)
  *    However in one instance, when called by kprobe (for a breakpt in
  *    builtin kernel code) @vaddr will be paddr only, meaning CDU operation will
- *    use a paddr to index the cache (despite VIPT). This is fine since a
+ *    use a paddr to index the cache (despite VIPT). This is fine since since a
  *    builtin kernel page will not have any virtual mappings.
  *    kprobe on loadable module will be kernel vaddr.
  */
@@ -958,7 +1038,7 @@ void flush_cache_mm(struct mm_struct *mm)
 void flush_cache_page(struct vm_area_struct *vma, unsigned long u_vaddr,
 		      unsigned long pfn)
 {
-	phys_addr_t paddr = pfn << PAGE_SHIFT;
+	unsigned int paddr = pfn << PAGE_SHIFT;
 
 	u_vaddr &= PAGE_MASK;
 
@@ -978,9 +1058,8 @@ void flush_anon_page(struct vm_area_struct *vma, struct page *page,
 		     unsigned long u_vaddr)
 {
 	/* TBD: do we really need to clear the kernel mapping */
-	__flush_dcache_page((phys_addr_t)page_address(page), u_vaddr);
-	__flush_dcache_page((phys_addr_t)page_address(page),
-			    (phys_addr_t)page_address(page));
+	__flush_dcache_page(page_address(page), u_vaddr);
+	__flush_dcache_page(page_address(page), page_address(page));
 
 }
 
@@ -1041,7 +1120,7 @@ void clear_user_page(void *to, unsigned long u_vaddr, struct page *page)
 	clear_page(to);
 	clear_bit(PG_dc_clean, &page->flags);
 }
-EXPORT_SYMBOL(clear_user_page);
+
 
 /**********************************************************************
  * Explicit Cache flush request from user space via syscall
@@ -1073,20 +1152,6 @@ noinline void __init arc_ioc_setup(void)
 {
 	unsigned int ioc_base, mem_sz;
 
-	/*
-	 * If IOC was already enabled (due to bootloader) it technically needs to
-	 * be reconfigured with aperture base,size corresponding to Linux memory map
-	 * which will certainly be different than uboot's. But disabling and
-	 * reenabling IOC when DMA might be potentially active is tricky business.
-	 * To avoid random memory issues later, just panic here and ask user to
-	 * upgrade bootloader to one which doesn't enable IOC
-	 */
-	if (read_aux_reg(ARC_REG_IO_COH_ENABLE) & ARC_IO_COH_ENABLE_BIT)
-		panic("IOC already enabled, please upgrade bootloader!\n");
-
-	if (!ioc_enable)
-		return;
-
 	/* Flush + invalidate + disable L1 dcache */
 	__dc_disable();
 
@@ -1117,8 +1182,8 @@ noinline void __init arc_ioc_setup(void)
 		panic("IOC Aperture start must be aligned to the size of the aperture");
 
 	write_aux_reg(ARC_REG_IO_COH_AP0_BASE, ioc_base >> 12);
-	write_aux_reg(ARC_REG_IO_COH_PARTIAL, ARC_IO_COH_PARTIAL_BIT);
-	write_aux_reg(ARC_REG_IO_COH_ENABLE, ARC_IO_COH_ENABLE_BIT);
+	write_aux_reg(ARC_REG_IO_COH_PARTIAL, 1);
+	write_aux_reg(ARC_REG_IO_COH_ENABLE, 1);
 
 	/* Re-enable L1 dcache */
 	__dc_enable();
@@ -1181,24 +1246,18 @@ void __init arc_cache_init_master(void)
 		}
 	}
 
-	/*
-	 * Check that SMP_CACHE_BYTES (and hence ARCH_DMA_MINALIGN) is larger
-	 * or equal to any cache line length.
-	 */
-	BUILD_BUG_ON_MSG(L1_CACHE_BYTES > SMP_CACHE_BYTES,
-			 "SMP_CACHE_BYTES must be >= any cache line length");
-	if (is_isa_arcv2() && (l2_line_sz > SMP_CACHE_BYTES))
-		panic("L2 Cache line [%d] > kernel Config [%d]\n",
-		      l2_line_sz, SMP_CACHE_BYTES);
-
 	/* Note that SLC disable not formally supported till HS 3.0 */
 	if (is_isa_arcv2() && l2_line_sz && !slc_enable)
 		arc_slc_disable();
 
-	if (is_isa_arcv2() && ioc_exists)
+	if (is_isa_arcv2() && ioc_enable)
 		arc_ioc_setup();
 
-	if (is_isa_arcv2() && l2_line_sz && slc_enable) {
+	if (is_isa_arcv2() && ioc_enable) {
+		__dma_cache_wback_inv = __dma_cache_wback_inv_ioc;
+		__dma_cache_inv = __dma_cache_inv_ioc;
+		__dma_cache_wback = __dma_cache_wback_ioc;
+	} else if (is_isa_arcv2() && l2_line_sz && slc_enable) {
 		__dma_cache_wback_inv = __dma_cache_wback_inv_slc;
 		__dma_cache_inv = __dma_cache_inv_slc;
 		__dma_cache_wback = __dma_cache_wback_slc;
@@ -1207,12 +1266,6 @@ void __init arc_cache_init_master(void)
 		__dma_cache_inv = __dma_cache_inv_l1;
 		__dma_cache_wback = __dma_cache_wback_l1;
 	}
-	/*
-	 * In case of IOC (say IOC+SLC case), pointers above could still be set
-	 * but end up not being relevant as the first function in chain is not
-	 * called at all for devices using coherent DMA.
-	 *     arch_sync_dma_for_cpu() -> dma_cache_*() -> __dma_cache_*()
-	 */
 }
 
 void __ref arc_cache_init(void)

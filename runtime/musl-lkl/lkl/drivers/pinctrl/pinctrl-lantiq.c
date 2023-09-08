@@ -1,7 +1,10 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  *  linux/drivers/pinctrl/pinctrl-lantiq.c
  *  based on linux/drivers/pinctrl/pinctrl-pxa3xx.c
+ *
+ *  This program is free software; you can redistribute it and/or modify
+ *  it under the terms of the GNU General Public License version 2 as
+ *  publishhed by the Free Software Foundation.
  *
  *  Copyright (C) 2012 John Crispin <john@phrozen.org>
  */
@@ -77,14 +80,14 @@ static void ltq_pinctrl_dt_subnode_to_map(struct pinctrl_dev *pctldev,
 	int ret, i;
 
 	if (!pins && !groups) {
-		dev_err(pctldev->dev, "%pOFn defines neither pins nor groups\n",
-			np);
+		dev_err(pctldev->dev, "%s defines neither pins nor groups\n",
+			np->name);
 		return;
 	}
 
 	if (pins && groups) {
-		dev_err(pctldev->dev, "%pOFn defines both pins and groups\n",
-			np);
+		dev_err(pctldev->dev, "%s defines both pins and groups\n",
+			np->name);
 		return;
 	}
 
@@ -155,8 +158,7 @@ static int ltq_pinctrl_dt_node_to_map(struct pinctrl_dev *pctldev,
 
 	for_each_child_of_node(np_config, np)
 		max_maps += ltq_pinctrl_dt_subnode_size(np);
-	*map = kzalloc(array3_size(max_maps, sizeof(struct pinctrl_map), 2),
-		       GFP_KERNEL);
+	*map = kzalloc(max_maps * sizeof(struct pinctrl_map) * 2, GFP_KERNEL);
 	if (!*map)
 		return -ENOMEM;
 	tmp = *map;
@@ -221,7 +223,7 @@ static int match_mux(const struct ltq_mfp_pin *mfp, unsigned mux)
 	return i;
 }
 
-/* don't assume .mfp is linearly mapped. find the mfp with the correct .pin */
+/* dont assume .mfp is linearly mapped. find the mfp with the correct .pin */
 static int match_mfp(const struct ltq_pinmux_info *info, int pin)
 {
 	int i;

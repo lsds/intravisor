@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /* 
  * CRC32C
  *@Article{castagnoli-crc,
@@ -12,7 +11,7 @@
  * pages =        {},
  * month =        {June},
  *}
- * Used by the iSCSI driver, possibly others, and derived from
+ * Used by the iSCSI driver, possibly others, and derived from the
  * the iscsi-crc.c module of the linux-iscsi driver at
  * http://linux-iscsi.sourceforge.net.
  *
@@ -24,6 +23,12 @@
  *  <endoflist>
  *
  * Copyright (c) 2004 Cisco Systems, Inc.
+ * 
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License as published by the Free
+ * Software Foundation; either version 2 of the License, or (at your option) 
+ * any later version.
+ *
  */
 
 #include <crypto/hash.h>
@@ -42,6 +47,7 @@ u32 crc32c(u32 crc, const void *address, unsigned int length)
 	int err;
 
 	shash->tfm = tfm;
+	shash->flags = 0;
 	*ctx = crc;
 
 	err = crypto_shash_update(shash, address, length);

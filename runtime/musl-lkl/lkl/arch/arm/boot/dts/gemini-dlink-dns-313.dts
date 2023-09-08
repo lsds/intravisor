@@ -11,11 +11,11 @@
 
 / {
 	model = "D-Link DNS-313 1-Bay Network Storage Enclosure";
-	compatible = "dlink,dns-313", "cortina,gemini";
+	compatible = "dlink,dir-313", "cortina,gemini";
 	#address-cells = <1>;
 	#size-cells = <1>;
 
-	memory@0 {
+	memory {
 		/* 64 MB SDRAM in a Nanya NT5DS32M16BS-6K package */
 		device_type = "memory";
 		reg = <0x00000000 0x4000000>;
@@ -26,15 +26,15 @@
 	};
 
 	chosen {
-		bootargs = "console=ttyS0,19200n8 root=/dev/sda4 rw rootwait";
 		stdout-path = "uart0:19200n8";
 	};
 
 	gpio_keys {
 		compatible = "gpio-keys";
-
+		#address-cells = <1>;
+		#size-cells = <0>;
 		button-esc {
-			debounce-interval = <100>;
+			debounce_interval = <50>;
 			wakeup-source;
 			linux,code = <KEY_ESC>;
 			label = "reset";
@@ -59,13 +59,14 @@
 			label = "dns313:green:disk";
 			gpios = <&gpio0 3 GPIO_ACTIVE_HIGH>;
 			default-state = "off";
-			linux,default-trigger = "disk-read";
+			linux,default-trigger = "ide-disk";
+			/* Ideally should activate while reading */
 		};
 		led-disk-red {
 			label = "dns313:red:disk";
 			gpios = <&gpio0 4 GPIO_ACTIVE_HIGH>;
 			default-state = "off";
-			linux,default-trigger = "disk-write";
+			/* Ideally should activate while writing */
 		};
 	};
 
@@ -82,7 +83,7 @@
 
 
 	/* Global Mixed-Mode Technology G751 mounted on GPIO I2C */
-	i2c {
+	gpio-i2c {
 		compatible = "i2c-gpio";
 		sda-gpios = <&gpio0 15 (GPIO_ACTIVE_HIGH|GPIO_OPEN_DRAIN)>;
 		scl-gpios = <&gpio0 16 (GPIO_ACTIVE_HIGH|GPIO_OPEN_DRAIN)>;
@@ -140,7 +141,7 @@
 		};
 	};
 
-	mdio0: mdio {
+	mdio0: ethernet-phy {
 		compatible = "virtual,mdio-gpio";
 		/* Uses MDC and MDIO */
 		gpios = <&gpio0 22 GPIO_ACTIVE_HIGH>, /* MDC */
@@ -157,12 +158,8 @@
 
 	soc {
 		flash@30000000 {
-			/*
-			 * This is a Eon EN29LV400AB 512 KiB flash with
-			 * three partitions.
-			 */
-			compatible = "cortina,gemini-flash", "jedec-flash";
 			status = "okay";
+			/* 512KB of flash */
 			reg = <0x30000000 0x00080000>;
 
 			/*
@@ -297,7 +294,7 @@
 			};
 		};
 
-		ide@63000000 {
+		ata@63000000 {
 			status = "okay";
 		};
 	};

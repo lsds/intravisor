@@ -1,10 +1,13 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * TI LMU (Lighting Management Unit) Devices
  *
  * Copyright 2017 Texas Instruments
  *
  * Author: Milo Kim <milo.kim@ti.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 
 #ifndef __MFD_TI_LMU_H__
@@ -13,17 +16,17 @@
 #include <linux/gpio.h>
 #include <linux/notifier.h>
 #include <linux/regmap.h>
-#include <linux/gpio/consumer.h>
 
 /* Notifier event */
 #define LMU_EVENT_MONITOR_DONE		0x01
 
 enum ti_lmu_id {
+	LM3532,
 	LM3631,
 	LM3632,
 	LM3633,
 	LM3695,
-	LM36274,
+	LM3697,
 	LMU_MAX_ID,
 };
 
@@ -65,9 +68,6 @@ enum lm363x_regulator_id {
 	LM3632_BOOST,		/* Boost output */
 	LM3632_LDO_POS,		/* Positive display bias output */
 	LM3632_LDO_NEG,		/* Negative display bias output */
-	LM36274_BOOST,		/* Boost output */
-	LM36274_LDO_POS,	/* Positive display bias output */
-	LM36274_LDO_NEG,	/* Negative display bias output */
 };
 
 /**
@@ -81,7 +81,7 @@ enum lm363x_regulator_id {
 struct ti_lmu {
 	struct device *dev;
 	struct regmap *regmap;
-	struct gpio_desc *en_gpio;
+	int en_gpio;
 	struct blocking_notifier_head notifier;
 };
 #endif

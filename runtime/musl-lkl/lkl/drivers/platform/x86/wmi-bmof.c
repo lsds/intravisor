@@ -1,9 +1,17 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * WMI embedded Binary MOF driver
  *
  * Copyright (c) 2015 Andrew Lutomirski
  * Copyright (C) 2017 VMware, Inc. All Rights Reserved.
+ *
+ *  This program is free software; you can redistribute it and/or modify it
+ *  under the terms of the GNU General Public License version 2 as published
+ *  by the Free Software Foundation.
+ *
+ *  This program is distributed in the hope that it will be useful,
+ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *  GNU General Public License for more details.
  */
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
@@ -46,7 +54,7 @@ read_bmof(struct file *filp, struct kobject *kobj,
 	return count;
 }
 
-static int wmi_bmof_probe(struct wmi_device *wdev, const void *context)
+static int wmi_bmof_probe(struct wmi_device *wdev)
 {
 	struct bmof_priv *priv;
 	int ret;
@@ -86,12 +94,13 @@ static int wmi_bmof_probe(struct wmi_device *wdev, const void *context)
 	return ret;
 }
 
-static void wmi_bmof_remove(struct wmi_device *wdev)
+static int wmi_bmof_remove(struct wmi_device *wdev)
 {
 	struct bmof_priv *priv = dev_get_drvdata(&wdev->dev);
 
 	sysfs_remove_bin_file(&wdev->dev.kobj, &priv->bmof_bin_attr);
 	kfree(priv->bmofdata);
+	return 0;
 }
 
 static const struct wmi_device_id wmi_bmof_id_table[] = {
@@ -110,7 +119,7 @@ static struct wmi_driver wmi_bmof_driver = {
 
 module_wmi_driver(wmi_bmof_driver);
 
-MODULE_DEVICE_TABLE(wmi, wmi_bmof_id_table);
+MODULE_ALIAS("wmi:" WMI_BMOF_GUID);
 MODULE_AUTHOR("Andrew Lutomirski <luto@kernel.org>");
 MODULE_DESCRIPTION("WMI embedded Binary MOF driver");
 MODULE_LICENSE("GPL");

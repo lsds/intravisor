@@ -1,9 +1,10 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * oxfw-scs1x.c - a part of driver for OXFW970/971 based devices
  *
  * Copyright (c) Clemens Ladisch <clemens@ladisch.de>
  * Copyright (c) 2015 Takashi Sakamoto <o-takashi@sakamocchi.jp>
+ *
+ * Licensed under the terms of the GNU General Public License, version 2.
  */
 
 #include "oxfw.h"
@@ -371,9 +372,8 @@ int snd_oxfw_scs1x_add(struct snd_oxfw *oxfw)
 	struct fw_scs1x *scs;
 	int err;
 
-	scs = devm_kzalloc(&oxfw->card->card_dev, sizeof(struct fw_scs1x),
-			   GFP_KERNEL);
-	if (!scs)
+	scs = kzalloc(sizeof(struct fw_scs1x), GFP_KERNEL);
+	if (scs == NULL)
 		return -ENOMEM;
 	scs->fw_dev = fw_parent_device(oxfw->unit);
 	oxfw->spec = scs;

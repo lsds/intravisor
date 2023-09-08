@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Frontend driver for the GENPIX 8pks/qpsk/DCII USB2.0 DVB-S module
  *
@@ -8,6 +7,10 @@
  * Thanks to GENPIX for the sample code used to implement this module.
  *
  * This module is based off the vp7045 and vp702x modules
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License as published by the Free
+ * Software Foundation, version 2.
  */
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
@@ -352,9 +355,9 @@ static const struct dvb_frontend_ops gp8psk_fe_ops = {
 	.delsys = { SYS_DVBS },
 	.info = {
 		.name			= "Genpix DVB-S",
-		.frequency_min_hz	=  800 * MHz,
-		.frequency_max_hz	= 2250 * MHz,
-		.frequency_stepsize_hz	=  100 * kHz,
+		.frequency_min		= 800000,
+		.frequency_max		= 2250000,
+		.frequency_stepsize	= 100,
 		.symbol_rate_min        = 1000000,
 		.symbol_rate_max        = 45000000,
 		.symbol_rate_tolerance  = 500,  /* ppm */

@@ -1,6 +1,7 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (C) 2011 Red Hat, Inc., Frederic Weisbecker <fweisbec@redhat.com>
+ *
+ * Licensed under the terms of the GNU GPL License version 2
  *
  * Selftests for breakpoints (and more generally the do_debug() path) in x86.
  */
@@ -20,8 +21,6 @@
 
 #include "../kselftest.h"
 
-#define COUNT_ISN_BPS	4
-#define COUNT_WPS	4
 
 /* Breakpoint access modes */
 enum {
@@ -221,7 +220,7 @@ static void trigger_tests(void)
 			if (!local && !global)
 				continue;
 
-			for (i = 0; i < COUNT_ISN_BPS; i++) {
+			for (i = 0; i < 4; i++) {
 				dummy_funcs[i]();
 				check_trapped();
 			}
@@ -293,7 +292,7 @@ static void launch_instruction_breakpoints(char *buf, int local, int global)
 {
 	int i;
 
-	for (i = 0; i < COUNT_ISN_BPS; i++) {
+	for (i = 0; i < 4; i++) {
 		set_breakpoint_addr(dummy_funcs[i], i);
 		toggle_breakpoint(i, BP_X, 1, local, global, 1);
 		ptrace(PTRACE_CONT, child_pid, NULL, 0);
@@ -315,7 +314,7 @@ static void launch_watchpoints(char *buf, int mode, int len,
 	else
 		mode_str = "read";
 
-	for (i = 0; i < COUNT_WPS; i++) {
+	for (i = 0; i < 4; i++) {
 		set_breakpoint_addr(&dummy_var[i], i);
 		toggle_breakpoint(i, mode, len, local, global, 1);
 		ptrace(PTRACE_CONT, child_pid, NULL, 0);
@@ -331,14 +330,7 @@ static void launch_watchpoints(char *buf, int mode, int len,
 static void launch_tests(void)
 {
 	char buf[1024];
-	unsigned int tests = 0;
 	int len, local, global, i;
-
-	tests += 3 * COUNT_ISN_BPS;
-	tests += sizeof(long) / 2 * 3 * COUNT_WPS;
-	tests += sizeof(long) / 2 * 3 * COUNT_WPS;
-	tests += 2;
-	ksft_set_plan(tests);
 
 	/* Instruction breakpoints */
 	for (local = 0; local < 2; local++) {

@@ -1,12 +1,11 @@
-// SPDX-License-Identifier: GPL-2.0-only
 ///
 /// Use ERR_CAST inlined function instead of ERR_PTR(PTR_ERR(...))
 ///
 // Confidence: High
-// Copyright: (C) 2009, 2010 Nicolas Palix, DIKU.
-// Copyright: (C) 2009, 2010 Julia Lawall, DIKU.
-// Copyright: (C) 2009, 2010 Gilles Muller, INRIA/LiP6.
-// URL: https://coccinelle.gitlabpages.inria.fr/website
+// Copyright: (C) 2009, 2010 Nicolas Palix, DIKU.  GPLv2.
+// Copyright: (C) 2009, 2010 Julia Lawall, DIKU.  GPLv2.
+// Copyright: (C) 2009, 2010 Gilles Muller, INRIA/LiP6.  GPLv2.
+// URL: http://coccinelle.lip6.fr/
 // Options:
 //
 // Keywords: ERR_PTR, PTR_ERR, ERR_CAST

@@ -1,38 +1,20 @@
 # SPDX-License-Identifier: GPL-2.0
 menu "Xilinx SoC drivers"
 
-config ZYNQMP_POWER
-	bool "Enable Xilinx Zynq MPSoC Power Management driver"
-	depends on PM && ZYNQMP_FIRMWARE
-	default y
-	select MAILBOX
-	select ZYNQMP_IPI_MBOX
+config XILINX_VCU
+	tristate "Xilinx VCU logicoreIP Init"
+	depends on HAS_IOMEM
 	help
-	  Say yes to enable power management support for ZyqnMP SoC.
-	  This driver uses firmware driver as an interface for power
-	  management request to firmware. It registers isr to handle
-	  power management callbacks from firmware. It registers mailbox client
-	  to handle power management callbacks from firmware.
+	  Provides the driver to enable and disable the isolation between the
+	  processing system and programmable logic part by using the logicoreIP
+	  register set. This driver also configures the frequency based on the
+	  clock information from the logicoreIP register set.
 
-	  If in doubt, say N.
+	  If you say yes here you get support for the logicoreIP.
 
-config ZYNQMP_PM_DOMAINS
-	bool "Enable Zynq MPSoC generic PM domains"
-	default y
-	depends on PM && ZYNQMP_FIRMWARE
-	select PM_GENERIC_DOMAINS
-	help
-	  Say yes to enable device power management through PM domains
-	  If in doubt, say N.
+	  If unsure, say N.
 
-config XLNX_EVENT_MANAGER
-	bool "Enable Xilinx Event Management Driver"
-	depends on ZYNQMP_FIRMWARE
-	default ZYNQMP_FIRMWARE
-	help
-	  Say yes to enable event management support for Xilinx.
-	  This driver uses firmware driver as an interface for event/power
-	  management request to firmware.
+	  To compile this driver as a module, choose M here: the
+	  module will be called xlnx_vcu.
 
-	  If in doubt, say N.
 endmenu

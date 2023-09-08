@@ -1,7 +1,15 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * offload engine driver for the Marvell XOR engine
  * Copyright (C) 2007, 2008, Marvell International Ltd.
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms and conditions of the GNU General Public License,
+ * version 2, as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+ * more details.
  */
 
 #include <linux/init.h>
@@ -336,13 +344,13 @@ static void mv_chan_slot_cleanup(struct mv_xor_chan *mv_chan)
 		mv_chan->dmachan.completed_cookie = cookie;
 }
 
-static void mv_xor_tasklet(struct tasklet_struct *t)
+static void mv_xor_tasklet(unsigned long data)
 {
-	struct mv_xor_chan *chan = from_tasklet(chan, t, irq_tasklet);
+	struct mv_xor_chan *chan = (struct mv_xor_chan *) data;
 
-	spin_lock(&chan->lock);
+	spin_lock_bh(&chan->lock);
 	mv_chan_slot_cleanup(chan);
-	spin_unlock(&chan->lock);
+	spin_unlock_bh(&chan->lock);
 }
 
 static struct mv_xor_desc_slot *
@@ -769,11 +777,11 @@ static int mv_chan_memcpy_self_test(struct mv_xor_chan *mv_chan)
 	struct dmaengine_unmap_data *unmap;
 	int err = 0;
 
-	src = kmalloc(PAGE_SIZE, GFP_KERNEL);
+	src = kmalloc(sizeof(u8) * PAGE_SIZE, GFP_KERNEL);
 	if (!src)
 		return -ENOMEM;
 
-	dest = kzalloc(PAGE_SIZE, GFP_KERNEL);
+	dest = kzalloc(sizeof(u8) * PAGE_SIZE, GFP_KERNEL);
 	if (!dest) {
 		kfree(src);
 		return -ENOMEM;
@@ -1051,7 +1059,6 @@ mv_xor_channel_add(struct mv_xor_device *xordev,
 		mv_chan->op_in_desc = XOR_MODE_IN_DESC;
 
 	dma_dev = &mv_chan->dmadev;
-	dma_dev->dev = &pdev->dev;
 	mv_chan->xordev = xordev;
 
 	/*
@@ -1084,6 +1091,7 @@ mv_xor_channel_add(struct mv_xor_device *xordev,
 	dma_dev->device_free_chan_resources = mv_xor_free_chan_resources;
 	dma_dev->device_tx_status = mv_xor_status;
 	dma_dev->device_issue_pending = mv_xor_issue_pending;
+	dma_dev->dev = &pdev->dev;
 
 	/* set prep routines based on capability */
 	if (dma_has_cap(DMA_INTERRUPT, dma_dev->cap_mask))
@@ -1097,7 +1105,8 @@ mv_xor_channel_add(struct mv_xor_device *xordev,
 
 	mv_chan->mmr_base = xordev->xor_base;
 	mv_chan->mmr_high_base = xordev->xor_high_base;
-	tasklet_setup(&mv_chan->irq_tasklet, mv_xor_tasklet);
+	tasklet_init(&mv_chan->irq_tasklet, mv_xor_tasklet, (unsigned long)
+		     mv_chan);
 
 	/* clear errors before enabling interrupts */
 	mv_chan_clear_err_status(mv_chan);
@@ -1144,10 +1153,7 @@ mv_xor_channel_add(struct mv_xor_device *xordev,
 		 dma_has_cap(DMA_MEMCPY, dma_dev->cap_mask) ? "cpy " : "",
 		 dma_has_cap(DMA_INTERRUPT, dma_dev->cap_mask) ? "intr " : "");
 
-	ret = dma_async_device_register(dma_dev);
-	if (ret)
-		goto err_free_irq;
-
+	dma_async_device_register(dma_dev);
 	return mv_chan;
 
 err_free_irq:
@@ -1455,7 +1461,7 @@ static struct platform_driver mv_xor_driver = {
 	.resume         = mv_xor_resume,
 	.driver		= {
 		.name	        = MV_XOR_NAME,
-		.of_match_table = mv_xor_dt_ids,
+		.of_match_table = of_match_ptr(mv_xor_dt_ids),
 	},
 };
 

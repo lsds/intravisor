@@ -1,9 +1,4 @@
 /* SPDX-License-Identifier: GPL-2.0 */
-/*
- * Portions of this file
- * Copyright (C) 2019 Intel Corporation
- */
-
 #ifdef CONFIG_MAC80211_MESSAGE_TRACING
 
 #if !defined(__MAC80211_MSG_DRIVER_TRACE) || defined(TRACE_HEADER_MULTI_READ)
@@ -16,7 +11,7 @@
 #undef TRACE_SYSTEM
 #define TRACE_SYSTEM mac80211_msg
 
-#define MAX_MSG_LEN	120
+#define MAX_MSG_LEN	100
 
 DECLARE_EVENT_CLASS(mac80211_msg_event,
 	TP_PROTO(struct va_format *vaf),
@@ -24,11 +19,13 @@ DECLARE_EVENT_CLASS(mac80211_msg_event,
 	TP_ARGS(vaf),
 
 	TP_STRUCT__entry(
-		__vstring(msg, vaf->fmt, vaf->va)
+		__dynamic_array(char, msg, MAX_MSG_LEN)
 	),
 
 	TP_fast_assign(
-		__assign_vstr(msg, vaf->fmt, vaf->va);
+		WARN_ON_ONCE(vsnprintf(__get_dynamic_array(msg),
+				       MAX_MSG_LEN, vaf->fmt,
+				       *vaf->va) >= MAX_MSG_LEN);
 	),
 
 	TP_printk("%s", __get_str(msg))

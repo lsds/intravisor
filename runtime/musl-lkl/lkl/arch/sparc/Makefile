@@ -9,10 +9,10 @@
 # Copyright (C) 1998 Jakub Jelinek (jj@ultra.linux.cz)
 
 # We are not yet configured - so test on arch
-ifeq ($(ARCH),sparc64)
-        KBUILD_DEFCONFIG := sparc64_defconfig
-else
+ifeq ($(ARCH),sparc)
         KBUILD_DEFCONFIG := sparc32_defconfig
+else
+        KBUILD_DEFCONFIG := sparc64_defconfig
 endif
 
 ifeq ($(CONFIG_SPARC32),y)
@@ -21,7 +21,7 @@ ifeq ($(CONFIG_SPARC32),y)
 #
 
 CHECKFLAGS     += -D__sparc__
-KBUILD_LDFLAGS := -m elf32_sparc
+LDFLAGS        := -m elf32_sparc
 export BITS    := 32
 UTS_MACHINE    := sparc
 
@@ -39,8 +39,8 @@ else
 # sparc64
 #
 
-CHECKFLAGS    += -D__sparc__ -D__sparc_v9__ -D__arch64__
-KBUILD_LDFLAGS := -m elf64_sparc
+CHECKFLAGS    += -D__sparc__ -D__sparc_v9__ -D__arch64__ -m64
+LDFLAGS       := -m elf64_sparc
 export BITS   := 64
 UTS_MACHINE   := sparc64
 
@@ -56,10 +56,16 @@ endif
 
 endif
 
+head-y                 := arch/sparc/kernel/head_$(BITS).o
+
+# See arch/sparc/Kbuild for the core part of the kernel
+core-y                 += arch/sparc/
+
 libs-y                 += arch/sparc/prom/
 libs-y                 += arch/sparc/lib/
 
 drivers-$(CONFIG_PM) += arch/sparc/power/
+drivers-$(CONFIG_OPROFILE)	+= arch/sparc/oprofile/
 
 boot := arch/sparc/boot
 
@@ -70,10 +76,10 @@ image zImage uImage tftpboot.img vmlinux.aout: vmlinux
 	$(Q)$(MAKE) $(build)=$(boot) $(boot)/$@
 
 install:
-	$(call cmd,install)
+	$(Q)$(MAKE) $(build)=$(boot) $@
 
-archheaders:
-	$(Q)$(MAKE) $(build)=arch/sparc/kernel/syscalls all
+archclean:
+	$(Q)$(MAKE) $(clean)=$(boot)
 
 PHONY += vdso_install
 vdso_install:

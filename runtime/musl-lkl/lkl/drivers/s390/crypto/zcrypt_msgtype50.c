@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0+
 /*
+ *  zcrypt 2.1.0
+ *
  *  Copyright IBM Corp. 2001, 2012
  *  Author(s): Robert Burroughs
  *	       Eric Rossman (edrossma@us.ibm.com)
@@ -25,22 +27,21 @@
 #include "zcrypt_error.h"
 #include "zcrypt_msgtype50.h"
 
-/* >= CEX3A: 4096 bits */
-#define CEX3A_MAX_MOD_SIZE 512
+#define CEX3A_MAX_MOD_SIZE	512	/* 4096 bits	*/
 
-/* CEX2A: max outputdatalength + type80_hdr */
-#define CEX2A_MAX_RESPONSE_SIZE 0x110
+#define CEX2A_MAX_RESPONSE_SIZE 0x110	/* max outputdatalength + type80_hdr */
 
-/* >= CEX3A: 512 bit modulus, (max outputdatalength) + type80_hdr */
-#define CEX3A_MAX_RESPONSE_SIZE 0x210
+#define CEX3A_MAX_RESPONSE_SIZE	0x210	/* 512 bit modulus
+					 * (max outputdatalength) +
+					 * type80_hdr*/
 
 MODULE_AUTHOR("IBM Corporation");
 MODULE_DESCRIPTION("Cryptographic Accelerator (message type 50), " \
 		   "Copyright IBM Corp. 2001, 2012");
 MODULE_LICENSE("GPL");
 
-/*
- * The type 50 message family is associated with a CEXxA cards.
+/**
+ * The type 50 message family is associated with a CEX2A card.
  *
  * The four members of the family are described below.
  *
@@ -136,8 +137,8 @@ struct type50_crb3_msg {
 	unsigned char	message[512];
 } __packed;
 
-/*
- * The type 80 response family is associated with a CEXxA cards.
+/**
+ * The type 80 response family is associated with a CEX2A card.
  *
  * Note that all unsigned char arrays are right-justified and left-padded
  * with zeroes.
@@ -156,8 +157,9 @@ struct type80_hdr {
 	unsigned char	reserved3[8];
 } __packed;
 
-int get_rsa_modex_fc(struct ica_rsa_modexpo *mex, int *fcode)
+unsigned int get_rsa_modex_fc(struct ica_rsa_modexpo *mex, int *fcode)
 {
+
 	if (!mex->inputdatalength)
 		return -EINVAL;
 
@@ -171,8 +173,9 @@ int get_rsa_modex_fc(struct ica_rsa_modexpo *mex, int *fcode)
 	return 0;
 }
 
-int get_rsa_crt_fc(struct ica_rsa_modexpo_crt *crt, int *fcode)
+unsigned int get_rsa_crt_fc(struct ica_rsa_modexpo_crt *crt, int *fcode)
 {
+
 	if (!crt->inputdatalength)
 		return -EINVAL;
 
@@ -186,7 +189,7 @@ int get_rsa_crt_fc(struct ica_rsa_modexpo_crt *crt, int *fcode)
 	return 0;
 }
 
-/*
+/**
  * Convert a ICAMEX message to a type50 MEX message.
  *
  * @zq: crypto queue pointer
@@ -205,10 +208,9 @@ static int ICAMEX_msg_to_type50MEX_msg(struct zcrypt_queue *zq,
 	mod_len = mex->inputdatalength;
 
 	if (mod_len <= 128) {
-		struct type50_meb1_msg *meb1 = ap_msg->msg;
-
+		struct type50_meb1_msg *meb1 = ap_msg->message;
 		memset(meb1, 0, sizeof(*meb1));
-		ap_msg->len = sizeof(*meb1);
+		ap_msg->length = sizeof(*meb1);
 		meb1->header.msg_type_code = TYPE50_TYPE_CODE;
 		meb1->header.msg_len = sizeof(*meb1);
 		meb1->keyblock_type = TYPE50_MEB1_FMT;
@@ -216,10 +218,9 @@ static int ICAMEX_msg_to_type50MEX_msg(struct zcrypt_queue *zq,
 		exp = meb1->exponent + sizeof(meb1->exponent) - mod_len;
 		inp = meb1->message + sizeof(meb1->message) - mod_len;
 	} else if (mod_len <= 256) {
-		struct type50_meb2_msg *meb2 = ap_msg->msg;
-
+		struct type50_meb2_msg *meb2 = ap_msg->message;
 		memset(meb2, 0, sizeof(*meb2));
-		ap_msg->len = sizeof(*meb2);
+		ap_msg->length = sizeof(*meb2);
 		meb2->header.msg_type_code = TYPE50_TYPE_CODE;
 		meb2->header.msg_len = sizeof(*meb2);
 		meb2->keyblock_type = TYPE50_MEB2_FMT;
@@ -227,34 +228,26 @@ static int ICAMEX_msg_to_type50MEX_msg(struct zcrypt_queue *zq,
 		exp = meb2->exponent + sizeof(meb2->exponent) - mod_len;
 		inp = meb2->message + sizeof(meb2->message) - mod_len;
 	} else if (mod_len <= 512) {
-		struct type50_meb3_msg *meb3 = ap_msg->msg;
-
+		struct type50_meb3_msg *meb3 = ap_msg->message;
 		memset(meb3, 0, sizeof(*meb3));
-		ap_msg->len = sizeof(*meb3);
+		ap_msg->length = sizeof(*meb3);
 		meb3->header.msg_type_code = TYPE50_TYPE_CODE;
 		meb3->header.msg_len = sizeof(*meb3);
 		meb3->keyblock_type = TYPE50_MEB3_FMT;
 		mod = meb3->modulus + sizeof(meb3->modulus) - mod_len;
 		exp = meb3->exponent + sizeof(meb3->exponent) - mod_len;
 		inp = meb3->message + sizeof(meb3->message) - mod_len;
-	} else {
+	} else
 		return -EINVAL;
-	}
 
 	if (copy_from_user(mod, mex->n_modulus, mod_len) ||
 	    copy_from_user(exp, mex->b_key, mod_len) ||
 	    copy_from_user(inp, mex->inputdata, mod_len))
 		return -EFAULT;
-
-#ifdef CONFIG_ZCRYPT_DEBUG
-	if (ap_msg->fi.flags & AP_FI_FLAG_TOGGLE_SPECIAL)
-		ap_msg->flags ^= AP_MSG_FLAG_SPECIAL;
-#endif
-
 	return 0;
 }
 
-/*
+/**
  * Convert a ICACRT message to a type50 CRT message.
  *
  * @zq: crypto queue pointer
@@ -276,14 +269,13 @@ static int ICACRT_msg_to_type50CRT_msg(struct zcrypt_queue *zq,
 	/*
 	 * CEX2A and CEX3A w/o FW update can handle requests up to
 	 * 256 byte modulus (2k keys).
-	 * CEX3A with FW update and newer CEXxA cards are able to handle
+	 * CEX3A with FW update and CEX4A cards are able to handle
 	 * 512 byte modulus (4k keys).
 	 */
 	if (mod_len <= 128) {		/* up to 1024 bit key size */
-		struct type50_crb1_msg *crb1 = ap_msg->msg;
-
+		struct type50_crb1_msg *crb1 = ap_msg->message;
 		memset(crb1, 0, sizeof(*crb1));
-		ap_msg->len = sizeof(*crb1);
+		ap_msg->length = sizeof(*crb1);
 		crb1->header.msg_type_code = TYPE50_TYPE_CODE;
 		crb1->header.msg_len = sizeof(*crb1);
 		crb1->keyblock_type = TYPE50_CRB1_FMT;
@@ -294,10 +286,9 @@ static int ICACRT_msg_to_type50CRT_msg(struct zcrypt_queue *zq,
 		u = crb1->u + sizeof(crb1->u) - short_len;
 		inp = crb1->message + sizeof(crb1->message) - mod_len;
 	} else if (mod_len <= 256) {	/* up to 2048 bit key size */
-		struct type50_crb2_msg *crb2 = ap_msg->msg;
-
+		struct type50_crb2_msg *crb2 = ap_msg->message;
 		memset(crb2, 0, sizeof(*crb2));
-		ap_msg->len = sizeof(*crb2);
+		ap_msg->length = sizeof(*crb2);
 		crb2->header.msg_type_code = TYPE50_TYPE_CODE;
 		crb2->header.msg_len = sizeof(*crb2);
 		crb2->keyblock_type = TYPE50_CRB2_FMT;
@@ -309,10 +300,9 @@ static int ICACRT_msg_to_type50CRT_msg(struct zcrypt_queue *zq,
 		inp = crb2->message + sizeof(crb2->message) - mod_len;
 	} else if ((mod_len <= 512) &&	/* up to 4096 bit key size */
 		   (zq->zcard->max_mod_size == CEX3A_MAX_MOD_SIZE)) {
-		struct type50_crb3_msg *crb3 = ap_msg->msg;
-
+		struct type50_crb3_msg *crb3 = ap_msg->message;
 		memset(crb3, 0, sizeof(*crb3));
-		ap_msg->len = sizeof(*crb3);
+		ap_msg->length = sizeof(*crb3);
 		crb3->header.msg_type_code = TYPE50_TYPE_CODE;
 		crb3->header.msg_len = sizeof(*crb3);
 		crb3->keyblock_type = TYPE50_CRB3_FMT;
@@ -322,9 +312,8 @@ static int ICACRT_msg_to_type50CRT_msg(struct zcrypt_queue *zq,
 		dq = crb3->dq + sizeof(crb3->dq) - short_len;
 		u = crb3->u + sizeof(crb3->u) - short_len;
 		inp = crb3->message + sizeof(crb3->message) - mod_len;
-	} else {
+	} else
 		return -EINVAL;
-	}
 
 	/*
 	 * correct the offset of p, bp and mult_inv according zcrypt.h
@@ -338,15 +327,10 @@ static int ICACRT_msg_to_type50CRT_msg(struct zcrypt_queue *zq,
 	    copy_from_user(inp, crt->inputdata, mod_len))
 		return -EFAULT;
 
-#ifdef CONFIG_ZCRYPT_DEBUG
-	if (ap_msg->fi.flags & AP_FI_FLAG_TOGGLE_SPECIAL)
-		ap_msg->flags ^= AP_MSG_FLAG_SPECIAL;
-#endif
-
 	return 0;
 }
 
-/*
+/**
  * Copy results from a type 80 reply message back to user space.
  *
  * @zq: crypto device pointer
@@ -361,38 +345,39 @@ static int convert_type80(struct zcrypt_queue *zq,
 			  char __user *outputdata,
 			  unsigned int outputdatalength)
 {
-	struct type80_hdr *t80h = reply->msg;
+	struct type80_hdr *t80h = reply->message;
 	unsigned char *data;
 
 	if (t80h->len < sizeof(*t80h) + outputdatalength) {
-		/* The result is too short, the CEXxA card may not do that.. */
+		/* The result is too short, the CEX2A card may not do that.. */
 		zq->online = 0;
-		pr_err("Crypto dev=%02x.%04x code=0x%02x => online=0 rc=EAGAIN\n",
+		pr_err("Cryptographic device %02x.%04x failed and was set offline\n",
 		       AP_QID_CARD(zq->queue->qid),
-		       AP_QID_QUEUE(zq->queue->qid), t80h->code);
-		ZCRYPT_DBF_ERR("%s dev=%02x.%04x code=0x%02x => online=0 rc=EAGAIN\n",
-			       __func__, AP_QID_CARD(zq->queue->qid),
-			       AP_QID_QUEUE(zq->queue->qid), t80h->code);
-		ap_send_online_uevent(&zq->queue->ap_dev, zq->online);
-		return -EAGAIN;
+		       AP_QID_QUEUE(zq->queue->qid));
+		ZCRYPT_DBF(DBF_ERR,
+			   "device=%02x.%04x code=0x%02x => online=0 rc=EAGAIN\n",
+			   AP_QID_CARD(zq->queue->qid),
+			   AP_QID_QUEUE(zq->queue->qid),
+			   t80h->code);
+		return -EAGAIN;	/* repeat the request on a different device. */
 	}
 	if (zq->zcard->user_space_type == ZCRYPT_CEX2A)
 		BUG_ON(t80h->len > CEX2A_MAX_RESPONSE_SIZE);
 	else
 		BUG_ON(t80h->len > CEX3A_MAX_RESPONSE_SIZE);
-	data = reply->msg + t80h->len - outputdatalength;
+	data = reply->message + t80h->len - outputdatalength;
 	if (copy_to_user(outputdata, data, outputdatalength))
 		return -EFAULT;
 	return 0;
 }
 
-static int convert_response_cex2a(struct zcrypt_queue *zq,
-				  struct ap_message *reply,
-				  char __user *outputdata,
-				  unsigned int outputdatalength)
+static int convert_response(struct zcrypt_queue *zq,
+			    struct ap_message *reply,
+			    char __user *outputdata,
+			    unsigned int outputdatalength)
 {
 	/* Response type byte is the second byte in the response. */
-	unsigned char rtype = ((unsigned char *)reply->msg)[1];
+	unsigned char rtype = ((unsigned char *) reply->message)[1];
 
 	switch (rtype) {
 	case TYPE82_RSP_CODE:
@@ -403,20 +388,19 @@ static int convert_response_cex2a(struct zcrypt_queue *zq,
 				      outputdata, outputdatalength);
 	default: /* Unknown response type, this should NEVER EVER happen */
 		zq->online = 0;
-		pr_err("Crypto dev=%02x.%04x unknown response type 0x%02x => online=0 rc=EAGAIN\n",
+		pr_err("Cryptographic device %02x.%04x failed and was set offline\n",
 		       AP_QID_CARD(zq->queue->qid),
-		       AP_QID_QUEUE(zq->queue->qid),
-		       (int)rtype);
-		ZCRYPT_DBF_ERR(
-			"%s dev=%02x.%04x unknown response type 0x%02x => online=0 rc=EAGAIN\n",
-			__func__, AP_QID_CARD(zq->queue->qid),
-			AP_QID_QUEUE(zq->queue->qid), (int)rtype);
-		ap_send_online_uevent(&zq->queue->ap_dev, zq->online);
-		return -EAGAIN;
+		       AP_QID_QUEUE(zq->queue->qid));
+		ZCRYPT_DBF(DBF_ERR,
+			   "device=%02x.%04x rtype=0x%02x => online=0 rc=EAGAIN\n",
+			   AP_QID_CARD(zq->queue->qid),
+			   AP_QID_QUEUE(zq->queue->qid),
+			   (unsigned int) rtype);
+		return -EAGAIN;	/* repeat the request on a different device. */
 	}
 }
 
-/*
+/**
  * This function is called from the AP bus code after a crypto request
  * "msg" has finished with the reply message "reply".
  * It is called from tasklet context.
@@ -433,132 +417,121 @@ static void zcrypt_cex2a_receive(struct ap_queue *aq,
 		.reply_code = REP82_ERROR_MACHINE_FAILURE,
 	};
 	struct type80_hdr *t80h;
-	int len;
+	int length;
 
 	/* Copy the reply message to the request message buffer. */
 	if (!reply)
 		goto out;	/* ap_msg->rc indicates the error */
-	t80h = reply->msg;
+	t80h = reply->message;
 	if (t80h->type == TYPE80_RSP_CODE) {
-		len = t80h->len;
-		if (len > reply->bufsize || len > msg->bufsize) {
-			msg->rc = -EMSGSIZE;
-		} else {
-			memcpy(msg->msg, reply->msg, len);
-			msg->len = len;
-		}
-	} else {
-		memcpy(msg->msg, reply->msg, sizeof(error_reply));
-	}
+		if (aq->ap_dev.device_type == AP_DEVICE_TYPE_CEX2A)
+			length = min_t(int,
+				       CEX2A_MAX_RESPONSE_SIZE, t80h->len);
+		else
+			length = min_t(int,
+				       CEX3A_MAX_RESPONSE_SIZE, t80h->len);
+		memcpy(msg->message, reply->message, length);
+	} else
+		memcpy(msg->message, reply->message, sizeof(error_reply));
 out:
-	complete((struct completion *)msg->private);
+	complete((struct completion *) msg->private);
 }
 
 static atomic_t zcrypt_step = ATOMIC_INIT(0);
 
-/*
- * The request distributor calls this function if it picked the CEXxA
+/**
+ * The request distributor calls this function if it picked the CEX2A
  * device to handle a modexpo request.
  * @zq: pointer to zcrypt_queue structure that identifies the
- *	CEXxA device to the request distributor
+ *	  CEX2A device to the request distributor
  * @mex: pointer to the modexpo request buffer
  */
 static long zcrypt_cex2a_modexpo(struct zcrypt_queue *zq,
-				 struct ica_rsa_modexpo *mex,
-				 struct ap_message *ap_msg)
+				 struct ica_rsa_modexpo *mex)
 {
+	struct ap_message ap_msg;
 	struct completion work;
 	int rc;
 
-	ap_msg->bufsize = (zq->zcard->user_space_type == ZCRYPT_CEX2A) ?
-		MSGTYPE50_CRB2_MAX_MSG_SIZE : MSGTYPE50_CRB3_MAX_MSG_SIZE;
-	ap_msg->msg = kmalloc(ap_msg->bufsize, GFP_KERNEL);
-	if (!ap_msg->msg)
+	ap_init_message(&ap_msg);
+	if (zq->zcard->user_space_type == ZCRYPT_CEX2A)
+		ap_msg.message = kmalloc(MSGTYPE50_CRB2_MAX_MSG_SIZE,
+					 GFP_KERNEL);
+	else
+		ap_msg.message = kmalloc(MSGTYPE50_CRB3_MAX_MSG_SIZE,
+					 GFP_KERNEL);
+	if (!ap_msg.message)
 		return -ENOMEM;
-	ap_msg->receive = zcrypt_cex2a_receive;
-	ap_msg->psmid = (((unsigned long long)current->pid) << 32) +
-		atomic_inc_return(&zcrypt_step);
-	ap_msg->private = &work;
-	rc = ICAMEX_msg_to_type50MEX_msg(zq, ap_msg, mex);
+	ap_msg.receive = zcrypt_cex2a_receive;
+	ap_msg.psmid = (((unsigned long long) current->pid) << 32) +
+				atomic_inc_return(&zcrypt_step);
+	ap_msg.private = &work;
+	rc = ICAMEX_msg_to_type50MEX_msg(zq, &ap_msg, mex);
 	if (rc)
-		goto out;
+		goto out_free;
 	init_completion(&work);
-	rc = ap_queue_message(zq->queue, ap_msg);
-	if (rc)
-		goto out;
+	ap_queue_message(zq->queue, &ap_msg);
 	rc = wait_for_completion_interruptible(&work);
 	if (rc == 0) {
-		rc = ap_msg->rc;
+		rc = ap_msg.rc;
 		if (rc == 0)
-			rc = convert_response_cex2a(zq, ap_msg,
-						    mex->outputdata,
-						    mex->outputdatalength);
-	} else {
+			rc = convert_response(zq, &ap_msg, mex->outputdata,
+					      mex->outputdatalength);
+	} else
 		/* Signal pending. */
-		ap_cancel_message(zq->queue, ap_msg);
-	}
-
-out:
-	ap_msg->private = NULL;
-	if (rc)
-		ZCRYPT_DBF_DBG("%s send me cprb at dev=%02x.%04x rc=%d\n",
-			       __func__, AP_QID_CARD(zq->queue->qid),
-			       AP_QID_QUEUE(zq->queue->qid), rc);
+		ap_cancel_message(zq->queue, &ap_msg);
+out_free:
+	kfree(ap_msg.message);
 	return rc;
 }
 
-/*
- * The request distributor calls this function if it picked the CEXxA
+/**
+ * The request distributor calls this function if it picked the CEX2A
  * device to handle a modexpo_crt request.
  * @zq: pointer to zcrypt_queue structure that identifies the
- *	CEXxA device to the request distributor
+ *	  CEX2A device to the request distributor
  * @crt: pointer to the modexpoc_crt request buffer
  */
 static long zcrypt_cex2a_modexpo_crt(struct zcrypt_queue *zq,
-				     struct ica_rsa_modexpo_crt *crt,
-				     struct ap_message *ap_msg)
+				     struct ica_rsa_modexpo_crt *crt)
 {
+	struct ap_message ap_msg;
 	struct completion work;
 	int rc;
 
-	ap_msg->bufsize = (zq->zcard->user_space_type == ZCRYPT_CEX2A) ?
-		MSGTYPE50_CRB2_MAX_MSG_SIZE : MSGTYPE50_CRB3_MAX_MSG_SIZE;
-	ap_msg->msg = kmalloc(ap_msg->bufsize, GFP_KERNEL);
-	if (!ap_msg->msg)
+	ap_init_message(&ap_msg);
+	if (zq->zcard->user_space_type == ZCRYPT_CEX2A)
+		ap_msg.message = kmalloc(MSGTYPE50_CRB2_MAX_MSG_SIZE,
+					 GFP_KERNEL);
+	else
+		ap_msg.message = kmalloc(MSGTYPE50_CRB3_MAX_MSG_SIZE,
+					 GFP_KERNEL);
+	if (!ap_msg.message)
 		return -ENOMEM;
-	ap_msg->receive = zcrypt_cex2a_receive;
-	ap_msg->psmid = (((unsigned long long)current->pid) << 32) +
-		atomic_inc_return(&zcrypt_step);
-	ap_msg->private = &work;
-	rc = ICACRT_msg_to_type50CRT_msg(zq, ap_msg, crt);
+	ap_msg.receive = zcrypt_cex2a_receive;
+	ap_msg.psmid = (((unsigned long long) current->pid) << 32) +
+				atomic_inc_return(&zcrypt_step);
+	ap_msg.private = &work;
+	rc = ICACRT_msg_to_type50CRT_msg(zq, &ap_msg, crt);
 	if (rc)
-		goto out;
+		goto out_free;
 	init_completion(&work);
-	rc = ap_queue_message(zq->queue, ap_msg);
-	if (rc)
-		goto out;
+	ap_queue_message(zq->queue, &ap_msg);
 	rc = wait_for_completion_interruptible(&work);
 	if (rc == 0) {
-		rc = ap_msg->rc;
+		rc = ap_msg.rc;
 		if (rc == 0)
-			rc = convert_response_cex2a(zq, ap_msg,
-						    crt->outputdata,
-						    crt->outputdatalength);
-	} else {
+			rc = convert_response(zq, &ap_msg, crt->outputdata,
+					      crt->outputdatalength);
+	} else
 		/* Signal pending. */
-		ap_cancel_message(zq->queue, ap_msg);
-	}
-
-out:
-	ap_msg->private = NULL;
-	if (rc)
-		ZCRYPT_DBF_DBG("%s send crt cprb at dev=%02x.%04x rc=%d\n",
-			       __func__, AP_QID_CARD(zq->queue->qid),
-			       AP_QID_QUEUE(zq->queue->qid), rc);
+		ap_cancel_message(zq->queue, &ap_msg);
+out_free:
+	kfree(ap_msg.message);
 	return rc;
 }
 
-/*
+/**
  * The crypto operations for message type 50.
  */
 static struct zcrypt_ops zcrypt_msgtype50_ops = {

@@ -1,8 +1,20 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * UEFI Common Platform Error Record (CPER) support
  *
  * Copyright (C) 2017, The Linux Foundation. All rights reserved.
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License version
+ * 2 as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  */
 
 #include <linux/kernel.h>
@@ -17,6 +29,8 @@
 #include <linux/bcd.h>
 #include <acpi/ghes.h>
 #include <ras/ras_event.h>
+
+#define INDENT_SP	" "
 
 static const char * const arm_reg_ctx_strs[] = {
 	"AArch32 general purpose registers",
@@ -269,7 +283,7 @@ void cper_print_proc_arm(const char *pfx,
 			pfx, proc->psci_state);
 	}
 
-	snprintf(newpfx, sizeof(newpfx), "%s ", pfx);
+	snprintf(newpfx, sizeof(newpfx), "%s%s", pfx, INDENT_SP);
 
 	err_info = (struct cper_arm_err_info *)(proc + 1);
 	for (i = 0; i < proc->err_info_num; i++) {
@@ -296,7 +310,7 @@ void cper_print_proc_arm(const char *pfx,
 		if (err_info->validation_bits & CPER_ARM_INFO_VALID_ERR_INFO) {
 			printk("%serror_info: 0x%016llx\n", newpfx,
 			       err_info->error_info);
-			snprintf(infopfx, sizeof(infopfx), "%s ", newpfx);
+			snprintf(infopfx, sizeof(infopfx), "%s%s", newpfx, INDENT_SP);
 			cper_print_arm_err_info(infopfx, err_info->type,
 						err_info->error_info);
 		}

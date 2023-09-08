@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * userspace-consumer.c
  *
@@ -9,6 +8,12 @@
  * Based of virtual consumer driver:
  *   Copyright 2008 Wolfson Microelectronics PLC.
  *   Author: Mark Brown <broonie@opensource.wolfsonmicro.com>
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License as
+ * published by the Free Software Foundation; either version 2 of the
+ * License, or (at your option) any later version.
+ *
  */
 
 #include <linux/err.h>
@@ -29,15 +34,15 @@ struct userspace_consumer_data {
 	struct regulator_bulk_data *supplies;
 };
 
-static ssize_t name_show(struct device *dev,
-			 struct device_attribute *attr, char *buf)
+static ssize_t reg_show_name(struct device *dev,
+			  struct device_attribute *attr, char *buf)
 {
 	struct userspace_consumer_data *data = dev_get_drvdata(dev);
 
 	return sprintf(buf, "%s\n", data->name);
 }
 
-static ssize_t state_show(struct device *dev,
+static ssize_t reg_show_state(struct device *dev,
 			  struct device_attribute *attr, char *buf)
 {
 	struct userspace_consumer_data *data = dev_get_drvdata(dev);
@@ -48,8 +53,8 @@ static ssize_t state_show(struct device *dev,
 	return sprintf(buf, "disabled\n");
 }
 
-static ssize_t state_store(struct device *dev, struct device_attribute *attr,
-			   const char *buf, size_t count)
+static ssize_t reg_set_state(struct device *dev, struct device_attribute *attr,
+			 const char *buf, size_t count)
 {
 	struct userspace_consumer_data *data = dev_get_drvdata(dev);
 	bool enabled;
@@ -87,8 +92,8 @@ static ssize_t state_store(struct device *dev, struct device_attribute *attr,
 	return count;
 }
 
-static DEVICE_ATTR_RO(name);
-static DEVICE_ATTR_RW(state);
+static DEVICE_ATTR(name, 0444, reg_show_name, NULL);
+static DEVICE_ATTR(state, 0644, reg_show_state, reg_set_state);
 
 static struct attribute *attributes[] = {
 	&dev_attr_name.attr,

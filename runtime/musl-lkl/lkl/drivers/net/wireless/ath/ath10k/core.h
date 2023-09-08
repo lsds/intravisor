@@ -1,8 +1,19 @@
-/* SPDX-License-Identifier: ISC */
 /*
  * Copyright (c) 2005-2011 Atheros Communications Inc.
  * Copyright (c) 2011-2017 Qualcomm Atheros, Inc.
- * Copyright (c) 2018-2019, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2018, The Linux Foundation. All rights reserved.
+ *
+ * Permission to use, copy, modify, and/or distribute this software for any
+ * purpose with or without fee is hereby granted, provided that the above
+ * copyright notice and this permission notice appear in all copies.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+ * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+ * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+ * ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+ * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+ * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+ * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
 #ifndef _CORE_H_
@@ -33,17 +44,13 @@
 #define WO(_f)      ((_f##_OFFSET) >> 2)
 
 #define ATH10K_SCAN_ID 0
-#define ATH10K_SCAN_CHANNEL_SWITCH_WMI_EVT_OVERHEAD 10 /* msec */
 #define WMI_READY_TIMEOUT (5 * HZ)
 #define ATH10K_FLUSH_TIMEOUT_HZ (5 * HZ)
 #define ATH10K_CONNECTION_LOSS_HZ (3 * HZ)
-#define ATH10K_NUM_CHANS 41
-#define ATH10K_MAX_5G_CHAN 173
+#define ATH10K_NUM_CHANS 40
 
 /* Antenna noise floor */
 #define ATH10K_DEFAULT_NOISE_FLOOR -95
-
-#define ATH10K_INVALID_RSSI 128
 
 #define ATH10K_MAX_NUM_MGMT_PENDING 128
 
@@ -58,6 +65,9 @@
 #define ATH10K_KEEPALIVE_MIN_IDLE 3747
 #define ATH10K_KEEPALIVE_MAX_IDLE 3895
 #define ATH10K_KEEPALIVE_MAX_UNRESPONSIVE 3900
+
+/* NAPI poll budget */
+#define ATH10K_NAPI_BUDGET      64
 
 /* SMBIOS type containing Board Data File Name Extension */
 #define ATH10K_SMBIOS_BDF_EXT_TYPE 0xF8
@@ -76,17 +86,15 @@
 /* The magic used by QCA spec */
 #define ATH10K_SMBIOS_BDF_EXT_MAGIC "BDF_"
 
-/* Default Airtime weight multiplier (Tuned for multiclient performance) */
-#define ATH10K_AIRTIME_WEIGHT_MULTIPLIER  4
-
-#define ATH10K_MAX_RETRY_COUNT 30
-
-#define ATH10K_ITER_NORMAL_FLAGS (IEEE80211_IFACE_ITER_NORMAL | \
-				  IEEE80211_IFACE_SKIP_SDATA_NOT_IN_DRIVER)
-#define ATH10K_ITER_RESUME_FLAGS (IEEE80211_IFACE_ITER_RESUME_ALL |\
-				  IEEE80211_IFACE_SKIP_SDATA_NOT_IN_DRIVER)
-
 struct ath10k;
+
+enum ath10k_bus {
+	ATH10K_BUS_PCI,
+	ATH10K_BUS_AHB,
+	ATH10K_BUS_SDIO,
+	ATH10K_BUS_USB,
+	ATH10K_BUS_SNOC,
+};
 
 static inline const char *ath10k_bus_str(enum ath10k_bus bus)
 {
@@ -112,8 +120,6 @@ enum ath10k_skb_flags {
 	ATH10K_SKB_F_DELIVER_CAB = BIT(2),
 	ATH10K_SKB_F_MGMT = BIT(3),
 	ATH10K_SKB_F_QOS = BIT(4),
-	ATH10K_SKB_F_RAW_TX = BIT(5),
-	ATH10K_SKB_F_NOACK_TID = BIT(6),
 };
 
 struct ath10k_skb_cb {
@@ -121,16 +127,13 @@ struct ath10k_skb_cb {
 	u8 flags;
 	u8 eid;
 	u16 msdu_id;
-	u16 airtime_est;
 	struct ieee80211_vif *vif;
 	struct ieee80211_txq *txq;
-	u32 ucast_cipher;
 } __packed;
 
 struct ath10k_skb_rxcb {
 	dma_addr_t paddr;
 	struct hlist_node hlist;
-	u8 eid;
 };
 
 static inline struct ath10k_skb_cb *ATH10K_SKB_CB(struct sk_buff *skb)
@@ -154,26 +157,6 @@ static inline u32 host_interest_item_address(u32 item_offset)
 	return QCA988X_HOST_INTEREST_ADDRESS + item_offset;
 }
 
-enum ath10k_phy_mode {
-	ATH10K_PHY_MODE_LEGACY = 0,
-	ATH10K_PHY_MODE_HT = 1,
-	ATH10K_PHY_MODE_VHT = 2,
-};
-
-/* Data rate 100KBPS based on IE Index */
-struct ath10k_index_ht_data_rate_type {
-	u8   beacon_rate_index;
-	u16  supported_rate[4];
-};
-
-/* Data rate 100KBPS based on IE Index */
-struct ath10k_index_vht_data_rate_type {
-	u8   beacon_rate_index;
-	u16  supported_VHT80_rate[2];
-	u16  supported_VHT40_rate[2];
-	u16  supported_VHT20_rate[2];
-};
-
 struct ath10k_bmi {
 	bool done_sent;
 };
@@ -190,20 +173,13 @@ struct ath10k_wmi {
 	struct completion service_ready;
 	struct completion unified_ready;
 	struct completion barrier;
-	struct completion radar_confirm;
 	wait_queue_head_t tx_credits_wq;
 	DECLARE_BITMAP(svc_map, WMI_SERVICE_MAX);
 	struct wmi_cmd_map *cmd;
 	struct wmi_vdev_param_map *vdev_param;
 	struct wmi_pdev_param_map *pdev_param;
-	struct wmi_peer_param_map *peer_param;
 	const struct wmi_ops *ops;
 	const struct wmi_peer_flags_map *peer_flags;
-
-	u32 mgmt_max_num_pending_tx;
-
-	/* Protected by data_lock */
-	struct idr mgmt_pending_tx;
 
 	u32 num_mem_chunks;
 	u32 rx_decap_mode;
@@ -217,14 +193,14 @@ struct ath10k_fw_stats_peer {
 	u32 peer_rssi;
 	u32 peer_tx_rate;
 	u32 peer_rx_rate; /* 10x only */
-	u64 rx_duration;
+	u32 rx_duration;
 };
 
 struct ath10k_fw_extd_stats_peer {
 	struct list_head list;
 
 	u8 peer_macaddr[ETH_ALEN];
-	u64 rx_duration;
+	u32 rx_duration;
 };
 
 struct ath10k_fw_stats_vdev {
@@ -298,7 +274,7 @@ struct ath10k_fw_stats_pdev {
 	s32 underrun;
 	u32 hw_paused;
 	s32 tx_abort;
-	s32 mpdus_requeued;
+	s32 mpdus_requed;
 	u32 tx_ko;
 	u32 data_rc;
 	u32 self_triggers;
@@ -399,21 +375,6 @@ struct ath10k_dfs_stats {
 	u32 radar_detected;
 };
 
-enum ath10k_radar_confirmation_state {
-	ATH10K_RADAR_CONFIRMATION_IDLE = 0,
-	ATH10K_RADAR_CONFIRMATION_INPROGRESS,
-	ATH10K_RADAR_CONFIRMATION_STOPPED,
-};
-
-struct ath10k_radar_found_info {
-	u32 pri_min;
-	u32 pri_max;
-	u32 width_min;
-	u32 width_max;
-	u32 sidx_min;
-	u32 sidx_max;
-};
-
 #define ATH10K_MAX_NUM_PEER_IDS (1 << 11) /* htt rx_desc limit */
 
 struct ath10k_peer {
@@ -428,14 +389,6 @@ struct ath10k_peer {
 
 	/* protected by ar->data_lock */
 	struct ieee80211_key_conf *keys[WMI_MAX_KEY_INDEX + 1];
-	union htt_rx_pn_t tids_last_pn[ATH10K_TXRX_NUM_EXT_TIDS];
-	bool tids_last_pn_valid[ATH10K_TXRX_NUM_EXT_TIDS];
-	union htt_rx_pn_t frag_tids_last_pn[ATH10K_TXRX_NUM_EXT_TIDS];
-	u32 frag_tids_seq[ATH10K_TXRX_NUM_EXT_TIDS];
-	struct {
-		enum htt_security_types sec_type;
-		int pn_len;
-	} rx_pn[ATH10K_HTT_TXRX_PEER_SECURITY_MAX];
 };
 
 struct ath10k_txq {
@@ -473,48 +426,15 @@ enum ath10k_amsdu_subfrm_num {
 };
 
 struct ath10k_sta_tid_stats {
-	unsigned long rx_pkt_from_fw;
-	unsigned long rx_pkt_unchained;
-	unsigned long rx_pkt_drop_chained;
-	unsigned long rx_pkt_drop_filter;
-	unsigned long rx_pkt_err[ATH10K_PKT_RX_ERR_MAX];
-	unsigned long rx_pkt_queued_for_mac;
-	unsigned long rx_pkt_ampdu[ATH10K_AMPDU_SUBFRM_NUM_MAX];
-	unsigned long rx_pkt_amsdu[ATH10K_AMSDU_SUBFRM_NUM_MAX];
+	unsigned long int rx_pkt_from_fw;
+	unsigned long int rx_pkt_unchained;
+	unsigned long int rx_pkt_drop_chained;
+	unsigned long int rx_pkt_drop_filter;
+	unsigned long int rx_pkt_err[ATH10K_PKT_RX_ERR_MAX];
+	unsigned long int rx_pkt_queued_for_mac;
+	unsigned long int rx_pkt_ampdu[ATH10K_AMPDU_SUBFRM_NUM_MAX];
+	unsigned long int rx_pkt_amsdu[ATH10K_AMSDU_SUBFRM_NUM_MAX];
 };
-
-enum ath10k_counter_type {
-	ATH10K_COUNTER_TYPE_BYTES,
-	ATH10K_COUNTER_TYPE_PKTS,
-	ATH10K_COUNTER_TYPE_MAX,
-};
-
-enum ath10k_stats_type {
-	ATH10K_STATS_TYPE_SUCC,
-	ATH10K_STATS_TYPE_FAIL,
-	ATH10K_STATS_TYPE_RETRY,
-	ATH10K_STATS_TYPE_AMPDU,
-	ATH10K_STATS_TYPE_MAX,
-};
-
-struct ath10k_htt_data_stats {
-	u64 legacy[ATH10K_COUNTER_TYPE_MAX][ATH10K_LEGACY_NUM];
-	u64 ht[ATH10K_COUNTER_TYPE_MAX][ATH10K_HT_MCS_NUM];
-	u64 vht[ATH10K_COUNTER_TYPE_MAX][ATH10K_VHT_MCS_NUM];
-	u64 bw[ATH10K_COUNTER_TYPE_MAX][ATH10K_BW_NUM];
-	u64 nss[ATH10K_COUNTER_TYPE_MAX][ATH10K_NSS_NUM];
-	u64 gi[ATH10K_COUNTER_TYPE_MAX][ATH10K_GI_NUM];
-	u64 rate_table[ATH10K_COUNTER_TYPE_MAX][ATH10K_RATE_TABLE_NUM];
-};
-
-struct ath10k_htt_tx_stats {
-	struct ath10k_htt_data_stats stats[ATH10K_STATS_TYPE_MAX];
-	u64 tx_duration;
-	u64 ba_fails;
-	u64 ack_fails;
-};
-
-#define ATH10K_TID_MAX	8
 
 struct ath10k_sta {
 	struct ath10k_vif *arvif;
@@ -526,19 +446,9 @@ struct ath10k_sta {
 	u32 smps;
 	u16 peer_id;
 	struct rate_info txrate;
-	struct ieee80211_tx_info tx_info;
-	u32 tx_retries;
-	u32 tx_failed;
-	u32 last_tx_bitrate;
 
-	u32 rx_rate_code;
-	u32 rx_bitrate_kbps;
-	u32 tx_rate_code;
-	u32 tx_bitrate_kbps;
 	struct work_struct update_wk;
 	u64 rx_duration;
-	struct ath10k_htt_tx_stats *tx_stats;
-	u32 ucast_cipher;
 
 #ifdef CONFIG_MAC80211_DEBUGFS
 	/* protected by conf_mutex */
@@ -547,19 +457,9 @@ struct ath10k_sta {
 	/* Protected with ar->data_lock */
 	struct ath10k_sta_tid_stats tid_stats[IEEE80211_NUM_TIDS + 1];
 #endif
-	/* Protected with ar->data_lock */
-	u32 peer_ps_state;
-	struct work_struct tid_config_wk;
-	int noack[ATH10K_TID_MAX];
-	int retry_long[ATH10K_TID_MAX];
-	int ampdu[ATH10K_TID_MAX];
-	u8 rate_ctrl[ATH10K_TID_MAX];
-	u32 rate_code[ATH10K_TID_MAX];
-	int rtscts[ATH10K_TID_MAX];
 };
 
-#define ATH10K_VDEV_SETUP_TIMEOUT_HZ	(5 * HZ)
-#define ATH10K_VDEV_DELETE_TIMEOUT_HZ	(5 * HZ)
+#define ATH10K_VDEV_SETUP_TIMEOUT_HZ (5 * HZ)
 
 enum ath10k_beacon_state {
 	ATH10K_BEACON_SCHEDULED = 0,
@@ -619,23 +519,10 @@ struct ath10k_vif {
 	bool nohwcrypt;
 	int num_legacy_stations;
 	int txpower;
-	bool ftm_responder;
 	struct wmi_wmm_params_all_arg wmm_params;
 	struct work_struct ap_csa_work;
 	struct delayed_work connection_loss_work;
 	struct cfg80211_bitrate_mask bitrate_mask;
-
-	/* For setting VHT peer fixed rate, protected by conf_mutex */
-	int vht_num_rates;
-	u8 vht_pfr;
-	u32 tid_conf_changed[ATH10K_TID_MAX];
-	int noack[ATH10K_TID_MAX];
-	int retry_long[ATH10K_TID_MAX];
-	int ampdu[ATH10K_TID_MAX];
-	u8 rate_ctrl[ATH10K_TID_MAX];
-	u32 rate_code[ATH10K_TID_MAX];
-	int rtscts[ATH10K_TID_MAX];
-	u32 tids_rst;
 };
 
 struct ath10k_vif_iter {
@@ -679,7 +566,6 @@ struct ath10k_debug {
 	bool fw_stats_done;
 
 	unsigned long htt_stats_mask;
-	unsigned long reset_htt_stats;
 	struct delayed_work htt_stats_dwork;
 	struct ath10k_dfs_stats dfs_stats;
 	struct ath_dfs_pool_stats dfs_pool_stats;
@@ -696,8 +582,6 @@ struct ath10k_debug {
 	u32 reg_addr;
 	u32 nf_cal_period;
 	void *cal_data;
-	u32 enable_extd_tx_stats;
-	u8 fw_dbglog_mode;
 };
 
 enum ath10k_state {
@@ -825,15 +709,6 @@ enum ath10k_fw_features {
 	/* Firmware load is done externally, not by bmi */
 	ATH10K_FW_FEATURE_NON_BMI = 19,
 
-	/* Firmware sends only one chan_info event per channel */
-	ATH10K_FW_FEATURE_SINGLE_CHAN_INFO_PER_CHANNEL = 20,
-
-	/* Firmware allows setting peer fixed rate */
-	ATH10K_FW_FEATURE_PEER_FIXED_RATE = 21,
-
-	/* Firmware support IRAM recovery */
-	ATH10K_FW_FEATURE_IRAM_RECOVERY = 22,
-
 	/* keep last */
 	ATH10K_FW_FEATURE_COUNT,
 };
@@ -857,27 +732,19 @@ enum ath10k_dev_flags {
 	/* Disable HW crypto engine */
 	ATH10K_FLAG_HW_CRYPTO_DISABLED,
 
-	/* Bluetooth coexistence enabled */
+	/* Bluetooth coexistance enabled */
 	ATH10K_FLAG_BTCOEX,
 
 	/* Per Station statistics service */
 	ATH10K_FLAG_PEER_STATS,
-
-	/* Indicates that ath10k device is during recovery process and not complete */
-	ATH10K_FLAG_RESTARTING,
-
-	/* protected by conf_mutex */
-	ATH10K_FLAG_NAPI_ENABLED,
 };
 
 enum ath10k_cal_mode {
 	ATH10K_CAL_MODE_FILE,
 	ATH10K_CAL_MODE_OTP,
 	ATH10K_CAL_MODE_DT,
-	ATH10K_CAL_MODE_NVMEM,
 	ATH10K_PRE_CAL_MODE_FILE,
 	ATH10K_PRE_CAL_MODE_DT,
-	ATH10K_PRE_CAL_MODE_NVMEM,
 	ATH10K_CAL_MODE_EEPROM,
 };
 
@@ -897,14 +764,10 @@ static inline const char *ath10k_cal_mode_str(enum ath10k_cal_mode mode)
 		return "otp";
 	case ATH10K_CAL_MODE_DT:
 		return "dt";
-	case ATH10K_CAL_MODE_NVMEM:
-		return "nvmem";
 	case ATH10K_PRE_CAL_MODE_FILE:
 		return "pre-cal-file";
 	case ATH10K_PRE_CAL_MODE_DT:
 		return "pre-cal-dt";
-	case ATH10K_PRE_CAL_MODE_NVMEM:
-		return "pre-cal-nvmem";
 	case ATH10K_CAL_MODE_EEPROM:
 		return "eeprom";
 	}
@@ -973,9 +836,6 @@ struct ath10k_fw_components {
 	const struct firmware *board;
 	const void *board_data;
 	size_t board_len;
-	const struct firmware *ext_board;
-	const void *ext_board_data;
-	size_t ext_board_len;
 
 	struct ath10k_fw_file fw_file;
 };
@@ -995,28 +855,11 @@ struct ath10k_per_peer_tx_stats {
 	u32	reserved2;
 };
 
-enum ath10k_dev_type {
-	ATH10K_DEV_TYPE_LL,
-	ATH10K_DEV_TYPE_HL,
-};
-
-struct ath10k_bus_params {
-	u32 chip_id;
-	enum ath10k_dev_type dev_type;
-	bool link_can_suspend;
-	bool hl_msdu_ids;
-};
-
 struct ath10k {
 	struct ath_common ath_common;
 	struct ieee80211_hw *hw;
 	struct ieee80211_ops *ops;
 	struct device *dev;
-	struct msa_region {
-		dma_addr_t paddr;
-		u32 mem_size;
-		void *vaddr;
-	} msa;
 	u8 mac_addr[ETH_ALEN];
 
 	enum ath10k_hw_rev hw_rev;
@@ -1034,24 +877,13 @@ struct ath10k {
 	u32 hw_eeprom_rd;
 	u32 ht_cap_info;
 	u32 vht_cap_info;
-	u32 vht_supp_mcs;
 	u32 num_rf_chains;
 	u32 max_spatial_stream;
 	/* protected by conf_mutex */
-	u32 low_2ghz_chan;
-	u32 high_2ghz_chan;
 	u32 low_5ghz_chan;
 	u32 high_5ghz_chan;
 	bool ani_enabled;
-	u32 sys_cap_info;
 
-	/* protected by data_lock */
-	bool hw_rfkill_on;
-
-	/* protected by conf_mutex */
-	u8 ps_state_enable;
-
-	bool nlo_enabled;
 	bool p2p;
 
 	struct {
@@ -1060,7 +892,6 @@ struct ath10k {
 	} hif;
 
 	struct completion target_suspend;
-	struct completion driver_recovery;
 
 	const struct ath10k_hw_regs *regs;
 	const struct ath10k_hw_ce_regs *hw_ce_regs;
@@ -1090,13 +921,8 @@ struct ath10k {
 		u32 subsystem_device;
 
 		bool bmi_ids_valid;
-		bool qmi_ids_valid;
-		u32 qmi_board_id;
-		u32 qmi_chip_id;
 		u8 bmi_board_id;
-		u8 bmi_eboard_id;
 		u8 bmi_chip_id;
-		bool ext_bid_supported;
 
 		char bdf_ext[ATH10K_SMBIOS_BDF_EXT_STR_LENGTH];
 	} id;
@@ -1152,24 +978,21 @@ struct ath10k {
 
 	struct completion install_key_done;
 
-	int last_wmi_vdev_start_status;
 	struct completion vdev_setup_done;
-	struct completion vdev_delete_done;
-	struct completion peer_stats_info_complete;
 
 	struct workqueue_struct *workqueue;
 	/* Auxiliary workqueue */
 	struct workqueue_struct *workqueue_aux;
-	struct workqueue_struct *workqueue_tx_complete;
+
 	/* prevents concurrent FW reconfiguration */
 	struct mutex conf_mutex;
 
-	/* protects coredump data */
-	struct mutex dump_mutex;
-
 	/* protects shared structure data */
 	spinlock_t data_lock;
+	/* protects: ar->txqs, artxq->list */
+	spinlock_t txqs_lock;
 
+	struct list_head txqs;
 	struct list_head arvifs;
 	struct list_head peers;
 	struct ath10k_peer *peer_map[ATH10K_MAX_NUM_PEER_IDS];
@@ -1201,8 +1024,6 @@ struct ath10k {
 
 	struct work_struct register_work;
 	struct work_struct restart_work;
-	struct work_struct bundle_tx_work;
-	struct work_struct tx_complete_work;
 
 	/* cycle count is reported twice for each visited channel during scan.
 	 * access protected by data_lock
@@ -1254,7 +1075,6 @@ struct ath10k {
 
 	struct {
 		/* protected by data_lock */
-		u32 rx_crc_err_drop;
 		u32 fw_crash_counter;
 		u32 fw_warm_reset_counter;
 		u32 fw_cold_reset_counter;
@@ -1283,26 +1103,12 @@ struct ath10k {
 
 	u32 ampdu_reference;
 
-	const u8 *wmi_key_cipher;
 	void *ce_priv;
 
 	u32 sta_tid_stats_mask;
 
-	/* protected by data_lock */
-	enum ath10k_radar_confirmation_state radar_conf_state;
-	struct ath10k_radar_found_info last_radar_info;
-	struct work_struct radar_confirmation_work;
-	struct ath10k_bus_params bus_param;
-	struct completion peer_delete_done;
-
-	bool coex_support;
-	int coex_gpio_pin;
-
-	s32 tx_power_2g_limit;
-	s32 tx_power_5g_limit;
-
 	/* must be last */
-	u8 drv_priv[] __aligned(sizeof(void *));
+	u8 drv_priv[0] __aligned(sizeof(void *));
 };
 
 static inline bool ath10k_peer_stats_enabled(struct ath10k *ar)
@@ -1314,11 +1120,8 @@ static inline bool ath10k_peer_stats_enabled(struct ath10k *ar)
 	return false;
 }
 
-extern unsigned int ath10k_frame_mode;
 extern unsigned long ath10k_coredump_mask;
 
-void ath10k_core_napi_sync_disable(struct ath10k *ar);
-void ath10k_core_napi_enable(struct ath10k *ar);
 struct ath10k *ath10k_core_create(size_t priv_size, struct device *dev,
 				  enum ath10k_bus bus,
 				  enum ath10k_hw_rev hw_rev,
@@ -1334,12 +1137,7 @@ int ath10k_core_start(struct ath10k *ar, enum ath10k_firmware_mode mode,
 		      const struct ath10k_fw_components *fw_components);
 int ath10k_wait_for_suspend(struct ath10k *ar, u32 suspend_opt);
 void ath10k_core_stop(struct ath10k *ar);
-void ath10k_core_start_recovery(struct ath10k *ar);
-int ath10k_core_register(struct ath10k *ar,
-			 const struct ath10k_bus_params *bus_params);
+int ath10k_core_register(struct ath10k *ar, u32 chip_id);
 void ath10k_core_unregister(struct ath10k *ar);
-int ath10k_core_fetch_board_file(struct ath10k *ar, int bd_ie_type);
-int ath10k_core_check_dt(struct ath10k *ar);
-void ath10k_core_free_board_files(struct ath10k *ar);
 
 #endif /* _CORE_H_ */

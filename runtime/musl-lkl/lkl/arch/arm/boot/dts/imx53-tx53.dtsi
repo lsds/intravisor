@@ -51,7 +51,6 @@
 
 	/* Will be filled by the bootloader */
 	memory@70000000 {
-		device_type = "memory";
 		reg = <0x70000000 0>;
 	};
 
@@ -59,7 +58,7 @@
 		can0 = &can2; /* Make the can interface indices consistent with TX28/TX48 modules */
 		can1 = &can1;
 		ipu = &ipu;
-		reg-can-xcvr = &reg_can_xcvr;
+		reg_can_xcvr = &reg_can_xcvr;
 		usbh1 = &usbh1;
 		usbotg = &usbotg;
 	};
@@ -68,12 +67,13 @@
 		ckih1 {
 			clock-frequency = <0>;
 		};
-	};
 
-	mclk: clock-mclk {
-		compatible = "fixed-clock";
-		#clock-cells = <0>;
-		clock-frequency = <26000000>;
+		mclk: clock@0 {
+			compatible = "fixed-clock";
+			reg = <0>;
+			#clock-cells = <0>;
+			clock-frequency = <26000000>;
+		};
 	};
 
 	gpio-keys {
@@ -81,7 +81,7 @@
 		pinctrl-names = "default";
 		pinctrl-0 = <&pinctrl_gpio_key>;
 
-		key-power {
+		power {
 			label = "Power Button";
 			gpios = <&gpio5 2 GPIO_ACTIVE_HIGH>;
 			linux,code = <116>; /* KEY_POWER */
@@ -192,6 +192,17 @@
 		&gpio3 19 GPIO_ACTIVE_HIGH
 	>;
 
+	spidev0: spi@0 {
+		compatible = "spidev";
+		reg = <0>;
+		spi-max-frequency = <54000000>;
+	};
+
+	spidev1: spi@1 {
+		compatible = "spidev";
+		reg = <1>;
+		spi-max-frequency = <54000000>;
+	};
 };
 
 &esdhc1 {
@@ -241,7 +252,7 @@
 	clock-frequency = <400000>;
 	status = "okay";
 
-	rtc1: rtc@68 {
+	rtc1: ds1339@68 {
 		compatible = "dallas,ds1339";
 		reg = <0x68>;
 		pinctrl-names = "default";
@@ -531,6 +542,7 @@
 &pwm2 {
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_pwm2>;
+	#pwm-cells = <3>;
 };
 
 &sdma {
@@ -538,6 +550,7 @@
 };
 
 &ssi1 {
+	codec-handle = <&sgtl5000>;
 	status = "okay";
 };
 

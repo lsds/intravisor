@@ -1,8 +1,16 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Netlink interface for IEEE 802.15.4 stack
  *
  * Copyright 2007, 2008 Siemens AG
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2
+ * as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
  *
  * Written by:
  * Sergey Lapin <slapin@ossfans.org>
@@ -30,7 +38,7 @@ static int ieee802154_nl_fill_phy(struct sk_buff *msg, u32 portid,
 {
 	void *hdr;
 	int i, pages = 0;
-	u32 *buf = kcalloc(IEEE802154_MAX_PAGE + 1, sizeof(u32), GFP_KERNEL);
+	uint32_t *buf = kzalloc(32 * sizeof(uint32_t), GFP_KERNEL);
 
 	pr_debug("%s\n", __func__);
 
@@ -47,7 +55,7 @@ static int ieee802154_nl_fill_phy(struct sk_buff *msg, u32 portid,
 	    nla_put_u8(msg, IEEE802154_ATTR_PAGE, phy->current_page) ||
 	    nla_put_u8(msg, IEEE802154_ATTR_CHANNEL, phy->current_channel))
 		goto nla_put_failure;
-	for (i = 0; i <= IEEE802154_MAX_PAGE; i++) {
+	for (i = 0; i < 32; i++) {
 		if (phy->supported.channels[i])
 			buf[pages++] = phy->supported.channels[i] | (i << 27);
 	}
@@ -234,17 +242,15 @@ int ieee802154_add_iface(struct sk_buff *skb, struct genl_info *info)
 		 * dev_set_mac_address require RTNL_LOCK
 		 */
 		rtnl_lock();
-		rc = dev_set_mac_address(dev, &addr, NULL);
+		rc = dev_set_mac_address(dev, &addr);
 		rtnl_unlock();
 		if (rc)
 			goto dev_unregister;
 	}
 
 	if (nla_put_string(msg, IEEE802154_ATTR_PHY_NAME, wpan_phy_name(phy)) ||
-	    nla_put_string(msg, IEEE802154_ATTR_DEV_NAME, dev->name)) {
-		rc = -EMSGSIZE;
+	    nla_put_string(msg, IEEE802154_ATTR_DEV_NAME, dev->name))
 		goto nla_put_failure;
-	}
 	dev_put(dev);
 
 	wpan_phy_put(phy);
@@ -340,7 +346,8 @@ nla_put_failure:
 out_dev:
 	wpan_phy_put(phy);
 out:
-	dev_put(dev);
+	if (dev)
+		dev_put(dev);
 
 	return rc;
 }

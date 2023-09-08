@@ -1,9 +1,10 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Windfarm PowerMac thermal control. iMac G5
  *
  * (c) Copyright 2005 Benjamin Herrenschmidt, IBM Corp.
  *                    <benh@kernel.crashing.org>
+ *
+ * Released under the term of the GNU GPL v2.
  *
  * The algorithm used is the PID control algorithm, used the same
  * way the published Darwin code does, using the same values that
@@ -89,6 +90,7 @@
  * from the SDB partition. If we ever end up with actually slewing the system
  * clock and thus changing operating points, we'll have to find a way to
  * communicate with the CPU freq driver;
+ *
  */
 
 #include <linux/types.h>
@@ -102,8 +104,7 @@
 #include <linux/kmod.h>
 #include <linux/device.h>
 #include <linux/platform_device.h>
-#include <linux/of.h>
-
+#include <asm/prom.h>
 #include <asm/machdep.h>
 #include <asm/io.h>
 #include <asm/sections.h>
@@ -454,7 +455,7 @@ static void wf_smu_create_cpu_fans(void)
 	wf_cpu_pid_init(&wf_smu_cpu_fans->pid, &pid_param);
 
 	DBG("wf: CPU Fan control initialized.\n");
-	DBG("    ttarget=%d.%03d, tmax=%d.%03d, min=%d RPM, max=%d RPM\n",
+	DBG("    ttarged=%d.%03d, tmax=%d.%03d, min=%d RPM, max=%d RPM\n",
 	    FIX32TOPRINT(pid_param.ttarget), FIX32TOPRINT(pid_param.tmax),
 	    pid_param.min, pid_param.max);
 

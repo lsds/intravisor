@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * tracing clocks
  *
@@ -95,49 +94,33 @@ u64 notrace trace_clock_global(void)
 {
 	unsigned long flags;
 	int this_cpu;
-	u64 now, prev_time;
+	u64 now;
 
 	raw_local_irq_save(flags);
 
 	this_cpu = raw_smp_processor_id();
-
-	/*
-	 * The global clock "guarantees" that the events are ordered
-	 * between CPUs. But if two events on two different CPUS call
-	 * trace_clock_global at roughly the same time, it really does
-	 * not matter which one gets the earlier time. Just make sure
-	 * that the same CPU will always show a monotonic clock.
-	 *
-	 * Use a read memory barrier to get the latest written
-	 * time that was recorded.
-	 */
-	smp_rmb();
-	prev_time = READ_ONCE(trace_clock_struct.prev_time);
 	now = sched_clock_cpu(this_cpu);
-
-	/* Make sure that now is always greater than or equal to prev_time */
-	if ((s64)(now - prev_time) < 0)
-		now = prev_time;
-
 	/*
-	 * If in an NMI context then dont risk lockups and simply return
-	 * the current time.
+	 * If in an NMI context then dont risk lockups and return the
+	 * cpu_clock() time:
 	 */
 	if (unlikely(in_nmi()))
 		goto out;
 
-	/* Tracing can cause strange recursion, always use a try lock */
-	if (arch_spin_trylock(&trace_clock_struct.lock)) {
-		/* Reread prev_time in case it was already updated */
-		prev_time = READ_ONCE(trace_clock_struct.prev_time);
-		if ((s64)(now - prev_time) < 0)
-			now = prev_time;
+	arch_spin_lock(&trace_clock_struct.lock);
 
-		trace_clock_struct.prev_time = now;
+	/*
+	 * TODO: if this happens often then maybe we should reset
+	 * my_scd->clock to prev_time+1, to make sure
+	 * we start ticking with the local clock from now on?
+	 */
+	if ((s64)(now - trace_clock_struct.prev_time) < 0)
+		now = trace_clock_struct.prev_time + 1;
 
-		/* The unlock acts as the wmb for the above rmb */
-		arch_spin_unlock(&trace_clock_struct.lock);
-	}
+	trace_clock_struct.prev_time = now;
+
+	arch_spin_unlock(&trace_clock_struct.lock);
+
  out:
 	raw_local_irq_restore(flags);
 

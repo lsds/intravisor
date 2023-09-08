@@ -1,8 +1,20 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (c) 2000-2006 Silicon Graphics, Inc.
  * Copyright (c) 2013 Red Hat, Inc.
  * All Rights Reserved.
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License as
+ * published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it would be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write the Free Software Foundation,
+ * Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
  */
 #include "xfs.h"
 #include "xfs_fs.h"
@@ -16,31 +28,28 @@
 #include "xfs_trans.h"
 #include "xfs_qm.h"
 #include "xfs_error.h"
+#include "xfs_cksum.h"
+#include "xfs_trace.h"
 
 int
 xfs_calc_dquots_per_chunk(
 	unsigned int		nbblks)	/* basic block units */
 {
 	ASSERT(nbblks > 0);
-	return BBTOB(nbblks) / sizeof(struct xfs_dqblk);
+	return BBTOB(nbblks) / sizeof(xfs_dqblk_t);
 }
 
 /*
  * Do some primitive error checking on ondisk dquot data structures.
- *
- * The xfs_dqblk structure /contains/ the xfs_disk_dquot structure;
- * we verify them separately because at some points we have only the
- * smaller xfs_disk_dquot structure available.
  */
-
 xfs_failaddr_t
 xfs_dquot_verify(
-	struct xfs_mount	*mp,
-	struct xfs_disk_dquot	*ddq,
-	xfs_dqid_t		id)	/* used only during quotacheck */
+	struct xfs_mount *mp,
+	xfs_disk_dquot_t *ddq,
+	xfs_dqid_t	 id,
+	uint		 type,	  /* used only when IO_dorepair is true */
+	uint		 flags)
 {
-	__u8			ddq_type;
-
 	/*
 	 * We can encounter an uninitialized dquot buffer for 2 reasons:
 	 * 1. If we crash while deleting the quotainode(s), and those blks got
@@ -61,19 +70,9 @@ xfs_dquot_verify(
 	if (ddq->d_version != XFS_DQUOT_VERSION)
 		return __this_address;
 
-	if (ddq->d_type & ~XFS_DQTYPE_ANY)
-		return __this_address;
-	ddq_type = ddq->d_type & XFS_DQTYPE_REC_MASK;
-	if (ddq_type != XFS_DQTYPE_USER &&
-	    ddq_type != XFS_DQTYPE_PROJ &&
-	    ddq_type != XFS_DQTYPE_GROUP)
-		return __this_address;
-
-	if ((ddq->d_type & XFS_DQTYPE_BIGTIME) &&
-	    !xfs_has_bigtime(mp))
-		return __this_address;
-
-	if ((ddq->d_type & XFS_DQTYPE_BIGTIME) && !ddq->d_id)
+	if (ddq->d_flags != XFS_DQ_USER &&
+	    ddq->d_flags != XFS_DQ_PROJ &&
+	    ddq->d_flags != XFS_DQ_GROUP)
 		return __this_address;
 
 	if (id != -1 && id != be32_to_cpu(ddq->d_id))
@@ -100,58 +99,49 @@ xfs_dquot_verify(
 	return NULL;
 }
 
-xfs_failaddr_t
-xfs_dqblk_verify(
-	struct xfs_mount	*mp,
-	struct xfs_dqblk	*dqb,
-	xfs_dqid_t		id)	/* used only during quotacheck */
-{
-	if (xfs_has_crc(mp) &&
-	    !uuid_equal(&dqb->dd_uuid, &mp->m_sb.sb_meta_uuid))
-		return __this_address;
-
-	return xfs_dquot_verify(mp, &dqb->dd_diskdq, id);
-}
-
 /*
  * Do some primitive error checking on ondisk dquot data structures.
  */
-void
-xfs_dqblk_repair(
+int
+xfs_dquot_repair(
 	struct xfs_mount	*mp,
-	struct xfs_dqblk	*dqb,
+	struct xfs_disk_dquot	*ddq,
 	xfs_dqid_t		id,
-	xfs_dqtype_t		type)
+	uint			type)
 {
+	struct xfs_dqblk	*d = (struct xfs_dqblk *)ddq;
+
+
 	/*
 	 * Typically, a repair is only requested by quotacheck.
 	 */
 	ASSERT(id != -1);
-	memset(dqb, 0, sizeof(struct xfs_dqblk));
+	memset(d, 0, sizeof(xfs_dqblk_t));
 
-	dqb->dd_diskdq.d_magic = cpu_to_be16(XFS_DQUOT_MAGIC);
-	dqb->dd_diskdq.d_version = XFS_DQUOT_VERSION;
-	dqb->dd_diskdq.d_type = type;
-	dqb->dd_diskdq.d_id = cpu_to_be32(id);
+	d->dd_diskdq.d_magic = cpu_to_be16(XFS_DQUOT_MAGIC);
+	d->dd_diskdq.d_version = XFS_DQUOT_VERSION;
+	d->dd_diskdq.d_flags = type;
+	d->dd_diskdq.d_id = cpu_to_be32(id);
 
-	if (xfs_has_crc(mp)) {
-		uuid_copy(&dqb->dd_uuid, &mp->m_sb.sb_meta_uuid);
-		xfs_update_cksum((char *)dqb, sizeof(struct xfs_dqblk),
+	if (xfs_sb_version_hascrc(&mp->m_sb)) {
+		uuid_copy(&d->dd_uuid, &mp->m_sb.sb_meta_uuid);
+		xfs_update_cksum((char *)d, sizeof(struct xfs_dqblk),
 				 XFS_DQUOT_CRC_OFF);
 	}
+
+	return 0;
 }
 
 STATIC bool
 xfs_dquot_buf_verify_crc(
 	struct xfs_mount	*mp,
-	struct xfs_buf		*bp,
-	bool			readahead)
+	struct xfs_buf		*bp)
 {
 	struct xfs_dqblk	*d = (struct xfs_dqblk *)bp->b_addr;
 	int			ndquots;
 	int			i;
 
-	if (!xfs_has_crc(mp))
+	if (!xfs_sb_version_hascrc(&mp->m_sb))
 		return true;
 
 	/*
@@ -166,12 +156,10 @@ xfs_dquot_buf_verify_crc(
 
 	for (i = 0; i < ndquots; i++, d++) {
 		if (!xfs_verify_cksum((char *)d, sizeof(struct xfs_dqblk),
-				 XFS_DQUOT_CRC_OFF)) {
-			if (!readahead)
-				xfs_buf_verifier_error(bp, -EFSBADCRC, __func__,
-					d, sizeof(*d), __this_address);
+				 XFS_DQUOT_CRC_OFF))
 			return false;
-		}
+		if (!uuid_equal(&d->dd_uuid, &mp->m_sb.sb_meta_uuid))
+			return false;
 	}
 	return true;
 }
@@ -179,10 +167,9 @@ xfs_dquot_buf_verify_crc(
 STATIC xfs_failaddr_t
 xfs_dquot_buf_verify(
 	struct xfs_mount	*mp,
-	struct xfs_buf		*bp,
-	bool			readahead)
+	struct xfs_buf		*bp)
 {
-	struct xfs_dqblk	*dqb = bp->b_addr;
+	struct xfs_dqblk	*d = (struct xfs_dqblk *)bp->b_addr;
 	xfs_failaddr_t		fa;
 	xfs_dqid_t		id = 0;
 	int			ndquots;
@@ -208,19 +195,14 @@ xfs_dquot_buf_verify(
 	for (i = 0; i < ndquots; i++) {
 		struct xfs_disk_dquot	*ddq;
 
-		ddq = &dqb[i].dd_diskdq;
+		ddq = &d[i].dd_diskdq;
 
 		if (i == 0)
 			id = be32_to_cpu(ddq->d_id);
 
-		fa = xfs_dqblk_verify(mp, &dqb[i], id + i);
-		if (fa) {
-			if (!readahead)
-				xfs_buf_verifier_error(bp, -EFSCORRUPTED,
-					__func__, &dqb[i],
-					sizeof(struct xfs_dqblk), fa);
+		fa = xfs_dquot_verify(mp, ddq, id + i, 0, 0);
+		if (fa)
 			return fa;
-		}
 	}
 
 	return NULL;
@@ -230,20 +212,25 @@ static xfs_failaddr_t
 xfs_dquot_buf_verify_struct(
 	struct xfs_buf		*bp)
 {
-	struct xfs_mount	*mp = bp->b_mount;
+	struct xfs_mount	*mp = bp->b_target->bt_mount;
 
-	return xfs_dquot_buf_verify(mp, bp, false);
+	return xfs_dquot_buf_verify(mp, bp);
 }
 
 static void
 xfs_dquot_buf_read_verify(
 	struct xfs_buf		*bp)
 {
-	struct xfs_mount	*mp = bp->b_mount;
+	struct xfs_mount	*mp = bp->b_target->bt_mount;
+	xfs_failaddr_t		fa;
 
-	if (!xfs_dquot_buf_verify_crc(mp, bp, false))
-		return;
-	xfs_dquot_buf_verify(mp, bp, false);
+	if (!xfs_dquot_buf_verify_crc(mp, bp))
+		xfs_verifier_error(bp, -EFSBADCRC, __this_address);
+	else {
+		fa = xfs_dquot_buf_verify(mp, bp);
+		if (fa)
+			xfs_verifier_error(bp, -EFSCORRUPTED, __this_address);
+	}
 }
 
 /*
@@ -256,10 +243,10 @@ static void
 xfs_dquot_buf_readahead_verify(
 	struct xfs_buf	*bp)
 {
-	struct xfs_mount	*mp = bp->b_mount;
+	struct xfs_mount	*mp = bp->b_target->bt_mount;
 
-	if (!xfs_dquot_buf_verify_crc(mp, bp, true) ||
-	    xfs_dquot_buf_verify(mp, bp, true) != NULL) {
+	if (!xfs_dquot_buf_verify_crc(mp, bp) ||
+	    xfs_dquot_buf_verify(mp, bp) != NULL) {
 		xfs_buf_ioerror(bp, -EIO);
 		bp->b_flags &= ~XBF_DONE;
 	}
@@ -274,15 +261,16 @@ static void
 xfs_dquot_buf_write_verify(
 	struct xfs_buf		*bp)
 {
-	struct xfs_mount	*mp = bp->b_mount;
+	struct xfs_mount	*mp = bp->b_target->bt_mount;
+	xfs_failaddr_t		fa;
 
-	xfs_dquot_buf_verify(mp, bp, false);
+	fa = xfs_dquot_buf_verify(mp, bp);
+	if (fa)
+		xfs_verifier_error(bp, -EFSCORRUPTED, __this_address);
 }
 
 const struct xfs_buf_ops xfs_dquot_buf_ops = {
 	.name = "xfs_dquot",
-	.magic16 = { cpu_to_be16(XFS_DQUOT_MAGIC),
-		     cpu_to_be16(XFS_DQUOT_MAGIC) },
 	.verify_read = xfs_dquot_buf_read_verify,
 	.verify_write = xfs_dquot_buf_write_verify,
 	.verify_struct = xfs_dquot_buf_verify_struct,
@@ -290,36 +278,6 @@ const struct xfs_buf_ops xfs_dquot_buf_ops = {
 
 const struct xfs_buf_ops xfs_dquot_buf_ra_ops = {
 	.name = "xfs_dquot_ra",
-	.magic16 = { cpu_to_be16(XFS_DQUOT_MAGIC),
-		     cpu_to_be16(XFS_DQUOT_MAGIC) },
 	.verify_read = xfs_dquot_buf_readahead_verify,
 	.verify_write = xfs_dquot_buf_write_verify,
 };
-
-/* Convert an on-disk timer value into an incore timer value. */
-time64_t
-xfs_dquot_from_disk_ts(
-	struct xfs_disk_dquot	*ddq,
-	__be32			dtimer)
-{
-	uint32_t		t = be32_to_cpu(dtimer);
-
-	if (t != 0 && (ddq->d_type & XFS_DQTYPE_BIGTIME))
-		return xfs_dq_bigtime_to_unix(t);
-
-	return t;
-}
-
-/* Convert an incore timer value into an on-disk timer value. */
-__be32
-xfs_dquot_to_disk_ts(
-	struct xfs_dquot	*dqp,
-	time64_t		timer)
-{
-	uint32_t		t = timer;
-
-	if (timer != 0 && (dqp->q_type & XFS_DQTYPE_BIGTIME))
-		t = xfs_dq_unix_to_bigtime(timer);
-
-	return cpu_to_be32(t);
-}

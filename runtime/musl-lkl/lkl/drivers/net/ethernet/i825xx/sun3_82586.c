@@ -29,7 +29,6 @@ static int rfdadd = 0; /* rfdadd=1 may be better for 8K MEM cards */
 static int fifo=0x8;	/* don't change */
 
 #include <linux/kernel.h>
-#include <linux/module.h>
 #include <linux/string.h>
 #include <linux/errno.h>
 #include <linux/ioport.h>
@@ -122,11 +121,10 @@ static int     sun3_82586_probe1(struct net_device *dev,int ioaddr);
 static irqreturn_t sun3_82586_interrupt(int irq,void *dev_id);
 static int     sun3_82586_open(struct net_device *dev);
 static int     sun3_82586_close(struct net_device *dev);
-static netdev_tx_t     sun3_82586_send_packet(struct sk_buff *,
-					      struct net_device *);
+static int     sun3_82586_send_packet(struct sk_buff *,struct net_device *);
 static struct  net_device_stats *sun3_82586_get_stats(struct net_device *dev);
 static void    set_multicast_list(struct net_device *dev);
-static void    sun3_82586_timeout(struct net_device *dev, unsigned int txqueue);
+static void    sun3_82586_timeout(struct net_device *dev);
 #if 0
 static void    sun3_82586_dump(struct net_device *,void *);
 #endif
@@ -277,7 +275,7 @@ static void alloc586(struct net_device *dev)
 	memset((char *)p->scb,0,sizeof(struct scb_struct));
 }
 
-static int __init sun3_82586_probe(void)
+struct net_device * __init sun3_82586_probe(int unit)
 {
 	struct net_device *dev;
 	unsigned long ioaddr;
@@ -292,20 +290,25 @@ static int __init sun3_82586_probe(void)
 		break;
 
 	default:
-		return -ENODEV;
+		return ERR_PTR(-ENODEV);
 	}
 
 	if (found)
-		return -ENODEV;
+		return ERR_PTR(-ENODEV);
 
 	ioaddr = (unsigned long)ioremap(IE_OBIO, SUN3_82586_TOTAL_SIZE);
 	if (!ioaddr)
-		return -ENOMEM;
+		return ERR_PTR(-ENOMEM);
 	found = 1;
 
 	dev = alloc_etherdev(sizeof(struct priv));
 	if (!dev)
 		goto out;
+	if (unit >= 0) {
+		sprintf(dev->name, "eth%d", unit);
+		netdev_boot_setup_check(dev);
+	}
+
 	dev->irq = IE_IRQ;
 	dev->base_addr = ioaddr;
 	err = sun3_82586_probe1(dev, ioaddr);
@@ -314,7 +317,7 @@ static int __init sun3_82586_probe(void)
 	err = register_netdev(dev);
 	if (err)
 		goto out2;
-	return 0;
+	return dev;
 
 out2:
 	release_region(ioaddr, SUN3_82586_TOTAL_SIZE);
@@ -322,9 +325,8 @@ out1:
 	free_netdev(dev);
 out:
 	iounmap((void __iomem *)ioaddr);
-	return err;
+	return ERR_PTR(err);
 }
-module_init(sun3_82586_probe);
 
 static const struct net_device_ops sun3_82586_netdev_ops = {
 	.ndo_open		= sun3_82586_open,
@@ -339,13 +341,14 @@ static const struct net_device_ops sun3_82586_netdev_ops = {
 
 static int __init sun3_82586_probe1(struct net_device *dev,int ioaddr)
 {
-	int size, retval;
+	int i, size, retval;
 
 	if (!request_region(ioaddr, SUN3_82586_TOTAL_SIZE, DRV_NAME))
 		return -EBUSY;
 
 	/* copy in the ethernet address from the prom */
-	eth_hw_addr_set(dev, idprom->id_ethaddr);
+	for(i = 0; i < 6 ; i++)
+	     dev->dev_addr[i] = idprom->id_ethaddr[i];
 
 	printk("%s: SUN3 Intel 82586 found at %lx, ",dev->name,dev->base_addr);
 
@@ -460,7 +463,7 @@ static int init586(struct net_device *dev)
 	ias_cmd->cmd_cmd	= swab16(CMD_IASETUP | CMD_LAST);
 	ias_cmd->cmd_link	= 0xffff;
 
-	memcpy((char *)&ias_cmd->iaddr,(const char *) dev->dev_addr,ETH_ALEN);
+	memcpy((char *)&ias_cmd->iaddr,(char *) dev->dev_addr,ETH_ALEN);
 
 	p->scb->cbl_offset = make16(ias_cmd);
 
@@ -961,7 +964,7 @@ static void startrecv586(struct net_device *dev)
 	WAIT_4_SCB_CMD_RUC();	/* wait for accept cmd. (no timeout!!) */
 }
 
-static void sun3_82586_timeout(struct net_device *dev, unsigned int txqueue)
+static void sun3_82586_timeout(struct net_device *dev)
 {
 	struct priv *p = netdev_priv(dev);
 #ifndef NO_NOPCOMMANDS
@@ -999,8 +1002,7 @@ static void sun3_82586_timeout(struct net_device *dev, unsigned int txqueue)
  * send frame
  */
 
-static netdev_tx_t
-sun3_82586_send_packet(struct sk_buff *skb, struct net_device *dev)
+static int sun3_82586_send_packet(struct sk_buff *skb, struct net_device *dev)
 {
 	int len,i;
 #ifndef NO_NOPCOMMANDS

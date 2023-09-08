@@ -1,8 +1,11 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Stream Parser
  *
  * Copyright (c) 2016 Tom Herbert <tom@herbertland.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2
+ * as published by the Free Software Foundation.
  */
 
 #ifndef __NET_STRPARSER_H_
@@ -54,35 +57,10 @@ struct strp_msg {
 	int offset;
 };
 
-struct _strp_msg {
-	/* Internal cb structure. struct strp_msg must be first for passing
-	 * to upper layer.
-	 */
-	struct strp_msg strp;
-	int accum_len;
-};
-
-struct sk_skb_cb {
-#define SK_SKB_CB_PRIV_LEN 20
-	unsigned char data[SK_SKB_CB_PRIV_LEN];
-	/* align strp on cache line boundary within skb->cb[] */
-	unsigned char pad[4];
-	struct _strp_msg strp;
-
-	/* strp users' data follows */
-	struct tls_msg {
-		u8 control;
-	} tls;
-	/* temp_reg is a temporary register used for bpf_convert_data_end_access
-	 * when dst_reg == src_reg.
-	 */
-	u64 temp_reg;
-};
-
 static inline struct strp_msg *strp_msg(struct sk_buff *skb)
 {
 	return (struct strp_msg *)((void *)skb->cb +
-		offsetof(struct sk_skb_cb, strp));
+		offsetof(struct qdisc_skb_cb, data));
 }
 
 /* Structure for an attached lower socket */
@@ -112,8 +90,6 @@ static inline void strp_pause(struct strparser *strp)
 
 /* May be called without holding lock for attached socket */
 void strp_unpause(struct strparser *strp);
-/* Must be called with process lock held (lock_sock) */
-void __strp_unpause(struct strparser *strp);
 
 static inline void save_strp_stats(struct strparser *strp,
 				   struct strp_aggr_stats *agg_stats)

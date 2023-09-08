@@ -1,6 +1,9 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (C) 2014-2015 Pengutronix, Markus Pargmann <mpa@pengutronix.de>
+ *
+ * This program is free software; you can redistribute it and/or modify it under
+ * the terms of the GNU General Public License version 2 as published by the
+ * Free Software Foundation.
  */
 
 #include <linux/clk.h>
@@ -35,10 +38,10 @@ static void mx25_tsadc_irq_handler(struct irq_desc *desc)
 	regmap_read(tsadc->regs, MX25_TSC_TGSR, &status);
 
 	if (status & MX25_TGSR_GCQ_INT)
-		generic_handle_domain_irq(tsadc->domain, 1);
+		generic_handle_irq(irq_find_mapping(tsadc->domain, 1));
 
 	if (status & MX25_TGSR_TCQ_INT)
-		generic_handle_domain_irq(tsadc->domain, 0);
+		generic_handle_irq(irq_find_mapping(tsadc->domain, 0));
 
 	chained_irq_exit(chip, desc);
 }
@@ -69,8 +72,10 @@ static int mx25_tsadc_setup_irq(struct platform_device *pdev,
 	int irq;
 
 	irq = platform_get_irq(pdev, 0);
-	if (irq < 0)
+	if (irq <= 0) {
+		dev_err(dev, "Failed to get irq\n");
 		return irq;
+	}
 
 	tsadc->domain = irq_domain_add_simple(np, 2, 0, &mx25_tsadc_domain_ops,
 					      tsadc);
@@ -80,19 +85,6 @@ static int mx25_tsadc_setup_irq(struct platform_device *pdev,
 	}
 
 	irq_set_chained_handler_and_data(irq, mx25_tsadc_irq_handler, tsadc);
-
-	return 0;
-}
-
-static int mx25_tsadc_unset_irq(struct platform_device *pdev)
-{
-	struct mx25_tsadc *tsadc = platform_get_drvdata(pdev);
-	int irq = platform_get_irq(pdev, 0);
-
-	if (irq >= 0) {
-		irq_set_chained_handler_and_data(irq, NULL, NULL);
-		irq_domain_remove(tsadc->domain);
-	}
 
 	return 0;
 }
@@ -184,21 +176,18 @@ static int mx25_tsadc_probe(struct platform_device *pdev)
 
 	platform_set_drvdata(pdev, tsadc);
 
-	ret = devm_of_platform_populate(dev);
-	if (ret)
-		goto err_irq;
-
-	return 0;
-
-err_irq:
-	mx25_tsadc_unset_irq(pdev);
-
-	return ret;
+	return devm_of_platform_populate(dev);
 }
 
 static int mx25_tsadc_remove(struct platform_device *pdev)
 {
-	mx25_tsadc_unset_irq(pdev);
+	struct mx25_tsadc *tsadc = platform_get_drvdata(pdev);
+	int irq = platform_get_irq(pdev, 0);
+
+	if (irq) {
+		irq_set_chained_handler_and_data(irq, NULL, NULL);
+		irq_domain_remove(tsadc->domain);
+	}
 
 	return 0;
 }
@@ -212,7 +201,7 @@ MODULE_DEVICE_TABLE(of, mx25_tsadc_ids);
 static struct platform_driver mx25_tsadc_driver = {
 	.driver = {
 		.name = "mx25-tsadc",
-		.of_match_table = mx25_tsadc_ids,
+		.of_match_table = of_match_ptr(mx25_tsadc_ids),
 	},
 	.probe = mx25_tsadc_probe,
 	.remove = mx25_tsadc_remove,

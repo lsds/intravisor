@@ -11,8 +11,6 @@
 
 struct net;
 
-void do_trace_netlink_extack(const char *msg);
-
 static inline struct nlmsghdr *nlmsg_hdr(const struct sk_buff *skb)
 {
 	return (struct nlmsghdr *)skb->data;
@@ -36,8 +34,8 @@ struct netlink_skb_parms {
 #define NETLINK_CREDS(skb)	(&NETLINK_CB((skb)).creds)
 
 
-void netlink_table_grab(void);
-void netlink_table_ungrab(void);
+extern void netlink_table_grab(void);
+extern void netlink_table_ungrab(void);
 
 #define NL_CFG_F_NONROOT_RECV	(1 << 0)
 #define NL_CFG_F_NONROOT_SEND	(1 << 1)
@@ -53,7 +51,7 @@ struct netlink_kernel_cfg {
 	bool		(*compare)(struct net *net, struct sock *sk);
 };
 
-struct sock *__netlink_kernel_create(struct net *net, int unit,
+extern struct sock *__netlink_kernel_create(struct net *net, int unit,
 					    struct module *module,
 					    struct netlink_kernel_cfg *cfg);
 static inline struct sock *
@@ -70,18 +68,12 @@ netlink_kernel_create(struct net *net, int unit, struct netlink_kernel_cfg *cfg)
  * @_msg: message string to report - don't access directly, use
  *	%NL_SET_ERR_MSG
  * @bad_attr: attribute with error
- * @policy: policy for a bad attribute
- * @miss_type: attribute type which was missing
- * @miss_nest: nest missing an attribute (%NULL if missing top level attr)
  * @cookie: cookie data to return to userspace (for success)
  * @cookie_len: actual cookie data length
  */
 struct netlink_ext_ack {
 	const char *_msg;
 	const struct nlattr *bad_attr;
-	const struct nla_policy *policy;
-	const struct nlattr *miss_nest;
-	u16 miss_type;
 	u8 cookie[NETLINK_MAX_COOKIE_LEN];
 	u8 cookie_len;
 };
@@ -96,8 +88,6 @@ struct netlink_ext_ack {
 	static const char __msg[] = msg;		\
 	struct netlink_ext_ack *__extack = (extack);	\
 							\
-	do_trace_netlink_extack(__msg);			\
-							\
 	if (__extack)					\
 		__extack->_msg = __msg;			\
 } while (0)
@@ -105,75 +95,39 @@ struct netlink_ext_ack {
 #define NL_SET_ERR_MSG_MOD(extack, msg)			\
 	NL_SET_ERR_MSG((extack), KBUILD_MODNAME ": " msg)
 
-#define NL_SET_BAD_ATTR_POLICY(extack, attr, pol) do {	\
-	if ((extack)) {					\
+#define NL_SET_BAD_ATTR(extack, attr) do {		\
+	if ((extack))					\
 		(extack)->bad_attr = (attr);		\
-		(extack)->policy = (pol);		\
-	}						\
 } while (0)
 
-#define NL_SET_BAD_ATTR(extack, attr) NL_SET_BAD_ATTR_POLICY(extack, attr, NULL)
-
-#define NL_SET_ERR_MSG_ATTR_POL(extack, attr, pol, msg) do {	\
-	static const char __msg[] = msg;			\
-	struct netlink_ext_ack *__extack = (extack);		\
-								\
-	do_trace_netlink_extack(__msg);				\
-								\
-	if (__extack) {						\
-		__extack->_msg = __msg;				\
-		__extack->bad_attr = (attr);			\
-		__extack->policy = (pol);			\
-	}							\
-} while (0)
-
-#define NL_SET_ERR_MSG_ATTR(extack, attr, msg)		\
-	NL_SET_ERR_MSG_ATTR_POL(extack, attr, NULL, msg)
-
-#define NL_SET_ERR_ATTR_MISS(extack, nest, type)  do {	\
+#define NL_SET_ERR_MSG_ATTR(extack, attr, msg) do {	\
+	static const char __msg[] = msg;		\
 	struct netlink_ext_ack *__extack = (extack);	\
 							\
 	if (__extack) {					\
-		__extack->miss_nest = (nest);		\
-		__extack->miss_type = (type);		\
+		__extack->_msg = __msg;			\
+		__extack->bad_attr = (attr);		\
 	}						\
 } while (0)
 
-#define NL_REQ_ATTR_CHECK(extack, nest, tb, type) ({		\
-	struct nlattr **__tb = (tb);				\
-	u32 __attr = (type);					\
-	int __retval;						\
-								\
-	__retval = !__tb[__attr];				\
-	if (__retval)						\
-		NL_SET_ERR_ATTR_MISS((extack), (nest), __attr);	\
-	__retval;						\
-})
+extern void netlink_kernel_release(struct sock *sk);
+extern int __netlink_change_ngroups(struct sock *sk, unsigned int groups);
+extern int netlink_change_ngroups(struct sock *sk, unsigned int groups);
+extern void __netlink_clear_multicast_users(struct sock *sk, unsigned int group);
+extern void netlink_ack(struct sk_buff *in_skb, struct nlmsghdr *nlh, int err,
+			const struct netlink_ext_ack *extack);
+extern int netlink_has_listeners(struct sock *sk, unsigned int group);
 
-static inline void nl_set_extack_cookie_u64(struct netlink_ext_ack *extack,
-					    u64 cookie)
-{
-	if (!extack)
-		return;
-	memcpy(extack->cookie, &cookie, sizeof(cookie));
-	extack->cookie_len = sizeof(cookie);
-}
-
-void netlink_kernel_release(struct sock *sk);
-int __netlink_change_ngroups(struct sock *sk, unsigned int groups);
-int netlink_change_ngroups(struct sock *sk, unsigned int groups);
-void __netlink_clear_multicast_users(struct sock *sk, unsigned int group);
-void netlink_ack(struct sk_buff *in_skb, struct nlmsghdr *nlh, int err,
-		 const struct netlink_ext_ack *extack);
-int netlink_has_listeners(struct sock *sk, unsigned int group);
-bool netlink_strict_get_check(struct sk_buff *skb);
-
-int netlink_unicast(struct sock *ssk, struct sk_buff *skb, __u32 portid, int nonblock);
-int netlink_broadcast(struct sock *ssk, struct sk_buff *skb, __u32 portid,
-		      __u32 group, gfp_t allocation);
-int netlink_set_err(struct sock *ssk, __u32 portid, __u32 group, int code);
-int netlink_register_notifier(struct notifier_block *nb);
-int netlink_unregister_notifier(struct notifier_block *nb);
+extern int netlink_unicast(struct sock *ssk, struct sk_buff *skb, __u32 portid, int nonblock);
+extern int netlink_broadcast(struct sock *ssk, struct sk_buff *skb, __u32 portid,
+			     __u32 group, gfp_t allocation);
+extern int netlink_broadcast_filtered(struct sock *ssk, struct sk_buff *skb,
+	__u32 portid, __u32 group, gfp_t allocation,
+	int (*filter)(struct sock *dsk, struct sk_buff *skb, void *data),
+	void *filter_data);
+extern int netlink_set_err(struct sock *ssk, __u32 portid, __u32 group, int code);
+extern int netlink_register_notifier(struct notifier_block *nb);
+extern int netlink_unregister_notifier(struct notifier_block *nb);
 
 /* finegrained unicast helpers: */
 struct sock *netlink_getsockbyfilp(struct file *filp);
@@ -216,26 +170,17 @@ netlink_skb_clone(struct sk_buff *skb, gfp_t gfp_mask)
 struct netlink_callback {
 	struct sk_buff		*skb;
 	const struct nlmsghdr	*nlh;
+	int			(*start)(struct netlink_callback *);
 	int			(*dump)(struct sk_buff * skb,
 					struct netlink_callback *cb);
 	int			(*done)(struct netlink_callback *cb);
 	void			*data;
 	/* the module that dump function belong to */
 	struct module		*module;
-	struct netlink_ext_ack	*extack;
 	u16			family;
-	u16			answer_flags;
-	u32			min_dump_alloc;
+	u16			min_dump_alloc;
 	unsigned int		prev_seq, seq;
-	bool			strict_check;
-	union {
-		u8		ctx[48];
-
-		/* args is deprecated. Cast a struct over ctx instead
-		 * for proper type safety.
-		 */
-		long		args[6];
-	};
+	long			args[6];
 };
 
 struct netlink_notify {
@@ -253,10 +198,10 @@ struct netlink_dump_control {
 	int (*done)(struct netlink_callback *);
 	void *data;
 	struct module *module;
-	u32 min_dump_alloc;
+	u16 min_dump_alloc;
 };
 
-int __netlink_dump_start(struct sock *ssk, struct sk_buff *skb,
+extern int __netlink_dump_start(struct sock *ssk, struct sk_buff *skb,
 				const struct nlmsghdr *nlh,
 				struct netlink_dump_control *control);
 static inline int netlink_dump_start(struct sock *ssk, struct sk_buff *skb,
@@ -275,8 +220,8 @@ struct netlink_tap {
 	struct list_head list;
 };
 
-int netlink_add_tap(struct netlink_tap *nt);
-int netlink_remove_tap(struct netlink_tap *nt);
+extern int netlink_add_tap(struct netlink_tap *nt);
+extern int netlink_remove_tap(struct netlink_tap *nt);
 
 bool __netlink_ns_capable(const struct netlink_skb_parms *nsp,
 			  struct user_namespace *ns, int cap);

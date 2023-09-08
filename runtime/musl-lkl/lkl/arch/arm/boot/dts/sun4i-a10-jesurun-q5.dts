@@ -63,7 +63,7 @@
 	leds {
 		compatible = "gpio-leds";
 
-		led {
+		green {
 			label = "q5:green:usr";
 			gpios = <&pio 7 20 GPIO_ACTIVE_HIGH>;  /* PH20 */
 		};
@@ -94,7 +94,7 @@
 };
 
 &emac {
-	phy-handle = <&phy1>;
+	phy = <&phy1>;
 	status = "okay";
 };
 

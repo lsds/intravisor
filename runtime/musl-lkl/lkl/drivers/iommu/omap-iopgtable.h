@@ -1,10 +1,13 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * omap iommu: pagetable definitions
  *
  * Copyright (C) 2008-2010 Nokia Corporation
  *
  * Written by Hiroshi DOYU <Hiroshi.DOYU@nokia.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 
 #ifndef _OMAP_IOPGTABLE_H
@@ -63,8 +66,7 @@
  *
  * va to pa translation
  */
-static inline phys_addr_t omap_iommu_translate(unsigned long d, dma_addr_t va,
-					       dma_addr_t mask)
+static inline phys_addr_t omap_iommu_translate(u32 d, u32 va, u32 mask)
 {
 	return (d & mask) | (va & (~mask));
 }

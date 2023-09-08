@@ -1,8 +1,12 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Freescale eSPI controller driver.
  *
  * Copyright 2010 Freescale Semiconductor, Inc.
+ *
+ * This program is free software; you can redistribute  it and/or modify it
+ * under  the terms of  the GNU General  Public License as published by the
+ * Free Software Foundation;  either version 2 of the  License, or (at your
+ * option) any later version.
  */
 #include <linux/delay.h>
 #include <linux/err.h>
@@ -427,7 +431,8 @@ static int fsl_espi_trans(struct spi_message *m, struct spi_transfer *trans)
 
 	ret = fsl_espi_bufs(spi, trans);
 
-	spi_transfer_delay_exec(trans);
+	if (trans->delay_usecs)
+		udelay(trans->delay_usecs);
 
 	return ret;
 }
@@ -435,7 +440,7 @@ static int fsl_espi_trans(struct spi_message *m, struct spi_transfer *trans)
 static int fsl_espi_do_one_msg(struct spi_master *master,
 			       struct spi_message *m)
 {
-	unsigned int rx_nbits = 0, delay_nsecs = 0;
+	unsigned int delay_usecs = 0, rx_nbits = 0;
 	struct spi_transfer *t, trans = {};
 	int ret;
 
@@ -444,10 +449,8 @@ static int fsl_espi_do_one_msg(struct spi_master *master,
 		goto out;
 
 	list_for_each_entry(t, &m->transfers, transfer_list) {
-		unsigned int delay = spi_delay_to_ns(&t->delay, t);
-
-		if (delay > delay_nsecs)
-			delay_nsecs = delay;
+		if (t->delay_usecs > delay_usecs)
+			delay_usecs = t->delay_usecs;
 		if (t->rx_nbits > rx_nbits)
 			rx_nbits = t->rx_nbits;
 	}
@@ -458,8 +461,7 @@ static int fsl_espi_do_one_msg(struct spi_master *master,
 	trans.len = m->frame_length;
 	trans.speed_hz = t->speed_hz;
 	trans.bits_per_word = t->bits_per_word;
-	trans.delay.value = delay_nsecs;
-	trans.delay.unit = SPI_DELAY_UNIT_NSECS;
+	trans.delay_usecs = delay_usecs;
 	trans.rx_nbits = rx_nbits;
 
 	if (trans.len)
@@ -545,11 +547,8 @@ static void fsl_espi_cpu_irq(struct fsl_espi *espi, u32 events)
 		dev_err(espi->dev,
 			"Transfer done but SPIE_DON isn't set!\n");
 
-	if (SPIE_RXCNT(events) || SPIE_TXCNT(events) != FSL_ESPI_FIFO_SIZE) {
+	if (SPIE_RXCNT(events) || SPIE_TXCNT(events) != FSL_ESPI_FIFO_SIZE)
 		dev_err(espi->dev, "Transfer done but rx/tx fifo's aren't empty!\n");
-		dev_err(espi->dev, "SPIE_RXCNT = %d, SPIE_TXCNT = %d\n",
-			SPIE_RXCNT(events), SPIE_TXCNT(events));
-	}
 
 	complete(&espi->done);
 }
@@ -557,14 +556,13 @@ static void fsl_espi_cpu_irq(struct fsl_espi *espi, u32 events)
 static irqreturn_t fsl_espi_irq(s32 irq, void *context_data)
 {
 	struct fsl_espi *espi = context_data;
-	u32 events, mask;
+	u32 events;
 
 	spin_lock(&espi->lock);
 
 	/* Get interrupt events(tx/rx) */
 	events = fsl_espi_read_reg(espi, ESPI_SPIE);
-	mask = fsl_espi_read_reg(espi, ESPI_SPIM);
-	if (!(events & mask)) {
+	if (!events) {
 		spin_unlock(&espi->lock);
 		return IRQ_NONE;
 	}
@@ -724,7 +722,7 @@ static int fsl_espi_probe(struct device *dev, struct resource *mem,
 	if (ret < 0)
 		goto err_pm;
 
-	dev_info(dev, "irq = %u\n", irq);
+	dev_info(dev, "at 0x%p (irq = %u)\n", espi->reg_base, irq);
 
 	pm_runtime_mark_last_busy(dev);
 	pm_runtime_put_autosuspend(dev);
@@ -797,8 +795,10 @@ static int of_fsl_espi_suspend(struct device *dev)
 	int ret;
 
 	ret = spi_master_suspend(master);
-	if (ret)
+	if (ret) {
+		dev_warn(dev, "cannot suspend master\n");
 		return ret;
+	}
 
 	return pm_runtime_force_suspend(dev);
 }

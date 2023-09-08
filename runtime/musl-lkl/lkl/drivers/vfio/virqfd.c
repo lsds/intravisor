@@ -1,10 +1,13 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * VFIO generic eventfd code for IRQFD support.
  * Derived from drivers/vfio/pci/vfio_pci_intrs.c
  *
  * Copyright (C) 2012 Red Hat, Inc.  All rights reserved.
  *     Author: Alex Williamson <alex.williamson@redhat.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 
 #include <linux/vfio.h>
@@ -46,9 +49,6 @@ static int virqfd_wakeup(wait_queue_entry_t *wait, unsigned mode, int sync, void
 	__poll_t flags = key_to_poll(key);
 
 	if (flags & EPOLLIN) {
-		u64 cnt;
-		eventfd_ctx_do_read(virqfd->eventfd, &cnt);
-
 		/* An event has been signaled, call function */
 		if ((!virqfd->handler ||
 		     virqfd->handler(virqfd->opaque, virqfd->data)) &&
@@ -166,7 +166,7 @@ int vfio_virqfd_enable(void *opaque,
 	init_waitqueue_func_entry(&virqfd->wait, virqfd_wakeup);
 	init_poll_funcptr(&virqfd->pt, virqfd_ptable_queue_proc);
 
-	events = vfs_poll(irqfd.file, &virqfd->pt);
+	events = irqfd.file->f_op->poll(irqfd.file, &virqfd->pt);
 
 	/*
 	 * Check if there was an event already pending on the eventfd

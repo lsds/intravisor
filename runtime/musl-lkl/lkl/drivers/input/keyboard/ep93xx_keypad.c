@@ -1,10 +1,13 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Driver for the Cirrus EP93xx matrix keypad controller.
  *
  * Copyright (c) 2008 H Hartley Sweeten <hsweeten@visionengravers.com>
  *
  * Based on the pxa27x matrix keypad controller by Rodolfo Giometti.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  *
  * NOTE:
  *
@@ -17,18 +20,16 @@
  * flag.
  */
 
-#include <linux/bits.h>
 #include <linux/module.h>
 #include <linux/platform_device.h>
 #include <linux/interrupt.h>
 #include <linux/clk.h>
 #include <linux/io.h>
-#include <linux/input.h>
 #include <linux/input/matrix_keypad.h>
 #include <linux/slab.h>
-#include <linux/soc/cirrus/ep93xx.h>
+
+#include <mach/hardware.h>
 #include <linux/platform_data/keypad-ep93xx.h>
-#include <linux/pm_wakeirq.h>
 
 /*
  * Keypad Interface Register offsets
@@ -38,28 +39,28 @@
 #define KEY_REG			0x08	/* Key Value Capture register */
 
 /* Key Scan Initialization Register bit defines */
-#define KEY_INIT_DBNC_MASK	GENMASK(23, 16)
-#define KEY_INIT_DBNC_SHIFT	16
-#define KEY_INIT_DIS3KY		BIT(15)
-#define KEY_INIT_DIAG		BIT(14)
-#define KEY_INIT_BACK		BIT(13)
-#define KEY_INIT_T2		BIT(12)
-#define KEY_INIT_PRSCL_MASK	GENMASK(9, 0)
-#define KEY_INIT_PRSCL_SHIFT	0
+#define KEY_INIT_DBNC_MASK	(0x00ff0000)
+#define KEY_INIT_DBNC_SHIFT	(16)
+#define KEY_INIT_DIS3KY		(1<<15)
+#define KEY_INIT_DIAG		(1<<14)
+#define KEY_INIT_BACK		(1<<13)
+#define KEY_INIT_T2		(1<<12)
+#define KEY_INIT_PRSCL_MASK	(0x000003ff)
+#define KEY_INIT_PRSCL_SHIFT	(0)
 
 /* Key Scan Diagnostic Register bit defines */
-#define KEY_DIAG_MASK		GENMASK(5, 0)
-#define KEY_DIAG_SHIFT		0
+#define KEY_DIAG_MASK		(0x0000003f)
+#define KEY_DIAG_SHIFT		(0)
 
 /* Key Value Capture Register bit defines */
-#define KEY_REG_K		BIT(15)
-#define KEY_REG_INT		BIT(14)
-#define KEY_REG_2KEYS		BIT(13)
-#define KEY_REG_1KEY		BIT(12)
-#define KEY_REG_KEY2_MASK	GENMASK(11, 6)
-#define KEY_REG_KEY2_SHIFT	6
-#define KEY_REG_KEY1_MASK	GENMASK(5, 0)
-#define KEY_REG_KEY1_SHIFT	0
+#define KEY_REG_K		(1<<15)
+#define KEY_REG_INT		(1<<14)
+#define KEY_REG_2KEYS		(1<<13)
+#define KEY_REG_1KEY		(1<<12)
+#define KEY_REG_KEY2_MASK	(0x00000fc0)
+#define KEY_REG_KEY2_SHIFT	(6)
+#define KEY_REG_KEY1_MASK	(0x0000003f)
+#define KEY_REG_KEY1_SHIFT	(0)
 
 #define EP93XX_MATRIX_SIZE	(EP93XX_MATRIX_ROWS * EP93XX_MATRIX_COLS)
 
@@ -136,7 +137,10 @@ static void ep93xx_keypad_config(struct ep93xx_keypad *keypad)
 	struct ep93xx_keypad_platform_data *pdata = keypad->pdata;
 	unsigned int val = 0;
 
-	clk_set_rate(keypad->clk, pdata->clk_rate);
+	if (pdata->flags & EP93XX_KEYPAD_KDIV)
+		clk_set_rate(keypad->clk, EP93XX_KEYTCHCLK_DIV4);
+	else
+		clk_set_rate(keypad->clk, EP93XX_KEYTCHCLK_DIV16);
 
 	if (pdata->flags & EP93XX_KEYPAD_DISABLE_3_KEY)
 		val |= KEY_INIT_DIS3KY;
@@ -160,7 +164,7 @@ static int ep93xx_keypad_open(struct input_dev *pdev)
 
 	if (!keypad->enabled) {
 		ep93xx_keypad_config(keypad);
-		clk_prepare_enable(keypad->clk);
+		clk_enable(keypad->clk);
 		keypad->enabled = true;
 	}
 
@@ -172,13 +176,14 @@ static void ep93xx_keypad_close(struct input_dev *pdev)
 	struct ep93xx_keypad *keypad = input_get_drvdata(pdev);
 
 	if (keypad->enabled) {
-		clk_disable_unprepare(keypad->clk);
+		clk_disable(keypad->clk);
 		keypad->enabled = false;
 	}
 }
 
 
-static int __maybe_unused ep93xx_keypad_suspend(struct device *dev)
+#ifdef CONFIG_PM_SLEEP
+static int ep93xx_keypad_suspend(struct device *dev)
 {
 	struct platform_device *pdev = to_platform_device(dev);
 	struct ep93xx_keypad *keypad = platform_get_drvdata(pdev);
@@ -193,18 +198,24 @@ static int __maybe_unused ep93xx_keypad_suspend(struct device *dev)
 
 	mutex_unlock(&input_dev->mutex);
 
+	if (device_may_wakeup(&pdev->dev))
+		enable_irq_wake(keypad->irq);
+
 	return 0;
 }
 
-static int __maybe_unused ep93xx_keypad_resume(struct device *dev)
+static int ep93xx_keypad_resume(struct device *dev)
 {
 	struct platform_device *pdev = to_platform_device(dev);
 	struct ep93xx_keypad *keypad = platform_get_drvdata(pdev);
 	struct input_dev *input_dev = keypad->input_dev;
 
+	if (device_may_wakeup(&pdev->dev))
+		disable_irq_wake(keypad->irq);
+
 	mutex_lock(&input_dev->mutex);
 
-	if (input_device_enabled(input_dev)) {
+	if (input_dev->users) {
 		if (!keypad->enabled) {
 			ep93xx_keypad_config(keypad);
 			clk_enable(keypad->clk);
@@ -216,60 +227,74 @@ static int __maybe_unused ep93xx_keypad_resume(struct device *dev)
 
 	return 0;
 }
+#endif
 
 static SIMPLE_DEV_PM_OPS(ep93xx_keypad_pm_ops,
 			 ep93xx_keypad_suspend, ep93xx_keypad_resume);
-
-static void ep93xx_keypad_release_gpio_action(void *_pdev)
-{
-	struct platform_device *pdev = _pdev;
-
-	ep93xx_keypad_release_gpio(pdev);
-}
 
 static int ep93xx_keypad_probe(struct platform_device *pdev)
 {
 	struct ep93xx_keypad *keypad;
 	const struct matrix_keymap_data *keymap_data;
 	struct input_dev *input_dev;
+	struct resource *res;
 	int err;
 
-	keypad = devm_kzalloc(&pdev->dev, sizeof(*keypad), GFP_KERNEL);
+	keypad = kzalloc(sizeof(struct ep93xx_keypad), GFP_KERNEL);
 	if (!keypad)
 		return -ENOMEM;
 
 	keypad->pdata = dev_get_platdata(&pdev->dev);
-	if (!keypad->pdata)
-		return -EINVAL;
+	if (!keypad->pdata) {
+		err = -EINVAL;
+		goto failed_free;
+	}
 
 	keymap_data = keypad->pdata->keymap_data;
-	if (!keymap_data)
-		return -EINVAL;
+	if (!keymap_data) {
+		err = -EINVAL;
+		goto failed_free;
+	}
 
 	keypad->irq = platform_get_irq(pdev, 0);
-	if (keypad->irq < 0)
-		return keypad->irq;
+	if (!keypad->irq) {
+		err = -ENXIO;
+		goto failed_free;
+	}
 
-	keypad->mmio_base = devm_platform_ioremap_resource(pdev, 0);
-	if (IS_ERR(keypad->mmio_base))
-		return PTR_ERR(keypad->mmio_base);
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	if (!res) {
+		err = -ENXIO;
+		goto failed_free;
+	}
+
+	res = request_mem_region(res->start, resource_size(res), pdev->name);
+	if (!res) {
+		err = -EBUSY;
+		goto failed_free;
+	}
+
+	keypad->mmio_base = ioremap(res->start, resource_size(res));
+	if (keypad->mmio_base == NULL) {
+		err = -ENXIO;
+		goto failed_free_mem;
+	}
 
 	err = ep93xx_keypad_acquire_gpio(pdev);
 	if (err)
-		return err;
+		goto failed_free_io;
 
-	err = devm_add_action_or_reset(&pdev->dev,
-				       ep93xx_keypad_release_gpio_action, pdev);
-	if (err)
-		return err;
+	keypad->clk = clk_get(&pdev->dev, NULL);
+	if (IS_ERR(keypad->clk)) {
+		err = PTR_ERR(keypad->clk);
+		goto failed_free_gpio;
+	}
 
-	keypad->clk = devm_clk_get(&pdev->dev, NULL);
-	if (IS_ERR(keypad->clk))
-		return PTR_ERR(keypad->clk);
-
-	input_dev = devm_input_allocate_device(&pdev->dev);
-	if (!input_dev)
-		return -ENOMEM;
+	input_dev = input_allocate_device();
+	if (!input_dev) {
+		err = -ENOMEM;
+		goto failed_put_clk;
+	}
 
 	keypad->input_dev = input_dev;
 
@@ -277,40 +302,70 @@ static int ep93xx_keypad_probe(struct platform_device *pdev)
 	input_dev->id.bustype = BUS_HOST;
 	input_dev->open = ep93xx_keypad_open;
 	input_dev->close = ep93xx_keypad_close;
+	input_dev->dev.parent = &pdev->dev;
 
 	err = matrix_keypad_build_keymap(keymap_data, NULL,
 					 EP93XX_MATRIX_ROWS, EP93XX_MATRIX_COLS,
 					 keypad->keycodes, input_dev);
 	if (err)
-		return err;
+		goto failed_free_dev;
 
 	if (keypad->pdata->flags & EP93XX_KEYPAD_AUTOREPEAT)
 		__set_bit(EV_REP, input_dev->evbit);
 	input_set_drvdata(input_dev, keypad);
 
-	err = devm_request_irq(&pdev->dev, keypad->irq,
-			       ep93xx_keypad_irq_handler,
-			       0, pdev->name, keypad);
+	err = request_irq(keypad->irq, ep93xx_keypad_irq_handler,
+			  0, pdev->name, keypad);
 	if (err)
-		return err;
+		goto failed_free_dev;
 
 	err = input_register_device(input_dev);
 	if (err)
-		return err;
+		goto failed_free_irq;
 
 	platform_set_drvdata(pdev, keypad);
-
 	device_init_wakeup(&pdev->dev, 1);
-	err = dev_pm_set_wake_irq(&pdev->dev, keypad->irq);
-	if (err)
-		dev_warn(&pdev->dev, "failed to set up wakeup irq: %d\n", err);
 
 	return 0;
+
+failed_free_irq:
+	free_irq(keypad->irq, keypad);
+failed_free_dev:
+	input_free_device(input_dev);
+failed_put_clk:
+	clk_put(keypad->clk);
+failed_free_gpio:
+	ep93xx_keypad_release_gpio(pdev);
+failed_free_io:
+	iounmap(keypad->mmio_base);
+failed_free_mem:
+	release_mem_region(res->start, resource_size(res));
+failed_free:
+	kfree(keypad);
+	return err;
 }
 
 static int ep93xx_keypad_remove(struct platform_device *pdev)
 {
-	dev_pm_clear_wake_irq(&pdev->dev);
+	struct ep93xx_keypad *keypad = platform_get_drvdata(pdev);
+	struct resource *res;
+
+	free_irq(keypad->irq, keypad);
+
+	if (keypad->enabled)
+		clk_disable(keypad->clk);
+	clk_put(keypad->clk);
+
+	input_unregister_device(keypad->input_dev);
+
+	ep93xx_keypad_release_gpio(pdev);
+
+	iounmap(keypad->mmio_base);
+
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	release_mem_region(res->start, resource_size(res));
+
+	kfree(keypad);
 
 	return 0;
 }

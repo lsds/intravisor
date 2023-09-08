@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  *  Ricoh RP5C01 RTC Driver
  *
@@ -251,15 +250,16 @@ static int __init rp5c01_rtc_probe(struct platform_device *dev)
 		return PTR_ERR(rtc);
 
 	rtc->ops = &rp5c01_rtc_ops;
+	rtc->nvram_old_abi = true;
 
 	priv->rtc = rtc;
 
 	nvmem_cfg.priv = priv;
-	error = devm_rtc_nvmem_register(rtc, &nvmem_cfg);
+	error = rtc_nvmem_register(rtc, &nvmem_cfg);
 	if (error)
 		return error;
 
-	return devm_rtc_register_device(rtc);
+	return rtc_register_device(rtc);
 }
 
 static struct platform_driver rp5c01_rtc_driver = {

@@ -1,8 +1,12 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Context switch microbenchmark.
  *
  * Copyright (C) 2015 Anton Blanchard <anton@au.ibm.com>, IBM
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version
+ * 2 of the License, or (at your option) any later version.
  */
 
 #define _GNU_SOURCE
@@ -19,7 +23,6 @@
 #include <limits.h>
 #include <sys/time.h>
 #include <sys/syscall.h>
-#include <sys/sysinfo.h>
 #include <sys/types.h>
 #include <sys/shm.h>
 #include <linux/futex.h>
@@ -105,9 +108,8 @@ static void start_thread_on(void *(*fn)(void *), void *arg, unsigned long cpu)
 
 static void start_process_on(void *(*fn)(void *), void *arg, unsigned long cpu)
 {
-	int pid, ncpus;
-	cpu_set_t *cpuset;
-	size_t size;
+	int pid;
+	cpu_set_t cpuset;
 
 	pid = fork();
 	if (pid == -1) {
@@ -118,23 +120,14 @@ static void start_process_on(void *(*fn)(void *), void *arg, unsigned long cpu)
 	if (pid)
 		return;
 
-	ncpus = get_nprocs();
-	size = CPU_ALLOC_SIZE(ncpus);
-	cpuset = CPU_ALLOC(ncpus);
-	if (!cpuset) {
-		perror("malloc");
-		exit(1);
-	}
-	CPU_ZERO_S(size, cpuset);
-	CPU_SET_S(cpu, size, cpuset);
+	CPU_ZERO(&cpuset);
+	CPU_SET(cpu, &cpuset);
 
-	if (sched_setaffinity(0, size, cpuset)) {
+	if (sched_setaffinity(0, sizeof(cpuset), &cpuset)) {
 		perror("sched_setaffinity");
-		CPU_FREE(cpuset);
 		exit(1);
 	}
 
-	CPU_FREE(cpuset);
 	fn(arg);
 
 	exit(0);
@@ -480,12 +473,6 @@ int main(int argc, char *argv[])
 		printf("yield");
 	else
 		printf("futex");
-
-	if (!have_hwcap(PPC_FEATURE_HAS_ALTIVEC))
-		touch_altivec = 0;
-
-	if (!have_hwcap(PPC_FEATURE_HAS_VSX))
-		touch_vector = 0;
 
 	printf(" on cpus %d/%d touching FP:%s altivec:%s vector:%s vdso:%s\n",
 	       cpu1, cpu2, touch_fp ?  "yes" : "no", touch_altivec ? "yes" : "no",

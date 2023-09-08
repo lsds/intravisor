@@ -1,5 +1,4 @@
-#!/usr/bin/env python
-# SPDX-License-Identifier: GPL-2.0-only
+#!/usr/bin/python
 # -*- coding: utf-8 -*-
 #
 """ This utility can be used to debug and tune the performance of the
@@ -11,11 +10,11 @@ then this utility enables and collects trace data for a user specified interval
 and generates performance plots.
 
 Prerequisites:
-    Python version 2.7.x or higher
+    Python version 2.7.x
     gnuplot 5.0 or higher
-    gnuplot-py 1.8 or higher
+    gnuplot-py 1.8
     (Most of the distributions have these required packages. They may be called
-     gnuplot-py, phython-gnuplot or phython3-gnuplot, gnuplot-nox, ... )
+     gnuplot-py, phython-gnuplot. )
 
     HWP (Hardware P-States are disabled)
     Kernel config for Linux trace is enabled
@@ -29,7 +28,6 @@ import subprocess
 import os
 import time
 import re
-import signal
 import sys
 import getopt
 import Gnuplot
@@ -63,7 +61,7 @@ C_USEC = 3
 C_SEC = 2
 C_CPU = 1
 
-global sample_num, last_sec_cpu, last_usec_cpu, start_time, testname, trace_file
+global sample_num, last_sec_cpu, last_usec_cpu, start_time, testname
 
 # 11 digits covers uptime to 115 days
 getcontext().prec = 11
@@ -72,20 +70,19 @@ sample_num =0
 last_sec_cpu = [0] * MAX_CPUS
 last_usec_cpu = [0] * MAX_CPUS
 
-def print_help(driver_name):
-    print('%s_tracer.py:'%driver_name)
+def print_help():
+    print('intel_pstate_tracer.py:')
     print('  Usage:')
     print('    If the trace file is available, then to simply parse and plot, use (sudo not required):')
-    print('      ./%s_tracer.py [-c cpus] -t <trace_file> -n <test_name>'%driver_name)
+    print('      ./intel_pstate_tracer.py [-c cpus] -t <trace_file> -n <test_name>')
     print('    Or')
-    print('      ./%s_tracer.py [--cpu cpus] ---trace_file <trace_file> --name <test_name>'%driver_name)
+    print('      ./intel_pstate_tracer.py [--cpu cpus] ---trace_file <trace_file> --name <test_name>')
     print('    To generate trace file, parse and plot, use (sudo required):')
-    print('      sudo ./%s_tracer.py [-c cpus] -i <interval> -n <test_name> -m <kbytes>'%driver_name)
+    print('      sudo ./intel_pstate_tracer.py [-c cpus] -i <interval> -n <test_name>')
     print('    Or')
-    print('      sudo ./%s_tracer.py [--cpu cpus] --interval <interval> --name <test_name> --memory <kbytes>'%driver_name)
+    print('      sudo ./intel_pstate_tracer.py [--cpu cpus] --interval <interval> --name <test_name>')
     print('    Optional argument:')
-    print('      cpus:   comma separated list of CPUs')
-    print('      kbytes: Kilo bytes of memory per CPU to allocate to the trace buffer. Default: 10240')
+    print('      cpus:  comma separated list of CPUs')
     print('  Output:')
     print('    If not already present, creates a "results/test_name" folder in the current working directory with:')
     print('      cpu.csv - comma seperated values file with trace contents and some additional calculations.')
@@ -104,7 +101,7 @@ def plot_perf_busy_with_sample(cpu_index):
     if os.path.exists(file_name):
         output_png = "cpu%03d_perf_busy_vs_samples.png" % cpu_index
         g_plot = common_all_gnuplot_settings(output_png)
-#   autoscale this one, no set y1 range
+        g_plot('set yrange [0:40]')
         g_plot('set y2range [0:200]')
         g_plot('set y2tics 0, 10')
         g_plot('set title "{} : cpu perf busy vs. sample : CPU {:0>3} : {:%F %H:%M}"'.format(testname, cpu_index, datetime.now()))
@@ -125,7 +122,7 @@ def plot_perf_busy(cpu_index):
     if os.path.exists(file_name):
         output_png = "cpu%03d_perf_busy.png" % cpu_index
         g_plot = common_all_gnuplot_settings(output_png)
-#   autoscale this one, no set y1 range
+        g_plot('set yrange [0:40]')
         g_plot('set y2range [0:200]')
         g_plot('set y2tics 0, 10')
         g_plot('set title "{} : perf busy : CPU {:0>3} : {:%F %H:%M}"'.format(testname, cpu_index, datetime.now()))
@@ -144,7 +141,9 @@ def plot_durations(cpu_index):
     if os.path.exists(file_name):
         output_png = "cpu%03d_durations.png" % cpu_index
         g_plot = common_all_gnuplot_settings(output_png)
-#       autoscale this one, no set y range
+#       Should autoscale be used here? Should seconds be used here?
+        g_plot('set yrange [0:5000]')
+        g_plot('set ytics 0, 500')
         g_plot('set title "{} : durations : CPU {:0>3} : {:%F %H:%M}"'.format(testname, cpu_index, datetime.now()))
         g_plot('set ylabel "Timer Duration (MilliSeconds)"')
 #       override common
@@ -174,12 +173,12 @@ def plot_pstate_cpu_with_sample():
     if os.path.exists('cpu.csv'):
         output_png = 'all_cpu_pstates_vs_samples.png'
         g_plot = common_all_gnuplot_settings(output_png)
-#       autoscale this one, no set y range
+        g_plot('set yrange [0:40]')
 #       override common
         g_plot('set xlabel "Samples"')
         g_plot('set ylabel "P-State"')
         g_plot('set title "{} : cpu pstate vs. sample : {:%F %H:%M}"'.format(testname, datetime.now()))
-        title_list = subprocess.check_output('ls cpu???.csv | sed -e \'s/.csv//\'',shell=True).decode('utf-8').replace('\n', ' ')
+        title_list = subprocess.check_output('ls cpu???.csv | sed -e \'s/.csv//\'',shell=True).replace('\n', ' ')
         plot_str = "plot for [i in title_list] i.'.csv' using {:d}:{:d} pt 7 ps 1 title i".format(C_SAMPLE, C_TO)
         g_plot('title_list = "{}"'.format(title_list))
         g_plot(plot_str)
@@ -189,14 +188,14 @@ def plot_pstate_cpu():
 
     output_png = 'all_cpu_pstates.png'
     g_plot = common_all_gnuplot_settings(output_png)
-#   autoscale this one, no set y range
+    g_plot('set yrange [0:40]')
     g_plot('set ylabel "P-State"')
     g_plot('set title "{} : cpu pstates : {:%F %H:%M}"'.format(testname, datetime.now()))
 
 #    the following command is really cool, but doesn't work with the CPU masking option because it aborts on the first missing file.
 #    plot_str = 'plot for [i=0:*] file=sprintf("cpu%03d.csv",i) title_s=sprintf("cpu%03d",i) file using 16:7 pt 7 ps 1 title title_s'
 #
-    title_list = subprocess.check_output('ls cpu???.csv | sed -e \'s/.csv//\'',shell=True).decode('utf-8').replace('\n', ' ')
+    title_list = subprocess.check_output('ls cpu???.csv | sed -e \'s/.csv//\'',shell=True).replace('\n', ' ')
     plot_str = "plot for [i in title_list] i.'.csv' using {:d}:{:d} pt 7 ps 1 title i".format(C_ELAPSED, C_TO)
     g_plot('title_list = "{}"'.format(title_list))
     g_plot(plot_str)
@@ -210,7 +209,7 @@ def plot_load_cpu():
     g_plot('set ylabel "CPU load (percent)"')
     g_plot('set title "{} : cpu loads : {:%F %H:%M}"'.format(testname, datetime.now()))
 
-    title_list = subprocess.check_output('ls cpu???.csv | sed -e \'s/.csv//\'',shell=True).decode('utf-8').replace('\n', ' ')
+    title_list = subprocess.check_output('ls cpu???.csv | sed -e \'s/.csv//\'',shell=True).replace('\n', ' ')
     plot_str = "plot for [i in title_list] i.'.csv' using {:d}:{:d} pt 7 ps 1 title i".format(C_ELAPSED, C_LOAD)
     g_plot('title_list = "{}"'.format(title_list))
     g_plot(plot_str)
@@ -220,11 +219,11 @@ def plot_frequency_cpu():
 
     output_png = 'all_cpu_frequencies.png'
     g_plot = common_all_gnuplot_settings(output_png)
-#   autoscale this one, no set y range
+    g_plot('set yrange [0:4]')
     g_plot('set ylabel "CPU Frequency (GHz)"')
     g_plot('set title "{} : cpu frequencies : {:%F %H:%M}"'.format(testname, datetime.now()))
 
-    title_list = subprocess.check_output('ls cpu???.csv | sed -e \'s/.csv//\'',shell=True).decode('utf-8').replace('\n', ' ')
+    title_list = subprocess.check_output('ls cpu???.csv | sed -e \'s/.csv//\'',shell=True).replace('\n', ' ')
     plot_str = "plot for [i in title_list] i.'.csv' using {:d}:{:d} pt 7 ps 1 title i".format(C_ELAPSED, C_FREQ)
     g_plot('title_list = "{}"'.format(title_list))
     g_plot(plot_str)
@@ -234,11 +233,12 @@ def plot_duration_cpu():
 
     output_png = 'all_cpu_durations.png'
     g_plot = common_all_gnuplot_settings(output_png)
-#   autoscale this one, no set y range
+    g_plot('set yrange [0:5000]')
+    g_plot('set ytics 0, 500')
     g_plot('set ylabel "Timer Duration (MilliSeconds)"')
     g_plot('set title "{} : cpu durations : {:%F %H:%M}"'.format(testname, datetime.now()))
 
-    title_list = subprocess.check_output('ls cpu???.csv | sed -e \'s/.csv//\'',shell=True).decode('utf-8').replace('\n', ' ')
+    title_list = subprocess.check_output('ls cpu???.csv | sed -e \'s/.csv//\'',shell=True).replace('\n', ' ')
     plot_str = "plot for [i in title_list] i.'.csv' using {:d}:{:d} pt 7 ps 1 title i".format(C_ELAPSED, C_DURATION)
     g_plot('title_list = "{}"'.format(title_list))
     g_plot(plot_str)
@@ -252,7 +252,7 @@ def plot_scaled_cpu():
     g_plot('set ylabel "Scaled Busy (Unitless)"')
     g_plot('set title "{} : cpu scaled busy : {:%F %H:%M}"'.format(testname, datetime.now()))
 
-    title_list = subprocess.check_output('ls cpu???.csv | sed -e \'s/.csv//\'',shell=True).decode('utf-8').replace('\n', ' ')
+    title_list = subprocess.check_output('ls cpu???.csv | sed -e \'s/.csv//\'',shell=True).replace('\n', ' ')
     plot_str = "plot for [i in title_list] i.'.csv' using {:d}:{:d} pt 7 ps 1 title i".format(C_ELAPSED, C_SCALED)
     g_plot('title_list = "{}"'.format(title_list))
     g_plot(plot_str)
@@ -266,7 +266,7 @@ def plot_boost_cpu():
     g_plot('set ylabel "CPU IO Boost (percent)"')
     g_plot('set title "{} : cpu io boost : {:%F %H:%M}"'.format(testname, datetime.now()))
 
-    title_list = subprocess.check_output('ls cpu???.csv | sed -e \'s/.csv//\'',shell=True).decode('utf-8').replace('\n', ' ')
+    title_list = subprocess.check_output('ls cpu???.csv | sed -e \'s/.csv//\'',shell=True).replace('\n', ' ')
     plot_str = "plot for [i in title_list] i.'.csv' using {:d}:{:d} pt 7 ps 1 title i".format(C_ELAPSED, C_BOOST)
     g_plot('title_list = "{}"'.format(title_list))
     g_plot(plot_str)
@@ -280,7 +280,7 @@ def plot_ghz_cpu():
     g_plot('set ylabel "TSC Frequency (GHz)"')
     g_plot('set title "{} : cpu TSC Frequencies (Sanity check calculation) : {:%F %H:%M}"'.format(testname, datetime.now()))
 
-    title_list = subprocess.check_output('ls cpu???.csv | sed -e \'s/.csv//\'',shell=True).decode('utf-8').replace('\n', ' ')
+    title_list = subprocess.check_output('ls cpu???.csv | sed -e \'s/.csv//\'',shell=True).replace('\n', ' ')
     plot_str = "plot for [i in title_list] i.'.csv' using {:d}:{:d} pt 7 ps 1 title i".format(C_ELAPSED, C_GHZ)
     g_plot('title_list = "{}"'.format(title_list))
     g_plot(plot_str)
@@ -323,7 +323,7 @@ def set_4_plot_linestyles(g_plot):
     g_plot('set style line 3 linetype 1 linecolor rgb "purple" pointtype -1')
     g_plot('set style line 4 linetype 1 linecolor rgb "blue" pointtype -1')
 
-def store_csv(cpu_int, time_pre_dec, time_post_dec, core_busy, scaled, _from, _to, mperf, aperf, tsc, freq_ghz, io_boost, common_comm, load, duration_ms, sample_num, elapsed_time, tsc_ghz, cpu_mask):
+def store_csv(cpu_int, time_pre_dec, time_post_dec, core_busy, scaled, _from, _to, mperf, aperf, tsc, freq_ghz, io_boost, common_comm, load, duration_ms, sample_num, elapsed_time, tsc_ghz):
     """ Store master csv file information """
 
     global graph_data_present
@@ -342,8 +342,10 @@ def store_csv(cpu_int, time_pre_dec, time_post_dec, core_busy, scaled, _from, _t
 
     graph_data_present = True;
 
-def split_csv(current_max_cpu, cpu_mask):
+def split_csv():
     """ seperate the all csv file into per CPU csv files. """
+
+    global current_max_cpu
 
     if os.path.exists('cpu.csv'):
         for index in range(0, current_max_cpu + 1):
@@ -377,35 +379,37 @@ def clear_trace_file():
         f_handle.close()
     except:
         print('IO error clearing trace file ')
-        sys.exit(2)
+        quit()
 
-def enable_trace(trace_file):
+def enable_trace():
     """ Enable trace """
 
     try:
-        open(trace_file,'w').write("1")
+       open('/sys/kernel/debug/tracing/events/power/pstate_sample/enable'
+                 , 'w').write("1")
     except:
         print('IO error enabling trace ')
-        sys.exit(2)
+        quit()
 
-def disable_trace(trace_file):
+def disable_trace():
     """ Disable trace """
 
     try:
-       open(trace_file, 'w').write("0")
+       open('/sys/kernel/debug/tracing/events/power/pstate_sample/enable'
+                 , 'w').write("0")
     except:
         print('IO error disabling trace ')
-        sys.exit(2)
+        quit()
 
-def set_trace_buffer_size(memory):
+def set_trace_buffer_size():
     """ Set trace buffer size """
 
     try:
-       with open('/sys/kernel/debug/tracing/buffer_size_kb', 'w') as fp:
-          fp.write(memory)
+       open('/sys/kernel/debug/tracing/buffer_size_kb'
+                 , 'w').write("10240")
     except:
-       print('IO error setting trace buffer size ')
-       sys.exit(2)
+        print('IO error setting trace buffer size ')
+        quit()
 
 def free_trace_buffer():
     """ Free the trace buffer memory """
@@ -414,10 +418,10 @@ def free_trace_buffer():
        open('/sys/kernel/debug/tracing/buffer_size_kb'
                  , 'w').write("1")
     except:
-        print('IO error freeing trace buffer ')
-        sys.exit(2)
+        print('IO error setting trace buffer size ')
+        quit()
 
-def read_trace_data(filename, cpu_mask):
+def read_trace_data(filename):
     """ Read and parse trace data """
 
     global current_max_cpu
@@ -427,7 +431,7 @@ def read_trace_data(filename, cpu_mask):
         data = open(filename, 'r').read()
     except:
         print('Error opening ', filename)
-        sys.exit(2)
+        quit()
 
     for line in data.splitlines():
         search_obj = \
@@ -477,137 +481,121 @@ def read_trace_data(filename, cpu_mask):
                 tsc_ghz = Decimal(0)
                 if duration_ms != Decimal(0) :
                     tsc_ghz = Decimal(tsc)/duration_ms/Decimal(1000000)
-                store_csv(cpu_int, time_pre_dec, time_post_dec, core_busy, scaled, _from, _to, mperf, aperf, tsc, freq_ghz, io_boost, common_comm, load, duration_ms, sample_num, elapsed_time, tsc_ghz, cpu_mask)
+                store_csv(cpu_int, time_pre_dec, time_post_dec, core_busy, scaled, _from, _to, mperf, aperf, tsc, freq_ghz, io_boost, common_comm, load, duration_ms, sample_num, elapsed_time, tsc_ghz)
 
             if cpu_int > current_max_cpu:
                 current_max_cpu = cpu_int
 # End of for each trace line loop
 # Now seperate the main overall csv file into per CPU csv files.
-    split_csv(current_max_cpu, cpu_mask)
+    split_csv()
 
-def signal_handler(signal, frame):
-    print(' SIGINT: Forcing cleanup before exit.')
-    if interval:
-        disable_trace(trace_file)
-        clear_trace_file()
-        # Free the memory
-        free_trace_buffer()
-        sys.exit(0)
+interval = ""
+filename = ""
+cpu_list = ""
+testname = ""
+graph_data_present = False;
 
-if __name__ == "__main__":
-    trace_file = "/sys/kernel/debug/tracing/events/power/pstate_sample/enable"
-    signal.signal(signal.SIGINT, signal_handler)
+valid1 = False
+valid2 = False
 
-    interval = ""
-    filename = ""
-    cpu_list = ""
-    testname = ""
-    memory = "10240"
-    graph_data_present = False;
+cpu_mask = zeros((MAX_CPUS,), dtype=int)
 
-    valid1 = False
-    valid2 = False
-
-    cpu_mask = zeros((MAX_CPUS,), dtype=int)
-
-    try:
-        opts, args = getopt.getopt(sys.argv[1:],"ht:i:c:n:m:",["help","trace_file=","interval=","cpu=","name=","memory="])
-    except getopt.GetoptError:
-        print_help('intel_pstate')
-        sys.exit(2)
-    for opt, arg in opts:
-        if opt == '-h':
-            print_help('intel_pstate')
-            sys.exit()
-        elif opt in ("-t", "--trace_file"):
-            valid1 = True
-            location = os.path.realpath(os.path.join(os.getcwd(), os.path.dirname(__file__)))
-            filename = os.path.join(location, arg)
-        elif opt in ("-i", "--interval"):
-            valid1 = True
-            interval = arg
-        elif opt in ("-c", "--cpu"):
-            cpu_list = arg
-        elif opt in ("-n", "--name"):
-            valid2 = True
-            testname = arg
-        elif opt in ("-m", "--memory"):
-            memory = arg
-
-    if not (valid1 and valid2):
-        print_help('intel_pstate')
+try:
+    opts, args = getopt.getopt(sys.argv[1:],"ht:i:c:n:",["help","trace_file=","interval=","cpu=","name="])
+except getopt.GetoptError:
+    print_help()
+    sys.exit(2)
+for opt, arg in opts:
+    if opt == '-h':
+        print()
         sys.exit()
+    elif opt in ("-t", "--trace_file"):
+        valid1 = True
+        location = os.path.realpath(os.path.join(os.getcwd(), os.path.dirname(__file__)))
+        filename = os.path.join(location, arg)
+    elif opt in ("-i", "--interval"):
+        valid1 = True
+        interval = arg
+    elif opt in ("-c", "--cpu"):
+        cpu_list = arg
+    elif opt in ("-n", "--name"):
+        valid2 = True
+        testname = arg
 
-    if cpu_list:
-        for p in re.split("[,]", cpu_list):
-            if int(p) < MAX_CPUS :
-                cpu_mask[int(p)] = 1
-    else:
-        for i in range (0, MAX_CPUS):
-            cpu_mask[i] = 1
+if not (valid1 and valid2):
+    print_help()
+    sys.exit()
 
-    if not os.path.exists('results'):
-        os.mkdir('results')
-        # The regular user needs to own the directory, not root.
-        fix_ownership('results')
+if cpu_list:
+    for p in re.split("[,]", cpu_list):
+        if int(p) < MAX_CPUS :
+            cpu_mask[int(p)] = 1
+else:
+    for i in range (0, MAX_CPUS):
+        cpu_mask[i] = 1
 
-    os.chdir('results')
-    if os.path.exists(testname):
-        print('The test name directory already exists. Please provide a unique test name. Test re-run not supported, yet.')
-        sys.exit()
-    os.mkdir(testname)
+if not os.path.exists('results'):
+    os.mkdir('results')
     # The regular user needs to own the directory, not root.
-    fix_ownership(testname)
-    os.chdir(testname)
+    fix_ownership('results')
 
-    # Temporary (or perhaps not)
-    cur_version = sys.version_info
-    print('python version (should be >= 2.7):')
-    print(cur_version)
+os.chdir('results')
+if os.path.exists(testname):
+    print('The test name directory already exists. Please provide a unique test name. Test re-run not supported, yet.')
+    sys.exit()
+os.mkdir(testname)
+# The regular user needs to own the directory, not root.
+fix_ownership(testname)
+os.chdir(testname)
 
-    # Left as "cleanup" for potential future re-run ability.
-    cleanup_data_files()
+# Temporary (or perhaps not)
+cur_version = sys.version_info
+print('python version (should be >= 2.7):')
+print(cur_version)
 
-    if interval:
-        filename = "/sys/kernel/debug/tracing/trace"
-        clear_trace_file()
-        set_trace_buffer_size(memory)
-        enable_trace(trace_file)
-        print('Sleeping for ', interval, 'seconds')
-        time.sleep(int(interval))
-        disable_trace(trace_file)
+# Left as "cleanup" for potential future re-run ability.
+cleanup_data_files()
 
-    current_max_cpu = 0
+if interval:
+    filename = "/sys/kernel/debug/tracing/trace"
+    clear_trace_file()
+    set_trace_buffer_size()
+    enable_trace()
+    print('Sleeping for ', interval, 'seconds')
+    time.sleep(int(interval))
+    disable_trace()
 
-    read_trace_data(filename, cpu_mask)
+current_max_cpu = 0
 
-    if interval:
-        clear_trace_file()
-        # Free the memory
-        free_trace_buffer()
+read_trace_data(filename)
 
-    if graph_data_present == False:
-        print('No valid data to plot')
-        sys.exit(2)
+if graph_data_present == False:
+    print('No valid data to plot')
+    sys.exit(2)
 
-    for cpu_no in range(0, current_max_cpu + 1):
-        plot_perf_busy_with_sample(cpu_no)
-        plot_perf_busy(cpu_no)
-        plot_durations(cpu_no)
-        plot_loads(cpu_no)
+for cpu_no in range(0, current_max_cpu + 1):
+    plot_perf_busy_with_sample(cpu_no)
+    plot_perf_busy(cpu_no)
+    plot_durations(cpu_no)
+    plot_loads(cpu_no)
 
-    plot_pstate_cpu_with_sample()
-    plot_pstate_cpu()
-    plot_load_cpu()
-    plot_frequency_cpu()
-    plot_duration_cpu()
-    plot_scaled_cpu()
-    plot_boost_cpu()
-    plot_ghz_cpu()
+plot_pstate_cpu_with_sample()
+plot_pstate_cpu()
+plot_load_cpu()
+plot_frequency_cpu()
+plot_duration_cpu()
+plot_scaled_cpu()
+plot_boost_cpu()
+plot_ghz_cpu()
 
-    # It is preferrable, but not necessary, that the regular user owns the files, not root.
-    for root, dirs, files in os.walk('.'):
-        for f in files:
-            fix_ownership(f)
+# It is preferrable, but not necessary, that the regular user owns the files, not root.
+for root, dirs, files in os.walk('.'):
+    for f in files:
+        fix_ownership(f)
 
-    os.chdir('../../')
+clear_trace_file()
+# Free the memory
+if interval:
+    free_trace_buffer()
+
+os.chdir('../../')

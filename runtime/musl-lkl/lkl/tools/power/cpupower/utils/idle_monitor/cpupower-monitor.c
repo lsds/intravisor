@@ -1,8 +1,10 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  *  (C) 2010,2011       Thomas Renninger <trenn@suse.de>, Novell Inc.
  *
+ *  Licensed under the terms of the GNU GPL License version 2.
+ *
  *  Output format inspired by Len Brown's <lenb@kernel.org> turbostat tool.
+ *
  */
 
 
@@ -26,8 +28,6 @@ struct cpuidle_monitor *all_monitors[] = {
 #include "idle_monitors.def"
 0
 };
-
-int cpu_count;
 
 static struct cpuidle_monitor *monitors[MONITORS_MAX];
 static unsigned int avail_monitors;
@@ -70,43 +70,36 @@ void print_n_spaces(int n)
 		printf(" ");
 }
 
-/*s is filled with left and right spaces
- *to make its length atleast n+1
- */
+/* size of s must be at least n + 1 */
 int fill_string_with_spaces(char *s, int n)
 {
-	char *temp;
 	int len = strlen(s);
-
-	if (len >= n)
+	if (len > n)
 		return -1;
-
-	temp = malloc(sizeof(char) * (n+1));
 	for (; len < n; len++)
 		s[len] = ' ';
 	s[len] = '\0';
-	snprintf(temp, n+1, " %s", s);
-	strcpy(s, temp);
-	free(temp);
 	return 0;
 }
 
-#define MAX_COL_WIDTH 6
 void print_header(int topology_depth)
 {
 	int unsigned mon;
 	int state, need_len;
 	cstate_t s;
 	char buf[128] = "";
+	int percent_width = 4;
 
 	fill_string_with_spaces(buf, topology_depth * 5 - 1);
 	printf("%s|", buf);
 
 	for (mon = 0; mon < avail_monitors; mon++) {
-		need_len = monitors[mon]->hw_states_num * (MAX_COL_WIDTH + 1)
+		need_len = monitors[mon]->hw_states_num * (percent_width + 3)
 			- 1;
-		if (mon != 0)
-			printf("||");
+		if (mon != 0) {
+			printf("|| ");
+			need_len--;
+		}
 		sprintf(buf, "%s", monitors[mon]->name);
 		fill_string_with_spaces(buf, need_len);
 		printf("%s", buf);
@@ -114,21 +107,23 @@ void print_header(int topology_depth)
 	printf("\n");
 
 	if (topology_depth > 2)
-		printf(" PKG|");
+		printf("PKG |");
 	if (topology_depth > 1)
 		printf("CORE|");
 	if (topology_depth > 0)
-		printf(" CPU|");
+		printf("CPU |");
 
 	for (mon = 0; mon < avail_monitors; mon++) {
 		if (mon != 0)
-			printf("||");
+			printf("|| ");
+		else
+			printf(" ");
 		for (state = 0; state < monitors[mon]->hw_states_num; state++) {
 			if (state != 0)
-				printf("|");
+				printf(" | ");
 			s = monitors[mon]->hw_states[state];
 			sprintf(buf, "%s", s.name);
-			fill_string_with_spaces(buf, MAX_COL_WIDTH);
+			fill_string_with_spaces(buf, percent_width);
 			printf("%s", buf);
 		}
 		printf(" ");
@@ -410,7 +405,7 @@ int cmd_monitor(int argc, char **argv)
 		dprint("Try to register: %s\n", all_monitors[num]->name);
 		test_mon = all_monitors[num]->do_register();
 		if (test_mon) {
-			if (test_mon->flags.needs_root && !run_as_root) {
+			if (test_mon->needs_root && !run_as_root) {
 				fprintf(stderr, _("Available monitor %s needs "
 					  "root access\n"), test_mon->name);
 				continue;

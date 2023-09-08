@@ -13,7 +13,6 @@
 #include <linux/slab.h>
 #include <linux/buffer_head.h>
 #include <linux/vfs.h>
-#include <linux/blkdev.h>
 
 #include "efs.h"
 #include <linux/efs_vh.h>
@@ -69,15 +68,21 @@ static struct kmem_cache * efs_inode_cachep;
 static struct inode *efs_alloc_inode(struct super_block *sb)
 {
 	struct efs_inode_info *ei;
-	ei = alloc_inode_sb(sb, efs_inode_cachep, GFP_KERNEL);
+	ei = kmem_cache_alloc(efs_inode_cachep, GFP_KERNEL);
 	if (!ei)
 		return NULL;
 	return &ei->vfs_inode;
 }
 
-static void efs_free_inode(struct inode *inode)
+static void efs_i_callback(struct rcu_head *head)
 {
+	struct inode *inode = container_of(head, struct inode, i_rcu);
 	kmem_cache_free(efs_inode_cachep, INODE_INFO(inode));
+}
+
+static void efs_destroy_inode(struct inode *inode)
+{
+	call_rcu(&inode->i_rcu, efs_i_callback);
 }
 
 static void init_once(void *foo)
@@ -117,7 +122,7 @@ static int efs_remount(struct super_block *sb, int *flags, char *data)
 
 static const struct super_operations efs_superblock_operations = {
 	.alloc_inode	= efs_alloc_inode,
-	.free_inode	= efs_free_inode,
+	.destroy_inode	= efs_destroy_inode,
 	.statfs		= efs_statfs,
 	.remount_fs	= efs_remount,
 };
@@ -258,8 +263,6 @@ static int efs_fill_super(struct super_block *s, void *d, int silent)
 	if (!sb)
 		return -ENOMEM;
 	s->s_fs_info = sb;
-	s->s_time_min = 0;
-	s->s_time_max = U32_MAX;
  
 	s->s_magic		= EFS_SUPER_MAGIC;
 	if (!sb_set_blocksize(s, EFS_BLOCKSIZE)) {
@@ -342,7 +345,8 @@ static int efs_statfs(struct dentry *dentry, struct kstatfs *buf) {
 			sbi->inode_blocks *
 			(EFS_BLOCKSIZE / sizeof(struct efs_dinode));
 	buf->f_ffree   = sbi->inode_free;	/* free inodes */
-	buf->f_fsid    = u64_to_fsid(id);
+	buf->f_fsid.val[0] = (u32)id;
+	buf->f_fsid.val[1] = (u32)(id >> 32);
 	buf->f_namelen = EFS_MAXNAMELEN;	/* max filename length */
 
 	return 0;

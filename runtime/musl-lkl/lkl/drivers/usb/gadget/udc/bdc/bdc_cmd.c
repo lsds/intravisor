@@ -153,6 +153,7 @@ int bdc_config_ep(struct bdc *bdc, struct bdc_ep *ep)
 	si = clamp_val(si, 1, 16) - 1;
 
 	mps = usb_endpoint_maxp(desc);
+	mps &= 0x7ff;
 	param2 |= mps << MP_SHIFT;
 	param2 |= usb_endpoint_type(desc) << EPT_SHIFT;
 
@@ -162,7 +163,7 @@ int bdc_config_ep(struct bdc *bdc, struct bdc_ep *ep)
 					usb_endpoint_xfer_isoc(desc)) {
 			param2 |= si;
 			if (usb_endpoint_xfer_isoc(desc) && comp_desc)
-				mul = comp_desc->bmAttributes;
+					mul = comp_desc->bmAttributes;
 
 		}
 		param2 |= mul << EPM_SHIFT;
@@ -307,11 +308,11 @@ int bdc_ep_clear_stall(struct bdc *bdc, int epnum)
 	 * his will reset the seq number for non EP0.
 	 */
 	if (epnum != 1) {
-		/* if the endpoint it not stalled */
+		/* if the endpoint it not stallled */
 		if (!(ep->flags & BDC_EP_STALL)) {
 			ret = bdc_ep_set_stall(bdc, epnum);
-			if (ret)
-				return ret;
+				if (ret)
+					return ret;
 		}
 	}
 	/* Preserve the seq number for ep0 only */

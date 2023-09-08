@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * pata_opti.c 	- ATI PATA for new ATA layer
  *			  (C) 2005 Red Hat Inc
@@ -69,7 +68,7 @@ static int opti_pre_reset(struct ata_link *link, unsigned long deadline)
 /**
  *	opti_write_reg		-	control register setup
  *	@ap: ATA port
- *	@val: value
+ *	@value: value
  *	@reg: control register number
  *
  *	The Opti uses magic 'trapdoor' register accesses to do configuration

@@ -63,6 +63,8 @@ static DEFINE_SPINLOCK(wdt_lock);
 /* XXX currently fixed, allows max margin ~68.72 secs */
 #define prescale_value 0xffff
 
+/* Resource of the WDT registers */
+static struct resource *ar7_regs_wdt;
 /* Pointer to the remapped WDT IO space */
 static struct ar7_wdt *ar7_wdt;
 
@@ -161,7 +163,7 @@ static int ar7_wdt_open(struct inode *inode, struct file *file)
 	ar7_wdt_enable_wdt();
 	expect_close = 0;
 
-	return stream_open(inode, file);
+	return nonseekable_open(inode, file);
 }
 
 static int ar7_wdt_release(struct inode *inode, struct file *file)
@@ -233,7 +235,7 @@ static long ar7_wdt_ioctl(struct file *file,
 		ar7_wdt_update_margin(new_margin);
 		ar7_wdt_kick(1);
 		spin_unlock(&wdt_lock);
-		fallthrough;
+
 	case WDIOC_GETTIMEOUT:
 		if (put_user(margin, (int *)arg))
 			return -EFAULT;
@@ -247,7 +249,6 @@ static const struct file_operations ar7_wdt_fops = {
 	.owner		= THIS_MODULE,
 	.write		= ar7_wdt_write,
 	.unlocked_ioctl	= ar7_wdt_ioctl,
-	.compat_ioctl	= compat_ptr_ioctl,
 	.open		= ar7_wdt_open,
 	.release	= ar7_wdt_release,
 	.llseek		= no_llseek,
@@ -263,7 +264,9 @@ static int ar7_wdt_probe(struct platform_device *pdev)
 {
 	int rc;
 
-	ar7_wdt = devm_platform_ioremap_resource_byname(pdev, "regs");
+	ar7_regs_wdt =
+		platform_get_resource_byname(pdev, IORESOURCE_MEM, "regs");
+	ar7_wdt = devm_ioremap_resource(&pdev->dev, ar7_regs_wdt);
 	if (IS_ERR(ar7_wdt))
 		return PTR_ERR(ar7_wdt);
 

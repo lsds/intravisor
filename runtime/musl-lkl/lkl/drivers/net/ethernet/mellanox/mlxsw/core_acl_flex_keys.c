@@ -1,5 +1,36 @@
-// SPDX-License-Identifier: BSD-3-Clause OR GPL-2.0
-/* Copyright (c) 2017-2018 Mellanox Technologies. All rights reserved */
+/*
+ * drivers/net/ethernet/mellanox/mlxsw/core_acl_flex_keys.c
+ * Copyright (c) 2017 Mellanox Technologies. All rights reserved.
+ * Copyright (c) 2017 Jiri Pirko <jiri@mellanox.com>
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ * 3. Neither the names of the copyright holders nor the names of its
+ *    contributors may be used to endorse or promote products derived from
+ *    this software without specific prior written permission.
+ *
+ * Alternatively, this software may be distributed under the terms of the
+ * GNU General Public License ("GPL") version 2 as published by the Free
+ * Software Foundation.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ * POSSIBILITY OF SUCH DAMAGE.
+ */
 
 #include <linux/kernel.h>
 #include <linux/slab.h>
@@ -9,45 +40,9 @@
 #include "item.h"
 #include "core_acl_flex_keys.h"
 
-/* For the purpose of the driver, define an internal storage scratchpad
- * that will be used to store key/mask values. For each defined element type
- * define an internal storage geometry.
- *
- * When adding new elements, MLXSW_AFK_ELEMENT_STORAGE_SIZE must be increased
- * accordingly.
- */
-static const struct mlxsw_afk_element_info mlxsw_afk_element_infos[] = {
-	MLXSW_AFK_ELEMENT_INFO_U32(SRC_SYS_PORT, 0x00, 16, 16),
-	MLXSW_AFK_ELEMENT_INFO_BUF(DMAC_32_47, 0x04, 2),
-	MLXSW_AFK_ELEMENT_INFO_BUF(DMAC_0_31, 0x06, 4),
-	MLXSW_AFK_ELEMENT_INFO_BUF(SMAC_32_47, 0x0A, 2),
-	MLXSW_AFK_ELEMENT_INFO_BUF(SMAC_0_31, 0x0C, 4),
-	MLXSW_AFK_ELEMENT_INFO_U32(ETHERTYPE, 0x00, 0, 16),
-	MLXSW_AFK_ELEMENT_INFO_U32(IP_PROTO, 0x10, 0, 8),
-	MLXSW_AFK_ELEMENT_INFO_U32(VID, 0x10, 8, 12),
-	MLXSW_AFK_ELEMENT_INFO_U32(PCP, 0x10, 20, 3),
-	MLXSW_AFK_ELEMENT_INFO_U32(TCP_FLAGS, 0x10, 23, 9),
-	MLXSW_AFK_ELEMENT_INFO_U32(DST_L4_PORT, 0x14, 0, 16),
-	MLXSW_AFK_ELEMENT_INFO_U32(SRC_L4_PORT, 0x14, 16, 16),
-	MLXSW_AFK_ELEMENT_INFO_U32(IP_TTL_, 0x18, 0, 8),
-	MLXSW_AFK_ELEMENT_INFO_U32(IP_ECN, 0x18, 9, 2),
-	MLXSW_AFK_ELEMENT_INFO_U32(IP_DSCP, 0x18, 11, 6),
-	MLXSW_AFK_ELEMENT_INFO_U32(VIRT_ROUTER_MSB, 0x18, 17, 3),
-	MLXSW_AFK_ELEMENT_INFO_U32(VIRT_ROUTER_LSB, 0x18, 20, 8),
-	MLXSW_AFK_ELEMENT_INFO_BUF(SRC_IP_96_127, 0x20, 4),
-	MLXSW_AFK_ELEMENT_INFO_BUF(SRC_IP_64_95, 0x24, 4),
-	MLXSW_AFK_ELEMENT_INFO_BUF(SRC_IP_32_63, 0x28, 4),
-	MLXSW_AFK_ELEMENT_INFO_BUF(SRC_IP_0_31, 0x2C, 4),
-	MLXSW_AFK_ELEMENT_INFO_BUF(DST_IP_96_127, 0x30, 4),
-	MLXSW_AFK_ELEMENT_INFO_BUF(DST_IP_64_95, 0x34, 4),
-	MLXSW_AFK_ELEMENT_INFO_BUF(DST_IP_32_63, 0x38, 4),
-	MLXSW_AFK_ELEMENT_INFO_BUF(DST_IP_0_31, 0x3C, 4),
-};
-
 struct mlxsw_afk {
 	struct list_head key_info_list;
 	unsigned int max_blocks;
-	const struct mlxsw_afk_ops *ops;
 	const struct mlxsw_afk_block *blocks;
 	unsigned int blocks_count;
 };
@@ -61,15 +56,12 @@ static bool mlxsw_afk_blocks_check(struct mlxsw_afk *mlxsw_afk)
 		const struct mlxsw_afk_block *block = &mlxsw_afk->blocks[i];
 
 		for (j = 0; j < block->instances_count; j++) {
-			const struct mlxsw_afk_element_info *elinfo;
 			struct mlxsw_afk_element_inst *elinst;
 
 			elinst = &block->instances[j];
-			elinfo = &mlxsw_afk_element_infos[elinst->element];
-			if (elinst->type != elinfo->type ||
-			    (!elinst->avoid_size_check &&
-			     elinst->item.size.bits !=
-			     elinfo->item.size.bits))
+			if (elinst->type != elinst->info->type ||
+			    elinst->item.size.bits !=
+			    elinst->info->item.size.bits)
 				return false;
 		}
 	}
@@ -77,7 +69,8 @@ static bool mlxsw_afk_blocks_check(struct mlxsw_afk *mlxsw_afk)
 }
 
 struct mlxsw_afk *mlxsw_afk_create(unsigned int max_blocks,
-				   const struct mlxsw_afk_ops *ops)
+				   const struct mlxsw_afk_block *blocks,
+				   unsigned int blocks_count)
 {
 	struct mlxsw_afk *mlxsw_afk;
 
@@ -86,9 +79,8 @@ struct mlxsw_afk *mlxsw_afk_create(unsigned int max_blocks,
 		return NULL;
 	INIT_LIST_HEAD(&mlxsw_afk->key_info_list);
 	mlxsw_afk->max_blocks = max_blocks;
-	mlxsw_afk->ops = ops;
-	mlxsw_afk->blocks = ops->blocks;
-	mlxsw_afk->blocks_count = ops->blocks_count;
+	mlxsw_afk->blocks = blocks;
+	mlxsw_afk->blocks_count = blocks_count;
 	WARN_ON(!mlxsw_afk_blocks_check(mlxsw_afk));
 	return mlxsw_afk;
 }
@@ -109,7 +101,7 @@ struct mlxsw_afk_key_info {
 						      * is index inside "blocks"
 						      */
 	struct mlxsw_afk_element_usage elusage;
-	const struct mlxsw_afk_block *blocks[];
+	const struct mlxsw_afk_block *blocks[0];
 };
 
 static bool
@@ -133,8 +125,10 @@ mlxsw_afk_key_info_find(struct mlxsw_afk *mlxsw_afk,
 }
 
 struct mlxsw_afk_picker {
-	DECLARE_BITMAP(element, MLXSW_AFK_ELEMENT_MAX);
-	unsigned int total;
+	struct {
+		DECLARE_BITMAP(element, MLXSW_AFK_ELEMENT_MAX);
+		unsigned int total;
+	} hits[0];
 };
 
 static void mlxsw_afk_picker_count_hits(struct mlxsw_afk *mlxsw_afk,
@@ -151,9 +145,9 @@ static void mlxsw_afk_picker_count_hits(struct mlxsw_afk *mlxsw_afk,
 			struct mlxsw_afk_element_inst *elinst;
 
 			elinst = &block->instances[j];
-			if (elinst->element == element) {
-				__set_bit(element, picker[i].element);
-				picker[i].total++;
+			if (elinst->info->element == element) {
+				__set_bit(element, picker->hits[i].element);
+				picker->hits[i].total++;
 			}
 		}
 	}
@@ -167,13 +161,13 @@ static void mlxsw_afk_picker_subtract_hits(struct mlxsw_afk *mlxsw_afk,
 	int i;
 	int j;
 
-	memcpy(&hits_element, &picker[block_index].element,
+	memcpy(&hits_element, &picker->hits[block_index].element,
 	       sizeof(hits_element));
 
 	for (i = 0; i < mlxsw_afk->blocks_count; i++) {
 		for_each_set_bit(j, hits_element, MLXSW_AFK_ELEMENT_MAX) {
-			if (__test_and_clear_bit(j, picker[i].element))
-				picker[i].total--;
+			if (__test_and_clear_bit(j, picker->hits[i].element))
+				picker->hits[i].total--;
 		}
 	}
 }
@@ -186,8 +180,8 @@ static int mlxsw_afk_picker_most_hits_get(struct mlxsw_afk *mlxsw_afk,
 	int i;
 
 	for (i = 0; i < mlxsw_afk->blocks_count; i++) {
-		if (picker[i].total > most_hits) {
-			most_hits = picker[i].total;
+		if (picker->hits[i].total > most_hits) {
+			most_hits = picker->hits[i].total;
 			most_index = i;
 		}
 	}
@@ -204,7 +198,7 @@ static int mlxsw_afk_picker_key_info_add(struct mlxsw_afk *mlxsw_afk,
 	if (key_info->blocks_count == mlxsw_afk->max_blocks)
 		return -EINVAL;
 
-	for_each_set_bit(element, picker[block_index].element,
+	for_each_set_bit(element, picker->hits[block_index].element,
 			 MLXSW_AFK_ELEMENT_MAX) {
 		key_info->element_to_block[element] = key_info->blocks_count;
 		mlxsw_afk_element_usage_add(&key_info->elusage, element);
@@ -222,9 +216,11 @@ static int mlxsw_afk_picker(struct mlxsw_afk *mlxsw_afk,
 {
 	struct mlxsw_afk_picker *picker;
 	enum mlxsw_afk_element element;
+	size_t alloc_size;
 	int err;
 
-	picker = kcalloc(mlxsw_afk->blocks_count, sizeof(*picker), GFP_KERNEL);
+	alloc_size = sizeof(picker->hits[0]) * mlxsw_afk->blocks_count;
+	picker = kzalloc(alloc_size, GFP_KERNEL);
 	if (!picker)
 		return -ENOMEM;
 
@@ -270,10 +266,12 @@ mlxsw_afk_key_info_create(struct mlxsw_afk *mlxsw_afk,
 			  struct mlxsw_afk_element_usage *elusage)
 {
 	struct mlxsw_afk_key_info *key_info;
+	size_t alloc_size;
 	int err;
 
-	key_info = kzalloc(struct_size(key_info, blocks, mlxsw_afk->max_blocks),
-			   GFP_KERNEL);
+	alloc_size = sizeof(*key_info) +
+		     sizeof(key_info->blocks[0]) * mlxsw_afk->max_blocks;
+	key_info = kzalloc(alloc_size, GFP_KERNEL);
 	if (!key_info)
 		return ERR_PTR(-ENOMEM);
 	err = mlxsw_afk_picker(mlxsw_afk, key_info, elusage);
@@ -334,7 +332,7 @@ mlxsw_afk_block_elinst_get(const struct mlxsw_afk_block *block,
 		struct mlxsw_afk_element_inst *elinst;
 
 		elinst = &block->instances[i];
-		if (elinst->element == element)
+		if (elinst->info->element == element)
 			return elinst;
 	}
 	return NULL;
@@ -417,90 +415,61 @@ void mlxsw_afk_values_add_buf(struct mlxsw_afk_element_values *values,
 }
 EXPORT_SYMBOL(mlxsw_afk_values_add_buf);
 
-static void mlxsw_sp_afk_encode_u32(const struct mlxsw_item *storage_item,
-				    const struct mlxsw_item *output_item,
-				    char *storage, char *output, int diff)
+static void mlxsw_afk_encode_u32(const struct mlxsw_item *storage_item,
+				 const struct mlxsw_item *output_item,
+				 char *storage, char *output_indexed)
 {
 	u32 value;
 
 	value = __mlxsw_item_get32(storage, storage_item, 0);
-	__mlxsw_item_set32(output, output_item, 0, value + diff);
+	__mlxsw_item_set32(output_indexed, output_item, 0, value);
 }
 
-static void mlxsw_sp_afk_encode_buf(const struct mlxsw_item *storage_item,
-				    const struct mlxsw_item *output_item,
-				    char *storage, char *output)
+static void mlxsw_afk_encode_buf(const struct mlxsw_item *storage_item,
+				 const struct mlxsw_item *output_item,
+				 char *storage, char *output_indexed)
 {
 	char *storage_data = __mlxsw_item_data(storage, storage_item, 0);
-	char *output_data = __mlxsw_item_data(output, output_item, 0);
+	char *output_data = __mlxsw_item_data(output_indexed, output_item, 0);
 	size_t len = output_item->size.bytes;
 
 	memcpy(output_data, storage_data, len);
 }
 
-static void
-mlxsw_sp_afk_encode_one(const struct mlxsw_afk_element_inst *elinst,
-			char *output, char *storage, int u32_diff)
-{
-	const struct mlxsw_item *output_item = &elinst->item;
-	const struct mlxsw_afk_element_info *elinfo;
-	const struct mlxsw_item *storage_item;
+#define MLXSW_AFK_KEY_BLOCK_SIZE 16
 
-	elinfo = &mlxsw_afk_element_infos[elinst->element];
-	storage_item = &elinfo->item;
+static void mlxsw_afk_encode_one(const struct mlxsw_afk_element_inst *elinst,
+				 int block_index, char *storage, char *output)
+{
+	char *output_indexed = output + block_index * MLXSW_AFK_KEY_BLOCK_SIZE;
+	const struct mlxsw_item *storage_item = &elinst->info->item;
+	const struct mlxsw_item *output_item = &elinst->item;
+
 	if (elinst->type == MLXSW_AFK_ELEMENT_TYPE_U32)
-		mlxsw_sp_afk_encode_u32(storage_item, output_item,
-					storage, output, u32_diff);
+		mlxsw_afk_encode_u32(storage_item, output_item,
+				     storage, output_indexed);
 	else if (elinst->type == MLXSW_AFK_ELEMENT_TYPE_BUF)
-		mlxsw_sp_afk_encode_buf(storage_item, output_item,
-					storage, output);
+		mlxsw_afk_encode_buf(storage_item, output_item,
+				     storage, output_indexed);
 }
 
-#define MLXSW_SP_AFK_KEY_BLOCK_MAX_SIZE 16
-
-void mlxsw_afk_encode(struct mlxsw_afk *mlxsw_afk,
-		      struct mlxsw_afk_key_info *key_info,
+void mlxsw_afk_encode(struct mlxsw_afk_key_info *key_info,
 		      struct mlxsw_afk_element_values *values,
 		      char *key, char *mask)
 {
-	unsigned int blocks_count =
-			mlxsw_afk_key_info_blocks_count_get(key_info);
-	char block_mask[MLXSW_SP_AFK_KEY_BLOCK_MAX_SIZE];
-	char block_key[MLXSW_SP_AFK_KEY_BLOCK_MAX_SIZE];
 	const struct mlxsw_afk_element_inst *elinst;
 	enum mlxsw_afk_element element;
-	int block_index, i;
+	int block_index;
 
-	for (i = 0; i < blocks_count; i++) {
-		memset(block_key, 0, MLXSW_SP_AFK_KEY_BLOCK_MAX_SIZE);
-		memset(block_mask, 0, MLXSW_SP_AFK_KEY_BLOCK_MAX_SIZE);
-
-		mlxsw_afk_element_usage_for_each(element, &values->elusage) {
-			elinst = mlxsw_afk_key_info_elinst_get(key_info,
-							       element,
-							       &block_index);
-			if (!elinst || block_index != i)
-				continue;
-
-			mlxsw_sp_afk_encode_one(elinst, block_key,
-						values->storage.key,
-						elinst->u32_key_diff);
-			mlxsw_sp_afk_encode_one(elinst, block_mask,
-						values->storage.mask, 0);
-		}
-
-		mlxsw_afk->ops->encode_block(key, i, block_key);
-		mlxsw_afk->ops->encode_block(mask, i, block_mask);
+	mlxsw_afk_element_usage_for_each(element, &values->elusage) {
+		elinst = mlxsw_afk_key_info_elinst_get(key_info, element,
+						       &block_index);
+		if (!elinst)
+			continue;
+		mlxsw_afk_encode_one(elinst, block_index,
+				     values->storage.key, key);
+		mlxsw_afk_encode_one(elinst, block_index,
+				     values->storage.mask, mask);
 	}
 }
 EXPORT_SYMBOL(mlxsw_afk_encode);
-
-void mlxsw_afk_clear(struct mlxsw_afk *mlxsw_afk, char *key,
-		     int block_start, int block_end)
-{
-	int i;
-
-	for (i = block_start; i <= block_end; i++)
-		mlxsw_afk->ops->clear_block(key, i);
-}
-EXPORT_SYMBOL(mlxsw_afk_clear);

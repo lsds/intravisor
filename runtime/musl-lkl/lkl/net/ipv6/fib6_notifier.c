@@ -7,12 +7,12 @@
 #include <net/netns/ipv6.h>
 #include <net/ip6_fib.h>
 
-int call_fib6_notifier(struct notifier_block *nb,
+int call_fib6_notifier(struct notifier_block *nb, struct net *net,
 		       enum fib_event_type event_type,
 		       struct fib_notifier_info *info)
 {
 	info->family = AF_INET6;
-	return call_fib_notifier(nb, event_type, info);
+	return call_fib_notifier(nb, net, event_type, info);
 }
 
 int call_fib6_notifiers(struct net *net, enum fib_event_type event_type,
@@ -27,16 +27,15 @@ static unsigned int fib6_seq_read(struct net *net)
 	return fib6_tables_seq_read(net) + fib6_rules_seq_read(net);
 }
 
-static int fib6_dump(struct net *net, struct notifier_block *nb,
-		     struct netlink_ext_ack *extack)
+static int fib6_dump(struct net *net, struct notifier_block *nb)
 {
 	int err;
 
-	err = fib6_rules_dump(net, nb, extack);
+	err = fib6_rules_dump(net, nb);
 	if (err)
 		return err;
 
-	return fib6_tables_dump(net, nb, extack);
+	return fib6_tables_dump(net, nb);
 }
 
 static const struct fib_notifier_ops fib6_notifier_ops_template = {

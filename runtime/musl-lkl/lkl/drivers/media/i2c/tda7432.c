@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * For the STS-Thompson TDA7432 audio processor chip
  *
@@ -10,7 +9,7 @@
  *
  * Copyright (c) 2000 Eric Sandeen <eric_sandeen@bigfoot.com>
  * Copyright (c) 2006 Mauro Carvalho Chehab <mchehab@kernel.org>
- *
+ * This code is placed under the terms of the GNU General Public License
  * Based on tda9855.c by Steve VanDeBogart (vandebo@uclink.berkeley.edu)
  * Which was based on tda8425.c by Greg Alexander (c) 1998
  *
@@ -20,7 +19,7 @@
  *
  * loudness - set between 0 and 15 for varying degrees of loudness effect
  *
- * maxvol   - set maximum volume to +20db (1), default is 0db(0)
+ * maxvol   - set maximium volume to +20db (1), default is 0db(0)
  */
 
 #include <linux/module.h>
@@ -54,7 +53,7 @@ MODULE_PARM_DESC(debug, "Set debugging level from 0 to 3. Default is off(0).");
 module_param(loudness, int, S_IRUGO);
 MODULE_PARM_DESC(loudness, "Turn loudness on(1) else off(0). Default is off(0).");
 module_param(maxvol, int, S_IRUGO | S_IWUSR);
-MODULE_PARM_DESC(maxvol, "Set maximum volume to +20dB(0) else +0dB(1). Default is +20dB(0).");
+MODULE_PARM_DESC(maxvol, "Set maximium volume to +20dB(0) else +0dB(1). Default is +20dB(0).");
 
 
 /* Structure of address and subaddresses for the tda7432 */
@@ -390,7 +389,7 @@ static int tda7432_probe(struct i2c_client *client,
 	return 0;
 }
 
-static void tda7432_remove(struct i2c_client *client)
+static int tda7432_remove(struct i2c_client *client)
 {
 	struct v4l2_subdev *sd = i2c_get_clientdata(client);
 	struct tda7432 *t = to_state(sd);
@@ -398,6 +397,7 @@ static void tda7432_remove(struct i2c_client *client)
 	tda7432_set(sd);
 	v4l2_device_unregister_subdev(sd);
 	v4l2_ctrl_handler_free(&t->hdl);
+	return 0;
 }
 
 static const struct i2c_device_id tda7432_id[] = {

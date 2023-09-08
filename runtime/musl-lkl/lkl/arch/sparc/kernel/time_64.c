@@ -53,6 +53,8 @@
 
 DEFINE_SPINLOCK(rtc_lock);
 
+unsigned int __read_mostly vdso_fix_stick;
+
 #ifdef CONFIG_SMP
 unsigned long profile_pc(struct pt_regs *regs)
 {
@@ -445,8 +447,8 @@ static int rtc_probe(struct platform_device *op)
 {
 	struct resource *r;
 
-	printk(KERN_INFO "%pOF: RTC regs at 0x%llx\n",
-	       op->dev.of_node, op->resource[0].start);
+	printk(KERN_INFO "%s: RTC regs at 0x%llx\n",
+	       op->dev.of_node->full_name, op->resource[0].start);
 
 	/* The CMOS RTC driver only accepts IORESOURCE_IO, so cons
 	 * up a fake resource so that the probe works for all cases.
@@ -501,8 +503,8 @@ static struct platform_device rtc_bq4802_device = {
 static int bq4802_probe(struct platform_device *op)
 {
 
-	printk(KERN_INFO "%pOF: BQ4802 regs at 0x%llx\n",
-	       op->dev.of_node, op->resource[0].start);
+	printk(KERN_INFO "%s: BQ4802 regs at 0x%llx\n",
+	       op->dev.of_node->full_name, op->resource[0].start);
 
 	rtc_bq4802_device.resource = &op->resource[0];
 	return platform_device_register(&rtc_bq4802_device);
@@ -561,12 +563,12 @@ static int mostek_probe(struct platform_device *op)
 	/* On an Enterprise system there can be multiple mostek clocks.
 	 * We should only match the one that is on the central FHC bus.
 	 */
-	if (of_node_name_eq(dp->parent, "fhc") &&
-	    !of_node_name_eq(dp->parent->parent, "central"))
+	if (!strcmp(dp->parent->name, "fhc") &&
+	    strcmp(dp->parent->parent->name, "central") != 0)
 		return -ENODEV;
 
-	printk(KERN_INFO "%pOF: Mostek regs at 0x%llx\n",
-	       dp, op->resource[0].start);
+	printk(KERN_INFO "%s: Mostek regs at 0x%llx\n",
+	       dp->full_name, op->resource[0].start);
 
 	m48t59_rtc.resource = &op->resource[0];
 	return platform_device_register(&m48t59_rtc);
@@ -653,23 +655,19 @@ static int sparc64_cpufreq_notifier(struct notifier_block *nb, unsigned long val
 				    void *data)
 {
 	struct cpufreq_freqs *freq = data;
-	unsigned int cpu;
-	struct freq_table *ft;
+	unsigned int cpu = freq->cpu;
+	struct freq_table *ft = &per_cpu(sparc64_freq_table, cpu);
 
-	for_each_cpu(cpu, freq->policy->cpus) {
-		ft = &per_cpu(sparc64_freq_table, cpu);
-
-		if (!ft->ref_freq) {
-			ft->ref_freq = freq->old;
-			ft->clock_tick_ref = cpu_data(cpu).clock_tick;
-		}
-
-		if ((val == CPUFREQ_PRECHANGE  && freq->old < freq->new) ||
-		    (val == CPUFREQ_POSTCHANGE && freq->old > freq->new)) {
-			cpu_data(cpu).clock_tick =
-				cpufreq_scale(ft->clock_tick_ref, ft->ref_freq,
-					      freq->new);
-		}
+	if (!ft->ref_freq) {
+		ft->ref_freq = freq->old;
+		ft->clock_tick_ref = cpu_data(cpu).clock_tick;
+	}
+	if ((val == CPUFREQ_PRECHANGE  && freq->old < freq->new) ||
+	    (val == CPUFREQ_POSTCHANGE && freq->old > freq->new)) {
+		cpu_data(cpu).clock_tick =
+			cpufreq_scale(ft->clock_tick_ref,
+				      ft->ref_freq,
+				      freq->new);
 	}
 
 	return 0;
@@ -816,7 +814,7 @@ static void __init get_tick_patch(void)
 	}
 }
 
-static void __init init_tick_ops(struct sparc64_tick_ops *ops)
+static void init_tick_ops(struct sparc64_tick_ops *ops)
 {
 	unsigned long freq, quotient, tick;
 
@@ -840,6 +838,7 @@ void __init time_init_early(void)
 		} else {
 			init_tick_ops(&tick_operations);
 			clocksource_tick.archdata.vclock_mode = VCLOCK_TICK;
+			vdso_fix_stick = 1;
 		}
 	} else {
 		init_tick_ops(&stick_operations);

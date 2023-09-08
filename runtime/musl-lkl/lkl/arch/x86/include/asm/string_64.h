@@ -7,30 +7,48 @@
 
 /* Written 2002 by Andi Kleen */
 
+/* Only used for special circumstances. Stolen from i386/string.h */
+static __always_inline void *__inline_memcpy(void *to, const void *from, size_t n)
+{
+	unsigned long d0, d1, d2;
+	asm volatile("rep ; movsl\n\t"
+		     "testb $2,%b4\n\t"
+		     "je 1f\n\t"
+		     "movsw\n"
+		     "1:\ttestb $1,%b4\n\t"
+		     "je 2f\n\t"
+		     "movsb\n"
+		     "2:"
+		     : "=&c" (d0), "=&D" (d1), "=&S" (d2)
+		     : "0" (n / 4), "q" (n), "1" ((long)to), "2" ((long)from)
+		     : "memory");
+	return to;
+}
+
 /* Even with __builtin_ the compiler may decide to use the out of line
    function. */
 
-#if defined(__SANITIZE_MEMORY__) && defined(__NO_FORTIFY)
-#include <linux/kmsan_string.h>
-#endif
-
 #define __HAVE_ARCH_MEMCPY 1
-#if defined(__SANITIZE_MEMORY__) && defined(__NO_FORTIFY)
-#undef memcpy
-#define memcpy __msan_memcpy
-#else
 extern void *memcpy(void *to, const void *from, size_t len);
-#endif
 extern void *__memcpy(void *to, const void *from, size_t len);
 
-#define __HAVE_ARCH_MEMSET
-#if defined(__SANITIZE_MEMORY__) && defined(__NO_FORTIFY)
-extern void *__msan_memset(void *s, int c, size_t n);
-#undef memset
-#define memset __msan_memset
-#else
-void *memset(void *s, int c, size_t n);
+#ifndef CONFIG_FORTIFY_SOURCE
+#if (__GNUC__ == 4 && __GNUC_MINOR__ < 3) || __GNUC__ < 4
+#define memcpy(dst, src, len)					\
+({								\
+	size_t __len = (len);					\
+	void *__ret;						\
+	if (__builtin_constant_p(len) && __len >= 64)		\
+		__ret = __memcpy((dst), (src), __len);		\
+	else							\
+		__ret = __builtin_memcpy((dst), (src), __len);	\
+	__ret;							\
+})
 #endif
+#endif /* !CONFIG_FORTIFY_SOURCE */
+
+#define __HAVE_ARCH_MEMSET
+void *memset(void *s, int c, size_t n);
 void *__memset(void *s, int c, size_t n);
 
 #define __HAVE_ARCH_MEMSET16
@@ -70,13 +88,7 @@ static inline void *memset64(uint64_t *s, uint64_t v, size_t n)
 }
 
 #define __HAVE_ARCH_MEMMOVE
-#if defined(__SANITIZE_MEMORY__) && defined(__NO_FORTIFY)
-#undef memmove
-void *__msan_memmove(void *dest, const void *src, size_t len);
-#define memmove __msan_memmove
-#else
 void *memmove(void *dest, const void *src, size_t count);
-#endif
 void *__memmove(void *dest, const void *src, size_t count);
 
 int memcmp(const void *cs, const void *ct, size_t count);
@@ -85,7 +97,8 @@ char *strcpy(char *dest, const char *src);
 char *strcat(char *dest, const char *src);
 int strcmp(const char *cs, const char *ct);
 
-#if (defined(CONFIG_KASAN) && !defined(__SANITIZE_ADDRESS__))
+#if defined(CONFIG_KASAN) && !defined(__SANITIZE_ADDRESS__)
+
 /*
  * For files that not instrumented (e.g. mm/slub.c) we
  * should use not instrumented version of mem* functions.
@@ -93,9 +106,7 @@ int strcmp(const char *cs, const char *ct);
 
 #undef memcpy
 #define memcpy(dst, src, len) __memcpy(dst, src, len)
-#undef memmove
 #define memmove(dst, src, len) __memmove(dst, src, len)
-#undef memset
 #define memset(s, c, n) __memset(s, c, n)
 
 #ifndef __NO_FORTIFY
@@ -104,27 +115,39 @@ int strcmp(const char *cs, const char *ct);
 
 #endif
 
+#define __HAVE_ARCH_MEMCPY_MCSAFE 1
+__must_check int memcpy_mcsafe_unrolled(void *dst, const void *src, size_t cnt);
+DECLARE_STATIC_KEY_FALSE(mcsafe_key);
+
+/**
+ * memcpy_mcsafe - copy memory with indication if a machine check happened
+ *
+ * @dst:	destination address
+ * @src:	source address
+ * @cnt:	number of bytes to copy
+ *
+ * Low level memory copy function that catches machine checks
+ * We only call into the "safe" function on systems that can
+ * actually do machine check recovery. Everyone else can just
+ * use memcpy().
+ *
+ * Return 0 for success, -EFAULT for fail
+ */
+static __always_inline __must_check int
+memcpy_mcsafe(void *dst, const void *src, size_t cnt)
+{
+#ifdef CONFIG_X86_MCE
+	if (static_branch_unlikely(&mcsafe_key))
+		return memcpy_mcsafe_unrolled(dst, src, cnt);
+	else
+#endif
+		memcpy(dst, src, cnt);
+	return 0;
+}
+
 #ifdef CONFIG_ARCH_HAS_UACCESS_FLUSHCACHE
 #define __HAVE_ARCH_MEMCPY_FLUSHCACHE 1
-void __memcpy_flushcache(void *dst, const void *src, size_t cnt);
-static __always_inline void memcpy_flushcache(void *dst, const void *src, size_t cnt)
-{
-	if (__builtin_constant_p(cnt)) {
-		switch (cnt) {
-			case 4:
-				asm ("movntil %1, %0" : "=m"(*(u32 *)dst) : "r"(*(u32 *)src));
-				return;
-			case 8:
-				asm ("movntiq %1, %0" : "=m"(*(u64 *)dst) : "r"(*(u64 *)src));
-				return;
-			case 16:
-				asm ("movntiq %1, %0" : "=m"(*(u64 *)dst) : "r"(*(u64 *)src));
-				asm ("movntiq %1, %0" : "=m"(*(u64 *)(dst + 8)) : "r"(*(u64 *)(src + 8)));
-				return;
-		}
-	}
-	__memcpy_flushcache(dst, src, cnt);
-}
+void memcpy_flushcache(void *dst, const void *src, size_t cnt);
 #endif
 
 #endif /* __KERNEL__ */

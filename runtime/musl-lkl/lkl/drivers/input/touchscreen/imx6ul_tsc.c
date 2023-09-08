@@ -1,8 +1,12 @@
-// SPDX-License-Identifier: GPL-2.0
-//
-// Freescale i.MX6UL touchscreen controller driver
-//
-// Copyright (C) 2015 Freescale Semiconductor, Inc.
+/*
+ * Freescale i.MX6UL touchscreen controller driver
+ *
+ * Copyright (C) 2015 Freescale Semiconductor, Inc.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ */
 
 #include <linux/errno.h>
 #include <linux/kernel.h>
@@ -304,18 +308,20 @@ static irqreturn_t adc_irq_fn(int irq, void *dev_id)
 {
 	struct imx6ul_tsc *tsc = dev_id;
 	u32 coco;
+	u32 value;
 
 	coco = readl(tsc->adc_regs + REG_ADC_HS);
 	if (coco & 0x01) {
-		readl(tsc->adc_regs + REG_ADC_R0);
+		value = readl(tsc->adc_regs + REG_ADC_R0);
 		complete(&tsc->completion);
 	}
 
 	return IRQ_HANDLED;
 }
 
-static int imx6ul_tsc_start(struct imx6ul_tsc *tsc)
+static int imx6ul_tsc_open(struct input_dev *input_dev)
 {
+	struct imx6ul_tsc *tsc = input_get_drvdata(input_dev);
 	int err;
 
 	err = clk_prepare_enable(tsc->adc_clk);
@@ -347,27 +353,14 @@ disable_adc_clk:
 	return err;
 }
 
-static void imx6ul_tsc_stop(struct imx6ul_tsc *tsc)
-{
-	imx6ul_tsc_disable(tsc);
-
-	clk_disable_unprepare(tsc->tsc_clk);
-	clk_disable_unprepare(tsc->adc_clk);
-}
-
-
-static int imx6ul_tsc_open(struct input_dev *input_dev)
-{
-	struct imx6ul_tsc *tsc = input_get_drvdata(input_dev);
-
-	return imx6ul_tsc_start(tsc);
-}
-
 static void imx6ul_tsc_close(struct input_dev *input_dev)
 {
 	struct imx6ul_tsc *tsc = input_get_drvdata(input_dev);
 
-	imx6ul_tsc_stop(tsc);
+	imx6ul_tsc_disable(tsc);
+
+	clk_disable_unprepare(tsc->tsc_clk);
+	clk_disable_unprepare(tsc->adc_clk);
 }
 
 static int imx6ul_tsc_probe(struct platform_device *pdev)
@@ -375,6 +368,8 @@ static int imx6ul_tsc_probe(struct platform_device *pdev)
 	struct device_node *np = pdev->dev.of_node;
 	struct imx6ul_tsc *tsc;
 	struct input_dev *input_dev;
+	struct resource *tsc_mem;
+	struct resource *adc_mem;
 	int err;
 	int tsc_irq;
 	int adc_irq;
@@ -412,14 +407,16 @@ static int imx6ul_tsc_probe(struct platform_device *pdev)
 		return err;
 	}
 
-	tsc->tsc_regs = devm_platform_ioremap_resource(pdev, 0);
+	tsc_mem = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	tsc->tsc_regs = devm_ioremap_resource(&pdev->dev, tsc_mem);
 	if (IS_ERR(tsc->tsc_regs)) {
 		err = PTR_ERR(tsc->tsc_regs);
 		dev_err(&pdev->dev, "failed to remap tsc memory: %d\n", err);
 		return err;
 	}
 
-	tsc->adc_regs = devm_platform_ioremap_resource(pdev, 1);
+	adc_mem = platform_get_resource(pdev, IORESOURCE_MEM, 1);
+	tsc->adc_regs = devm_ioremap_resource(&pdev->dev, adc_mem);
 	if (IS_ERR(tsc->adc_regs)) {
 		err = PTR_ERR(tsc->adc_regs);
 		dev_err(&pdev->dev, "failed to remap adc memory: %d\n", err);
@@ -441,12 +438,16 @@ static int imx6ul_tsc_probe(struct platform_device *pdev)
 	}
 
 	tsc_irq = platform_get_irq(pdev, 0);
-	if (tsc_irq < 0)
+	if (tsc_irq < 0) {
+		dev_err(&pdev->dev, "no tsc irq resource?\n");
 		return tsc_irq;
+	}
 
 	adc_irq = platform_get_irq(pdev, 1);
-	if (adc_irq < 0)
+	if (adc_irq < 0) {
+		dev_err(&pdev->dev, "no adc irq resource?\n");
 		return adc_irq;
+	}
 
 	err = devm_request_threaded_irq(tsc->dev, tsc_irq,
 					NULL, tsc_irq_fn, IRQF_ONESHOT,
@@ -520,8 +521,12 @@ static int __maybe_unused imx6ul_tsc_suspend(struct device *dev)
 
 	mutex_lock(&input_dev->mutex);
 
-	if (input_device_enabled(input_dev))
-		imx6ul_tsc_stop(tsc);
+	if (input_dev->users) {
+		imx6ul_tsc_disable(tsc);
+
+		clk_disable_unprepare(tsc->tsc_clk);
+		clk_disable_unprepare(tsc->adc_clk);
+	}
 
 	mutex_unlock(&input_dev->mutex);
 
@@ -537,11 +542,22 @@ static int __maybe_unused imx6ul_tsc_resume(struct device *dev)
 
 	mutex_lock(&input_dev->mutex);
 
-	if (input_device_enabled(input_dev))
-		retval = imx6ul_tsc_start(tsc);
+	if (input_dev->users) {
+		retval = clk_prepare_enable(tsc->adc_clk);
+		if (retval)
+			goto out;
 
+		retval = clk_prepare_enable(tsc->tsc_clk);
+		if (retval) {
+			clk_disable_unprepare(tsc->adc_clk);
+			goto out;
+		}
+
+		retval = imx6ul_tsc_init(tsc);
+	}
+
+out:
 	mutex_unlock(&input_dev->mutex);
-
 	return retval;
 }
 

@@ -12,7 +12,7 @@
 #include <linux/interrupt.h>
 #include <linux/platform_device.h>
 #include <linux/power_supply.h>
-#include <linux/gpio/consumer.h>
+#include <linux/gpio.h>
 #include <linux/err.h>
 #include <linux/timer.h>
 #include <linux/jiffies.h>
@@ -52,7 +52,6 @@ struct gab {
 	int	level;
 	int	status;
 	bool cable_plugged;
-	struct gpio_desc *charge_finished;
 };
 
 static struct gab *to_generic_bat(struct power_supply *psy)
@@ -92,9 +91,13 @@ static const enum power_supply_property gab_dyn_props[] = {
 
 static bool gab_charge_finished(struct gab *adc_bat)
 {
-	if (!adc_bat->charge_finished)
+	struct gab_platform_data *pdata = adc_bat->pdata;
+	bool ret = gpio_get_value(pdata->gpio_charge_finished);
+	bool inv = pdata->gpio_inverted;
+
+	if (!gpio_is_valid(pdata->gpio_charge_finished))
 		return false;
-	return gpiod_get_value(adc_bat->charge_finished);
+	return ret ^ inv;
 }
 
 static int gab_get_status(struct gab *adc_bat)
@@ -241,8 +244,7 @@ static int gab_probe(struct platform_device *pdev)
 	enum power_supply_property *properties;
 	int ret = 0;
 	int chan;
-	int index = ARRAY_SIZE(gab_props);
-	bool any = false;
+	int index = 0;
 
 	adc_bat = devm_kzalloc(&pdev->dev, sizeof(*adc_bat), GFP_KERNEL);
 	if (!adc_bat) {
@@ -266,16 +268,18 @@ static int gab_probe(struct platform_device *pdev)
 	 * copying the static properties and allocating extra memory for holding
 	 * the extra configurable properties received from platform data.
 	 */
-	properties = kcalloc(ARRAY_SIZE(gab_props) +
-			     ARRAY_SIZE(gab_chan_name),
-			     sizeof(*properties),
-			     GFP_KERNEL);
-	if (!properties) {
+	psy_desc->properties = kcalloc(ARRAY_SIZE(gab_props) +
+					ARRAY_SIZE(gab_chan_name),
+					sizeof(*psy_desc->properties),
+					GFP_KERNEL);
+	if (!psy_desc->properties) {
 		ret = -ENOMEM;
 		goto first_mem_fail;
 	}
 
-	memcpy(properties, gab_props, sizeof(gab_props));
+	memcpy(psy_desc->properties, gab_props, sizeof(gab_props));
+	properties = (enum power_supply_property *)
+			((char *)psy_desc->properties + sizeof(gab_props));
 
 	/*
 	 * getting channel from iio and copying the battery properties
@@ -289,20 +293,15 @@ static int gab_probe(struct platform_device *pdev)
 			adc_bat->channel[chan] = NULL;
 		} else {
 			/* copying properties for supported channels only */
-			int index2;
-
-			for (index2 = 0; index2 < index; index2++) {
-				if (properties[index2] == gab_dyn_props[chan])
-					break;	/* already known */
-			}
-			if (index2 == index)	/* really new */
-				properties[index++] = gab_dyn_props[chan];
-			any = true;
+			memcpy(properties + sizeof(*(psy_desc->properties)) * index,
+					&gab_dyn_props[chan],
+					sizeof(gab_dyn_props[chan]));
+			index++;
 		}
 	}
 
 	/* none of the channels are supported so let's bail out */
-	if (!any) {
+	if (index == 0) {
 		ret = -ENODEV;
 		goto second_mem_fail;
 	}
@@ -313,8 +312,7 @@ static int gab_probe(struct platform_device *pdev)
 	 * as come channels may be not be supported by the device.So
 	 * we need to take care of that.
 	 */
-	psy_desc->properties = properties;
-	psy_desc->num_properties = index;
+	psy_desc->num_properties = ARRAY_SIZE(gab_props) + index;
 
 	adc_bat->psy = power_supply_register(&pdev->dev, psy_desc, &psy_cfg);
 	if (IS_ERR(adc_bat->psy)) {
@@ -324,17 +322,18 @@ static int gab_probe(struct platform_device *pdev)
 
 	INIT_DELAYED_WORK(&adc_bat->bat_work, gab_work);
 
-	adc_bat->charge_finished = devm_gpiod_get_optional(&pdev->dev,
-							   "charged", GPIOD_IN);
-	if (adc_bat->charge_finished) {
+	if (gpio_is_valid(pdata->gpio_charge_finished)) {
 		int irq;
+		ret = gpio_request(pdata->gpio_charge_finished, "charged");
+		if (ret)
+			goto gpio_req_fail;
 
-		irq = gpiod_to_irq(adc_bat->charge_finished);
+		irq = gpio_to_irq(pdata->gpio_charge_finished);
 		ret = request_any_context_irq(irq, gab_charged,
 				IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING,
 				"battery charged", adc_bat);
 		if (ret < 0)
-			goto gpio_req_fail;
+			goto err_gpio;
 	}
 
 	platform_set_drvdata(pdev, adc_bat);
@@ -344,6 +343,8 @@ static int gab_probe(struct platform_device *pdev)
 			msecs_to_jiffies(0));
 	return 0;
 
+err_gpio:
+	gpio_free(pdata->gpio_charge_finished);
 gpio_req_fail:
 	power_supply_unregister(adc_bat->psy);
 err_reg_fail:
@@ -352,7 +353,7 @@ err_reg_fail:
 			iio_channel_release(adc_bat->channel[chan]);
 	}
 second_mem_fail:
-	kfree(properties);
+	kfree(psy_desc->properties);
 first_mem_fail:
 	return ret;
 }
@@ -361,11 +362,14 @@ static int gab_remove(struct platform_device *pdev)
 {
 	int chan;
 	struct gab *adc_bat = platform_get_drvdata(pdev);
+	struct gab_platform_data *pdata = adc_bat->pdata;
 
 	power_supply_unregister(adc_bat->psy);
 
-	if (adc_bat->charge_finished)
-		free_irq(gpiod_to_irq(adc_bat->charge_finished), adc_bat);
+	if (gpio_is_valid(pdata->gpio_charge_finished)) {
+		free_irq(gpio_to_irq(pdata->gpio_charge_finished), adc_bat);
+		gpio_free(pdata->gpio_charge_finished);
+	}
 
 	for (chan = 0; chan < ARRAY_SIZE(gab_chan_name); chan++) {
 		if (adc_bat->channel[chan])
@@ -373,7 +377,7 @@ static int gab_remove(struct platform_device *pdev)
 	}
 
 	kfree(adc_bat->psy_desc.properties);
-	cancel_delayed_work_sync(&adc_bat->bat_work);
+	cancel_delayed_work(&adc_bat->bat_work);
 	return 0;
 }
 

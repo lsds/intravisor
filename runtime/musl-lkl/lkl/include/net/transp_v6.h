@@ -3,7 +3,6 @@
 #define _TRANSP_V6_H
 
 #include <net/checksum.h>
-#include <net/sock.h>
 
 /* IPv6 transport protocols */
 extern struct proto rawv6_prot;
@@ -13,7 +12,6 @@ extern struct proto tcpv6_prot;
 extern struct proto pingv6_prot;
 
 struct flowi6;
-struct ipcm6_cookie;
 
 /* extension headers */
 int ipv6_exthdrs_init(void);
@@ -44,19 +42,16 @@ void ip6_datagram_recv_specific_ctl(struct sock *sk, struct msghdr *msg,
 				    struct sk_buff *skb);
 
 int ip6_datagram_send_ctl(struct net *net, struct sock *sk, struct msghdr *msg,
-			  struct flowi6 *fl6, struct ipcm6_cookie *ipc6);
+			  struct flowi6 *fl6, struct ipcm6_cookie *ipc6,
+			  struct sockcm_cookie *sockc);
 
-void __ip6_dgram_sock_seq_show(struct seq_file *seq, struct sock *sp,
-			       __u16 srcp, __u16 destp, int rqueue, int bucket);
-static inline void
-ip6_dgram_sock_seq_show(struct seq_file *seq, struct sock *sp, __u16 srcp,
-			__u16 destp, int bucket)
-{
-	__ip6_dgram_sock_seq_show(seq, sp, srcp, destp, sk_rmem_alloc_get(sp),
-				  bucket);
-}
+void ip6_dgram_sock_seq_show(struct seq_file *seq, struct sock *sp,
+			     __u16 srcp, __u16 destp, int bucket);
 
 #define LOOPBACK4_IPV6 cpu_to_be32(0x7f000006)
+
+/* address family specific functions */
+extern const struct inet_connection_sock_af_ops ipv4_specific;
 
 void inet6_destroy_sock(struct sock *sk);
 

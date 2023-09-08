@@ -1,11 +1,14 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
- * HiSilicon SoC reset code
+ * Hisilicon SoC reset code
  *
- * Copyright (c) 2014 HiSilicon Ltd.
+ * Copyright (c) 2014 Hisilicon Ltd.
  * Copyright (c) 2014 Linaro Ltd.
  *
  * Author: Haojian Zhuang <haojian.zhuang@linaro.org>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 
 #include <linux/delay.h>
@@ -68,7 +71,6 @@ static const struct of_device_id hisi_reboot_of_match[] = {
 	{ .compatible = "hisilicon,sysctrl" },
 	{}
 };
-MODULE_DEVICE_TABLE(of, hisi_reboot_of_match);
 
 static struct platform_driver hisi_reboot_driver = {
 	.probe = hisi_reboot_probe,

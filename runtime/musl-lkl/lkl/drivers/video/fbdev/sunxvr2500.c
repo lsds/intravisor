@@ -5,7 +5,6 @@
  * Copyright (C) 2007 David S. Miller (davem@davemloft.net)
  */
 
-#include <linux/aperture.h>
 #include <linux/kernel.h>
 #include <linux/fb.h>
 #include <linux/pci.h>
@@ -64,7 +63,7 @@ static int s3d_setcolreg(unsigned regno,
 	return 0;
 }
 
-static const struct fb_ops s3d_ops = {
+static struct fb_ops s3d_ops = {
 	.owner			= THIS_MODULE,
 	.fb_setcolreg		= s3d_setcolreg,
 	.fb_fillrect		= cfb_fillrect,
@@ -85,7 +84,7 @@ static int s3d_set_fbinfo(struct s3d_info *sp)
 	info->pseudo_palette = sp->pseudo_palette;
 
 	/* Fill fix common fields */
-	strscpy(info->fix.id, "s3d", sizeof(info->fix.id));
+	strlcpy(info->fix.id, "s3d", sizeof(info->fix.id));
         info->fix.smem_start = sp->fb_base_phys;
         info->fix.smem_len = sp->fb_size;
         info->fix.type = FB_TYPE_PACKED_PIXELS;
@@ -124,10 +123,6 @@ static int s3d_pci_register(struct pci_dev *pdev,
 	struct s3d_info *sp;
 	int err;
 
-	err = aperture_remove_conflicting_pci_devices(pdev, "s3dfb");
-	if (err)
-		return err;
-
 	err = pci_enable_device(pdev);
 	if (err < 0) {
 		printk(KERN_ERR "s3d: Cannot enable PCI device %s\n",
@@ -137,6 +132,7 @@ static int s3d_pci_register(struct pci_dev *pdev,
 
 	info = framebuffer_alloc(sizeof(struct s3d_info), &pdev->dev);
 	if (!info) {
+		printk(KERN_ERR "s3d: Cannot allocate fb_info\n");
 		err = -ENOMEM;
 		goto err_disable;
 	}

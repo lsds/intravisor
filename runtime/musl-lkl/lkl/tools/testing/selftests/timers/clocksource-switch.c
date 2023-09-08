@@ -3,7 +3,7 @@
  *		(C) Copyright IBM 2012
  *		Licensed under the GPLv2
  *
- *  NOTE: This is a meta-test which quickly changes the clocksource and
+ *  NOTE: This is a meta-test which quickly changes the clocksourc and
  *  then uses other tests to detect problems. Thus this test requires
  *  that the inconsistency-check and nanosleep tests be present in the
  *  same directory it is run from.
@@ -23,17 +23,17 @@
  */
 
 
-#include <fcntl.h>
 #include <stdio.h>
+#include <unistd.h>
 #include <stdlib.h>
-#include <string.h>
-#include <sys/stat.h>
 #include <sys/time.h>
 #include <sys/timex.h>
-#include <sys/types.h>
-#include <sys/wait.h>
 #include <time.h>
-#include <unistd.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <string.h>
+#include <sys/wait.h>
 #include "../kselftest.h"
 
 
@@ -110,39 +110,20 @@ int run_tests(int secs)
 
 	sprintf(buf, "./inconsistency-check -t %i", secs);
 	ret = system(buf);
-	if (WIFEXITED(ret) && WEXITSTATUS(ret))
-		return WEXITSTATUS(ret);
+	if (ret)
+		return ret;
 	ret = system("./nanosleep");
-	return WIFEXITED(ret) ? WEXITSTATUS(ret) : 0;
+	return ret;
 }
 
 
 char clocksource_list[10][30];
 
-int main(int argc, char **argv)
+int main(int argv, char **argc)
 {
 	char orig_clk[512];
-	int count, i, status, opt;
-	int do_sanity_check = 1;
-	int runtime = 60;
+	int count, i, status;
 	pid_t pid;
-
-	/* Process arguments */
-	while ((opt = getopt(argc, argv, "st:")) != -1) {
-		switch (opt) {
-		case 's':
-			do_sanity_check = 0;
-			break;
-		case 't':
-			runtime = atoi(optarg);
-			break;
-		default:
-			printf("Usage: %s [-s] [-t <secs>]\n", argv[0]);
-			printf("	-s: skip sanity checks\n");
-			printf("	-t: Number of seconds to run\n");
-			exit(-1);
-		}
-	}
 
 	get_cur_clocksource(orig_clk, 512);
 
@@ -153,26 +134,24 @@ int main(int argc, char **argv)
 		return -1;
 	}
 
-	/* Check everything is sane before we start switching asynchronously */
-	if (do_sanity_check) {
-		for (i = 0; i < count; i++) {
-			printf("Validating clocksource %s\n",
-				clocksource_list[i]);
-			if (change_clocksource(clocksource_list[i])) {
-				status = -1;
-				goto out;
-			}
-			if (run_tests(5)) {
-				status = -1;
-				goto out;
-			}
+	/* Check everything is sane before we start switching asyncrhonously */
+	for (i = 0; i < count; i++) {
+		printf("Validating clocksource %s\n", clocksource_list[i]);
+		if (change_clocksource(clocksource_list[i])) {
+			status = -1;
+			goto out;
+		}
+		if (run_tests(5)) {
+			status = -1;
+			goto out;
 		}
 	}
+
 
 	printf("Running Asynchronous Switching Tests...\n");
 	pid = fork();
 	if (!pid)
-		return run_tests(runtime);
+		return run_tests(60);
 
 	while (pid != waitpid(pid, &status, WNOHANG))
 		for (i = 0; i < count; i++)
@@ -183,9 +162,7 @@ int main(int argc, char **argv)
 out:
 	change_clocksource(orig_clk);
 
-	/* Print at the end to not mix output with child process */
-	ksft_print_header();
-	ksft_set_plan(1);
-	ksft_test_result(!status, "clocksource-switch\n");
-	ksft_exit(!status);
+	if (status)
+		return ksft_exit_fail();
+	return ksft_exit_pass();
 }

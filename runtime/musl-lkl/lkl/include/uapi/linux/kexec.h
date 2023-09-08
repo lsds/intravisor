@@ -31,7 +31,6 @@
 #define KEXEC_ARCH_DEFAULT ( 0 << 16)
 #define KEXEC_ARCH_386     ( 3 << 16)
 #define KEXEC_ARCH_68K     ( 4 << 16)
-#define KEXEC_ARCH_PARISC  (15 << 16)
 #define KEXEC_ARCH_X86_64  (62 << 16)
 #define KEXEC_ARCH_PPC     (20 << 16)
 #define KEXEC_ARCH_PPC64   (21 << 16)
@@ -42,8 +41,6 @@
 #define KEXEC_ARCH_MIPS_LE (10 << 16)
 #define KEXEC_ARCH_MIPS    ( 8 << 16)
 #define KEXEC_ARCH_AARCH64 (183 << 16)
-#define KEXEC_ARCH_RISCV   (243 << 16)
-#define KEXEC_ARCH_LOONGARCH	(258 << 16)
 
 /* The artificial cap on the number of segments passed to kexec_load. */
 #define KEXEC_SEGMENT_MAX 16
@@ -55,9 +52,9 @@
  */
 struct kexec_segment {
 	const void *buf;
-	__kernel_size_t bufsz;
+	size_t bufsz;
 	const void *mem;
-	__kernel_size_t memsz;
+	size_t memsz;
 };
 
 #endif /* __KERNEL__ */

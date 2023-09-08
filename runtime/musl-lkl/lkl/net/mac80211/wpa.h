@@ -1,7 +1,9 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright 2002-2004, Instant802 Networks, Inc.
- * Copyright (C) 2022 Intel Corporation
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 
 #ifndef WPA_H
@@ -40,6 +42,10 @@ ieee80211_tx_result
 ieee80211_crypto_aes_gmac_encrypt(struct ieee80211_tx_data *tx);
 ieee80211_rx_result
 ieee80211_crypto_aes_gmac_decrypt(struct ieee80211_rx_data *rx);
+ieee80211_tx_result
+ieee80211_crypto_hw_encrypt(struct ieee80211_tx_data *tx);
+ieee80211_rx_result
+ieee80211_crypto_hw_decrypt(struct ieee80211_rx_data *rx);
 
 ieee80211_tx_result
 ieee80211_crypto_gcmp_encrypt(struct ieee80211_tx_data *tx);

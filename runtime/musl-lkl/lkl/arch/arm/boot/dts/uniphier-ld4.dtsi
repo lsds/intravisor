@@ -6,7 +6,6 @@
 //   Author: Masahiro Yamada <yamada.masahiro@socionext.com>
 
 #include <dt-bindings/gpio/uniphier-gpio.h>
-#include <dt-bindings/interrupt-controller/arm-gic.h>
 
 / {
 	compatible = "socionext,uniphier-ld4";
@@ -52,12 +51,11 @@
 		ranges;
 		interrupt-parent = <&intc>;
 
-		l2: cache-controller@500c0000 {
+		l2: l2-cache@500c0000 {
 			compatible = "socionext,uniphier-system-cache";
 			reg = <0x500c0000 0x2000>, <0x503c0100 0x4>,
 			      <0x506c0000 0x400>;
-			interrupts = <GIC_SPI 174 IRQ_TYPE_LEVEL_HIGH>,
-				     <GIC_SPI 175 IRQ_TYPE_LEVEL_HIGH>;
+			interrupts = <0 174 4>, <0 175 4>;
 			cache-unified;
 			cache-size = <(512 * 1024)>;
 			cache-sets = <256>;
@@ -65,24 +63,11 @@
 			cache-level = <2>;
 		};
 
-		spi: spi@54006000 {
-			compatible = "socionext,uniphier-scssi";
-			status = "disabled";
-			reg = <0x54006000 0x100>;
-			#address-cells = <1>;
-			#size-cells = <0>;
-			interrupts = <GIC_SPI 39 IRQ_TYPE_LEVEL_HIGH>;
-			pinctrl-names = "default";
-			pinctrl-0 = <&pinctrl_spi0>;
-			clocks = <&peri_clk 11>;
-			resets = <&peri_rst 11>;
-		};
-
 		serial0: serial@54006800 {
 			compatible = "socionext,uniphier-uart";
 			status = "disabled";
 			reg = <0x54006800 0x40>;
-			interrupts = <GIC_SPI 33 IRQ_TYPE_LEVEL_HIGH>;
+			interrupts = <0 33 4>;
 			pinctrl-names = "default";
 			pinctrl-0 = <&pinctrl_uart0>;
 			clocks = <&peri_clk 0>;
@@ -93,7 +78,7 @@
 			compatible = "socionext,uniphier-uart";
 			status = "disabled";
 			reg = <0x54006900 0x40>;
-			interrupts = <GIC_SPI 35 IRQ_TYPE_LEVEL_HIGH>;
+			interrupts = <0 35 4>;
 			pinctrl-names = "default";
 			pinctrl-0 = <&pinctrl_uart1>;
 			clocks = <&peri_clk 1>;
@@ -104,7 +89,7 @@
 			compatible = "socionext,uniphier-uart";
 			status = "disabled";
 			reg = <0x54006a00 0x40>;
-			interrupts = <GIC_SPI 37 IRQ_TYPE_LEVEL_HIGH>;
+			interrupts = <0 37 4>;
 			pinctrl-names = "default";
 			pinctrl-0 = <&pinctrl_uart2>;
 			clocks = <&peri_clk 2>;
@@ -115,7 +100,7 @@
 			compatible = "socionext,uniphier-uart";
 			status = "disabled";
 			reg = <0x54006b00 0x40>;
-			interrupts = <GIC_SPI 29 IRQ_TYPE_LEVEL_HIGH>;
+			interrupts = <0 29 4>;
 			pinctrl-names = "default";
 			pinctrl-0 = <&pinctrl_uart3>;
 			clocks = <&peri_clk 3>;
@@ -142,7 +127,7 @@
 			reg = <0x58400000 0x40>;
 			#address-cells = <1>;
 			#size-cells = <0>;
-			interrupts = <GIC_SPI 41 IRQ_TYPE_EDGE_RISING>;
+			interrupts = <0 41 1>;
 			pinctrl-names = "default";
 			pinctrl-0 = <&pinctrl_i2c0>;
 			clocks = <&peri_clk 4>;
@@ -156,7 +141,7 @@
 			reg = <0x58480000 0x40>;
 			#address-cells = <1>;
 			#size-cells = <0>;
-			interrupts = <GIC_SPI 42 IRQ_TYPE_EDGE_RISING>;
+			interrupts = <0 42 1>;
 			pinctrl-names = "default";
 			pinctrl-0 = <&pinctrl_i2c1>;
 			clocks = <&peri_clk 5>;
@@ -170,7 +155,7 @@
 			reg = <0x58500000 0x40>;
 			#address-cells = <1>;
 			#size-cells = <0>;
-			interrupts = <GIC_SPI 43 IRQ_TYPE_EDGE_RISING>;
+			interrupts = <0 43 1>;
 			pinctrl-names = "default";
 			pinctrl-0 = <&pinctrl_i2c2>;
 			clocks = <&peri_clk 6>;
@@ -184,7 +169,7 @@
 			reg = <0x58580000 0x40>;
 			#address-cells = <1>;
 			#size-cells = <0>;
-			interrupts = <GIC_SPI 44 IRQ_TYPE_EDGE_RISING>;
+			interrupts = <0 44 1>;
 			pinctrl-names = "default";
 			pinctrl-0 = <&pinctrl_i2c3>;
 			clocks = <&peri_clk 7>;
@@ -239,64 +224,11 @@
 			};
 		};
 
-		dmac: dma-controller@5a000000 {
-			compatible = "socionext,uniphier-mio-dmac";
-			reg = <0x5a000000 0x1000>;
-			interrupts = <GIC_SPI 68 IRQ_TYPE_LEVEL_HIGH>,
-				     <GIC_SPI 68 IRQ_TYPE_LEVEL_HIGH>,
-				     <GIC_SPI 69 IRQ_TYPE_LEVEL_HIGH>,
-				     <GIC_SPI 70 IRQ_TYPE_LEVEL_HIGH>,
-				     <GIC_SPI 71 IRQ_TYPE_LEVEL_HIGH>,
-				     <GIC_SPI 72 IRQ_TYPE_LEVEL_HIGH>,
-				     <GIC_SPI 73 IRQ_TYPE_LEVEL_HIGH>;
-			clocks = <&mio_clk 7>;
-			resets = <&mio_rst 7>;
-			#dma-cells = <1>;
-		};
-
-		sd: mmc@5a400000 {
-			compatible = "socionext,uniphier-sd-v2.91";
-			status = "disabled";
-			reg = <0x5a400000 0x200>;
-			interrupts = <GIC_SPI 76 IRQ_TYPE_LEVEL_HIGH>;
-			pinctrl-names = "default", "uhs";
-			pinctrl-0 = <&pinctrl_sd>;
-			pinctrl-1 = <&pinctrl_sd_uhs>;
-			clocks = <&mio_clk 0>;
-			reset-names = "host", "bridge";
-			resets = <&mio_rst 0>, <&mio_rst 3>;
-			dma-names = "rx-tx";
-			dmas = <&dmac 4>;
-			bus-width = <4>;
-			cap-sd-highspeed;
-			sd-uhs-sdr12;
-			sd-uhs-sdr25;
-			sd-uhs-sdr50;
-		};
-
-		emmc: mmc@5a500000 {
-			compatible = "socionext,uniphier-sd-v2.91";
-			status = "disabled";
-			reg = <0x5a500000 0x200>;
-			interrupts = <GIC_SPI 78 IRQ_TYPE_LEVEL_HIGH>;
-			pinctrl-names = "default";
-			pinctrl-0 = <&pinctrl_emmc>;
-			clocks = <&mio_clk 1>;
-			reset-names = "host", "bridge", "hw";
-			resets = <&mio_rst 1>, <&mio_rst 4>, <&mio_rst 6>;
-			dma-names = "rx-tx";
-			dmas = <&dmac 6>;
-			bus-width = <8>;
-			cap-mmc-highspeed;
-			cap-mmc-hw-reset;
-			non-removable;
-		};
-
 		usb0: usb@5a800100 {
 			compatible = "socionext,uniphier-ehci", "generic-ehci";
 			status = "disabled";
 			reg = <0x5a800100 0x100>;
-			interrupts = <GIC_SPI 80 IRQ_TYPE_LEVEL_HIGH>;
+			interrupts = <0 80 4>;
 			pinctrl-names = "default";
 			pinctrl-0 = <&pinctrl_usb0>;
 			clocks = <&sys_clk 8>, <&mio_clk 7>, <&mio_clk 8>,
@@ -310,7 +242,7 @@
 			compatible = "socionext,uniphier-ehci", "generic-ehci";
 			status = "disabled";
 			reg = <0x5a810100 0x100>;
-			interrupts = <GIC_SPI 81 IRQ_TYPE_LEVEL_HIGH>;
+			interrupts = <0 81 4>;
 			pinctrl-names = "default";
 			pinctrl-0 = <&pinctrl_usb1>;
 			clocks = <&sys_clk 8>, <&mio_clk 7>, <&mio_clk 9>,
@@ -324,7 +256,7 @@
 			compatible = "socionext,uniphier-ehci", "generic-ehci";
 			status = "disabled";
 			reg = <0x5a820100 0x100>;
-			interrupts = <GIC_SPI 82 IRQ_TYPE_LEVEL_HIGH>;
+			interrupts = <0 82 4>;
 			pinctrl-names = "default";
 			pinctrl-0 = <&pinctrl_usb2>;
 			clocks = <&sys_clk 8>, <&mio_clk 7>, <&mio_clk 10>,
@@ -365,16 +297,14 @@
 		timer@60000200 {
 			compatible = "arm,cortex-a9-global-timer";
 			reg = <0x60000200 0x20>;
-			interrupts = <GIC_PPI 11
-				(GIC_CPU_MASK_RAW(1) | IRQ_TYPE_LEVEL_HIGH)>;
+			interrupts = <1 11 0x104>;
 			clocks = <&arm_timer_clk>;
 		};
 
 		timer@60000600 {
 			compatible = "arm,cortex-a9-twd-timer";
 			reg = <0x60000600 0x20>;
-			interrupts = <GIC_PPI 13
-				(GIC_CPU_MASK_RAW(1) | IRQ_TYPE_LEVEL_HIGH)>;
+			interrupts = <1 13 0x104>;
 			clocks = <&arm_timer_clk>;
 		};
 
@@ -386,7 +316,7 @@
 			interrupt-controller;
 		};
 
-		aidet: interrupt-controller@61830000 {
+		aidet: aidet@61830000 {
 			compatible = "socionext,uniphier-ld4-aidet";
 			reg = <0x61830000 0x200>;
 			interrupt-controller;
@@ -409,20 +339,16 @@
 			};
 		};
 
-		nand: nand-controller@68000000 {
+		nand: nand@68000000 {
 			compatible = "socionext,uniphier-denali-nand-v5a";
 			status = "disabled";
 			reg-names = "nand_data", "denali_reg";
 			reg = <0x68000000 0x20>, <0x68100000 0x1000>;
-			#address-cells = <1>;
-			#size-cells = <0>;
-			interrupts = <GIC_SPI 65 IRQ_TYPE_LEVEL_HIGH>;
+			interrupts = <0 65 4>;
 			pinctrl-names = "default";
-			pinctrl-0 = <&pinctrl_nand>;
-			clock-names = "nand", "nand_x", "ecc";
-			clocks = <&sys_clk 2>, <&sys_clk 3>, <&sys_clk 3>;
-			reset-names = "nand", "reg";
-			resets = <&sys_rst 2>, <&sys_rst 2>;
+			pinctrl-0 = <&pinctrl_nand2cs>;
+			clocks = <&sys_clk 2>;
+			resets = <&sys_rst 2>;
 		};
 	};
 };

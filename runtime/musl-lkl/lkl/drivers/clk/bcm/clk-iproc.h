@@ -1,5 +1,15 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2014 Broadcom Corporation */
+/*
+ * Copyright (C) 2014 Broadcom Corporation
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License as
+ * published by the Free Software Foundation version 2.
+ *
+ * This program is distributed "as is" WITHOUT ANY WARRANTY of any
+ * kind, whether express or implied; without even the implied warranty
+ * of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ */
 
 #ifndef _CLK_IPROC_H
 #define _CLK_IPROC_H
@@ -79,7 +89,7 @@
  * Parameters for VCO frequency configuration
  *
  * VCO frequency =
- * ((ndiv_int + ndiv_frac / 2^20) * (ref frequency  / pdiv)
+ * ((ndiv_int + ndiv_frac / 2^20) * (ref freqeuncy  / pdiv)
  */
 struct iproc_pll_vco_param {
 	unsigned long rate;

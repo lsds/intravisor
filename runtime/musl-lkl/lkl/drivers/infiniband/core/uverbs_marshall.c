@@ -66,7 +66,7 @@ void ib_copy_ah_attr_to_user(struct ib_device *device,
 	struct rdma_ah_attr *src = ah_attr;
 	struct rdma_ah_attr conv_ah;
 
-	memset(&dst->grh, 0, sizeof(dst->grh));
+	memset(&dst->grh.reserved, 0, sizeof(dst->grh.reserved));
 
 	if ((ah_attr->type == RDMA_AH_ATTR_TYPE_OPA) &&
 	    (rdma_ah_get_dlid(ah_attr) > be16_to_cpu(IB_LID_PERMISSIVE)) &&
@@ -211,5 +211,7 @@ void ib_copy_path_rec_from_user(struct sa_path_rec *dst,
 
 	/* TODO: No need to set this */
 	sa_path_set_dmac_zero(dst);
+	sa_path_set_ndev(dst, NULL);
+	sa_path_set_ifindex(dst, 0);
 }
 EXPORT_SYMBOL(ib_copy_path_rec_from_user);

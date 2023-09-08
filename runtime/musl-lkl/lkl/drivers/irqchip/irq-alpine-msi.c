@@ -165,7 +165,8 @@ static int alpine_msix_middle_domain_alloc(struct irq_domain *domain,
 	return 0;
 
 err_sgi:
-	irq_domain_free_irqs_parent(domain, virq, i - 1);
+	while (--i >= 0)
+		irq_domain_free_irqs_parent(domain, virq, i);
 	alpine_msix_free_sgi(priv, sgi, nr_irqs);
 	return err;
 }
@@ -267,7 +268,8 @@ static int alpine_msix_init(struct device_node *node,
 		goto err_priv;
 	}
 
-	priv->msi_map = bitmap_zalloc(priv->num_spis, GFP_KERNEL);
+	priv->msi_map = kzalloc(sizeof(*priv->msi_map) * BITS_TO_LONGS(priv->num_spis),
+				GFP_KERNEL);
 	if (!priv->msi_map) {
 		ret = -ENOMEM;
 		goto err_priv;
@@ -283,7 +285,7 @@ static int alpine_msix_init(struct device_node *node,
 	return 0;
 
 err_map:
-	bitmap_free(priv->msi_map);
+	kfree(priv->msi_map);
 err_priv:
 	kfree(priv);
 	return ret;

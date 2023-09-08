@@ -1,6 +1,9 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2016 Chelsio Communications, Inc.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 
 #define DRV_NAME "cxgbit"
@@ -33,18 +36,11 @@ static void cxgbit_set_mdsl(struct cxgbit_device *cdev)
 	struct cxgb4_lld_info *lldi = &cdev->lldi;
 	u32 mdsl;
 
-#define CXGBIT_T5_MAX_PDU_LEN 16224
-#define CXGBIT_PDU_NONPAYLOAD_LEN 312 /* 48(BHS) + 256(AHS) + 8(Digest) */
-	if (is_t5(lldi->adapter_type)) {
-		mdsl = min_t(u32, lldi->iscsi_iolen - CXGBIT_PDU_NONPAYLOAD_LEN,
-			     CXGBIT_T5_MAX_PDU_LEN - CXGBIT_PDU_NONPAYLOAD_LEN);
-	} else {
-		mdsl = lldi->iscsi_iolen - CXGBIT_PDU_NONPAYLOAD_LEN;
-		mdsl = min(mdsl, 16384U);
-	}
-
-	mdsl = round_down(mdsl, 4);
-	mdsl = min_t(u32, mdsl, 4 * PAGE_SIZE);
+#define ULP2_MAX_PKT_LEN 16224
+#define ISCSI_PDU_NONPAYLOAD_LEN 312
+	mdsl = min_t(u32, lldi->iscsi_iolen - ISCSI_PDU_NONPAYLOAD_LEN,
+		     ULP2_MAX_PKT_LEN - ISCSI_PDU_NONPAYLOAD_LEN);
+	mdsl = min_t(u32, mdsl, 8192);
 	mdsl = min_t(u32, mdsl, (MAX_SKB_FRAGS - 1) * PAGE_SIZE);
 
 	cdev->mdsl = mdsl;
@@ -62,7 +58,6 @@ static void *cxgbit_uld_add(const struct cxgb4_lld_info *lldi)
 		return ERR_PTR(-ENOMEM);
 
 	kref_init(&cdev->kref);
-	spin_lock_init(&cdev->np_lock);
 
 	cdev->lldi = *lldi;
 
@@ -451,7 +446,7 @@ cxgbit_uld_lro_rx_handler(void *hndl, const __be64 *rsp,
 	case CPL_RX_ISCSI_DDP:
 	case CPL_FW4_ACK:
 		lro_flush = false;
-		fallthrough;
+		/* fall through */
 	case CPL_ABORT_RPL_RSS:
 	case CPL_PASS_ESTABLISH:
 	case CPL_PEER_CLOSE:
@@ -596,8 +591,7 @@ static void cxgbit_dcb_workfn(struct work_struct *work)
 	iscsi_app = &dcb_work->dcb_app;
 
 	if (iscsi_app->dcbx & DCB_CAP_DCBX_VER_IEEE) {
-		if ((iscsi_app->app.selector != IEEE_8021QAZ_APP_SEL_STREAM) &&
-		    (iscsi_app->app.selector != IEEE_8021QAZ_APP_SEL_ANY))
+		if (iscsi_app->app.selector != IEEE_8021QAZ_APP_SEL_ANY)
 			goto out;
 
 		priority = iscsi_app->app.priority;
@@ -657,7 +651,7 @@ cxgbit_dcbevent_notify(struct notifier_block *nb, unsigned long action,
 }
 #endif
 
-static enum target_prot_op cxgbit_get_sup_prot_ops(struct iscsit_conn *conn)
+static enum target_prot_op cxgbit_get_sup_prot_ops(struct iscsi_conn *conn)
 {
 	return TARGET_PROT_NORMAL;
 }
@@ -683,7 +677,7 @@ static struct iscsit_transport cxgbit_transport = {
 	.iscsit_get_r2t_ttt	= cxgbit_get_r2t_ttt,
 	.iscsit_get_rx_pdu	= cxgbit_get_rx_pdu,
 	.iscsit_validate_params	= cxgbit_validate_params,
-	.iscsit_unmap_cmd	= cxgbit_unmap_cmd,
+	.iscsit_release_cmd	= cxgbit_release_cmd,
 	.iscsit_aborted_task	= iscsit_aborted_task,
 	.iscsit_get_sup_prot_ops = cxgbit_get_sup_prot_ops,
 };
@@ -715,7 +709,7 @@ static int __init cxgbit_init(void)
 	pr_info("%s dcb enabled.\n", DRV_NAME);
 	register_dcbevent_notifier(&cxgbit_dcbevent_nb);
 #endif
-	BUILD_BUG_ON(sizeof_field(struct sk_buff, cb) <
+	BUILD_BUG_ON(FIELD_SIZEOF(struct sk_buff, cb) <
 		     sizeof(union cxgbit_skb_cb));
 	return 0;
 }

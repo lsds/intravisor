@@ -26,11 +26,11 @@ struct bitmask *bitmask_alloc(unsigned int n)
 	struct bitmask *bmp;
 
 	bmp = malloc(sizeof(*bmp));
-	if (!bmp)
+	if (bmp == 0)
 		return 0;
 	bmp->size = n;
 	bmp->maskp = calloc(longsperbits(n), sizeof(unsigned long));
-	if (!bmp->maskp) {
+	if (bmp->maskp == 0) {
 		free(bmp);
 		return 0;
 	}
@@ -40,7 +40,7 @@ struct bitmask *bitmask_alloc(unsigned int n)
 /* Free `struct bitmask` */
 void bitmask_free(struct bitmask *bmp)
 {
-	if (!bmp)
+	if (bmp == 0)
 		return;
 	free(bmp->maskp);
 	bmp->maskp = (unsigned long *)0xdeadcdef;  /* double free tripwire */

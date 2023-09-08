@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * Samsung Exynos5420 SoC cpu device tree source
+ * SAMSUNG EXYNOS5420 SoC cpu device tree source
  *
  * Copyright (c) 2015 Samsung Electronics Co., Ltd.
  *		http://www.samsung.com
@@ -22,38 +22,6 @@
 		#address-cells = <1>;
 		#size-cells = <0>;
 
-		cpu-map {
-			cluster0 {
-				core0 {
-					cpu = <&cpu0>;
-				};
-				core1 {
-					cpu = <&cpu1>;
-				};
-				core2 {
-					cpu = <&cpu2>;
-				};
-				core3 {
-					cpu = <&cpu3>;
-				};
-			};
-
-			cluster1 {
-				core0 {
-					cpu = <&cpu4>;
-				};
-				core1 {
-					cpu = <&cpu5>;
-				};
-				core2 {
-					cpu = <&cpu6>;
-				};
-				core3 {
-					cpu = <&cpu7>;
-				};
-			};
-		};
-
 		cpu0: cpu@0 {
 			device_type = "cpu";
 			compatible = "arm,cortex-a15";
@@ -70,7 +38,6 @@
 			device_type = "cpu";
 			compatible = "arm,cortex-a15";
 			reg = <0x1>;
-			clocks = <&clock CLK_ARM_CLK>;
 			clock-frequency = <1800000000>;
 			cci-control-port = <&cci_control1>;
 			operating-points-v2 = <&cluster_a15_opp_table>;
@@ -82,7 +49,6 @@
 			device_type = "cpu";
 			compatible = "arm,cortex-a15";
 			reg = <0x2>;
-			clocks = <&clock CLK_ARM_CLK>;
 			clock-frequency = <1800000000>;
 			cci-control-port = <&cci_control1>;
 			operating-points-v2 = <&cluster_a15_opp_table>;
@@ -94,7 +60,6 @@
 			device_type = "cpu";
 			compatible = "arm,cortex-a15";
 			reg = <0x3>;
-			clocks = <&clock CLK_ARM_CLK>;
 			clock-frequency = <1800000000>;
 			cci-control-port = <&cci_control1>;
 			operating-points-v2 = <&cluster_a15_opp_table>;
@@ -118,7 +83,6 @@
 			device_type = "cpu";
 			compatible = "arm,cortex-a7";
 			reg = <0x101>;
-			clocks = <&clock CLK_KFC_CLK>;
 			clock-frequency = <1000000000>;
 			cci-control-port = <&cci_control0>;
 			operating-points-v2 = <&cluster_a7_opp_table>;
@@ -130,7 +94,6 @@
 			device_type = "cpu";
 			compatible = "arm,cortex-a7";
 			reg = <0x102>;
-			clocks = <&clock CLK_KFC_CLK>;
 			clock-frequency = <1000000000>;
 			cci-control-port = <&cci_control0>;
 			operating-points-v2 = <&cluster_a7_opp_table>;
@@ -142,7 +105,6 @@
 			device_type = "cpu";
 			compatible = "arm,cortex-a7";
 			reg = <0x103>;
-			clocks = <&clock CLK_KFC_CLK>;
 			clock-frequency = <1000000000>;
 			cci-control-port = <&cci_control0>;
 			operating-points-v2 = <&cluster_a7_opp_table>;

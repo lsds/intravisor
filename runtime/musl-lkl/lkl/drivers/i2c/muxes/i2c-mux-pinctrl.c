@@ -1,8 +1,19 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * I2C multiplexer using pinctrl API
  *
  * Copyright (c) 2012, NVIDIA CORPORATION.  All rights reserved.
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms and conditions of the GNU General Public License,
+ * version 2, as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+ * more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
 #include <linux/i2c.h>
@@ -16,7 +27,7 @@
 
 struct i2c_mux_pinctrl {
 	struct pinctrl *pinctrl;
-	struct pinctrl_state *states[];
+	struct pinctrl_state **states;
 };
 
 static int i2c_mux_pinctrl_select(struct i2c_mux_core *muxc, u32 chan)
@@ -93,13 +104,14 @@ static int i2c_mux_pinctrl_probe(struct platform_device *pdev)
 		return PTR_ERR(parent);
 
 	muxc = i2c_mux_alloc(parent, dev, num_names,
-			     struct_size(mux, states, num_names),
+			     sizeof(*mux) + num_names * sizeof(*mux->states),
 			     0, i2c_mux_pinctrl_select, NULL);
 	if (!muxc) {
 		ret = -ENOMEM;
 		goto err_put_parent;
 	}
 	mux = i2c_mux_priv(muxc);
+	mux->states = (struct pinctrl_state **)(mux + 1);
 
 	platform_set_drvdata(pdev, muxc);
 
@@ -185,7 +197,7 @@ MODULE_DEVICE_TABLE(of, i2c_mux_pinctrl_of_match);
 static struct platform_driver i2c_mux_pinctrl_driver = {
 	.driver	= {
 		.name	= "i2c-mux-pinctrl",
-		.of_match_table = i2c_mux_pinctrl_of_match,
+		.of_match_table = of_match_ptr(i2c_mux_pinctrl_of_match),
 	},
 	.probe	= i2c_mux_pinctrl_probe,
 	.remove	= i2c_mux_pinctrl_remove,

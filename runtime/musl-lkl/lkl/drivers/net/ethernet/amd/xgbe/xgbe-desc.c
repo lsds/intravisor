@@ -289,7 +289,7 @@ static int xgbe_alloc_pages(struct xgbe_prv_data *pdata,
 	struct page *pages = NULL;
 	dma_addr_t pages_dma;
 	gfp_t gfp;
-	int order;
+	int order, ret;
 
 again:
 	order = alloc_order;
@@ -316,9 +316,10 @@ again:
 	/* Map the pages */
 	pages_dma = dma_map_page(pdata->dev, pages, 0,
 				 PAGE_SIZE << order, DMA_FROM_DEVICE);
-	if (dma_mapping_error(pdata->dev, pages_dma)) {
+	ret = dma_mapping_error(pdata->dev, pages_dma);
+	if (ret) {
 		put_page(pages);
-		return -ENOMEM;
+		return ret;
 	}
 
 	pa->pages = pages;
@@ -526,7 +527,7 @@ static int xgbe_map_tx_skb(struct xgbe_channel *channel, struct sk_buff *skb)
 	struct xgbe_ring *ring = channel->tx_ring;
 	struct xgbe_ring_data *rdata;
 	struct xgbe_packet_data *packet;
-	skb_frag_t *frag;
+	struct skb_frag_struct *frag;
 	dma_addr_t skb_dma;
 	unsigned int start_index, cur_index;
 	unsigned int offset, tso, vlan, datalen, len;

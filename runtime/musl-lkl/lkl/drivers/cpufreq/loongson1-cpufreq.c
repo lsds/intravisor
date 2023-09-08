@@ -13,7 +13,6 @@
 #include <linux/cpu.h>
 #include <linux/cpufreq.h>
 #include <linux/delay.h>
-#include <linux/io.h>
 #include <linux/module.h>
 #include <linux/platform_device.h>
 #include <linux/slab.h>
@@ -81,7 +80,7 @@ static int ls1x_cpufreq_init(struct cpufreq_policy *policy)
 	struct device *cpu_dev = get_cpu_device(policy->cpu);
 	struct cpufreq_frequency_table *freq_tbl;
 	unsigned int pll_freq, freq;
-	int steps, i;
+	int steps, i, ret;
 
 	pll_freq = clk_get_rate(cpufreq->pll_clk) / 1000;
 
@@ -103,9 +102,11 @@ static int ls1x_cpufreq_init(struct cpufreq_policy *policy)
 	freq_tbl[i].frequency = CPUFREQ_TABLE_END;
 
 	policy->clk = cpufreq->clk;
-	cpufreq_generic_init(policy, freq_tbl, 0);
+	ret = cpufreq_generic_init(policy, freq_tbl, 0);
+	if (ret)
+		kfree(freq_tbl);
 
-	return 0;
+	return ret;
 }
 
 static int ls1x_cpufreq_exit(struct cpufreq_policy *policy)
@@ -116,7 +117,7 @@ static int ls1x_cpufreq_exit(struct cpufreq_policy *policy)
 
 static struct cpufreq_driver ls1x_cpufreq_driver = {
 	.name		= "cpufreq-ls1x",
-	.flags		= CPUFREQ_NEED_INITIAL_FREQ_CHECK,
+	.flags		= CPUFREQ_STICKY | CPUFREQ_NEED_INITIAL_FREQ_CHECK,
 	.verify		= cpufreq_generic_frequency_table_verify,
 	.target_index	= ls1x_cpufreq_target,
 	.get		= cpufreq_generic_get,
@@ -216,7 +217,6 @@ static struct platform_driver ls1x_cpufreq_platdrv = {
 
 module_platform_driver(ls1x_cpufreq_platdrv);
 
-MODULE_ALIAS("platform:ls1x-cpufreq");
 MODULE_AUTHOR("Kelvin Cheung <keguang.zhang@gmail.com>");
 MODULE_DESCRIPTION("Loongson1 CPUFreq driver");
 MODULE_LICENSE("GPL");

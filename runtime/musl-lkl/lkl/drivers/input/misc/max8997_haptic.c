@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * MAX8997-haptic controller driver
  *
@@ -6,6 +5,21 @@
  * Donggeun Kim <dg77.kim@samsung.com>
  *
  * This program is not provided / owned by Maxim Integrated Products.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ *
  */
 
 #include <linux/module.h>
@@ -61,10 +75,15 @@ static int max8997_haptic_set_duty_cycle(struct max8997_haptic *chip)
 		unsigned int duty = chip->pwm_period * chip->level / 100;
 		ret = pwm_config(chip->pwm, duty, chip->pwm_period);
 	} else {
+		int i;
 		u8 duty_index = 0;
 
-		duty_index = DIV_ROUND_UP(chip->level * 64, 100);
-
+		for (i = 0; i <= 64; i++) {
+			if (chip->level <= i * 100 / 64) {
+				duty_index = i;
+				break;
+			}
+		}
 		switch (chip->internal_mode_pattern) {
 		case 0:
 			max8997_write_reg(chip->client,

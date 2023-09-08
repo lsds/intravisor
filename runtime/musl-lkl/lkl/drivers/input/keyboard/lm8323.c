@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * drivers/i2c/chips/lm8323.c
  *
@@ -8,6 +7,19 @@
  *            Timo O. Karjalainen <timo.o.karjalainen@nokia.com>
  *
  * Updated by Felipe Balbi <felipe.balbi@nokia.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation (version 2 of the License only).
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
  */
 
 #include <linux/module.h>
@@ -752,7 +764,7 @@ fail1:
 	return err;
 }
 
-static void lm8323_remove(struct i2c_client *client)
+static int lm8323_remove(struct i2c_client *client)
 {
 	struct lm8323_chip *lm = i2c_get_clientdata(client);
 	int i;
@@ -769,6 +781,8 @@ static void lm8323_remove(struct i2c_client *client)
 			led_classdev_unregister(&lm->pwm[i].cdev);
 
 	kfree(lm);
+
+	return 0;
 }
 
 #ifdef CONFIG_PM_SLEEP

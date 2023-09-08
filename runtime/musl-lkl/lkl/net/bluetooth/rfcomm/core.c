@@ -40,6 +40,7 @@
 static bool disable_cfc;
 static bool l2cap_ertm;
 static int channel_mtu = -1;
+static unsigned int l2cap_mtu = RFCOMM_MAX_L2CAP_MTU;
 
 static struct task_struct *rfcomm_thread;
 
@@ -72,6 +73,8 @@ static struct rfcomm_session *rfcomm_session_del(struct rfcomm_session *s);
 
 /* ---- RFCOMM frame parsing macros ---- */
 #define __get_dlci(b)     ((b & 0xfc) >> 2)
+#define __get_channel(b)  ((b & 0xf8) >> 3)
+#define __get_dir(b)      ((b & 0x04) >> 2)
 #define __get_type(b)     ((b & 0xef))
 
 #define __test_ea(b)      ((b & 0x01))
@@ -84,6 +87,7 @@ static struct rfcomm_session *rfcomm_session_del(struct rfcomm_session *s);
 #define __ctrl(type, pf)       (((type & 0xef) | (pf << 4)))
 #define __dlci(dir, chn)       (((chn & 0x1f) << 1) | dir)
 #define __srv_channel(dlci)    (dlci >> 1)
+#define __dir(dlci)            (dlci & 0x01)
 
 #define __len8(len)       (((len) << 1) | 1)
 #define __len16(len)      ((len) << 1)
@@ -479,7 +483,6 @@ static int __rfcomm_dlc_close(struct rfcomm_dlc *d, int err)
 		/* if closing a dlc in a session that hasn't been started,
 		 * just close and unlink the dlc
 		 */
-		fallthrough;
 
 	default:
 		rfcomm_dlc_clear_timer(d);
@@ -549,58 +552,22 @@ struct rfcomm_dlc *rfcomm_dlc_exists(bdaddr_t *src, bdaddr_t *dst, u8 channel)
 	return dlc;
 }
 
-static int rfcomm_dlc_send_frag(struct rfcomm_dlc *d, struct sk_buff *frag)
+int rfcomm_dlc_send(struct rfcomm_dlc *d, struct sk_buff *skb)
 {
-	int len = frag->len;
+	int len = skb->len;
+
+	if (d->state != BT_CONNECTED)
+		return -ENOTCONN;
 
 	BT_DBG("dlc %p mtu %d len %d", d, d->mtu, len);
 
 	if (len > d->mtu)
 		return -EINVAL;
 
-	rfcomm_make_uih(frag, d->addr);
-	__skb_queue_tail(&d->tx_queue, frag);
+	rfcomm_make_uih(skb, d->addr);
+	skb_queue_tail(&d->tx_queue, skb);
 
-	return len;
-}
-
-int rfcomm_dlc_send(struct rfcomm_dlc *d, struct sk_buff *skb)
-{
-	unsigned long flags;
-	struct sk_buff *frag, *next;
-	int len;
-
-	if (d->state != BT_CONNECTED)
-		return -ENOTCONN;
-
-	frag = skb_shinfo(skb)->frag_list;
-	skb_shinfo(skb)->frag_list = NULL;
-
-	/* Queue all fragments atomically. */
-	spin_lock_irqsave(&d->tx_queue.lock, flags);
-
-	len = rfcomm_dlc_send_frag(d, skb);
-	if (len < 0 || !frag)
-		goto unlock;
-
-	for (; frag; frag = next) {
-		int ret;
-
-		next = frag->next;
-
-		ret = rfcomm_dlc_send_frag(d, frag);
-		if (ret < 0) {
-			kfree_skb(frag);
-			goto unlock;
-		}
-
-		len += ret;
-	}
-
-unlock:
-	spin_unlock_irqrestore(&d->tx_queue.lock, flags);
-
-	if (len > 0 && !test_bit(RFCOMM_TX_THROTTLED, &d->flags))
+	if (!test_bit(RFCOMM_TX_THROTTLED, &d->flags))
 		rfcomm_schedule();
 	return len;
 }
@@ -784,8 +751,7 @@ static struct rfcomm_session *rfcomm_session_create(bdaddr_t *src,
 	/* Set L2CAP options */
 	sk = sock->sk;
 	lock_sock(sk);
-	/* Set MTU to 0 so L2CAP can auto select the MTU */
-	l2cap_pi(sk)->chan->imtu = 0;
+	l2cap_pi(sk)->chan->imtu = l2cap_mtu;
 	l2cap_pi(sk)->chan->sec_level = sec_level;
 	if (l2cap_ertm)
 		l2cap_pi(sk)->chan->mode = L2CAP_MODE_ERTM;
@@ -2072,8 +2038,7 @@ static int rfcomm_add_listener(bdaddr_t *ba)
 	/* Set L2CAP options */
 	sk = sock->sk;
 	lock_sock(sk);
-	/* Set MTU to 0 so L2CAP can auto select the MTU */
-	l2cap_pi(sk)->chan->imtu = 0;
+	l2cap_pi(sk)->chan->imtu = l2cap_mtu;
 	release_sock(sk);
 
 	/* Start listening on the socket */
@@ -2201,7 +2166,17 @@ static int rfcomm_dlc_debugfs_show(struct seq_file *f, void *x)
 	return 0;
 }
 
-DEFINE_SHOW_ATTRIBUTE(rfcomm_dlc_debugfs);
+static int rfcomm_dlc_debugfs_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, rfcomm_dlc_debugfs_show, inode->i_private);
+}
+
+static const struct file_operations rfcomm_dlc_debugfs_fops = {
+	.open		= rfcomm_dlc_debugfs_open,
+	.read		= seq_read,
+	.llseek		= seq_lseek,
+	.release	= single_release,
+};
 
 static struct dentry *rfcomm_dlc_debugfs;
 
@@ -2270,6 +2245,9 @@ MODULE_PARM_DESC(disable_cfc, "Disable credit based flow control");
 
 module_param(channel_mtu, int, 0644);
 MODULE_PARM_DESC(channel_mtu, "Default MTU for the RFCOMM channel");
+
+module_param(l2cap_mtu, uint, 0644);
+MODULE_PARM_DESC(l2cap_mtu, "Default MTU for the L2CAP connection");
 
 module_param(l2cap_ertm, bool, 0644);
 MODULE_PARM_DESC(l2cap_ertm, "Use L2CAP ERTM mode for connection");

@@ -1,9 +1,12 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * X86 specific ACPICA environments and implementation
  *
  * Copyright (C) 2014, Intel Corporation
  *   Author: Lv Zheng <lv.zheng@intel.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 
 #ifndef _ASM_X86_ACENV_H
@@ -13,19 +16,7 @@
 
 /* Asm macros */
 
-/*
- * ACPI_FLUSH_CPU_CACHE() flushes caches on entering sleep states.
- * It is required to prevent data loss.
- *
- * While running inside virtual machine, the kernel can bypass cache flushing.
- * Changing sleep state in a virtual machine doesn't affect the host system
- * sleep state and cannot lead to data loss.
- */
-#define ACPI_FLUSH_CPU_CACHE()					\
-do {								\
-	if (!cpu_feature_enabled(X86_FEATURE_HYPERVISOR))	\
-		wbinvd();					\
-} while (0)
+#define ACPI_FLUSH_CPU_CACHE()	wbinvd()
 
 int __acpi_acquire_global_lock(unsigned int *lock);
 int __acpi_release_global_lock(unsigned int *lock);

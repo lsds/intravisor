@@ -1,9 +1,12 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * Disassemble SuperH instructions.
  *
  * Copyright (C) 1999 kaz Kojima
  * Copyright (C) 2008 Paul Mundt
+ *
+ * This file is subject to the terms and conditions of the GNU General Public
+ * License.  See the file "COPYING" in the main directory of this archive
+ * for more details.
  */
 #include <linux/kernel.h>
 #include <linux/string.h>
@@ -376,148 +379,149 @@ static void print_sh_insn(u32 memaddr, u16 insn)
 		}
 
 	ok:
-		pr_cont("%-8s  ", op->name);
+		printk("%-8s  ", op->name);
 		lastsp = (op->arg[0] == A_END);
 		disp_pc = 0;
 		for (n = 0; n < 6 && op->arg[n] != A_END; n++) {
 			if (n && op->arg[1] != A_END)
-				pr_cont(", ");
+				printk(", ");
 			switch (op->arg[n]) {
 			case A_IMM:
-				pr_cont("#%d", (char)(imm));
+				printk("#%d", (char)(imm));
 				break;
 			case A_R0:
-				pr_cont("r0");
+				printk("r0");
 				break;
 			case A_REG_N:
-				pr_cont("r%d", rn);
+				printk("r%d", rn);
 				break;
 			case A_INC_N:
-				pr_cont("@r%d+", rn);
+				printk("@r%d+", rn);
 				break;
 			case A_DEC_N:
-				pr_cont("@-r%d", rn);
+				printk("@-r%d", rn);
 				break;
 			case A_IND_N:
-				pr_cont("@r%d", rn);
+				printk("@r%d", rn);
 				break;
 			case A_DISP_REG_N:
-				pr_cont("@(%d,r%d)", imm, rn);
+				printk("@(%d,r%d)", imm, rn);
 				break;
 			case A_REG_M:
-				pr_cont("r%d", rm);
+				printk("r%d", rm);
 				break;
 			case A_INC_M:
-				pr_cont("@r%d+", rm);
+				printk("@r%d+", rm);
 				break;
 			case A_DEC_M:
-				pr_cont("@-r%d", rm);
+				printk("@-r%d", rm);
 				break;
 			case A_IND_M:
-				pr_cont("@r%d", rm);
+				printk("@r%d", rm);
 				break;
 			case A_DISP_REG_M:
-				pr_cont("@(%d,r%d)", imm, rm);
+				printk("@(%d,r%d)", imm, rm);
 				break;
 			case A_REG_B:
-				pr_cont("r%d_bank", rb);
+				printk("r%d_bank", rb);
 				break;
 			case A_DISP_PC:
 				disp_pc = 1;
 				disp_pc_addr = imm + 4 + (memaddr & relmask);
-				pr_cont("%08x <%pS>", disp_pc_addr,
-					(void *)disp_pc_addr);
+				printk("%08x <%pS>", disp_pc_addr,
+				       (void *)disp_pc_addr);
 				break;
 			case A_IND_R0_REG_N:
-				pr_cont("@(r0,r%d)", rn);
+				printk("@(r0,r%d)", rn);
 				break;
 			case A_IND_R0_REG_M:
-				pr_cont("@(r0,r%d)", rm);
+				printk("@(r0,r%d)", rm);
 				break;
 			case A_DISP_GBR:
-				pr_cont("@(%d,gbr)", imm);
+				printk("@(%d,gbr)",imm);
 				break;
 			case A_R0_GBR:
-				pr_cont("@(r0,gbr)");
+				printk("@(r0,gbr)");
 				break;
 			case A_BDISP12:
 			case A_BDISP8:
-				pr_cont("%08x", imm + memaddr);
+				printk("%08x", imm + memaddr);
 				break;
 			case A_SR:
-				pr_cont("sr");
+				printk("sr");
 				break;
 			case A_GBR:
-				pr_cont("gbr");
+				printk("gbr");
 				break;
 			case A_VBR:
-				pr_cont("vbr");
+				printk("vbr");
 				break;
 			case A_SSR:
-				pr_cont("ssr");
+				printk("ssr");
 				break;
 			case A_SPC:
-				pr_cont("spc");
+				printk("spc");
 				break;
 			case A_MACH:
-				pr_cont("mach");
+				printk("mach");
 				break;
 			case A_MACL:
-				pr_cont("macl");
+				printk("macl");
 				break;
 			case A_PR:
-				pr_cont("pr");
+				printk("pr");
 				break;
 			case A_SGR:
-				pr_cont("sgr");
+				printk("sgr");
 				break;
 			case A_DBR:
-				pr_cont("dbr");
+				printk("dbr");
 				break;
 			case FD_REG_N:
+				if (0)
+					goto d_reg_n;
 			case F_REG_N:
-				pr_cont("fr%d", rn);
+				printk("fr%d", rn);
 				break;
 			case F_REG_M:
-				pr_cont("fr%d", rm);
+				printk("fr%d", rm);
 				break;
 			case DX_REG_N:
 				if (rn & 1) {
-					pr_cont("xd%d", rn & ~1);
+					printk("xd%d", rn & ~1);
 					break;
 				}
-				fallthrough;
+			d_reg_n:
 			case D_REG_N:
-				pr_cont("dr%d", rn);
+				printk("dr%d", rn);
 				break;
 			case DX_REG_M:
 				if (rm & 1) {
-					pr_cont("xd%d", rm & ~1);
+					printk("xd%d", rm & ~1);
 					break;
 				}
-				fallthrough;
 			case D_REG_M:
-				pr_cont("dr%d", rm);
+				printk("dr%d", rm);
 				break;
 			case FPSCR_M:
 			case FPSCR_N:
-				pr_cont("fpscr");
+				printk("fpscr");
 				break;
 			case FPUL_M:
 			case FPUL_N:
-				pr_cont("fpul");
+				printk("fpul");
 				break;
 			case F_FR0:
-				pr_cont("fr0");
+				printk("fr0");
 				break;
 			case V_REG_N:
-				pr_cont("fv%d", rn*4);
+				printk("fv%d", rn*4);
 				break;
 			case V_REG_M:
-				pr_cont("fv%d", rm*4);
+				printk("fv%d", rm*4);
 				break;
 			case XMTRX_M4:
-				pr_cont("xmtrx");
+				printk("xmtrx");
 				break;
 			default:
 				return;
@@ -532,7 +536,7 @@ static void print_sh_insn(u32 memaddr, u16 insn)
 			else
 				__get_user(val, (u32 *)disp_pc_addr);
 
-			pr_cont("  ! %08x <%pS>", val, (void *)val);
+			printk("  ! %08x <%pS>", val, (void *)val);
 		}
 
 		return;
@@ -541,7 +545,7 @@ static void print_sh_insn(u32 memaddr, u16 insn)
 
 	}
 
-	pr_info(".word 0x%x%x%x%x", nibs[0], nibs[1], nibs[2], nibs[3]);
+	printk(".word 0x%x%x%x%x", nibs[0], nibs[1], nibs[2], nibs[3]);
 }
 
 void show_code(struct pt_regs *regs)
@@ -552,21 +556,20 @@ void show_code(struct pt_regs *regs)
 	if (regs->pc & 0x1)
 		return;
 
-	pr_info("Code:\n");
+	printk("Code:\n");
 
 	for (i = -3 ; i < 6 ; i++) {
 		unsigned short insn;
 
 		if (__get_user(insn, pc + i)) {
-			pr_err(" (Bad address in pc)\n");
+			printk(" (Bad address in pc)\n");
 			break;
 		}
 
-		pr_info("%s%08lx:  ", (i ? "  " : "->"),
-			(unsigned long)(pc + i));
+		printk("%s%08lx:  ", (i ? "  ": "->"), (unsigned long)(pc + i));
 		print_sh_insn((unsigned long)(pc + i), insn);
-		pr_cont("\n");
+		printk("\n");
 	}
 
-	pr_info("\n");
+	printk("\n");
 }

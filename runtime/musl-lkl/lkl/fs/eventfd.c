@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  *  fs/eventfd.c
  *
@@ -22,10 +21,6 @@
 #include <linux/eventfd.h>
 #include <linux/proc_fs.h>
 #include <linux/seq_file.h>
-#include <linux/idr.h>
-#include <linux/uio.h>
-
-static DEFINE_IDA(eventfd_ida);
 
 struct eventfd_ctx {
 	struct kref kref;
@@ -40,7 +35,6 @@ struct eventfd_ctx {
 	 */
 	__u64 count;
 	unsigned int flags;
-	int id;
 };
 
 /**
@@ -61,25 +55,12 @@ __u64 eventfd_signal(struct eventfd_ctx *ctx, __u64 n)
 {
 	unsigned long flags;
 
-	/*
-	 * Deadlock or stack overflow issues can happen if we recurse here
-	 * through waitqueue wakeup handlers. If the caller users potentially
-	 * nested waitqueues with custom wakeup handlers, then it should
-	 * check eventfd_signal_allowed() before calling this function. If
-	 * it returns false, the eventfd_signal() call should be deferred to a
-	 * safe context.
-	 */
-	if (WARN_ON_ONCE(current->in_eventfd))
-		return 0;
-
 	spin_lock_irqsave(&ctx->wqh.lock, flags);
-	current->in_eventfd = 1;
 	if (ULLONG_MAX - ctx->count < n)
 		n = ULLONG_MAX - ctx->count;
 	ctx->count += n;
 	if (waitqueue_active(&ctx->wqh))
 		wake_up_locked_poll(&ctx->wqh, EPOLLIN);
-	current->in_eventfd = 0;
 	spin_unlock_irqrestore(&ctx->wqh.lock, flags);
 
 	return n;
@@ -88,8 +69,6 @@ EXPORT_SYMBOL_GPL(eventfd_signal);
 
 static void eventfd_free_ctx(struct eventfd_ctx *ctx)
 {
-	if (ctx->id >= 0)
-		ida_simple_remove(&eventfd_ida, ctx->id);
 	kfree(ctx);
 }
 
@@ -180,14 +159,11 @@ static __poll_t eventfd_poll(struct file *file, poll_table *wait)
 	return events;
 }
 
-void eventfd_ctx_do_read(struct eventfd_ctx *ctx, __u64 *cnt)
+static void eventfd_ctx_do_read(struct eventfd_ctx *ctx, __u64 *cnt)
 {
-	lockdep_assert_held(&ctx->wqh.lock);
-
 	*cnt = (ctx->flags & EFD_SEMAPHORE) ? 1 : ctx->count;
 	ctx->count -= *cnt;
 }
-EXPORT_SYMBOL_GPL(eventfd_ctx_do_read);
 
 /**
  * eventfd_ctx_remove_wait_queue - Read the current counter and removes wait queue.
@@ -218,32 +194,32 @@ int eventfd_ctx_remove_wait_queue(struct eventfd_ctx *ctx, wait_queue_entry_t *w
 }
 EXPORT_SYMBOL_GPL(eventfd_ctx_remove_wait_queue);
 
-static ssize_t eventfd_read(struct kiocb *iocb, struct iov_iter *to)
+static ssize_t eventfd_read(struct file *file, char __user *buf, size_t count,
+			    loff_t *ppos)
 {
-	struct file *file = iocb->ki_filp;
 	struct eventfd_ctx *ctx = file->private_data;
+	ssize_t res;
 	__u64 ucnt = 0;
 	DECLARE_WAITQUEUE(wait, current);
 
-	if (iov_iter_count(to) < sizeof(ucnt))
+	if (count < sizeof(ucnt))
 		return -EINVAL;
+
 	spin_lock_irq(&ctx->wqh.lock);
-	if (!ctx->count) {
-		if ((file->f_flags & O_NONBLOCK) ||
-		    (iocb->ki_flags & IOCB_NOWAIT)) {
-			spin_unlock_irq(&ctx->wqh.lock);
-			return -EAGAIN;
-		}
+	res = -EAGAIN;
+	if (ctx->count > 0)
+		res = sizeof(ucnt);
+	else if (!(file->f_flags & O_NONBLOCK)) {
 		__add_wait_queue(&ctx->wqh, &wait);
 		for (;;) {
 			set_current_state(TASK_INTERRUPTIBLE);
-			if (ctx->count)
+			if (ctx->count > 0) {
+				res = sizeof(ucnt);
 				break;
+			}
 			if (signal_pending(current)) {
-				__remove_wait_queue(&ctx->wqh, &wait);
-				__set_current_state(TASK_RUNNING);
-				spin_unlock_irq(&ctx->wqh.lock);
-				return -ERESTARTSYS;
+				res = -ERESTARTSYS;
+				break;
 			}
 			spin_unlock_irq(&ctx->wqh.lock);
 			schedule();
@@ -252,16 +228,17 @@ static ssize_t eventfd_read(struct kiocb *iocb, struct iov_iter *to)
 		__remove_wait_queue(&ctx->wqh, &wait);
 		__set_current_state(TASK_RUNNING);
 	}
-	eventfd_ctx_do_read(ctx, &ucnt);
-	current->in_eventfd = 1;
-	if (waitqueue_active(&ctx->wqh))
-		wake_up_locked_poll(&ctx->wqh, EPOLLOUT);
-	current->in_eventfd = 0;
+	if (likely(res > 0)) {
+		eventfd_ctx_do_read(ctx, &ucnt);
+		if (waitqueue_active(&ctx->wqh))
+			wake_up_locked_poll(&ctx->wqh, EPOLLOUT);
+	}
 	spin_unlock_irq(&ctx->wqh.lock);
-	if (unlikely(copy_to_iter(&ucnt, sizeof(ucnt), to) != sizeof(ucnt)))
+
+	if (res > 0 && put_user(ucnt, (__u64 __user *)buf))
 		return -EFAULT;
 
-	return sizeof(ucnt);
+	return res;
 }
 
 static ssize_t eventfd_write(struct file *file, const char __user *buf, size_t count,
@@ -303,10 +280,8 @@ static ssize_t eventfd_write(struct file *file, const char __user *buf, size_t c
 	}
 	if (likely(res > 0)) {
 		ctx->count += ucnt;
-		current->in_eventfd = 1;
 		if (waitqueue_active(&ctx->wqh))
 			wake_up_locked_poll(&ctx->wqh, EPOLLIN);
-		current->in_eventfd = 0;
 	}
 	spin_unlock_irq(&ctx->wqh.lock);
 
@@ -322,7 +297,6 @@ static void eventfd_show_fdinfo(struct seq_file *m, struct file *f)
 	seq_printf(m, "eventfd-count: %16llx\n",
 		   (unsigned long long)ctx->count);
 	spin_unlock_irq(&ctx->wqh.lock);
-	seq_printf(m, "eventfd-id: %d\n", ctx->id);
 }
 #endif
 
@@ -332,7 +306,7 @@ static const struct file_operations eventfd_fops = {
 #endif
 	.release	= eventfd_release,
 	.poll		= eventfd_poll,
-	.read_iter	= eventfd_read,
+	.read		= eventfd_read,
 	.write		= eventfd_write,
 	.llseek		= noop_llseek,
 };
@@ -409,7 +383,6 @@ EXPORT_SYMBOL_GPL(eventfd_ctx_fileget);
 static int do_eventfd(unsigned int count, int flags)
 {
 	struct eventfd_ctx *ctx;
-	struct file *file;
 	int fd;
 
 	/* Check the EFD_* constants for consistency.  */
@@ -427,26 +400,12 @@ static int do_eventfd(unsigned int count, int flags)
 	init_waitqueue_head(&ctx->wqh);
 	ctx->count = count;
 	ctx->flags = flags;
-	ctx->id = ida_simple_get(&eventfd_ida, 0, 0, GFP_KERNEL);
 
-	flags &= EFD_SHARED_FCNTL_FLAGS;
-	flags |= O_RDWR;
-	fd = get_unused_fd_flags(flags);
+	fd = anon_inode_getfd("[eventfd]", &eventfd_fops, ctx,
+			      O_RDWR | (flags & EFD_SHARED_FCNTL_FLAGS));
 	if (fd < 0)
-		goto err;
+		eventfd_free_ctx(ctx);
 
-	file = anon_inode_getfile("[eventfd]", &eventfd_fops, ctx, flags);
-	if (IS_ERR(file)) {
-		put_unused_fd(fd);
-		fd = PTR_ERR(file);
-		goto err;
-	}
-
-	file->f_mode |= FMODE_NOWAIT;
-	fd_install(fd, file);
-	return fd;
-err:
-	eventfd_free_ctx(ctx);
 	return fd;
 }
 

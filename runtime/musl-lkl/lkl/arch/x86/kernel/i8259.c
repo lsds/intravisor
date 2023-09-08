@@ -5,7 +5,6 @@
 #include <linux/sched.h>
 #include <linux/ioport.h>
 #include <linux/interrupt.h>
-#include <linux/irq.h>
 #include <linux/timex.h>
 #include <linux/random.h>
 #include <linux/init.h>
@@ -15,11 +14,11 @@
 #include <linux/acpi.h>
 #include <linux/io.h>
 #include <linux/delay.h>
-#include <linux/pgtable.h>
 
 #include <linux/atomic.h>
 #include <asm/timer.h>
 #include <asm/hw_irq.h>
+#include <asm/pgtable.h>
 #include <asm/desc.h>
 #include <asm/apic.h>
 #include <asm/i8259.h>
@@ -207,7 +206,7 @@ spurious_8259A_irq:
 		 * lets ACK and report it. [once per IRQ]
 		 */
 		if (!(spurious_irq_mask & irqmask)) {
-			printk_deferred(KERN_DEBUG
+			printk(KERN_DEBUG
 			       "spurious 8259A interrupt: IRQ%d.\n", irq);
 			spurious_irq_mask |= irqmask;
 		}
@@ -235,15 +234,15 @@ static char irq_trigger[2];
  */
 static void restore_ELCR(char *trigger)
 {
-	outb(trigger[0], PIC_ELCR1);
-	outb(trigger[1], PIC_ELCR2);
+	outb(trigger[0], 0x4d0);
+	outb(trigger[1], 0x4d1);
 }
 
 static void save_ELCR(char *trigger)
 {
 	/* IRQ 0,1,2,8,13 are marked as reserved */
-	trigger[0] = inb(PIC_ELCR1) & 0xF8;
-	trigger[1] = inb(PIC_ELCR2) & 0xDE;
+	trigger[0] = inb(0x4d0) & 0xF8;
+	trigger[1] = inb(0x4d1) & 0xDE;
 }
 
 static void i8259A_resume(void)

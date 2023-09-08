@@ -1,10 +1,24 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * OMAP thermal driver interface
  *
  * Copyright (C) 2012 Texas Instruments Incorporated - http://www.ti.com/
  * Contact:
  *   Eduardo Valentin <eduardo.valentin@ti.com>
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * version 2 as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
+ * 02110-1301 USA
+ *
  */
 
 #include <linux/device.h>
@@ -21,7 +35,6 @@
 
 #include "ti-thermal.h"
 #include "ti-bandgap.h"
-#include "../thermal_hwmon.h"
 
 /* common data structures */
 struct ti_thermal_data {
@@ -65,10 +78,10 @@ static inline int ti_thermal_hotspot_temperature(int t, int s, int c)
 
 /* thermal zone ops */
 /* Get temperature callback function for thermal zone */
-static inline int __ti_thermal_get_temp(struct thermal_zone_device *tz, int *temp)
+static inline int __ti_thermal_get_temp(void *devdata, int *temp)
 {
 	struct thermal_zone_device *pcb_tz = NULL;
-	struct ti_thermal_data *data = tz->devdata;
+	struct ti_thermal_data *data = devdata;
 	struct ti_bandgap *bgp;
 	const struct ti_temp_sensor *s;
 	int ret, tmp, slope, constant;
@@ -85,8 +98,8 @@ static inline int __ti_thermal_get_temp(struct thermal_zone_device *tz, int *tem
 		return ret;
 
 	/* Default constants */
-	slope = thermal_zone_get_slope(tz);
-	constant = thermal_zone_get_offset(tz);
+	slope = thermal_zone_get_slope(data->ti_thermal);
+	constant = thermal_zone_get_offset(data->ti_thermal);
 
 	pcb_tz = data->pcb_tz;
 	/* In case pcb zone is available, use the extrapolation rule with it */
@@ -107,9 +120,17 @@ static inline int __ti_thermal_get_temp(struct thermal_zone_device *tz, int *tem
 	return ret;
 }
 
-static int __ti_thermal_get_trend(struct thermal_zone_device *tz, int trip, enum thermal_trend *trend)
+static inline int ti_thermal_get_temp(struct thermal_zone_device *thermal,
+				      int *temp)
 {
-	struct ti_thermal_data *data = tz->devdata;
+	struct ti_thermal_data *data = thermal->devdata;
+
+	return __ti_thermal_get_temp(data, temp);
+}
+
+static int __ti_thermal_get_trend(void *p, int trip, enum thermal_trend *trend)
+{
+	struct ti_thermal_data *data = p;
 	struct ti_bandgap *bgp;
 	int id, tr, ret = 0;
 
@@ -130,7 +151,7 @@ static int __ti_thermal_get_trend(struct thermal_zone_device *tz, int trip, enum
 	return 0;
 }
 
-static const struct thermal_zone_device_ops ti_of_thermal_ops = {
+static const struct thermal_zone_of_device_ops ti_of_thermal_ops = {
 	.get_temp = __ti_thermal_get_temp,
 	.get_trend = __ti_thermal_get_trend,
 };
@@ -159,31 +180,26 @@ int ti_thermal_expose_sensor(struct ti_bandgap *bgp, int id,
 			     char *domain)
 {
 	struct ti_thermal_data *data;
-	int interval;
 
 	data = ti_bandgap_get_sensor_data(bgp, id);
 
-	if (IS_ERR_OR_NULL(data))
+	if (!data || IS_ERR(data))
 		data = ti_thermal_build_data(bgp, id);
 
 	if (!data)
 		return -EINVAL;
 
 	/* in case this is specified by DT */
-	data->ti_thermal = devm_thermal_of_zone_register(bgp->dev, id,
+	data->ti_thermal = devm_thermal_zone_of_sensor_register(bgp->dev, id,
 					data, &ti_of_thermal_ops);
 	if (IS_ERR(data->ti_thermal)) {
 		dev_err(bgp->dev, "thermal zone device is NULL\n");
 		return PTR_ERR(data->ti_thermal);
 	}
 
-	interval = jiffies_to_msecs(data->ti_thermal->polling_delay_jiffies);
-
 	ti_bandgap_set_sensor_data(bgp, id, data);
-	ti_bandgap_write_update_interval(bgp, data->sensor_id, interval);
-
-	if (devm_thermal_add_hwmon_sysfs(data->ti_thermal))
-		dev_warn(bgp->dev, "failed to add hwmon sysfs attributes\n");
+	ti_bandgap_write_update_interval(bgp, data->sensor_id,
+					data->ti_thermal->polling_delay);
 
 	return 0;
 }
@@ -194,7 +210,7 @@ int ti_thermal_remove_sensor(struct ti_bandgap *bgp, int id)
 
 	data = ti_bandgap_get_sensor_data(bgp, id);
 
-	if (!IS_ERR_OR_NULL(data) && data->ti_thermal) {
+	if (data && data->ti_thermal) {
 		if (data->our_zone)
 			thermal_zone_device_unregister(data->ti_thermal);
 	}
@@ -260,7 +276,7 @@ int ti_thermal_unregister_cpu_cooling(struct ti_bandgap *bgp, int id)
 
 	data = ti_bandgap_get_sensor_data(bgp, id);
 
-	if (!IS_ERR_OR_NULL(data)) {
+	if (data) {
 		cpufreq_cooling_unregister(data->cool_dev);
 		if (data->policy)
 			cpufreq_cpu_put(data->policy);

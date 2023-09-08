@@ -58,9 +58,7 @@
  *  BE  shift left / mask 0 0 X X
  */
 
-#if XCHAL_HAVE_WINDOWED
 #define UNALIGNED_USER_EXCEPTION
-#endif
 
 #if XCHAL_HAVE_BE
 

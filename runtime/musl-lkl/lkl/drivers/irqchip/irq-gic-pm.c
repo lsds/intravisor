@@ -1,6 +1,17 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (C) 2016 NVIDIA CORPORATION, All Rights Reserved.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 #include <linux/module.h>
 #include <linux/clk.h>
@@ -8,6 +19,7 @@
 #include <linux/of_irq.h>
 #include <linux/irqchip/arm-gic.h>
 #include <linux/platform_device.h>
+#include <linux/pm_clock.h>
 #include <linux/pm_runtime.h>
 #include <linux/slab.h>
 
@@ -16,25 +28,17 @@ struct gic_clk_data {
 	const char *const *clocks;
 };
 
-struct gic_chip_pm {
-	struct gic_chip_data *chip_data;
-	const struct gic_clk_data *clk_data;
-	struct clk_bulk_data *clks;
-};
-
 static int gic_runtime_resume(struct device *dev)
 {
-	struct gic_chip_pm *chip_pm = dev_get_drvdata(dev);
-	struct gic_chip_data *gic = chip_pm->chip_data;
-	const struct gic_clk_data *data = chip_pm->clk_data;
+	struct gic_chip_data *gic = dev_get_drvdata(dev);
 	int ret;
 
-	ret = clk_bulk_prepare_enable(data->num_clocks, chip_pm->clks);
+	ret = pm_clk_resume(dev);
 	if (ret)
 		return ret;
 
 	/*
-	 * On the very first resume, the pointer to chip_pm->chip_data
+	 * On the very first resume, the pointer to the driver data
 	 * will be NULL and this is intentional, because we do not
 	 * want to restore the GIC on the very first resume. So if
 	 * the pointer is not valid just return.
@@ -50,14 +54,35 @@ static int gic_runtime_resume(struct device *dev)
 
 static int gic_runtime_suspend(struct device *dev)
 {
-	struct gic_chip_pm *chip_pm = dev_get_drvdata(dev);
-	struct gic_chip_data *gic = chip_pm->chip_data;
-	const struct gic_clk_data *data = chip_pm->clk_data;
+	struct gic_chip_data *gic = dev_get_drvdata(dev);
 
 	gic_dist_save(gic);
 	gic_cpu_save(gic);
 
-	clk_bulk_disable_unprepare(data->num_clocks, chip_pm->clks);
+	return pm_clk_suspend(dev);
+}
+
+static int gic_get_clocks(struct device *dev, const struct gic_clk_data *data)
+{
+	unsigned int i;
+	int ret;
+
+	if (!dev || !data)
+		return -EINVAL;
+
+	ret = pm_clk_create(dev);
+	if (ret)
+		return ret;
+
+	for (i = 0; i < data->num_clocks; i++) {
+		ret = of_pm_clk_add_clk(dev, data->clocks[i]);
+		if (ret) {
+			dev_err(dev, "failed to add clock %s\n",
+				data->clocks[i]);
+			pm_clk_destroy(dev);
+			return ret;
+		}
+	}
 
 	return 0;
 }
@@ -66,8 +91,8 @@ static int gic_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
 	const struct gic_clk_data *data;
-	struct gic_chip_pm *chip_pm;
-	int ret, irq, i;
+	struct gic_chip_data *gic;
+	int ret, irq;
 
 	data = of_device_get_match_data(&pdev->dev);
 	if (!data) {
@@ -75,30 +100,15 @@ static int gic_probe(struct platform_device *pdev)
 		return -ENODEV;
 	}
 
-	chip_pm = devm_kzalloc(dev, sizeof(*chip_pm), GFP_KERNEL);
-	if (!chip_pm)
-		return -ENOMEM;
-
 	irq = irq_of_parse_and_map(dev->of_node, 0);
 	if (!irq) {
 		dev_err(dev, "no parent interrupt found!\n");
 		return -EINVAL;
 	}
 
-	chip_pm->clks = devm_kcalloc(dev, data->num_clocks,
-				     sizeof(*chip_pm->clks), GFP_KERNEL);
-	if (!chip_pm->clks)
-		return -ENOMEM;
-
-	for (i = 0; i < data->num_clocks; i++)
-		chip_pm->clks[i].id = data->clocks[i];
-
-	ret = devm_clk_bulk_get(dev, data->num_clocks, chip_pm->clks);
+	ret = gic_get_clocks(dev, data);
 	if (ret)
 		goto irq_dispose;
-
-	chip_pm->clk_data = data;
-	dev_set_drvdata(dev, chip_pm);
 
 	pm_runtime_enable(dev);
 
@@ -106,9 +116,11 @@ static int gic_probe(struct platform_device *pdev)
 	if (ret < 0)
 		goto rpm_disable;
 
-	ret = gic_of_init_child(dev, &chip_pm->chip_data, irq);
+	ret = gic_of_init_child(dev, &gic, irq);
 	if (ret)
 		goto rpm_put;
+
+	platform_set_drvdata(pdev, gic);
 
 	pm_runtime_put(dev);
 
@@ -120,6 +132,7 @@ rpm_put:
 	pm_runtime_put_sync(dev);
 rpm_disable:
 	pm_runtime_disable(dev);
+	pm_clk_destroy(dev);
 irq_dispose:
 	irq_dispose_mapping(irq);
 
@@ -129,8 +142,6 @@ irq_dispose:
 static const struct dev_pm_ops gic_pm_ops = {
 	SET_RUNTIME_PM_OPS(gic_runtime_suspend,
 			   gic_runtime_resume, NULL)
-	SET_LATE_SYSTEM_SLEEP_PM_OPS(pm_runtime_force_suspend,
-				     pm_runtime_force_resume)
 };
 
 static const char * const gic400_clocks[] = {

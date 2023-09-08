@@ -108,7 +108,7 @@ struct snd_us16x08_meter_store {
 };
 
 struct snd_us16x08_control_params {
-	const struct snd_kcontrol_new *kcontrol_new;
+	struct snd_kcontrol_new *kcontrol_new;
 	int control_id;
 	int type;
 	int num_channels;

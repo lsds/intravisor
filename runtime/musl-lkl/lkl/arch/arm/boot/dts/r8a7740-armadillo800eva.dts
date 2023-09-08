@@ -1,8 +1,11 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * Device Tree Source for the armadillo 800 eva board
  *
  * Copyright (C) 2012 Renesas Solutions Corp.
+ *
+ * This file is licensed under the terms of the GNU General Public License
+ * version 2.  This program is licensed "as is" without any warranty of any
+ * kind, whether express or implied.
  */
 
 /dts-v1/;
@@ -21,7 +24,7 @@
 	};
 
 	chosen {
-		bootargs = "earlyprintk ignore_loglevel root=/dev/nfs ip=on rw";
+		bootargs = "earlyprintk ignore_loglevel root=/dev/nfs ip=dhcp rw";
 		stdout-path = "serial0:115200n8";
 	};
 
@@ -60,7 +63,8 @@
 
 		enable-gpio = <&pfc 74 GPIO_ACTIVE_HIGH>;
 		gpios = <&pfc 17 GPIO_ACTIVE_HIGH>;
-		states = <3300000 0>, <1800000 1>;
+		states = <3300000 0
+			  1800000 1>;
 
 		enable-active-high;
 	};
@@ -170,10 +174,7 @@
 	status = "okay";
 
 	phy0: ethernet-phy@0 {
-		compatible = "ethernet-phy-id0007.c0f1",
-			     "ethernet-phy-ieee802.3-c22";
 		reg = <0>;
-		reset-gpios = <&pfc 18 GPIO_ACTIVE_LOW>;
 	};
 };
 
@@ -266,7 +267,7 @@
 		function = "lcd0";
 	};
 
-	lcd0-mux-hog {
+	lcd0_mux {
 		/* DBGMD/LCDC0/FSIA MUX */
 		gpio-hog;
 		gpios = <176 0>;

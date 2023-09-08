@@ -2,16 +2,19 @@
 /* Copyright (C) 2000-2002 Joakim Axelsson <gozem@linux.nu>
  *                         Patrick Schaaf <bof@bof.de>
  *                         Martin Josefsson <gandalf@wlug.westbo.se>
- * Copyright (C) 2003-2011 Jozsef Kadlecsik <kadlec@netfilter.org>
+ * Copyright (C) 2003-2011 Jozsef Kadlecsik <kadlec@blackhole.kfki.hu>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 #ifndef _UAPI_IP_SET_H
 #define _UAPI_IP_SET_H
 
 #include <linux/types.h>
 
-/* The protocol versions */
-#define IPSET_PROTOCOL		7
-#define IPSET_PROTOCOL_MIN	6
+/* The protocol version */
+#define IPSET_PROTOCOL		6
 
 /* The max length of strings including NUL: set and type identifiers */
 #define IPSET_MAXNAMELEN	32
@@ -35,19 +38,17 @@ enum ipset_cmd {
 	IPSET_CMD_TEST,		/* 11: Test an element in a set */
 	IPSET_CMD_HEADER,	/* 12: Get set header data only */
 	IPSET_CMD_TYPE,		/* 13: Get set type */
-	IPSET_CMD_GET_BYNAME,	/* 14: Get set index by name */
-	IPSET_CMD_GET_BYINDEX,	/* 15: Get set name by index */
 	IPSET_MSG_MAX,		/* Netlink message commands */
 
 	/* Commands in userspace: */
-	IPSET_CMD_RESTORE = IPSET_MSG_MAX, /* 16: Enter restore mode */
-	IPSET_CMD_HELP,		/* 17: Get help */
-	IPSET_CMD_VERSION,	/* 18: Get program version */
-	IPSET_CMD_QUIT,		/* 19: Quit from interactive mode */
+	IPSET_CMD_RESTORE = IPSET_MSG_MAX, /* 14: Enter restore mode */
+	IPSET_CMD_HELP,		/* 15: Get help */
+	IPSET_CMD_VERSION,	/* 16: Get program version */
+	IPSET_CMD_QUIT,		/* 17: Quit from interactive mode */
 
 	IPSET_CMD_MAX,
 
-	IPSET_CMD_COMMIT = IPSET_CMD_MAX, /* 20: Commit buffered commands */
+	IPSET_CMD_COMMIT = IPSET_CMD_MAX, /* 18: Commit buffered commands */
 };
 
 /* Attributes at command level */
@@ -65,7 +66,6 @@ enum {
 	IPSET_ATTR_LINENO,	/* 9: Restore lineno */
 	IPSET_ATTR_PROTOCOL_MIN, /* 10: Minimal supported version number */
 	IPSET_ATTR_REVISION_MIN	= IPSET_ATTR_PROTOCOL_MIN, /* type rev min */
-	IPSET_ATTR_INDEX,	/* 11: Kernel index of set */
 	__IPSET_ATTR_CMD_MAX,
 };
 #define IPSET_ATTR_CMD_MAX	(__IPSET_ATTR_CMD_MAX - 1)
@@ -88,11 +88,11 @@ enum {
 	/* Reserve empty slots */
 	IPSET_ATTR_CADT_MAX = 16,
 	/* Create-only specific attributes */
-	IPSET_ATTR_INITVAL,	/* was unused IPSET_ATTR_GC */
+	IPSET_ATTR_GC,
 	IPSET_ATTR_HASHSIZE,
 	IPSET_ATTR_MAXELEM,
 	IPSET_ATTR_NETMASK,
-	IPSET_ATTR_BUCKETSIZE,	/* was unused IPSET_ATTR_PROBES */
+	IPSET_ATTR_PROBES,
 	IPSET_ATTR_RESIZE,
 	IPSET_ATTR_SIZE,
 	/* Kernel-only */
@@ -201,8 +201,6 @@ enum ipset_cadt_flags {
 	IPSET_FLAG_WITH_FORCEADD = (1 << IPSET_FLAG_BIT_WITH_FORCEADD),
 	IPSET_FLAG_BIT_WITH_SKBINFO = 6,
 	IPSET_FLAG_WITH_SKBINFO = (1 << IPSET_FLAG_BIT_WITH_SKBINFO),
-	IPSET_FLAG_BIT_IFACE_WILDCARD = 7,
-	IPSET_FLAG_IFACE_WILDCARD = (1 << IPSET_FLAG_BIT_IFACE_WILDCARD),
 	IPSET_FLAG_CADT_MAX	= 15,
 };
 
@@ -210,8 +208,6 @@ enum ipset_cadt_flags {
 enum ipset_create_flags {
 	IPSET_CREATE_FLAG_BIT_FORCEADD = 0,
 	IPSET_CREATE_FLAG_FORCEADD = (1 << IPSET_CREATE_FLAG_BIT_FORCEADD),
-	IPSET_CREATE_FLAG_BIT_BUCKETSIZE = 1,
-	IPSET_CREATE_FLAG_BUCKETSIZE = (1 << IPSET_CREATE_FLAG_BIT_BUCKETSIZE),
 	IPSET_CREATE_FLAG_BIT_MAX = 7,
 };
 
@@ -227,7 +223,6 @@ enum ipset_adt {
 
 /* Sets are identified by an index in kernel space. Tweak with ip_set_id_t
  * and IPSET_INVALID_ID if you want to increase the max number of sets.
- * Also, IPSET_ATTR_INDEX must be changed.
  */
 typedef __u16 ip_set_id_t;
 

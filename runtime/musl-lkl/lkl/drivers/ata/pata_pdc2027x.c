@@ -1,6 +1,10 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  *  Promise PATA TX2/TX4/TX2000/133 IDE driver for pdc20268 to pdc20277.
+ *
+ *  This program is free software; you can redistribute it and/or
+ *  modify it under the terms of the GNU General Public License
+ *  as published by the Free Software Foundation; either version
+ *  2 of the License, or (at your option) any later version.
  *
  *  Ported to libata by:
  *  Albert Lee <albertcc@tw.ibm.com> IBM Corporation
@@ -11,10 +15,12 @@
  *  Author: Frank Tiernan (frankt@promise.com)
  *  Released under terms of General Public License
  *
+ *
  *  libata documentation is available via 'make {ps|pdf}docs',
  *  as Documentation/driver-api/libata.rst
  *
  *  Hardware information only available under NDA.
+ *
  */
 #include <linux/kernel.h>
 #include <linux/module.h>
@@ -30,6 +36,13 @@
 
 #define DRV_NAME	"pata_pdc2027x"
 #define DRV_VERSION	"1.0"
+#undef PDC_DEBUG
+
+#ifdef PDC_DEBUG
+#define PDPRINTK(fmt, args...) printk(KERN_ERR "%s: " fmt, __func__, ## args)
+#else
+#define PDPRINTK(fmt, args...)
+#endif
 
 enum {
 	PDC_MMIO_BAR		= 5,
@@ -57,7 +70,7 @@ static int pdc2027x_prereset(struct ata_link *link, unsigned long deadline);
 static void pdc2027x_set_piomode(struct ata_port *ap, struct ata_device *adev);
 static void pdc2027x_set_dmamode(struct ata_port *ap, struct ata_device *adev);
 static int pdc2027x_check_atapi_dma(struct ata_queued_cmd *qc);
-static unsigned int pdc2027x_mode_filter(struct ata_device *adev, unsigned int mask);
+static unsigned long pdc2027x_mode_filter(struct ata_device *adev, unsigned long mask);
 static int pdc2027x_cable_detect(struct ata_port *ap);
 static int pdc2027x_set_mode(struct ata_link *link, struct ata_device **r_failed);
 
@@ -189,7 +202,7 @@ static inline void __iomem *dev_mmio(struct ata_port *ap, struct ata_device *ade
 }
 
 /**
- *	pdc2027x_cable_detect - Probe host controller cable detect info
+ *	pdc2027x_pata_cable_detect - Probe host controller cable detect info
  *	@ap: Port for which cable detect info is desired
  *
  *	Read 80c cable indicator from Promise extended register.
@@ -207,11 +220,11 @@ static int pdc2027x_cable_detect(struct ata_port *ap)
 	if (cgcr & (1 << 26))
 		goto cbl40;
 
-	ata_port_dbg(ap, "No cable or 80-conductor cable\n");
+	PDPRINTK("No cable or 80-conductor cable on port %d\n", ap->port_no);
 
 	return ATA_CBL_PATA80;
 cbl40:
-	ata_port_info(ap, DRV_NAME ":40-conductor cable detected\n");
+	printk(KERN_INFO DRV_NAME ": 40-conductor cable detected on port %d\n", ap->port_no);
 	return ATA_CBL_PATA40;
 }
 
@@ -244,14 +257,14 @@ static int pdc2027x_prereset(struct ata_link *link, unsigned long deadline)
 }
 
 /**
- *	pdc2027x_mode_filter	-	mode selection filter
+ *	pdc2720x_mode_filter	-	mode selection filter
  *	@adev: ATA device
  *	@mask: list of modes proposed
  *
  *	Block UDMA on devices that cause trouble with this controller.
  */
 
-static unsigned int pdc2027x_mode_filter(struct ata_device *adev, unsigned int mask)
+static unsigned long pdc2027x_mode_filter(struct ata_device *adev, unsigned long mask)
 {
 	unsigned char model_num[ATA_ID_PROD_LEN + 1];
 	struct ata_device *pair = ata_dev_pair(adev);
@@ -285,17 +298,17 @@ static void pdc2027x_set_piomode(struct ata_port *ap, struct ata_device *adev)
 	unsigned int pio = adev->pio_mode - XFER_PIO_0;
 	u32 ctcr0, ctcr1;
 
-	ata_port_dbg(ap, "adev->pio_mode[%X]\n", adev->pio_mode);
+	PDPRINTK("adev->pio_mode[%X]\n", adev->pio_mode);
 
 	/* Sanity check */
 	if (pio > 4) {
-		ata_port_err(ap, "Unknown pio mode [%d] ignored\n", pio);
+		printk(KERN_ERR DRV_NAME ": Unknown pio mode [%d] ignored\n", pio);
 		return;
 
 	}
 
 	/* Set the PIO timing registers using value table for 133MHz */
-	ata_port_dbg(ap, "Set pio regs... \n");
+	PDPRINTK("Set pio regs... \n");
 
 	ctcr0 = ioread32(dev_mmio(ap, adev, PDC_CTCR0));
 	ctcr0 &= 0xffff0000;
@@ -308,7 +321,9 @@ static void pdc2027x_set_piomode(struct ata_port *ap, struct ata_device *adev)
 	ctcr1 |= (pdc2027x_pio_timing_tbl[pio].value2 << 24);
 	iowrite32(ctcr1, dev_mmio(ap, adev, PDC_CTCR1));
 
-	ata_port_dbg(ap, "Set to pio mode[%u] \n", pio);
+	PDPRINTK("Set pio regs done\n");
+
+	PDPRINTK("Set to pio mode[%u] \n", pio);
 }
 
 /**
@@ -341,7 +356,7 @@ static void pdc2027x_set_dmamode(struct ata_port *ap, struct ata_device *adev)
 			iowrite32(ctcr1 & ~(1 << 7), dev_mmio(ap, adev, PDC_CTCR1));
 		}
 
-		ata_port_dbg(ap, "Set udma regs... \n");
+		PDPRINTK("Set udma regs... \n");
 
 		ctcr1 = ioread32(dev_mmio(ap, adev, PDC_CTCR1));
 		ctcr1 &= 0xff000000;
@@ -350,14 +365,16 @@ static void pdc2027x_set_dmamode(struct ata_port *ap, struct ata_device *adev)
 			(pdc2027x_udma_timing_tbl[udma_mode].value2 << 16);
 		iowrite32(ctcr1, dev_mmio(ap, adev, PDC_CTCR1));
 
-		ata_port_dbg(ap, "Set to udma mode[%u] \n", udma_mode);
+		PDPRINTK("Set udma regs done\n");
+
+		PDPRINTK("Set to udma mode[%u] \n", udma_mode);
 
 	} else  if ((dma_mode >= XFER_MW_DMA_0) &&
 		   (dma_mode <= XFER_MW_DMA_2)) {
 		/* Set the MDMA timing registers with value table for 133MHz */
 		unsigned int mdma_mode = dma_mode & 0x07;
 
-		ata_port_dbg(ap, "Set mdma regs... \n");
+		PDPRINTK("Set mdma regs... \n");
 		ctcr0 = ioread32(dev_mmio(ap, adev, PDC_CTCR0));
 
 		ctcr0 &= 0x0000ffff;
@@ -365,10 +382,11 @@ static void pdc2027x_set_dmamode(struct ata_port *ap, struct ata_device *adev)
 			(pdc2027x_mdma_timing_tbl[mdma_mode].value1 << 24);
 
 		iowrite32(ctcr0, dev_mmio(ap, adev, PDC_CTCR0));
+		PDPRINTK("Set mdma regs done\n");
 
-		ata_port_dbg(ap, "Set to mdma mode[%u] \n", mdma_mode);
+		PDPRINTK("Set to mdma mode[%u] \n", mdma_mode);
 	} else {
-		ata_port_err(ap, "Unknown dma mode [%u] ignored\n", dma_mode);
+		printk(KERN_ERR DRV_NAME ": Unknown dma mode [%u] ignored\n", dma_mode);
 	}
 }
 
@@ -402,7 +420,7 @@ static int pdc2027x_set_mode(struct ata_link *link, struct ata_device **r_failed
 			ctcr1 |= (1 << 25);
 			iowrite32(ctcr1, dev_mmio(ap, dev, PDC_CTCR1));
 
-			ata_dev_dbg(dev, "Turn on prefetch\n");
+			PDPRINTK("Turn on prefetch\n");
 		} else {
 			pdc2027x_set_dmamode(ap, dev);
 		}
@@ -473,8 +491,8 @@ retry:
 
 	counter = (bccrh << 15) | bccrl;
 
-	dev_dbg(host->dev, "bccrh [%X] bccrl [%X]\n", bccrh,  bccrl);
-	dev_dbg(host->dev, "bccrhv[%X] bccrlv[%X]\n", bccrhv, bccrlv);
+	PDPRINTK("bccrh [%X] bccrl [%X]\n", bccrh,  bccrl);
+	PDPRINTK("bccrhv[%X] bccrlv[%X]\n", bccrhv, bccrlv);
 
 	/*
 	 * The 30-bit decreasing counter are read by 2 pieces.
@@ -483,7 +501,7 @@ retry:
 	 */
 	if (retry && !(bccrh == bccrhv && bccrl >= bccrlv)) {
 		retry--;
-		dev_dbg(host->dev, "rereading counter\n");
+		PDPRINTK("rereading counter\n");
 		goto retry;
 	}
 
@@ -491,11 +509,11 @@ retry:
 }
 
 /**
- * pdc_adjust_pll - Adjust the PLL input clock in Hz.
+ * adjust_pll - Adjust the PLL input clock in Hz.
  *
+ * @pdc_controller: controller specific information
  * @host: target ATA host
  * @pll_clock: The input of PLL in HZ
- * @board_idx: board identifier
  */
 static void pdc_adjust_pll(struct ata_host *host, long pll_clock, unsigned int board_idx)
 {
@@ -508,19 +526,20 @@ static void pdc_adjust_pll(struct ata_host *host, long pll_clock, unsigned int b
 
 	/* Sanity check */
 	if (unlikely(pll_clock_khz < 5000L || pll_clock_khz > 70000L)) {
-		dev_err(host->dev, "Invalid PLL input clock %ldkHz, give up!\n",
-			pll_clock_khz);
+		printk(KERN_ERR DRV_NAME ": Invalid PLL input clock %ldkHz, give up!\n", pll_clock_khz);
 		return;
 	}
 
-	dev_dbg(host->dev, "pout_required is %ld\n", pout_required);
+#ifdef PDC_DEBUG
+	PDPRINTK("pout_required is %ld\n", pout_required);
 
 	/* Show the current clock value of PLL control register
 	 * (maybe already configured by the firmware)
 	 */
 	pll_ctl = ioread16(mmio_base + PDC_PLL_CTL);
 
-	dev_dbg(host->dev, "pll_ctl[%X]\n", pll_ctl);
+	PDPRINTK("pll_ctl[%X]\n", pll_ctl);
+#endif
 
 	/*
 	 * Calculate the ratio of F, R and OD
@@ -539,7 +558,7 @@ static void pdc_adjust_pll(struct ata_host *host, long pll_clock, unsigned int b
 		R = 0x00;
 	} else {
 		/* Invalid ratio */
-		dev_err(host->dev, "Invalid ratio %ld, give up!\n", ratio);
+		printk(KERN_ERR DRV_NAME ": Invalid ratio %ld, give up!\n", ratio);
 		return;
 	}
 
@@ -547,15 +566,15 @@ static void pdc_adjust_pll(struct ata_host *host, long pll_clock, unsigned int b
 
 	if (unlikely(F < 0 || F > 127)) {
 		/* Invalid F */
-		dev_err(host->dev, "F[%d] invalid!\n", F);
+		printk(KERN_ERR DRV_NAME ": F[%d] invalid!\n", F);
 		return;
 	}
 
-	dev_dbg(host->dev, "F[%d] R[%d] ratio*1000[%ld]\n", F, R, ratio);
+	PDPRINTK("F[%d] R[%d] ratio*1000[%ld]\n", F, R, ratio);
 
 	pll_ctl = (R << 8) | F;
 
-	dev_dbg(host->dev, "Writing pll_ctl[%X]\n", pll_ctl);
+	PDPRINTK("Writing pll_ctl[%X]\n", pll_ctl);
 
 	iowrite16(pll_ctl, mmio_base + PDC_PLL_CTL);
 	ioread16(mmio_base + PDC_PLL_CTL); /* flush */
@@ -563,19 +582,21 @@ static void pdc_adjust_pll(struct ata_host *host, long pll_clock, unsigned int b
 	/* Wait the PLL circuit to be stable */
 	msleep(30);
 
+#ifdef PDC_DEBUG
 	/*
 	 *  Show the current clock value of PLL control register
 	 * (maybe configured by the firmware)
 	 */
 	pll_ctl = ioread16(mmio_base + PDC_PLL_CTL);
 
-	dev_dbg(host->dev, "pll_ctl[%X]\n", pll_ctl);
+	PDPRINTK("pll_ctl[%X]\n", pll_ctl);
+#endif
 
 	return;
 }
 
 /**
- * pdc_detect_pll_input_clock - Detect the PLL input clock in Hz.
+ * detect_pll_input_clock - Detect the PLL input clock in Hz.
  * @host: target ATA host
  * Ex. 16949000 on 33MHz PCI bus for pdc20275.
  *     Half of the PCI clock.
@@ -590,7 +611,7 @@ static long pdc_detect_pll_input_clock(struct ata_host *host)
 
 	/* Start the test mode */
 	scr = ioread32(mmio_base + PDC_SYS_CTL);
-	dev_dbg(host->dev, "scr[%X]\n", scr);
+	PDPRINTK("scr[%X]\n", scr);
 	iowrite32(scr | (0x01 << 14), mmio_base + PDC_SYS_CTL);
 	ioread32(mmio_base + PDC_SYS_CTL); /* flush */
 
@@ -607,7 +628,7 @@ static long pdc_detect_pll_input_clock(struct ata_host *host)
 
 	/* Stop the test mode */
 	scr = ioread32(mmio_base + PDC_SYS_CTL);
-	dev_dbg(host->dev, "scr[%X]\n", scr);
+	PDPRINTK("scr[%X]\n", scr);
 	iowrite32(scr & ~(0x01 << 14), mmio_base + PDC_SYS_CTL);
 	ioread32(mmio_base + PDC_SYS_CTL); /* flush */
 
@@ -617,8 +638,8 @@ static long pdc_detect_pll_input_clock(struct ata_host *host)
 	pll_clock = ((start_count - end_count) & 0x3fffffff) / 100 *
 		(100000000 / usec_elapsed);
 
-	dev_dbg(host->dev, "start[%ld] end[%ld] PLL input clock[%ld]HZ\n",
-		     start_count, end_count, pll_clock);
+	PDPRINTK("start[%ld] end[%ld] \n", start_count, end_count);
+	PDPRINTK("PLL input clock[%ld]Hz\n", pll_clock);
 
 	return pll_clock;
 }
@@ -707,7 +728,11 @@ static int pdc2027x_init_one(struct pci_dev *pdev,
 		return rc;
 	host->iomap = pcim_iomap_table(pdev);
 
-	rc = dma_set_mask_and_coherent(&pdev->dev, ATA_DMA_MASK);
+	rc = dma_set_mask(&pdev->dev, ATA_DMA_MASK);
+	if (rc)
+		return rc;
+
+	rc = dma_set_coherent_mask(&pdev->dev, ATA_DMA_MASK);
 	if (rc)
 		return rc;
 

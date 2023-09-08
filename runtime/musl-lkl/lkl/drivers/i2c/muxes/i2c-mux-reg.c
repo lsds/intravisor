@@ -1,9 +1,13 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * I2C multiplexer using a single register
  *
  * Copyright 2015 Freescale Semiconductor
  * York Sun  <yorksun@freescale.com>
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License as published by the
+ * Free Software Foundation; either version 2 of the License, or (at your
+ * option) any later version.
  */
 
 #include <linux/i2c.h>
@@ -120,11 +124,13 @@ static int i2c_mux_reg_probe_dt(struct regmux *mux,
 	}
 	mux->data.write_only = of_property_read_bool(np, "write-only");
 
-	values = devm_kcalloc(&pdev->dev,
-			      mux->data.n_values, sizeof(*mux->data.values),
+	values = devm_kzalloc(&pdev->dev,
+			      sizeof(*mux->data.values) * mux->data.n_values,
 			      GFP_KERNEL);
-	if (!values)
+	if (!values) {
+		dev_err(&pdev->dev, "Cannot allocate values array");
 		return -ENOMEM;
+	}
 
 	for_each_child_of_node(np, child) {
 		of_property_read_u32(child, "reg", values + i);
@@ -171,9 +177,13 @@ static int i2c_mux_reg_probe(struct platform_device *pdev)
 			sizeof(mux->data));
 	} else {
 		ret = i2c_mux_reg_probe_dt(mux, pdev);
-		if (ret < 0)
-			return dev_err_probe(&pdev->dev, ret,
-					     "Error parsing device tree");
+		if (ret == -EPROBE_DEFER)
+			return ret;
+
+		if (ret < 0) {
+			dev_err(&pdev->dev, "Error parsing device tree");
+			return ret;
+		}
 	}
 
 	parent = i2c_get_adapter(mux->data.parent);

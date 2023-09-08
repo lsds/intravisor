@@ -47,7 +47,9 @@
 #include <asm/mach/irq.h>
 
 #include "soc.h"
-#include "hardware.h"
+
+#include <mach/hardware.h>
+
 #include "common.h"
 
 #define IRQ_BANK(irq) ((irq) >> 5)
@@ -163,7 +165,7 @@ asmlinkage void __exception_irq_entry omap1_handle_irq(struct pt_regs *regs)
 		}
 irq:
 		if (irqnr)
-			generic_handle_domain_irq(domain, irqnr);
+			handle_domain_irq(domain, irqnr, regs);
 		else
 			break;
 	} while (irqnr);

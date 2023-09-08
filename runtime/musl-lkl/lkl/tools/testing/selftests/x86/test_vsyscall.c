@@ -18,9 +18,6 @@
 #include <sched.h>
 #include <stdbool.h>
 #include <setjmp.h>
-#include <sys/uio.h>
-
-#include "helpers.h"
 
 #ifdef __x86_64__
 # define VSYS(x) (x)
@@ -52,21 +49,21 @@ static void sethandler(int sig, void (*handler)(int, siginfo_t *, void *),
 }
 
 /* vsyscalls and vDSO */
-bool vsyscall_map_r = false, vsyscall_map_x = false;
+bool should_read_vsyscall = false;
 
 typedef long (*gtod_t)(struct timeval *tv, struct timezone *tz);
-const gtod_t vgtod = (gtod_t)VSYS(0xffffffffff600000);
+gtod_t vgtod = (gtod_t)VSYS(0xffffffffff600000);
 gtod_t vdso_gtod;
 
 typedef int (*vgettime_t)(clockid_t, struct timespec *);
 vgettime_t vdso_gettime;
 
 typedef long (*time_func_t)(time_t *t);
-const time_func_t vtime = (time_func_t)VSYS(0xffffffffff600400);
+time_func_t vtime = (time_func_t)VSYS(0xffffffffff600400);
 time_func_t vdso_time;
 
 typedef long (*getcpu_t)(unsigned *, unsigned *, void *);
-const getcpu_t vgetcpu = (getcpu_t)VSYS(0xffffffffff600800);
+getcpu_t vgetcpu = (getcpu_t)VSYS(0xffffffffff600800);
 getcpu_t vdso_getcpu;
 
 static void init_vdso(void)
@@ -110,7 +107,7 @@ static int init_vsys(void)
 	maps = fopen("/proc/self/maps", "r");
 	if (!maps) {
 		printf("[WARN]\tCould not open /proc/self/maps -- assuming vsyscall is r-x\n");
-		vsyscall_map_r = true;
+		should_read_vsyscall = true;
 		return 0;
 	}
 
@@ -136,8 +133,12 @@ static int init_vsys(void)
 		}
 
 		printf("\tvsyscall permissions are %c-%c\n", r, x);
-		vsyscall_map_r = (r == 'r');
-		vsyscall_map_x = (x == 'x');
+		should_read_vsyscall = (r == 'r');
+		if (x != 'x') {
+			vgtod = NULL;
+			vtime = NULL;
+			vgetcpu = NULL;
+		}
 
 		found = true;
 		break;
@@ -147,8 +148,10 @@ static int init_vsys(void)
 
 	if (!found) {
 		printf("\tno vsyscall map in /proc/self/maps\n");
-		vsyscall_map_r = false;
-		vsyscall_map_x = false;
+		should_read_vsyscall = false;
+		vgtod = NULL;
+		vtime = NULL;
+		vgetcpu = NULL;
 	}
 
 	return nerrs;
@@ -180,13 +183,9 @@ static inline long sys_getcpu(unsigned * cpu, unsigned * node,
 }
 
 static jmp_buf jmpbuf;
-static volatile unsigned long segv_err;
 
 static void sigsegv(int sig, siginfo_t *info, void *ctx_void)
 {
-	ucontext_t *ctx = (ucontext_t *)ctx_void;
-
-	segv_err =  ctx->uc_mcontext.gregs[REG_ERR];
 	siglongjmp(jmpbuf, 1);
 }
 
@@ -239,7 +238,7 @@ static int test_gtod(void)
 		err(1, "syscall gettimeofday");
 	if (vdso_gtod)
 		ret_vdso = vdso_gtod(&tv_vdso, &tz_vdso);
-	if (vsyscall_map_x)
+	if (vgtod)
 		ret_vsys = vgtod(&tv_vsys, &tz_vsys);
 	if (sys_gtod(&tv_sys2, &tz_sys) != 0)
 		err(1, "syscall gettimeofday");
@@ -253,7 +252,7 @@ static int test_gtod(void)
 		}
 	}
 
-	if (vsyscall_map_x) {
+	if (vgtod) {
 		if (ret_vsys == 0) {
 			nerrs += check_gtod(&tv_sys1, &tv_sys2, &tz_sys, "vsyscall", &tv_vsys, &tz_vsys);
 		} else {
@@ -274,7 +273,7 @@ static int test_time(void) {
 	t_sys1 = sys_time(&t2_sys1);
 	if (vdso_time)
 		t_vdso = vdso_time(&t2_vdso);
-	if (vsyscall_map_x)
+	if (vtime)
 		t_vsys = vtime(&t2_vsys);
 	t_sys2 = sys_time(&t2_sys2);
 	if (t_sys1 < 0 || t_sys1 != t2_sys1 || t_sys2 < 0 || t_sys2 != t2_sys2) {
@@ -295,7 +294,7 @@ static int test_time(void) {
 		}
 	}
 
-	if (vsyscall_map_x) {
+	if (vtime) {
 		if (t_vsys < 0 || t_vsys != t2_vsys) {
 			printf("[FAIL]\tvsyscall failed (ret:%ld output:%ld)\n", t_vsys, t2_vsys);
 			nerrs++;
@@ -331,7 +330,7 @@ static int test_getcpu(int cpu)
 	ret_sys = sys_getcpu(&cpu_sys, &node_sys, 0);
 	if (vdso_getcpu)
 		ret_vdso = vdso_getcpu(&cpu_vdso, &node_vdso, 0);
-	if (vsyscall_map_x)
+	if (vgetcpu)
 		ret_vsys = vgetcpu(&cpu_vsys, &node_vsys, 0);
 
 	if (ret_sys == 0) {
@@ -370,7 +369,7 @@ static int test_getcpu(int cpu)
 		}
 	}
 
-	if (vsyscall_map_x) {
+	if (vgetcpu) {
 		if (ret_vsys) {
 			printf("[FAIL]\tvsyscall getcpu() failed\n");
 			nerrs++;
@@ -411,109 +410,36 @@ static int test_vsys_r(void)
 		can_read = false;
 	}
 
-	if (can_read && !vsyscall_map_r) {
+	if (can_read && !should_read_vsyscall) {
 		printf("[FAIL]\tWe have read access, but we shouldn't\n");
 		return 1;
-	} else if (!can_read && vsyscall_map_r) {
+	} else if (!can_read && should_read_vsyscall) {
 		printf("[FAIL]\tWe don't have read access, but we should\n");
 		return 1;
-	} else if (can_read) {
-		printf("[OK]\tWe have read access\n");
 	} else {
-		printf("[OK]\tWe do not have read access: #PF(0x%lx)\n",
-		       segv_err);
+		printf("[OK]\tgot expected result\n");
 	}
 #endif
 
 	return 0;
 }
 
-static int test_vsys_x(void)
-{
-#ifdef __x86_64__
-	if (vsyscall_map_x) {
-		/* We already tested this adequately. */
-		return 0;
-	}
-
-	printf("[RUN]\tMake sure that vsyscalls really page fault\n");
-
-	bool can_exec;
-	if (sigsetjmp(jmpbuf, 1) == 0) {
-		vgtod(NULL, NULL);
-		can_exec = true;
-	} else {
-		can_exec = false;
-	}
-
-	if (can_exec) {
-		printf("[FAIL]\tExecuting the vsyscall did not page fault\n");
-		return 1;
-	} else if (segv_err & (1 << 4)) { /* INSTR */
-		printf("[OK]\tExecuting the vsyscall page failed: #PF(0x%lx)\n",
-		       segv_err);
-	} else {
-		printf("[FAIL]\tExecution failed with the wrong error: #PF(0x%lx)\n",
-		       segv_err);
-		return 1;
-	}
-#endif
-
-	return 0;
-}
-
-/*
- * Debuggers expect ptrace() to be able to peek at the vsyscall page.
- * Use process_vm_readv() as a proxy for ptrace() to test this.  We
- * want it to work in the vsyscall=emulate case and to fail in the
- * vsyscall=xonly case.
- *
- * It's worth noting that this ABI is a bit nutty.  write(2) can't
- * read from the vsyscall page on any kernel version or mode.  The
- * fact that ptrace() ever worked was a nice courtesy of old kernels,
- * but the code to support it is fairly gross.
- */
-static int test_process_vm_readv(void)
-{
-#ifdef __x86_64__
-	char buf[4096];
-	struct iovec local, remote;
-	int ret;
-
-	printf("[RUN]\tprocess_vm_readv() from vsyscall page\n");
-
-	local.iov_base = buf;
-	local.iov_len = 4096;
-	remote.iov_base = (void *)0xffffffffff600000;
-	remote.iov_len = 4096;
-	ret = process_vm_readv(getpid(), &local, 1, &remote, 1, 0);
-	if (ret != 4096) {
-		/*
-		 * We expect process_vm_readv() to work if and only if the
-		 * vsyscall page is readable.
-		 */
-		printf("[%s]\tprocess_vm_readv() failed (ret = %d, errno = %d)\n", vsyscall_map_r ? "FAIL" : "OK", ret, errno);
-		return vsyscall_map_r ? 1 : 0;
-	}
-
-	if (vsyscall_map_r) {
-		if (!memcmp(buf, remote.iov_base, sizeof(buf))) {
-			printf("[OK]\tIt worked and read correct data\n");
-		} else {
-			printf("[FAIL]\tIt worked but returned incorrect data\n");
-			return 1;
-		}
-	} else {
-		printf("[FAIL]\tprocess_rm_readv() succeeded, but it should have failed in this configuration\n");
-		return 1;
-	}
-#endif
-
-	return 0;
-}
 
 #ifdef __x86_64__
+#define X86_EFLAGS_TF (1UL << 8)
 static volatile sig_atomic_t num_vsyscall_traps;
+
+static unsigned long get_eflags(void)
+{
+	unsigned long eflags;
+	asm volatile ("pushfq\n\tpopq %0" : "=rm" (eflags));
+	return eflags;
+}
+
+static void set_eflags(unsigned long eflags)
+{
+	asm volatile ("pushq %0\n\tpopfq" : : "rm" (eflags) : "flags");
+}
 
 static void sigtrap(int sig, siginfo_t *info, void *ctx_void)
 {
@@ -529,7 +455,7 @@ static int test_emulation(void)
 	time_t tmp;
 	bool is_native;
 
-	if (!vsyscall_map_x)
+	if (!vtime)
 		return 0;
 
 	printf("[RUN]\tchecking that vsyscalls are emulated\n");
@@ -571,9 +497,6 @@ int main(int argc, char **argv)
 
 	sethandler(SIGSEGV, sigsegv, 0);
 	nerrs += test_vsys_r();
-	nerrs += test_vsys_x();
-
-	nerrs += test_process_vm_readv();
 
 #ifdef __x86_64__
 	nerrs += test_emulation();

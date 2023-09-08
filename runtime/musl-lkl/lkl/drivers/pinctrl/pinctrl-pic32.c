@@ -1,9 +1,17 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * PIC32 pinctrl driver
  *
  * Joshua Henderson, <joshua.henderson@microchip.com>
  * Copyright (C) 2015 Microchip Technology Inc.  All rights reserved.
+ *
+ * This program is free software; you can distribute it and/or modify it
+ * under the terms of the GNU General Public License (Version 2) as
+ * published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
+ * for more details.
  */
 #include <linux/clk.h>
 #include <linux/gpio/driver.h>
@@ -1990,10 +1998,7 @@ static int pic32_gpio_get_direction(struct gpio_chip *chip, unsigned offset)
 {
 	struct pic32_gpio_bank *bank = gpiochip_get_data(chip);
 
-	if (readl(bank->reg_base + TRIS_REG) & BIT(offset))
-		return GPIO_LINE_DIRECTION_IN;
-
-	return GPIO_LINE_DIRECTION_OUT;
+	return !!(readl(bank->reg_base + TRIS_REG) & BIT(offset));
 }
 
 static void pic32_gpio_irq_ack(struct irq_data *data)
@@ -2101,7 +2106,7 @@ static void pic32_gpio_irq_handler(struct irq_desc *desc)
 	pending = pic32_gpio_get_pending(gc, stat);
 
 	for_each_set_bit(pin, &pending, BITS_PER_LONG)
-		generic_handle_domain_irq(gc->irq.domain, pin);
+		generic_handle_irq(irq_linear_revmap(gc->irq.domain, pin));
 
 	chained_irq_exit(chip, desc);
 }
@@ -2205,7 +2210,7 @@ static int pic32_gpio_probe(struct platform_device *pdev)
 	struct pic32_gpio_bank *bank;
 	u32 id;
 	int irq, ret;
-	struct gpio_irq_chip *girq;
+	struct resource *res;
 
 	if (of_property_read_u32(np, "microchip,gpio-bank", &id)) {
 		dev_err(&pdev->dev, "microchip,gpio-bank property not found\n");
@@ -2219,13 +2224,16 @@ static int pic32_gpio_probe(struct platform_device *pdev)
 
 	bank = &pic32_gpio_banks[id];
 
-	bank->reg_base = devm_platform_ioremap_resource(pdev, 0);
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	bank->reg_base = devm_ioremap_resource(&pdev->dev, res);
 	if (IS_ERR(bank->reg_base))
 		return PTR_ERR(bank->reg_base);
 
 	irq = platform_get_irq(pdev, 0);
-	if (irq < 0)
+	if (irq < 0) {
+		dev_err(&pdev->dev, "irq get failed\n");
 		return irq;
+	}
 
 	bank->clk = devm_clk_get(&pdev->dev, NULL);
 	if (IS_ERR(bank->clk)) {
@@ -2241,24 +2249,26 @@ static int pic32_gpio_probe(struct platform_device *pdev)
 	}
 
 	bank->gpio_chip.parent = &pdev->dev;
-
-	girq = &bank->gpio_chip.irq;
-	girq->chip = &bank->irq_chip;
-	girq->parent_handler = pic32_gpio_irq_handler;
-	girq->num_parents = 1;
-	girq->parents = devm_kcalloc(&pdev->dev, 1, sizeof(*girq->parents),
-				     GFP_KERNEL);
-	if (!girq->parents)
-		return -ENOMEM;
-	girq->default_type = IRQ_TYPE_NONE;
-	girq->handler = handle_level_irq;
-	girq->parents[0] = irq;
+	bank->gpio_chip.of_node = np;
 	ret = gpiochip_add_data(&bank->gpio_chip, bank);
 	if (ret < 0) {
 		dev_err(&pdev->dev, "Failed to add GPIO chip %u: %d\n",
 			id, ret);
 		return ret;
 	}
+
+	ret = gpiochip_irqchip_add(&bank->gpio_chip, &bank->irq_chip,
+				0, handle_level_irq, IRQ_TYPE_NONE);
+	if (ret < 0) {
+		dev_err(&pdev->dev, "Failed to add IRQ chip %u: %d\n",
+			id, ret);
+		gpiochip_remove(&bank->gpio_chip);
+		return ret;
+	}
+
+	gpiochip_set_chained_irqchip(&bank->gpio_chip, &bank->irq_chip,
+				     irq, pic32_gpio_irq_handler);
+
 	return 0;
 }
 

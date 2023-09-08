@@ -223,7 +223,7 @@ static void pdc_intc_perip_isr(struct irq_desc *desc)
 {
 	unsigned int irq = irq_desc_get_irq(desc);
 	struct pdc_intc_priv *priv;
-	unsigned int i;
+	unsigned int i, irq_no;
 
 	priv = (struct pdc_intc_priv *)irq_desc_get_handler_data(desc);
 
@@ -237,13 +237,14 @@ static void pdc_intc_perip_isr(struct irq_desc *desc)
 found:
 
 	/* pass on the interrupt */
-	generic_handle_domain_irq(priv->domain, i);
+	irq_no = irq_linear_revmap(priv->domain, i);
+	generic_handle_irq(irq_no);
 }
 
 static void pdc_intc_syswake_isr(struct irq_desc *desc)
 {
 	struct pdc_intc_priv *priv;
-	unsigned int syswake;
+	unsigned int syswake, irq_no;
 	unsigned int status;
 
 	priv = (struct pdc_intc_priv *)irq_desc_get_handler_data(desc);
@@ -257,7 +258,9 @@ static void pdc_intc_syswake_isr(struct irq_desc *desc)
 		if (!(status & 1))
 			continue;
 
-		generic_handle_domain_irq(priv->domain, syswake_to_hwirq(syswake));
+		irq_no = irq_linear_revmap(priv->domain,
+					   syswake_to_hwirq(syswake));
+		generic_handle_irq(irq_no);
 	}
 }
 
@@ -313,8 +316,10 @@ static int pdc_intc_probe(struct platform_device *pdev)
 
 	/* Allocate driver data */
 	priv = devm_kzalloc(&pdev->dev, sizeof(*priv), GFP_KERNEL);
-	if (!priv)
+	if (!priv) {
+		dev_err(&pdev->dev, "cannot allocate device data\n");
 		return -ENOMEM;
+	}
 	raw_spin_lock_init(&priv->lock);
 	platform_set_drvdata(pdev, priv);
 
@@ -349,14 +354,18 @@ static int pdc_intc_probe(struct platform_device *pdev)
 	priv->nr_syswakes = val;
 
 	/* Get peripheral IRQ numbers */
-	priv->perip_irqs = devm_kcalloc(&pdev->dev, 4, priv->nr_perips,
+	priv->perip_irqs = devm_kzalloc(&pdev->dev, 4 * priv->nr_perips,
 					GFP_KERNEL);
-	if (!priv->perip_irqs)
+	if (!priv->perip_irqs) {
+		dev_err(&pdev->dev, "cannot allocate perip IRQ list\n");
 		return -ENOMEM;
+	}
 	for (i = 0; i < priv->nr_perips; ++i) {
 		irq = platform_get_irq(pdev, 1 + i);
-		if (irq < 0)
+		if (irq < 0) {
+			dev_err(&pdev->dev, "cannot find perip IRQ #%u\n", i);
 			return irq;
+		}
 		priv->perip_irqs[i] = irq;
 	}
 	/* check if too many were provided */
@@ -367,8 +376,10 @@ static int pdc_intc_probe(struct platform_device *pdev)
 
 	/* Get syswake IRQ number */
 	irq = platform_get_irq(pdev, 0);
-	if (irq < 0)
+	if (irq < 0) {
+		dev_err(&pdev->dev, "cannot find syswake IRQ\n");
 		return irq;
+	}
 	priv->syswake_irq = irq;
 
 	/* Set up an IRQ domain */

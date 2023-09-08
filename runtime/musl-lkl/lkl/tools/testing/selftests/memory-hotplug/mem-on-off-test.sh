@@ -3,33 +3,30 @@
 
 SYSFS=
 
-# Kselftest framework requirement - SKIP code is 4.
-ksft_skip=4
-
 prerequisite()
 {
 	msg="skip all tests:"
 
 	if [ $UID != 0 ]; then
 		echo $msg must be run as root >&2
-		exit $ksft_skip
+		exit 0
 	fi
 
 	SYSFS=`mount -t sysfs | head -1 | awk '{ print $3 }'`
 
 	if [ ! -d "$SYSFS" ]; then
 		echo $msg sysfs is not mounted >&2
-		exit $ksft_skip
+		exit 0
 	fi
 
 	if ! ls $SYSFS/devices/system/memory/memory* > /dev/null 2>&1; then
 		echo $msg memory hotplug is not supported >&2
-		exit $ksft_skip
+		exit 0
 	fi
 
 	if ! grep -q 1 $SYSFS/devices/system/memory/memory*/removable; then
 		echo $msg no hot-pluggable memory >&2
-		exit $ksft_skip
+		exit 0
 	fi
 }
 
@@ -134,19 +131,9 @@ offline_memory_expect_fail()
 	return 0
 }
 
-online_all_offline_memory()
-{
-	for memory in `hotpluggable_offline_memory`; do
-		if ! online_memory_expect_success $memory; then
-			retval=1
-		fi
-	done
-}
-
 error=-12
 priority=0
-# Run with default of ratio=2 for Kselftest run
-ratio=2
+ratio=10
 retval=0
 
 while getopts e:hp:r: opt; do
@@ -206,11 +193,8 @@ echo -e "\t trying to offline $target out of $hotpluggable_num memory block(s):"
 for memory in `hotpluggable_online_memory`; do
 	if [ "$target" -gt 0 ]; then
 		echo "online->offline memory$memory"
-		if offline_memory_expect_success $memory &>/dev/null; then
+		if offline_memory_expect_success $memory; then
 			target=$(($target - 1))
-			echo "-> Success"
-		else
-			echo "-> Failure"
 		fi
 	fi
 done
@@ -269,7 +253,7 @@ prerequisite_extra
 echo 0 > $NOTIFIER_ERR_INJECT_DIR/actions/MEM_GOING_OFFLINE/error
 for memory in `hotpluggable_online_memory`; do
 	if [ $((RANDOM % 100)) -lt $ratio ]; then
-		offline_memory_expect_success $memory &>/dev/null
+		offline_memory_expect_success $memory
 	fi
 done
 
@@ -278,35 +262,26 @@ done
 #
 echo $error > $NOTIFIER_ERR_INJECT_DIR/actions/MEM_GOING_ONLINE/error
 for memory in `hotpluggable_offline_memory`; do
-	if ! online_memory_expect_fail $memory; then
-		retval=1
-	fi
+	online_memory_expect_fail $memory
 done
 
 #
 # Online all hot-pluggable memory
 #
 echo 0 > $NOTIFIER_ERR_INJECT_DIR/actions/MEM_GOING_ONLINE/error
-online_all_offline_memory
+for memory in `hotpluggable_offline_memory`; do
+	online_memory_expect_success $memory
+done
 
 #
 # Test memory hot-remove error handling (online => offline)
 #
 echo $error > $NOTIFIER_ERR_INJECT_DIR/actions/MEM_GOING_OFFLINE/error
 for memory in `hotpluggable_online_memory`; do
-	if [ $((RANDOM % 100)) -lt $ratio ]; then
-		if ! offline_memory_expect_fail $memory; then
-			retval=1
-		fi
-	fi
+	offline_memory_expect_fail $memory
 done
 
 echo 0 > $NOTIFIER_ERR_INJECT_DIR/actions/MEM_GOING_OFFLINE/error
 /sbin/modprobe -q -r memory-notifier-error-inject
-
-#
-# Restore memory before exit
-#
-online_all_offline_memory
 
 exit $retval

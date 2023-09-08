@@ -63,21 +63,21 @@ static __inline__ void release_dma_lock(unsigned long flags)
 }
 
 
-static __inline__ unsigned char fd_inb(int base, int reg)
+static __inline__ unsigned char fd_inb(int port)
 {
 	if(MACH_IS_Q40)
-		return inb_p(base + reg);
+		return inb_p(port);
 	else if(MACH_IS_SUN3X)
-		return sun3x_82072_fd_inb(base + reg);
+		return sun3x_82072_fd_inb(port);
 	return 0;
 }
 
-static __inline__ void fd_outb(unsigned char value, int base, int reg)
+static __inline__ void fd_outb(unsigned char value, int port)
 {
 	if(MACH_IS_Q40)
-		outb_p(value, base + reg);
+		outb_p(value, port);
 	else if(MACH_IS_SUN3X)
-		sun3x_82072_fd_outb(value, base + reg);
+		sun3x_82072_fd_outb(value, port);
 }
 
 
@@ -211,27 +211,26 @@ asmlinkage irqreturn_t floppy_hardint(int irq, void *dev_id)
 		st=1;
 		for(lcount=virtual_dma_count, lptr=virtual_dma_addr;
 		    lcount; lcount--, lptr++) {
-			st = inb(virtual_dma_port + FD_STATUS);
-			st &= STATUS_DMA | STATUS_READY;
-			if (st != (STATUS_DMA | STATUS_READY))
+			st=inb(virtual_dma_port+4) & 0xa0 ;
+			if(st != 0xa0)
 				break;
 			if(virtual_dma_mode)
-				outb_p(*lptr, virtual_dma_port + FD_DATA);
+				outb_p(*lptr, virtual_dma_port+5);
 			else
-				*lptr = inb_p(virtual_dma_port + FD_DATA);
+				*lptr = inb_p(virtual_dma_port+5);
 		}
 
 		virtual_dma_count = lcount;
 		virtual_dma_addr = lptr;
-		st = inb(virtual_dma_port + FD_STATUS);
+		st = inb(virtual_dma_port+4);
 	}
 
 #ifdef TRACE_FLPY_INT
 	calls++;
 #endif
-	if (st == STATUS_DMA)
+	if(st == 0x20)
 		return IRQ_HANDLED;
-	if (!(st & STATUS_DMA)) {
+	if(!(st & 0x20)) {
 		virtual_dma_residue += virtual_dma_count;
 		virtual_dma_count=0;
 #ifdef TRACE_FLPY_INT

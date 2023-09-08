@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: GPL-2.0 */
+// SPDX-License-Identifier: GPL-2.0
 /*
  * MUSB OTG driver peripheral defines
  *
@@ -60,7 +60,10 @@ struct musb_request {
 	enum buffer_map_state map_state;
 };
 
-#define to_musb_request(r)	container_of((r), struct musb_request, request)
+static inline struct musb_request *to_musb_request(struct usb_request *req)
+{
+	return req ? container_of(req, struct musb_request, request) : NULL;
+}
 
 extern struct usb_request *
 musb_alloc_request(struct usb_ep *ep, gfp_t gfp_flags);
@@ -96,7 +99,10 @@ struct musb_ep {
 	u8				hb_mult;
 };
 
-#define to_musb_ep(ep)	container_of((ep), struct musb_ep, end_point)
+static inline struct musb_ep *to_musb_ep(struct usb_ep *ep)
+{
+	return ep ? container_of(ep, struct musb_ep, end_point) : NULL;
+}
 
 static inline struct musb_request *next_request(struct musb_ep *ep)
 {

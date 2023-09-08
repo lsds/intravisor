@@ -5,9 +5,7 @@
 #include <linux/of_device.h>
 #include <linux/of_address.h>
 #include <linux/of_iommu.h>
-#include <linux/of_reserved_mem.h>
-#include <linux/dma-direct.h> /* for bus_dma_region */
-#include <linux/dma-map-ops.h>
+#include <linux/dma-mapping.h>
 #include <linux/init.h>
 #include <linux/module.h>
 #include <linux/mod_devicetable.h>
@@ -19,7 +17,7 @@
 
 /**
  * of_match_device - Tell if a struct device matches an of_device_id list
- * @matches: array of of device match structures to search in
+ * @ids: array of of device match structures to search in
  * @dev: the of device structure to match against
  *
  * Used by a driver to check whether an platform_device present in the
@@ -28,11 +26,32 @@
 const struct of_device_id *of_match_device(const struct of_device_id *matches,
 					   const struct device *dev)
 {
-	if (!matches || !dev->of_node || dev->of_node_reused)
+	if ((!matches) || (!dev->of_node))
 		return NULL;
 	return of_match_node(matches, dev->of_node);
 }
 EXPORT_SYMBOL(of_match_device);
+
+struct platform_device *of_dev_get(struct platform_device *dev)
+{
+	struct device *tmp;
+
+	if (!dev)
+		return NULL;
+	tmp = get_device(&dev->dev);
+	if (tmp)
+		return to_platform_device(tmp);
+	else
+		return NULL;
+}
+EXPORT_SYMBOL(of_dev_get);
+
+void of_dev_put(struct platform_device *dev)
+{
+	if (dev)
+		put_device(&dev->dev);
+}
+EXPORT_SYMBOL(of_dev_put);
 
 int of_device_add(struct platform_device *ofdev)
 {
@@ -53,56 +72,10 @@ int of_device_add(struct platform_device *ofdev)
 	return device_add(&ofdev->dev);
 }
 
-static void
-of_dma_set_restricted_buffer(struct device *dev, struct device_node *np)
-{
-	struct device_node *node, *of_node = dev->of_node;
-	int count, i;
-
-	if (!IS_ENABLED(CONFIG_DMA_RESTRICTED_POOL))
-		return;
-
-	count = of_property_count_elems_of_size(of_node, "memory-region",
-						sizeof(u32));
-	/*
-	 * If dev->of_node doesn't exist or doesn't contain memory-region, try
-	 * the OF node having DMA configuration.
-	 */
-	if (count <= 0) {
-		of_node = np;
-		count = of_property_count_elems_of_size(
-			of_node, "memory-region", sizeof(u32));
-	}
-
-	for (i = 0; i < count; i++) {
-		node = of_parse_phandle(of_node, "memory-region", i);
-		/*
-		 * There might be multiple memory regions, but only one
-		 * restricted-dma-pool region is allowed.
-		 */
-		if (of_device_is_compatible(node, "restricted-dma-pool") &&
-		    of_device_is_available(node)) {
-			of_node_put(node);
-			break;
-		}
-		of_node_put(node);
-	}
-
-	/*
-	 * Attempt to initialize a restricted-dma-pool region if one was found.
-	 * Note that count can hold a negative error code.
-	 */
-	if (i < count && of_reserved_mem_device_init_by_idx(dev, of_node, i))
-		dev_warn(dev, "failed to initialise \"restricted-dma-pool\" memory node\n");
-}
-
 /**
- * of_dma_configure_id - Setup DMA configuration
+ * of_dma_configure - Setup DMA configuration
  * @dev:	Device to apply DMA configuration
  * @np:		Pointer to OF node having DMA configuration
- * @force_dma:  Whether device is to be set up by of_dma_configure() even if
- *		DMA capability is not explicitly described by firmware.
- * @id:		Optional const pointer value input id
  *
  * Try to get devices's DMA configuration from DT and update it
  * accordingly.
@@ -111,117 +84,100 @@ of_dma_set_restricted_buffer(struct device *dev, struct device_node *np)
  * can use a platform bus notifier and handle BUS_NOTIFY_ADD_DEVICE events
  * to fix up DMA configuration.
  */
-int of_dma_configure_id(struct device *dev, struct device_node *np,
-			bool force_dma, const u32 *id)
+int of_dma_configure(struct device *dev, struct device_node *np)
 {
-	const struct iommu_ops *iommu;
-	const struct bus_dma_region *map = NULL;
-	struct device_node *bus_np;
-	u64 dma_start = 0;
-	u64 mask, end, size = 0;
-	bool coherent;
+	u64 dma_addr, paddr, size = 0;
 	int ret;
+	bool coherent;
+	unsigned long offset;
+	const struct iommu_ops *iommu;
+	u64 mask;
 
-	if (np == dev->of_node)
-		bus_np = __of_get_dma_parent(np);
-	else
-		bus_np = of_node_get(np);
-
-	ret = of_dma_get_range(bus_np, &map);
-	of_node_put(bus_np);
+	ret = of_dma_get_range(np, &dma_addr, &paddr, &size);
 	if (ret < 0) {
 		/*
 		 * For legacy reasons, we have to assume some devices need
 		 * DMA configuration regardless of whether "dma-ranges" is
 		 * correctly specified or not.
 		 */
-		if (!force_dma)
+		if (!dev->bus->force_dma)
 			return ret == -ENODEV ? 0 : ret;
-	} else {
-		const struct bus_dma_region *r = map;
-		u64 dma_end = 0;
 
-		/* Determine the overall bounds of all DMA regions */
-		for (dma_start = ~0; r->size; r++) {
-			/* Take lower and upper limits */
-			if (r->dma_start < dma_start)
-				dma_start = r->dma_start;
-			if (r->dma_start + r->size > dma_end)
-				dma_end = r->dma_start + r->size;
-		}
-		size = dma_end - dma_start;
+		dma_addr = offset = 0;
+	} else {
+		offset = PFN_DOWN(paddr - dma_addr);
 
 		/*
 		 * Add a work around to treat the size as mask + 1 in case
 		 * it is defined in DT as a mask.
 		 */
 		if (size & 1) {
-			dev_warn(dev, "Invalid size 0x%llx for dma-range(s)\n",
+			dev_warn(dev, "Invalid size 0x%llx for dma-range\n",
 				 size);
 			size = size + 1;
 		}
 
 		if (!size) {
 			dev_err(dev, "Adjusted size 0x%llx invalid\n", size);
-			kfree(map);
 			return -EINVAL;
 		}
+		dev_dbg(dev, "dma_pfn_offset(%#08lx)\n", offset);
 	}
 
 	/*
-	 * If @dev is expected to be DMA-capable then the bus code that created
-	 * it should have initialised its dma_mask pointer by this point. For
-	 * now, we'll continue the legacy behaviour of coercing it to the
-	 * coherent mask if not, but we'll no longer do so quietly.
+	 * Set default coherent_dma_mask to 32 bit.  Drivers are expected to
+	 * setup the correct supported mask.
 	 */
-	if (!dev->dma_mask) {
-		dev_warn(dev, "DMA mask not set\n");
+	if (!dev->coherent_dma_mask)
+		dev->coherent_dma_mask = DMA_BIT_MASK(32);
+	/*
+	 * Set it to coherent_dma_mask by default if the architecture
+	 * code has not set it.
+	 */
+	if (!dev->dma_mask)
 		dev->dma_mask = &dev->coherent_dma_mask;
-	}
 
-	if (!size && dev->coherent_dma_mask)
+	if (!size)
 		size = max(dev->coherent_dma_mask, dev->coherent_dma_mask + 1);
-	else if (!size)
-		size = 1ULL << 32;
+
+	dev->dma_pfn_offset = offset;
 
 	/*
 	 * Limit coherent and dma mask based on size and default mask
 	 * set by the driver.
 	 */
-	end = dma_start + size - 1;
-	mask = DMA_BIT_MASK(ilog2(end) + 1);
+	mask = DMA_BIT_MASK(ilog2(dma_addr + size - 1) + 1);
 	dev->coherent_dma_mask &= mask;
 	*dev->dma_mask &= mask;
-	/* ...but only set bus limit and range map if we found valid dma-ranges earlier */
-	if (!ret) {
-		dev->bus_dma_limit = end;
-		dev->dma_range_map = map;
-	}
 
 	coherent = of_dma_is_coherent(np);
 	dev_dbg(dev, "device is%sdma coherent\n",
 		coherent ? " " : " not ");
 
-	iommu = of_iommu_configure(dev, np, id);
-	if (PTR_ERR(iommu) == -EPROBE_DEFER) {
-		/* Don't touch range map if it wasn't set from a valid dma-ranges */
-		if (!ret)
-			dev->dma_range_map = NULL;
-		kfree(map);
+	iommu = of_iommu_configure(dev, np);
+	if (IS_ERR(iommu) && PTR_ERR(iommu) == -EPROBE_DEFER)
 		return -EPROBE_DEFER;
-	}
 
 	dev_dbg(dev, "device is%sbehind an iommu\n",
 		iommu ? " " : " not ");
 
-	arch_setup_dma_ops(dev, dma_start, size, iommu, coherent);
-
-	if (!iommu)
-		of_dma_set_restricted_buffer(dev, np);
+	arch_setup_dma_ops(dev, dma_addr, size, iommu, coherent);
 
 	return 0;
 }
-EXPORT_SYMBOL_GPL(of_dma_configure_id);
+EXPORT_SYMBOL_GPL(of_dma_configure);
+
+/**
+ * of_dma_deconfigure - Clean up DMA configuration
+ * @dev:	Device for which to clean up DMA configuration
+ *
+ * Clean up all configuration performed by of_dma_configure_ops() and free all
+ * resources that have been allocated.
+ */
+void of_dma_deconfigure(struct device *dev)
+{
+	arch_teardown_dma_ops(dev);
+}
 
 int of_device_register(struct platform_device *pdev)
 {
@@ -260,9 +216,8 @@ static ssize_t of_device_get_modalias(struct device *dev, char *str, ssize_t len
 		return -ENODEV;
 
 	/* Name & Type */
-	/* %p eats all alphanum characters, so %c must be used here */
-	csize = snprintf(str, len, "of:N%pOFn%c%s", dev->of_node, 'T',
-			 of_node_get_device_type(dev->of_node));
+	csize = snprintf(str, len, "of:N%sT%s", dev->of_node->name,
+			 dev->of_node->type);
 	tsize = csize;
 	len -= csize;
 	if (str)
@@ -312,9 +267,6 @@ EXPORT_SYMBOL_GPL(of_device_request_module);
 
 /**
  * of_device_modalias - Fill buffer with newline terminated modalias string
- * @dev:	Calling device
- * @str:	Modalias string
- * @len:	Size of @str
  */
 ssize_t of_device_modalias(struct device *dev, char *str, ssize_t len)
 {
@@ -332,12 +284,10 @@ EXPORT_SYMBOL_GPL(of_device_modalias);
 
 /**
  * of_device_uevent - Display OF related uevent information
- * @dev:	Device to apply DMA configuration
- * @env:	Kernel object's userspace event reference
  */
 void of_device_uevent(struct device *dev, struct kobj_uevent_env *env)
 {
-	const char *compat, *type;
+	const char *compat;
 	struct alias_prop *app;
 	struct property *p;
 	int seen = 0;
@@ -345,11 +295,10 @@ void of_device_uevent(struct device *dev, struct kobj_uevent_env *env)
 	if ((!dev) || (!dev->of_node))
 		return;
 
-	add_uevent_var(env, "OF_NAME=%pOFn", dev->of_node);
+	add_uevent_var(env, "OF_NAME=%s", dev->of_node->name);
 	add_uevent_var(env, "OF_FULLNAME=%pOF", dev->of_node);
-	type = of_node_get_device_type(dev->of_node);
-	if (type)
-		add_uevent_var(env, "OF_TYPE=%s", type);
+	if (dev->of_node->type && strcmp("<NULL>", dev->of_node->type) != 0)
+		add_uevent_var(env, "OF_TYPE=%s", dev->of_node->type);
 
 	/* Since the compatible field can contain pretty much anything
 	 * it's not really legal to split it out with commas. We split it

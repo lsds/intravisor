@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  *	SEGA Dreamcast controller driver
  *	Based on drivers/usb/iforce.c

@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * dvb_net.c
  *
@@ -14,6 +13,18 @@
  *                      and Wolfram Stering <wstering@cosy.sbg.ac.at>
  *
  * ULE Decaps according to RFC 4326.
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version 2
+ * of the License, or (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ * To obtain the license, point your browser to
+ * http://www.gnu.org/copyleft/gpl.html
  */
 
 /*
@@ -45,7 +56,6 @@
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/netdevice.h>
-#include <linux/nospec.h>
 #include <linux/etherdevice.h>
 #include <linux/dvb/net.h>
 #include <linux/uio.h>
@@ -547,7 +557,7 @@ static int dvb_net_ule_new_payload(struct dvb_net_ule_handle *h)
 		h->priv->ule_sndu_type_1 = 1;
 		h->ts_remain -= 1;
 		h->from_where += 1;
-		fallthrough;
+		/* fallthrough */
 	case 0:
 		h->new_ts = 1;
 		h->ts += TS_SZ;
@@ -995,7 +1005,7 @@ static int dvb_net_sec_callback(const u8 *buffer1, size_t buffer1_len,
 	return 0;
 }
 
-static netdev_tx_t dvb_net_tx(struct sk_buff *skb, struct net_device *dev)
+static int dvb_net_tx(struct sk_buff *skb, struct net_device *dev)
 {
 	dev_kfree_skb(skb);
 	return NETDEV_TX_OK;
@@ -1008,7 +1018,7 @@ static u8 mask_promisc[6]={0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
 
 static int dvb_net_filter_sec_set(struct net_device *dev,
 		   struct dmx_section_filter **secfilter,
-		   const u8 *mac, u8 *mac_mask)
+		   u8 *mac, u8 *mac_mask)
 {
 	struct dvb_net_priv *priv = netdev_priv(dev);
 	int ret;
@@ -1052,7 +1062,7 @@ static int dvb_net_feed_start(struct net_device *dev)
 	int ret = 0, i;
 	struct dvb_net_priv *priv = netdev_priv(dev);
 	struct dmx_demux *demux = priv->demux;
-	const unsigned char *mac = (const unsigned char *) dev->dev_addr;
+	unsigned char *mac = (unsigned char *) dev->dev_addr;
 
 	netdev_dbg(dev, "rx_mode %i\n", priv->rx_mode);
 	mutex_lock(&priv->mutex);
@@ -1272,7 +1282,7 @@ static int dvb_net_set_mac (struct net_device *dev, void *p)
 	struct dvb_net_priv *priv = netdev_priv(dev);
 	struct sockaddr *addr=p;
 
-	eth_hw_addr_set(dev, addr->sa_data);
+	memcpy(dev->dev_addr, addr->sa_data, dev->addr_len);
 
 	if (netif_running(dev))
 		schedule_work(&priv->restart_net_feed_wq);
@@ -1367,7 +1377,7 @@ static int dvb_net_add_if(struct dvb_net *dvbnet, u16 pid, u8 feedtype)
 			 dvbnet->dvbdev->adapter->num, if_num);
 
 	net->addr_len = 6;
-	eth_hw_addr_set(net, dvbnet->dvbdev->adapter->proposed_mac);
+	memcpy(net->dev_addr, dvbnet->dvbdev->adapter->proposed_mac, 6);
 
 	dvbnet->device[if_num] = net;
 
@@ -1463,20 +1473,14 @@ static int dvb_net_do_ioctl(struct file *file,
 		struct net_device *netdev;
 		struct dvb_net_priv *priv_data;
 		struct dvb_net_if *dvbnetif = parg;
-		int if_num = dvbnetif->if_num;
 
-		if (if_num >= DVB_NET_DEVICES_MAX) {
-			ret = -EINVAL;
-			goto ioctl_error;
-		}
-		if_num = array_index_nospec(if_num, DVB_NET_DEVICES_MAX);
-
-		if (!dvbnet->state[if_num]) {
+		if (dvbnetif->if_num >= DVB_NET_DEVICES_MAX ||
+		    !dvbnet->state[dvbnetif->if_num]) {
 			ret = -EINVAL;
 			goto ioctl_error;
 		}
 
-		netdev = dvbnet->device[if_num];
+		netdev = dvbnet->device[dvbnetif->if_num];
 
 		priv_data = netdev_priv(netdev);
 		dvbnetif->pid=priv_data->pid;
@@ -1529,20 +1533,14 @@ static int dvb_net_do_ioctl(struct file *file,
 		struct net_device *netdev;
 		struct dvb_net_priv *priv_data;
 		struct __dvb_net_if_old *dvbnetif = parg;
-		int if_num = dvbnetif->if_num;
 
-		if (if_num >= DVB_NET_DEVICES_MAX) {
-			ret = -EINVAL;
-			goto ioctl_error;
-		}
-		if_num = array_index_nospec(if_num, DVB_NET_DEVICES_MAX);
-
-		if (!dvbnet->state[if_num]) {
+		if (dvbnetif->if_num >= DVB_NET_DEVICES_MAX ||
+		    !dvbnet->state[dvbnetif->if_num]) {
 			ret = -EINVAL;
 			goto ioctl_error;
 		}
 
-		netdev = dvbnet->device[if_num];
+		netdev = dvbnet->device[dvbnetif->if_num];
 
 		priv_data = netdev_priv(netdev);
 		dvbnetif->pid=priv_data->pid;

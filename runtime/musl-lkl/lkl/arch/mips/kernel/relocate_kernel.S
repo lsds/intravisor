@@ -1,7 +1,9 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * relocate_kernel.S for kexec
  * Created by <nschichan@corp.free.fr> on Thu Oct 12 17:49:57 2006
+ *
+ * This source code is licensed under the GNU General Public License,
+ * Version 2.  See the file COPYING for more details.
  */
 
 #include <asm/asm.h>
@@ -10,8 +12,6 @@
 #include <asm/mipsregs.h>
 #include <asm/stackframe.h>
 #include <asm/addrspace.h>
-
-#include <kernel-entry-init.h>
 
 LEAF(relocate_new_kernel)
 	PTR_L a0,	arg0
@@ -85,7 +85,7 @@ done:
 
 #ifdef CONFIG_CPU_CAVIUM_OCTEON
 	/* We need to flush I-cache before jumping to new kernel.
-	 * Unfortunately, this code is cpu-specific.
+	 * Unfortunatelly, this code is cpu-specific.
 	 */
 	.set push
 	.set noreorder
@@ -127,8 +127,11 @@ LEAF(kexec_smp_wait)
 1:	LONG_L		s0, (t0)
 	bne		s0, zero,1b
 
-#ifdef USE_KEXEC_SMP_WAIT_FINAL
-	kexec_smp_wait_final
+#ifdef CONFIG_CPU_CAVIUM_OCTEON
+	.set push
+	.set noreorder
+	synci		0($0)
+	.set pop
 #else
 	sync
 #endif
@@ -142,14 +145,15 @@ LEAF(kexec_smp_wait)
 #endif
 
 /* All parameters to new kernel are passed in registers a0-a3.
- * kexec_args[0..3] are used to prepare register values.
+ * kexec_args[0..3] are uses to prepare register values.
  */
 
-EXPORT(kexec_args)
-arg0:	PTR_WD		0x0
-arg1:	PTR_WD		0x0
-arg2:	PTR_WD		0x0
-arg3:	PTR_WD		0x0
+kexec_args:
+	EXPORT(kexec_args)
+arg0:	PTR		0x0
+arg1:	PTR		0x0
+arg2:	PTR		0x0
+arg3:	PTR		0x0
 	.size	kexec_args,PTRSIZE*4
 
 #ifdef CONFIG_SMP
@@ -158,27 +162,31 @@ arg3:	PTR_WD		0x0
  * their registers a0-a3. secondary_kexec_args[0..3] are used
  * to prepare register values.
  */
-EXPORT(secondary_kexec_args)
-s_arg0: PTR_WD		0x0
-s_arg1: PTR_WD		0x0
-s_arg2: PTR_WD		0x0
-s_arg3: PTR_WD		0x0
+secondary_kexec_args:
+	EXPORT(secondary_kexec_args)
+s_arg0: PTR		0x0
+s_arg1: PTR		0x0
+s_arg2: PTR		0x0
+s_arg3: PTR		0x0
 	.size	secondary_kexec_args,PTRSIZE*4
 kexec_flag:
 	LONG		0x1
 
 #endif
 
-EXPORT(kexec_start_address)
-	PTR_WD		0x0
+kexec_start_address:
+	EXPORT(kexec_start_address)
+	PTR		0x0
 	.size		kexec_start_address, PTRSIZE
 
-EXPORT(kexec_indirection_page)
-	PTR_WD		0
+kexec_indirection_page:
+	EXPORT(kexec_indirection_page)
+	PTR		0
 	.size		kexec_indirection_page, PTRSIZE
 
 relocate_new_kernel_end:
 
-EXPORT(relocate_new_kernel_size)
-	PTR_WD		relocate_new_kernel_end - relocate_new_kernel
+relocate_new_kernel_size:
+	EXPORT(relocate_new_kernel_size)
+	PTR		relocate_new_kernel_end - relocate_new_kernel
 	.size		relocate_new_kernel_size, PTRSIZE

@@ -1,7 +1,19 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (c) 2000-2005 Silicon Graphics, Inc.
  * All Rights Reserved.
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License as
+ * published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it would be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write the Free Software Foundation,
+ * Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
  */
 #ifndef __XFS_TYPES_H__
 #define	__XFS_TYPES_H__
@@ -12,16 +24,16 @@ typedef uint32_t	xfs_agblock_t;	/* blockno in alloc. group */
 typedef uint32_t	xfs_agino_t;	/* inode # within allocation grp */
 typedef uint32_t	xfs_extlen_t;	/* extent length in blocks */
 typedef uint32_t	xfs_agnumber_t;	/* allocation group number */
-typedef uint64_t	xfs_extnum_t;	/* # of extents in a file */
-typedef uint32_t	xfs_aextnum_t;	/* # extents in an attribute fork */
+typedef int32_t		xfs_extnum_t;	/* # of extents in a file */
+typedef int16_t		xfs_aextnum_t;	/* # extents in an attribute fork */
 typedef int64_t		xfs_fsize_t;	/* bytes in a file */
 typedef uint64_t	xfs_ufsize_t;	/* unsigned bytes in a file */
 
 typedef int32_t		xfs_suminfo_t;	/* type of bitmap summary info */
-typedef uint32_t	xfs_rtword_t;	/* word type for bitmap manipulations */
+typedef int32_t		xfs_rtword_t;	/* word type for bitmap manipulations */
 
 typedef int64_t		xfs_lsn_t;	/* log sequence number */
-typedef int64_t		xfs_csn_t;	/* CIL sequence number */
+typedef int32_t		xfs_tid_t;	/* transaction identifier */
 
 typedef uint32_t	xfs_dablk_t;	/* dir/attr block number (in file) */
 typedef uint32_t	xfs_dahash_t;	/* dir/attr hash value */
@@ -33,6 +45,7 @@ typedef uint64_t	xfs_fileoff_t;	/* block number in a file */
 typedef uint64_t	xfs_filblks_t;	/* number of blocks in a file */
 
 typedef int64_t		xfs_srtblock_t;	/* signed version of xfs_rtblock_t */
+typedef int64_t		xfs_sfiloff_t;	/* signed block number in a file */
 
 /*
  * New verifiers will return the instruction address of the failing check.
@@ -55,6 +68,13 @@ typedef void *		xfs_failaddr_t;
 
 #define	NULLFSINO	((xfs_ino_t)-1)
 #define	NULLAGINO	((xfs_agino_t)-1)
+
+/*
+ * Max values for extlen, extnum, aextnum.
+ */
+#define	MAXEXTLEN	((xfs_extlen_t)0x001fffff)	/* 21 bits */
+#define	MAXEXTNUM	((xfs_extnum_t)0x7fffffff)	/* signed int */
+#define	MAXAEXTNUM	((xfs_aextnum_t)0x7fff)		/* signed short */
 
 /*
  * Minimum and maximum blocksize and sectorsize.
@@ -80,11 +100,6 @@ typedef void *		xfs_failaddr_t;
 #define	XFS_ATTR_FORK	1
 #define	XFS_COW_FORK	2
 
-#define XFS_WHICHFORK_STRINGS \
-	{ XFS_DATA_FORK, 	"data" }, \
-	{ XFS_ATTR_FORK,	"attr" }, \
-	{ XFS_COW_FORK,		"cow" }
-
 /*
  * Min numbers of data/attr fork btree root pointers.
  */
@@ -97,36 +112,14 @@ typedef void *		xfs_failaddr_t;
  */
 #define MAXNAMELEN	256
 
-/*
- * This enum is used in string mapping in xfs_trace.h; please keep the
- * TRACE_DEFINE_ENUMs for it up to date.
- */
 typedef enum {
 	XFS_LOOKUP_EQi, XFS_LOOKUP_LEi, XFS_LOOKUP_GEi
 } xfs_lookup_t;
 
-#define XFS_AG_BTREE_CMP_FORMAT_STR \
-	{ XFS_LOOKUP_EQi,	"eq" }, \
-	{ XFS_LOOKUP_LEi,	"le" }, \
-	{ XFS_LOOKUP_GEi,	"ge" }
-
-/*
- * This enum is used in string mapping in xfs_trace.h and scrub/trace.h;
- * please keep the TRACE_DEFINE_ENUMs for it up to date.
- */
 typedef enum {
 	XFS_BTNUM_BNOi, XFS_BTNUM_CNTi, XFS_BTNUM_RMAPi, XFS_BTNUM_BMAPi,
 	XFS_BTNUM_INOi, XFS_BTNUM_FINOi, XFS_BTNUM_REFCi, XFS_BTNUM_MAX
 } xfs_btnum_t;
-
-#define XFS_BTNUM_STRINGS \
-	{ XFS_BTNUM_BNOi,	"bnobt" }, \
-	{ XFS_BTNUM_CNTi,	"cntbt" }, \
-	{ XFS_BTNUM_RMAPi,	"rmapbt" }, \
-	{ XFS_BTNUM_BMAPi,	"bmbt" }, \
-	{ XFS_BTNUM_INOi,	"inobt" }, \
-	{ XFS_BTNUM_FINOi,	"finobt" }, \
-	{ XFS_BTNUM_REFCi,	"refcbt" }
 
 struct xfs_name {
 	const unsigned char	*name;
@@ -165,66 +158,5 @@ typedef struct xfs_bmbt_irec
 	xfs_filblks_t	br_blockcount;	/* number of blocks */
 	xfs_exntst_t	br_state;	/* extent state */
 } xfs_bmbt_irec_t;
-
-enum xfs_refc_domain {
-	XFS_REFC_DOMAIN_SHARED = 0,
-	XFS_REFC_DOMAIN_COW,
-};
-
-#define XFS_REFC_DOMAIN_STRINGS \
-	{ XFS_REFC_DOMAIN_SHARED,	"shared" }, \
-	{ XFS_REFC_DOMAIN_COW,		"cow" }
-
-struct xfs_refcount_irec {
-	xfs_agblock_t	rc_startblock;	/* starting block number */
-	xfs_extlen_t	rc_blockcount;	/* count of free blocks */
-	xfs_nlink_t	rc_refcount;	/* number of inodes linked here */
-	enum xfs_refc_domain	rc_domain; /* shared or cow staging extent? */
-};
-
-#define XFS_RMAP_ATTR_FORK		(1 << 0)
-#define XFS_RMAP_BMBT_BLOCK		(1 << 1)
-#define XFS_RMAP_UNWRITTEN		(1 << 2)
-#define XFS_RMAP_KEY_FLAGS		(XFS_RMAP_ATTR_FORK | \
-					 XFS_RMAP_BMBT_BLOCK)
-#define XFS_RMAP_REC_FLAGS		(XFS_RMAP_UNWRITTEN)
-struct xfs_rmap_irec {
-	xfs_agblock_t	rm_startblock;	/* extent start block */
-	xfs_extlen_t	rm_blockcount;	/* extent length */
-	uint64_t	rm_owner;	/* extent owner */
-	uint64_t	rm_offset;	/* offset within the owner */
-	unsigned int	rm_flags;	/* state flags */
-};
-
-/* per-AG block reservation types */
-enum xfs_ag_resv_type {
-	XFS_AG_RESV_NONE = 0,
-	XFS_AG_RESV_AGFL,
-	XFS_AG_RESV_METADATA,
-	XFS_AG_RESV_RMAPBT,
-};
-
-/*
- * Type verifier functions
- */
-struct xfs_mount;
-
-bool xfs_verify_fsbno(struct xfs_mount *mp, xfs_fsblock_t fsbno);
-bool xfs_verify_fsbext(struct xfs_mount *mp, xfs_fsblock_t fsbno,
-		xfs_fsblock_t len);
-
-bool xfs_verify_ino(struct xfs_mount *mp, xfs_ino_t ino);
-bool xfs_internal_inum(struct xfs_mount *mp, xfs_ino_t ino);
-bool xfs_verify_dir_ino(struct xfs_mount *mp, xfs_ino_t ino);
-bool xfs_verify_rtbno(struct xfs_mount *mp, xfs_rtblock_t rtbno);
-bool xfs_verify_rtext(struct xfs_mount *mp, xfs_rtblock_t rtbno,
-		xfs_rtblock_t len);
-bool xfs_verify_icount(struct xfs_mount *mp, unsigned long long icount);
-bool xfs_verify_dablk(struct xfs_mount *mp, xfs_fileoff_t off);
-void xfs_icount_range(struct xfs_mount *mp, unsigned long long *min,
-		unsigned long long *max);
-bool xfs_verify_fileoff(struct xfs_mount *mp, xfs_fileoff_t off);
-bool xfs_verify_fileext(struct xfs_mount *mp, xfs_fileoff_t off,
-		xfs_fileoff_t len);
 
 #endif	/* __XFS_TYPES_H__ */

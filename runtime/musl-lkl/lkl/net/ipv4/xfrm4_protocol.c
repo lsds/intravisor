@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /* xfrm4_protocol.c - Generic xfrm protocol multiplexer.
  *
  * Copyright (C) 2013 secunet Security Networks AG
@@ -8,6 +7,11 @@
  *
  * Based on:
  * net/ipv4/tunnel4.c
+ *
+ *	This program is free software; you can redistribute it and/or
+ *	modify it under the terms of the GNU General Public License
+ *	as published by the Free Software Foundation; either version
+ *	2 of the License, or (at your option) any later version.
  */
 
 #include <linux/init.h>
@@ -42,7 +46,7 @@ static inline struct xfrm4_protocol __rcu **proto_handlers(u8 protocol)
 	     handler != NULL;				\
 	     handler = rcu_dereference(handler->next))	\
 
-static int xfrm4_rcv_cb(struct sk_buff *skb, u8 protocol, int err)
+int xfrm4_rcv_cb(struct sk_buff *skb, u8 protocol, int err)
 {
 	int ret;
 	struct xfrm4_protocol *handler;
@@ -57,6 +61,7 @@ static int xfrm4_rcv_cb(struct sk_buff *skb, u8 protocol, int err)
 
 	return 0;
 }
+EXPORT_SYMBOL(xfrm4_rcv_cb);
 
 int xfrm4_rcv_encap(struct sk_buff *skb, int nexthdr, __be32 spi,
 		    int encap_type)
@@ -72,14 +77,6 @@ int xfrm4_rcv_encap(struct sk_buff *skb, int nexthdr, __be32 spi,
 	if (!head)
 		goto out;
 
-	if (!skb_dst(skb)) {
-		const struct iphdr *iph = ip_hdr(skb);
-
-		if (ip_route_input_noref(skb, iph->daddr, iph->saddr,
-					 iph->tos, skb->dev))
-			goto drop;
-	}
-
 	for_each_protocol_rcu(*head, handler)
 		if ((ret = handler->input_handler(skb, nexthdr, spi, encap_type)) != -EINVAL)
 			return ret;
@@ -87,7 +84,6 @@ int xfrm4_rcv_encap(struct sk_buff *skb, int nexthdr, __be32 spi,
 out:
 	icmp_send(skb, ICMP_DEST_UNREACH, ICMP_PORT_UNREACH, 0);
 
-drop:
 	kfree_skb(skb);
 	return 0;
 }
@@ -110,15 +106,13 @@ static int xfrm4_esp_rcv(struct sk_buff *skb)
 	return 0;
 }
 
-static int xfrm4_esp_err(struct sk_buff *skb, u32 info)
+static void xfrm4_esp_err(struct sk_buff *skb, u32 info)
 {
 	struct xfrm4_protocol *handler;
 
 	for_each_protocol_rcu(esp4_handlers, handler)
 		if (!handler->err_handler(skb, info))
-			return 0;
-
-	return -ENOENT;
+			break;
 }
 
 static int xfrm4_ah_rcv(struct sk_buff *skb)
@@ -138,15 +132,13 @@ static int xfrm4_ah_rcv(struct sk_buff *skb)
 	return 0;
 }
 
-static int xfrm4_ah_err(struct sk_buff *skb, u32 info)
+static void xfrm4_ah_err(struct sk_buff *skb, u32 info)
 {
 	struct xfrm4_protocol *handler;
 
 	for_each_protocol_rcu(ah4_handlers, handler)
 		if (!handler->err_handler(skb, info))
-			return 0;
-
-	return -ENOENT;
+			break;
 }
 
 static int xfrm4_ipcomp_rcv(struct sk_buff *skb)
@@ -166,33 +158,34 @@ static int xfrm4_ipcomp_rcv(struct sk_buff *skb)
 	return 0;
 }
 
-static int xfrm4_ipcomp_err(struct sk_buff *skb, u32 info)
+static void xfrm4_ipcomp_err(struct sk_buff *skb, u32 info)
 {
 	struct xfrm4_protocol *handler;
 
 	for_each_protocol_rcu(ipcomp4_handlers, handler)
 		if (!handler->err_handler(skb, info))
-			return 0;
-
-	return -ENOENT;
+			break;
 }
 
 static const struct net_protocol esp4_protocol = {
 	.handler	=	xfrm4_esp_rcv,
 	.err_handler	=	xfrm4_esp_err,
 	.no_policy	=	1,
+	.netns_ok	=	1,
 };
 
 static const struct net_protocol ah4_protocol = {
 	.handler	=	xfrm4_ah_rcv,
 	.err_handler	=	xfrm4_ah_err,
 	.no_policy	=	1,
+	.netns_ok	=	1,
 };
 
 static const struct net_protocol ipcomp4_protocol = {
 	.handler	=	xfrm4_ipcomp_rcv,
 	.err_handler	=	xfrm4_ipcomp_err,
 	.no_policy	=	1,
+	.netns_ok	=	1,
 };
 
 static const struct xfrm_input_afinfo xfrm4_input_afinfo = {
@@ -304,3 +297,4 @@ void __init xfrm4_protocol_init(void)
 {
 	xfrm_input_register_afinfo(&xfrm4_input_afinfo);
 }
+EXPORT_SYMBOL(xfrm4_protocol_init);

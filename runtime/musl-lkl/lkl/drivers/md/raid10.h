@@ -75,8 +75,9 @@ struct r10conf {
 
 	/* queue pending writes and submit them on unplug */
 	struct bio_list		pending_bio_list;
+	int			pending_count;
 
-	seqlock_t		resync_lock;
+	spinlock_t		resync_lock;
 	atomic_t		nr_pending;
 	int			nr_waiting;
 	int			nr_queued;
@@ -92,10 +93,10 @@ struct r10conf {
 						   */
 	wait_queue_head_t	wait_barrier;
 
-	mempool_t		r10bio_pool;
-	mempool_t		r10buf_pool;
+	mempool_t		*r10bio_pool;
+	mempool_t		*r10buf_pool;
 	struct page		*tmppage;
-	struct bio_set		bio_split;
+	struct bio_set		*bio_split;
 
 	/* When taking over an array from a different personality, we store
 	 * the new thread here until we fully activate the array.
@@ -123,7 +124,6 @@ struct r10bio {
 	sector_t		sector;	/* virtual sector number */
 	int			sectors;
 	unsigned long		state;
-	unsigned long		start_time;
 	struct mddev		*mddev;
 	/*
 	 * original bio going to /dev/mdx
@@ -153,7 +153,7 @@ struct r10bio {
 		};
 		sector_t	addr;
 		int		devnum;
-	} devs[];
+	} devs[0];
 };
 
 /* bits for r10bio.state */
@@ -179,6 +179,5 @@ enum r10bio_state {
 	R10BIO_Previous,
 /* failfast devices did receive failfast requests. */
 	R10BIO_FailFast,
-	R10BIO_Discard,
 };
 #endif

@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * CPUFreq support for Armada 370/XP platforms.
  *
@@ -7,6 +6,10 @@
  * Yehuda Yitschak <yehuday@marvell.com>
  * Gregory Clement <gregory.clement@free-electrons.com>
  * Thomas Petazzoni <thomas.petazzoni@free-electrons.com>
+ *
+ * This file is licensed under the terms of the GNU General Public
+ * License version 2.  This program is licensed "as is" without any
+ * warranty of any kind, whether express or implied.
  */
 
 #define pr_fmt(fmt) "mvebu-pmsu: " fmt
@@ -81,10 +84,9 @@ static int __init armada_xp_pmsu_cpufreq_init(void)
 
 		ret = dev_pm_opp_add(cpu_dev, clk_get_rate(clk) / 2, 0);
 		if (ret) {
-			dev_pm_opp_remove(cpu_dev, clk_get_rate(clk));
 			clk_put(clk);
 			dev_err(cpu_dev, "Failed to register OPPs\n");
-			return ret;
+			goto opp_register_failed;
 		}
 
 		ret = dev_pm_opp_set_sharing_cpus(cpu_dev,
@@ -97,5 +99,11 @@ static int __init armada_xp_pmsu_cpufreq_init(void)
 
 	platform_device_register_simple("cpufreq-dt", -1, NULL, 0);
 	return 0;
+
+opp_register_failed:
+	/* As registering has failed remove all the opp for all cpus */
+	dev_pm_opp_cpumask_remove_table(cpu_possible_mask);
+
+	return ret;
 }
 device_initcall(armada_xp_pmsu_cpufreq_init);

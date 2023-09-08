@@ -1,8 +1,20 @@
-// SPDX-License-Identifier: GPL-2.0-only
-/*
+/**
  * AES routines supporting VMX instructions on the Power 8
  *
  * Copyright (C) 2015 International Business Machines Inc.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; version 2 only.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  *
  * Author: Marcelo Henrique Cerri <mhcerri@br.ibm.com>
  */
@@ -11,11 +23,9 @@
 #include <linux/err.h>
 #include <linux/crypto.h>
 #include <linux/delay.h>
-#include <asm/simd.h>
+#include <linux/hardirq.h>
 #include <asm/switch_to.h>
 #include <crypto/aes.h>
-#include <crypto/internal/cipher.h>
-#include <crypto/internal/simd.h>
 
 #include "aesp8-ppc.h"
 
@@ -38,6 +48,8 @@ static int p8_aes_init(struct crypto_tfm *tfm)
 		       alg, PTR_ERR(fallback));
 		return PTR_ERR(fallback);
 	}
+	printk(KERN_INFO "Using '%s' as fallback implementation.\n",
+	       crypto_tfm_alg_driver_name((struct crypto_tfm *) fallback));
 
 	crypto_cipher_set_flags(fallback,
 				crypto_cipher_get_flags((struct
@@ -68,21 +80,20 @@ static int p8_aes_setkey(struct crypto_tfm *tfm, const u8 *key,
 	pagefault_disable();
 	enable_kernel_vsx();
 	ret = aes_p8_set_encrypt_key(key, keylen * 8, &ctx->enc_key);
-	ret |= aes_p8_set_decrypt_key(key, keylen * 8, &ctx->dec_key);
+	ret += aes_p8_set_decrypt_key(key, keylen * 8, &ctx->dec_key);
 	disable_kernel_vsx();
 	pagefault_enable();
 	preempt_enable();
 
-	ret |= crypto_cipher_setkey(ctx->fallback, key, keylen);
-
-	return ret ? -EINVAL : 0;
+	ret += crypto_cipher_setkey(ctx->fallback, key, keylen);
+	return ret;
 }
 
 static void p8_aes_encrypt(struct crypto_tfm *tfm, u8 *dst, const u8 *src)
 {
 	struct p8_aes_ctx *ctx = crypto_tfm_ctx(tfm);
 
-	if (!crypto_simd_usable()) {
+	if (in_interrupt()) {
 		crypto_cipher_encrypt_one(ctx->fallback, dst, src);
 	} else {
 		preempt_disable();
@@ -99,7 +110,7 @@ static void p8_aes_decrypt(struct crypto_tfm *tfm, u8 *dst, const u8 *src)
 {
 	struct p8_aes_ctx *ctx = crypto_tfm_ctx(tfm);
 
-	if (!crypto_simd_usable()) {
+	if (in_interrupt()) {
 		crypto_cipher_decrypt_one(ctx->fallback, dst, src);
 	} else {
 		preempt_disable();

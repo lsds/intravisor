@@ -1,11 +1,10 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /// NULL check before some freeing functions is not needed.
 ///
 /// Based on checkpatch warning
 /// "kfree(NULL) is safe this check is probably not required"
 /// and kfreeaddr.cocci by Julia Lawall.
 ///
-// Copyright: (C) 2014 Fabian Frederick.
+// Copyright: (C) 2014 Fabian Frederick.  GPLv2.
 // Comments: -
 // Options: --no-includes --include-headers
 
@@ -21,13 +20,7 @@ expression E;
 (
   kfree(E);
 |
-  kvfree(E);
-|
-  kfree_sensitive(E);
-|
-  kvfree_sensitive(E, ...);
-|
-  vfree(E);
+  kzfree(E);
 |
   debugfs_remove(E);
 |
@@ -48,10 +41,9 @@ position p;
 @@
 
 * if (E != NULL)
-*	\(kfree@p\|kvfree@p\|kfree_sensitive@p\|kvfree_sensitive@p\|vfree@p\|
-*         debugfs_remove@p\|debugfs_remove_recursive@p\|
+*	\(kfree@p\|kzfree@p\|debugfs_remove@p\|debugfs_remove_recursive@p\|
 *         usb_free_urb@p\|kmem_cache_destroy@p\|mempool_destroy@p\|
-*         dma_pool_destroy@p\)(E, ...);
+*         dma_pool_destroy@p\)(E);
 
 @script:python depends on org@
 p << r.p;

@@ -54,16 +54,19 @@
 
 	lcd-panel {
 		compatible = "edt,et057090dhu";
+		bus-format-override = "rgb24";
 		pixelclk-active = <0>;
 	};
 
 	lvds0-panel {
 		compatible = "edt,etml1010g0dka";
+		bus-format-override = "spwg-18";
 		pixelclk-active = <0>;
 	};
 
 	lvds1-panel {
 		compatible = "edt,etml1010g0dka";
+		bus-format-override = "spwg-18";
 		pixelclk-active = <0>;
 	};
 };
@@ -85,7 +88,7 @@
 };
 
 &i2c3 {
-	rtc: rtc@6f {
+	rtc: mcp7940x@6f {
 		compatible = "microchip,mcp7940x";
 		reg = <0x6f>;
 	};

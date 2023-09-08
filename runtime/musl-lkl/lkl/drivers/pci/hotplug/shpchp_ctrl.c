@@ -299,6 +299,7 @@ static int board_added(struct slot *p_slot)
 	if (p_slot->status == 0xFF) {
 		/* power fault occurred, but it was benign */
 		ctrl_dbg(ctrl, "%s: Power fault\n", __func__);
+		rc = POWER_FAILURE;
 		p_slot->status = 0;
 		goto err_exit;
 	}
@@ -340,7 +341,8 @@ static int remove_board(struct slot *p_slot)
 	u8 hp_slot;
 	int rc;
 
-	shpchp_unconfigure_device(p_slot);
+	if (shpchp_unconfigure_device(p_slot))
+		return(1);
 
 	hp_slot = p_slot->device - ctrl->slot_device_offset;
 	p_slot = shpchp_find_slot(ctrl, hp_slot + ctrl->slot_device_offset);
@@ -444,12 +446,23 @@ void shpchp_queue_pushbutton_work(struct work_struct *work)
 	mutex_unlock(&p_slot->lock);
 }
 
-static void update_slot_info(struct slot *slot)
+static int update_slot_info (struct slot *slot)
 {
-	slot->hpc_ops->get_power_status(slot, &slot->pwr_save);
-	slot->hpc_ops->get_attention_status(slot, &slot->attention_save);
-	slot->hpc_ops->get_latch_status(slot, &slot->latch_save);
-	slot->hpc_ops->get_adapter_status(slot, &slot->presence_save);
+	struct hotplug_slot_info *info;
+	int result;
+
+	info = kmalloc(sizeof(*info), GFP_KERNEL);
+	if (!info)
+		return -ENOMEM;
+
+	slot->hpc_ops->get_power_status(slot, &(info->power_status));
+	slot->hpc_ops->get_attention_status(slot, &(info->attention_status));
+	slot->hpc_ops->get_latch_status(slot, &(info->latch_status));
+	slot->hpc_ops->get_adapter_status(slot, &(info->adapter_status));
+
+	result = pci_hp_change_slot_info(slot->hotplug_slot, info);
+	kfree (info);
+	return result;
 }
 
 /*
@@ -572,13 +585,13 @@ static int shpchp_enable_slot (struct slot *p_slot)
 	ctrl_dbg(ctrl, "%s: p_slot->pwr_save %x\n", __func__, p_slot->pwr_save);
 	p_slot->hpc_ops->get_latch_status(p_slot, &getstatus);
 
-	if ((p_slot->ctrl->pci_dev->vendor == PCI_VENDOR_ID_AMD &&
-	     p_slot->ctrl->pci_dev->device == PCI_DEVICE_ID_AMD_POGO_7458)
+	if (((p_slot->ctrl->pci_dev->vendor == PCI_VENDOR_ID_AMD) ||
+	    (p_slot->ctrl->pci_dev->device == PCI_DEVICE_ID_AMD_POGO_7458))
 	     && p_slot->ctrl->num_slots == 1) {
-		/* handle AMD POGO errata; this must be done before enable  */
+		/* handle amd pogo errata; this must be done before enable  */
 		amd_pogo_errata_save_misc_reg(p_slot);
 		retval = board_added(p_slot);
-		/* handle AMD POGO errata; this must be done after enable  */
+		/* handle amd pogo errata; this must be done after enable  */
 		amd_pogo_errata_restore_misc_reg(p_slot);
 	} else
 		retval = board_added(p_slot);
@@ -641,7 +654,6 @@ int shpchp_sysfs_enable_slot(struct slot *p_slot)
 	switch (p_slot->state) {
 	case BLINKINGON_STATE:
 		cancel_delayed_work(&p_slot->work);
-		fallthrough;
 	case STATIC_STATE:
 		p_slot->state = POWERON_STATE;
 		mutex_unlock(&p_slot->lock);
@@ -677,7 +689,6 @@ int shpchp_sysfs_disable_slot(struct slot *p_slot)
 	switch (p_slot->state) {
 	case BLINKINGOFF_STATE:
 		cancel_delayed_work(&p_slot->work);
-		fallthrough;
 	case STATIC_STATE:
 		p_slot->state = POWEROFF_STATE;
 		mutex_unlock(&p_slot->lock);

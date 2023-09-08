@@ -44,8 +44,19 @@ static struct iw_statistics *hostap_get_wireless_stats(struct net_device *dev)
 
 	if (local->iw_mode != IW_MODE_MASTER &&
 	    local->iw_mode != IW_MODE_REPEAT) {
+		int update = 1;
+#ifdef in_atomic
+		/* RID reading might sleep and it must not be called in
+		 * interrupt context or while atomic. However, this
+		 * function seems to be called while atomic (at least in Linux
+		 * 2.5.59). Update signal quality values only if in suitable
+		 * context. Otherwise, previous values read from tick timer
+		 * will be used. */
+		if (in_atomic())
+			update = 0;
+#endif /* in_atomic */
 
-		if (prism2_update_comms_qual(dev) == 0)
+		if (update && prism2_update_comms_qual(dev) == 0)
 			wstats->qual.updated = IW_QUAL_ALL_UPDATED |
 				IW_QUAL_DBM;
 
@@ -502,8 +513,8 @@ static int prism2_ioctl_giwaplist(struct net_device *dev,
 		return -EOPNOTSUPP;
 	}
 
-	addr = kmalloc_array(IW_MAX_AP, sizeof(struct sockaddr), GFP_KERNEL);
-	qual = kmalloc_array(IW_MAX_AP, sizeof(struct iw_quality), GFP_KERNEL);
+	addr = kmalloc(sizeof(struct sockaddr) * IW_MAX_AP, GFP_KERNEL);
+	qual = kmalloc(sizeof(struct iw_quality) * IW_MAX_AP, GFP_KERNEL);
 	if (addr == NULL || qual == NULL) {
 		kfree(addr);
 		kfree(qual);
@@ -1944,7 +1955,7 @@ static inline int prism2_translate_scan(local_info_t *local,
 					char *buffer, int buflen)
 {
 	struct hfa384x_hostscan_result *scan;
-	int entry;
+	int entry, hostscan;
 	char *current_ev = buffer;
 	char *end_buf = buffer + buflen;
 	struct list_head *ptr;
@@ -1957,6 +1968,7 @@ static inline int prism2_translate_scan(local_info_t *local,
 		bss->included = 0;
 	}
 
+	hostscan = local->last_scan_type == PRISM2_HOSTSCAN;
 	for (entry = 0; entry < local->last_scan_results_count; entry++) {
 		int found = 0;
 		scan = &local->last_scan_results[entry];
@@ -3848,7 +3860,7 @@ static void prism2_get_drvinfo(struct net_device *dev,
 	iface = netdev_priv(dev);
 	local = iface->local;
 
-	strscpy(info->driver, "hostap", sizeof(info->driver));
+	strlcpy(info->driver, "hostap", sizeof(info->driver));
 	snprintf(info->fw_version, sizeof(info->fw_version),
 		 "%d.%d.%d", (local->sta_fw_ver >> 16) & 0xff,
 		 (local->sta_fw_ver >> 8) & 0xff,
@@ -3941,8 +3953,7 @@ const struct iw_handler_def hostap_iw_handler_def =
 	.get_wireless_stats = hostap_get_wireless_stats,
 };
 
-/* Private ioctls (iwpriv) that have not yet been converted
- * into new wireless extensions API */
+
 int hostap_ioctl(struct net_device *dev, struct ifreq *ifr, int cmd)
 {
 	struct iwreq *wrq = (struct iwreq *) ifr;
@@ -3954,6 +3965,9 @@ int hostap_ioctl(struct net_device *dev, struct ifreq *ifr, int cmd)
 	local = iface->local;
 
 	switch (cmd) {
+		/* Private ioctls (iwpriv) that have not yet been converted
+		 * into new wireless extensions API */
+
 	case PRISM2_IOCTL_INQUIRE:
 		if (!capable(CAP_NET_ADMIN)) ret = -EPERM;
 		else ret = prism2_ioctl_priv_inquire(dev, (int *) wrq->u.name);
@@ -4007,31 +4021,11 @@ int hostap_ioctl(struct net_device *dev, struct ifreq *ifr, int cmd)
 					       wrq->u.ap_addr.sa_data);
 		break;
 #endif /* PRISM2_NO_KERNEL_IEEE80211_MGMT */
-	default:
-		ret = -EOPNOTSUPP;
-		break;
-	}
 
-	return ret;
-}
 
-/* Private ioctls that are not used with iwpriv;
- * in SIOCDEVPRIVATE range */
-int hostap_siocdevprivate(struct net_device *dev, struct ifreq *ifr,
-			  void __user *data, int cmd)
-{
-	struct iwreq *wrq = (struct iwreq *)ifr;
-	struct hostap_interface *iface;
-	local_info_t *local;
-	int ret = 0;
+		/* Private ioctls that are not used with iwpriv;
+		 * in SIOCDEVPRIVATE range */
 
-	iface = netdev_priv(dev);
-	local = iface->local;
-
-	if (in_compat_syscall()) /* not implemented yet */
-		return -EOPNOTSUPP;
-
-	switch (cmd) {
 #ifdef PRISM2_DOWNLOAD_SUPPORT
 	case PRISM2_IOCTL_DOWNLOAD:
 		if (!capable(CAP_NET_ADMIN)) ret = -EPERM;

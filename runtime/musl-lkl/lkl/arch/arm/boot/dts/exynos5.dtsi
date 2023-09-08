@@ -12,6 +12,7 @@
 
 #include <dt-bindings/interrupt-controller/arm-gic.h>
 #include <dt-bindings/interrupt-controller/irq.h>
+#include "exynos-syscon-restart.dtsi"
 
 / {
 	interrupt-parent = <&gic>;
@@ -35,7 +36,7 @@
 		#size-cells = <1>;
 		ranges;
 
-		chipid: chipid@10000000 {
+		chipid@10000000 {
 			compatible = "samsung,exynos4210-chipid";
 			reg = <0x10000000 0x100>;
 		};
@@ -86,10 +87,10 @@
 		};
 
 		gic: interrupt-controller@10481000 {
-			compatible = "arm,gic-400", "arm,cortex-a15-gic";
+			compatible = "arm,gic-400", "arm,cortex-a15-gic", "arm,cortex-a9-gic";
 			#interrupt-cells = <3>;
 			interrupt-controller;
-			reg = <0x10481000 0x1000>,
+			reg =	<0x10481000 0x1000>,
 				<0x10482000 0x2000>,
 				<0x10484000 0x2000>,
 				<0x10486000 0x2000>;
@@ -169,11 +170,6 @@
 		pwm: pwm@12dd0000 {
 			compatible = "samsung,exynos4210-pwm";
 			reg = <0x12DD0000 0x100>;
-			interrupts = <GIC_SPI 36 IRQ_TYPE_LEVEL_HIGH>,
-				     <GIC_SPI 37 IRQ_TYPE_LEVEL_HIGH>,
-				     <GIC_SPI 38 IRQ_TYPE_LEVEL_HIGH>,
-				     <GIC_SPI 39 IRQ_TYPE_LEVEL_HIGH>,
-				     <GIC_SPI 40 IRQ_TYPE_LEVEL_HIGH>;
 			samsung,pwm-outputs = <0>, <1>, <2>, <3>;
 			#pwm-cells = <3>;
 		};
@@ -201,6 +197,8 @@
 			reg = <0x145B0000 0x1000>;
 			interrupts = <10 3>;
 			interrupt-parent = <&combiner>;
+			#address-cells = <1>;
+			#size-cells = <0>;
 			status = "disabled";
 		};
 
@@ -211,13 +209,13 @@
 		};
 
 		prng: rng@10830400 {
-			compatible = "samsung,exynos5250-prng";
-			reg = <0x10830400 0x200>;
+		      compatible = "samsung,exynos5250-prng";
+		      reg = <0x10830400 0x200>;
 		};
 
 		trng: rng@10830600 {
-			compatible = "samsung,exynos5250-trng";
-			reg = <0x10830600 0x100>;
+		      compatible = "samsung,exynos5250-trng";
+		      reg = <0x10830600 0x100>;
 		};
 
 		g2d: g2d@10850000 {

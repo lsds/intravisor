@@ -36,6 +36,8 @@
 
 #include <asm/io.h>
 #include <asm/irq.h>
+#include <asm/pgtable.h>
+#include <asm/pgalloc.h>
 #include <asm/mmu_context.h>
 #include <asm/tlbflush.h>
 
@@ -166,6 +168,7 @@ smp_callin(void)
 	DBGS(("smp_callin: commencing CPU %d current %p active_mm %p\n",
 	      cpuid, current, current->active_mm));
 
+	preempt_disable();
 	cpu_startup_entry(CPUHP_AP_ONLINE_IDLE);
 }
 
@@ -497,6 +500,12 @@ smp_cpus_done(unsigned int max_cpus)
 	       ((bogosum + 2500) / (5000/HZ)) % 100);
 }
 
+int
+setup_profiling_timer(unsigned int multiplier)
+{
+	return -EINVAL;
+}
+
 static void
 send_ipi_message(const struct cpumask *to_whom, enum ipi_message_type operation)
 {
@@ -576,7 +585,7 @@ void
 smp_send_stop(void)
 {
 	cpumask_t to_whom;
-	cpumask_copy(&to_whom, cpu_online_mask);
+	cpumask_copy(&to_whom, cpu_possible_mask);
 	cpumask_clear_cpu(smp_processor_id(), &to_whom);
 #ifdef DEBUG_IPI_MSG
 	if (hard_smp_processor_id() != boot_cpu_id)
@@ -605,7 +614,8 @@ void
 smp_imb(void)
 {
 	/* Must wait other processors to flush their icache before continue. */
-	on_each_cpu(ipi_imb, NULL, 1);
+	if (on_each_cpu(ipi_imb, NULL, 1))
+		printk(KERN_CRIT "smp_imb: timed out\n");
 }
 EXPORT_SYMBOL(smp_imb);
 
@@ -620,7 +630,9 @@ flush_tlb_all(void)
 {
 	/* Although we don't have any data to pass, we do want to
 	   synchronize with the other processors.  */
-	on_each_cpu(ipi_flush_tlb_all, NULL, 1);
+	if (on_each_cpu(ipi_flush_tlb_all, NULL, 1)) {
+		printk(KERN_CRIT "flush_tlb_all: timed out\n");
+	}
 }
 
 #define asn_locked() (cpu_data[smp_processor_id()].asn_lock)
@@ -655,7 +667,9 @@ flush_tlb_mm(struct mm_struct *mm)
 		}
 	}
 
-	smp_call_function(ipi_flush_tlb_mm, mm, 1);
+	if (smp_call_function(ipi_flush_tlb_mm, mm, 1)) {
+		printk(KERN_CRIT "flush_tlb_mm: timed out\n");
+	}
 
 	preempt_enable();
 }
@@ -706,7 +720,9 @@ flush_tlb_page(struct vm_area_struct *vma, unsigned long addr)
 	data.mm = mm;
 	data.addr = addr;
 
-	smp_call_function(ipi_flush_tlb_page, &data, 1);
+	if (smp_call_function(ipi_flush_tlb_page, &data, 1)) {
+		printk(KERN_CRIT "flush_tlb_page: timed out\n");
+	}
 
 	preempt_enable();
 }
@@ -731,7 +747,7 @@ ipi_flush_icache_page(void *x)
 }
 
 void
-flush_icache_user_page(struct vm_area_struct *vma, struct page *page,
+flush_icache_user_range(struct vm_area_struct *vma, struct page *page,
 			unsigned long addr, int len)
 {
 	struct mm_struct *mm = vma->vm_mm;
@@ -756,7 +772,9 @@ flush_icache_user_page(struct vm_area_struct *vma, struct page *page,
 		}
 	}
 
-	smp_call_function(ipi_flush_icache_page, mm, 1);
+	if (smp_call_function(ipi_flush_icache_page, mm, 1)) {
+		printk(KERN_CRIT "flush_icache_page: timed out\n");
+	}
 
 	preempt_enable();
 }

@@ -31,9 +31,8 @@
 
 #include "xlate.h"
 #include "init.h"
-#include "hijack.h"
 
-int is_lklfd(int fd)
+static int is_lklfd(int fd)
 {
 	if (fd < LKL_FD_OFFSET)
 		return 0;
@@ -168,8 +167,8 @@ HOST_CALL(write)
 HOST_CALL(pipe2)
 
 HOST_CALL(setsockopt);
-int hijack_setsockopt(int fd, int level, int optname, const void *optval,
-		      socklen_t optlen)
+int setsockopt(int fd, int level, int optname, const void *optval,
+	       socklen_t optlen)
 {
 	CHECK_HOST_CALL(setsockopt);
 	if (!is_lklfd(fd))
@@ -179,7 +178,7 @@ int hijack_setsockopt(int fd, int level, int optname, const void *optval,
 }
 
 HOST_CALL(getsockopt);
-int hijack_getsockopt(int fd, int level, int optname, void *optval, socklen_t *optlen)
+int getsockopt(int fd, int level, int optname, void *optval, socklen_t *optlen)
 {
 	CHECK_HOST_CALL(getsockopt);
 	if (!is_lklfd(fd))
@@ -241,7 +240,7 @@ int fcntl(int fd, int cmd, ...)
 }
 
 HOST_CALL(poll);
-int hijack_poll(struct pollfd *fds, nfds_t nfds, int timeout)
+int poll(struct pollfd *fds, nfds_t nfds, int timeout)
 {
 	unsigned int i, lklfds = 0, hostfds = 0;
 
@@ -265,8 +264,10 @@ int hijack_poll(struct pollfd *fds, nfds_t nfds, int timeout)
 	return lkl_sys_poll((struct lkl_pollfd *)fds, nfds, timeout);
 }
 
+int __poll(struct pollfd *, nfds_t, int) __attribute__((alias("poll")));
+
 HOST_CALL(select);
-int hijack_select(int nfds, fd_set *r, fd_set *w, fd_set *e, struct timeval *t)
+int select(int nfds, fd_set *r, fd_set *w, fd_set *e, struct timeval *t)
 {
 	int fd, hostfds = 0, lklfds = 0;
 
@@ -323,7 +324,7 @@ int close(int fd)
 }
 
 HOST_CALL(epoll_create);
-int hijack_epoll_create(int size)
+int epoll_create(int size)
 {
 	int host_fd;
 
@@ -345,14 +346,14 @@ int hijack_epoll_create(int size)
 }
 
 HOST_CALL(epoll_create1);
-int hijack_epoll_create1(int flags)
+int epoll_create1(int flags)
 {
 	int host_fd;
 
 	CHECK_HOST_CALL(epoll_create1);
 
 	host_fd = host_epoll_create1(flags);
-	if (host_fd < 0) {
+	if (!host_fd) {
 		fprintf(stderr, "%s fail (%d)\n", __func__, errno);
 		return -1;
 	}
@@ -368,7 +369,7 @@ int hijack_epoll_create1(int flags)
 
 
 HOST_CALL(epoll_ctl);
-int hijack_epoll_ctl(int epollfd, int op, int fd, struct epoll_event *event)
+int epoll_ctl(int epollfd, int op, int fd, struct epoll_event *event)
 {
 	CHECK_HOST_CALL(epoll_ctl);
 
@@ -403,7 +404,7 @@ static void *host_epollwait(void *arg)
 	return (void *)(intptr_t)ret;
 }
 
-int hijack_epoll_wait(int epfd, struct epoll_event *events,
+int epoll_wait(int epfd, struct epoll_event *events,
 	       int maxevents, int timeout)
 {
 	CHECK_HOST_CALL(epoll_wait);
@@ -540,7 +541,7 @@ int hijack_epoll_wait(int epfd, struct epoll_event *events,
 	return ret;
 }
 
-int hijack_eventfd(unsigned int count, int flags)
+int eventfd(unsigned int count, int flags)
 {
 	if (!lkl_running) {
 		int (*f)(unsigned int, int) = resolve_sym("eventfd");
@@ -552,7 +553,7 @@ int hijack_eventfd(unsigned int count, int flags)
 }
 
 HOST_CALL(eventfd_read);
-int hijack_eventfd_read(int fd, uint64_t *value)
+int eventfd_read(int fd, uint64_t *value)
 {
 	CHECK_HOST_CALL(eventfd_read);
 
@@ -564,7 +565,7 @@ int hijack_eventfd_read(int fd, uint64_t *value)
 }
 
 HOST_CALL(eventfd_write);
-int hijack_eventfd_write(int fd, uint64_t value)
+int eventfd_write(int fd, uint64_t value)
 {
 	CHECK_HOST_CALL(eventfd_write);
 

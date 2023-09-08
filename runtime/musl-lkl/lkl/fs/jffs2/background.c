@@ -125,7 +125,7 @@ static int jffs2_garbage_collect_thread(void *_c)
 			if (try_to_freeze())
 				goto again;
 
-			signr = kernel_dequeue_signal();
+			signr = kernel_dequeue_signal(NULL);
 
 			switch(signr) {
 			case SIGSTOP:
@@ -161,5 +161,5 @@ static int jffs2_garbage_collect_thread(void *_c)
 	spin_lock(&c->erase_completion_lock);
 	c->gc_task = NULL;
 	spin_unlock(&c->erase_completion_lock);
-	kthread_complete_and_exit(&c->gc_thread_exit, 0);
+	complete_and_exit(&c->gc_thread_exit, 0);
 }

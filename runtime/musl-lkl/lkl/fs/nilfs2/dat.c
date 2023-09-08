@@ -1,8 +1,17 @@
-// SPDX-License-Identifier: GPL-2.0+
 /*
- * NILFS disk address translation.
+ * dat.c - NILFS disk address translation.
  *
  * Copyright (C) 2006-2008 Nippon Telegraph and Telephone Corporation.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
  *
  * Written by Koji Sato.
  */
@@ -111,13 +120,6 @@ static void nilfs_dat_commit_free(struct inode *dat,
 	kunmap_atomic(kaddr);
 
 	nilfs_dat_commit_entry(dat, req);
-
-	if (unlikely(req->pr_desc_bh == NULL || req->pr_bitmap_bh == NULL)) {
-		nilfs_error(dat->i_sb,
-			    "state inconsistency probably due to duplicate use of vblocknr = %llu",
-			    (unsigned long long)req->pr_entry_nr);
-		return;
-	}
 	nilfs_palloc_commit_free_entry(dat, req);
 }
 
@@ -347,11 +349,11 @@ int nilfs_dat_move(struct inode *dat, __u64 vblocknr, sector_t blocknr)
 	kaddr = kmap_atomic(entry_bh->b_page);
 	entry = nilfs_palloc_block_get_entry(dat, vblocknr, entry_bh, kaddr);
 	if (unlikely(entry->de_blocknr == cpu_to_le64(0))) {
-		nilfs_crit(dat->i_sb,
-			   "%s: invalid vblocknr = %llu, [%llu, %llu)",
-			   __func__, (unsigned long long)vblocknr,
-			   (unsigned long long)le64_to_cpu(entry->de_start),
-			   (unsigned long long)le64_to_cpu(entry->de_end));
+		nilfs_msg(dat->i_sb, KERN_CRIT,
+			  "%s: invalid vblocknr = %llu, [%llu, %llu)",
+			  __func__, (unsigned long long)vblocknr,
+			  (unsigned long long)le64_to_cpu(entry->de_start),
+			  (unsigned long long)le64_to_cpu(entry->de_end));
 		kunmap_atomic(kaddr);
 		brelse(entry_bh);
 		return -EINVAL;
@@ -478,11 +480,11 @@ int nilfs_dat_read(struct super_block *sb, size_t entry_size,
 	int err;
 
 	if (entry_size > sb->s_blocksize) {
-		nilfs_err(sb, "too large DAT entry size: %zu bytes",
+		nilfs_msg(sb, KERN_ERR, "too large DAT entry size: %zu bytes",
 			  entry_size);
 		return -EINVAL;
 	} else if (entry_size < NILFS_MIN_DAT_ENTRY_SIZE) {
-		nilfs_err(sb, "too small DAT entry size: %zu bytes",
+		nilfs_msg(sb, KERN_ERR, "too small DAT entry size: %zu bytes",
 			  entry_size);
 		return -EINVAL;
 	}
@@ -504,9 +506,7 @@ int nilfs_dat_read(struct super_block *sb, size_t entry_size,
 	di = NILFS_DAT_I(dat);
 	lockdep_set_class(&di->mi.mi_sem, &dat_lock_key);
 	nilfs_palloc_setup_cache(dat, &di->palloc_cache);
-	err = nilfs_mdt_setup_shadow_map(dat, &di->shadow);
-	if (err)
-		goto failed;
+	nilfs_mdt_setup_shadow_map(dat, &di->shadow);
 
 	err = nilfs_read_inode_common(dat, raw_inode);
 	if (err)

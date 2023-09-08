@@ -1,7 +1,15 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2014 MediaTek Inc.
  * Author: Shunli Wang <shunli.wang@mediatek.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
  */
 
 #include <linux/clk-provider.h>
@@ -10,10 +18,9 @@
 #include <linux/of_device.h>
 #include <linux/platform_device.h>
 
-#include "clk-cpumux.h"
-#include "clk-gate.h"
 #include "clk-mtk.h"
-#include "clk-pll.h"
+#include "clk-gate.h"
+#include "clk-cpumux.h"
 
 #include <dt-bindings/clock/mt2701-clk.h>
 
@@ -39,6 +46,8 @@ static const struct mtk_fixed_clk top_fixed_clks[] = {
 		340 * MHZ),
 	FIXED_CLK(CLK_TOP_HDMI_0_PLL340M, "hdmi_0_pll340m", "clk26m",
 		340 * MHZ),
+	FIXED_CLK(CLK_TOP_HDMITX_CLKDIG_CTS, "hdmitx_dig_cts", "clk26m",
+		300 * MHZ),
 	FIXED_CLK(CLK_TOP_HADDS2_FB, "hadds2_fbclk", "clk26m",
 		27 * MHZ),
 	FIXED_CLK(CLK_TOP_WBG_DIG_416M, "wbg_dig_ck_416m", "clk26m",
@@ -240,6 +249,11 @@ static const char * const msdc30_parents[] = {
 	"syspll1_d4",
 	"univpll1_d4",
 	"univpll2_d4"
+};
+
+static const char * const audio_parents[] = {
+	"clk26m",
+	"syspll1_d16"
 };
 
 static const char * const aud_intbus_parents[] = {
@@ -528,8 +542,8 @@ static const struct mtk_composite top_muxes[] = {
 		0x0080, 8, 2, 15),
 	MUX_GATE(CLK_TOP_DPI0_SEL, "dpi0_sel", dpi0_parents,
 		0x0080, 16, 3, 23),
-	MUX_GATE_FLAGS_2(CLK_TOP_DPI1_SEL, "dpi1_sel", dpi1_parents,
-		0x0080, 24, 2, 31, 0, CLK_MUX_ROUND_CLOSEST),
+	MUX_GATE(CLK_TOP_DPI1_SEL, "dpi1_sel", dpi1_parents,
+		0x0080, 24, 2, 31),
 
 	MUX_GATE(CLK_TOP_TVE_SEL, "tve_sel", tve_parents,
 		0x0090, 0, 3, 7),
@@ -666,7 +680,7 @@ static const struct mtk_gate top_clks[] = {
 
 static int mtk_topckgen_init(struct platform_device *pdev)
 {
-	struct clk_hw_onecell_data *clk_data;
+	struct clk_onecell_data *clk_data;
 	void __iomem *base;
 	struct device_node *node = pdev->dev.of_node;
 	struct resource *res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
@@ -692,7 +706,7 @@ static int mtk_topckgen_init(struct platform_device *pdev)
 	mtk_clk_register_gates(node, top_clks, ARRAY_SIZE(top_clks),
 						clk_data);
 
-	return of_clk_add_hw_provider(node, of_clk_hw_onecell_get, clk_data);
+	return of_clk_add_provider(node, of_clk_src_onecell_get, clk_data);
 }
 
 static const struct mtk_gate_regs infra_cg_regs = {
@@ -735,25 +749,7 @@ static const struct mtk_fixed_factor infra_fixed_divs[] = {
 	FACTOR(CLK_INFRA_CLK_13M, "clk13m", "clk26m", 1, 2),
 };
 
-static u16 infrasys_rst_ofs[] = { 0x30, 0x34, };
-static u16 pericfg_rst_ofs[] = { 0x0, 0x4, };
-
-static const struct mtk_clk_rst_desc clk_rst_desc[] = {
-	/* infrasys */
-	{
-		.version = MTK_RST_SIMPLE,
-		.rst_bank_ofs = infrasys_rst_ofs,
-		.rst_bank_nr = ARRAY_SIZE(infrasys_rst_ofs),
-	},
-	/* pericfg */
-	{
-		.version = MTK_RST_SIMPLE,
-		.rst_bank_ofs = pericfg_rst_ofs,
-		.rst_bank_nr = ARRAY_SIZE(pericfg_rst_ofs),
-	},
-};
-
-static struct clk_hw_onecell_data *infra_clk_data;
+static struct clk_onecell_data *infra_clk_data;
 
 static void __init mtk_infrasys_init_early(struct device_node *node)
 {
@@ -763,7 +759,7 @@ static void __init mtk_infrasys_init_early(struct device_node *node)
 		infra_clk_data = mtk_alloc_clk_data(CLK_INFRA_NR);
 
 		for (i = 0; i < CLK_INFRA_NR; i++)
-			infra_clk_data->hws[i] = ERR_PTR(-EPROBE_DEFER);
+			infra_clk_data->clks[i] = ERR_PTR(-EPROBE_DEFER);
 	}
 
 	mtk_clk_register_factors(infra_fixed_divs, ARRAY_SIZE(infra_fixed_divs),
@@ -772,8 +768,7 @@ static void __init mtk_infrasys_init_early(struct device_node *node)
 	mtk_clk_register_cpumuxes(node, cpu_muxes, ARRAY_SIZE(cpu_muxes),
 				  infra_clk_data);
 
-	r = of_clk_add_hw_provider(node, of_clk_hw_onecell_get,
-				   infra_clk_data);
+	r = of_clk_add_provider(node, of_clk_src_onecell_get, infra_clk_data);
 	if (r)
 		pr_err("%s(): could not register clock provider: %d\n",
 			__func__, r);
@@ -790,8 +785,8 @@ static int mtk_infrasys_init(struct platform_device *pdev)
 		infra_clk_data = mtk_alloc_clk_data(CLK_INFRA_NR);
 	} else {
 		for (i = 0; i < CLK_INFRA_NR; i++) {
-			if (infra_clk_data->hws[i] == ERR_PTR(-EPROBE_DEFER))
-				infra_clk_data->hws[i] = ERR_PTR(-ENOENT);
+			if (infra_clk_data->clks[i] == ERR_PTR(-EPROBE_DEFER))
+				infra_clk_data->clks[i] = ERR_PTR(-ENOENT);
 		}
 	}
 
@@ -800,12 +795,11 @@ static int mtk_infrasys_init(struct platform_device *pdev)
 	mtk_clk_register_factors(infra_fixed_divs, ARRAY_SIZE(infra_fixed_divs),
 						infra_clk_data);
 
-	r = of_clk_add_hw_provider(node, of_clk_hw_onecell_get,
-				   infra_clk_data);
+	r = of_clk_add_provider(node, of_clk_src_onecell_get, infra_clk_data);
 	if (r)
 		return r;
 
-	mtk_register_reset_controller_with_dev(&pdev->dev, &clk_rst_desc[0]);
+	mtk_register_reset_controller(node, 2, 0x30);
 
 	return 0;
 }
@@ -906,7 +900,7 @@ static const struct mtk_composite peri_muxs[] = {
 
 static int mtk_pericfg_init(struct platform_device *pdev)
 {
-	struct clk_hw_onecell_data *clk_data;
+	struct clk_onecell_data *clk_data;
 	void __iomem *base;
 	int r;
 	struct device_node *node = pdev->dev.of_node;
@@ -924,11 +918,11 @@ static int mtk_pericfg_init(struct platform_device *pdev)
 	mtk_clk_register_composites(peri_muxs, ARRAY_SIZE(peri_muxs), base,
 			&mt2701_clk_lock, clk_data);
 
-	r = of_clk_add_hw_provider(node, of_clk_hw_onecell_get, clk_data);
+	r = of_clk_add_provider(node, of_clk_src_onecell_get, clk_data);
 	if (r)
 		return r;
 
-	mtk_register_reset_controller_with_dev(&pdev->dev, &clk_rst_desc[1]);
+	mtk_register_reset_controller(node, 2, 0x0);
 
 	return 0;
 }
@@ -955,13 +949,13 @@ static int mtk_pericfg_init(struct platform_device *pdev)
 	}
 
 static const struct mtk_pll_data apmixed_plls[] = {
-	PLL(CLK_APMIXED_ARMPLL, "armpll", 0x200, 0x20c, 0x80000000,
+	PLL(CLK_APMIXED_ARMPLL, "armpll", 0x200, 0x20c, 0x80000001,
 			PLL_AO, 21, 0x204, 24, 0x0, 0x204, 0),
-	PLL(CLK_APMIXED_MAINPLL, "mainpll", 0x210, 0x21c, 0xf0000000,
+	PLL(CLK_APMIXED_MAINPLL, "mainpll", 0x210, 0x21c, 0xf0000001,
 		  HAVE_RST_BAR, 21, 0x210, 4, 0x0, 0x214, 0),
-	PLL(CLK_APMIXED_UNIVPLL, "univpll", 0x220, 0x22c, 0xf3000000,
+	PLL(CLK_APMIXED_UNIVPLL, "univpll", 0x220, 0x22c, 0xf3000001,
 		  HAVE_RST_BAR, 7, 0x220, 4, 0x0, 0x224, 14),
-	PLL(CLK_APMIXED_MMPLL, "mmpll", 0x230, 0x23c, 0, 0,
+	PLL(CLK_APMIXED_MMPLL, "mmpll", 0x230, 0x23c, 0x00000001, 0,
 				21, 0x230, 4, 0x0, 0x234, 0),
 	PLL(CLK_APMIXED_MSDCPLL, "msdcpll", 0x240, 0x24c, 0x00000001, 0,
 				21, 0x240, 4, 0x0, 0x244, 0),
@@ -983,13 +977,9 @@ static const struct mtk_pll_data apmixed_plls[] = {
 				21, 0x2d0, 4, 0x0, 0x2d4, 0),
 };
 
-static const struct mtk_fixed_factor apmixed_fixed_divs[] = {
-	FACTOR(CLK_APMIXED_HDMI_REF, "hdmi_ref", "tvdpll", 1, 1),
-};
-
 static int mtk_apmixedsys_init(struct platform_device *pdev)
 {
-	struct clk_hw_onecell_data *clk_data;
+	struct clk_onecell_data *clk_data;
 	struct device_node *node = pdev->dev.of_node;
 
 	clk_data = mtk_alloc_clk_data(CLK_APMIXED_NR);
@@ -998,10 +988,8 @@ static int mtk_apmixedsys_init(struct platform_device *pdev)
 
 	mtk_clk_register_plls(node, apmixed_plls, ARRAY_SIZE(apmixed_plls),
 								clk_data);
-	mtk_clk_register_factors(apmixed_fixed_divs, ARRAY_SIZE(apmixed_fixed_divs),
-								clk_data);
 
-	return of_clk_add_hw_provider(node, of_clk_hw_onecell_get, clk_data);
+	return of_clk_add_provider(node, of_clk_src_onecell_get, clk_data);
 }
 
 static const struct of_device_id of_match_clk_mt2701[] = {

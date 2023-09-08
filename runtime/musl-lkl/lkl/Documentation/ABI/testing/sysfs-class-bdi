@@ -23,17 +23,15 @@ default
 	The default backing dev, used for non-block device backed
 	filesystems which do not provide their own BDI.
 
-What:		/sys/class/bdi/<bdi>/read_ahead_kb
-Date:		January 2008
-Contact:	Peter Zijlstra <a.p.zijlstra@chello.nl>
-Description:
+Files under /sys/class/bdi/<bdi>/
+---------------------------------
+
+read_ahead_kb (read-write)
+
 	Size of the read-ahead window in kilobytes
 
-	(read-write)
-What:		/sys/class/bdi/<bdi>/min_ratio
-Date:		January 2008
-Contact:	Peter Zijlstra <a.p.zijlstra@chello.nl>
-Description:
+min_ratio (read-write)
+
 	Under normal circumstances each device is given a part of the
 	total write-back cache that relates to its current average
 	writeout speed in relation to the other devices.
@@ -42,12 +40,8 @@ Description:
 	percentage of the write-back cache to a particular device.
 	For example, this is useful for providing a minimum QoS.
 
-	(read-write)
+max_ratio (read-write)
 
-What:		/sys/class/bdi/<bdi>/max_ratio
-Date:		January 2008
-Contact:	Peter Zijlstra <a.p.zijlstra@chello.nl>
-Description:
 	Allows limiting a particular device to use not more than the
 	given percentage of the write-back cache.  This is useful in
 	situations where we want to avoid one device taking all or
@@ -55,12 +49,7 @@ Description:
 	mount that is prone to get stuck, or a FUSE mount which cannot
 	be trusted to play fair.
 
-	(read-write)
-What:		/sys/class/bdi/<bdi>/stable_pages_required
-Date:		January 2008
-Contact:	Peter Zijlstra <a.p.zijlstra@chello.nl>
-Description:
+stable_pages_required (read-only)
+
 	If set, the backing device requires that all pages comprising a write
 	request must not be changed until writeout is complete.
-
-	(read-only)

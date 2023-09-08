@@ -2,7 +2,6 @@
  * Common logic shared by IPv4 [ipmr] and IPv6 [ip6mr] implementation
  */
 
-#include <linux/rhashtable.h>
 #include <linux/mroute_base.h>
 
 /* Sets everything common except 'dev', since that is done under locking */
@@ -13,7 +12,7 @@ void vif_device_init(struct vif_device *v,
 		     unsigned short flags,
 		     unsigned short get_iflink_mask)
 {
-	RCU_INIT_POINTER(v->dev, NULL);
+	v->dev = NULL;
 	v->bytes_in = 0;
 	v->bytes_out = 0;
 	v->pkt_in = 0;
@@ -36,19 +35,17 @@ mr_table_alloc(struct net *net, u32 id,
 				 struct net *net))
 {
 	struct mr_table *mrt;
-	int err;
 
 	mrt = kzalloc(sizeof(*mrt), GFP_KERNEL);
 	if (!mrt)
-		return ERR_PTR(-ENOMEM);
+		return NULL;
 	mrt->id = id;
 	write_pnet(&mrt->net, net);
 
 	mrt->ops = *ops;
-	err = rhltable_init(&mrt->mfc_hash, mrt->ops.rht_params);
-	if (err) {
+	if (rhltable_init(&mrt->mfc_hash, mrt->ops.rht_params)) {
 		kfree(mrt);
-		return ERR_PTR(err);
+		return NULL;
 	}
 	INIT_LIST_HEAD(&mrt->mfc_cache_list);
 	INIT_LIST_HEAD(&mrt->mfc_unres_queue);
@@ -208,7 +205,6 @@ EXPORT_SYMBOL(mr_mfc_seq_next);
 int mr_fill_mroute(struct mr_table *mrt, struct sk_buff *skb,
 		   struct mr_mfc *c, struct rtmsg *rtm)
 {
-	struct net_device *vif_dev;
 	struct rta_mfc_stats mfcs;
 	struct nlattr *mp_attr;
 	struct rtnexthop *nhp;
@@ -221,42 +217,35 @@ int mr_fill_mroute(struct mr_table *mrt, struct sk_buff *skb,
 		return -ENOENT;
 	}
 
-	rcu_read_lock();
-	vif_dev = rcu_dereference(mrt->vif_table[c->mfc_parent].dev);
-	if (vif_dev && nla_put_u32(skb, RTA_IIF, vif_dev->ifindex) < 0) {
-		rcu_read_unlock();
+	if (VIF_EXISTS(mrt, c->mfc_parent) &&
+	    nla_put_u32(skb, RTA_IIF,
+			mrt->vif_table[c->mfc_parent].dev->ifindex) < 0)
 		return -EMSGSIZE;
-	}
-	rcu_read_unlock();
 
 	if (c->mfc_flags & MFC_OFFLOAD)
 		rtm->rtm_flags |= RTNH_F_OFFLOAD;
 
-	mp_attr = nla_nest_start_noflag(skb, RTA_MULTIPATH);
+	mp_attr = nla_nest_start(skb, RTA_MULTIPATH);
 	if (!mp_attr)
 		return -EMSGSIZE;
 
-	rcu_read_lock();
 	for (ct = c->mfc_un.res.minvif; ct < c->mfc_un.res.maxvif; ct++) {
-		struct vif_device *vif = &mrt->vif_table[ct];
-
-		vif_dev = rcu_dereference(vif->dev);
-		if (vif_dev && c->mfc_un.res.ttls[ct] < 255) {
+		if (VIF_EXISTS(mrt, ct) && c->mfc_un.res.ttls[ct] < 255) {
+			struct vif_device *vif;
 
 			nhp = nla_reserve_nohdr(skb, sizeof(*nhp));
 			if (!nhp) {
-				rcu_read_unlock();
 				nla_nest_cancel(skb, mp_attr);
 				return -EMSGSIZE;
 			}
 
 			nhp->rtnh_flags = 0;
 			nhp->rtnh_hops = c->mfc_un.res.ttls[ct];
-			nhp->rtnh_ifindex = vif_dev->ifindex;
+			vif = &mrt->vif_table[ct];
+			nhp->rtnh_ifindex = vif->dev->ifindex;
 			nhp->rtnh_len = sizeof(*nhp);
 		}
 	}
-	rcu_read_unlock();
 
 	nla_nest_end(skb, mp_attr);
 
@@ -276,80 +265,6 @@ int mr_fill_mroute(struct mr_table *mrt, struct sk_buff *skb,
 }
 EXPORT_SYMBOL(mr_fill_mroute);
 
-static bool mr_mfc_uses_dev(const struct mr_table *mrt,
-			    const struct mr_mfc *c,
-			    const struct net_device *dev)
-{
-	int ct;
-
-	for (ct = c->mfc_un.res.minvif; ct < c->mfc_un.res.maxvif; ct++) {
-		const struct net_device *vif_dev;
-		const struct vif_device *vif;
-
-		vif = &mrt->vif_table[ct];
-		vif_dev = rcu_access_pointer(vif->dev);
-		if (vif_dev && c->mfc_un.res.ttls[ct] < 255 &&
-		    vif_dev == dev)
-			return true;
-	}
-	return false;
-}
-
-int mr_table_dump(struct mr_table *mrt, struct sk_buff *skb,
-		  struct netlink_callback *cb,
-		  int (*fill)(struct mr_table *mrt, struct sk_buff *skb,
-			      u32 portid, u32 seq, struct mr_mfc *c,
-			      int cmd, int flags),
-		  spinlock_t *lock, struct fib_dump_filter *filter)
-{
-	unsigned int e = 0, s_e = cb->args[1];
-	unsigned int flags = NLM_F_MULTI;
-	struct mr_mfc *mfc;
-	int err;
-
-	if (filter->filter_set)
-		flags |= NLM_F_DUMP_FILTERED;
-
-	list_for_each_entry_rcu(mfc, &mrt->mfc_cache_list, list) {
-		if (e < s_e)
-			goto next_entry;
-		if (filter->dev &&
-		    !mr_mfc_uses_dev(mrt, mfc, filter->dev))
-			goto next_entry;
-
-		err = fill(mrt, skb, NETLINK_CB(cb->skb).portid,
-			   cb->nlh->nlmsg_seq, mfc, RTM_NEWROUTE, flags);
-		if (err < 0)
-			goto out;
-next_entry:
-		e++;
-	}
-
-	spin_lock_bh(lock);
-	list_for_each_entry(mfc, &mrt->mfc_unres_queue, list) {
-		if (e < s_e)
-			goto next_entry2;
-		if (filter->dev &&
-		    !mr_mfc_uses_dev(mrt, mfc, filter->dev))
-			goto next_entry2;
-
-		err = fill(mrt, skb, NETLINK_CB(cb->skb).portid,
-			   cb->nlh->nlmsg_seq, mfc, RTM_NEWROUTE, flags);
-		if (err < 0) {
-			spin_unlock_bh(lock);
-			goto out;
-		}
-next_entry2:
-		e++;
-	}
-	spin_unlock_bh(lock);
-	err = 0;
-out:
-	cb->args[1] = e;
-	return err;
-}
-EXPORT_SYMBOL(mr_table_dump);
-
 int mr_rtm_dumproute(struct sk_buff *skb, struct netlink_callback *cb,
 		     struct mr_table *(*iter)(struct net *net,
 					      struct mr_table *mrt),
@@ -357,36 +272,53 @@ int mr_rtm_dumproute(struct sk_buff *skb, struct netlink_callback *cb,
 				 struct sk_buff *skb,
 				 u32 portid, u32 seq, struct mr_mfc *c,
 				 int cmd, int flags),
-		     spinlock_t *lock, struct fib_dump_filter *filter)
+		     spinlock_t *lock)
 {
-	unsigned int t = 0, s_t = cb->args[0];
+	unsigned int t = 0, e = 0, s_t = cb->args[0], s_e = cb->args[1];
 	struct net *net = sock_net(skb->sk);
 	struct mr_table *mrt;
-	int err;
-
-	/* multicast does not track protocol or have route type other
-	 * than RTN_MULTICAST
-	 */
-	if (filter->filter_set) {
-		if (filter->protocol || filter->flags ||
-		    (filter->rt_type && filter->rt_type != RTN_MULTICAST))
-			return skb->len;
-	}
+	struct mr_mfc *mfc;
 
 	rcu_read_lock();
 	for (mrt = iter(net, NULL); mrt; mrt = iter(net, mrt)) {
 		if (t < s_t)
 			goto next_table;
+		list_for_each_entry_rcu(mfc, &mrt->mfc_cache_list, list) {
+			if (e < s_e)
+				goto next_entry;
+			if (fill(mrt, skb, NETLINK_CB(cb->skb).portid,
+				 cb->nlh->nlmsg_seq, mfc,
+				 RTM_NEWROUTE, NLM_F_MULTI) < 0)
+				goto done;
+next_entry:
+			e++;
+		}
+		e = 0;
+		s_e = 0;
 
-		err = mr_table_dump(mrt, skb, cb, fill, lock, filter);
-		if (err < 0)
-			break;
-		cb->args[1] = 0;
+		spin_lock_bh(lock);
+		list_for_each_entry(mfc, &mrt->mfc_unres_queue, list) {
+			if (e < s_e)
+				goto next_entry2;
+			if (fill(mrt, skb, NETLINK_CB(cb->skb).portid,
+				 cb->nlh->nlmsg_seq, mfc,
+				 RTM_NEWROUTE, NLM_F_MULTI) < 0) {
+				spin_unlock_bh(lock);
+				goto done;
+			}
+next_entry2:
+			e++;
+		}
+		spin_unlock_bh(lock);
+		e = 0;
+		s_e = 0;
 next_table:
 		t++;
 	}
+done:
 	rcu_read_unlock();
 
+	cb->args[1] = e;
 	cb->args[0] = t;
 
 	return skb->len;
@@ -395,52 +327,40 @@ EXPORT_SYMBOL(mr_rtm_dumproute);
 
 int mr_dump(struct net *net, struct notifier_block *nb, unsigned short family,
 	    int (*rules_dump)(struct net *net,
-			      struct notifier_block *nb,
-			      struct netlink_ext_ack *extack),
+			      struct notifier_block *nb),
 	    struct mr_table *(*mr_iter)(struct net *net,
 					struct mr_table *mrt),
-	    struct netlink_ext_ack *extack)
+	    rwlock_t *mrt_lock)
 {
 	struct mr_table *mrt;
 	int err;
 
-	err = rules_dump(net, nb, extack);
+	err = rules_dump(net, nb);
 	if (err)
 		return err;
 
 	for (mrt = mr_iter(net, NULL); mrt; mrt = mr_iter(net, mrt)) {
 		struct vif_device *v = &mrt->vif_table[0];
-		struct net_device *vif_dev;
 		struct mr_mfc *mfc;
 		int vifi;
 
 		/* Notifiy on table VIF entries */
-		rcu_read_lock();
+		read_lock(mrt_lock);
 		for (vifi = 0; vifi < mrt->maxvif; vifi++, v++) {
-			vif_dev = rcu_dereference(v->dev);
-			if (!vif_dev)
+			if (!v->dev)
 				continue;
 
-			err = mr_call_vif_notifier(nb, family,
-						   FIB_EVENT_VIF_ADD, v,
-						   vif_dev, vifi,
-						   mrt->id, extack);
-			if (err)
-				break;
+			mr_call_vif_notifier(nb, net, family,
+					     FIB_EVENT_VIF_ADD,
+					     v, vifi, mrt->id);
 		}
-		rcu_read_unlock();
-
-		if (err)
-			return err;
+		read_unlock(mrt_lock);
 
 		/* Notify on table MFC entries */
-		list_for_each_entry_rcu(mfc, &mrt->mfc_cache_list, list) {
-			err = mr_call_mfc_notifier(nb, family,
-						   FIB_EVENT_ENTRY_ADD,
-						   mfc, mrt->id, extack);
-			if (err)
-				return err;
-		}
+		list_for_each_entry_rcu(mfc, &mrt->mfc_cache_list, list)
+			mr_call_mfc_notifier(nb, net, family,
+					     FIB_EVENT_ENTRY_ADD,
+					     mfc, mrt->id);
 	}
 
 	return 0;

@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  *  sata_promise.c - Promise SATA
  *
@@ -9,10 +8,27 @@
  *
  *  Copyright 2003-2004 Red Hat, Inc.
  *
+ *
+ *  This program is free software; you can redistribute it and/or modify
+ *  it under the terms of the GNU General Public License as published by
+ *  the Free Software Foundation; either version 2, or (at your option)
+ *  any later version.
+ *
+ *  This program is distributed in the hope that it will be useful,
+ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *  GNU General Public License for more details.
+ *
+ *  You should have received a copy of the GNU General Public License
+ *  along with this program; see the file COPYING.  If not, write to
+ *  the Free Software Foundation, 675 Mass Ave, Cambridge, MA 02139, USA.
+ *
+ *
  *  libata documentation is available via 'make {ps|pdf}docs',
  *  as Documentation/driver-api/libata.rst
  *
  *  Hardware information only available under NDA.
+ *
  */
 
 #include <linux/kernel.h>
@@ -139,7 +155,7 @@ static int pdc_sata_scr_write(struct ata_link *link, unsigned int sc_reg, u32 va
 static int pdc_ata_init_one(struct pci_dev *pdev, const struct pci_device_id *ent);
 static int pdc_common_port_start(struct ata_port *ap);
 static int pdc_sata_port_start(struct ata_port *ap);
-static enum ata_completion_errors pdc_qc_prep(struct ata_queued_cmd *qc);
+static void pdc_qc_prep(struct ata_queued_cmd *qc);
 static void pdc_tf_load_mmio(struct ata_port *ap, const struct ata_taskfile *tf);
 static void pdc_exec_command_mmio(struct ata_port *ap, const struct ata_taskfile *tf);
 static int pdc_check_atapi_dma(struct ata_queued_cmd *qc);
@@ -157,6 +173,7 @@ static int pdc_sata_hardreset(struct ata_link *link, unsigned int *class,
 static void pdc_error_handler(struct ata_port *ap);
 static void pdc_post_internal_cmd(struct ata_queued_cmd *qc);
 static int pdc_pata_cable_detect(struct ata_port *ap);
+static int pdc_sata_cable_detect(struct ata_port *ap);
 
 static struct scsi_host_template pdc_ata_sht = {
 	ATA_BASE_SHT(DRV_NAME),
@@ -182,7 +199,7 @@ static const struct ata_port_operations pdc_common_ops = {
 
 static struct ata_port_operations pdc_sata_ops = {
 	.inherits		= &pdc_common_ops,
-	.cable_detect		= ata_cable_sata,
+	.cable_detect		= pdc_sata_cable_detect,
 	.freeze			= pdc_sata_freeze,
 	.thaw			= pdc_sata_thaw,
 	.scr_read		= pdc_sata_scr_read,
@@ -458,6 +475,11 @@ static int pdc_pata_cable_detect(struct ata_port *ap)
 	return ATA_CBL_PATA80;
 }
 
+static int pdc_sata_cable_detect(struct ata_port *ap)
+{
+	return ATA_CBL_SATA;
+}
+
 static int pdc_sata_scr_read(struct ata_link *link,
 			     unsigned int sc_reg, u32 *val)
 {
@@ -596,8 +618,7 @@ static void pdc_fill_sg(struct ata_queued_cmd *qc)
 
 			prd[idx].addr = cpu_to_le32(addr);
 			prd[idx].flags_len = cpu_to_le32(len & 0xffff);
-			ata_port_dbg(ap, "PRD[%u] = (0x%X, 0x%X)\n",
-				     idx, addr, len);
+			VPRINTK("PRD[%u] = (0x%X, 0x%X)\n", idx, addr, len);
 
 			idx++;
 			sg_len -= len;
@@ -610,16 +631,17 @@ static void pdc_fill_sg(struct ata_queued_cmd *qc)
 	if (len > SG_COUNT_ASIC_BUG) {
 		u32 addr;
 
+		VPRINTK("Splitting last PRD.\n");
+
 		addr = le32_to_cpu(prd[idx - 1].addr);
 		prd[idx - 1].flags_len = cpu_to_le32(len - SG_COUNT_ASIC_BUG);
-		ata_port_dbg(ap, "PRD[%u] = (0x%X, 0x%X)\n",
-			     idx - 1, addr, SG_COUNT_ASIC_BUG);
+		VPRINTK("PRD[%u] = (0x%X, 0x%X)\n", idx - 1, addr, SG_COUNT_ASIC_BUG);
 
 		addr = addr + len - SG_COUNT_ASIC_BUG;
 		len = SG_COUNT_ASIC_BUG;
 		prd[idx].addr = cpu_to_le32(addr);
 		prd[idx].flags_len = cpu_to_le32(len);
-		ata_port_dbg(ap, "PRD[%u] = (0x%X, 0x%X)\n", idx, addr, len);
+		VPRINTK("PRD[%u] = (0x%X, 0x%X)\n", idx, addr, len);
 
 		idx++;
 	}
@@ -627,15 +649,17 @@ static void pdc_fill_sg(struct ata_queued_cmd *qc)
 	prd[idx - 1].flags_len |= cpu_to_le32(ATA_PRD_EOT);
 }
 
-static enum ata_completion_errors pdc_qc_prep(struct ata_queued_cmd *qc)
+static void pdc_qc_prep(struct ata_queued_cmd *qc)
 {
 	struct pdc_port_priv *pp = qc->ap->private_data;
 	unsigned int i;
 
+	VPRINTK("ENTER\n");
+
 	switch (qc->tf.protocol) {
 	case ATA_PROT_DMA:
 		pdc_fill_sg(qc);
-		fallthrough;
+		/*FALLTHROUGH*/
 	case ATA_PROT_NODATA:
 		i = pdc_pkt_header(&qc->tf, qc->ap->bmdma_prd_dma,
 				   qc->dev->devno, pp->pkt);
@@ -650,15 +674,13 @@ static enum ata_completion_errors pdc_qc_prep(struct ata_queued_cmd *qc)
 		break;
 	case ATAPI_PROT_DMA:
 		pdc_fill_sg(qc);
-		fallthrough;
+		/*FALLTHROUGH*/
 	case ATAPI_PROT_NODATA:
 		pdc_atapi_pkt(qc);
 		break;
 	default:
 		break;
 	}
-
-	return AC_ERR_OK;
 }
 
 static int pdc_is_sataii_tx4(unsigned long flags)
@@ -920,8 +942,12 @@ static irqreturn_t pdc_interrupt(int irq, void *dev_instance)
 	u32 hotplug_status;
 	int is_sataii_tx4;
 
-	if (!host || !host->iomap[PDC_MMIO_BAR])
+	VPRINTK("ENTER\n");
+
+	if (!host || !host->iomap[PDC_MMIO_BAR]) {
+		VPRINTK("QUICK EXIT\n");
 		return IRQ_NONE;
+	}
 
 	host_mmio = host->iomap[PDC_MMIO_BAR];
 
@@ -940,18 +966,23 @@ static irqreturn_t pdc_interrupt(int irq, void *dev_instance)
 	/* reading should also clear interrupts */
 	mask = readl(host_mmio + PDC_INT_SEQMASK);
 
-	if (mask == 0xffffffff && hotplug_status == 0)
+	if (mask == 0xffffffff && hotplug_status == 0) {
+		VPRINTK("QUICK EXIT 2\n");
 		goto done_irq;
+	}
 
 	mask &= 0xffff;		/* only 16 SEQIDs possible */
-	if (mask == 0 && hotplug_status == 0)
+	if (mask == 0 && hotplug_status == 0) {
+		VPRINTK("QUICK EXIT 3\n");
 		goto done_irq;
+	}
 
 	writel(mask, host_mmio + PDC_INT_SEQMASK);
 
 	is_sataii_tx4 = pdc_is_sataii_tx4(host->ports[0]->flags);
 
 	for (i = 0; i < host->n_ports; i++) {
+		VPRINTK("port %u\n", i);
 		ap = host->ports[i];
 
 		/* check for a plug or unplug event */
@@ -978,6 +1009,8 @@ static irqreturn_t pdc_interrupt(int irq, void *dev_instance)
 		}
 	}
 
+	VPRINTK("EXIT\n");
+
 done_irq:
 	spin_unlock(&host->lock);
 	return IRQ_RETVAL(handled);
@@ -991,6 +1024,8 @@ static void pdc_packet_start(struct ata_queued_cmd *qc)
 	void __iomem *ata_mmio = ap->ioaddr.cmd_addr;
 	unsigned int port_no = ap->port_no;
 	u8 seq = (u8) (port_no + 1);
+
+	VPRINTK("ENTER, ap %p\n", ap);
 
 	writel(0x00000001, host_mmio + (seq * 4));
 	readl(host_mmio + (seq * 4));	/* flush */
@@ -1007,11 +1042,11 @@ static unsigned int pdc_qc_issue(struct ata_queued_cmd *qc)
 	case ATAPI_PROT_NODATA:
 		if (qc->dev->flags & ATA_DFLAG_CDB_INTR)
 			break;
-		fallthrough;
+		/*FALLTHROUGH*/
 	case ATA_PROT_NODATA:
 		if (qc->tf.flags & ATA_TFLAG_POLLING)
 			break;
-		fallthrough;
+		/*FALLTHROUGH*/
 	case ATAPI_PROT_DMA:
 	case ATA_PROT_DMA:
 		pdc_packet_start(qc);
@@ -1211,7 +1246,10 @@ static int pdc_ata_init_one(struct pci_dev *pdev,
 	/* initialize adapter */
 	pdc_host_init(host);
 
-	rc = dma_set_mask_and_coherent(&pdev->dev, ATA_DMA_MASK);
+	rc = dma_set_mask(&pdev->dev, ATA_DMA_MASK);
+	if (rc)
+		return rc;
+	rc = dma_set_coherent_mask(&pdev->dev, ATA_DMA_MASK);
 	if (rc)
 		return rc;
 

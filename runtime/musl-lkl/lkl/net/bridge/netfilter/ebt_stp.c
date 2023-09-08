@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  *  ebt_stp
  *
@@ -15,6 +14,7 @@
 #include <linux/netfilter_bridge/ebt_stp.h>
 
 #define BPDU_TYPE_CONFIG 0
+#define BPDU_TYPE_TCN 0x80
 
 struct stp_header {
 	u8 dsap;

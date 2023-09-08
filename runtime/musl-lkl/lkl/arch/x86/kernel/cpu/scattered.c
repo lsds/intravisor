@@ -4,11 +4,10 @@
  */
 #include <linux/cpu.h>
 
-#include <asm/memtype.h>
-#include <asm/apic.h>
+#include <asm/pat.h>
 #include <asm/processor.h>
 
-#include "cpu.h"
+#include <asm/apic.h>
 
 struct cpuid_bit {
 	u16 feature;
@@ -18,34 +17,20 @@ struct cpuid_bit {
 	u32 sub_leaf;
 };
 
-/*
- * Please keep the leaf sorted by cpuid_bit.level for faster search.
- * X86_FEATURE_MBA is supported by both Intel and AMD. But the CPUID
- * levels are different and there is a separate entry for each.
- */
+/* Please keep the leaf sorted by cpuid_bit.level for faster search. */
 static const struct cpuid_bit cpuid_bits[] = {
 	{ X86_FEATURE_APERFMPERF,       CPUID_ECX,  0, 0x00000006, 0 },
 	{ X86_FEATURE_EPB,		CPUID_ECX,  3, 0x00000006, 0 },
-	{ X86_FEATURE_INTEL_PPIN,	CPUID_EBX,  0, 0x00000007, 1 },
-	{ X86_FEATURE_RRSBA_CTRL,	CPUID_EDX,  2, 0x00000007, 2 },
-	{ X86_FEATURE_CQM_LLC,		CPUID_EDX,  1, 0x0000000f, 0 },
-	{ X86_FEATURE_CQM_OCCUP_LLC,	CPUID_EDX,  0, 0x0000000f, 1 },
-	{ X86_FEATURE_CQM_MBM_TOTAL,	CPUID_EDX,  1, 0x0000000f, 1 },
-	{ X86_FEATURE_CQM_MBM_LOCAL,	CPUID_EDX,  2, 0x0000000f, 1 },
 	{ X86_FEATURE_CAT_L3,		CPUID_EBX,  1, 0x00000010, 0 },
 	{ X86_FEATURE_CAT_L2,		CPUID_EBX,  2, 0x00000010, 0 },
 	{ X86_FEATURE_CDP_L3,		CPUID_ECX,  2, 0x00000010, 1 },
 	{ X86_FEATURE_CDP_L2,		CPUID_ECX,  2, 0x00000010, 2 },
 	{ X86_FEATURE_MBA,		CPUID_EBX,  3, 0x00000010, 0 },
-	{ X86_FEATURE_PER_THREAD_MBA,	CPUID_ECX,  0, 0x00000010, 3 },
-	{ X86_FEATURE_SGX1,		CPUID_EAX,  0, 0x00000012, 0 },
-	{ X86_FEATURE_SGX2,		CPUID_EAX,  1, 0x00000012, 0 },
 	{ X86_FEATURE_HW_PSTATE,	CPUID_EDX,  7, 0x80000007, 0 },
 	{ X86_FEATURE_CPB,		CPUID_EDX,  9, 0x80000007, 0 },
 	{ X86_FEATURE_PROC_FEEDBACK,    CPUID_EDX, 11, 0x80000007, 0 },
-	{ X86_FEATURE_MBA,		CPUID_EBX,  6, 0x80000008, 0 },
-	{ X86_FEATURE_PERFMON_V2,	CPUID_EAX,  0, 0x80000022, 0 },
-	{ X86_FEATURE_AMD_LBR_V2,	CPUID_EAX,  1, 0x80000022, 0 },
+	{ X86_FEATURE_SME,		CPUID_EAX,  0, 0x8000001f, 0 },
+	{ X86_FEATURE_SEV,		CPUID_EAX,  1, 0x8000001f, 0 },
 	{ 0, 0, 0, 0, 0 }
 };
 
@@ -71,3 +56,27 @@ void init_scattered_cpuid_features(struct cpuinfo_x86 *c)
 			set_cpu_cap(c, cb->feature);
 	}
 }
+
+u32 get_scattered_cpuid_leaf(unsigned int level, unsigned int sub_leaf,
+			     enum cpuid_regs_idx reg)
+{
+	const struct cpuid_bit *cb;
+	u32 cpuid_val = 0;
+
+	for (cb = cpuid_bits; cb->feature; cb++) {
+
+		if (level > cb->level)
+			continue;
+
+		if (level < cb->level)
+			break;
+
+		if (reg == cb->reg && sub_leaf == cb->sub_leaf) {
+			if (cpu_has(&boot_cpu_data, cb->feature))
+				cpuid_val |= BIT(cb->bit);
+		}
+	}
+
+	return cpuid_val;
+}
+EXPORT_SYMBOL_GPL(get_scattered_cpuid_leaf);

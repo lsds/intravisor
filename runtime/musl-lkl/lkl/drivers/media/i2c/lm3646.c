@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * drivers/media/i2c/lm3646.c
  * General device driver for TI lm3646, Dual FLASH LED Driver
@@ -7,6 +6,10 @@
  *
  * Contact: Daniel Jeong <gshark.jeong@gmail.com>
  *			Ldd-Mlp <ldd-mlp@list.ti.com>
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * version 2 as published by the Free Software Foundation.
  */
 
 #include <linux/delay.h>
@@ -59,7 +62,7 @@ enum led_mode {
  * @regmap: reg. map for i2c
  * @lock: muxtex for serial access.
  * @led_mode: V4L2 LED mode
- * @ctrls_led: V4L2 controls
+ * @ctrls_led: V4L2 contols
  * @subdev_led: V4L2 subdev
  * @mode_reg : mode register value
  */
@@ -134,7 +137,7 @@ static int lm3646_set_ctrl(struct v4l2_ctrl *ctrl)
 {
 	struct lm3646_flash *flash = to_lm3646_flash(ctrl);
 	unsigned int reg_val;
-	int rval;
+	int rval = -EINVAL;
 
 	switch (ctrl->id) {
 	case V4L2_CID_FLASH_LED_MODE:
@@ -275,8 +278,7 @@ static int lm3646_subdev_init(struct lm3646_flash *flash)
 
 	v4l2_i2c_subdev_init(&flash->subdev_led, client, &lm3646_ops);
 	flash->subdev_led.flags |= V4L2_SUBDEV_FL_HAS_DEVNODE;
-	strscpy(flash->subdev_led.name, LM3646_NAME,
-		sizeof(flash->subdev_led.name));
+	strcpy(flash->subdev_led.name, LM3646_NAME);
 	rval = lm3646_init_controls(flash);
 	if (rval)
 		goto err_out;
@@ -377,13 +379,15 @@ static int lm3646_probe(struct i2c_client *client,
 	return 0;
 }
 
-static void lm3646_remove(struct i2c_client *client)
+static int lm3646_remove(struct i2c_client *client)
 {
 	struct lm3646_flash *flash = i2c_get_clientdata(client);
 
 	v4l2_device_unregister_subdev(&flash->subdev_led);
 	v4l2_ctrl_handler_free(&flash->ctrls_led);
 	media_entity_cleanup(&flash->subdev_led.entity);
+
+	return 0;
 }
 
 static const struct i2c_device_id lm3646_id_table[] = {

@@ -1,6 +1,14 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright(c) 2013-2015 Intel Corporation. All rights reserved.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of version 2 of the GNU General Public License as
+ * published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * General Public License for more details.
  */
 #include <linux/memremap.h>
 #include <linux/rculist.h>
@@ -62,16 +70,18 @@ struct nfit_test_resource *get_nfit_res(resource_size_t resource)
 }
 EXPORT_SYMBOL(get_nfit_res);
 
-#define __nfit_test_ioremap(offset, size, fallback_fn) ({		\
-	struct nfit_test_resource *nfit_res = get_nfit_res(offset);	\
-	nfit_res ?							\
-		(void __iomem *) nfit_res->buf + (offset)		\
-			- nfit_res->res.start				\
-	:								\
-		fallback_fn((offset), (size)) ;				\
-})
+void __iomem *__nfit_test_ioremap(resource_size_t offset, unsigned long size,
+		void __iomem *(*fallback_fn)(resource_size_t, unsigned long))
+{
+	struct nfit_test_resource *nfit_res = get_nfit_res(offset);
 
-void __iomem *__wrap_devm_ioremap(struct device *dev,
+	if (nfit_res)
+		return (void __iomem *) nfit_res->buf + offset
+			- nfit_res->res.start;
+	return fallback_fn(offset, size);
+}
+
+void __iomem *__wrap_devm_ioremap_nocache(struct device *dev,
 		resource_size_t offset, unsigned long size)
 {
 	struct nfit_test_resource *nfit_res = get_nfit_res(offset);
@@ -79,9 +89,9 @@ void __iomem *__wrap_devm_ioremap(struct device *dev,
 	if (nfit_res)
 		return (void __iomem *) nfit_res->buf + offset
 			- nfit_res->res.start;
-	return devm_ioremap(dev, offset, size);
+	return devm_ioremap_nocache(dev, offset, size);
 }
-EXPORT_SYMBOL(__wrap_devm_ioremap);
+EXPORT_SYMBOL(__wrap_devm_ioremap_nocache);
 
 void *__wrap_devm_memremap(struct device *dev, resource_size_t offset,
 		size_t size, unsigned long flags)
@@ -94,46 +104,16 @@ void *__wrap_devm_memremap(struct device *dev, resource_size_t offset,
 }
 EXPORT_SYMBOL(__wrap_devm_memremap);
 
-static void nfit_test_kill(void *_pgmap)
-{
-	struct dev_pagemap *pgmap = _pgmap;
-
-	WARN_ON(!pgmap);
-
-	percpu_ref_kill(&pgmap->ref);
-
-	wait_for_completion(&pgmap->done);
-	percpu_ref_exit(&pgmap->ref);
-}
-
-static void dev_pagemap_percpu_release(struct percpu_ref *ref)
-{
-	struct dev_pagemap *pgmap = container_of(ref, struct dev_pagemap, ref);
-
-	complete(&pgmap->done);
-}
-
 void *__wrap_devm_memremap_pages(struct device *dev, struct dev_pagemap *pgmap)
 {
-	int error;
-	resource_size_t offset = pgmap->range.start;
+	resource_size_t offset = pgmap->res.start;
 	struct nfit_test_resource *nfit_res = get_nfit_res(offset);
 
-	if (!nfit_res)
-		return devm_memremap_pages(dev, pgmap);
-
-	init_completion(&pgmap->done);
-	error = percpu_ref_init(&pgmap->ref, dev_pagemap_percpu_release, 0,
-				GFP_KERNEL);
-	if (error)
-		return ERR_PTR(error);
-
-	error = devm_add_action_or_reset(dev, nfit_test_kill, pgmap);
-	if (error)
-		return ERR_PTR(error);
-	return nfit_res->buf + offset - nfit_res->res.start;
+	if (nfit_res)
+		return nfit_res->buf + offset - nfit_res->res.start;
+	return devm_memremap_pages(dev, pgmap);
 }
-EXPORT_SYMBOL_GPL(__wrap_devm_memremap_pages);
+EXPORT_SYMBOL(__wrap_devm_memremap_pages);
 
 pfn_t __wrap_phys_to_pfn_t(phys_addr_t addr, unsigned long flags)
 {
@@ -166,11 +146,11 @@ void __wrap_devm_memunmap(struct device *dev, void *addr)
 }
 EXPORT_SYMBOL(__wrap_devm_memunmap);
 
-void __iomem *__wrap_ioremap(resource_size_t offset, unsigned long size)
+void __iomem *__wrap_ioremap_nocache(resource_size_t offset, unsigned long size)
 {
-	return __nfit_test_ioremap(offset, size, ioremap);
+	return __nfit_test_ioremap(offset, size, ioremap_nocache);
 }
-EXPORT_SYMBOL(__wrap_ioremap);
+EXPORT_SYMBOL(__wrap_ioremap_nocache);
 
 void __iomem *__wrap_ioremap_wc(resource_size_t offset, unsigned long size)
 {

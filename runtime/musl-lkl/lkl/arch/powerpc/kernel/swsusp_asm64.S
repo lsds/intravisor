@@ -1,8 +1,9 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * PowerPC 64-bit swsusp implementation
  *
  * Copyright 2006 Johannes Berg <johannes@sipsolutions.net>
+ *
+ * GPLv2
  */
 
 #include <linux/threads.h>
@@ -12,7 +13,6 @@
 #include <asm/thread_info.h>
 #include <asm/ppc_asm.h>
 #include <asm/asm-offsets.h>
-#include <asm/feature-fixups.h>
 
 /*
  * Structure for storing CPU registers on the save area.
@@ -76,10 +76,16 @@
 swsusp_save_area:
 	.space SL_SIZE
 
+	.section ".toc","aw"
+swsusp_save_area_ptr:
+	.tc	swsusp_save_area[TC],swsusp_save_area
+restore_pblist_ptr:
+	.tc	restore_pblist[TC],restore_pblist
+
 	.section .text
 	.align  5
 _GLOBAL(swsusp_arch_suspend)
-	LOAD_REG_ADDR(r11, swsusp_save_area)
+	ld	r11,swsusp_save_area_ptr@toc(r2)
 	SAVE_SPECIAL(LR)
 	SAVE_REGISTER(r1)
 	SAVE_SPECIAL(CR)
@@ -122,10 +128,11 @@ END_FW_FTR_SECTION_IFCLR(FW_FEATURE_LPAR)
 	 * stack pointer on the stack like a real stackframe */
 	addi	r1,r1,-128
 
+	bl _iommu_save
 	bl swsusp_save
 
 	/* restore LR */
-	LOAD_REG_ADDR(r11, swsusp_save_area)
+	ld	r11,swsusp_save_area_ptr@toc(r2)
 	RESTORE_SPECIAL(LR)
 	addi	r1,r1,128
 
@@ -135,11 +142,11 @@ END_FW_FTR_SECTION_IFCLR(FW_FEATURE_LPAR)
 _GLOBAL(swsusp_arch_resume)
 	/* Stop pending alitvec streams and memory accesses */
 BEGIN_FTR_SECTION
-	PPC_DSSALL
+	DSSALL
 END_FTR_SECTION_IFSET(CPU_FTR_ALTIVEC)
 	sync
 
-	LOAD_REG_ADDR(r11, restore_pblist)
+	ld	r12,restore_pblist_ptr@toc(r2)
 	ld	r12,0(r12)
 
 	cmpdi	r12,0
@@ -181,7 +188,7 @@ nothing_to_copy:
 	tlbia
 #endif
 
-	LOAD_REG_ADDR(r11, swsusp_save_area)
+	ld	r11,swsusp_save_area_ptr@toc(r2)
 
 	RESTORE_SPECIAL(CR)
 
@@ -254,12 +261,12 @@ END_FW_FTR_SECTION_IFCLR(FW_FEATURE_LPAR)
 
 	addi	r1,r1,-128
 #ifdef CONFIG_PPC_BOOK3S_64
-	bl	slb_flush_and_restore_bolted
+	bl	slb_flush_and_rebolt
 #endif
 	bl	do_after_copyback
 	addi	r1,r1,128
 
-	LOAD_REG_ADDR(r11, swsusp_save_area)
+	ld	r11,swsusp_save_area_ptr@toc(r2)
 	RESTORE_SPECIAL(LR)
 
 	li	r3, 0

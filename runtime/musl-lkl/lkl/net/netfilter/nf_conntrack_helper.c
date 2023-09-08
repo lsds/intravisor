@@ -1,10 +1,13 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /* Helper handling for netfilter. */
 
 /* (C) 1999-2001 Paul `Rusty' Russell
  * (C) 2002-2006 Netfilter Core Team <coreteam@netfilter.org>
  * (C) 2003,2004 USAGI/WIDE Project <http://www.linux-ipv6.org>
  * (C) 2006-2012 Patrick McHardy <kaber@trash.net>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 
 #include <linux/types.h>
@@ -21,11 +24,11 @@
 #include <linux/rtnetlink.h>
 
 #include <net/netfilter/nf_conntrack.h>
-#include <net/netfilter/nf_conntrack_core.h>
-#include <net/netfilter/nf_conntrack_ecache.h>
-#include <net/netfilter/nf_conntrack_extend.h>
-#include <net/netfilter/nf_conntrack_helper.h>
+#include <net/netfilter/nf_conntrack_l3proto.h>
 #include <net/netfilter/nf_conntrack_l4proto.h>
+#include <net/netfilter/nf_conntrack_helper.h>
+#include <net/netfilter/nf_conntrack_core.h>
+#include <net/netfilter/nf_conntrack_extend.h>
 #include <net/netfilter/nf_log.h>
 
 static DEFINE_MUTEX(nf_ct_helper_mutex);
@@ -35,8 +38,71 @@ unsigned int nf_ct_helper_hsize __read_mostly;
 EXPORT_SYMBOL_GPL(nf_ct_helper_hsize);
 static unsigned int nf_ct_helper_count __read_mostly;
 
-static DEFINE_MUTEX(nf_ct_nat_helpers_mutex);
-static struct list_head nf_ct_nat_helpers __read_mostly;
+static bool nf_ct_auto_assign_helper __read_mostly = false;
+module_param_named(nf_conntrack_helper, nf_ct_auto_assign_helper, bool, 0644);
+MODULE_PARM_DESC(nf_conntrack_helper,
+		 "Enable automatic conntrack helper assignment (default 0)");
+
+#ifdef CONFIG_SYSCTL
+static struct ctl_table helper_sysctl_table[] = {
+	{
+		.procname	= "nf_conntrack_helper",
+		.data		= &init_net.ct.sysctl_auto_assign_helper,
+		.maxlen		= sizeof(unsigned int),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec,
+	},
+	{}
+};
+
+static int nf_conntrack_helper_init_sysctl(struct net *net)
+{
+	struct ctl_table *table;
+
+	table = kmemdup(helper_sysctl_table, sizeof(helper_sysctl_table),
+			GFP_KERNEL);
+	if (!table)
+		goto out;
+
+	table[0].data = &net->ct.sysctl_auto_assign_helper;
+
+	/* Don't export sysctls to unprivileged users */
+	if (net->user_ns != &init_user_ns)
+		table[0].procname = NULL;
+
+	net->ct.helper_sysctl_header =
+		register_net_sysctl(net, "net/netfilter", table);
+
+	if (!net->ct.helper_sysctl_header) {
+		pr_err("nf_conntrack_helper: can't register to sysctl.\n");
+		goto out_register;
+	}
+	return 0;
+
+out_register:
+	kfree(table);
+out:
+	return -ENOMEM;
+}
+
+static void nf_conntrack_helper_fini_sysctl(struct net *net)
+{
+	struct ctl_table *table;
+
+	table = net->ct.helper_sysctl_header->ctl_table_arg;
+	unregister_net_sysctl_table(net->ct.helper_sysctl_header);
+	kfree(table);
+}
+#else
+static int nf_conntrack_helper_init_sysctl(struct net *net)
+{
+	return 0;
+}
+
+static void nf_conntrack_helper_fini_sysctl(struct net *net)
+{
+}
+#endif /* CONFIG_SYSCTL */
 
 /* Stupid hash, but collision free for the default registrations of the
  * helpers currently in the kernel. */
@@ -44,6 +110,24 @@ static unsigned int helper_hash(const struct nf_conntrack_tuple *tuple)
 {
 	return (((tuple->src.l3num << 8) | tuple->dst.protonum) ^
 		(__force __u16)tuple->src.u.all) % nf_ct_helper_hsize;
+}
+
+static struct nf_conntrack_helper *
+__nf_ct_helper_find(const struct nf_conntrack_tuple *tuple)
+{
+	struct nf_conntrack_helper *helper;
+	struct nf_conntrack_tuple_mask mask = { .src.u.all = htons(0xFFFF) };
+	unsigned int h;
+
+	if (!nf_ct_helper_count)
+		return NULL;
+
+	h = helper_hash(tuple);
+	hlist_for_each_entry_rcu(helper, &nf_ct_helper_hash[h], hnode) {
+		if (nf_ct_tuple_src_mask_cmp(tuple, &helper->tuple, &mask))
+			return helper;
+	}
+	return NULL;
 }
 
 struct nf_conntrack_helper *
@@ -108,72 +192,9 @@ void nf_conntrack_helper_put(struct nf_conntrack_helper *helper)
 }
 EXPORT_SYMBOL_GPL(nf_conntrack_helper_put);
 
-static struct nf_conntrack_nat_helper *
-nf_conntrack_nat_helper_find(const char *mod_name)
-{
-	struct nf_conntrack_nat_helper *cur;
-	bool found = false;
-
-	list_for_each_entry_rcu(cur, &nf_ct_nat_helpers, list) {
-		if (!strcmp(cur->mod_name, mod_name)) {
-			found = true;
-			break;
-		}
-	}
-	return found ? cur : NULL;
-}
-
-int
-nf_nat_helper_try_module_get(const char *name, u16 l3num, u8 protonum)
-{
-	struct nf_conntrack_helper *h;
-	struct nf_conntrack_nat_helper *nat;
-	char mod_name[NF_CT_HELPER_NAME_LEN];
-	int ret = 0;
-
-	rcu_read_lock();
-	h = __nf_conntrack_helper_find(name, l3num, protonum);
-	if (!h) {
-		rcu_read_unlock();
-		return -ENOENT;
-	}
-
-	nat = nf_conntrack_nat_helper_find(h->nat_mod_name);
-	if (!nat) {
-		snprintf(mod_name, sizeof(mod_name), "%s", h->nat_mod_name);
-		rcu_read_unlock();
-		request_module("%s", mod_name);
-
-		rcu_read_lock();
-		nat = nf_conntrack_nat_helper_find(mod_name);
-		if (!nat) {
-			rcu_read_unlock();
-			return -ENOENT;
-		}
-	}
-
-	if (!try_module_get(nat->module))
-		ret = -ENOENT;
-
-	rcu_read_unlock();
-	return ret;
-}
-EXPORT_SYMBOL_GPL(nf_nat_helper_try_module_get);
-
-void nf_nat_helper_put(struct nf_conntrack_helper *helper)
-{
-	struct nf_conntrack_nat_helper *nat;
-
-	nat = nf_conntrack_nat_helper_find(helper->nat_mod_name);
-	if (WARN_ON_ONCE(!nat))
-		return;
-
-	module_put(nat->module);
-}
-EXPORT_SYMBOL_GPL(nf_nat_helper_put);
-
 struct nf_conn_help *
-nf_ct_helper_ext_add(struct nf_conn *ct, gfp_t gfp)
+nf_ct_helper_ext_add(struct nf_conn *ct,
+		     struct nf_conntrack_helper *helper, gfp_t gfp)
 {
 	struct nf_conn_help *help;
 
@@ -186,11 +207,32 @@ nf_ct_helper_ext_add(struct nf_conn *ct, gfp_t gfp)
 }
 EXPORT_SYMBOL_GPL(nf_ct_helper_ext_add);
 
+static struct nf_conntrack_helper *
+nf_ct_lookup_helper(struct nf_conn *ct, struct net *net)
+{
+	if (!net->ct.sysctl_auto_assign_helper) {
+		if (net->ct.auto_assign_helper_warned)
+			return NULL;
+		if (!__nf_ct_helper_find(&ct->tuplehash[IP_CT_DIR_REPLY].tuple))
+			return NULL;
+		pr_info("nf_conntrack: default automatic helper assignment "
+			"has been turned off for security reasons and CT-based "
+			" firewall rule not found. Use the iptables CT target "
+			"to attach helpers instead.\n");
+		net->ct.auto_assign_helper_warned = 1;
+		return NULL;
+	}
+
+	return __nf_ct_helper_find(&ct->tuplehash[IP_CT_DIR_REPLY].tuple);
+}
+
+
 int __nf_ct_try_assign_helper(struct nf_conn *ct, struct nf_conn *tmpl,
 			      gfp_t flags)
 {
 	struct nf_conntrack_helper *helper = NULL;
 	struct nf_conn_help *help;
+	struct net *net = nf_ct_net(ct);
 
 	/* We already got a helper explicitly attached. The function
 	 * nf_conntrack_alter_reply - in case NAT is in use - asks for looking
@@ -201,25 +243,27 @@ int __nf_ct_try_assign_helper(struct nf_conn *ct, struct nf_conn *tmpl,
 	if (test_bit(IPS_HELPER_BIT, &ct->status))
 		return 0;
 
-	if (WARN_ON_ONCE(!tmpl))
-		return 0;
-
-	help = nfct_help(tmpl);
-	if (help != NULL) {
-		helper = rcu_dereference(help->helper);
-		set_bit(IPS_HELPER_BIT, &ct->status);
+	if (tmpl != NULL) {
+		help = nfct_help(tmpl);
+		if (help != NULL) {
+			helper = help->helper;
+			set_bit(IPS_HELPER_BIT, &ct->status);
+		}
 	}
 
 	help = nfct_help(ct);
 
 	if (helper == NULL) {
-		if (help)
-			RCU_INIT_POINTER(help->helper, NULL);
-		return 0;
+		helper = nf_ct_lookup_helper(ct, net);
+		if (helper == NULL) {
+			if (help)
+				RCU_INIT_POINTER(help->helper, NULL);
+			return 0;
+		}
 	}
 
 	if (help == NULL) {
-		help = nf_ct_helper_ext_add(ct, flags);
+		help = nf_ct_helper_ext_add(ct, helper, flags);
 		if (help == NULL)
 			return -ENOMEM;
 	} else {
@@ -444,8 +488,6 @@ void nf_ct_helper_init(struct nf_conntrack_helper *helper,
 	helper->help = help;
 	helper->from_nlattr = from_nlattr;
 	helper->me = module;
-	snprintf(helper->nat_mod_name, sizeof(helper->nat_mod_name),
-		 NF_NAT_HELPER_PREFIX "%s", name);
 
 	if (spec_port == default_port)
 		snprintf(helper->name, sizeof(helper->name), "%s", name);
@@ -482,35 +524,47 @@ void nf_conntrack_helpers_unregister(struct nf_conntrack_helper *helper,
 }
 EXPORT_SYMBOL_GPL(nf_conntrack_helpers_unregister);
 
-void nf_nat_helper_register(struct nf_conntrack_nat_helper *nat)
-{
-	mutex_lock(&nf_ct_nat_helpers_mutex);
-	list_add_rcu(&nat->list, &nf_ct_nat_helpers);
-	mutex_unlock(&nf_ct_nat_helpers_mutex);
-}
-EXPORT_SYMBOL_GPL(nf_nat_helper_register);
+static const struct nf_ct_ext_type helper_extend = {
+	.len	= sizeof(struct nf_conn_help),
+	.align	= __alignof__(struct nf_conn_help),
+	.id	= NF_CT_EXT_HELPER,
+};
 
-void nf_nat_helper_unregister(struct nf_conntrack_nat_helper *nat)
+int nf_conntrack_helper_pernet_init(struct net *net)
 {
-	mutex_lock(&nf_ct_nat_helpers_mutex);
-	list_del_rcu(&nat->list);
-	mutex_unlock(&nf_ct_nat_helpers_mutex);
+	net->ct.auto_assign_helper_warned = false;
+	net->ct.sysctl_auto_assign_helper = nf_ct_auto_assign_helper;
+	return nf_conntrack_helper_init_sysctl(net);
 }
-EXPORT_SYMBOL_GPL(nf_nat_helper_unregister);
+
+void nf_conntrack_helper_pernet_fini(struct net *net)
+{
+	nf_conntrack_helper_fini_sysctl(net);
+}
 
 int nf_conntrack_helper_init(void)
 {
+	int ret;
 	nf_ct_helper_hsize = 1; /* gets rounded up to use one page */
 	nf_ct_helper_hash =
 		nf_ct_alloc_hashtable(&nf_ct_helper_hsize, 0);
 	if (!nf_ct_helper_hash)
 		return -ENOMEM;
 
-	INIT_LIST_HEAD(&nf_ct_nat_helpers);
+	ret = nf_ct_extend_register(&helper_extend);
+	if (ret < 0) {
+		pr_err("nf_ct_helper: Unable to register helper extension.\n");
+		goto out_extend;
+	}
+
 	return 0;
+out_extend:
+	nf_ct_free_hashtable(nf_ct_helper_hash, nf_ct_helper_hsize);
+	return ret;
 }
 
 void nf_conntrack_helper_fini(void)
 {
-	kvfree(nf_ct_helper_hash);
+	nf_ct_extend_unregister(&helper_extend);
+	nf_ct_free_hashtable(nf_ct_helper_hash, nf_ct_helper_hsize);
 }

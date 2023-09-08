@@ -67,13 +67,11 @@ struct slot {
 	u32 number;
 	u8 is_a_board;
 	u8 state;
-	u8 attention_save;
 	u8 presence_save;
-	u8 latch_save;
 	u8 pwr_save;
 	struct controller *ctrl;
 	const struct hpc_ops *hpc_ops;
-	struct hotplug_slot hotplug_slot;
+	struct hotplug_slot *hotplug_slot;
 	struct list_head	slot_list;
 	struct delayed_work work;	/* work for button event */
 	struct mutex lock;
@@ -107,6 +105,7 @@ struct controller {
 };
 
 /* Define AMD SHPC ID  */
+#define PCI_DEVICE_ID_AMD_GOLAM_7450	0x7450
 #define PCI_DEVICE_ID_AMD_POGO_7458	0x7458
 
 /* AMD PCI-X bridge registers */
@@ -164,15 +163,26 @@ u8 shpchp_handle_switch_change(u8 hp_slot, struct controller *ctrl);
 u8 shpchp_handle_presence_change(u8 hp_slot, struct controller *ctrl);
 u8 shpchp_handle_power_fault(u8 hp_slot, struct controller *ctrl);
 int shpchp_configure_device(struct slot *p_slot);
-void shpchp_unconfigure_device(struct slot *p_slot);
+int shpchp_unconfigure_device(struct slot *p_slot);
 void cleanup_slots(struct controller *ctrl);
 void shpchp_queue_pushbutton_work(struct work_struct *work);
 int shpc_init(struct controller *ctrl, struct pci_dev *pdev);
 
 static inline const char *slot_name(struct slot *slot)
 {
-	return hotplug_slot_name(&slot->hotplug_slot);
+	return hotplug_slot_name(slot->hotplug_slot);
 }
+
+#ifdef CONFIG_ACPI
+#include <linux/pci-acpi.h>
+static inline int get_hp_hw_control_from_firmware(struct pci_dev *dev)
+{
+	u32 flags = OSC_PCI_SHPC_NATIVE_HP_CONTROL;
+	return acpi_get_hp_hw_control_from_firmware(dev, flags);
+}
+#else
+#define get_hp_hw_control_from_firmware(dev) (0)
+#endif
 
 struct ctrl_reg {
 	volatile u32 base_offset;
@@ -209,7 +219,7 @@ enum ctrl_offsets {
 
 static inline struct slot *get_slot(struct hotplug_slot *hotplug_slot)
 {
-	return container_of(hotplug_slot, struct slot, hotplug_slot);
+	return hotplug_slot->private;
 }
 
 static inline struct slot *shpchp_find_slot(struct controller *ctrl, u8 device)

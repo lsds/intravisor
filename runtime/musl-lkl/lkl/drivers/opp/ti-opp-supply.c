@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * Copyright (C) 2016-2017 Texas Instruments Incorporated - https://www.ti.com/
+ * Copyright (C) 2016-2017 Texas Instruments Incorporated - http://www.ti.com/
  *	Nishanth Menon <nm@ti.com>
  *	Dave Gerlach <d-gerlach@ti.com>
  *
@@ -36,15 +36,11 @@ struct ti_opp_supply_optimum_voltage_table {
  * @vdd_table:	Optimized voltage mapping table
  * @num_vdd_table: number of entries in vdd_table
  * @vdd_absolute_max_voltage_uv: absolute maximum voltage in UV for the supply
- * @old_supplies: Placeholder for supplies information for old OPP.
- * @new_supplies: Placeholder for supplies information for new OPP.
  */
 struct ti_opp_supply_data {
 	struct ti_opp_supply_optimum_voltage_table *vdd_table;
 	u32 num_vdd_table;
 	u32 vdd_absolute_max_voltage_uv;
-	struct dev_pm_opp_supply old_supplies[2];
-	struct dev_pm_opp_supply new_supplies[2];
 };
 
 static struct ti_opp_supply_data opp_data;
@@ -94,7 +90,7 @@ static int _store_optimized_voltages(struct device *dev,
 		goto out_map;
 	}
 
-	base = ioremap(res->start, resource_size(res));
+	base = ioremap_nocache(res->start, resource_size(res));
 	if (!base) {
 		dev_err(dev, "Unable to map Efuse registers\n");
 		ret = -ENOMEM;
@@ -126,8 +122,8 @@ static int _store_optimized_voltages(struct device *dev,
 		goto out;
 	}
 
-	table = kcalloc(data->num_vdd_table, sizeof(*data->vdd_table),
-			GFP_KERNEL);
+	table = kzalloc(sizeof(*data->vdd_table) *
+				  data->num_vdd_table, GFP_KERNEL);
 	if (!table) {
 		ret = -ENOMEM;
 		goto out;
@@ -270,37 +266,29 @@ static int _opp_set_voltage(struct device *dev,
 	return 0;
 }
 
-/* Do the opp supply transition */
-static int ti_opp_config_regulators(struct device *dev,
-			struct dev_pm_opp *old_opp, struct dev_pm_opp *new_opp,
-			struct regulator **regulators, unsigned int count)
+/**
+ * ti_opp_supply_set_opp() - do the opp supply transition
+ * @data:	information on regulators and new and old opps provided by
+ *		opp core to use in transition
+ *
+ * Return: If successful, 0, else appropriate error value.
+ */
+static int ti_opp_supply_set_opp(struct dev_pm_set_opp_data *data)
 {
-	struct dev_pm_opp_supply *old_supply_vdd = &opp_data.old_supplies[0];
-	struct dev_pm_opp_supply *old_supply_vbb = &opp_data.old_supplies[1];
-	struct dev_pm_opp_supply *new_supply_vdd = &opp_data.new_supplies[0];
-	struct dev_pm_opp_supply *new_supply_vbb = &opp_data.new_supplies[1];
-	struct regulator *vdd_reg = regulators[0];
-	struct regulator *vbb_reg = regulators[1];
-	unsigned long old_freq, freq;
+	struct dev_pm_opp_supply *old_supply_vdd = &data->old_opp.supplies[0];
+	struct dev_pm_opp_supply *old_supply_vbb = &data->old_opp.supplies[1];
+	struct dev_pm_opp_supply *new_supply_vdd = &data->new_opp.supplies[0];
+	struct dev_pm_opp_supply *new_supply_vbb = &data->new_opp.supplies[1];
+	struct device *dev = data->dev;
+	unsigned long old_freq = data->old_opp.rate, freq = data->new_opp.rate;
+	struct clk *clk = data->clk;
+	struct regulator *vdd_reg = data->regulators[0];
+	struct regulator *vbb_reg = data->regulators[1];
 	int vdd_uv;
 	int ret;
 
-	/* We must have two regulators here */
-	WARN_ON(count != 2);
-
-	/* Fetch supplies and freq information from OPP core */
-	ret = dev_pm_opp_get_supplies(new_opp, opp_data.new_supplies);
-	WARN_ON(ret);
-
-	old_freq = dev_pm_opp_get_freq(old_opp);
-	freq = dev_pm_opp_get_freq(new_opp);
-	WARN_ON(!old_freq || !freq);
-
 	vdd_uv = _get_optimal_vdd_voltage(dev, &opp_data,
-					  new_supply_vdd->u_volt);
-
-	if (new_supply_vdd->u_volt_min < vdd_uv)
-		new_supply_vdd->u_volt_min = vdd_uv;
+					  new_supply_vbb->u_volt);
 
 	/* Scaling up? Scale voltage before frequency */
 	if (freq > old_freq) {
@@ -312,24 +300,39 @@ static int ti_opp_config_regulators(struct device *dev,
 		ret = _opp_set_voltage(dev, new_supply_vbb, 0, vbb_reg, "vbb");
 		if (ret)
 			goto restore_voltage;
-	} else {
+	}
+
+	/* Change frequency */
+	dev_dbg(dev, "%s: switching OPP: %lu Hz --> %lu Hz\n",
+		__func__, old_freq, freq);
+
+	ret = clk_set_rate(clk, freq);
+	if (ret) {
+		dev_err(dev, "%s: failed to set clock rate: %d\n", __func__,
+			ret);
+		goto restore_voltage;
+	}
+
+	/* Scaling down? Scale voltage after frequency */
+	if (freq < old_freq) {
 		ret = _opp_set_voltage(dev, new_supply_vbb, 0, vbb_reg, "vbb");
 		if (ret)
-			goto restore_voltage;
+			goto restore_freq;
 
 		ret = _opp_set_voltage(dev, new_supply_vdd, vdd_uv, vdd_reg,
 				       "vdd");
 		if (ret)
-			goto restore_voltage;
+			goto restore_freq;
 	}
 
 	return 0;
 
+restore_freq:
+	ret = clk_set_rate(clk, old_freq);
+	if (ret)
+		dev_err(dev, "%s: failed to restore old-freq (%lu Hz)\n",
+			__func__, old_freq);
 restore_voltage:
-	/* Fetch old supplies information only if required */
-	ret = dev_pm_opp_get_supplies(old_opp, opp_data.old_supplies);
-	WARN_ON(ret);
-
 	/* This shouldn't harm even if the voltages weren't updated earlier */
 	if (old_supply_vdd->u_volt) {
 		ret = _opp_set_voltage(dev, old_supply_vbb, 0, vbb_reg, "vbb");
@@ -399,8 +402,9 @@ static int ti_opp_supply_probe(struct platform_device *pdev)
 			return ret;
 	}
 
-	ret = dev_pm_opp_set_config_regulators(cpu_dev, ti_opp_config_regulators);
-	if (ret < 0)
+	ret = PTR_ERR_OR_ZERO(dev_pm_opp_register_set_opp_helper(cpu_dev,
+								 ti_opp_supply_set_opp));
+	if (ret)
 		_free_optimized_voltages(dev, &opp_data);
 
 	return ret;
@@ -410,6 +414,7 @@ static struct platform_driver ti_opp_supply_driver = {
 	.probe = ti_opp_supply_probe,
 	.driver = {
 		   .name = "ti_opp_supply",
+		   .owner = THIS_MODULE,
 		   .of_match_table = of_match_ptr(ti_opp_supply_of_match),
 		   },
 };

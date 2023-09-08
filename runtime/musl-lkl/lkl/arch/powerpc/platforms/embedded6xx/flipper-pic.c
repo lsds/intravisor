@@ -1,10 +1,15 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * arch/powerpc/platforms/embedded6xx/flipper-pic.c
  *
  * Nintendo GameCube/Wii "Flipper" interrupt controller support.
  * Copyright (C) 2004-2009 The GameCube Linux Team
  * Copyright (C) 2007,2008,2009 Albert Herranz
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version 2
+ * of the License, or (at your option) any later version.
+ *
  */
 #define DRV_MODULE_NAME "flipper-pic"
 #define pr_fmt(fmt) DRV_MODULE_NAME ": " fmt
@@ -12,7 +17,6 @@
 #include <linux/kernel.h>
 #include <linux/init.h>
 #include <linux/irq.h>
-#include <linux/irqdomain.h>
 #include <linux/of.h>
 #include <linux/of_address.h>
 #include <asm/io.h>
@@ -104,8 +108,16 @@ static int flipper_pic_map(struct irq_domain *h, unsigned int virq,
 	return 0;
 }
 
+static int flipper_pic_match(struct irq_domain *h, struct device_node *np,
+			     enum irq_domain_bus_token bus_token)
+{
+	return 1;
+}
+
+
 static const struct irq_domain_ops flipper_irq_domain_ops = {
 	.map = flipper_pic_map,
+	.match = flipper_pic_match,
 };
 
 /*

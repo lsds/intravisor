@@ -1,9 +1,13 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Freescale 83xx USB SOC setup code
  *
  * Copyright (C) 2007 Freescale Semiconductor, Inc.
  * Author: Li Yang
+ *
+ * This program is free software; you can redistribute  it and/or modify it
+ * under  the terms of  the GNU General  Public License as published by the
+ * Free Software Foundation;  either version 2 of the  License, or (at your
+ * option) any later version.
  */
 
 
@@ -11,16 +15,16 @@
 #include <linux/kernel.h>
 #include <linux/errno.h>
 #include <linux/of.h>
-#include <linux/of_address.h>
 
 #include <asm/io.h>
+#include <asm/prom.h>
 #include <sysdev/fsl_soc.h>
 
 #include "mpc83xx.h"
 
 
 #ifdef CONFIG_PPC_MPC834x
-int __init mpc834x_usb_cfg(void)
+int mpc834x_usb_cfg(void)
 {
 	unsigned long sccr, sicrl, sicrh;
 	void __iomem *immap;
@@ -96,7 +100,7 @@ int __init mpc834x_usb_cfg(void)
 #endif /* CONFIG_PPC_MPC834x */
 
 #ifdef CONFIG_PPC_MPC831x
-int __init mpc831x_usb_cfg(void)
+int mpc831x_usb_cfg(void)
 {
 	u32 temp;
 	void __iomem *immap, *usb_regs;
@@ -209,7 +213,7 @@ out:
 #endif /* CONFIG_PPC_MPC831x */
 
 #ifdef CONFIG_PPC_MPC837x
-int __init mpc837x_usb_cfg(void)
+int mpc837x_usb_cfg(void)
 {
 	void __iomem *immap;
 	struct device_node *np = NULL;
@@ -217,10 +221,8 @@ int __init mpc837x_usb_cfg(void)
 	int ret = 0;
 
 	np = of_find_compatible_node(NULL, NULL, "fsl-usb2-dr");
-	if (!np || !of_device_is_available(np)) {
-		of_node_put(np);
+	if (!np || !of_device_is_available(np))
 		return -ENODEV;
-	}
 	prop = of_get_property(np, "phy_type", NULL);
 
 	if (!prop || (strcmp(prop, "ulpi") && strcmp(prop, "serial"))) {

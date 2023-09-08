@@ -1,11 +1,35 @@
-// SPDX-License-Identifier: GPL-2.0
-/* Copyright(c) 1999 - 2018 Intel Corporation. */
+/*******************************************************************************
+
+  Intel 10 Gigabit PCI Express Linux driver
+  Copyright(c) 1999 - 2014 Intel Corporation.
+
+  This program is free software; you can redistribute it and/or modify it
+  under the terms and conditions of the GNU General Public License,
+  version 2, as published by the Free Software Foundation.
+
+  This program is distributed in the hope it will be useful, but WITHOUT
+  ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+  FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+  more details.
+
+  You should have received a copy of the GNU General Public License along with
+  this program; if not, write to the Free Software Foundation, Inc.,
+  51 Franklin St - Fifth Floor, Boston, MA 02110-1301 USA.
+
+  The full GNU General Public License is included in this distribution in
+  the file called "COPYING".
+
+  Contact Information:
+  Linux NICS <linux.nics@intel.com>
+  e1000-devel Mailing List <e1000-devel@lists.sourceforge.net>
+  Intel Corporation, 5200 N.E. Elam Young Parkway, Hillsboro, OR 97124-6497
+
+*******************************************************************************/
 
 #include "ixgbe.h"
 #include <linux/if_ether.h>
 #include <linux/gfp.h>
 #include <linux/if_vlan.h>
-#include <generated/utsrelease.h>
 #include <scsi/scsi_cmnd.h>
 #include <scsi/scsi_device.h>
 #include <scsi/fc/fc_fs.h>
@@ -441,10 +465,10 @@ int ixgbe_fcoe_ddp(struct ixgbe_adapter *adapter,
 	case cpu_to_le32(IXGBE_RXDADV_STAT_FCSTAT_FCPRSP):
 		dma_unmap_sg(&adapter->pdev->dev, ddp->sgl,
 			     ddp->sgc, DMA_FROM_DEVICE);
-		ddp->err = (__force u32)ddp_err;
+		ddp->err = ddp_err;
 		ddp->sgl = NULL;
 		ddp->sgc = 0;
-		fallthrough;
+		/* fall through */
 	/* if DDP length is present pass it through to ULD */
 	case cpu_to_le32(IXGBE_RXDADV_STAT_FCSTAT_NODDP):
 		/* update length of DDPed data */
@@ -761,7 +785,7 @@ int ixgbe_setup_fcoe_ddp_resources(struct ixgbe_adapter *adapter)
 		return 0;
 
 	/* Extra buffer to be shared by all DDPs for HW work around */
-	buffer = kmalloc(IXGBE_FCBUFF_MIN, GFP_KERNEL);
+	buffer = kmalloc(IXGBE_FCBUFF_MIN, GFP_ATOMIC);
 	if (!buffer)
 		return -ENOMEM;
 
@@ -969,7 +993,8 @@ int ixgbe_fcoe_get_hbainfo(struct net_device *netdev,
 {
 	struct ixgbe_adapter *adapter = netdev_priv(netdev);
 	struct ixgbe_hw *hw = &adapter->hw;
-	u64 dsn;
+	int i, pos;
+	u8 buf[8];
 
 	if (!info)
 		return -EINVAL;
@@ -985,11 +1010,17 @@ int ixgbe_fcoe_get_hbainfo(struct net_device *netdev,
 	/* Serial Number */
 
 	/* Get the PCI-e Device Serial Number Capability */
-	dsn = pci_get_dsn(adapter->pdev);
-	if (dsn)
+	pos = pci_find_ext_capability(adapter->pdev, PCI_EXT_CAP_ID_DSN);
+	if (pos) {
+		pos += 4;
+		for (i = 0; i < 8; i++)
+			pci_read_config_byte(adapter->pdev, pos + i, &buf[i]);
+
 		snprintf(info->serial_number, sizeof(info->serial_number),
-			 "%016llX", dsn);
-	else
+			 "%02X%02X%02X%02X%02X%02X%02X%02X",
+			 buf[7], buf[6], buf[5], buf[4],
+			 buf[3], buf[2], buf[1], buf[0]);
+	} else
 		snprintf(info->serial_number, sizeof(info->serial_number),
 			 "Unknown");
 
@@ -1002,9 +1033,9 @@ int ixgbe_fcoe_get_hbainfo(struct net_device *netdev,
 		 sizeof(info->driver_version),
 		 "%s v%s",
 		 ixgbe_driver_name,
-		 UTS_RELEASE);
+		 ixgbe_driver_version);
 	/* Firmware Version */
-	strscpy(info->firmware_version, adapter->eeprom_id,
+	strlcpy(info->firmware_version, adapter->eeprom_id,
 		sizeof(info->firmware_version));
 
 	/* Model */

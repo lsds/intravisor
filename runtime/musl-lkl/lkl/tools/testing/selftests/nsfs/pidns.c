@@ -27,7 +27,7 @@
 #define __stack_aligned__	__attribute__((aligned(16)))
 struct cr_clone_arg {
 	char stack[128] __stack_aligned__;
-	char stack_ptr[];
+	char stack_ptr[0];
 };
 
 static int child(void *args)

@@ -3,7 +3,7 @@
  *
  * Name: acutils.h -- prototypes for the common (subsystem-wide) procedures
  *
- * Copyright (C) 2000 - 2022, Intel Corp.
+ * Copyright (C) 2000 - 2018, Intel Corp.
  *
  *****************************************************************************/
 
@@ -28,7 +28,6 @@ extern const char *acpi_gbl_max_decode[];
 extern const char *acpi_gbl_mem_decode[];
 extern const char *acpi_gbl_min_decode[];
 extern const char *acpi_gbl_mtp_decode[];
-extern const char *acpi_gbl_phy_decode[];
 extern const char *acpi_gbl_rng_decode[];
 extern const char *acpi_gbl_rw_decode[];
 extern const char *acpi_gbl_shr_decode[];
@@ -143,11 +142,10 @@ struct acpi_pkg_info {
 
 /* acpi_ut_dump_buffer */
 
-#define DB_BYTE_DISPLAY      0x01
-#define DB_WORD_DISPLAY      0x02
-#define DB_DWORD_DISPLAY     0x04
-#define DB_QWORD_DISPLAY     0x08
-#define DB_DISPLAY_DATA_ONLY 0x10
+#define DB_BYTE_DISPLAY     1
+#define DB_WORD_DISPLAY     2
+#define DB_DWORD_DISPLAY    4
+#define DB_QWORD_DISPLAY    8
 
 /*
  * utascii - ASCII utilities
@@ -181,8 +179,6 @@ char acpi_ut_remove_whitespace(char **string);
 char acpi_ut_remove_leading_zeros(char **string);
 
 u8 acpi_ut_detect_hex_prefix(char **string);
-
-void acpi_ut_remove_hex_prefix(char **string);
 
 u8 acpi_ut_detect_octal_prefix(char **string);
 
@@ -688,26 +684,22 @@ void acpi_ut_delete_address_lists(void);
 /*
  * utxferror - various error/warning output functions
  */
-ACPI_PRINTF_LIKE(5)
 void ACPI_INTERNAL_VAR_XFACE
 acpi_ut_predefined_warning(const char *module_name,
 			   u32 line_number,
 			   char *pathname,
-			   u16 node_flags, const char *format, ...);
+			   u8 node_flags, const char *format, ...);
 
-ACPI_PRINTF_LIKE(5)
 void ACPI_INTERNAL_VAR_XFACE
 acpi_ut_predefined_info(const char *module_name,
 			u32 line_number,
-			char *pathname,
-			u16 node_flags, const char *format, ...);
+			char *pathname, u8 node_flags, const char *format, ...);
 
-ACPI_PRINTF_LIKE(5)
 void ACPI_INTERNAL_VAR_XFACE
 acpi_ut_predefined_bios_error(const char *module_name,
 			      u32 line_number,
 			      char *pathname,
-			      u16 node_flags, const char *format, ...);
+			      u8 node_flags, const char *format, ...);
 
 void
 acpi_ut_prefixed_namespace_error(const char *module_name,
@@ -737,8 +729,6 @@ const char *acpi_ah_match_uuid(u8 *data);
  */
 #if (defined ACPI_ASL_COMPILER || defined ACPI_EXEC_APP || defined ACPI_HELP_APP)
 void acpi_ut_convert_string_to_uuid(char *in_string, u8 *uuid_buffer);
-
-acpi_status acpi_ut_convert_uuid_to_string(char *uuid_buffer, char *out_string);
 #endif
 
 #endif				/* _ACUTILS_H */

@@ -1,7 +1,19 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (c) 2000-2003,2005 Silicon Graphics, Inc.
  * All Rights Reserved.
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License as
+ * published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it would be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write the Free Software Foundation,
+ * Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
  */
 #include "xfs.h"
 #include "xfs_fs.h"
@@ -11,8 +23,10 @@
 #include "xfs_trans_resv.h"
 #include "xfs_bit.h"
 #include "xfs_mount.h"
+#include "xfs_defer.h"
 #include "xfs_inode.h"
 #include "xfs_trans.h"
+#include "xfs_inode_item.h"
 #include "xfs_alloc.h"
 #include "xfs_btree.h"
 #include "xfs_bmap_btree.h"
@@ -20,9 +34,8 @@
 #include "xfs_error.h"
 #include "xfs_quota.h"
 #include "xfs_trace.h"
+#include "xfs_cksum.h"
 #include "xfs_rmap.h"
-
-static struct kmem_cache	*xfs_bmbt_cur_cache;
 
 /*
  * Convert on-disk form of btree root to in-memory form.
@@ -60,7 +73,7 @@ xfs_bmdr_to_bmbt(
 
 void
 xfs_bmbt_disk_get_all(
-	const struct xfs_bmbt_rec *rec,
+	struct xfs_bmbt_rec	*rec,
 	struct xfs_bmbt_irec	*irec)
 {
 	uint64_t		l0 = get_unaligned_be64(&rec->l0);
@@ -80,7 +93,7 @@ xfs_bmbt_disk_get_all(
  */
 xfs_filblks_t
 xfs_bmbt_disk_get_blockcount(
-	const struct xfs_bmbt_rec	*r)
+	xfs_bmbt_rec_t	*r)
 {
 	return (xfs_filblks_t)(be64_to_cpu(r->l1) & xfs_mask64lo(21));
 }
@@ -90,7 +103,7 @@ xfs_bmbt_disk_get_blockcount(
  */
 xfs_fileoff_t
 xfs_bmbt_disk_get_startoff(
-	const struct xfs_bmbt_rec	*r)
+	xfs_bmbt_rec_t	*r)
 {
 	return ((xfs_fileoff_t)be64_to_cpu(r->l0) &
 		 xfs_mask64lo(64 - BMBT_EXNTFLAG_BITLEN)) >> 9;
@@ -138,7 +151,7 @@ xfs_bmbt_to_bmdr(
 	xfs_bmbt_key_t		*tkp;
 	__be64			*tpp;
 
-	if (xfs_has_crc(mp)) {
+	if (xfs_sb_version_hascrc(&mp->m_sb)) {
 		ASSERT(rblock->bb_magic == cpu_to_be32(XFS_BMAP_CRC_MAGIC));
 		ASSERT(uuid_equal(&rblock->bb_u.l.bb_uuid,
 		       &mp->m_sb.sb_meta_uuid));
@@ -168,13 +181,15 @@ xfs_bmbt_dup_cursor(
 	struct xfs_btree_cur	*new;
 
 	new = xfs_bmbt_init_cursor(cur->bc_mp, cur->bc_tp,
-			cur->bc_ino.ip, cur->bc_ino.whichfork);
+			cur->bc_private.b.ip, cur->bc_private.b.whichfork);
 
 	/*
 	 * Copy the firstblock, dfops, and flags values,
 	 * since init cursor doesn't get them.
 	 */
-	new->bc_ino.flags = cur->bc_ino.flags;
+	new->bc_private.b.firstblock = cur->bc_private.b.firstblock;
+	new->bc_private.b.dfops = cur->bc_private.b.dfops;
+	new->bc_private.b.flags = cur->bc_private.b.flags;
 
 	return new;
 }
@@ -184,21 +199,22 @@ xfs_bmbt_update_cursor(
 	struct xfs_btree_cur	*src,
 	struct xfs_btree_cur	*dst)
 {
-	ASSERT((dst->bc_tp->t_firstblock != NULLFSBLOCK) ||
-	       (dst->bc_ino.ip->i_diflags & XFS_DIFLAG_REALTIME));
+	ASSERT((dst->bc_private.b.firstblock != NULLFSBLOCK) ||
+	       (dst->bc_private.b.ip->i_d.di_flags & XFS_DIFLAG_REALTIME));
+	ASSERT(dst->bc_private.b.dfops == src->bc_private.b.dfops);
 
-	dst->bc_ino.allocated += src->bc_ino.allocated;
-	dst->bc_tp->t_firstblock = src->bc_tp->t_firstblock;
+	dst->bc_private.b.allocated += src->bc_private.b.allocated;
+	dst->bc_private.b.firstblock = src->bc_private.b.firstblock;
 
-	src->bc_ino.allocated = 0;
+	src->bc_private.b.allocated = 0;
 }
 
 STATIC int
 xfs_bmbt_alloc_block(
-	struct xfs_btree_cur		*cur,
-	const union xfs_btree_ptr	*start,
-	union xfs_btree_ptr		*new,
-	int				*stat)
+	struct xfs_btree_cur	*cur,
+	union xfs_btree_ptr	*start,
+	union xfs_btree_ptr	*new,
+	int			*stat)
 {
 	xfs_alloc_arg_t		args;		/* block allocation args */
 	int			error;		/* error return value */
@@ -206,9 +222,10 @@ xfs_bmbt_alloc_block(
 	memset(&args, 0, sizeof(args));
 	args.tp = cur->bc_tp;
 	args.mp = cur->bc_mp;
-	args.fsbno = cur->bc_tp->t_firstblock;
-	xfs_rmap_ino_bmbt_owner(&args.oinfo, cur->bc_ino.ip->i_ino,
-			cur->bc_ino.whichfork);
+	args.fsbno = cur->bc_private.b.firstblock;
+	args.firstblock = args.fsbno;
+	xfs_rmap_ino_bmbt_owner(&args.oinfo, cur->bc_private.b.ip->i_ino,
+			cur->bc_private.b.whichfork);
 
 	if (args.fsbno == NULLFSBLOCK) {
 		args.fsbno = be64_to_cpu(start->l);
@@ -225,14 +242,14 @@ xfs_bmbt_alloc_block(
 		 * block allocation here and corrupt the filesystem.
 		 */
 		args.minleft = args.tp->t_blk_res;
-	} else if (cur->bc_tp->t_flags & XFS_TRANS_LOWMODE) {
+	} else if (cur->bc_private.b.dfops->dop_low) {
 		args.type = XFS_ALLOCTYPE_START_BNO;
 	} else {
 		args.type = XFS_ALLOCTYPE_NEAR_BNO;
 	}
 
 	args.minlen = args.maxlen = args.prod = 1;
-	args.wasdel = cur->bc_ino.flags & XFS_BTCUR_BMBT_WASDEL;
+	args.wasdel = cur->bc_private.b.flags & XFS_BTCUR_BPRV_WASDEL;
 	if (!args.wasdel && args.tp->t_blk_res == 0) {
 		error = -ENOSPC;
 		goto error0;
@@ -252,7 +269,7 @@ xfs_bmbt_alloc_block(
 		error = xfs_alloc_vextent(&args);
 		if (error)
 			goto error0;
-		cur->bc_tp->t_flags |= XFS_TRANS_LOWMODE;
+		cur->bc_private.b.dfops->dop_low = true;
 	}
 	if (WARN_ON_ONCE(args.fsbno == NULLFSBLOCK)) {
 		*stat = 0;
@@ -260,11 +277,11 @@ xfs_bmbt_alloc_block(
 	}
 
 	ASSERT(args.len == 1);
-	cur->bc_tp->t_firstblock = args.fsbno;
-	cur->bc_ino.allocated++;
-	cur->bc_ino.ip->i_nblocks++;
-	xfs_trans_log_inode(args.tp, cur->bc_ino.ip, XFS_ILOG_CORE);
-	xfs_trans_mod_dquot_byino(args.tp, cur->bc_ino.ip,
+	cur->bc_private.b.firstblock = args.fsbno;
+	cur->bc_private.b.allocated++;
+	cur->bc_private.b.ip->i_d.di_nblocks++;
+	xfs_trans_log_inode(args.tp, cur->bc_private.b.ip, XFS_ILOG_CORE);
+	xfs_trans_mod_dquot_byino(args.tp, cur->bc_private.b.ip,
 			XFS_TRANS_DQ_BCOUNT, 1L);
 
 	new->l = cpu_to_be64(args.fsbno);
@@ -282,14 +299,14 @@ xfs_bmbt_free_block(
 	struct xfs_buf		*bp)
 {
 	struct xfs_mount	*mp = cur->bc_mp;
-	struct xfs_inode	*ip = cur->bc_ino.ip;
+	struct xfs_inode	*ip = cur->bc_private.b.ip;
 	struct xfs_trans	*tp = cur->bc_tp;
-	xfs_fsblock_t		fsbno = XFS_DADDR_TO_FSB(mp, xfs_buf_daddr(bp));
+	xfs_fsblock_t		fsbno = XFS_DADDR_TO_FSB(mp, XFS_BUF_ADDR(bp));
 	struct xfs_owner_info	oinfo;
 
-	xfs_rmap_ino_bmbt_owner(&oinfo, ip->i_ino, cur->bc_ino.whichfork);
-	xfs_free_extent_later(cur->bc_tp, fsbno, 1, &oinfo);
-	ip->i_nblocks--;
+	xfs_rmap_ino_bmbt_owner(&oinfo, ip->i_ino, cur->bc_private.b.whichfork);
+	xfs_bmap_add_free(mp, cur->bc_private.b.dfops, fsbno, 1, &oinfo);
+	ip->i_d.di_nblocks--;
 
 	xfs_trans_log_inode(tp, ip, XFS_ILOG_CORE);
 	xfs_trans_mod_dquot_byino(tp, ip, XFS_TRANS_DQ_BCOUNT, -1L);
@@ -304,8 +321,8 @@ xfs_bmbt_get_minrecs(
 	if (level == cur->bc_nlevels - 1) {
 		struct xfs_ifork	*ifp;
 
-		ifp = xfs_ifork_ptr(cur->bc_ino.ip,
-				    cur->bc_ino.whichfork);
+		ifp = XFS_IFORK_PTR(cur->bc_private.b.ip,
+				    cur->bc_private.b.whichfork);
 
 		return xfs_bmbt_maxrecs(cur->bc_mp,
 					ifp->if_broot_bytes, level == 0) / 2;
@@ -322,8 +339,8 @@ xfs_bmbt_get_maxrecs(
 	if (level == cur->bc_nlevels - 1) {
 		struct xfs_ifork	*ifp;
 
-		ifp = xfs_ifork_ptr(cur->bc_ino.ip,
-				    cur->bc_ino.whichfork);
+		ifp = XFS_IFORK_PTR(cur->bc_private.b.ip,
+				    cur->bc_private.b.whichfork);
 
 		return xfs_bmbt_maxrecs(cur->bc_mp,
 					ifp->if_broot_bytes, level == 0);
@@ -349,13 +366,13 @@ xfs_bmbt_get_dmaxrecs(
 {
 	if (level != cur->bc_nlevels - 1)
 		return cur->bc_mp->m_bmap_dmxr[level != 0];
-	return xfs_bmdr_maxrecs(cur->bc_ino.forksize, level == 0);
+	return xfs_bmdr_maxrecs(cur->bc_private.b.forksize, level == 0);
 }
 
 STATIC void
 xfs_bmbt_init_key_from_rec(
-	union xfs_btree_key		*key,
-	const union xfs_btree_rec	*rec)
+	union xfs_btree_key	*key,
+	union xfs_btree_rec	*rec)
 {
 	key->bmbt.br_startoff =
 		cpu_to_be64(xfs_bmbt_disk_get_startoff(&rec->bmbt));
@@ -363,8 +380,8 @@ xfs_bmbt_init_key_from_rec(
 
 STATIC void
 xfs_bmbt_init_high_key_from_rec(
-	union xfs_btree_key		*key,
-	const union xfs_btree_rec	*rec)
+	union xfs_btree_key	*key,
+	union xfs_btree_rec	*rec)
 {
 	key->bmbt.br_startoff = cpu_to_be64(
 			xfs_bmbt_disk_get_startoff(&rec->bmbt) +
@@ -389,8 +406,8 @@ xfs_bmbt_init_ptr_from_cur(
 
 STATIC int64_t
 xfs_bmbt_key_diff(
-	struct xfs_btree_cur		*cur,
-	const union xfs_btree_key	*key)
+	struct xfs_btree_cur	*cur,
+	union xfs_btree_key	*key)
 {
 	return (int64_t)be64_to_cpu(key->bmbt.br_startoff) -
 				      cur->bc_rec.b.br_startoff;
@@ -398,39 +415,25 @@ xfs_bmbt_key_diff(
 
 STATIC int64_t
 xfs_bmbt_diff_two_keys(
-	struct xfs_btree_cur		*cur,
-	const union xfs_btree_key	*k1,
-	const union xfs_btree_key	*k2)
+	struct xfs_btree_cur	*cur,
+	union xfs_btree_key	*k1,
+	union xfs_btree_key	*k2)
 {
-	uint64_t			a = be64_to_cpu(k1->bmbt.br_startoff);
-	uint64_t			b = be64_to_cpu(k2->bmbt.br_startoff);
-
-	/*
-	 * Note: This routine previously casted a and b to int64 and subtracted
-	 * them to generate a result.  This lead to problems if b was the
-	 * "maximum" key value (all ones) being signed incorrectly, hence this
-	 * somewhat less efficient version.
-	 */
-	if (a > b)
-		return 1;
-	if (b > a)
-		return -1;
-	return 0;
+	return (int64_t)be64_to_cpu(k1->bmbt.br_startoff) -
+			  be64_to_cpu(k2->bmbt.br_startoff);
 }
 
 static xfs_failaddr_t
 xfs_bmbt_verify(
 	struct xfs_buf		*bp)
 {
-	struct xfs_mount	*mp = bp->b_mount;
+	struct xfs_mount	*mp = bp->b_target->bt_mount;
 	struct xfs_btree_block	*block = XFS_BUF_TO_BLOCK(bp);
 	xfs_failaddr_t		fa;
 	unsigned int		level;
 
-	if (!xfs_verify_magic(bp, block->bb_magic))
-		return __this_address;
-
-	if (xfs_has_crc(mp)) {
+	switch (block->bb_magic) {
+	case cpu_to_be32(XFS_BMAP_CRC_MAGIC):
 		/*
 		 * XXX: need a better way of verifying the owner here. Right now
 		 * just make sure there has been one set.
@@ -438,6 +441,11 @@ xfs_bmbt_verify(
 		fa = xfs_btree_lblock_v5hdr_verify(bp, XFS_RMAP_OWN_UNKNOWN);
 		if (fa)
 			return fa;
+		/* fall through */
+	case cpu_to_be32(XFS_BMAP_MAGIC):
+		break;
+	default:
+		return __this_address;
 	}
 
 	/*
@@ -489,8 +497,6 @@ xfs_bmbt_write_verify(
 
 const struct xfs_buf_ops xfs_bmbt_buf_ops = {
 	.name = "xfs_bmbt",
-	.magic = { cpu_to_be32(XFS_BMAP_MAGIC),
-		   cpu_to_be32(XFS_BMAP_CRC_MAGIC) },
 	.verify_read = xfs_bmbt_read_verify,
 	.verify_write = xfs_bmbt_write_verify,
 	.verify_struct = xfs_bmbt_verify,
@@ -499,9 +505,9 @@ const struct xfs_buf_ops xfs_bmbt_buf_ops = {
 
 STATIC int
 xfs_bmbt_keys_inorder(
-	struct xfs_btree_cur		*cur,
-	const union xfs_btree_key	*k1,
-	const union xfs_btree_key	*k2)
+	struct xfs_btree_cur	*cur,
+	union xfs_btree_key	*k1,
+	union xfs_btree_key	*k2)
 {
 	return be64_to_cpu(k1->bmbt.br_startoff) <
 		be64_to_cpu(k2->bmbt.br_startoff);
@@ -509,9 +515,9 @@ xfs_bmbt_keys_inorder(
 
 STATIC int
 xfs_bmbt_recs_inorder(
-	struct xfs_btree_cur		*cur,
-	const union xfs_btree_rec	*r1,
-	const union xfs_btree_rec	*r2)
+	struct xfs_btree_cur	*cur,
+	union xfs_btree_rec	*r1,
+	union xfs_btree_rec	*r2)
 {
 	return xfs_bmbt_disk_get_startoff(&r1->bmbt) +
 		xfs_bmbt_disk_get_blockcount(&r1->bmbt) <=
@@ -550,38 +556,33 @@ xfs_bmbt_init_cursor(
 	struct xfs_inode	*ip,		/* inode owning the btree */
 	int			whichfork)	/* data or attr fork */
 {
-	struct xfs_ifork	*ifp = xfs_ifork_ptr(ip, whichfork);
+	struct xfs_ifork	*ifp = XFS_IFORK_PTR(ip, whichfork);
 	struct xfs_btree_cur	*cur;
 	ASSERT(whichfork != XFS_COW_FORK);
 
-	cur = xfs_btree_alloc_cursor(mp, tp, XFS_BTNUM_BMAP,
-			mp->m_bm_maxlevels[whichfork], xfs_bmbt_cur_cache);
+	cur = kmem_zone_zalloc(xfs_btree_cur_zone, KM_NOFS);
+
+	cur->bc_tp = tp;
+	cur->bc_mp = mp;
 	cur->bc_nlevels = be16_to_cpu(ifp->if_broot->bb_level) + 1;
+	cur->bc_btnum = XFS_BTNUM_BMAP;
+	cur->bc_blocklog = mp->m_sb.sb_blocklog;
 	cur->bc_statoff = XFS_STATS_CALC_INDEX(xs_bmbt_2);
 
 	cur->bc_ops = &xfs_bmbt_ops;
 	cur->bc_flags = XFS_BTREE_LONG_PTRS | XFS_BTREE_ROOT_IN_INODE;
-	if (xfs_has_crc(mp))
+	if (xfs_sb_version_hascrc(&mp->m_sb))
 		cur->bc_flags |= XFS_BTREE_CRC_BLOCKS;
 
-	cur->bc_ino.forksize = xfs_inode_fork_size(ip, whichfork);
-	cur->bc_ino.ip = ip;
-	cur->bc_ino.allocated = 0;
-	cur->bc_ino.flags = 0;
-	cur->bc_ino.whichfork = whichfork;
+	cur->bc_private.b.forksize = XFS_IFORK_SIZE(ip, whichfork);
+	cur->bc_private.b.ip = ip;
+	cur->bc_private.b.firstblock = NULLFSBLOCK;
+	cur->bc_private.b.dfops = NULL;
+	cur->bc_private.b.allocated = 0;
+	cur->bc_private.b.flags = 0;
+	cur->bc_private.b.whichfork = whichfork;
 
 	return cur;
-}
-
-/* Calculate number of records in a block mapping btree block. */
-static inline unsigned int
-xfs_bmbt_block_maxrecs(
-	unsigned int		blocklen,
-	bool			leaf)
-{
-	if (leaf)
-		return blocklen / sizeof(xfs_bmbt_rec_t);
-	return blocklen / (sizeof(xfs_bmbt_key_t) + sizeof(xfs_bmbt_ptr_t));
 }
 
 /*
@@ -594,29 +595,10 @@ xfs_bmbt_maxrecs(
 	int			leaf)
 {
 	blocklen -= XFS_BMBT_BLOCK_LEN(mp);
-	return xfs_bmbt_block_maxrecs(blocklen, leaf);
-}
 
-/*
- * Calculate the maximum possible height of the btree that the on-disk format
- * supports. This is used for sizing structures large enough to support every
- * possible configuration of a filesystem that might get mounted.
- */
-unsigned int
-xfs_bmbt_maxlevels_ondisk(void)
-{
-	unsigned int		minrecs[2];
-	unsigned int		blocklen;
-
-	blocklen = min(XFS_MIN_BLOCKSIZE - XFS_BTREE_SBLOCK_LEN,
-		       XFS_MIN_CRC_BLOCKSIZE - XFS_BTREE_SBLOCK_CRC_LEN);
-
-	minrecs[0] = xfs_bmbt_block_maxrecs(blocklen, true) / 2;
-	minrecs[1] = xfs_bmbt_block_maxrecs(blocklen, false) / 2;
-
-	/* One extra level for the inode root. */
-	return xfs_btree_compute_maxlevels(minrecs,
-			XFS_MAX_EXTCNT_DATA_FORK_LARGE) + 1;
+	if (leaf)
+		return blocklen / sizeof(xfs_bmbt_rec_t);
+	return blocklen / (sizeof(xfs_bmbt_key_t) + sizeof(xfs_bmbt_ptr_t));
 }
 
 /*
@@ -664,40 +646,17 @@ xfs_bmbt_change_owner(
 
 	ASSERT(tp || buffer_list);
 	ASSERT(!(tp && buffer_list));
-	ASSERT(xfs_ifork_ptr(ip, whichfork)->if_format == XFS_DINODE_FMT_BTREE);
+	if (whichfork == XFS_DATA_FORK)
+		ASSERT(ip->i_d.di_format == XFS_DINODE_FMT_BTREE);
+	else
+		ASSERT(ip->i_d.di_aformat == XFS_DINODE_FMT_BTREE);
 
 	cur = xfs_bmbt_init_cursor(ip->i_mount, tp, ip, whichfork);
-	cur->bc_ino.flags |= XFS_BTCUR_BMBT_INVALID_OWNER;
+	if (!cur)
+		return -ENOMEM;
+	cur->bc_private.b.flags |= XFS_BTCUR_BPRV_INVALID_OWNER;
 
 	error = xfs_btree_change_owner(cur, new_owner, buffer_list);
-	xfs_btree_del_cursor(cur, error);
+	xfs_btree_del_cursor(cur, error ? XFS_BTREE_ERROR : XFS_BTREE_NOERROR);
 	return error;
-}
-
-/* Calculate the bmap btree size for some records. */
-unsigned long long
-xfs_bmbt_calc_size(
-	struct xfs_mount	*mp,
-	unsigned long long	len)
-{
-	return xfs_btree_calc_size(mp->m_bmap_dmnr, len);
-}
-
-int __init
-xfs_bmbt_init_cur_cache(void)
-{
-	xfs_bmbt_cur_cache = kmem_cache_create("xfs_bmbt_cur",
-			xfs_btree_cur_sizeof(xfs_bmbt_maxlevels_ondisk()),
-			0, 0, NULL);
-
-	if (!xfs_bmbt_cur_cache)
-		return -ENOMEM;
-	return 0;
-}
-
-void
-xfs_bmbt_destroy_cur_cache(void)
-{
-	kmem_cache_destroy(xfs_bmbt_cur_cache);
-	xfs_bmbt_cur_cache = NULL;
 }

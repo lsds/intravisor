@@ -1,8 +1,22 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * ALSA SoC TWL6040 codec driver
  *
  * Author:	 Misael Lopez Cruz <x0052729@ti.com>
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * version 2 as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
+ * 02110-1301 USA
+ *
  */
 
 #include <linux/module.h>
@@ -134,7 +148,7 @@ static bool twl6040_can_write_to_chip(struct snd_soc_component *component,
 	case TWL6040_REG_HFRCTL:
 		return priv->dl2_unmuted;
 	default:
-		return true;
+		return 1;
 	}
 }
 
@@ -997,7 +1011,7 @@ static void twl6040_mute_path(struct snd_soc_component *component, enum twl6040_
 	}
 }
 
-static int twl6040_mute_stream(struct snd_soc_dai *dai, int mute, int direction)
+static int twl6040_digital_mute(struct snd_soc_dai *dai, int mute)
 {
 	switch (dai->id) {
 	case TWL6040_DAI_LEGACY:
@@ -1020,8 +1034,7 @@ static const struct snd_soc_dai_ops twl6040_dai_ops = {
 	.hw_params	= twl6040_hw_params,
 	.prepare	= twl6040_prepare,
 	.set_sysclk	= twl6040_set_dai_sysclk,
-	.mute_stream	= twl6040_mute_stream,
-	.no_capture_mute = 1,
+	.digital_mute	= twl6040_digital_mute,
 };
 
 static struct snd_soc_dai_driver twl6040_dai[] = {
@@ -1109,8 +1122,10 @@ static int twl6040_probe(struct snd_soc_component *component)
 	priv->component = component;
 
 	priv->plug_irq = platform_get_irq(pdev, 0);
-	if (priv->plug_irq < 0)
+	if (priv->plug_irq < 0) {
+		dev_err(component->dev, "invalid irq: %d\n", priv->plug_irq);
 		return priv->plug_irq;
+	}
 
 	INIT_DELAYED_WORK(&priv->hs_jack.work, twl6040_accessory_work);
 
@@ -1153,6 +1168,7 @@ static const struct snd_soc_component_driver soc_component_dev_twl6040 = {
 	.suspend_bias_off	= 1,
 	.idle_bias_on		= 1,
 	.endianness		= 1,
+	.non_legacy_dai_naming	= 1,
 };
 
 static int twl6040_codec_probe(struct platform_device *pdev)

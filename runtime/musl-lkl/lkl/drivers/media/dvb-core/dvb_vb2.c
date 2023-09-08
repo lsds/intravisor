@@ -5,6 +5,10 @@
  * Copyright (C) 2015 Samsung Electronics
  *
  * Author: jh1009.sung@samsung.com
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation.
  */
 
 #include <linux/err.h>
@@ -142,7 +146,8 @@ static void _fill_dmx_buffer(struct vb2_buffer *vb, void *pb)
 	dprintk(3, "[%s]\n", ctx->name);
 }
 
-static int _fill_vb2_buffer(struct vb2_buffer *vb, struct vb2_plane *planes)
+static int _fill_vb2_buffer(struct vb2_buffer *vb,
+			    const void *pb, struct vb2_plane *planes)
 {
 	struct dvb_vb2_ctx *ctx = vb2_get_drv_priv(vb->vb2_queue);
 
@@ -189,7 +194,7 @@ int dvb_vb2_init(struct dvb_vb2_ctx *ctx, const char *name, int nonblocking)
 	spin_lock_init(&ctx->slock);
 	INIT_LIST_HEAD(&ctx->dvb_q);
 
-	strscpy(ctx->name, name, DVB_VB2_NAME_MAX);
+	strlcpy(ctx->name, name, DVB_VB2_NAME_MAX);
 	ctx->nonblocking = nonblocking;
 	ctx->state = DVB_VB2_STATE_INIT;
 
@@ -338,7 +343,7 @@ int dvb_vb2_reqbufs(struct dvb_vb2_ctx *ctx, struct dmx_requestbuffers *req)
 
 	ctx->buf_siz = req->size;
 	ctx->buf_cnt = req->count;
-	ret = vb2_core_reqbufs(&ctx->vb_q, VB2_MEMORY_MMAP, 0, &req->count);
+	ret = vb2_core_reqbufs(&ctx->vb_q, VB2_MEMORY_MMAP, &req->count);
 	if (ret) {
 		ctx->state = DVB_VB2_STATE_NONE;
 		dprintk(1, "[%s] count=%d size=%d errno=%d\n", ctx->name,
@@ -354,12 +359,6 @@ int dvb_vb2_reqbufs(struct dvb_vb2_ctx *ctx, struct dmx_requestbuffers *req)
 
 int dvb_vb2_querybuf(struct dvb_vb2_ctx *ctx, struct dmx_buffer *b)
 {
-	struct vb2_queue *q = &ctx->vb_q;
-
-	if (b->index >= q->num_buffers) {
-		dprintk(1, "[%s] buffer index out of range\n", ctx->name);
-		return -EINVAL;
-	}
 	vb2_core_querybuf(&ctx->vb_q, b->index, b);
 	dprintk(3, "[%s] index=%d\n", ctx->name, b->index);
 	return 0;
@@ -384,14 +383,9 @@ int dvb_vb2_expbuf(struct dvb_vb2_ctx *ctx, struct dmx_exportbuffer *exp)
 
 int dvb_vb2_qbuf(struct dvb_vb2_ctx *ctx, struct dmx_buffer *b)
 {
-	struct vb2_queue *q = &ctx->vb_q;
 	int ret;
 
-	if (b->index >= q->num_buffers) {
-		dprintk(1, "[%s] buffer index out of range\n", ctx->name);
-		return -EINVAL;
-	}
-	ret = vb2_core_qbuf(&ctx->vb_q, b->index, b, NULL);
+	ret = vb2_core_qbuf(&ctx->vb_q, b->index, b);
 	if (ret) {
 		dprintk(1, "[%s] index=%d errno=%d\n", ctx->name,
 			b->index, ret);

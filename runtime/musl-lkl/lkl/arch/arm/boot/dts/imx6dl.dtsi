@@ -1,6 +1,12 @@
-// SPDX-License-Identifier: GPL-2.0
-//
-// Copyright 2013 Freescale Semiconductor, Inc.
+
+/*
+ * Copyright 2013 Freescale Semiconductor, Inc.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ *
+ */
 
 #include <dt-bindings/interrupt-controller/irq.h>
 #include "imx6dl-pinfunc.h"
@@ -15,7 +21,7 @@
 		#address-cells = <1>;
 		#size-cells = <0>;
 
-		cpu0: cpu@0 {
+		cpu@0 {
 			compatible = "arm,cortex-a9";
 			device_type = "cpu";
 			reg = <0>;
@@ -33,7 +39,6 @@
 				396000	1175000
 			>;
 			clock-latency = <61036>; /* two CLK32 periods */
-			#cooling-cells = <2>;
 			clocks = <&clks IMX6QDL_CLK_ARM>,
 				 <&clks IMX6QDL_CLK_PLL2_PFD2_396M>,
 				 <&clks IMX6QDL_CLK_STEP>,
@@ -44,8 +49,6 @@
 			arm-supply = <&reg_arm>;
 			pu-supply = <&reg_pu>;
 			soc-supply = <&reg_soc>;
-			nvmem-cells = <&cpu_speed_grade>;
-			nvmem-cell-names = "speed_grade";
 		};
 
 		cpu@1 {
@@ -53,44 +56,21 @@
 			device_type = "cpu";
 			reg = <1>;
 			next-level-cache = <&L2>;
-			operating-points = <
-				/* kHz    uV */
-				996000  1250000
-				792000  1175000
-				396000  1150000
-			>;
-			fsl,soc-operating-points = <
-				/* ARM kHz  SOC-PU uV */
-				996000	1175000
-				792000	1175000
-				396000	1175000
-			>;
-			clock-latency = <61036>; /* two CLK32 periods */
-			#cooling-cells = <2>;
-			clocks = <&clks IMX6QDL_CLK_ARM>,
-				 <&clks IMX6QDL_CLK_PLL2_PFD2_396M>,
-				 <&clks IMX6QDL_CLK_STEP>,
-				 <&clks IMX6QDL_CLK_PLL1_SW>,
-				 <&clks IMX6QDL_CLK_PLL1_SYS>;
-			clock-names = "arm", "pll2_pfd2_396m", "step",
-				      "pll1_sw", "pll1_sys";
-			arm-supply = <&reg_arm>;
-			pu-supply = <&reg_pu>;
-			soc-supply = <&reg_soc>;
 		};
 	};
 
-	soc: soc {
+	soc {
 		ocram: sram@900000 {
 			compatible = "mmio-sram";
 			reg = <0x00900000 0x20000>;
-			ranges = <0 0x00900000 0x20000>;
-			#address-cells = <1>;
-			#size-cells = <1>;
 			clocks = <&clks IMX6QDL_CLK_OCRAM>;
 		};
 
-		aips1: bus@2000000 {
+		aips1: aips-bus@2000000 {
+			iomuxc: iomuxc@20e0000 {
+				compatible = "fsl,imx6dl-iomuxc";
+			};
+
 			pxp: pxp@20f0000 {
 				reg = <0x020f0000 0x4000>;
 				interrupts = <0 98 IRQ_TYPE_LEVEL_HIGH>;
@@ -102,7 +82,7 @@
 			};
 		};
 
-		aips2: bus@2100000 {
+		aips2: aips-bus@2100000 {
 			i2c4: i2c@21f8000 {
 				#address-cells = <1>;
 				#size-cells = <0>;
@@ -295,10 +275,6 @@
 
 &hdmi {
 	compatible = "fsl,imx6dl-hdmi";
-};
-
-&iomuxc {
-	compatible = "fsl,imx6dl-iomuxc";
 };
 
 &ipu1_csi1 {

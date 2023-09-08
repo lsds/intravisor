@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Debug helper to dump the current kernel pagetables of the system
  * so that we can see what the various memory ranges are set to.
@@ -7,6 +6,11 @@
  * (C) Copyright 2008 Intel Corporation
  *
  * Author: Arjan van de Ven <arjan@linux.intel.com>
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; version 2
+ * of the License.
  */
 #include <linux/debugfs.h>
 #include <linux/fs.h>
@@ -16,17 +20,14 @@
 #include <asm/domain.h>
 #include <asm/fixmap.h>
 #include <asm/memory.h>
+#include <asm/pgtable.h>
 #include <asm/ptdump.h>
 
 static struct addr_marker address_markers[] = {
-#ifdef CONFIG_KASAN
-	{ KASAN_SHADOW_START,	"Kasan shadow start"},
-	{ KASAN_SHADOW_END,	"Kasan shadow end"},
-#endif
 	{ MODULES_VADDR,	"Modules" },
 	{ PAGE_OFFSET,		"Kernel Mapping" },
 	{ 0,			"vmalloc() Area" },
-	{ FDT_FIXED_BASE,	"FDT Area" },
+	{ VMALLOC_END,		"vmalloc() End" },
 	{ FIXADDR_START,	"Fixmap Area" },
 	{ VECTORS_BASE,	"Vectors" },
 	{ VECTORS_BASE + PAGE_SIZE * 2, "Vectors End" },
@@ -200,7 +201,6 @@ static const struct prot_bits section_bits[] = {
 };
 
 struct pg_level {
-	const char *name;
 	const struct prot_bits *bits;
 	size_t num;
 	u64 mask;
@@ -211,14 +211,11 @@ struct pg_level {
 static struct pg_level pg_level[] = {
 	{
 	}, { /* pgd */
-	}, { /* p4d */
 	}, { /* pud */
 	}, { /* pmd */
-		.name	= (CONFIG_PGTABLE_LEVELS > 2) ? "PMD" : "PGD",
 		.bits	= section_bits,
 		.num	= ARRAY_SIZE(section_bits),
 	}, { /* pte */
-		.name	= "PTE",
 		.bits	= pte_bits,
 		.num	= ARRAY_SIZE(pte_bits),
 	},
@@ -285,8 +282,7 @@ static void note_page(struct pg_state *st, unsigned long addr,
 				delta >>= 10;
 				unit++;
 			}
-			pt_dump_seq_printf(st->seq, "%9lu%c %s", delta, *unit,
-					   pg_level[st->level].name);
+			pt_dump_seq_printf(st->seq, "%9lu%c", delta, *unit);
 			if (st->current_domain)
 				pt_dump_seq_printf(st->seq, " %s",
 							st->current_domain);
@@ -316,7 +312,7 @@ static void walk_pte(struct pg_state *st, pmd_t *pmd, unsigned long start,
 
 	for (i = 0; i < PTRS_PER_PTE; i++, pte++) {
 		addr = start + i * PAGE_SIZE;
-		note_page(st, addr, 5, pte_val(*pte), domain);
+		note_page(st, addr, 4, pte_val(*pte), domain);
 	}
 }
 
@@ -350,7 +346,7 @@ static void walk_pmd(struct pg_state *st, pud_t *pud, unsigned long start)
 		addr = start + i * PMD_SIZE;
 		domain = get_domain_name(pmd);
 		if (pmd_none(*pmd) || pmd_large(*pmd) || !pmd_present(*pmd))
-			note_page(st, addr, 4, pmd_val(*pmd), domain);
+			note_page(st, addr, 3, pmd_val(*pmd), domain);
 		else
 			walk_pte(st, pmd, addr, domain);
 
@@ -358,14 +354,14 @@ static void walk_pmd(struct pg_state *st, pud_t *pud, unsigned long start)
 			addr += SECTION_SIZE;
 			pmd++;
 			domain = get_domain_name(pmd);
-			note_page(st, addr, 4, pmd_val(*pmd), domain);
+			note_page(st, addr, 3, pmd_val(*pmd), domain);
 		}
 	}
 }
 
-static void walk_pud(struct pg_state *st, p4d_t *p4d, unsigned long start)
+static void walk_pud(struct pg_state *st, pgd_t *pgd, unsigned long start)
 {
-	pud_t *pud = pud_offset(p4d, 0);
+	pud_t *pud = pud_offset(pgd, 0);
 	unsigned long addr;
 	unsigned i;
 
@@ -374,23 +370,7 @@ static void walk_pud(struct pg_state *st, p4d_t *p4d, unsigned long start)
 		if (!pud_none(*pud)) {
 			walk_pmd(st, pud, addr);
 		} else {
-			note_page(st, addr, 3, pud_val(*pud), NULL);
-		}
-	}
-}
-
-static void walk_p4d(struct pg_state *st, pgd_t *pgd, unsigned long start)
-{
-	p4d_t *p4d = p4d_offset(pgd, 0);
-	unsigned long addr;
-	unsigned i;
-
-	for (i = 0; i < PTRS_PER_P4D; i++, p4d++) {
-		addr = start + i * P4D_SIZE;
-		if (!p4d_none(*p4d)) {
-			walk_pud(st, p4d, addr);
-		} else {
-			note_page(st, addr, 2, p4d_val(*p4d), NULL);
+			note_page(st, addr, 2, pud_val(*pud), NULL);
 		}
 	}
 }
@@ -405,7 +385,7 @@ static void walk_pgd(struct pg_state *st, struct mm_struct *mm,
 	for (i = 0; i < PTRS_PER_PGD; i++, pgd++) {
 		addr = start + i * PGDIR_SIZE;
 		if (!pgd_none(*pgd)) {
-			walk_p4d(st, pgd, addr);
+			walk_pud(st, pgd, addr);
 		} else {
 			note_page(st, addr, 1, pgd_val(*pgd), NULL);
 		}
@@ -424,7 +404,7 @@ void ptdump_walk_pgd(struct seq_file *m, struct ptdump_info *info)
 	note_page(&st, 0, 0, 0, NULL);
 }
 
-static void __init ptdump_initialize(void)
+static void ptdump_initialize(void)
 {
 	unsigned i, j;
 
@@ -437,11 +417,8 @@ static void __init ptdump_initialize(void)
 				if (pg_level[i].bits[j].nx_bit)
 					pg_level[i].nx_bit = &pg_level[i].bits[j];
 			}
-#ifdef CONFIG_KASAN
-	address_markers[4].start_address = VMALLOC_START;
-#else
+
 	address_markers[2].start_address = VMALLOC_START;
-#endif
 }
 
 static struct ptdump_info kernel_ptdump_info = {
@@ -470,10 +447,10 @@ void ptdump_check_wx(void)
 		pr_info("Checked W+X mappings: passed, no W+X pages found\n");
 }
 
-static int __init ptdump_init(void)
+static int ptdump_init(void)
 {
 	ptdump_initialize();
-	ptdump_debugfs_register(&kernel_ptdump_info, "kernel_page_tables");
-	return 0;
+	return ptdump_debugfs_register(&kernel_ptdump_info,
+					"kernel_page_tables");
 }
 __initcall(ptdump_init);

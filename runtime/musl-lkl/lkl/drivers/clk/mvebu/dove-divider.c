@@ -170,7 +170,7 @@ static struct clk *clk_register_dove_divider(struct device *dev,
 		.num_parents = num_parents,
 	};
 
-	strscpy(name, dc->name, sizeof(name));
+	strlcpy(name, dc->name, sizeof(name));
 
 	dc->hw.init = &init;
 	dc->base = base;

@@ -1,13 +1,12 @@
 #include <stdio.h>
 #include <stdarg.h>
-#include <stdlib.h>
 #include <time.h>
 
 #include "test.h"
 
 /* circular log buffer */
 
-static char log_buf[0x80000];
+static char log_buf[0x10000];
 static char *head = log_buf, *tail = log_buf;
 
 static inline void advance(char **ptr)
@@ -24,32 +23,6 @@ static void log_char(char c)
 	advance(&tail);
 	if (tail == head)
 		advance(&head);
-}
-
-char *lkl_test_get_log(void)
-{
-	unsigned int size = 0;
-	char *i, *j, *log;
-
-	i = head;
-	while (i != tail) {
-		size++;
-		advance(&i);
-	}
-
-	log = malloc(size + 1);
-	if (!log)
-		return log;
-
-	i = head;
-	j = log;
-	while (i != tail) {
-		*j++ = *i;
-		advance(&i);
-	}
-	*i = 0;
-
-	return log;
 }
 
 static void print_log(void)

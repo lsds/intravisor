@@ -4,8 +4,6 @@
 
 #include <linux/types.h>
 
-#ifndef __ASSEMBLY__
-
 struct subchannel_id {
 	__u32 cssid : 8;
 	__u32 : 4;
@@ -15,6 +13,5 @@ struct subchannel_id {
 	__u32 sch_no : 16;
 } __attribute__ ((packed, aligned(4)));
 
-#endif /* __ASSEMBLY__ */
 
 #endif /* _UAPIASM_SCHID_H */
