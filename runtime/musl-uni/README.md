@@ -9,6 +9,7 @@
 |                 				| ARM | RISC-V |
 |:---------------:				|:---:|:------:|
 | Intravisor 					|  Y  |   Y    |
+| [darknet](single/apps/darknet)       		|  Y  |   Y    |
 | [ffmpeg](single/apps/ffmpeg)               	|  Y  |   Y    |
 | [hellow_world](single/apps/hello_world)       |  Y  |   Y    |
 | [libvirt](single/apps/libvirt)           	|  Y  |   Y    |
@@ -17,6 +18,12 @@
 | [MicroROS2](single/apps/uros2)           	|  Y  |   Y    |
 
 #### Multi-cVM applications
+
+|                 				| ARM | RISC-V |
+|:---------------:				|:---:|:------:|
+| Intravisor 					|  Y  |        |
+| [SQLite x5](multi/sqlite/x5)           	|  Y  |        |
+
 
 #### Legend
 Y: supported and tested

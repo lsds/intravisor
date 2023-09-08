@@ -1,0 +1,55 @@
+---
+cVMs:
+- name: ramfs
+  runtime: libsco_ramfs.so
+  args: /ld.so /app/sc_main #aligment problem with pure cap aux in intravisor
+  isolation:
+  - base: 0x60000000
+    size: 0x10000000
+    begin: 0x60000000
+    end: 0x70000000
+  callback_out: monitor
+  callback_in: libsco_vfs.so
+  wait: -1
+- name: vfs
+  runtime: libsco_vfs.so
+  args: /ld.so /app/sc_main #aligment problem with pure cap aux in intravisor
+  isolation:
+  - base: 0x20000000
+    size: 0x10000000
+    begin: 0x20000000
+    end: 0x30000000
+  callback_out: libsco_ramfs.so
+  callback_in: libsco_sqlite.so
+  wait: -1
+- name: scolibc
+  runtime: libsco_libc.so
+  args: /ld.so /app/sc_main #aligment problem with pure cap aux in intravisor
+  isolation:
+  - base: 0x50000000
+    size: 0x10000000
+    begin: 0x50000000
+    end: 0x60000000
+  callback_out: libsco_vfs.so
+  wait: -1
+- name: sqlite
+  runtime: libsco_sqlite.so
+  args: /ld.so /app/sc_main #aligment problem with pure cap aux in intravisor
+  isolation:
+  - base: 0x10000000
+    size: 0x10000000
+    begin: 0x10000000
+    end: 0x20000000
+  callback_out: libsco_vfs.so
+  callback_in: libsco_speedtest1.so
+  wait: -1
+- name: speedtest1
+  runtime: libsco_speedtest1.so
+  args: /ld.so /app/sc_main #aligment problem with pure cap aux in intravisor
+  isolation:
+  - base: 0x30000000
+    size: 0x10000000
+    begin: 0x30000000
+    end: 0x40000000
+  callback_out: libsco_sqlite.so
+  wait: -1

@@ -11,6 +11,7 @@
   - c++ ctors in musl are back
 * musl-uni:
   - centralised build system for arm and riscv for single cVM applications
+  - partitioned SQLite
 * native: minimalistic demos
   - ORC hello
   - Hybrid hello_world with CF_FILE
