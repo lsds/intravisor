@@ -6,6 +6,8 @@ typedef struct encl_map_info {
     void* entry_point;
 	unsigned long ret_point;
 	unsigned long syscall_handler;
+	unsigned long cvm_heap_begin;
+	unsigned long cvm_heap_size;
 	void *cap_relocs;
 	unsigned long cap_relocs_size;
 	void *rela_dyn;

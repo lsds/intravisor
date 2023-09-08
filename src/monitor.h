@@ -235,6 +235,8 @@ struct s_box {
 	unsigned long box_size;		//base + box_size + stack = top
 	void *stack;			//beginning of stacks
 	unsigned long stack_size;	//stack size
+	void *heap;
+	unsigned long heap_size;
 // threads
 	struct c_thread threads[MAX_THREADS];
 	pthread_mutex_t ct_lock;

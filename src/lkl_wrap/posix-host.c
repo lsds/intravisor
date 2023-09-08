@@ -57,13 +57,13 @@ struct lkl_tls_key {
 
 #define WARN_UNLESS(exp) do {						\
 		if (exp < 0)						\
-			printf("%s: %s\n", #exp, strerror(errno));	\
+			printf("INT: %s: %s\n", #exp, strerror(errno));	\
 	} while (0)
 
 static int _warn_pthread(int ret, char *str_exp)
 {
 	if (ret > 0)
-		printf("%s: %s\n", str_exp, strerror(ret));
+		printf("INT: %s: %s\n", str_exp, strerror(ret));
 
 	return ret;
 }
@@ -234,7 +234,7 @@ static struct lkl_tls_key *tls_alloc(void (*destructor)(void *))
 	struct lkl_tls_key *ret = malloc(sizeof(struct lkl_tls_key));
 
 	if(destructor) {
-		printf("ignore destructor in %s\n", __func__);
+		printf("INT: ignore destructor %lx in %s\n", destructor, __func__);
 		destructor = 0;
 	}
 

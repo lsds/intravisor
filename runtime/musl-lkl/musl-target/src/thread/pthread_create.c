@@ -361,7 +361,13 @@ lkl_printf("new = %p\n", new);
 
 	ret = __syscall(220, flags, ts, &new->tid, TP_ADJ(new), &__thread_list_lock);
 	if(ret == 0) {
-//		__asm__ __volatile__ ("ld a2, 0(a1); ld a0, 8(a1); ld tp, 16(a1); jalr a2; ret");
+#ifdef __riscv64__
+		__asm__ __volatile__ ("ld a2, 0(a1); ld a0, 8(a1); ld tp, 16(a1); jalr a2; ebreak;");
+#endif
+#ifdef __aarch64__
+		__asm__ __volatile__ ("ldr x2, [x1, #0]; ldr x0, [x1, #8]; ldr x1, [x1, #16]; msr tpidr_el0, x1;br x2;brk 0;");
+#endif
+
 		printf("imposible!\n"); while(1);
 	} else {
 		printf("new thread = %d\n", ret);

@@ -19,7 +19,7 @@ struct s_box cvms[MAX_CVMS];
 
 //default config
 
-int timers = 1;
+int timers = 0;
 int debug_calls = 0;
 //
 
@@ -366,6 +366,7 @@ int build_cvm(int cid, struct cmp_s *comp, char *libos, char *disk, int argc, ch
 		while(1) ;
 	}
 
+//todo: CVM_MAX_SIZE Should be passed to elf_loader to stop loading after reaching it, otherwaise big cVM can corrupt others
 	if(encl_map.size > CVM_MAX_SIZE) {
 		printf("actual cVM is bigger (%lx) than it could be (%lx), die\n", encl_map.size, CVM_MAX_SIZE);
 		while(1) ;
@@ -554,8 +555,45 @@ int build_cvm(int cid, struct cmp_s *comp, char *libos, char *disk, int argc, ch
 	if(disk)
 		strncpy(cvms[cid].disk_image, disk, sizeof(cvms[cid].disk_image));
 
-	struct c_thread *ct = cvms[cid].threads;
+
+	unsigned long heap_start = ((((unsigned long) base + encl_map.size) >> 12 ) + 1 ) << 12;
+	cvms[cid].heap = (void *) heap_start;
+	cvms[cid].heap_size = addr_ret - heap_start;
+
+	printf("Convrting free memory into cVM Heap: %lx -- %lx +%lx ( %f MB)\n", cvms[cid].heap, cvms[cid].heap + cvms[cid].heap_size, cvms[cid].heap_size, cvms[cid].heap_size/1024.0/1024);
+
+	void *heap_ret = mmap(cvms[cid].heap, cvms[cid].heap_size, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_FIXED | MAP_ANONYMOUS, -1, 0);
+	if(heap_ret == MAP_FAILED) {
+		perror("mmap");
+		return 1;
+	}
+
+	if( (encl_map.cvm_heap_begin != 0) && (encl_map.cvm_heap_size != 0) ) {
+		printf("cVM has cvm_heap_begin (%lx) and cvm_heap_size (%lx)\n", encl_map.cvm_heap_begin, encl_map.cvm_heap_size);
+#if (defined riscv_hyb) || (defined arm_hyb)
+		unsigned long to = cvms[cid].base + encl_map.cvm_heap_begin;
+		unsigned long from = mon_to_comp(cvms[cid].heap,&cvms[cid]);
+		memcpy(to, &from, sizeof(from));
+		to = cvms[cid].base + encl_map.cvm_heap_size;
+		from = cvms[cid].heap_size;
+		memcpy(to, &from, sizeof(from));
+#else
+#if (defined riscv) || (defined arm)
+		void *__capability heap_cap = datacap_create(cvms[cid].heap, cvms[cid].heap + cvms[cid].heap_size, cvms[cid].clean_room);
+		st_cap(cvms[cid].base + encl_map.cvm_heap_begin, heap_cap);
+		unsigned long to = cvms[cid].base + encl_map.cvm_heap_size;
+		unsigned long from = cvms[cid].heap_size;
+		memcpy(to, &from, sizeof(from));
+#else
+		#warning this architecture doesnot setup heap inside cVM
+#endif
+#endif
+	} else 
+		printf("cVM doesn't use heap or has a built-in one\n");
+
 ////////////////////
+	struct c_thread *ct = cvms[cid].threads;
+
 	for(int i = 0; i < MAX_THREADS; i++) {
 		ct[i].id = -1;
 		ct[i].sbox = &cvms[cid];
@@ -672,49 +710,6 @@ pthread_t run_cvm(int cid) {
 
 	return ct[0].tid;
 }
-
-#if EVA
-#if arm
-struct vmtotal *getVMinfo(struct vmtotal *vm_info) {
-	int mib[2];
-
-	mib[0] = CTL_VM;
-	mib[1] = VM_TOTAL;
-
-	size_t len = sizeof(struct vmtotal);
-	sysctl(mib, 2, vm_info, &len, NULL, 0);
-
-	return vm_info;
-}
-
-int getSysCtl(int top_level, int next_level) {
-	int mib[2], ctlvalue;
-	size_t len;
-
-	mib[0] = top_level;
-	mib[1] = next_level;
-	len = sizeof(ctlvalue);
-
-	sysctl(mib, 2, &ctlvalue, &len, NULL, 0);
-
-	return ctlvalue;
-}
-#endif
-
-long long get_free_mem() {
-#if arm_sim
-	struct sysinfo memInfo;
-	sysinfo(&memInfo);
-	long long physMemUsed = memInfo.totalram - memInfo.freeram;
-	physMemUsed *= memInfo.mem_unit;
-	return memInfo.freeram;
-#else
-	struct vmtotal vmsize;
-	getVMinfo(&vmsize);
-	return vmsize.t_free * 4096;
-#endif
-}
-#endif
 
 int parse_and_spawn_yaml(char *yaml_cfg, char libvirt) {
 	struct cmp_s comp;
