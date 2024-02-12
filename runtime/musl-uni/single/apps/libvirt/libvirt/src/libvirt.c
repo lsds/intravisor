@@ -220,11 +220,9 @@ virGlobalInit(void)
      * virConnectOpen first.  But we can't rely on VIR_DEBUG working
      * until after initialization is complete, and since this is
      * one-shot, we never get here again.  */
-printf("%s %d\n", __FILE__, __LINE__);
     if (virThreadInitialize() < 0 ||
         virErrorInitialize() < 0)
         goto error;
-printf("%s %d\n", __FILE__, __LINE__);
 #ifndef LIBVIRT_SETUID_RPC_CLIENT
     if (virIsSUID()) {
         virReportError(VIR_ERR_INTERNAL_ERROR, "%s",
@@ -232,29 +230,22 @@ printf("%s %d\n", __FILE__, __LINE__);
         goto error;
     }
 #endif
-printf("%s %d\n", __FILE__, __LINE__);
     virLogSetFromEnv();
-printf("%s %d\n", __FILE__, __LINE__);
 #ifdef WITH_GNUTLS
     virNetTLSInit();
 #endif
-printf("%s %d\n", __FILE__, __LINE__);
 #if WITH_CURL
     curl_global_init(CURL_GLOBAL_DEFAULT);
 #endif
-printf("%s %d\n", __FILE__, __LINE__);
     VIR_DEBUG("register drivers");
-printf("%s %d\n", __FILE__, __LINE__);
 #if HAVE_WINSOCK2_H
     if (virWinsockInit() == -1)
         goto error;
 #endif
-printf("%s %d\n", __FILE__, __LINE__);
 #ifdef HAVE_LIBINTL_H
     if (!bindtextdomain(PACKAGE, LOCALEDIR))
         goto error;
 #endif /* HAVE_LIBINTL_H */
-printf("%s %d\n", __FILE__, __LINE__);
     /*
      * Note we must avoid everything except 'remote' driver
      * for virt-login-shell usage
@@ -293,12 +284,10 @@ printf("%s %d\n", __FILE__, __LINE__);
         goto error;
 # endif
 #endif
-printf("%s %d\n", __FILE__, __LINE__);
 #ifdef WITH_REMOTE
     if (remoteRegister() == -1)
         goto error;
 #endif
-printf("%s %d\n", __FILE__, __LINE__);
     return;
 
  error:

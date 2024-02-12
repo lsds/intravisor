@@ -1,0 +1,63 @@
+#############################################  musl-lkl Aarch64
+
+##### pure-cap ORC (ARM only)
+
+AArch64-pure_cap-intravisor-ORC:
+  stage: build_intravisor
+  artifacts:
+      paths:
+      - /builds/gitlab/cloudcap/intravisor/.config
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+      # when: always # is a default value
+    - when: manual
+  # allow_failure: false # is a default value
+  script:
+    - git config --global --add safe.directory /builds/gitlab/cloudcap/intravisor
+    - echo "Hello, $GITLAB_USER_LOGIN!"
+    - sudo rm -rf /opt/share/AArch64-native-ORC
+    - sudo mkdir -p /opt/share/AArch64-native-ORC
+    - echo > /tmp/int.cfg
+    - echo "CONFIG_ARCH_ARM=y" >> /tmp/int.cfg
+    - echo "CONFIG_BIT_64=y" >> /tmp/int.cfg
+    - echo "CONFIG_MODE_PURE=y" >> /tmp/int.cfg
+    - echo "CONFIG_OS_CHERIBSD=y" >> /tmp/int.cfg
+    - echo "CONFIG_ORC=y" >> /tmp/int.cfg
+    - echo "CONFIG_KERNEL_CONFIGURED_DDC_RELATIVE=n" >> /tmp/int.cfg
+    - echo "CONFIG_CHERI_SDK=\"\$\{HOME\}/cheri/output/morello-sdk\"" >> /tmp/int.cfg
+    - echo "CONFIG_CVM_MAX_SIZE=0x10000000" >> /tmp/int.cfg
+    - kconfig-conf --defconfig=/tmp/int.cfg  Kconfig
+    - cat .config
+    - make -C src
+    - sudo cp src/intravisor /opt/share/AArch64-native-ORC/
+
+AArch64-native-ORC-hello:
+  stage: build_runtime
+  needs: ["AArch64-pure_cap-intravisor-ORC"]
+  artifacts:
+    when: always
+    paths:
+#      - extras/default.xml
+#      - extras/default.txt
+    reports:
+#      junit: extras/default.xml
+  script:
+    - git config --global --add safe.directory /builds/gitlab/cloudcap/intravisor
+    - make -C runtime/native/orc-hello/
+    - make -C runtime/native/orc-hello/ install INSTALL_PATH=/opt/share/AArch64-native-ORC/
+
+
+AArch64-musl-uni-sqlite-x5:
+  stage: build_runtime
+  needs: ["AArch64-pure_cap-intravisor-ORC"]
+  artifacts:
+    when: always
+    paths:
+#      - extras/default.xml
+#      - extras/default.txt
+    reports:
+#      junit: extras/default.xml
+  script:
+    - git config --global --add safe.directory /builds/gitlab/cloudcap/intravisor
+    - make -C runtime/musl-uni/multi/sqlite/x5/
+    - make -C runtime/musl-uni/multi/sqlite/x5/ install INSTALL_PATH=/opt/share/AArch64-native-ORC/

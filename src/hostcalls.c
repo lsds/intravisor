@@ -110,18 +110,26 @@ int open_tap(char *ifname) {
 #endif
 }
 
-#ifndef CONFIG_MODE_SIM
-void cinv2(long, void *__capability, void *__capability, void *__capability);
-void cinv2_sp(long, void *__capability, void *__capability, void *__capability, unsigned long);
-#else
+#ifdef MODE_SIM
 void cinv2(long, void *, void *, void *);
 void cinv2_sp(long, void *, void *, void *, void *);
+#endif
+
+#ifdef MODE_HYB
+void cinv2(void *__capability, void *__capability, void *__capability, void *__capability);
+//void cinv2_sp(void *__capability, void *__capability, void *__capability, void *__capability, void *__capability);
+void cinv2_sp(void *__capability, void *__capability, void *__capability, void *__capability, void *);
+#endif
+
+#ifdef MODE_PURE
+void cinv2(void *__capability, void *__capability, void *__capability, void *__capability);
+void cinv2_sp(void *__capability, void *__capability, void *__capability, void *__capability, void *__capability);
 #endif
 
 void *c_thread_body(void *carg) {
 	struct c_thread *me = (struct c_thread *) carg;
 
-	long addr = (long) me->arg;	//there is no mon_to_cap here because in all cases the args are cap-relative
+	void *__capability addr = me->arg;	//there is no mon_to_cap here because in all cases the args are cap-relative
 
 	me->m_tp = getTP();
 	me->c_tp = (void *) (me->stack + 4096);
@@ -166,14 +174,14 @@ void *c_thread_body(void *carg) {
 		sp_cap = datacap_create((void *) me->stack, (unsigned long) me->stack + (unsigned long) me->stack_size, me->sbox->clean_room);
 		sp_cap = cheri_setaddress(sp_cap, sp);
 
-		printf("ca7: SP cap for purecap cVMs\n");
-		CHERI_CAP_PRINT(sp_cap);
+//              printf("ca7: SP cap for purecap cVMs\n");
+//              CHERI_CAP_PRINT(sp_cap);
 
 		void *__capability tp_cap = datacap_create((void *) ((unsigned long) me->c_tp), (unsigned long) me->c_tp + 4096, me->sbox->clean_room);
 		tp_cap = cheri_setaddress(tp_cap, me->c_tp);
 
-		printf("ca8: TP cap for purecap cVMs\n");
-		CHERI_CAP_PRINT(tp_cap);
+//              printf("ca8: TP cap for purecap cVMs\n");
+//              CHERI_CAP_PRINT(tp_cap);
 
 		me->c_tp = tp_cap;
 
@@ -182,12 +190,23 @@ void *c_thread_body(void *carg) {
 		me->c_tp = mon_to_comp(me->c_tp, me->sbox);
 	}
 
+#ifndef MODE_PURE
+	unsigned long *tp_args = comp_to_mon(me->c_tp, me->sbox);
+#else
+	unsigned long *tp_args = (__cheri_fromcap unsigned long *) (me->c_tp);
+#endif
+	tp_args[0] = me->sbox->top - me->sbox->stack_size + 0x1000;
+	tp_args[1] = me->sbox->cid;
+
 	cmv_ctp(me->c_tp);
 	cinv2_sp(addr, sealed_codecap,	//entrance
 		 sealed_datacap,	//entrance
 		 dcap,		//compartment data cap
+#ifndef MODE_PURE
 		 sp);
-
+#else
+		 sp_cap);
+#endif
 	printf("stuck in thread, die\n");
 	while(1) ;
 }
@@ -239,7 +258,7 @@ long host_make_call(struct c_thread *ct, void *f, void *arg) {
 	return 0;		//todo: here should be return value
 }
 
-void destroy_carrie_thread(struct c_thread *ct) {
+void destroy_carrie_thread(struct c_thread *ct, unsigned long ret_val) {
 	pthread_t tid = pthread_self();
 	pthread_mutex_lock(&ct->sbox->ct_lock);
 	for(int i = 0; i < MAX_THREADS; i++) {
@@ -252,7 +271,7 @@ void destroy_carrie_thread(struct c_thread *ct) {
 #if LKL
 			lkl_host_ops.thread_exit();
 #else
-			pthread_exit(NULL);
+			pthread_exit(ret_val);
 #endif
 		}
 	}
@@ -261,15 +280,14 @@ void destroy_carrie_thread(struct c_thread *ct) {
 	while(1) ;
 }
 
-#if LKL
-
 struct thread_bootstrap_arg {
 	struct thread_info *ti;
 	int (*f)(void *);
 	void *arg;
 };
 
-long create_carrie_thread(struct c_thread *ct, void *f, void *arg) {
+unsigned long create_carrie_thread(struct c_thread *ct, void *f, void *__capability arg) {
+//    printf("%s %p\n", __func__, arg);
       again:
 	pthread_mutex_lock(&ct->sbox->ct_lock);
 	int j;
@@ -309,15 +327,19 @@ long create_carrie_thread(struct c_thread *ct, void *f, void *arg) {
 	ct[tmp].arg = arg;
 	ct[tmp].func = comp_to_mon(f, ct[tmp].sbox);
 
-	struct thread_bootstrap_arg *targ = (struct thread_bootstrap_arg *) (comp_to_mon(arg, ct[tmp].sbox));
-	void *targ_f = NULL;
-	void *targ_arg = NULL;
+#if 0
+//old?
+//      struct thread_bootstrap_arg *targ = (struct thread_bootstrap_arg *) (comp_to_mon(arg, ct[tmp].sbox));
+//      void *targ_f = NULL;
+//      void *targ_arg = NULL;
 //      printf("arg = %p, targ = %p\n", arg, targ);
-	if(arg) {
-		targ_f = targ->f;
-		targ_arg = targ->arg;
-	}
+//      if(arg) {
+//              targ_f = targ->f;
+//              targ_arg = targ->arg;
+//      }
 //      printf("CARRIE_THREAD %d %p, [%lx -- %lx], guessing (%p %p)\n", tmp, ct[tmp].func, ct[tmp].stack, ct[tmp].stack+STACK_SIZE, targ_f, targ_arg);
+//      printf("CARRIE_THREAD %d %p, [%lx -- %lx], %p\n", tmp, ct[tmp].func, ct[tmp].stack, ct[tmp].stack+STACK_SIZE, arg);
+#endif
 
 #ifdef __linux__
 	ret = pthread_attr_setaffinity_np(&ct[tmp].tattr, sizeof(ct[tmp].sbox->cpuset), &ct[tmp].sbox->cpuset);
@@ -336,6 +358,8 @@ long create_carrie_thread(struct c_thread *ct, void *f, void *arg) {
 
 	return (long) ct[tmp].tid;
 }
+
+#if LKL
 
 struct s_thread {
 	void *f;
@@ -361,7 +385,7 @@ long create_carrie_timer(struct s_box *sbox, void *f, void *arg) {
 
 //the most of the calls are related to MUSL-LKL. They should be separated from basic calls. Ideally, moved into the runtime/musllkl directory and loaded as shared library.
 
-long hostcall(long a0, long a1, long a2, long a3, long a4, long a5, long a6, long a7) {
+__intcap_t hostcall(long a0, long a1, long a2, long a3, long a4, long a5, long a6, long a7) {
 	long t5 = (long) getT5();
 	struct c_thread *ct = get_cur_thread();
 	ct->c_tp = getTP();
@@ -374,7 +398,7 @@ long hostcall(long a0, long a1, long a2, long a3, long a4, long a5, long a6, lon
 //      if ( (ct->id !=1) && debug_calls)
 	printf("IN: [%d]:%d %p, %p, [%lx %lx %lx %lx] \n", ct->id, t5, getSP(), getTP(), a0, a1, a2, a3);
 #endif
-	long ret = 0;
+	__intcap_t ret = 0;
 //      struct lkl_disk *disk;
 
 	switch (t5) {
@@ -409,13 +433,13 @@ long hostcall(long a0, long a1, long a2, long a3, long a4, long a5, long a6, lon
 		lkl_host_ops.mutex_unlock(a0);
 		break;
 	case 11:
-		ret = (long) create_carrie_thread(ct->sbox->threads, a0, a1);
+		ret = create_carrie_thread(ct->sbox->threads, a0, a1);
 		break;
 	case 12:
 		lkl_host_ops.thread_detach();
 		break;
 	case 13:
-		destroy_carrie_thread(ct->sbox->threads);
+		destroy_carrie_thread(ct->sbox->threads, a0);
 		break;
 	case 14:
 		ret = (long) lkl_host_ops.thread_join(a0);
@@ -451,12 +475,12 @@ long hostcall(long a0, long a1, long a2, long a3, long a4, long a5, long a6, lon
 	case 23:
 		printf("EXEC ALLOC %p, who called?\n", a0);
 		while(1) ;
-//		ret = (long) lkl_host_ops.mem_executable_alloc(a0); renamed
+//              ret = (long) lkl_host_ops.mem_executable_alloc(a0); renamed
 		break;
 	case 24:
 		printf("EXEC FREE %p, who called?\n", a0);
 		while(1) ;
-//		lkl_host_ops.mem_executable_free(a0, a1); renamed
+//              lkl_host_ops.mem_executable_free(a0, a1); renamed
 		break;
 	case 25:
 		ret = (long) lkl_host_ops.time();
@@ -467,7 +491,7 @@ long hostcall(long a0, long a1, long a2, long a3, long a4, long a5, long a6, lon
 		break;
 	case 27:
 		if(timers) {
-//			timers--;
+//                      timers--;
 			ret = (long) lkl_host_ops.timer_set_oneshot(a0, a1);
 		}
 		break;
@@ -475,6 +499,7 @@ long hostcall(long a0, long a1, long a2, long a3, long a4, long a5, long a6, lon
 		printf("TODO: TIMER_FREE\n");
 		lkl_host_ops.timer_free(a0);
 		break;
+
 /////
 //disk I/O
 /////
@@ -509,12 +534,27 @@ long hostcall(long a0, long a1, long a2, long a3, long a4, long a5, long a6, lon
 #endif
 #else
 	case 13:
-		destroy_carrie_thread(ct->sbox->threads);
+		destroy_carrie_thread(ct->sbox->threads, 0);
 		break;
 	case 200:
 		ret = nanosleep(comp_to_mon(a0, ct->sbox), comp_to_mon(a1, ct->sbox));
 		break;
 #endif
+
+	case 29:
+		ret = prepare_parse_run_yaml(ct->sbox, comp_to_mon(a0, ct->sbox), a1);
+		break;
+//pure-cap threading, separated from LKL but duplicats some parts 
+	case 40:
+		ret = create_carrie_thread(ct->sbox->threads, a0, (__cheri_tocap void *__capability) (void *) a1);
+		break;
+	case 41:
+		ret = pthread_join(a0, a1);
+		break;
+	case 42:
+		destroy_carrie_thread(ct->sbox->threads, a0);
+		break;
+
 ////
 //HOST CALLS
 //// these 3 calls are used for networking. 
@@ -739,7 +779,7 @@ long hostcall(long a0, long a1, long a2, long a3, long a4, long a5, long a6, lon
 		break;
 /// GD
 	default:
-		printf("Introvisor: unknown t5 %d\n", (int) t5);
+		printf("Intravisor: unknown t5 %d\n", (int) t5);
 		while(1) ;
 	}
 #if 0

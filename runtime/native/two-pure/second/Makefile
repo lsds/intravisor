@@ -7,8 +7,11 @@ CFLAGS=-fPIC -fPIE -pie -g -O2  -nostdinc -DCVM_MAX_SIZE=$(CONFIG_CVM_MAX_SIZE)\
 #CFLAGS_ALL += -D_XOPEN_SOURCE=700 -I$(srcdir)/arch/$(ARCH) -I$(srcdir)/arch/generic -Iobj/src/internal -I$(srcdir)/src/include -I$(srcdir)/src/internal -Iobj/include -I$(srcdir)/include
 #	-Wno-unused-command-line-argument -Werror=implicit-function-declaration -Werror=format -Werror=incompatible-pointer-types -Werror=cheri-capability-misuse -Werror=cheri-bitwise-operations -Werror=cheri-prototypes -Werror=pass-failed -Werror=undefined-internal -Wno-error=cheri-capability-misuse \
 
-ifneq ($(MODE),sim)
+
+ifeq ($(CONFIG_KERNEL_CONFIGURED_DDC_RELATIVE), y)
+CFLAGS +=-DKERNEL_CONFIGURED_DDC_RELATIVE
 endif
+
 
 DEPS = 
 OBJDIR = obj

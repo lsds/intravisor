@@ -5,8 +5,10 @@ include $(MAKEFILE)
 CFLAGS=-fPIC -fPIE -pie -g -O2  -nostdinc -DCVM_MAX_SIZE=$(CONFIG_CVM_MAX_SIZE)\
 	$(TARGET_FLAGS_LINUX) $(SYSROOT_FLAGS_PURE) -B$(CROSS_COMPILE) $(ARCH_PURE) -Iarch/$(TARGET_ARCH)/include\
 
-ifneq ($(MODE),sim)
+ifeq ($(CONFIG_KERNEL_CONFIGURED_DDC_RELATIVE), y)
+CFLAGS +=-DKERNEL_CONFIGURED_DDC_RELATIVE
 endif
+
 
 DEPS = 
 OBJDIR = obj
@@ -45,4 +47,4 @@ clean:
 
 install:
 	sudo mkdir -p ${INSTALL_PATH}
-	sudo cp ./*.yaml ./*.so  ${INSTALL_PATH}
+	sudo cp ./*.yaml ./*.ci ./*.so  ${INSTALL_PATH}

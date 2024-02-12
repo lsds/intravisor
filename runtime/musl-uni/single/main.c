@@ -14,16 +14,16 @@ long syscall(void *a0, void *a1, void *a2, long a3, long a4, long a5, long a6, l
 	int ret;
 	long t5 = (long) getT5();
 
-	switch(t5) {
-		case 1:
-			host_write_out(a0, (unsigned long) a1);
-			break;
-		case 13:
-			host_exit();
-			break;
-		default:
-			printf("unknown t5 %d\n", (int) t5);
-			while(1);
+	switch (t5) {
+	case 1:
+		host_write_out(a0, (unsigned long) a1);
+		break;
+	case 13:
+		host_exit(a0);
+		break;
+	default:
+		printf("unknown t5 %d\n", (int) t5);
+		while(1) ;
 	}
 
 	return ret;
@@ -38,8 +38,7 @@ void outer_c() {
 	printf("\n");
 
 	extern int app_main();
-	app_main();
+	int ret = app_main();
 
-	host_exit();
+	host_exit(ret);
 }
-

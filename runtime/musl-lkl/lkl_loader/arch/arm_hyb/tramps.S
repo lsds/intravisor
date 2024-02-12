@@ -130,7 +130,7 @@ c_out:
 		SC	S7, [sp, #(16*8)]
 		SC	S8, [sp, #(16*9)]
 		SC	S9, [sp, #(16*10)]
-
+		SC	x29, [sp, #(16*11)]
 
 //tt:
 //		auipcc	ct0, %captab_pcrel_hi(local_cap_store)    // R_RISCV_PCREL_HI20
@@ -195,7 +195,7 @@ ret_from_monitor:
 		LC	S7, [sp, #(16*8)]
 		LC	S8, [sp, #(16*9)]
 		LC	S9, [sp, #(16*10)]
-
+		LC	x29, [sp, #(16*11)]
 
 
 //		addi	sp, sp, 112
@@ -226,6 +226,7 @@ copy_from_cap:
 	add CT1, CT1, 8
 	cmp A0, A2
 	b.lo 9b
+	SC	CT1, [A1]
 
 	ret
 
@@ -244,6 +245,7 @@ copy_to_cap:
     add c9, c9, #8       // Increment destination capability address by 8
     cmp x1, x2           // Compare source address with destination address
     b.lo 10b             // Branch to label 10 if x1 is less than x2
+    str	c9, [x0]
 
     ret
 

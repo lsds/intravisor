@@ -191,9 +191,9 @@ virNetServerDispatchNewMessage(virNetServerClientPtr client,
 
     VIR_DEBUG("server=%p client=%p message=%p programs=%d",
               srv, client, msg, srv->nprograms);
-printf("%s %d\n", __FILE__, __LINE__);
+
     virObjectLock(srv);
-printf("%s %d '%s' %d\n", __FILE__, __LINE__, msg, srv->nprograms);
+
 #if 0
     for (i = 0; i < srv->nprograms; i++) {
         if (virNetServerProgramMatches(srv->programs[i], msg)) {
@@ -204,41 +204,33 @@ printf("%s %d '%s' %d\n", __FILE__, __LINE__, msg, srv->nprograms);
 #else
             prog = srv->programs[0];
 #endif
-printf("%s %d\n", __FILE__, __LINE__);
     /* we can unlock @srv since @prog can only become invalid in case
      * of disposing @srv, but let's grab a ref first to ensure nothing
      * disposes of it before we use it. */
     virObjectRef(srv);
-printf("%s %d\n", __FILE__, __LINE__);
     virObjectUnlock(srv);
-printf("%s %d\n", __FILE__, __LINE__);
 //    if (virThreadPoolGetMaxWorkers(srv->workers) > 0)  {
     if (0)  {
-printf("%s %d\n", __FILE__, __LINE__);
         virNetServerJobPtr job;
-printf("%s %d\n", __FILE__, __LINE__);
         if (VIR_ALLOC(job) < 0)
             goto error;
 
         job->client = client;
         job->msg = msg;
-printf("%s %d\n", __FILE__, __LINE__);
+
         if (prog) {
             job->prog = virObjectRef(prog);
             priority = virNetServerProgramGetPriority(prog, msg->header.proc);
         }
-printf("%s %d\n", __FILE__, __LINE__);
+
         virObjectRef(client);
-printf("%s %d\n", __FILE__, __LINE__);
         if (virThreadPoolSendJob(srv->workers, priority, job) < 0) {
-printf("%s %d\n", __FILE__, __LINE__);
             virObjectUnref(client);
             VIR_FREE(job);
             virObjectUnref(prog);
             goto error;
         }
     } else {
-printf("%s %d\n", __FILE__, __LINE__);
         if (virNetServerProcessMsg(srv, client, prog, msg) < 0)
             goto error;
     }
@@ -373,23 +365,22 @@ virNetServerPtr virNetServerNew(const char *name,
 {
     virNetServerPtr srv;
 
-printf("%s %d\n", __FILE__, __LINE__);
 
     if (virNetServerInitialize() < 0)
 	return NULL;
 
     if (!(srv = virObjectLockableNew(virNetServerClass)))
         return NULL;
-printf("%s %d\n", __FILE__, __LINE__);
+
     if (!(srv->workers = virThreadPoolNew(min_workers, max_workers,
                                           priority_workers,
                                           virNetServerHandleJob,
                                           srv)))
         goto error;
-printf("%s %d\n", __FILE__, __LINE__);
+
     if (VIR_STRDUP(srv->name, name) < 0)
         goto error;
-printf("%s %d\n", __FILE__, __LINE__);
+
     srv->next_client_id = next_client_id;
     srv->nclients_max = max_clients;
     srv->nclients_unauth_max = max_anonymous_clients;
@@ -399,20 +390,16 @@ printf("%s %d\n", __FILE__, __LINE__);
     srv->clientPrivPreExecRestart = clientPrivPreExecRestart;
     srv->clientPrivFree = clientPrivFree;
     srv->clientPrivOpaque = clientPrivOpaque;
-printf("%s %d\n", __FILE__, __LINE__);
+
     if (VIR_STRDUP(srv->mdnsGroupName, mdnsGroupName) < 0)
         goto error;
-printf("%s %d\n", __FILE__, __LINE__);
     if (srv->mdnsGroupName) {
-printf("%s %d\n", __FILE__, __LINE__);
         if (!(srv->mdns = virNetServerMDNSNew()))
             goto error;
-printf("%s %d\n", __FILE__, __LINE__);
         if (!(srv->mdnsGroup = virNetServerMDNSAddGroup(srv->mdns,
                                                         srv->mdnsGroupName)))
             goto error;
     }
-printf("%s %d\n", __FILE__, __LINE__);
     return srv;
  error:
     virObjectUnref(srv);

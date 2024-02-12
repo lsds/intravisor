@@ -15,14 +15,18 @@ struct stream_caps_store {
 	struct cs_lock call_lock2;
 };
 
+#ifdef MODE_HYB
+void cinv2(void *__capability, void *__capability, void *__capability, void *__capability);
+//void cinv2_sp(void *__capability, void *__capability, void *__capability, void *__capability, void *__capability);
+void cinv2_sp(void *__capability, void *__capability, void *__capability, void *__capability, void *);
+#endif
+
 static struct stream_caps_store stream_caps[MAX_STREAM_CAPS];
 
 /////// this function is used to spawn a call thread. it runs once and used for multiple calls. 
 
 void *c_call_thread_body(void *carg) {
 	struct c_thread *me = (struct c_thread *) carg;
-//      void *sp_read = me->stack + me->stack_size;
-//      unsigned long *sp = (sp_read -  4096*1);
 
 	long addr = (long) me->arg;	//there is no mon_to_cap here because in all cases the args are cap-relative
 
@@ -61,7 +65,11 @@ void *c_call_thread_body(void *carg) {
 	void *__capability sealed_datacap = cheri_seal(dcap, sealcap);
 	void *__capability sealed_codecap = cheri_seal(ccap, sealcap);
 
-	me->c_tp = mon_to_comp(me->c_tp, me->sbox->cmp_begin);
+	void *sp_read = me->stack + me->stack_size;	//getSP();
+	volatile unsigned long *sp = (sp_read - 4096 * 4);	//I don't know why, but without volatile sp gets some wrong value after initing CENV in -O2
+
+	sp = mon_to_comp(sp, me->sbox);
+	me->c_tp = mon_to_comp(me->c_tp, me->sbox);
 
 	struct stream_caps_store *cs = me->cs;
 
@@ -72,15 +80,11 @@ void *c_call_thread_body(void *carg) {
 	pthread_cond_signal(&cs->call_lock2.cond);
 	pthread_mutex_unlock(&cs->call_lock2.lock);
 
-#if 0
-	__asm__ __volatile__("cmove ctp, %0;"::"C"(me->c_tp):"memory");
-#else
 	cmv_ctp(me->c_tp);
-#endif
-	cinv2(addr, sealed_codecap,	//entrance
-	      sealed_datacap,	//entrance
-	      dcap		//compartment data cap
-	    );
+	cinv2_sp(addr, sealed_codecap,	//entrance
+		 sealed_datacap,	//entrance
+		 dcap,		//compartment data cap
+		 sp);
 
 #if 0
 	__asm__ __volatile__("cmove ctp, %0;"::"C"(me->m_tp):"memory");

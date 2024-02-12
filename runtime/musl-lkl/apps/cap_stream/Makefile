@@ -37,6 +37,6 @@ $(DISK): $(PROG)
 
 install:
 	sudo mkdir -p ${INSTALL_PATH}
-	sudo cp ./*.yaml ./*.img ${INSTALL_PATH}
+	sudo cp ./*.yaml ./*.ci  ./*.img ${INSTALL_PATH}
 
 

@@ -21,18 +21,17 @@ static struct iomem_region {
 	const struct lkl_iomem_ops *ops;
 } iomem_regions[MAX_IOMEM_REGIONS];
 
-void* register_iomem(void *data, int size, const struct lkl_iomem_ops *ops)
-{
+void *register_iomem(void *data, int size, const struct lkl_iomem_ops *ops) {
 	int i;
 
-	if (size > (1 << IOMEM_OFFSET_BITS) - 1)
+	if(size > (1 << IOMEM_OFFSET_BITS) - 1)
 		return NULL;
 
-	for (i = 1; i < MAX_IOMEM_REGIONS; i++)
-		if (!iomem_regions[i].ops)
+	for(i = 1; i < MAX_IOMEM_REGIONS; i++)
+		if(!iomem_regions[i].ops)
 			break;
 
-	if (i >= MAX_IOMEM_REGIONS)
+	if(i >= MAX_IOMEM_REGIONS)
 		return NULL;
 
 	iomem_regions[i].data = data;
@@ -41,11 +40,10 @@ void* register_iomem(void *data, int size, const struct lkl_iomem_ops *ops)
 	return IOMEM_INDEX_TO_ADDR(i);
 }
 
-void unregister_iomem(void *base)
-{
+void unregister_iomem(void *base) {
 	unsigned int index = IOMEM_ADDR_TO_INDEX(base);
 
-	if (index >= MAX_IOMEM_REGIONS) {
+	if(index >= MAX_IOMEM_REGIONS) {
 		printf("%s: invalid iomem_addr %p\n", __func__, base);
 		return;
 	}
@@ -54,32 +52,29 @@ void unregister_iomem(void *base)
 	iomem_regions[index].ops = NULL;
 }
 
-void *lkl_ioremap(long addr, int size)
-{
+void *lkl_ioremap(long addr, int size) {
 	int index = IOMEM_ADDR_TO_INDEX(addr);
 	struct iomem_region *iomem = &iomem_regions[index];
 
-	if (index >= MAX_IOMEM_REGIONS)
+	if(index >= MAX_IOMEM_REGIONS)
 		return NULL;
 
-	if (iomem->ops && size <= iomem->size)
+	if(iomem->ops && size <= iomem->size)
 		return IOMEM_INDEX_TO_ADDR(index);
 
 	return NULL;
 }
 
-int lkl_iomem_access(const volatile void *addr, void *res, int size, int write)
-{
+int lkl_iomem_access(const volatile void *addr, void *res, int size, int write) {
 	int index = IOMEM_ADDR_TO_INDEX(addr);
 	struct iomem_region *iomem = &iomem_regions[index];
 	int offset = IOMEM_ADDR_TO_OFFSET(addr);
 	int ret;
 
-	if (index > MAX_IOMEM_REGIONS || !iomem_regions[index].ops ||
-	    offset + size > iomem_regions[index].size)
+	if(index > MAX_IOMEM_REGIONS || !iomem_regions[index].ops || offset + size > iomem_regions[index].size)
 		return -1;
 
-	if (write)
+	if(write)
 		ret = iomem->ops->write(iomem->data, offset, res, size);
 	else
 		ret = iomem->ops->read(iomem->data, offset, res, size);

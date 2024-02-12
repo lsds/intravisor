@@ -1,0 +1,9 @@
+"hello first(syscall-handler)","1st started",True
+"hello second","2nd started",True
+"unknown t5","Something is wrong",False
+"Using yaml.cfg =","Intravisor is failed to start",True
+"ALL cVMs loaded",'Cannot load cVMs',True
+"Exited successfully","Exited successfully",True
+"In-address space security exception","CHERI protection fault",False
+"Segmentation fault (core dumped)","SEGFAUL fault",False
+"Crushed or Failed","Exited with error",False

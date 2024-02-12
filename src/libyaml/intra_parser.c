@@ -178,6 +178,8 @@ int consume_event(struct parser_state *s, yaml_event_t * event) {
 				s->state = STATE_FWAIT;
 			} else if(strcmp(value, "clean_room") == 0) {
 				s->state = STATE_FCR;
+			} else if(strcmp(value, "libvirt") == 0) {
+				s->state = STATE_FLV;
 			} else if(strcmp(value, "callback_in") == 0) {
 				s->state = STATE_FCALLBACK_IN;
 			} else if(strcmp(value, "callback_out") == 0) {
@@ -191,7 +193,7 @@ int consume_event(struct parser_state *s, yaml_event_t * event) {
 			break;
 		case YAML_MAPPING_END_EVENT:
 			add_cvm(&s->flist, s->f.name, s->f.disk, s->f.runtime, s->f.net, s->f.args, s->f.isol.base, s->f.isol.size, s->f.isol.begin, s->f.isol.end, s->f.cb_out, s->f.cb_in, s->f.wait,
-				s->f.cr);
+				s->f.cr, s->f.lv);
 			free(s->f.name);
 			free(s->f.disk);
 			free(s->f.runtime);
@@ -288,6 +290,18 @@ int consume_event(struct parser_state *s, yaml_event_t * event) {
 		switch (event->type) {
 		case YAML_SCALAR_EVENT:
 			s->f.cr = strtol((char *) event->data.scalar.value, NULL, 10);
+			s->state = STATE_FKEY;
+			break;
+		default:
+			fprintf(stderr, "Unexpected event %d in state %d.\n", event->type, s->state);
+			return FAILURE;
+		}
+		break;
+
+	case STATE_FLV:
+		switch (event->type) {
+		case YAML_SCALAR_EVENT:
+			s->f.lv = strtol((char *) event->data.scalar.value, NULL, 10);
 			s->state = STATE_FKEY;
 			break;
 		default:

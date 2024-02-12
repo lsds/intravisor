@@ -179,7 +179,7 @@ virClassNew(virClassPtr parent,
 
     klass->parent = parent;
     klass->magic = virAtomicIntInc(&magicCounter);
-    printf("INCREMENT ATOMIC %x %s\n", klass->magic, name);
+
     if (klass->magic > 0xCAFEFFFF) {
         virReportError(VIR_ERR_INTERNAL_ERROR, "%s",
                        _("too many object classes defined"));
@@ -257,7 +257,6 @@ virObjectLockableNew(virClassPtr klass)
 {
     virObjectLockablePtr obj;
 #if 1
-printf("%s %d %s\n", __FILE__, __LINE__, virClassName(klass));
     if (!virClassIsDerivedFrom(klass, virClassForObjectLockable())) {
         virReportInvalidArg(klass,
                             _("Class %s must derive from virObjectLockable"),

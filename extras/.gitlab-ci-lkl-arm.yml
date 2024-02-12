@@ -1,0 +1,200 @@
+#############################################  musl-lkl Aarch64
+
+.AArch64-hyb_cap-intravisor-lkl-template:
+  stage: build_intravisor
+  artifacts:
+      paths:
+      - /builds/gitlab/cloudcap/intravisor/.config
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+      # when: always # is a default value
+    - when: manual
+  # allow_failure: false # is a default value
+  script:
+    - git config --global --add safe.directory /builds/gitlab/cloudcap/intravisor
+    - echo "Hello, $GITLAB_USER_LOGIN!"
+    - sudo rm -rf /opt/share/AArch64-musl-lkl$CVM_MAX_SIZE
+    - sudo mkdir -p /opt/share/AArch64-musl-lkl$CVM_MAX_SIZE
+    - echo > /tmp/int.cfg
+    - echo "CONFIG_ARCH_ARM=y" >> /tmp/int.cfg
+    - echo "CONFIG_BIT_64=y" >> /tmp/int.cfg
+    - echo "CONFIG_MODE_HYB=y" >> /tmp/int.cfg
+    - echo "CONFIG_OS_CHERIBSD=y" >> /tmp/int.cfg
+    - echo "CONFIG_KERNEL_CONFIGURED_DDC_RELATIVE=y" >> /tmp/int.cfg
+    - echo "CONFIG_LKL=y" >> /tmp/int.cfg
+    - echo "CONFIG_OPENSSL=y" >> /tmp/int.cfg
+    - echo "CONFIG_LKL_HEAP_SIZE_MB=950" >> /tmp/int.cfg
+    - echo "CONFIG_CHERI_SDK=\"\$\{HOME\}/cheri/output/morello-sdk\"" >> /tmp/int.cfg
+    - echo "CONFIG_CVM_MAX_SIZE=$CVM_MAX_SIZE" >> /tmp/int.cfg
+    - kconfig-conf --defconfig=/tmp/int.cfg  Kconfig
+    - cat .config
+    - make -C src -j$(ncpus)
+    - sudo cp src/intravisor /opt/share/AArch64-musl-lkl$CVM_MAX_SIZE/
+
+.AArch64-musl-lkl-runtime-template:
+  stage: build_runtime
+  needs: ["AArch64-hyb_cap-intravisor-lkl"]
+  artifacts:
+    when: always
+    paths:
+    reports:
+  script:
+    - git config --global --add safe.directory /builds/gitlab/cloudcap/intravisor
+    - make -C runtime/musl-lkl
+    - sudo cp runtime/musl-lkl/build/*.so /opt/share/AArch64-musl-lkl$CVM_MAX_SIZE/
+    - source runtime/musl-lkl/apps/SOURCE_ME.aarch64
+    - DSUBDIRS=$DSUBDIRS make -C runtime/musl-lkl/apps/$APPS all
+    - DSUBDIRS=$DSUBDIRS make -C runtime/musl-lkl/apps/$APPS install INSTALL_PATH=/opt/share/AArch64-musl-lkl$CVM_MAX_SIZE
+
+
+.AArch64-musl-lkl-template:
+  stage: run_app
+  needs: ["AArch64-musl-lkl-runtime"]
+  allow_failure: false
+  artifacts:
+    when: always
+    paths:
+      - extras/default.xml
+      - extras/default.txt
+    reports:
+      junit: extras/default.xml
+  timeout: 8h
+  script:
+    - mkdir -p ~/cheri/extra-files/etc/rc.d/
+    - cp extras/int ~/cheri/extra-files/etc/rc.d/
+    - mkdir -p ~/cheri/extra-files/intravisor
+#
+    - sudo cp 	 /opt/share/AArch64-musl-lkl$CVM_MAX_SIZE/intravisor ~/cheri/extra-files/intravisor/
+    - sudo cp 	 /opt/share/AArch64-musl-lkl$CVM_MAX_SIZE/*.so ~/cheri/extra-files/intravisor/
+    - sudo cp 	 /opt/share/AArch64-musl-lkl$CVM_MAX_SIZE/$YAML.yaml ~/cheri/extra-files/intravisor/cvm.yaml
+    - if [ -e   "/opt/share/AArch64-musl-lkl$CVM_MAX_SIZE/$YAML.ci" ]; then sudo cat /opt/share/AArch64-musl-lkl$CVM_MAX_SIZE/$YAML.ci >> extras/input_keys_musl-lkl.txt; fi
+    - sudo cp -r /opt/share/AArch64-musl-lkl$CVM_MAX_SIZE/$DISK ~/cheri/extra-files/intravisor/
+#
+    - ~/cheribuild/cheribuild.py disk-image-morello-hybrid --enable-hybrid-targets
+    - cd extras && bash spawn.bash morello 300 default.txt input_keys_musl-lkl.txt  default.xml && cat default.xml | grep -q "failure message" && exit 1 || exit 0
+
+#######################################
+
+#default size
+AArch64-hyb_cap-intravisor-lkl:
+  extends: .AArch64-hyb_cap-intravisor-lkl-template
+
+AArch64-musl-lkl-runtime:
+  variables:
+    DSUBDIRS: "default"
+  extends: .AArch64-musl-lkl-runtime-template
+
+
+#0x80000000: musl-lkl ggml tf1
+AArch64-hyb_cap-intravisor-lkl-0x80000000:
+  variables:
+    CVM_MAX_SIZE: "0x80000000"
+  extends: .AArch64-hyb_cap-intravisor-lkl-template
+
+AArch64-musl-lkl-runtime-0x80000000:
+  needs: ["AArch64-hyb_cap-intravisor-lkl-0x80000000"]
+  variables:
+    APPS: "docker/"
+    CVM_MAX_SIZE: "0x80000000"
+    DSUBDIRS: "tf1/ ggml/"
+  extends: .AArch64-musl-lkl-runtime-template
+
+
+###################
+
+AArch64-musl-lkl-hello:
+  variables:
+    YAML: "musl-lkl-hello"
+    DISK: "disk_hello.img"
+  extends: .AArch64-musl-lkl-template
+
+AArch64-musl-lkl-python-hello:
+  variables:
+    YAML: "musl-lkl-python-hello"
+    DISK: "disk_python.img"
+  extends: .AArch64-musl-lkl-template
+
+AArch64-musl-lkl-python-libhello:
+  variables:
+    YAML: "musl-lkl-python-libhello"
+    DISK: "disk_python.img"
+  extends: .AArch64-musl-lkl-template
+
+
+AArch64-musl-lkl-sqlite:
+  variables:
+    YAML: "musl-lkl-sqlite"
+    DISK: "disk_sqlite.img"
+  extends: .AArch64-musl-lkl-template
+
+AArch64-musl-lkl-darknet:
+  variables:
+    YAML: "musl-lkl-darknet"
+    DISK: "disk_darknet.img"
+  extends: .AArch64-musl-lkl-template
+
+
+AArch64-musl-lkl-darknet-python:
+  variables:
+    YAML: "musl-lkl-darknet-python"
+    DISK: "disk_darknet_python.img"
+  extends: .AArch64-musl-lkl-template
+
+
+AArch64-musl-lkl-cap_file:
+  variables:
+    YAML: "musl-lkl-cap_file"
+    DISK: "disk_cap_file.img"
+  extends: .AArch64-musl-lkl-template
+
+
+AArch64-musl-lkl-cap_stream:
+  variables:
+    YAML: "musl-lkl-cap_stream-single"
+    DISK: "disk_cap_stream.img"
+  extends: .AArch64-musl-lkl-template
+
+AArch64-musl-lkl-docker-hello:
+  variables:
+    YAML: "musl-lkl-docker-hello"
+    DISK: "disk_docker_hello.img"
+  extends: .AArch64-musl-lkl-template
+
+
+AArch64-musl-lkl-docker-sysbench:
+  variables:
+    YAML: "musl-lkl-docker-sysbench"
+    DISK: "disk_docker_sysbench.img"
+  extends: .AArch64-musl-lkl-template
+
+AArch64-musl-lkl-docker-ggml:
+  needs: ["AArch64-musl-lkl-runtime-0x80000000"]
+  variables:
+    YAML: "musl-lkl-docker-ggml"
+    DISK: "disk_docker_ggml.img"
+    CVM_MAX_SIZE: "0x80000000"
+  extends: .AArch64-musl-lkl-template
+
+#too long
+#AArch64-musl-lkl-docker-tf1:
+#  needs: ["AArch64-musl-lkl-runtime-0x80000000"]
+#  variables:
+#    YAML: "musl-lkl-docker-tf1-3"
+#    DISK: "disk_docker_tf1.img"
+#    CVM_MAX_SIZE: "0x80000000"
+#  extends: .AArch64-musl-lkl-template
+
+
+AArch64-musl-lkl-docker-pandas:
+  variables:
+    YAML: "musl-lkl-docker-pandas"
+    DISK: "disk_docker_pandas.img"
+  extends: .AArch64-musl-lkl-template
+
+
+#AArch64-musl-lkl-docker-wamr:
+#  variables:
+#    YAML: "musl-lkl-docker-wamr"
+#    DISK: "disk_docker_wamr.img"
+#  extends: .AArch64-musl-lkl-template
+

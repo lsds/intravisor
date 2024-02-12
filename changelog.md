@@ -1,17 +1,34 @@
-# 0.2.1 gitlab-ci
+# 0.3.0 threads and apps
+* Minimalistic pthreads in musl-uni
+* Working threads in musl-lkl
+* Significant CI improvement
+* Docker scripts and ready-to-use containers for musl-lkl (RV64 and AArch64):
+  - tensorflow
+  - ggml
+  - pandas
+  - sysbench
+* musl-lkl apps:
+  - darknet, darknet+python, pthreads test in hello
+* musl-uni apps (pure-cap):
+  - ffmpeg
+  - darknet
+  - ggml
+  - pthreads test
+  - libvirt
+  - polybench-c
+* overall clean up: old bugs removed, new added
+
+# 0.2.0 gitlab-ci
 * Kconfig
 * Now Intravisor uses gitlab-ci for authomated builds
 * Dockerfile to compile SDK or run Intravisor
 * musl-lkl is back:
-  - Linux kernel version 4.17.0
+  - Linux kernel version 6.1.0
   - supports both arm and risc-v architectures
   - compatible with docker images (proper stat.h for both architectures)
   - patch for CheriBSD to enable PCC-relative hybrid compartments
-  - proper pthreads behaviour (threads, locks, keys)
-  - c++ ctors in musl are back
 * musl-uni:
   - centralised build system for arm and riscv for single cVM applications
-  - partitioned SQLite
 * native: minimalistic demos
   - ORC hello
   - Hybrid hello_world with CF_FILE

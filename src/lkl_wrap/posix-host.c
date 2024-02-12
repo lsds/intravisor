@@ -30,8 +30,7 @@ int __clock_gettime(clockid_t, struct timespec *ts);
 #define SHARE_SEM 0
 #endif /* _POSIX_SEMAPHORES */
 
-static void print(const char *str, int len)
-{
+static void print(const char *str, int len) {
 	int ret __attribute__((unused));
 
 	ret = write(STDOUT_FILENO, str, len);
@@ -48,7 +47,7 @@ struct lkl_sem {
 	pthread_mutex_t lock;
 	int count;
 	pthread_cond_t cond;
-#endif /* _POSIX_SEMAPHORES */
+#endif				/* _POSIX_SEMAPHORES */
 };
 
 struct lkl_tls_key {
@@ -60,9 +59,8 @@ struct lkl_tls_key {
 			printf("INT: %s: %s\n", #exp, strerror(errno));	\
 	} while (0)
 
-static int _warn_pthread(int ret, char *str_exp)
-{
-	if (ret > 0)
+static int _warn_pthread(int ret, char *str_exp) {
+	if(ret > 0)
 		printf("INT: %s: %s\n", str_exp, strerror(ret));
 
 	return ret;
@@ -71,16 +69,15 @@ static int _warn_pthread(int ret, char *str_exp)
 /* pthread_* functions use the reverse convention */
 #define WARN_PTHREAD(exp) _warn_pthread(exp, #exp)
 
-static struct lkl_sem *sem_alloc(int count)
-{
+static struct lkl_sem *sem_alloc(int count) {
 	struct lkl_sem *sem;
 
 	sem = malloc(sizeof(*sem));
-	if (!sem)
+	if(!sem)
 		return NULL;
 	//printf("-> %p: %s %p (%d)\n", __builtin_frame_address(0), __func__, sem, count);
 #ifdef _POSIX_SEMAPHORES
-	if (sem_init(&sem->sem, SHARE_SEM, count) < 0) {
+	if(sem_init(&sem->sem, SHARE_SEM, count) < 0) {
 		printf("sem_init: %s\n", strerror(errno));
 		free(sem);
 		return NULL;
@@ -94,8 +91,7 @@ static struct lkl_sem *sem_alloc(int count)
 	return sem;
 }
 
-static void sem_free(struct lkl_sem *sem)
-{
+static void sem_free(struct lkl_sem *sem) {
 	//printf("-> %p: %s %p\n", __builtin_frame_address(0), __func__, sem);
 #ifdef _POSIX_SEMAPHORES
 	WARN_UNLESS(sem_destroy(&sem->sem));
@@ -107,35 +103,33 @@ static void sem_free(struct lkl_sem *sem)
 	//printf("<- %p: %s %p\n", __builtin_frame_address(0), __func__, sem);
 }
 
-static void sem_up(struct lkl_sem *sem)
-{
+static void sem_up(struct lkl_sem *sem) {
 	//printf("-> %p: %s %p\n", __builtin_frame_address(0), __func__, sem);
 #ifdef _POSIX_SEMAPHORES
 	WARN_UNLESS(sem_post(&sem->sem));
 #else
 	WARN_PTHREAD(pthread_mutex_lock(&sem->lock));
 	sem->count++;
-	if (sem->count > 0)
+	if(sem->count > 0)
 		WARN_PTHREAD(pthread_cond_signal(&sem->cond));
 	WARN_PTHREAD(pthread_mutex_unlock(&sem->lock));
 #endif /* _POSIX_SEMAPHORES */
 	//printf("<- %p: %s %p\n", __builtin_frame_address(0), __func__, sem);
 }
 
-static void sem_down(struct lkl_sem *sem)
-{
+static void sem_down(struct lkl_sem *sem) {
 	//printf("-> %p: %s %p\n", __builtin_frame_address(0), __func__, sem);
 #ifdef _POSIX_SEMAPHORES
 	int err;
 
 	do {
 		err = sem_wait(&sem->sem);
-	} while (err < 0 && errno == EINTR);
-	if (err < 0 && errno != EINTR)
+	} while(err < 0 && errno == EINTR);
+	if(err < 0 && errno != EINTR)
 		printf("sem_wait: %s\n", strerror(errno));
 #else
 	WARN_PTHREAD(pthread_mutex_lock(&sem->lock));
-	while (sem->count <= 0)
+	while(sem->count <= 0)
 		WARN_PTHREAD(pthread_cond_wait(&sem->cond, &sem->lock));
 	sem->count--;
 	WARN_PTHREAD(pthread_mutex_unlock(&sem->lock));
@@ -143,13 +137,12 @@ static void sem_down(struct lkl_sem *sem)
 	//printf("<- %p: %s %p\n", __builtin_frame_address(0), __func__, sem);
 }
 
-static struct lkl_mutex *mutex_alloc(int recursive)
-{
+static struct lkl_mutex *mutex_alloc(int recursive) {
 	struct lkl_mutex *_mutex = malloc(sizeof(struct lkl_mutex));
 	pthread_mutex_t *mutex = NULL;
 	pthread_mutexattr_t attr;
 
-	if (!_mutex)
+	if(!_mutex)
 		return NULL;
 
 	mutex = &_mutex->mutex;
@@ -159,11 +152,11 @@ static struct lkl_mutex *mutex_alloc(int recursive)
 	 * but has some overhead, so we provide an option to turn it
 	 * off. */
 #ifdef DEBUG
-	if (!recursive)
+	if(!recursive)
 		WARN_PTHREAD(pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_ERRORCHECK));
 #endif /* DEBUG */
 
-	if (recursive)
+	if(recursive)
 		WARN_PTHREAD(pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE));
 
 	WARN_PTHREAD(pthread_mutex_init(mutex, &attr));
@@ -171,66 +164,56 @@ static struct lkl_mutex *mutex_alloc(int recursive)
 	return _mutex;
 }
 
-static void mutex_lock(struct lkl_mutex *mutex)
-{
+static void mutex_lock(struct lkl_mutex *mutex) {
 	WARN_PTHREAD(pthread_mutex_lock(&mutex->mutex));
 }
 
-static void mutex_unlock(struct lkl_mutex *_mutex)
-{
+static void mutex_unlock(struct lkl_mutex *_mutex) {
 	pthread_mutex_t *mutex = &_mutex->mutex;
 	WARN_PTHREAD(pthread_mutex_unlock(mutex));
 }
 
-static void mutex_free(struct lkl_mutex *_mutex)
-{
+static void mutex_free(struct lkl_mutex *_mutex) {
 	pthread_mutex_t *mutex = &_mutex->mutex;
 	WARN_PTHREAD(pthread_mutex_destroy(mutex));
 	free(_mutex);
 }
 
-static lkl_thread_t thread_create(void (*fn)(void *), void *arg)
-{
+static lkl_thread_t thread_create(void (*fn)(void *), void *arg) {
 	pthread_t thread;
-	if (WARN_PTHREAD(pthread_create(&thread, NULL, (void* (*)(void *))fn, arg)))
+	if(WARN_PTHREAD(pthread_create(&thread, NULL, (void *(*)(void *)) fn, arg)))
 		return 0;
 	else
 		return (lkl_thread_t) thread;
 }
 
-static void thread_detach(void)
-{
+static void thread_detach(void) {
 	WARN_PTHREAD(pthread_detach(pthread_self()));
 }
 
-static void thread_exit(void)
-{
+static void thread_exit(void) {
 	pthread_exit(NULL);
 }
 
-static int thread_join(lkl_thread_t tid)
-{
-	if (WARN_PTHREAD(pthread_join((pthread_t)tid, NULL)))
+static int thread_join(lkl_thread_t tid) {
+	if(WARN_PTHREAD(pthread_join((pthread_t) tid, NULL)))
 		return -1;
 	else
 		return 0;
 }
 
-static lkl_thread_t thread_self(void)
-{
-	lkl_thread_t ret = (lkl_thread_t)pthread_self();
-//	printf("%s: %p\n", __func__, ret);
+static lkl_thread_t thread_self(void) {
+	lkl_thread_t ret = (lkl_thread_t) pthread_self();
+//      printf("%s: %p\n", __func__, ret);
 	return ret;
 }
 
-static int thread_equal(lkl_thread_t a, lkl_thread_t b)
-{
-//	printf("%s %p %p\n",__func__, a, b); 
-	return pthread_equal((pthread_t)a, (pthread_t)b);
+static int thread_equal(lkl_thread_t a, lkl_thread_t b) {
+//      printf("%s %p %p\n",__func__, a, b); 
+	return pthread_equal((pthread_t) a, (pthread_t) b);
 }
 
-static struct lkl_tls_key *tls_alloc(void (*destructor)(void *))
-{
+static struct lkl_tls_key *tls_alloc(void (*destructor)(void *)) {
 	struct lkl_tls_key *ret = malloc(sizeof(struct lkl_tls_key));
 
 	if(destructor) {
@@ -238,108 +221,97 @@ static struct lkl_tls_key *tls_alloc(void (*destructor)(void *))
 		destructor = 0;
 	}
 
-	if (WARN_PTHREAD(pthread_key_create(&ret->key, destructor))) {
+	if(WARN_PTHREAD(pthread_key_create(&ret->key, destructor))) {
 		free(ret);
 		return NULL;
 	}
 	return ret;
 }
 
-static void tls_free(struct lkl_tls_key *key)
-{
+static void tls_free(struct lkl_tls_key *key) {
 	WARN_PTHREAD(pthread_key_delete(key->key));
 	free(key);
 }
 
-static __inline__ void * getSP(void) {
-    register void * sp asm("sp");
-    asm ("" : "=r"(sp));
-    return sp;
+static __inline__ void *getSP(void) {
+	register void *sp asm("sp");
+      asm("":"=r"(sp));
+	return sp;
 }
 
-
-
-static int tls_set(struct lkl_tls_key *key, void *data)
-{
+static int tls_set(struct lkl_tls_key *key, void *data) {
 //#define STACK_SIZE (0x100000) //1M
-//	int tid = (0x30000000-(((long) getSP() / STACK_SIZE)*STACK_SIZE))/STACK_SIZE - 1;
+//      int tid = (0x30000000-(((long) getSP() / STACK_SIZE)*STACK_SIZE))/STACK_SIZE - 1;
 //printf("key = %p, key->key=%p, data = %p, tid %d\n", key, key->key, data, tid);
-	if (WARN_PTHREAD(pthread_setspecific(key->key, data)))
+	if(WARN_PTHREAD(pthread_setspecific(key->key, data)))
 		return -1;
 
 	return 0;
 }
 
-static void *tls_get(struct lkl_tls_key *key)
-{
+static void *tls_get(struct lkl_tls_key *key) {
 	void *reg = pthread_getspecific(key->key);
 	return reg;
 }
 
-static unsigned long long time_ns(void)
-{
+static unsigned long long time_ns(void) {
 	struct timespec ts;
 
-#ifdef __linux__ 
+#ifdef __linux__
 	clock_gettime(CLOCK_MONOTONIC, &ts);
 #else
 	__sys_clock_gettime(CLOCK_REALTIME, &ts);
 #endif
 
-	return 1e9*ts.tv_sec + ts.tv_nsec;
+	return 1e9 * ts.tv_sec + ts.tv_nsec;
 }
 
-static void *timer_alloc(void (*fn)(void *), void *arg)
-{
+static void *timer_alloc(void (*fn)(void *), void *arg) {
 	int err;
 	timer_t timer;
-	struct sigevent se =  {
+	struct sigevent se = {
 		.sigev_notify = SIGEV_THREAD,
 		.sigev_value = {
-			.sival_ptr = arg,
-		},
-		.sigev_notify_function = (void (*)(union sigval))fn,
+				.sival_ptr = arg,
+				 },
+		.sigev_notify_function = (void (*)(union sigval)) fn,
 	};
 
 	err = timer_create(CLOCK_REALTIME, &se, &timer);
-	if (err)
+	if(err)
 		return NULL;
 
-	return (void *)(long)timer;
+	return (void *) (long) timer;
 }
 
-static int timer_set_oneshot(void *_timer, unsigned long ns)
-{
-	timer_t timer = (timer_t)(long)_timer;
+static int timer_set_oneshot(void *_timer, unsigned long ns) {
+	timer_t timer = (timer_t) (long) _timer;
 	struct itimerspec ts = {
 		.it_value = {
-			.tv_sec = ns / 1000000000,
-			.tv_nsec = ns % 1000000000,
-		},
+			     .tv_sec = ns / 1000000000,
+			     .tv_nsec = ns % 1000000000,
+			      },
 	};
 
 	return timer_settime(timer, 0, &ts, NULL);
 }
 
-static void timer_free(void *_timer)
-{
-	timer_t timer = (timer_t)(long)_timer;
+static void timer_free(void *_timer) {
+	timer_t timer = (timer_t) (long) _timer;
 
 	timer_delete(timer);
 }
 
-static void panic(void)
-{
+static void panic(void) {
 	assert(0);
 }
 
-static long _gettid(void)
-{
+static long _gettid(void) {
 #ifdef	__FreeBSD__
-	return (long)pthread_self();
+	return (long) pthread_self();
 #else
-	printf("%s %d not implemented\n", __FILE__,__LINE__);
-//	return syscall(SYS_gettid);
+	printf("%s %d not implemented\n", __FILE__, __LINE__);
+//      return syscall(SYS_gettid);
 #endif
 }
 
@@ -382,42 +354,40 @@ struct lkl_host_operations lkl_host_ops = {
 	.jmp_buf_longjmp = jmp_buf_longjmp,
 };
 
-static int fd_get_capacity(unsigned long cof2mon, struct lkl_disk disk, unsigned long long *res)
-{
+static int fd_get_capacity(unsigned long cof2mon, struct lkl_disk disk, unsigned long long *res) {
 	off_t off;
 
 	res = (unsigned long long) ((unsigned long) res + cof2mon);
 
 	off = lseek(disk.fd, 0, SEEK_END);
-	if (off < 0)
+	if(off < 0)
 		return -1;
 
 	*res = off;
 	return 0;
 }
 
-static int do_rw(unsigned long cof2mon, ssize_t (*fn)(), struct lkl_disk disk, struct lkl_blk_req *req)
-{
+static int do_rw(unsigned long cof2mon, ssize_t(*fn) (), struct lkl_disk disk, struct lkl_blk_req *req) {
 	off_t off = req->sector * 512;
 	void *addr;
 	int len;
 	int i;
 	int ret = 0;
 
-//	printf("%p, req->count = %d, sec = %d\n", req, req->count, req->sector);
+//      printf("%p, req->count = %d, sec = %d\n", req, req->count, req->sector);
 
-	for (i = 0; i < req->count; i++) {
-//		printf("req->buf = %lx\n", req->buf);
+	for(i = 0; i < req->count; i++) {
+//              printf("req->buf = %lx\n", req->buf);
 		struct iovec *tbuf = (struct iovec *) ((unsigned long) &req->buf[i] + cof2mon);
-//		addr = req->buf[i].iov_base;
+//              addr = req->buf[i].iov_base;
 		addr = tbuf->iov_base + cof2mon;
-//		printf("addr = %lx\n", addr);
-//		len = req->buf[i].iov_len;
+//              printf("addr = %lx\n", addr);
+//              len = req->buf[i].iov_len;
 		len = tbuf->iov_len;
 //printf("RoW %p, %x %x %d\n", addr, len, off, req->count);
 		do {
 			ret = fn(disk.fd, addr, len, off);
-			if (ret <= 0) {
+			if(ret <= 0) {
 				ret = -1;
 				goto out;
 			}
@@ -426,15 +396,14 @@ static int do_rw(unsigned long cof2mon, ssize_t (*fn)(), struct lkl_disk disk, s
 			len -= ret;
 			off += ret;
 
-		} while (len);
+		} while(len);
 	}
 
-out:
+      out:
 	return ret;
 }
 
-static int blk_request(unsigned long cof2mon, struct lkl_disk disk, struct lkl_blk_req *req)
-{
+static int blk_request(unsigned long cof2mon, struct lkl_disk disk, struct lkl_blk_req *req) {
 	int err = 0;
 
 	req = (struct lkl_blk_req *) ((unsigned long) req + cof2mon);
@@ -460,7 +429,7 @@ static int blk_request(unsigned long cof2mon, struct lkl_disk disk, struct lkl_b
 		return LKL_DEV_BLK_STATUS_UNSUP;
 	}
 
-	if (err < 0)
+	if(err < 0)
 		return LKL_DEV_BLK_STATUS_IOERR;
 
 	return LKL_DEV_BLK_STATUS_OK;

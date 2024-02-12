@@ -341,8 +341,8 @@ static int daemonInitialize(void)
     if (virDriverLoadModule("lxc", "lxcRegister", false) < 0)
         return -1;
 #endif
-#ifdef WITH_UML
-    if (virDriverLoadModule("uml", "umlRegister", false) < 0)
+#ifdef WITH_CVM
+    if (virDriverLoadModule("cvm", "cvmRegister", false) < 0)
         return -1;
 #endif
 #ifdef WITH_VBOX
@@ -358,7 +358,7 @@ static int daemonInitialize(void)
         return -1;
 #endif
 
-    umlRegister();
+    cvmRegister();
     return 0;
 }
 
@@ -445,11 +445,10 @@ daemonSetupNetworking(virNetServerPtr srv,
 	printf("skip not implemented %d %s\n", __LINE__, __FILE__);
 #endif
 
-printf("%s %d\n", __FILE__, __LINE__);
     if (svcRO &&
         virNetServerAddService(srv, svcRO, NULL) < 0)
         goto cleanup;
-printf("%s %d\n", __FILE__, __LINE__);
+
 #if 0
     if (sock_path_adm) {
         VIR_DEBUG("Registering unix socket %s", sock_path_adm);
@@ -467,7 +466,6 @@ printf("%s %d\n", __FILE__, __LINE__);
             goto cleanup;
     }
 #endif
-printf("%s %d\n", __FILE__, __LINE__);
     if (ipsock) {
         if (config->listen_tcp) {
             VIR_DEBUG("Registering TCP socket %s:%s",
@@ -806,15 +804,11 @@ handleSystemMessageFunc(DBusConnection *connection ATTRIBUTE_UNUSED,
 static void daemonRunStateInit(void *opaque)
 {
     virNetDaemonPtr dmn = opaque;
-printf("%s %d\n", __FILE__, __LINE__);
     virIdentityPtr sysident = virIdentityGetSystem();
-printf("%s %d\n", __FILE__, __LINE__);
     virIdentitySetCurrent(sysident);
-printf("%s %d\n", __FILE__, __LINE__);
     /* Since driver initialization can take time inhibit daemon shutdown until
        we're done so clients get a chance to connect */
     daemonInhibitCallback(true, dmn);
-printf("%s %d\n", __FILE__, __LINE__);
 #if 1
     /* Start the stateful HV drivers
      * This is deliberately done after telling the parent process
@@ -853,10 +847,8 @@ printf("%s %d\n", __FILE__, __LINE__);
         }
     }
 #endif
-printf("%s %d\n", __FILE__, __LINE__);
     /* Only now accept clients from network */
     virNetDaemonUpdateServices(dmn, true);
-printf("%s %d\n", __FILE__, __LINE__);
  cleanup:
     daemonInhibitCallback(false, dmn);
     virObjectUnref(dmn);
@@ -874,9 +866,7 @@ static int daemonStateInit(virNetDaemonPtr dmn)
         return -1;
     }
 #else
-    printf("%s %d\n", __func__, __LINE__);
 	daemonRunStateInit(dmn);
-    printf("%s %d\n", __func__, __LINE__);
 #endif
     return 0;
 }
@@ -1093,17 +1083,15 @@ int libvirt_main(int argc, char **argv) {
         { "help", no_argument, NULL, 'h' },
         {0, 0, 0, 0}
     };
-printf("%s %d\n", __FILE__, __LINE__);
+
     if (virGettextInitialize() < 0 ||
         virInitialize() < 0) {
         fprintf(stderr, _("%s: initialization failed\n"), argv[0]);
         exit(EXIT_FAILURE);
     }
-printf("%s %d\n", __FILE__, __LINE__);
+
     virUpdateSelfLastChanged(argv[0]);
-printf("%s %d\n", __FILE__, __LINE__);
     virFileActivateDirOverride(argv[0]);
-printf("%s %d\n", __FILE__, __LINE__);
     while (1) {
         int optidx = 0;
         int c;
@@ -1168,18 +1156,18 @@ printf("%s %d\n", __FILE__, __LINE__);
             exit(EXIT_FAILURE);
         }
     }
-printf("%s %d\n", __FILE__, __LINE__);
+
     if (optind != argc) {
         fprintf(stderr, "%s: unexpected, non-option, command line arguments\n",
                 argv[0]);
         exit(EXIT_FAILURE);
     }
-printf("%s %d\n", __FILE__, __LINE__);
+
     if (!(config = daemonConfigNew(privileged))) {
         VIR_ERROR(_("Can't create initial configuration"));
         exit(EXIT_FAILURE);
     }
-printf("%s %d\n", __FILE__, __LINE__);
+
     /* No explicit config, so try and find a default one */
     if (remote_config_file == NULL) {
         implicit_conf = true;
@@ -1189,7 +1177,7 @@ printf("%s %d\n", __FILE__, __LINE__);
             exit(EXIT_FAILURE);
         }
     }
-printf("%s %d\n", __FILE__, __LINE__);
+
     /* Read the config file if it exists*/
     if (remote_config_file &&
         daemonConfigLoadFile(config, remote_config_file, implicit_conf) < 0) {
@@ -1197,7 +1185,7 @@ printf("%s %d\n", __FILE__, __LINE__);
                   virGetLastErrorMessage(), remote_config_file);
         exit(EXIT_FAILURE);
     }
-printf("%s %d\n", __FILE__, __LINE__);
+
 #if 0
     if (!privileged &&
         migrateProfile() < 0) {
@@ -1207,19 +1195,17 @@ printf("%s %d\n", __FILE__, __LINE__);
 #else
 	printf("%s %d disabled\n", __func__, __LINE__);
 #endif
-printf("%s %d\n", __FILE__, __LINE__);
+
     if (daemonSetupHostUUID(config) < 0) {
         VIR_ERROR(_("Can't setup host uuid"));
         exit(EXIT_FAILURE);
     }
-printf("%s %d\n", __FILE__, __LINE__);
+
     if (daemonSetupLogging(config, privileged, verbose, godaemon) < 0) {
         VIR_ERROR(_("Can't initialize logging"));
         exit(EXIT_FAILURE);
     }
-printf("%s %d\n", __FILE__, __LINE__);
     daemonSetupNetDevOpenvswitch(config);
-printf("%s %d\n", __FILE__, __LINE__);
 #if 1
     if (daemonSetupAccessManager(config) < 0) {
         VIR_ERROR(_("Can't initialize access manager"));
@@ -1228,7 +1214,7 @@ printf("%s %d\n", __FILE__, __LINE__);
 #else
     printf("skip %s %d\n", __FILE__, __LINE__);
 #endif
-printf("%s %d\n", __FILE__, __LINE__);
+
 #if 0
     if (!pid_file &&
         virPidFileConstructPath(privileged,
@@ -1239,7 +1225,7 @@ printf("%s %d\n", __FILE__, __LINE__);
         exit(EXIT_FAILURE);
     }
     VIR_DEBUG("Decided on pid file path '%s'", NULLSTR(pid_file));
-printf("%s %d\n", __FILE__, __LINE__);
+
     if (daemonUnixSocketPaths(config,
                               privileged,
                               &sock_file,
@@ -1248,12 +1234,12 @@ printf("%s %d\n", __FILE__, __LINE__);
         VIR_ERROR(_("Can't determine socket paths"));
         exit(EXIT_FAILURE);
     }
-printf("%s %d\n", __FILE__, __LINE__);
+
     VIR_DEBUG("Decided on socket paths '%s', '%s' and '%s'",
               sock_file,
               NULLSTR(sock_file_ro),
               NULLSTR(sock_file_adm));
-printf("%s %d\n", __FILE__, __LINE__);
+
     if (godaemon) {
         char ebuf[1024];
 
@@ -1269,13 +1255,13 @@ printf("%s %d\n", __FILE__, __LINE__);
             goto cleanup;
         }
     }
-printf("%s %d\n", __FILE__, __LINE__);
+
     /* Try to claim the pidfile, exiting if we can't */
     if ((pid_file_fd = virPidFileAcquirePath(pid_file, false, getpid())) < 0) {
         ret = VIR_DAEMON_ERR_PIDFILE;
         goto cleanup;
     }
-printf("%s %d\n", __FILE__, __LINE__);
+
     /* Ensure the rundir exists (on tmpfs on some systems) */
     if (privileged) {
         if (VIR_STRDUP_QUIET(run_dir, LOCALSTATEDIR "/run/libvirt") < 0) {
@@ -1290,12 +1276,12 @@ printf("%s %d\n", __FILE__, __LINE__);
             goto cleanup;
         }
     }
-printf("%s %d\n", __FILE__, __LINE__);
+
     if (privileged)
         old_umask = umask(022);
     else
         old_umask = umask(077);
-printf("%s %d\n", __FILE__, __LINE__);
+
     VIR_DEBUG("Ensuring run dir '%s' exists", run_dir);
     if (virFileMakePath(run_dir) < 0) {
         char ebuf[1024];
@@ -1306,17 +1292,14 @@ printf("%s %d\n", __FILE__, __LINE__);
     }
     umask(old_umask);
 #endif
-printf("%s %d\n", __FILE__, __LINE__);
     if (virNetlinkStartup() < 0) {
         ret = VIR_DAEMON_ERR_INIT;
         goto cleanup;
     }
-printf("%s %d\n", __FILE__, __LINE__);
     if (!(dmn = virNetDaemonNew())) {
         ret = VIR_DAEMON_ERR_DRIVER;
         goto cleanup;
     }
-printf("%s %d\n", __FILE__, __LINE__);
     if (!(srv = virNetServerNew("libvirtd", 1,
                                 config->min_workers,
                                 config->max_workers,
@@ -1333,17 +1316,14 @@ printf("%s %d\n", __FILE__, __LINE__);
         ret = VIR_DAEMON_ERR_INIT;
         goto cleanup;
     }
-printf("%s %d\n", __FILE__, __LINE__);
     if (virNetDaemonAddServer(dmn, srv) < 0) {
         ret = VIR_DAEMON_ERR_INIT;
         goto cleanup;
     }
-printf("%s %d\n", __FILE__, __LINE__);
     if (daemonInitialize() < 0) {
         ret = VIR_DAEMON_ERR_INIT;
         goto cleanup;
     }
-printf("%s %d\n", __FILE__, __LINE__);
     remoteProcs[REMOTE_PROC_AUTH_LIST].needAuth = false;
     remoteProcs[REMOTE_PROC_AUTH_SASL_INIT].needAuth = false;
     remoteProcs[REMOTE_PROC_AUTH_SASL_STEP].needAuth = false;
@@ -1356,7 +1336,6 @@ printf("%s %d\n", __FILE__, __LINE__);
         ret = VIR_DAEMON_ERR_INIT;
         goto cleanup;
     }
-printf("%s %d\n", __FILE__, __LINE__);
     if (virNetServerAddProgram(srv, remoteProgram) < 0) {
         ret = VIR_DAEMON_ERR_INIT;
         goto cleanup;
@@ -1421,7 +1400,6 @@ printf("%s %d\n", __FILE__, __LINE__);
     }
 
 #endif
-printf("%s %d\n", __FILE__, __LINE__);
     if (timeout != -1) {
         VIR_DEBUG("Registering shutdown timeout %d", timeout);
         virNetDaemonAutoShutdown(dmn, timeout);
@@ -1432,7 +1410,6 @@ printf("%s %d\n", __FILE__, __LINE__);
         goto cleanup;
     }
 #endif
-printf("%s %d\n", __FILE__, __LINE__);
     if (config->audit_level) {
         VIR_DEBUG("Attempting to configure auditing subsystem");
         if (virAuditOpen(config->audit_level) < 0) {
@@ -1444,17 +1421,14 @@ printf("%s %d\n", __FILE__, __LINE__);
         }
     }
     virAuditLog(config->audit_logging > 0);
-printf("%s %d\n", __FILE__, __LINE__);
     /* setup the hooks if any */
     if (virHookInitialize() < 0) {
         ret = VIR_DAEMON_ERR_HOOKS;
         goto cleanup;
     }
-printf("%s %d\n", __FILE__, __LINE__);
     /* Disable error func, now logging is setup */
     virSetErrorFunc(NULL, daemonErrorHandler);
     virSetErrorLogPriorityFunc(daemonErrorLogFilter);
-printf("%s %d\n", __FILE__, __LINE__);
     /*
      * Call the daemon startup hook
      * TODO: should we abort the daemon startup if the script returned
@@ -1462,7 +1436,6 @@ printf("%s %d\n", __FILE__, __LINE__);
      */
     virHookCall(VIR_HOOK_DRIVER_DAEMON, "-", VIR_HOOK_DAEMON_OP_START,
                 0, "start", NULL, NULL);
-printf("%s %d\n", __FILE__, __LINE__);
     if (daemonSetupNetworking(srv, srvAdm,
                               config,
                               sock_file,
@@ -1472,7 +1445,6 @@ printf("%s %d\n", __FILE__, __LINE__);
         ret = VIR_DAEMON_ERR_NETWORK;
         goto cleanup;
     }
-printf("%s %d\n", __FILE__, __LINE__);
     /* Tell parent of daemon that basic initialization is complete
      * In particular we're ready to accept net connections & have
      * written the pidfile
@@ -1482,13 +1454,11 @@ printf("%s %d\n", __FILE__, __LINE__);
         ignore_value(safewrite(statuswrite, &status, 1));
         VIR_FORCE_CLOSE(statuswrite);
     }
-printf("%s %d\n", __FILE__, __LINE__);
     /* Initialize drivers & then start accepting new clients from network */
     if (daemonStateInit(dmn) < 0) {
         ret = VIR_DAEMON_ERR_INIT;
         goto cleanup;
     }
-printf("%s %d\n", __FILE__, __LINE__);
 #if defined(__linux__) && defined(NETLINK_ROUTE)
     /* Register the netlink event service for NETLINK_ROUTE */
     if (virNetlinkEventServiceStart(NETLINK_ROUTE, 0) < 0) {
@@ -1504,10 +1474,8 @@ printf("%s %d\n", __FILE__, __LINE__);
         goto cleanup;
     }
 #endif
-printf("%s %d\n", __FILE__, __LINE__);
     /* Run event loop. */
     virNetDaemonRun(dmn);
-printf("%s %d\n", __FILE__, __LINE__);
     ret = 0;
 
     virHookCall(VIR_HOOK_DRIVER_DAEMON, "-", VIR_HOOK_DAEMON_OP_SHUTDOWN,

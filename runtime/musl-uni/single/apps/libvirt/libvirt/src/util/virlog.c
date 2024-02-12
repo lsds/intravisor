@@ -625,7 +625,7 @@ virLogVMessage(virLogSourcePtr source,
      * use stderr.
      */
     for (i = 0; i < virLogNbOutputs; i++) {
-//        if (priority >= virLogOutputs[i]->priority) {
+        if (priority >= virLogOutputs[i]->priority) {
             if (virLogOutputs[i]->logInitMessage) {
                 const char *rawinitmsg;
                 char *hoststr = NULL;
@@ -650,14 +650,8 @@ virLogVMessage(virLogSourcePtr source,
                                 filename, linenr, funcname,
                                 timestamp, metadata, filterflags,
                                 str, msg, virLogOutputs[i]->data);
-//        }
+        }
     }
-
-        virLogOutputToFd(source, priority,
-                         filename, linenr, funcname,
-                         timestamp, metadata, filterflags,
-                         str, msg, (void *) STDERR_FILENO);
-
 
     if (virLogNbOutputs == 0) {
         if (logInitMessageStderr) {
@@ -741,7 +735,7 @@ virLogOutputToFd(virLogSourcePtr source ATTRIBUTE_UNUSED,
         return;
 
     ignore_value(safewrite(fd, msg, strlen(msg)));
-    printf("LOG: '%s'\n", msg);
+//    printf("LOG: [%d] %s", fd, msg);
     VIR_FREE(msg);
 
     if (flags & VIR_LOG_STACK_TRACE)

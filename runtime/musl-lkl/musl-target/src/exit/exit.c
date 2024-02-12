@@ -26,7 +26,6 @@ weak_alias(libc_exit_fini, __libc_exit_fini);
 
 _Noreturn void exit(int code)
 {
-	printf("EXIT IS CALLED\n");while(1);
 	__funcs_on_exit();
 	__libc_exit_fini();
 	__stdio_exit();

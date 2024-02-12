@@ -24,7 +24,7 @@ struct virtio_req {
 struct virtio_dev;
 
 struct virtio_dev_ops {
-	int (*check_features)(struct virtio_dev *dev);
+	int (*check_features)(struct virtio_dev * dev);
 	/**
 	 * enqueue - queues the request for processing
 	 *
@@ -41,14 +41,14 @@ struct virtio_dev_ops {
 	 * later time; 0 or a positive value means that the request has been
 	 * queued for processing
 	 */
-	int (*enqueue)(struct virtio_dev *dev, int q, struct virtio_req *req);
+	int (*enqueue)(struct virtio_dev * dev, int q, struct virtio_req * req);
 	/*
 	 * Acquire/release a lock on the specified queue. Only implemented by
 	 * netdevs, all other devices have NULL acquire/release function
 	 * pointers.
 	 */
-	void (*acquire_queue)(struct virtio_dev *dev, int queue_idx);
-	void (*release_queue)(struct virtio_dev *dev, int queue_idx);
+	void (*acquire_queue)(struct virtio_dev * dev, int queue_idx);
+	void (*release_queue)(struct virtio_dev * dev, int queue_idx);
 };
 
 struct virtio_dev {

@@ -2,7 +2,7 @@ MAKEFILE := $(shell git rev-parse --show-toplevel)/.config
 include $(MAKEFILE)
 
 ### common, clang-based
-
+OS := $(shell uname)
 CHERI_SDK	?= $(CONFIG_CHERI_SDK:"%"=%)
 CC_MON = $(CHERI_SDK)/bin/clang
 AS_MON = $(CHERI_SDK)/bin/clang
@@ -10,6 +10,15 @@ AS_MON = $(CHERI_SDK)/bin/clang
 CC=$(CHERI_SDK)/bin/clang
 CC_CPP=$(CHERI_SDK)/bin/clang++
 OPT=$(CHERI_SDK)/bin/opt
+AR=$(CHERI_SDK)/bin/ar
+
+ifeq ($(OS),Darwin)
+#don't use the default one
+CPIO=/opt/homebrew/Cellar/cpio/2.14/bin/cpio
+else
+CPIO=cpio
+endif
+
 
 ##########################
 
@@ -51,7 +60,13 @@ endif
 
 ifdef CONFIG_ARCH_ARM
 LKL_TARGET=aarch64
+
+ifeq ($(OS),Darwin)
+CROSS_COMPILE=aarch64-elf-
+else
 CROSS_COMPILE=aarch64-linux-gnu-
+endif
+
 TARGET_FLAGS_BSD=-target aarch64-unknown-freebsd
 TARGET_FLAGS_LINUX=-target aarch64-unknown-linux
 SYSROOT_FLAGS_HYBRID=--sysroot='$(CHERI_SDK)/sysroot-morello-hybrid'
@@ -121,6 +136,8 @@ AS_LKL_FLAGS = $(DEBUG_FLAGS) $(TARGET_FLAGS_LINUX) $(SYSROOT_FLAGS_HYBRID) $(AR
 CC_CHERI_PURE = $(CHERI_SDK)/bin/clang
 CC_CHERI_PURE_FLAGS = $(TARGET_FLAGS_LINUX) -fPIE -mno-relax $(ARCH_PURE)
 
+CPP_CHERI_PURE = $(CHERI_SDK)/bin/clang++
+CPP_CHERI_PURE_FLAGS = $(TARGET_FLAGS_LINUX) -fPIE -mno-relax $(ARCH_PURE) -std=c++11
 
 
 #musl-lkl

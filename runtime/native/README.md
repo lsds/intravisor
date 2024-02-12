@@ -7,7 +7,7 @@
 | Intravisor 					|   Y   |    Y     |   Y   |    Y     |   Y   |          |
 | [hello world](./hello_world)       		|   Y   |    Y     |       |          |       |          |
 | [Two Pure](./two-pure)       			|       |          |   Y   |    Y     |       |          |
-| [ORC hello](./orc-hello)       		|       |          |   Y   |          |   Y   |     O    |
+| [ORC hello](./orc-hello)       		|       |          |   O   |    O     |   O   |     O    |
 
 #### Legend
 Y: supported and tested

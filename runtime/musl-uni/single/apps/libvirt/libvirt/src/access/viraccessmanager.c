@@ -81,27 +81,27 @@ static virAccessManagerPtr virAccessManagerNewDriver(virAccessDriverPtr drv)
 {
     virAccessManagerPtr mgr;
     char *privateData;
-printf("%s %d\n", __FILE__, __LINE__);
+
     if (virAccessManagerInitialize() < 0)
         return NULL;
-printf("%s %d\n", __FILE__, __LINE__);
+
     if (VIR_ALLOC_N(privateData, drv->privateDataLen) < 0)
         return NULL;
-printf("%s %d\n", __FILE__, __LINE__);
+
     if (!(mgr = virObjectLockableNew(virAccessManagerClass))) {
         VIR_FREE(privateData);
         return NULL;
     }
-printf("%s %d\n", __FILE__, __LINE__);
+
     mgr->drv = drv;
     mgr->privateData = privateData;
-printf("%s %d\n", __FILE__, __LINE__);
+
     if (mgr->drv->setup &&
         mgr->drv->setup(mgr) < 0) {
         virObjectUnref(mgr);
         return NULL;
     }
-printf("%s %d\n", __FILE__, __LINE__);
+
     VIR_DEBUG("Initialized with %s", mgr->drv->name);
     return mgr;
 }
@@ -149,25 +149,22 @@ virAccessManagerPtr virAccessManagerNewStack(const char **names)
 {
     virAccessManagerPtr manager = virAccessManagerNewDriver(&accessDriverStack);
     size_t i;
-printf("%s %d\n", __FILE__, __LINE__);
+
     if (!manager)
         return NULL;
-printf("%s %d\n", __FILE__, __LINE__);
+
     for (i = 0; names[i] != NULL; i++) {
         virAccessManagerPtr child = virAccessManagerNew(names[i]);
-printf("%s %d\n", __FILE__, __LINE__);
+
         if (!child) {
-printf("%s %d\n", __FILE__, __LINE__);
             goto error;
 	}
-printf("%s %d\n", __FILE__, __LINE__);
+
         if (virAccessDriverStackAppend(manager, child) < 0) {
-printf("%s %d\n", __FILE__, __LINE__);
             virObjectUnref(child);
             goto error;
         }
     }
-printf("%s %d\n", __FILE__, __LINE__);
     return manager;
 
  error:

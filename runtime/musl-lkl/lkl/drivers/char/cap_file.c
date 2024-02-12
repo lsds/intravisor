@@ -31,6 +31,7 @@ struct cap_file_device_data {
 	struct cdev cdev;
 //
 	int size;
+	int max_size;
  	char key[10];
 	void *ptr;
 	char cap[16];
@@ -65,15 +66,15 @@ static ssize_t cap_file_read(struct file *file, char __user *user_buffer, size_t
 
 static ssize_t cap_file_write(struct file *file, const char __user *user_buffer, size_t size, loff_t * offset) {
 	struct cap_file_device_data *cap_file_data = (struct cap_file_device_data *) file->private_data;
-	ssize_t len = min(cap_file_data->size - *offset, size);
+	ssize_t len = min(cap_file_data->max_size - *offset, size);
 
 	if (len <= 0)
 		return 0;
 
 	copy_to_cap((void *) cap_file_data->cap, (void *) user_buffer, len);
-//	write_cap((void *)user_buffer, 0, len);
 
 	*offset += len;
+	cap_file_data->size += len;
 
 	return len;
 }
@@ -96,7 +97,7 @@ static long cap_file_ioctl (struct file *file, unsigned int cmd, unsigned long a
   			return 0;
 		case CAP_PRB:
 			memcpy(cap_file_data->key, (void *) arg, 10);
-			wrap_host_cap_prb(cap_file_data->key, (void *) cap_file_data->cap, &cap_file_data->size);
+			wrap_host_cap_prb(cap_file_data->key, (void *) cap_file_data->cap, &cap_file_data->max_size);
 			return 0;
 		default:
 	        return -ENOTTY;

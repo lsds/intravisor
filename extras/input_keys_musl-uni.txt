@@ -2,3 +2,8 @@
 "ALL cVMs loaded",'Cannot load cVMs',True
 "LibOS is ok",'Cannot init LibOS',True
 "-----------------------------------------------",'cVMs loaded but not spawned',True
+"Exited successfully","Exited successfully",True
+"Intravisor: unknown t5","Wrong hostcall",False
+"In-address space security exception","CHERI protection fault",False
+"Segmentation fault (core dumped)","SEGFAUL fault",False
+"Crushed or Failed","Exited with error",False

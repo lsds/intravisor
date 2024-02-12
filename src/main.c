@@ -345,7 +345,7 @@ struct tmp_s {
 	unsigned long b;
 };
 
-int build_cvm(int cid, struct cmp_s *comp, char *libos, char *disk, int argc, char *argv[], char *cb_out, char *cb_in, int clean_room) {
+int build_cvm(int cid, struct cmp_s *comp, char *libos, char *disk, int argc, char *argv[], char *cb_out, char *cb_in, int clean_room, int libvirt) {
 	struct encl_map_info encl_map;
 	void *base = comp->base;
 //      printf("comp->base = %p\n", comp->base);
@@ -365,7 +365,6 @@ int build_cvm(int cid, struct cmp_s *comp, char *libos, char *disk, int argc, ch
 		printf("mapped at wrong addres [%p]:[%p], die\n", encl_map.base, base);
 		while(1) ;
 	}
-
 //todo: CVM_MAX_SIZE Should be passed to elf_loader to stop loading after reaching it, otherwaise big cVM can corrupt others
 	if(encl_map.size > CVM_MAX_SIZE) {
 		printf("actual cVM is bigger (%lx) than it could be (%lx), die\n", encl_map.size, CVM_MAX_SIZE);
@@ -393,7 +392,13 @@ int build_cvm(int cid, struct cmp_s *comp, char *libos, char *disk, int argc, ch
 		printf("encl_map.ret = %p\n", encl_map.ret_point);
 #endif
 
+#ifdef CONFIG_OPENSSL
+	SHA256_Init(&cvms[cid].context);
+	SHA256_Update(&cvms[cid].context, encl_map.base, encl_map.size);
+	SHA256_Final(cvms[cid].hash, &cvms[cid].context);
+#endif
 	cvms[cid].clean_room = clean_room;
+	cvms[cid].libvirt = libvirt;
 
 #if riscv
 	if(encl_map.cap_relocs) {
@@ -555,12 +560,11 @@ int build_cvm(int cid, struct cmp_s *comp, char *libos, char *disk, int argc, ch
 	if(disk)
 		strncpy(cvms[cid].disk_image, disk, sizeof(cvms[cid].disk_image));
 
-
-	unsigned long heap_start = ((((unsigned long) base + encl_map.size) >> 12 ) + 1 ) << 12;
+	unsigned long heap_start = ((((unsigned long) base + encl_map.size) >> 12) + 1) << 12;
 	cvms[cid].heap = (void *) heap_start;
 	cvms[cid].heap_size = addr_ret - heap_start;
 
-	printf("Convrting free memory into cVM Heap: %lx -- %lx +%lx ( %f MB)\n", cvms[cid].heap, cvms[cid].heap + cvms[cid].heap_size, cvms[cid].heap_size, cvms[cid].heap_size/1024.0/1024);
+	printf("Convrting free memory into cVM Heap: %lx -- %lx +%lx ( %f MB)\n", cvms[cid].heap, cvms[cid].heap + cvms[cid].heap_size, cvms[cid].heap_size, cvms[cid].heap_size / 1024.0 / 1024);
 
 	void *heap_ret = mmap(cvms[cid].heap, cvms[cid].heap_size, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_FIXED | MAP_ANONYMOUS, -1, 0);
 	if(heap_ret == MAP_FAILED) {
@@ -568,11 +572,11 @@ int build_cvm(int cid, struct cmp_s *comp, char *libos, char *disk, int argc, ch
 		return 1;
 	}
 
-	if( (encl_map.cvm_heap_begin != 0) && (encl_map.cvm_heap_size != 0) ) {
+	if((encl_map.cvm_heap_begin != 0) && (encl_map.cvm_heap_size != 0)) {
 		printf("cVM has cvm_heap_begin (%lx) and cvm_heap_size (%lx)\n", encl_map.cvm_heap_begin, encl_map.cvm_heap_size);
 #if (defined riscv_hyb) || (defined arm_hyb)
 		unsigned long to = cvms[cid].base + encl_map.cvm_heap_begin;
-		unsigned long from = mon_to_comp(cvms[cid].heap,&cvms[cid]);
+		unsigned long from = mon_to_comp(cvms[cid].heap, &cvms[cid]);
 		memcpy(to, &from, sizeof(from));
 		to = cvms[cid].base + encl_map.cvm_heap_size;
 		from = cvms[cid].heap_size;
@@ -585,10 +589,10 @@ int build_cvm(int cid, struct cmp_s *comp, char *libos, char *disk, int argc, ch
 		unsigned long from = cvms[cid].heap_size;
 		memcpy(to, &from, sizeof(from));
 #else
-		#warning this architecture doesnot setup heap inside cVM
+#warning this architecture doesnot setup heap inside cVM
 #endif
 #endif
-	} else 
+	} else
 		printf("cVM doesn't use heap or has a built-in one\n");
 
 ////////////////////
@@ -743,8 +747,16 @@ int parse_and_spawn_yaml(char *yaml_cfg, char libvirt) {
 
 	for(struct cvm * f = state->flist; f; f = f->next) {
 		printf("***************** [%d] Deploy '%s' ***************\n", f->isol.base / CVM_MAX_SIZE, f->name);
-		printf("BUILDING cvm: name=%s, disk=%s, runtime=%s, net=%s, args='%s', base=0x%lx, size=0x%lx, begin=0x%lx, end=0x%lx, cb_in = '%s', cb_out = '%s' wait = %ds clean_room = %d\n",
-		       f->name, f->disk, f->runtime, f->net, f->args, f->isol.base, f->isol.size, f->isol.begin, f->isol.end, f->cb_in, f->cb_out, f->wait, f->cr);
+		printf
+		    ("BUILDING cvm: name=%s, disk=%s, runtime=%s, net=%s, args='%s', base=0x%lx, size=0x%lx, begin=0x%lx, end=0x%lx, cb_in = '%s', cb_out = '%s' wait = %ds clean_room = %d, libvirt = %d\n",
+		     f->name, f->disk, f->runtime, f->net, f->args, f->isol.base, f->isol.size, f->isol.begin, f->isol.end, f->cb_in, f->cb_out, f->wait, f->cr, f->lv);
+
+		if(CVM_MAX_SIZE != f->isol.size) {
+			printf("CVM_MAX_SIZE = %lx, requested = %lx, die\n", CVM_MAX_SIZE, f->isol.size);
+			exit(1);
+		} else {
+			printf("requested cVM size matches CVM_MAX_SIZE (%lx)\n", CVM_MAX_SIZE);
+		}
 
 		enum { kMaxArgs = 16 };
 		int c_argc = 0;
@@ -763,10 +775,28 @@ int parse_and_spawn_yaml(char *yaml_cfg, char libvirt) {
 		comp.end = f->isol.end;	/* cmp_end  */
 
 //todo: sanitise base addresses, check cvms/sbox max number
-		build_cvm(f->isol.base / CVM_MAX_SIZE,	//so far it is the best I can offer. 
+		struct timeval start, end;
+		gettimeofday(&start, NULL);
+
+		int cid = f->isol.base / CVM_MAX_SIZE;
+		build_cvm(cid,	//so far it is the best I can offer. 
 			  &comp, f->runtime,	/* libOS+init */
 			  f->disk,	/* user disk */
-			  c_argc, c_argv, f->cb_out, f->cb_in, f->cr);
+			  c_argc, (char **) c_argv, f->cb_out, f->cb_in, f->cr, f->lv);
+
+		gettimeofday(&end, NULL);
+		unsigned long now = (end.tv_sec * 1000ull) + (end.tv_usec / (1000ull));
+		unsigned long then = (start.tv_sec * 1000ull) + (start.tv_usec / (1000ull));
+		printf("Deploy %d in %f, ", cid, (now - then) / 1000.0);
+#ifdef CONFIG_OPENSSL
+		printf("SHA-256 Hash: ");
+		for(int i = 0; i < SHA256_DIGEST_LENGTH; i++) {
+			printf("%02x", cvms[cid].hash[i]);
+		}
+		printf("\n");
+#else
+		printf("\n");
+#endif
 	}
 
 	printf("***************** Link Inner<-->Outer ***************\n");
@@ -808,13 +838,50 @@ int parse_and_spawn_yaml(char *yaml_cfg, char libvirt) {
 	}
 }
 
+int prepare_parse_run_yaml(struct s_box *sbox, void *loc, int size) {
+	printf("request for ppr yaml from %d\n", sbox->libvirt);
+	if(!sbox->libvirt)
+		return -1;
+
+	time_t current_time;
+	struct tm *time_info;
+	char filename[30];
+	FILE *file;
+
+	// Get the current timestamp
+	time(&current_time);
+	time_info = localtime(&current_time);
+
+	// Format the timestamp as a string
+	strftime(filename, sizeof(filename), "/tmp/%Y%m%d%H%M%S.yaml", time_info);
+
+//    snprintf(filename, sizeof(filename), "/1.yaml");
+
+	// Create and open the file
+	file = fopen(filename, "w");
+	if(file == NULL) {
+		printf("cannot create temp yaml file\n");
+		while(1) ;
+	}
+
+	fwrite(loc, 1, size, file);
+	fclose(file);
+
+	return parse_and_spawn_yaml(filename, 1);
+}
+
 queue q, ready;
 int once = 1;			//SCO
 
-struct timeval start;
+struct timeval start, end;
 
 int main(int argc, char *argv[]) {
 //      printf("hello world %d %s\n", argc, argv[1]);
+#ifdef UNDERVISOR
+	extern void *__capability under_tp;
+	under_tp = getTP();
+#endif
+
 	gettimeofday(&start, NULL);
 
 	char *disk_img = "./disk.img";

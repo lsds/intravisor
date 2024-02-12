@@ -707,22 +707,20 @@ virConfParse(const char *filename, const char *content, int len,
     ctxt.base = ctxt.cur = content;
     ctxt.end = content + len;
     ctxt.line = 1;
-printf("%s %d\n", __FILE__, __LINE__);
+
     ctxt.conf = virConfCreate(filename, flags);
     if (ctxt.conf == NULL)
         return NULL;
-printf("%s %d %p %p\n", __FILE__, __LINE__, ctxt.cur , ctxt.end);
+
     while (ctxt.cur < ctxt.end) {
         if (virConfParseStatement(&ctxt) < 0) {
-printf("%s %d\n", __FILE__, __LINE__);
             goto error;
         }
         if (virConfParseSeparator(&ctxt) < 0) {
-printf("%s %d\n", __FILE__, __LINE__);
             goto error;
         }
     }
-printf("%s %d\n", __FILE__, __LINE__);
+
     return ctxt.conf;
 
  error:
@@ -750,19 +748,15 @@ virConfReadFile(const char *filename, unsigned int flags)
     char *content;
     int len;
     virConfPtr conf;
-printf("%s %d\n", __FILE__, __LINE__);
+
     VIR_DEBUG("filename=%s", NULLSTR(filename));
-printf("%s %d\n", __FILE__, __LINE__);
     if (filename == NULL) {
         virConfError(NULL, VIR_ERR_INVALID_ARG, __FUNCTION__);
         return NULL;
     }
-printf("%s %d\n", __FILE__, __LINE__);
     if ((len = virFileReadAll(filename, MAX_CONFIG_FILE_SIZE, &content)) < 0)
         return NULL;
-printf("%s %d\n", __FILE__, __LINE__);
     conf = virConfParse(filename, content, len, flags);
-printf("%s %d %p\n", __FILE__, __LINE__, conf);
     VIR_FREE(content);
 
     return conf;

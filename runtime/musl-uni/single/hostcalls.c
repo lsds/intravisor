@@ -2,15 +2,15 @@
 
 extern long c_out(void *);
 
-int host_write_out(char __capability *ptr, int size) {
+int host_write_out(char __capability * ptr, int size) {
 #if 0
 	int tmp = 1;
 	register long t5 __asm__("t5") = tmp;
 	register long a0 __asm__("a0") = (long) ptr;
 	register long a1 __asm__("a1") = (long) size;
 
-	__asm__ __volatile__("cjr %4" : "=r"(a0) : "r"(t5), "r"(a0), "r"(a1), "C"(c_out) : "memory" );
-	return (int) a0; 
+	__asm__ __volatile__("cjr %4":"=r"(a0):"r"(t5), "r"(a0), "r"(a1), "C"(c_out):"memory");
+	return (int) a0;
 
 #else
 	return (int) c_out_3(1, ptr, (long) size, 0);
@@ -24,7 +24,7 @@ int host_get_sc_caps(int me, int they, void *ptr) {
 ///////////////////////
 
 int host_nanosleep(const struct timespec *rqtp, struct timespec *rmtp) {
-       return c_out_3(200, rqtp, rmtp, 0);
+	return c_out_3(200, rqtp, rmtp, 0);
 }
 
 int host_gettimeofday(void *ptr, void *ptr2) {
@@ -34,12 +34,24 @@ int host_gettimeofday(void *ptr, void *ptr2) {
 	register long a0 __asm__("a0") = (long) ptr;
 	register long a1 __asm__("a1") = (long) ptr2;
 
-	__asm__ __volatile__("jal c_out" : "=r"(a0) : "r"(t5), "r"(a0), "r"(a1) : "memory" );
-	return a0; 
+	__asm__ __volatile__("jal c_out":"=r"(a0):"r"(t5), "r"(a0), "r"(a1):"memory");
+	return a0;
 
 #else
 	return c_out_3(800, (long) ptr, (long) ptr2, 0);
 #endif
+}
+
+unsigned long host_thread_create(void *f, void *arg) {
+	return (unsigned long) c_out_3(40, f, arg, 0);
+}
+
+int host_thread_join(unsigned long t, void **res) {
+	return (int) c_out_3(41, t, res, 0);
+}
+
+void host_thread_exit(void *res) {
+	c_out_3(42, res, 0, 0);
 }
 
 int host_socket(int domain, int type, int protocol) {
@@ -58,7 +70,6 @@ int host_connect(int socket, void *address, unsigned long address_len) {
 	return c_out_3(532, socket, address, address_len);
 }
 
-
 int host_listen(int socket, int backlog) {
 	return c_out_3(504, socket, backlog, 0);
 }
@@ -75,7 +86,6 @@ int host_accept4(int socket, void *address, void *restrict address_len, int flag
 	return c_out_5(503, socket, address, address_len, flags, 0);
 }
 
-
 ssize_t host_send(int socket, const void *buffer, size_t length, int flags) {
 	return c_out_5(509, socket, buffer, length, flags, 0);
 }
@@ -84,15 +94,15 @@ ssize_t host_recv(int socket, void *buffer, size_t length, int flags) {
 	return c_out_5(510, socket, buffer, length, flags, 0);
 }
 
-int host_getaddrinfo(const char *hostname, const char *servname, __intcap_t *hints, __intcap_t **res) {
+int host_getaddrinfo(const char *hostname, const char *servname, __intcap_t * hints, __intcap_t ** res) {
 	return c_out_5(530, hostname, servname, hints, res, 0);
 }
 
-int host_getpeername(int socket, __intcap_t *address, __intcap_t *address_len) {
+int host_getpeername(int socket, __intcap_t * address, __intcap_t * address_len) {
 	return c_out_3(531, socket, address, address_len);
 }
 
-int host_select(int nfds, __intcap_t *readfds, __intcap_t *writefds, __intcap_t *errorfds, __intcap_t *timeout) {
+int host_select(int nfds, __intcap_t * readfds, __intcap_t * writefds, __intcap_t * errorfds, __intcap_t * timeout) {
 	return c_out_5(514, nfds, readfds, writefds, errorfds, timeout);
 }
 
@@ -139,22 +149,21 @@ int host_get_errno() {
 	return c_out_3(813, 0, 0, 0);
 }
 
-int host_fcntl(int fd, int cmd, long *ptr ) {
+int host_fcntl(int fd, int cmd, long *ptr) {
 	return c_out_3(814, fd, cmd, ptr);
 }
 
-
 ////////////////////////
 
-void host_exit() {
+void host_exit(int status) {
 #if 0
 	int tmp = 13;
 	register long a0 __asm__("a0");
 	register long t5 __asm__("t5") = tmp;
 
-	__asm__ __volatile__("jal c_out" : "=r"(a0) : "r"(t5) : "memory" );
+	__asm__ __volatile__("jal c_out":"=r"(a0):"r"(t5):"memory");
 #else
-	c_out_3(13, 0, 0, 0);
+	c_out_3(13, (long) status, 0, 0);
 #endif
 }
 
@@ -164,13 +173,12 @@ int host_cap_prb(char *key, void *location) {
 	register long a0 __asm__("a0") = (long) key;
 	register long a1 __asm__("a1") = (long) location;
 	register long t5 __asm__("t5") = tmp;
-	__asm__ __volatile__("jal c_out" : "=r"(a0) : "r"(t5), "r"(a0), "r"(a1) : "memory" );
-	return (int) a0; 
+	__asm__ __volatile__("jal c_out":"=r"(a0):"r"(t5), "r"(a0), "r"(a1):"memory");
+	return (int) a0;
 #else
 	return c_out_3(406, (long) key, (long) location, 0);
 #endif
 }
-
 
 int host_get_my_inner(void *ptr) {
 #if 0
@@ -178,18 +186,49 @@ int host_get_my_inner(void *ptr) {
 	register long t5 __asm__("t5") = tmp;
 	register long a0 __asm__("a0") = (long) ptr;
 
-	__asm__ __volatile__("jal c_out" : "=r"(a0) : "r"(t5), "r"(a0) : "memory" );
+	__asm__ __volatile__("jal c_out":"=r"(a0):"r"(t5), "r"(a0):"memory");
 	return (int) a0;
 #else
 	return c_out_3(700, (long) ptr, 0, 0);
 #endif
 }
 
-
 long host_get_cpio_size(char *ptr) {
 	return c_out_3(900, (long) ptr, 0, 0);
 }
 
 long host_load_cpio(char *ptr, char *where, long size) {
-	return c_out_3(901, (long) ptr, (long)where, size);
+	return c_out_3(901, (long) ptr, (long) where, size);
+}
+
+long host_parse_and_spawn_yaml(char *yaml, size_t size) {
+	return c_out_3(29, yaml, size, 0);
+}
+
+__intcap_t host_mmap_cvm_code(unsigned long a, size_t b, int c, int d, int e, off_t f) {
+	return c_out_7(30, a, b, c, d, e, f, 0);
+}
+
+int host_pthread_create(pthread_t * thread, const pthread_attr_t * attr, void *(*start_routine)(void *), void *arg) {
+	return c_out_5(31, thread, attr, start_routine, arg, 0);
+}
+
+int host_pthread_join(pthread_t thread, void **value_ptr) {
+	return c_out_3(32, thread, value_ptr, 0);
+}
+
+int host_pthread_attr_init(pthread_attr_t * a) {
+	return c_out_3(33, a, 0, 0);
+}
+
+int host_pthread_attr_setstack(pthread_attr_t * attr, void *stackaddr, size_t stacksize) {
+	return c_out_3(34, attr, stackaddr, stacksize);
+}
+
+int host_get_seal_cap(void *addr, void *size) {
+	return c_out_3(35, addr, size, 0);
+}
+
+__intcap_t host_mmap_cvm_data(unsigned long a, size_t b, int c, int d, int e, off_t f) {
+	return c_out_7(36, a, b, c, d, e, f, 0);
 }

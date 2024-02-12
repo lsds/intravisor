@@ -16,9 +16,14 @@ static void do_unmap()
 
 void __unmapself(void *base, size_t size)
 {
+#if 0
 	char *stack = shared_stack + sizeof shared_stack;
 	stack -= (uintptr_t)stack % 16;
 	unmap_base = base;
 	unmap_size = size;
 	CRTJMP(do_unmap, stack);
+#else
+	printf("munmap in %s is disabled\n", __func__);
+	__syscall(SYS_exit);
+#endif
 }

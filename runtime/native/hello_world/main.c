@@ -4,7 +4,7 @@
 
 void out_c() {
 	char buf[32];
-	char cap[16]; //place to store the capability
+	char cap[16];		//place to store the capability
 	long size;
 
 	host_write_out(MSG, sizeof(MSG));
@@ -17,4 +17,3 @@ void out_c() {
 
 	host_exit();
 }
-

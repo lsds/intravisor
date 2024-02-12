@@ -13,6 +13,8 @@ weak_alias(dummy, __fork_handler);
 
 pid_t fork(void)
 {
+	lkl_printf("fork\n");
+	return -1;
 	pid_t ret;
 	sigset_t set;
 	__fork_handler(-1);

@@ -85,7 +85,7 @@ int main(int argc, char **argv)
 
     int *ret_data2 = pthread_getspecific(global_key);
 
-    printf("key after ret: in = %x, out = %x[%p]\n", in_data, *ret_data, ret_data);
+    printf("key after ret: in = %x, out = %x[%p]\n", in_data, *ret_data2, ret_data2);
 
     pthread_key_delete(global_key);
 

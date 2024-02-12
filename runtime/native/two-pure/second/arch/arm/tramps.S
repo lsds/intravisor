@@ -146,23 +146,26 @@ c_out:
 		SC	CS8, [csp, #(16*9)]
 		SC	CS9, [csp, #(16*10)]
 
-
-//tt:
-//		auipcc	ct0, %captab_pcrel_hi(local_cap_store)    // R_RISCV_PCREL_HI20
-//		cincoffset	ct0, ct0, %pcrel_lo(tt)
-
 #if 0
-//legacy
-		mrs 	CT0, DDC
-		gcbase	T0, CT0
-		ldr	T1, =(CVM_MAX_SIZE - 0x2000000 + 0x1000)
-		add	T0, T0, T1
-		cvtp	CT0, T0
-#else
+//todo: cvtp here also doesnt work without problem DDC_RELATIVE flag
 		mrs CT0, ctpidr_el0
 		LC	T0, [CT0, #0]
 		cvtp	CT0, T0
+#else
+//so, we contruct the local_cap_store cap manually. 
+#ifdef KERNEL_CONFIGURED_DDC_RELATIVE
+		ldr	T0, =0
+#else
+		mrs 	CT0, DDC
+		gcbase	T0, CT0
+
 #endif
+		ldr	T1, =(CVM_MAX_SIZE - 0x2000000 + 0x1000)
+		add	T0, T0, T1
+//
+		cvtp	CT0, T0
+#endif
+
 
 //		clc	cs2, COMP_DDC(ct0) //my ddc
 //		clc	cs3, HC_PCC(ct0) //hostcall code sealed

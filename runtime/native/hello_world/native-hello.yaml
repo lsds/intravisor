@@ -2,7 +2,7 @@
 capfiles:
 - name: test1
   size: 0x20
-  data: "Hello world\n"
+  data: "Some random text\n"
 - name: test2
   size: 0x1000
 

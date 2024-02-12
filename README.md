@@ -1,4 +1,4 @@
-# Intravisor  0.2.0
+# Intravisor  0.3.0
 
 Intravisor is the type-3 hypervisor that utilises hardware memory capabilities as the foundation for virtualisation.
 It hosts capability-based virtual machines called CAP-VMs (or cVMs for short).
@@ -42,58 +42,11 @@ The latter requires to use a special LLVM pass during the compiling of capabilit
 
 ## Prepare SDK
 
-You can download pre-build VMWare image with Morello and RISCV64 SDK: https://disk.yandex.com/d/Kr6eHel7fE3oow. Login:  capvm/capvm
+You can download pre-build VMWare image with Morello and RISCV64 SDK: `https://disk.yandex.com/d/Kr6eHel7fE3oow`. Login:  capvm/capvm
 
-You can use [dockerfile](extras/cheribuild-docker/) to build your own SDK or use reqdy-to-use container (`extras/cheribuild-docker/`).
+You can use [dockerfile](extras/cheribuild-docker/) to build your own SDK or use ready-to-use container (`docker push intravisor/cheri-sdk:2309`).
 
-Manual build:
-
-### Building for RISC-V
-
-CHERI toolchains and QEMU 
-
-Ubuntu (tested on 18.04.6)
-```
-sudo apt install autoconf automake libtool pkg-config clang bison cmake ninja-build samba flex texinfo libglib2.0-dev libpixman-1-dev libarchive-dev libarchive-tools libbz2-dev libattr1-dev libcap-ng-dev gcc-7-riscv64-linux-gnu-base binutils-riscv64-linux-gnu
-```
-macOS
-```
-brew install cmake ninja libarchive git glib gnu-sed automake autoconf coreutils llvm make wget pixman pkg-config xz samba
-```
-
-Then:
-```
-git clone https://github.com/CTSRD-CHERI/cheribuild.git
-cd cheribuild/
-./cheribuild.py --enable-hybrid-targets disk-image-riscv64-hybrid -d
-```
-
-Compile QEMU and run it
-```
-./cheribuild.py run-riscv64-hybrid --enable-hybrid-targets -d
-
-login:root 
-
-root@cheribsd-riscv64-hybrid:~ # qemu-mount-rootfs.sh
-```
-
-### Building for Morello
-
-Compile SDK:
-
-```
-git clone https://github.com/CTSRD-CHERI/cheribuild.git
-cd cheribuild/
-git checkout 36b95e9325e03e2705bfe0d561311dcd606686a6
-./cheribuild.py disk-image-morello-hybrid --enable-hybrid-targets --cheribsd/git-revision=release/22.05p1 -d
-```
-Run in QEMU:
-
-```
-./cheribuild.py run-morello-hybrid --enable-hybrid-targets --cheribsd/git-revision=release/22.05p1
-```
-
-CheriBSD need to be [patched](extras/cheribuild-docker/cheribsd.patch) to support Arm-hybrid musl-lkl instances. Once patched, KERNEL_CONFIGURED_DDC_RELATIVE must be always enabled in the configuration even for pure-cap code.
+[Manual build](build.md)
 
 ## Building Intravisor, runtime, programs
 
@@ -144,7 +97,7 @@ root@cheribsd-riscv64-hybrid:~ # cd /intravisor/
 root@cheribsd-riscv64-hybrid:/intravisor # ./intravisor -y two-pure.yaml 
 ```
 
-Expected [output](runtime/native/).
+Expected [output](runtime/native/two-pure).
 
 # IPC 
 
@@ -162,3 +115,7 @@ This work was also supported by JSPS KAKENHI grant number 18KK0310 and JST CREST
 Vasily A. Sartakov, Lluís Vilanova, Munir Geden, David Eyers, Takahiro Shinagawa, Peter Pietzuch. "ORC: Increasing Cloud Memory Density via Object Reuse with Capabilities". In 17th USENIX Symposium on Operating Systems Design and Implementation (OSDI 23) (pp. 573-587). USENIX Association.
 
 Vasily A. Sartakov, Lluís Vilanova, David Eyers, Takahiro Shinagawa, and Peter Pietzuch. "CAP-VMs: Capability-Based Isolation and Sharing in the Cloud". In 16th USENIX Symposium on Operating Systems Design and Implementation (OSDI 22), pages 597–612, Carlsbad, CA, USA, July 2022. USENIX Association.
+
+# Support 
+
+We are open for joint works, collaborations, and commercial support. Contact: `v.sartakov@imperial.ac.uk`

@@ -237,15 +237,10 @@ static void virNetServerClientUpdateEvent(virNetServerClientPtr client)
 
     if (!client->sock)
         return;
-printf("%s %d\n", __FILE__, __LINE__);
     mode = virNetServerClientCalculateHandleMode(client);
-printf("%s %d\n", __FILE__, __LINE__);
     virNetSocketUpdateIOCallback(client->sock, mode);
-printf("%s %d\n", __FILE__, __LINE__);
     if (client->rx && virNetSocketHasCachedData(client->sock)) {
-printf("%s %d\n", __FILE__, __LINE__);
         virEventUpdateTimeout(client->sockTimer, 0);
-printf("%s %d\n", __FILE__, __LINE__);
     }
 }
 

@@ -169,7 +169,6 @@ void load_elf(char *file_to_map, void *base_addr, encl_map_info * result) {
 //                                                                      break;
 				}
 
-
 			}
 
 		}

@@ -66,7 +66,7 @@ void *__capability codecap_create(void *sandbox_base, void *sandbox_end, int dis
 	return (codecap);
 }
 
-//permissions here need a revision
+//permissions here need a revision, datacap_create uses too many permissions than should
 void *__capability pure_codecap_create(void *sandbox_base, void *sandbox_end, int disable_lwec) {
 	void *__capability codecap;
 
@@ -128,6 +128,49 @@ void check_canaries(unsigned long *begin, long size, long magic) {
 	}
 
 }
+
+#if EVA
+#if arm
+struct vmtotal *getVMinfo(struct vmtotal *vm_info) {
+	int mib[2];
+
+	mib[0] = CTL_VM;
+	mib[1] = VM_TOTAL;
+
+	size_t len = sizeof(struct vmtotal);
+	sysctl(mib, 2, vm_info, &len, NULL, 0);
+
+	return vm_info;
+}
+
+int getSysCtl(int top_level, int next_level) {
+	int mib[2], ctlvalue;
+	size_t len;
+
+	mib[0] = top_level;
+	mib[1] = next_level;
+	len = sizeof(ctlvalue);
+
+	sysctl(mib, 2, &ctlvalue, &len, NULL, 0);
+
+	return ctlvalue;
+}
+#endif
+
+long long get_free_mem() {
+#if arm_sim
+	struct sysinfo memInfo;
+	sysinfo(&memInfo);
+	long long physMemUsed = memInfo.totalram - memInfo.freeram;
+	physMemUsed *= memInfo.mem_unit;
+	return memInfo.freeram;
+#else
+	struct vmtotal vmsize;
+	getVMinfo(&vmsize);
+	return vmsize.t_free * 4096;
+#endif
+}
+#endif
 
 int create_console(int cid) {
 
@@ -196,6 +239,7 @@ int host_purge_cap(void *location) {
 }
 
 long get_file_size(char *filename) {
+	printf("WARNING: %s is unsafe and doesnt filename (%s) when it loads\n", __func__, filename);
 	FILE *file = fopen(filename, "rb");	// Open the file in binary mode
 	if(file == NULL) {
 		// Error handling if the file cannot be opened
@@ -211,7 +255,7 @@ long get_file_size(char *filename) {
 }
 
 long copy_file_into_cvm(char *filename, long *where, long size) {
-	printf("WARRNING: %s is unsafe and doesnt check where and what it loads\n", __func__);
+	printf("WARNING: %s is unsafe and doesnt check where (%p/%d) and what (%s) it loads\n", __func__, where, size, filename);
 
 	FILE *file = fopen(filename, "rb");
 	if(file == NULL) {
@@ -229,4 +273,26 @@ long copy_file_into_cvm(char *filename, long *where, long size) {
 	fclose(file);
 
 	return bytesRead;
+}
+
+void __capability *mmap_cvm_code(unsigned long addr, size_t len, int prot, int flags, int fd, off_t offset) {
+	printf("WARNING: %s is unsafe and doesnt check rights to allocate what and where (%p, +%lx) and ignores flags\n", __func__, addr, len);
+	printf("WARNING: It doesnot allocate memory and just gives a cap\n");
+//      void *ret = mmap(addr, len, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_ANON | MAP_PRIVATE | MAP_FIXED, -1, 0);
+//      void __capability *full = codecap_create(addr, addr + len, 0);
+	void __capability *full = codecap_create(addr, addr + CVM_MAX_SIZE, 0);
+
+	return full;
+}
+
+void __capability *mmap_cvm_data(unsigned long addr, size_t len, int prot, int flags, int fd, off_t offset) {
+	printf("WARNING: %s is unsafe and doesnt check rights to allocate what and where (%p, +%lx) and ignores flags\n", __func__, addr, len);
+	void *ret = mmap(addr, len, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_ANON | MAP_PRIVATE | MAP_FIXED, -1, 0);
+	void __capability *full = datacap_create(ret, ret + len, 0);
+
+	return full;
+}
+
+int intravisor_pthread_create(pthread_t * thread, const pthread_attr_t * attr, void *(*start_routine)(void *), void *arg) {
+
 }

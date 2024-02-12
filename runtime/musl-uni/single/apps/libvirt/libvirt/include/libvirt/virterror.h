@@ -76,7 +76,7 @@ typedef enum {
     VIR_FROM_NETWORK = 19,      /* Error from network config */
 
     VIR_FROM_DOMAIN = 20,       /* Error from domain config */
-    VIR_FROM_UML = 21,          /* Error at the UML driver */
+    VIR_FROM_CVM = 21,          /* Error at the UML driver */
     VIR_FROM_NODEDEV = 22,      /* Error from node device monitor */
     VIR_FROM_XEN_INOTIFY = 23,  /* Error from xen inotify layer */
     VIR_FROM_SECURITY = 24,     /* Error from security framework */

@@ -1,0 +1,12 @@
+---
+cVMs:
+- name: darknet
+  disk: disk_darknet_python.img
+  runtime: libmusl-lkl.so
+  args: "/ld.so /usr/bin/python3.9 /darknet.py"
+  callback_out: monitor
+  isolation:
+  - base:  0x400000000
+    size:  0x040000000
+    begin: 0x400000000
+    end:   0x440000000

@@ -13,7 +13,6 @@ struct ifreq;
  */
 struct lkl_netdev *lkl_register_netdev_fd(int fd_rx, int fd_tx);
 
-
 /**
  * lkl_netdev_tap_init - initialize tap related structure fot lkl_netdev.
  *
@@ -21,7 +20,6 @@ struct lkl_netdev *lkl_register_netdev_fd(int fd_rx, int fd_tx);
  * @offload - offload bits for the device
  * @ifr - struct ifreq for ioctl.
  */
-struct lkl_netdev *lkl_netdev_tap_init(const char *path, int offload,
-				       struct ifreq *ifr);
+struct lkl_netdev *lkl_netdev_tap_init(const char *path, int offload, struct ifreq *ifr);
 
-#endif /* _VIRTIO_NET_FD_H*/
+#endif /* _VIRTIO_NET_FD_H */

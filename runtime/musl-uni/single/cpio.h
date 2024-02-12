@@ -17,33 +17,31 @@
 #define CPIO_ALIGNMENT 4
 
 struct cpio_header {
-    char c_magic[6];      /* Magic header '070701'. */
-    char c_ino[8];        /* "i-node" number. */
-    char c_mode[8];       /* Permisions. */
-    char c_uid[8];        /* User ID. */
-    char c_gid[8];        /* Group ID. */
-    char c_nlink[8];      /* Number of hard links. */
-    char c_mtime[8];      /* Modification time. */
-    char c_filesize[8];   /* File size. */
-    char c_devmajor[8];   /* Major dev number. */
-    char c_devminor[8];   /* Minor dev number. */
-    char c_rdevmajor[8];
-    char c_rdevminor[8];
-    char c_namesize[8];   /* Length of filename in bytes. */
-    char c_check[8];      /* Checksum. */
+	char c_magic[6];	/* Magic header '070701'. */
+	char c_ino[8];		/* "i-node" number. */
+	char c_mode[8];		/* Permisions. */
+	char c_uid[8];		/* User ID. */
+	char c_gid[8];		/* Group ID. */
+	char c_nlink[8];	/* Number of hard links. */
+	char c_mtime[8];	/* Modification time. */
+	char c_filesize[8];	/* File size. */
+	char c_devmajor[8];	/* Major dev number. */
+	char c_devminor[8];	/* Minor dev number. */
+	char c_rdevmajor[8];
+	char c_rdevminor[8];
+	char c_namesize[8];	/* Length of filename in bytes. */
+	char c_check[8];	/* Checksum. */
 };
-
 
 /**
  * Stores information about the underlying implementation.
  */
 struct cpio_info {
-    /// The number of files in the CPIO archive
-    unsigned int file_count;
-    /// The maximum size of a file name
-    unsigned int max_path_sz;
+	/// The number of files in the CPIO archive
+	unsigned int file_count;
+	/// The maximum size of a file name
+	unsigned int max_path_sz;
 };
-
 
 /**
  * Retrieve file information from a provided CPIO list index
@@ -56,7 +54,7 @@ struct cpio_info {
  * @return             The location of the file in memory; NULL if the index
  *                     exceeds the number of files in the CPIO archive.
  */
-intptr_t *cpio_get_entry(intptr_t *archive, int index, const char **name, unsigned long *size);
+intptr_t *cpio_get_entry(intptr_t * archive, int index, const char **name, unsigned long *size);
 
 /**
  * Retrieve file information from a provided file name
@@ -66,7 +64,7 @@ intptr_t *cpio_get_entry(intptr_t *archive, int index, const char **name, unsign
  * @return             The location of the file in memory; NULL if the file
  *                     does not exist.
  */
-intptr_t *cpio_get_file(intptr_t *archive, const char *name, unsigned long *size);
+intptr_t *cpio_get_file(intptr_t * archive, const char *name, unsigned long *size);
 
 /**
  * Retrieves information about the provided CPIO archive
@@ -74,7 +72,7 @@ intptr_t *cpio_get_file(intptr_t *archive, const char *name, unsigned long *size
  * @param[out] info    A CPIO info structure to populate
  * @return             Non-zero on error.
  */
-int cpio_info(intptr_t *archive, struct cpio_info *info);
+int cpio_info(intptr_t * archive, struct cpio_info *info);
 
 /**
  * Writes the list of file names contained within a CPIO archive into 
@@ -83,6 +81,6 @@ int cpio_info(intptr_t *archive, struct cpio_info *info);
  * @param[in] buf      A memory location to store the CPIO file list to
  * @param[in] buf_len  The length of the provided buf
  */
-void cpio_ls(intptr_t *archive, char **buf, unsigned long buf_len);
+void cpio_ls(intptr_t * archive, char **buf, unsigned long buf_len);
 
 #endif /* _LIB_CPIO_H_ */

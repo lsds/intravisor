@@ -4,8 +4,10 @@ include $(MAKEFILE)
 
 CFLAGS=-fPIC -fPIE -pie   -nostdinc -DCVM_MAX_SIZE=$(CONFIG_CVM_MAX_SIZE)
 
-ifneq ($(MODE),sim)
+ifndef CONFIG_MODE_HYB
+$(error Should be Hybrid (pure-cap is not tested))
 endif
+
 
 DEPS = 
 OBJ = main.o tramps.o hostcalls.o
@@ -27,4 +29,4 @@ clean:
 
 install:
 	sudo mkdir -p ${INSTALL_PATH}
-	sudo cp ./*.yaml ./*.so  ${INSTALL_PATH}
+	sudo cp ./*.yaml ./*.ci ./*.so  ${INSTALL_PATH}

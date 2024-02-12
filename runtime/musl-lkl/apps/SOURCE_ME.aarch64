@@ -1,3 +1,5 @@
 export REALGCC=aarch64-linux-gnu-gcc
 export LKL_MUSL_HOST=aarch64-linux-gnu
 export LKL_MUSL_BUILD=aarch64
+export LKL_MUSL_DOCKER_PLAT="--platform=linux/arm64"
+#export HOST="-H morello.local"

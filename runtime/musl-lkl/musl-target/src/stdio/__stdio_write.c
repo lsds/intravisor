@@ -1,5 +1,7 @@
 #include "stdio_impl.h"
 #include <sys/uio.h>
+#include <string.h>
+#include <stdlib.h>
 
 extern int lkl_printf(const char *format, ...);
 
@@ -17,7 +19,6 @@ size_t __stdio_write(FILE *f, const unsigned char *buf, size_t len)
 	ssize_t cnt;
 
 //	if( (f->fd >= 0) && (f->fd < 3) )
-#include <string.h>
 		char *outp = malloc(rem);
 		if(!outp) {
 			lkl_printf("cannot allocate memory for stdio_write\n");

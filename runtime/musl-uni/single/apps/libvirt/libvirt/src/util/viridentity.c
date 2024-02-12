@@ -103,25 +103,21 @@ virIdentityPtr virIdentityGetCurrent(void)
 int virIdentitySetCurrent(virIdentityPtr ident)
 {
     virIdentityPtr old;
-printf("%s %d\n", __FILE__, __LINE__);
     if (virIdentityInitialize() < 0)
         return -1;
-printf("%s %d\n", __FILE__, __LINE__);
+
     old = virThreadLocalGet(&virIdentityCurrent);
-printf("%s %d\n", __FILE__, __LINE__);
 
     if (virThreadLocalSet(&virIdentityCurrent,
                           virObjectRef(ident)) < 0) {
-printf("%s %d\n", __FILE__, __LINE__);
+
         virReportError(VIR_ERR_INTERNAL_ERROR, "%s",
                        _("Unable to set thread local identity"));
         virObjectUnref(ident);
         return -1;
     }
 
-printf("%s %d\n", __FILE__, __LINE__);
     virObjectUnref(old);
-printf("%s %d\n", __FILE__, __LINE__);
     return 0;
 }
 
@@ -143,38 +139,35 @@ virIdentityPtr virIdentityGetSystem(void)
 #if WITH_SELINUX
     security_context_t con;
 #endif
-printf("%s %d\n", __FILE__, __LINE__);
+
     if (!(ret = virIdentityNew()))
         goto error;
-printf("%s %d\n", __FILE__, __LINE__);
+
     if (virIdentitySetUNIXProcessID(ret, getpid()) < 0)
         goto error;
 #if 0
-printf("%s %d\n", __FILE__, __LINE__);
     if (virProcessGetStartTime(getpid(), &startTime) < 0)
         goto error;
-printf("%s %d\n", __FILE__, __LINE__);
 
     if (startTime != 0 &&
         virIdentitySetUNIXProcessTime(ret, startTime) < 0)
         goto error;
 
-printf("%s %d\n", __FILE__, __LINE__);
     if (!(username = virGetUserName(geteuid())))
         return ret;
-printf("%s %d\n", __FILE__, __LINE__);
+
     if (virIdentitySetUNIXUserName(ret, username) < 0)
         goto error;
-printf("%s %d\n", __FILE__, __LINE__);
+
     if (virIdentitySetUNIXUserID(ret, getuid()) < 0)
         goto error;
-printf("%s %d\n", __FILE__, __LINE__);
+
     if (!(groupname = virGetGroupName(getegid())))
         return ret;
-printf("%s %d\n", __FILE__, __LINE__);
+
     if (virIdentitySetUNIXGroupName(ret, groupname) < 0)
         goto error;
-printf("%s %d\n", __FILE__, __LINE__);
+
     if (virIdentitySetUNIXGroupID(ret, getgid()) < 0)
         goto error;
 #endif

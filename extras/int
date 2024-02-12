@@ -14,7 +14,7 @@
 
 name="intravisor"
 desc="Manage cVMS"
-start_cmd="cd /intravisor && /intravisor/intravisor -y /intravisor/cvm.yaml"
+start_cmd="cd /intravisor && /intravisor/intravisor -y /intravisor/cvm.yaml && echo \"Exited successfully\" || echo \"Crushed or Failed\" && shutdown -p now"
 
 load_rc_config $name
 run_rc_command "$1"

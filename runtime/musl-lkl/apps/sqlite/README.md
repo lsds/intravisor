@@ -4,34 +4,31 @@ Speedtest1 benchmark for SQLite
 
 # Expected output: 
 
+Tested in QEMU:
+
 ```
-root@cheribsd-riscv64-hybrid:/intravisor # ls -la 
-total 78796
-drwxr-xr-x   2 root  wheel        512 Feb  4 23:00 .
-drwxr-xr-x  21 root  wheel        512 Feb  4 22:55 ..
--rwxr-xr-x   1 root  wheel  104857600 Feb  4 22:57 disk_sqlite.img
--rwxr-xr-x   1 root  wheel   71222888 Feb  4 23:00 libmusl-lkl.so
--rwxr-xr-x   1 root  wheel    1002232 Feb  4 22:58 monitor
--rwxr-xr-x   1 root  wheel        222 Feb  4 22:55 musl-lkl-sqlite.yaml
-root@cheribsd-riscv64-hybrid:/intravisor # ./monitor -y musl-lkl-sqlite.yaml
-Using yaml.cfg = musl-lkl-sqlite.yaml
-MON: sc_cbs[0]: monitor, 0x3fffdff880, 0x3fffdff870, 0x48b86
-***************** Deploy 'sqlite' ***************
-BUILDING cvm: name=sqlite, disk=disk_sqlite.img, runtime=libmusl-lkl.so, net=(null), args='/ld.so /app/speedtest :memory: --size 50', base=0x20000000, size=0x10000000, begin=0x20000000, end=0x30000000, cb_in = '(null)', cb_out = '(null)' wait = 0s
-Mapped 0x0, segment = 0x20000000, map_aaadr = 0x20000000, map_len = ce78000
-Mapped 0x129284, segment = 0x20129000, map_aaadr = 0x20129000, map_len = 358000
-Mapped 0x481a00, segment = 0x20481000, map_aaadr = 0x20481000, map_len = 19000
-Mapped 0x49a1e0, segment = 0x2049a000, map_aaadr = 0x2049a000, map_len = c9de000
-SHARED MAPPING 0x205d9000--0x2ce78000
-ELF BASE = 0x20000000, MAP SIZE = ce77550, ENTRY = 0x201757a4
-encl_map.entry = 0x201757a4
-encl_map.ret = 0x4680b0
-[cVM STACKs] = [0x2e000000 -- 30000000]
+Using yaml.cfg = /intravisor/cvm.yaml
+***************** [16] Deploy 'sqlite' ***************
+BUILDING cvm: name=sqlite, disk=disk_sqlite.img, runtime=libmusl-lkl.so, net=(null), args='/ld.so /app/speedtest :memory: --size 50', base=0x400000000, size=0x40000000, begin=0x400000000, end=0x440000000, cb_in = '(null)', cb_out = '(null)' wait = 0s clean_room = 0, libvirt = 0
+requested cVM size matches CVM_MAX_SIZE (40000000)
+[1]: 8c523000 400000000 f218c f218c 8c523000 f218c
+[2]: 8c615190 400102190 26ea3c 26ea3c 8c615190 26ea3c
+end of RO: 400380be0
+[3]: 8c883be0 400380be0 fe78 fe78 8c883be0 fe78
+[4]: 8c893c00 4003a0c00 12c688 1c3fe0 8c893c00 12c688
+ELF BASE = 0x400000000, MAP SIZE = 564be0, ENTRY = 0x14fb6c
+encl_map.entry = 0x14fb6c
+encl_map.ret = 0x361fd0
+[cVM STACKs] = [0x43e000000 -- 440000000]
+Convrting free memory into cVM Heap: 400565000 -- 43e000000 +3da9b000 ( 986.605469 MB)
+cVM has cvm_heap_begin (4bd490) and cvm_heap_size (4bd498)
 callback_out is empty, use default 'monitor'
-MON: probe syscall handler for key monitor
+SEALED RET FROM MON 0x81106720 0x81106710
+ACHTUNG: 'libmusl-lkl.so' has syscall handler 'syscall_handler' at 0x362008
+Deploy 16 in 6.281000, SHA-256 Hash: 71524d537b961f77e23fc1fb5462120c6ec8a2d1e5955da6d00a37c6f95b09df
 ***************** Link Inner<-->Outer ***************
 ***************** ALL cVMs loaded ***************
-target SP = 2fffc000, sp_read = 0x30000000, me->stacl = 0x2ff80000, getSP()=0x2ffffa00, me->c_tp = 0x2ff81000
+target SP = 43fffc000, old TP = 43ffffbe0 sp_read = 0x440000000, me->stacl = 0x43ff80000, getSP()=0x43ffff990, me->c_tp = 0x43ffffbd0 43ffffbc0
 [1] '/app/speedtest'
 sp[i+1] = '/app/speedtest'
 [2] ':memory:'
@@ -40,91 +37,76 @@ sp[i+1] = ':memory:'
 sp[i+1] = '--size'
 [4] '50'
 sp[i+1] = '50'
-&env0 = 0x2fffc038, &env1=0x2fffc040
-72 sp = 0x2fffc000
-ca0: sealed COMP PPC
-tag 1 s 1 perms 00000107 type 0000000000000000
-        base 0000000020000000 length 0000000010000000 ofset 00000000001757a4
+&env0 = 0x43fffc038, &env1=0x43fffc040
+ca0: sealed COMP PCC
+tag 1 s 1 perms 0002c147 type 0000000000000004
+    base 0000000400000000 length 0000000040000000 ofset 000000000014fb6c
 ca1: sealed COMP DDC
-tag 1 s 1 perms 0000011d type 0000000000000000
-        base 0000000020000000 length 0000000010000000 ofset 0000000000000000
+tag 1 s 1 perms 00037145 type 0000000000000004
+    base 0000000400000000 length 0000000040000000 ofset 0000000000000000
 ca2: COMP DDC
-tag 1 s 0 perms 0000011d type ffffffffffffffff
-        base 0000000020000000 length 0000000010000000 ofset 0000000000000000
+tag 1 s 0 perms 00037145 type 0000000000000000
+    base 0000000400000000 length 0000000040000000 ofset 0000000000000000
 ca3: sealed HC PCC
-tag 1 s 1 perms 00068117 type 0000000000000000
-        base 0000000000000000 length 0000004000000000 ofset 0000000000048b86
+tag 1 s 1 perms 0002c177 type 0000000000000004
+    base 0000000000000000 length 0001000000000000 ofset 000000000024c1a4
 ca4: sealed HC DDC (mon.DDC)
-tag 1 s 1 perms 0007817d type 0000000000000000
-        base 0000000000000000 length 0000004000000000 ofset 0000000000000000
+tag 1 s 1 perms 0003717d type 0000000000000004
+    base 0000000000000000 length 0001000000000000 ofset 0000000000000000
 ca5: sealed OCALL PCC 
-tag 1 s 1 perms 00068117 type 0000000000000000
-        base 0000000000000000 length 0000004000000000 ofset 0000000000048b5e
+tag 1 s 1 perms 0002c177 type 0000000000000004
+    base 0000000000000000 length 0001000000000000 ofset 000000000024c220
 ca6: sealed ret from mon
-tag 1 s 1 perms 00000107 type 0000000000000000
-        base 0000000020000000 length 0000000010000000 ofset 00000000004680b0
-HW: sp = 0xfffc000, tp = 0xff81000
+tag 1 s 1 perms 0002c147 type 0000000000000004
+    base 0000000400000000 length 0000000040000000 ofset 0000000000361fd0
+HW: sp = 0x3fffc000, tp = 0x43ffffa10, &cinv_args = 0x43ffffa90
+TP_ARGS: 43e001000, 10, 400000000
 -----------------------------------------------
-STARTING LKL, lkl_io_in = 0xce77428, disk_io = 0xce77538
-TIMER[0]: 0x182c30 0
+STARTING LKL, lkl_io_in = 0x563d70, disk_io = 0x563e90, heap (565000, +3da9b000)
+TIMER[0]: 0x15a698 0
 TODO: CREATE_CARRIE_TIMER
-[    0.000000] Linux version 4.17.0 (vsartako@maru26) (clang version 11.0.0 (https://github.com/CTSRD-CHERI/llvm-project 9c51217b7d41f3124b84b190b6631b90db6d1bf4)) #3 Fri Feb 4 22:51:56 UTC 2022
-[    0.000000] bootmem address range: 0x5ea000 - 0xcdea000
-[    0.000000] Built 1 zonelists, mobility grouping off.  Total pages: 50500
-[    0.000000] Kernel command line: mem=30M
-[    0.000000] Dentry cache hash table entries: 32768 (order: 6, 262144 bytes)
-[    0.000000] Inode-cache hash table entries: 16384 (order: 5, 131072 bytes)
-[    0.000000] Memory available: 147028k/204800k RAM
+[    0.000000] Linux version 4.17.0 (cheri@runner-_aJ2xR8B-project-191-concurrent-0) (clang version 13.0.0 (https://git.morello-project.org/morello/llvm-project.git b4f4d8095b90b87ba65a692dfa98de2968996db4)) #1 Sun Feb 11 01:08:40 UTC 2024
+[    0.000000] bootmem address range: 0x565000 - 0x3e000000
+[    0.000000] Built 1 zonelists, mobility grouping off.  Total pages: 249117
+[    0.000000] Kernel command line: 
+[    0.000000] Dentry cache hash table entries: 131072 (order: 8, 1048576 bytes)
+[    0.000000] Inode-cache hash table entries: 65536 (order: 7, 524288 bytes)
+[    0.000000] Memory available: 951360k/1010284k RAM
 [    0.000000] SLUB: HWalign=32, Order=0-3, MinObjects=0, CPUs=1, Nodes=1
 [    0.000000] NR_IRQS: 4096
 [    0.000000] lkl: irqs initialized
 [    0.000000] clocksource: lkl: mask: 0xffffffffffffffff max_cycles: 0x1cd42e4dffb, max_idle_ns: 881590591483 ns
-[    0.000075] lkl: time and timers initialized (irq1)
-[    0.000525] pid_max: default: 4096 minimum: 301
-[    0.001772] Mount-cache hash table entries: 512 (order: 0, 4096 bytes)
-[    0.002094] Mountpoint-cache hash table entries: 512 (order: 0, 4096 bytes)
-[    0.046290] devtmpfs: initialized
-[    0.246799] console [lkl_console0] enabled
-[    0.248423] clocksource: jiffies: mask: 0xffffffff max_cycles: 0xffffffff, max_idle_ns: 19112604462750000 ns
-[    0.249850] xor: automatically using best checksumming function   8regs     
-[    0.254062] random: get_random_u32 called from 0x0000000000302982 with crng_init=0
-[    0.256872] NET: Registered protocol family 16
-[    0.287557] cryptd: max_cpu_qlen set to 1000
-[    0.304087] clocksource: Switched to clocksource lkl
-[    0.317855] NET: Registered protocol family 2
-[    0.326356] tcp_listen_portaddr_hash hash table entries: 256 (order: 0, 4096 bytes)
-[    0.327578] TCP established hash table entries: 2048 (order: 2, 16384 bytes)
-[    0.328969] TCP bind hash table entries: 2048 (order: 2, 16384 bytes)
-[    0.330227] TCP: Hash tables configured (established 2048 bind 2048)
-[    0.334599] UDP hash table entries: 128 (order: 0, 4096 bytes)
-[    0.335629] UDP-Lite hash table entries: 128 (order: 0, 4096 bytes)
-[    0.337653] NET: Registered protocol family 1
-[    0.349213] workingset: timestamp_bits=62 max_order=16 bucket_order=0
-[    0.416240] romfs: ROMFS MTD (C) 2007 Red Hat, Inc.
-[    0.594192] NET: Registered protocol family 38
-[    0.595373] io scheduler noop registered
-[    0.596114] io scheduler deadline registered
-[    0.599067] io scheduler cfq registered (default)
-[    0.599928] io scheduler mq-deadline registered
-[    0.600677] io scheduler kyber registered
+[    0.000119] lkl: time and timers initialized (irq1)
+[    0.001303] pid_max: default: 4096 minimum: 301
+[    0.005087] Mount-cache hash table entries: 2048 (order: 2, 16384 bytes)
+[    0.005765] Mountpoint-cache hash table entries: 2048 (order: 2, 16384 bytes)
+[    0.095880] devtmpfs: initialized
+[    0.311423] console [lkl_console0] enabled
+[    0.315127] clocksource: jiffies: mask: 0xffffffff max_cycles: 0xffffffff, max_idle_ns: 19112604462750000 ns
+[    0.318770] xor: automatically using best checksumming function   8regs     
+[    0.352697] cryptd: max_cpu_qlen set to 1000
+[    0.370902] clocksource: Switched to clocksource lkl
+[    0.404172] workingset: timestamp_bits=62 max_order=18 bucket_order=0
+[    0.467401] romfs: ROMFS MTD (C) 2007 Red Hat, Inc.
+[    0.644973] io scheduler noop registered
+[    0.646577] io scheduler deadline registered
+[    0.650175] io scheduler cfq registered (default)
+[    0.651461] io scheduler mq-deadline registered
+[    0.652752] io scheduler kyber registered
 CAP_FILE INIT 43 4004e201
 CAP_STREAM_HOST INIT 45 4004e401
-[    1.185423] device-mapper: ioctl: 4.39.0-ioctl (2018-04-03) initialised: dm-devel@redhat.com
-[    1.208876] Warning: unable to open an initial console.
-[    1.209912] This architecture does not have kernel memory protection.
-ignore destructor in tls_alloc
-host0 allocated (task=0xcc95500/host0) pid=51
+[    1.213119] device-mapper: ioctl: 4.39.0-ioctl (2018-04-03) initialised: dm-devel@redhat.com
+[    1.223568] random: get_random_bytes called from 0x000000000015e5d0 with crng_init=0
+[    1.236842] Warning: unable to open an initial console.
+[    1.239452] This architecture does not have kernel memory protection.
+INT: ignore destructor 15ab5c in tls_alloc
 ------ LKL INIT DONE, starting mount  ------- 
------- TEST1 ------- 
------- TEST 1 DONE ------- 
 ADD disk
-[    1.227113] virtio-mmio virtio-mmio.0.auto: Failed to enable 64-bit or 32-bit DMA.  Trying to continue, but this might not work.
-[    1.234512] virtio_blk virtio0: [vda] 204800 512-byte logical blocks (105 MB/100 MiB)
+[    1.300866] virtio_blk virtio0: [vda] 204800 512-byte logical blocks (105 MB/100 MiB)
 disk id = 0
 ------ ADD disk DONE ------- 
-[    1.286025] EXT4-fs (vda): recovery complete
-[    1.287656] EXT4-fs (vda): mounted filesystem with ordered data mode. Opts: 
-loader.c        311
+[    1.431440] EXT4-fs (vda): mounted filesystem with ordered data mode. Opts: 
+loader.c	355
 ------ CHROOT DONE ------- 
 creating /cap/cf1 1
 creating /cap/cf2 2
@@ -132,79 +114,97 @@ creating /cap/ch1 1
 creating /cap/ch2 2
 creating /cap/ch3 3
 creating /cap/ch4 4
+creating /cap/cg1 1
+creating /cap/cg2 2
+creating /cap/cg3 3
+creating /cap/cg4 4
 ------ MOUNTS DONE ------- 
-[lost+found]
-[proc]
+pad Descriptor Table: 0 ((null))
+pad Descriptor Table: 1 ((null))
+pad Descriptor Table: 2 ((null))
 [.]
-[sys]
 [..]
 [cap]
 [app]
+[proc]
+[sys]
+[lost+found]
 [dev]
 [run]
 ------
-?--ch4
-?--ch3
-?--ch2
-?--ch1
-?--cf2
-?--cf1
-st.st_mode = 41ed
-st.st_nlink = 5
-stat2.st_mode = 41ed
-stat2.st_nlink = 5
-stat2.st_uid = 0
-stat2.st_gid = 0
-[    1.335406] host1 (52): drop_caches: 3
+�--cg4
+�--cg3
+�--cg2
+�--cg1
+�--ch4
+�--ch3
+�--ch2
+�--ch1
+�--cf2
+�--cf1
+st_lkl.st_mode = 21a4
+st_lkl.st_nlink = 1
+st_musl.st_mode = 21a4
+st_musl.st_nlink = 1
+st_musl.st_uid = 0
+st_musl.st_gid = 0
+Size of musl stat: 128
+Offset of st_mode:	16, Size: 4
+Offset of st_nlink:	20, Size: 4
+Offset of st_uid:	24, Size: 4
+Offset of st_gid:	28, Size: 4
+Size of lkl stat: 128
+Offset of st_mode:	16, Size: 4
+Offset of st_nlink:	20, Size: 4
+Offset of st_uid:	24, Size: 4
+Offset of st_gid:	28, Size: 4
+S_IFMT = f000, S_IFDIR = 4000
+O_DIRECTORY = 0x4000
+is_dir(/dev/stdin): 0 (LKL) 0 (musl)
+Adding entropy to entropy pool
+[    1.648413] random: crng init done
 MOUNT DONE
-td = 0x5dbb10, p = 0x5dbb10, td->robust_list.head = 0x5dbba0 0xfffbcb8 0x5dbba0
-PRESTART NETWORK BEFORE LKL 
-[    1.664205] virtio-mmio virtio-mmio.1.auto: Failed to enable 64-bit or 32-bit DMA.  Trying to continue, but this might not work.
------- NETWORK ----- 
-setting LO
-...done
-setting eth0
-...done
-post start done
+td = 0x4cfe08, p = 0x4cfe08, td->robust_list.head = 0x4cfe98 0x3fffbce0 0x4cfe98
+NO NETWORK 
 LOAD: /app/speedtest
-app.base = 0xca00000
-ready to start the app: 0xcaccbe0
-envp = 0xfffc038, me->argv[0] = 0xfffd000, m->argv[0]=/app/speedtest
+app.base = 0x3c400000
+ready to start the app: 0x3c4f4dc0
+envp = 0x3fffc038, me->argv[0] = 0x3fffd000, m->argv[0]=/app/speedtest
 ---------------------------------
 -- Speedtest1 for SQLite 3.35.0 2021-02-01 12:39:50 5d54d9fd406381383afdf10612bfd5
- 100 - 25000 INSERTs into table with no index......................        1.248
- 110 - 25000 ordered INSERTS with one index/PK.....................        1.826
- 120 - 25000 unordered INSERTS with one index/PK...................        2.114
- 130 - 25 SELECTS, numeric BETWEEN, unindexed......................        1.113
- 140 - 10 SELECTS, LIKE, unindexed.................................        2.471
- 142 - 10 SELECTS w/ORDER BY, unindexed............................        3.164
- 145 - 10 SELECTS w/ORDER BY and LIMIT, unindexed..................        2.015
- 150 - CREATE INDEX five times.....................................        2.387
- 160 - 5000 SELECTS, numeric BETWEEN, indexed......................        0.970
- 161 - 5000 SELECTS, numeric BETWEEN, PK...........................        0.963
- 170 - 5000 SELECTS, text BETWEEN, indexed.........................        1.587
- 180 - 25000 INSERTS with three indexes............................        2.446
- 190 - DELETE and REFILL one table.................................        2.345
- 210 - ALTER TABLE ADD COLUMN, and query...........................        0.060
- 230 - 5000 UPDATES, numeric BETWEEN, indexed......................        1.063
- 240 - 25000 UPDATES of individual rows............................        1.249
- 250 - One big UPDATE of the whole 25000-row table.................        0.344
- 260 - Query added column after filling............................        0.053
- 270 - 5000 DELETEs, numeric BETWEEN, indexed......................        1.962
- 280 - 25000 DELETEs of individual rows............................        1.342
- 290 - Refill two 25000-row tables using REPLACE...................        5.344
- 300 - Refill a 25000-row table using (b&1)==(a&1).................        2.614
- 310 - 5000 four-ways joins........................................        2.664
- 320 - subquery in result set......................................        5.483
- 400 - 35000 REPLACE ops on an IPK.................................        2.337
- 410 - 35000 SELECTS on an IPK.....................................        1.372
- 500 - 35000 REPLACE on TEXT PK....................................        2.280
- 510 - 35000 SELECTS on a TEXT PK..................................        2.214
- 520 - 35000 SELECT DISTINCT.......................................        1.444
- 980 - PRAGMA integrity_check......................................        3.201
- 990 - ANALYZE.....................................................        0.713
-       TOTAL.......................................................   60.388
-EXIT IS CALLED
+ 100 - 25000 INSERTs into table with no index...................... 	   1.737
+ 110 - 25000 ordered INSERTS with one index/PK..................... 	   2.252
+ 120 - 25000 unordered INSERTS with one index/PK................... 	   2.575
+ 130 - 25 SELECTS, numeric BETWEEN, unindexed...................... 	   1.771
+ 140 - 10 SELECTS, LIKE, unindexed................................. 	   2.743
+ 142 - 10 SELECTS w/ORDER BY, unindexed............................ 	   3.605
+ 145 - 10 SELECTS w/ORDER BY and LIMIT, unindexed.................. 	   2.395
+ 150 - CREATE INDEX five times..................................... 	   2.709
+ 160 - 5000 SELECTS, numeric BETWEEN, indexed...................... 	   1.230
+ 161 - 5000 SELECTS, numeric BETWEEN, PK........................... 	   1.230
+ 170 - 5000 SELECTS, text BETWEEN, indexed......................... 	   2.096
+ 180 - 25000 INSERTS with three indexes............................ 	   2.882
+ 190 - DELETE and REFILL one table................................. 	   2.713
+ 210 - ALTER TABLE ADD COLUMN, and query........................... 	   0.101
+ 230 - 5000 UPDATES, numeric BETWEEN, indexed...................... 	   1.331
+ 240 - 25000 UPDATES of individual rows............................ 	   1.563
+ 250 - One big UPDATE of the whole 25000-row table................. 	   0.430
+ 260 - Query added column after filling............................ 	   0.086
+ 270 - 5000 DELETEs, numeric BETWEEN, indexed...................... 	   2.331
+ 280 - 25000 DELETEs of individual rows............................ 	   1.737
+ 290 - Refill two 25000-row tables using REPLACE................... 	   6.221
+ 300 - Refill a 25000-row table using (b&1)==(a&1)................. 	   3.000
+ 310 - 5000 four-ways joins........................................ 	   3.322
+ 320 - subquery in result set...................................... 	   8.871
+ 400 - 35000 REPLACE ops on an IPK................................. 	   2.855
+ 410 - 35000 SELECTS on an IPK..................................... 	   1.616
+ 500 - 35000 REPLACE on TEXT PK.................................... 	   2.796
+ 510 - 35000 SELECTS on a TEXT PK.................................. 	   2.790
+ 520 - 35000 SELECT DISTINCT....................................... 	   1.611
+ 980 - PRAGMA integrity_check...................................... 	   4.210
+ 990 - ANALYZE..................................................... 	   0.956
+       TOTAL.......................................................   75.765
+Warning: _Exit is replaced by wrap_thread_exit()
 ```
 
 

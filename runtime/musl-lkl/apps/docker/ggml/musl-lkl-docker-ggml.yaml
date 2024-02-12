@@ -1,0 +1,11 @@
+---
+cVMs:
+- name: ggml
+  disk: disk_docker_ggml.img
+  runtime: libmusl-lkl.so
+  args: "/ld.so /ggml/build/bin/gpt-2 -m /ggml/build/models/gpt-2-117M/ggml-model.bin -t 1 -s 0 -p once"
+  isolation:
+  - base:  0x400000000
+    size:  0x080000000
+    begin: 0x400000000
+    end:   0x480000000

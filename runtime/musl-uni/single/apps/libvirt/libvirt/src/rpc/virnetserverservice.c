@@ -141,41 +141,38 @@ virNetServerServicePtr virNetServerServiceNewTCP(const char *nodename,
 {
     virNetServerServicePtr svc;
     size_t i;
-printf("%s %d\n", __FILE__,__LINE__);
+
     if (virNetServerServiceInitialize() < 0)
 	return NULL;
 
-printf("%s %d\n", __FILE__,__LINE__);       
     if (!(svc = virObjectNew(virNetServerServiceClass)))
         return NULL;
-printf("%s %d\n", __FILE__,__LINE__);
+
     svc->auth = auth;
     svc->readonly = readonly;
     svc->nrequests_client_max = nrequests_client_max;
     svc->tls = virObjectRef(tls);
-printf("%s %d\n", __FILE__,__LINE__);
+
     if (virNetSocketNewListenTCP(nodename,
                                  service,
                                  family,
                                  &svc->socks,
                                  &svc->nsocks) < 0)
         goto error;
-printf("%s %d\n", __FILE__,__LINE__);
+
     for (i = 0; i < svc->nsocks; i++) {
-printf("%s %d\n", __FILE__,__LINE__);
         if (virNetSocketListen(svc->socks[i], max_queued_clients) < 0)
             goto error;
-printf("%s %d\n", __FILE__,__LINE__);
+
         /* IO callback is initially disabled, until we're ready
          * to deal with incoming clients */
         virObjectRef(svc);
-printf("%s %d\n", __FILE__,__LINE__);
+
         if (virNetSocketAddIOCallback(svc->socks[i],
                                       0,
                                       virNetServerServiceAccept,
                                       svc,
                                       virObjectFreeCallback) < 0) {
-printf("%s %d\n", __FILE__,__LINE__);
             virObjectUnref(svc);
             goto error;
         }

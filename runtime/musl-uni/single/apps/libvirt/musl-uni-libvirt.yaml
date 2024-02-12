@@ -10,3 +10,4 @@ cVMs:
     end:   0x440000000
   callback_out: monitor
   wait: -1
+  libvirt: 1

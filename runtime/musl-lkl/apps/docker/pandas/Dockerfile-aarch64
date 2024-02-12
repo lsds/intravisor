@@ -1,0 +1,15 @@
+FROM alpine:3.18
+
+#py3-scikit-learn
+RUN apk --no-cache --update-cache add  py3-seaborn py3-imbalanced-learn py3-matplotlib  py3-scipy py3-numpy
+RUN apk --virtual=.build-deps add gcc make git musl-dev linux-headers perl py3-pip py3-wheel sed python3-dev cython g++ py3-numpy-dev cmake
+
+COPY data_code /
+RUN git clone https://github.com/openssl/openssl.git /openssl
+RUN rm -rf /lib/libcrypto.so.3 && cd openssl && git switch openssl-3.1  && ./Configure linux-generic64 --prefix=/usr --libdir=lib --openssldir=/etc/ssl no-asm enable-ktls shared no-zlib no-async no-comp no-idea no-mdc2 no-rc5 no-ec2m no-ssl3 no-seed no-weak-ssl-ciphers -Os -fstack-clash-protection -Wformat -Werror=format-security -g -Wl,--as-needed,-O1,--sort-common -Wa,--noexecstack && make -j$(nproc) && make install
+#git switch OpenSSL_1_1_1-stable
+RUN sed -i 's/#  define WITH_THREAD/#undef WITH_THREAD/g' /usr/include/python3.11/pyport.h
+RUN cd / && wget --no-check-certificate https://github.com/scikit-learn/scikit-learn/archive/refs/tags/1.2.2.tar.gz && tar -xf 1.2.2.tar.gz 
+RUN cd /scikit-learn-1.2.2 && MAX_JOBS=$(nproc) python3.11 setup.py build && rm -rf /usr/lib/python3.11/site-packages/sklearn && cp -r build/lib.linux-`uname -m`-cpython-311/sklearn /usr/lib/python3.11/site-packages/
+RUN rm -rf /1.2.2.tar.gz /scikit-learn-1.2.2 /openssl
+RUN apk del .build-deps

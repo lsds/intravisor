@@ -119,7 +119,7 @@ static ssize_t portal_write(int id) {
 //	lkl_printf("id = %d, md->id = %d\n", id, my_data->id);
 	wrap_host_cap_wake(my_data->id);
 
-#if 0
+#if 1
 //one call -- destroy the thread
 	extern void wrap_thread_exit(void);
 	wrap_thread_exit();

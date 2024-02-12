@@ -11,13 +11,16 @@
 | Intravisor 					|  Y  |   Y    |
 | [darknet](single/apps/darknet)       		|  Y  |   Y    |
 | [ffmpeg](single/apps/ffmpeg)               	|  Y  |   Y    |
+| [ggml](single/apps/ggml)               	|  Y  |   Y    |
 | [hellow_world](single/apps/hello_world)       |  Y  |   Y    |
+| [hellow_pthreads](single/apps/hello_pthreads)	|  Y  |   Y    |
 | [libvirt](single/apps/libvirt)           	|  Y  |   Y    |
+| [polybench-c](single/apps/polybench-c)        |  Y  |   Y    |
 | [redis](single/apps/redis)           		|  Y  |   Y    |
 | [SQLite](single/apps/sqlite)           	|  Y  |   Y    |
 | [MicroROS2](single/apps/uros2)           	|  Y  |   Y    |
 
-#### Multi-cVM applications
+#### Multi-cVM applications (outdated)
 
 |                 				| ARM | RISC-V |
 |:---------------:				|:---:|:------:|

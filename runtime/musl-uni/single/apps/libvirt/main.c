@@ -6,9 +6,16 @@ extern void copy_cpio(__intcap_t *);
 extern long host_get_cpio_size( char *);
 extern long host_load_cpio(char *, __intcap_t, long);
 
-char *argv[] = {"libvirt", "-v", "-l", "-f", "/libvirt.conf", NULL};
-int argc = 5;
+//remove -t 20 for real use
 
+char *argv[] = {"libvirt", "-v", "-l", "-f", "/libvirt.conf", "-t", "20", NULL};
+int argc = 7;
+
+extern 	long host_parse_and_spawn_yaml(char *, size_t);
+
+int parse_and_spawn_yaml(char *yaml, size_t len) { 
+	return (int) host_parse_and_spawn_yaml(yaml, len);
+};
 
 void app_main() {
 	printf("app main\n");
@@ -24,7 +31,4 @@ void app_main() {
 
 	extern int libvirt_main(int argc, char **argv);
 	libvirt_main(argc, argv);
-
-
-
 }

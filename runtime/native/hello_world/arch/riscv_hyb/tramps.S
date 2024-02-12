@@ -60,14 +60,6 @@ c_out:
 		sd	s5,  (8*5)(sp)
 		sd	s6,  (8*6)(sp)
 
-#if 0
-//previosly, there was a bug in QEMU -- JAL produced global RA but not pc.base relative. remove this in future
-		cspecialr	cs2, ddc
-		cgetbase	t1, cs2
-
-		sub ra, ra, t1
-#endif
-
 		sd	ra,  (8*7)(sp)
 		sd	s0,  (8*8)(sp)
 

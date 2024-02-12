@@ -413,18 +413,18 @@ daemonConfigLoadFile(struct daemonConfig *data,
 {
     virConfPtr conf;
     int ret;
-printf("%s %d\n", __FILE__, __LINE__);
+
     if (allow_missing &&
         access(filename, R_OK) == -1 &&
         errno == ENOENT)
         return 0;
-printf("%s %d '%s'\n", __FILE__, __LINE__, filename);
+
     conf = virConfReadFile(filename, 0);
     if (!conf)
         return -1;
-printf("%s %d\n", __FILE__, __LINE__);
+
     ret = daemonConfigLoadOptions(data, filename, conf);
-printf("%s %d\n", __FILE__, __LINE__);
+
     virConfFree(conf);
     return ret;
 }

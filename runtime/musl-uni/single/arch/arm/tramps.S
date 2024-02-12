@@ -79,6 +79,16 @@
 
 .text
 
+.global outer_asm
+.type outer_c,%function
+outer_asm:
+		adrp	CT0, outer_c
+		add	CT0, CT0, :lo12:outer_c
+		brk 0
+		blr	CT0
+
+
+
 .global c_out_3
 .type c_out_3,%function
 c_out_3:
@@ -145,6 +155,7 @@ c_out:
 		SC	CS7, [csp, #(16*8)]
 		SC	CS8, [csp, #(16*9)]
 		SC	CS9, [csp, #(16*10)]
+		SC	c29, [csp, #(16*11)]
 
 
 //tt:
@@ -216,8 +227,7 @@ ret_from_monitor:
 		LC	CS7, [csp, #(16*8)]
 		LC	CS8, [csp, #(16*9)]
 		LC	CS9, [csp, #(16*10)]
-
-
+		LC	c29, [csp, #(16*11)]
 
 //		addi	sp, sp, 112
 //		cincoffset	csp, csp, 256

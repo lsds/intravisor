@@ -22,7 +22,7 @@ clean:
 
 install:
 	sudo mkdir -p ${INSTALL_PATH}
-	sudo cp ./*.yaml ./*.img ${INSTALL_PATH}
+	sudo cp ./*.yaml ./*.img ./*.ci ${INSTALL_PATH}
 
 $(PROG): $(PROG_C)
 	../../build/musl-host/bin/musl-clang-target -fPIE -pie -c -g -o $@.o $(PROG_C)

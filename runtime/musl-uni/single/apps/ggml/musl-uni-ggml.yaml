@@ -1,0 +1,12 @@
+---
+cVMs:
+- name: ggml
+  runtime: libggml.so
+  args: /ld.so /dead/beef #aligment problem with pure cap aux in intravisor
+  isolation:
+  - base:  0x400000000
+    size:  0x040000000
+    begin: 0x400000000
+    end:   0x440000000
+  callback_out: monitor
+  wait: -1

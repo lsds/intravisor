@@ -1,8 +1,14 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-char *argv[] = {"redis-server", "--daemonize", "no", "--save", "\"\"", "--bind", "127.0.0.1", "--port", "6379", NULL};
-int argc = 9;
+//test-memory for CI
+char *argv[] = {"redis-server", "--test-memory", "100",NULL};
+int argc = 3;
+
+
+
+//char *argv[] = {"redis-server", "--daemonize", "no", "--save", "\"\"", "--bind", "127.0.0.1", "--port", "6379", NULL};
+//int argc = 9;
 
 
 void app_main() {

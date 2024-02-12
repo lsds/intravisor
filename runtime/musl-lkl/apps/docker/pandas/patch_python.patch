@@ -1,0 +1,96 @@
+Only in site-packages_fixed: _distutils_hack
+Only in site-packages_fixed: distutils-precedence.pth
+Only in site-packages/numpy: fft
+diff -uar site-packages/numpy/__init__.py site-packages_fixed/numpy/__init__.py
+--- site-packages/numpy/__init__.py	2023-07-09 18:35:10.000000000 +0000
++++ site-packages_fixed/numpy/__init__.py	2023-08-12 16:09:55.000000000 +0000
+@@ -147,7 +147,7 @@
+     from .lib import *
+ 
+     from . import linalg
+-    from . import fft
++#    from . import fft
+     from . import polynomial
+     from . import random
+     from . import ctypeslib
+@@ -226,7 +226,7 @@
+     __all__.extend(core.__all__)
+     __all__.extend(_mat.__all__)
+     __all__.extend(lib.__all__)
+-    __all__.extend(['linalg', 'fft', 'random', 'ctypeslib', 'ma'])
++    __all__.extend(['linalg', 'random', 'ctypeslib', 'ma'])
+ 
+     # Remove one of the two occurrences of `issubdtype`, which is exposed as
+     # both `numpy.core.issubdtype` and `numpy.lib.issubdtype`.
+Only in site-packages_fixed: pip
+Only in site-packages_fixed: pip-23.1.2-py3.11.egg-info
+Only in site-packages_fixed: pkg_resources
+diff -uar site-packages/scipy/__init__.py site-packages_fixed/scipy/__init__.py
+--- site-packages/scipy/__init__.py	2023-05-02 15:02:29.000000000 +0000
++++ site-packages_fixed/scipy/__init__.py	2023-08-12 16:10:57.000000000 +0000
+@@ -90,9 +90,9 @@
+ randn = _deprecated(_msg.format('randn'))(randn)
+ 
+ # fft is especially problematic, so was removed in SciPy 1.6.0
+-from numpy.fft import ifft
+-ifft = _deprecated('scipy.ifft is deprecated and will be removed in SciPy '
+-                   '2.0.0, use scipy.fft.ifft instead')(ifft)
++#from numpy.fft import ifft
++#ifft = _deprecated('scipy.ifft is deprecated and will be removed in SciPy '
++#                   '2.0.0, use scipy.fft.ifft instead')(ifft)
+ 
+ from numpy.lib import scimath  # noqa: E402
+ _msg = ('scipy.{0} is deprecated and will be removed in SciPy 2.0.0, '
+@@ -165,7 +165,6 @@
+     submodules = [
+         'cluster',
+         'datasets',
+-        'fft',
+         'fftpack',
+         'integrate',
+         'interpolate',
+Only in site-packages_fixed/scipy/spatial: dump.dump
+diff -uar site-packages/scipy/spatial/__init__.py site-packages_fixed/scipy/spatial/__init__.py
+--- site-packages/scipy/spatial/__init__.py	2023-05-02 15:02:29.000000000 +0000
++++ site-packages_fixed/scipy/spatial/__init__.py	2023-08-12 17:32:20.000000000 +0000
+@@ -105,7 +105,6 @@
+ from ._kdtree import *
+ from ._ckdtree import *
+ from ._qhull import *
+-from ._spherical_voronoi import SphericalVoronoi
+ from ._plotutils import *
+ from ._procrustes import procrustes
+ from ._geometric_slerp import geometric_slerp
+diff -uar site-packages/scipy/spatial/qhull.py site-packages_fixed/scipy/spatial/qhull.py
+--- site-packages/scipy/spatial/qhull.py	2023-05-02 15:02:29.000000000 +0000
++++ site-packages_fixed/scipy/spatial/qhull.py	2023-08-12 17:32:56.000000000 +0000
+@@ -11,7 +11,6 @@
+     'Delaunay',
+     'HalfspaceIntersection',
+     'QhullError',
+-    'Voronoi',
+     'os',
+     'sys',
+     'tempfile',
+diff -uar site-packages/scipy/stats/_hypotests.py site-packages_fixed/scipy/stats/_hypotests.py
+--- site-packages/scipy/stats/_hypotests.py	2023-05-02 15:02:29.000000000 +0000
++++ site-packages_fixed/scipy/stats/_hypotests.py	2023-08-12 16:12:57.000000000 +0000
+@@ -10,7 +10,6 @@
+ from ._common import ConfidenceInterval
+ from ._continuous_distns import chi2, norm
+ from scipy.special import gamma, kv, gammaln
+-from scipy.fft import ifft
+ from ._stats_pythran import _a_ij_Aij_Dij2
+ from ._stats_pythran import (
+     _concordant_pairs as _P, _discordant_pairs as _Q
+@@ -633,7 +632,7 @@
+     theta = 2*np.pi/q*j
+     phi_sp = np.prod(np.cos(theta*ai), axis=0)
+     phi_s = np.exp(1j*theta*t) * phi_sp
+-    p = np.real(ifft(phi_s))
++    p = np.real(phi_s)
+     res = np.zeros(int(t)+1)
+     res[:-1:] = p[::2]
+     res[0] /= 2
+Only in site-packages_fixed: setuptools
+Only in site-packages_fixed: setuptools-67.7.2-py3.11.egg-info

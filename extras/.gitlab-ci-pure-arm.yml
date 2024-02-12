@@ -1,0 +1,137 @@
+#############################################  musl-UNI Aarch64
+
+AArch64-pure_cap-intravisor:
+  stage: build_intravisor
+  artifacts:
+      paths:
+      - /builds/gitlab/cloudcap/intravisor/.config
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+      # when: always # is a default value
+    - when: manual
+  # allow_failure: false # is a default value
+  script:
+    - git config --global --add safe.directory /builds/gitlab/cloudcap/intravisor
+    - echo "Hello, $GITLAB_USER_LOGIN!"
+    - sudo rm -rf /opt/share/AArch64-musl-uni
+    - sudo mkdir -p /opt/share/AArch64-musl-uni
+    - echo > /tmp/int.cfg
+    - echo "CONFIG_ARCH_ARM=y" >> /tmp/int.cfg
+    - echo "CONFIG_BIT_64=y" >> /tmp/int.cfg
+    - echo "CONFIG_MODE_PURE=y" >> /tmp/int.cfg
+    - echo "CONFIG_KERNEL_CONFIGURED_DDC_RELATIVE=y" >> /tmp/int.cfg
+    - echo "CONFIG_OS_CHERIBSD=y" >> /tmp/int.cfg
+    - echo "CONFIG_OPENSSL=y" >> /tmp/int.cfg
+    - echo "CONFIG_CHERI_SDK=\"\$\{HOME\}/cheri/output/morello-sdk\"" >> /tmp/int.cfg
+    - echo "CONFIG_CVM_MAX_SIZE=0x40000000" >> /tmp/int.cfg
+    - kconfig-conf --defconfig=/tmp/int.cfg  Kconfig
+    - cat .config
+    - make -C src -j 8
+    - sudo cp src/intravisor /opt/share/AArch64-musl-uni/
+
+AArch64-musl-uni-runtime:
+  stage: build_runtime
+  needs: ["AArch64-pure_cap-intravisor"]
+  artifacts:
+    when: always
+    paths:
+#      - extras/default.xml
+#      - extras/default.txt
+    reports:
+#      junit: extras/default.xml
+  script:
+    - git config --global --add safe.directory /builds/gitlab/cloudcap/intravisor
+    - make -C runtime/musl-uni/single/
+    - make -C runtime/musl-uni/single/apps/ -j 8
+    - make -C runtime/musl-uni/single/apps/ install INSTALL_PATH=/opt/share/AArch64-musl-uni
+
+.AArch64-musl-uni-template:
+  stage: run_app
+  needs: ["AArch64-musl-uni-runtime"]
+  allow_failure: false
+  artifacts:
+    when: always
+    paths:
+      - extras/default.xml
+      - extras/default.txt
+    reports:
+      junit: extras/default.xml
+  timeout: 2h
+  script:
+    - bash
+    - mkdir -p ~/cheri/extra-files/etc/rc.d/
+    - cp extras/int ~/cheri/extra-files/etc/rc.d/
+    - mkdir -p ~/cheri/extra-files/intravisor
+#
+    - sudo cp /opt/share/AArch64-musl-uni/intravisor ~/cheri/extra-files/intravisor/
+    - sudo cp /opt/share/AArch64-musl-uni/$YAML.yaml ~/cheri/extra-files/intravisor/cvm.yaml
+    - sudo cp /opt/share/AArch64-musl-uni/$SO ~cheri/cheri/extra-files/intravisor/
+    - if [ -e "/opt/share/AArch64-musl-uni/$YAML.ci" ]; then sudo cat /opt/share/AArch64-musl-uni/$YAML.ci >> extras/input_keys_musl-uni.txt; fi
+    - if [ -n "$CPIO" ]; then echo $CPIO; sudo cp /opt/share/AArch64-musl-uni/$CPIO ~cheri/cheri/extra-files/intravisor/; fi
+#
+    - ~/cheribuild/cheribuild.py disk-image-morello-hybrid --enable-hybrid-targets
+    - cd extras && bash spawn.bash morello 300 default.txt input_keys_musl-uni.txt default.xml && cat default.xml | grep -q "failure message" && exit 1 || exit 0
+
+
+AArch64-musl-uni-hello:
+  variables:
+    YAML: "musl-uni-hello"
+    SO: "libhello_world.so"
+  extends: .AArch64-musl-uni-template
+
+AArch64-musl-uni-pthreads:
+  variables:
+    YAML: "musl-uni-pthreads"
+    SO: "libhello_pthreads.so"
+  extends: .AArch64-musl-uni-template
+
+AArch64-musl-uni-darknet:
+  variables:
+    YAML: "musl-uni-darknet"
+    SO: "libdarknet.so"
+    CPIO: "root.cpio"
+  extends: .AArch64-musl-uni-template
+
+AArch64-musl-uni-sqlite:
+  variables:
+    YAML: "musl-uni-sqlite"
+    SO: "libsqlite.so"
+  extends: .AArch64-musl-uni-template
+
+AArch64-musl-uni-redis:
+  variables:
+    YAML: "musl-uni-redis"
+    SO: "libredis.so"
+  extends: .AArch64-musl-uni-template
+
+AArch64-musl-uni-ffmpeg:
+  variables:
+    YAML: "musl-uni-ffmpeg"
+    SO: "libffmpeg.so"
+  extends: .AArch64-musl-uni-template
+
+AArch64-musl-uni-libvirt:
+  variables:
+    YAML: "musl-uni-libvirt"
+    SO: "liblibvirt.so"
+    CPIO: "root_libvirt.cpio"
+  extends: .AArch64-musl-uni-template
+
+AArch64-musl-uni-uros2:
+  variables:
+    YAML: "musl-uni-uros2"
+    SO: "liburos2.so"
+  extends: .AArch64-musl-uni-template
+
+AArch64-musl-uni-polybench-c:
+  variables:
+    YAML: "musl-uni-polybench-c"
+    SO: "libpolybench-c.so"
+  extends: .AArch64-musl-uni-template
+
+AArch64-musl-uni-ggml:
+  variables:
+    YAML: "musl-uni-ggml"
+    SO: "libggml.so"
+    CPIO: "root_ggml.cpio"
+  extends: .AArch64-musl-uni-template

@@ -1,0 +1,89 @@
+#############################################  musl-UNI RV64
+
+AArch64-native-two_pure:
+  stage: build_runtime
+  needs: ["AArch64-pure_cap-intravisor"]
+  artifacts:
+    when: always
+    paths:
+#      - extras/default.xml
+#      - extras/default.txt
+    reports:
+#      junit: extras/default.xml
+  script:
+    - git config --global --add safe.directory /builds/gitlab/cloudcap/intravisor
+    - make -C runtime/native/two-pure/
+    - make -C runtime/native/two-pure/ install INSTALL_PATH=/opt/share/AArch64-native/
+
+RISCV64-native-two_pure:
+  stage: build_runtime
+  needs: ["RISCV64-pure_cap-intravisor"]
+  artifacts:
+    when: always
+    paths:
+#      - extras/default.xml
+#      - extras/default.txt
+    reports:
+#      junit: extras/default.xml
+  script:
+    - git config --global --add safe.directory /builds/gitlab/cloudcap/intravisor
+    - make -C runtime/native/two-pure/
+    - make -C runtime/native/two-pure/ install INSTALL_PATH=/opt/share/RISCV64-native/
+
+AArch64-native-hello-runtime:
+  stage: build_runtime
+  needs: ["AArch64-hyb_cap-intravisor-lkl"]
+  artifacts:
+    when: always
+    paths:
+#      - extras/default.xml
+#      - extras/default.txt
+    reports:
+#      junit: extras/default.xml
+  script:
+    - git config --global --add safe.directory /builds/gitlab/cloudcap/intravisor
+    - make -C runtime/native/hello_world/
+    - make -C runtime/native/hello_world/ install INSTALL_PATH=/opt/share/AArch64-native/
+
+AArch64-native-hello-run:
+  stage: run_app
+  needs: ["AArch64-native-hello-runtime"]
+  allow_failure: false
+  artifacts:
+    when: always
+    paths:
+      - extras/default.xml
+      - extras/default.txt
+    reports:
+      junit: extras/default.xml
+  timeout: 1h
+  script:
+    - bash
+    - mkdir -p ~/cheri/extra-files/etc/rc.d/
+    - cp extras/int ~/cheri/extra-files/etc/rc.d/
+    - mkdir -p ~/cheri/extra-files/intravisor
+#
+    - sudo cp /opt/share/AArch64-native/intravisor ~/cheri/extra-files/intravisor/
+    - sudo cp /opt/share/AArch64-native/$YAML.yaml ~/cheri/extra-files/intravisor/cvm.yaml
+    - sudo cp /opt/share/AArch64-native/$SO ~cheri/cheri/extra-files/intravisor/
+    - sudo cat /opt/share/AArch64-native/$YAML.ci > extras/input_keys_musl-uni.txt; fi
+#
+    - ~/cheribuild/cheribuild.py disk-image-morello-hybrid --enable-hybrid-targets
+    - cd extras && bash spawn.bash morello 300 default.txt input_keys_musl-uni.txt default.xml && cat default.xml | grep -q "failure message" && exit 1 || exit 0
+
+
+RISCV64-native-hello:
+  stage: build_runtime
+  needs: ["RISCV64-hyb_cap-intravisor-lkl"]
+  artifacts:
+    when: always
+    paths:
+#      - extras/default.xml
+#      - extras/default.txt
+    reports:
+#      junit: extras/default.xml
+  script:
+    - git config --global --add safe.directory /builds/gitlab/cloudcap/intravisor
+    - make -C runtime/native/hello_world/
+    - make -C runtime/native/hello_world/ install INSTALL_PATH=/opt/share/RISCV64-native/
+

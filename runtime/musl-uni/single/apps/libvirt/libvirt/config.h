@@ -2882,7 +2882,7 @@
 /* #undef WITH_UDEV */
 
 /* whether UML driver is enabled */
-#define WITH_UML 1
+#define WITH_CVM 1
 
 /* whether VirtualBox driver is enabled */
 //#define WITH_VBOX 1

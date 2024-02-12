@@ -1,0 +1,181 @@
+#############################################  musl-lkl RISCV64
+
+.RISCV64-hyb_cap-intravisor-lkl-template:
+  stage: build_intravisor
+  artifacts:
+      paths:
+      - /builds/gitlab/cloudcap/intravisor/.config
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+      # when: always # is a default value
+    - when: manual
+  # allow_failure: false # is a default value
+  script:
+    - git config --global --add safe.directory /builds/gitlab/cloudcap/intravisor
+    - echo "Hello, $GITLAB_USER_LOGIN!"
+    - sudo rm -rf /opt/share/RISCV64-musl-lkl$CVM_MAX_SIZE
+    - sudo mkdir -p /opt/share/RISCV64-musl-lkl$CVM_MAX_SIZE
+    - echo > /tmp/int.cfg
+    - echo "CONFIG_ARCH_RV=y" >> /tmp/int.cfg
+    - echo "CONFIG_BIT_64=y" >> /tmp/int.cfg
+    - echo "CONFIG_MODE_HYB=y" >> /tmp/int.cfg
+    - echo "CONFIG_OS_CHERIBSD=y" >> /tmp/int.cfg
+    - echo "CONFIG_LKL=y" >> /tmp/int.cfg
+    - echo "CONFIG_OPENSSL=y" >> /tmp/int.cfg
+    - echo "CONFIG_LKL_HEAP_SIZE_MB=950" >> /tmp/int.cfg
+    - echo "CONFIG_CHERI_SDK=\"\$\{HOME\}/cheri/output/sdk\"" >> /tmp/int.cfg
+    - echo "CONFIG_CVM_MAX_SIZE=$CVM_MAX_SIZE" >> /tmp/int.cfg
+    - kconfig-conf --defconfig=/tmp/int.cfg  Kconfig
+    - cat .config
+    - make -C src -j$(ncpus)
+    - sudo cp src/intravisor /opt/share/RISCV64-musl-lkl$CVM_MAX_SIZE/
+
+.RISCV64-musl-lkl-runtime-template:
+  stage: build_runtime
+  needs: ["RISCV64-hyb_cap-intravisor-lkl"]
+  artifacts:
+    when: always
+    paths:
+    reports:
+  script:
+    - git config --global --add safe.directory /builds/gitlab/cloudcap/intravisor
+    - make -C runtime/musl-lkl
+    - sudo cp runtime/musl-lkl/build/*.so /opt/share/RISCV64-musl-lkl$CVM_MAX_SIZE/
+    - source runtime/musl-lkl/apps/SOURCE_ME.rv64
+    - DSUBDIRS=$DSUBDIRS make -C runtime/musl-lkl/apps/$APPS all
+    - DSUBDIRS=$DSUBDIRS make -C runtime/musl-lkl/apps/$APPS install INSTALL_PATH=/opt/share/RISCV64-musl-lkl$CVM_MAX_SIZE
+
+
+.RISCV64-musl-lkl-template:
+  stage: run_app
+  needs: ["RISCV64-musl-lkl-runtime"]
+  allow_failure: false
+  artifacts:
+    when: always
+    paths:
+      - extras/default.xml
+      - extras/default.txt
+    reports:
+      junit: extras/default.xml
+  timeout: 1h
+  script:
+    - mkdir -p ~/cheri/extra-files/etc/rc.d/
+    - cp extras/int ~/cheri/extra-files/etc/rc.d/
+    - mkdir -p ~/cheri/extra-files/intravisor
+#
+    - sudo cp 	 /opt/share/RISCV64-musl-lkl$CVM_MAX_SIZE/intravisor ~/cheri/extra-files/intravisor/
+    - sudo cp 	 /opt/share/RISCV64-musl-lkl$CVM_MAX_SIZE/*.so ~/cheri/extra-files/intravisor/
+    - sudo cp 	 /opt/share/RISCV64-musl-lkl$CVM_MAX_SIZE/$YAML.yaml ~/cheri/extra-files/intravisor/cvm.yaml
+    - if [ -e "/opt/share/RISCV64-musl-lkl$CVM_MAX_SIZE/$YAML.ci" ]; then sudo cat /opt/share/RISCV64-musl-lkl$CVM_MAX_SIZE/$YAML.ci >> extras/input_keys_musl-lkl.txt; fi
+    - sudo cp -r /opt/share/RISCV64-musl-lkl$CVM_MAX_SIZE/$DISK ~/cheri/extra-files/intravisor/
+#
+    - ~/cheribuild/cheribuild.py disk-image-riscv64-hybrid --enable-hybrid-targets
+    - cd extras && bash spawn.bash riscv64 300 default.txt input_keys_musl-lkl.txt  default.xml && cat default.xml | grep -q "failure message" && exit 1 || exit 0
+
+#######################################
+
+#default size
+RISCV64-hyb_cap-intravisor-lkl:
+  extends: .RISCV64-hyb_cap-intravisor-lkl-template
+
+RISCV64-musl-lkl-runtime:
+  variables:
+    DSUBDIRS: "default"
+  extends: .RISCV64-musl-lkl-runtime-template
+
+
+#0x80000000: musl-lkl ggml
+RISCV64-hyb_cap-intravisor-lkl-0x80000000:
+  variables:
+    CVM_MAX_SIZE: "0x80000000"
+  extends: .RISCV64-hyb_cap-intravisor-lkl-template
+
+
+RISCV64-musl-lkl-runtime-0x80000000:
+  needs: ["RISCV64-hyb_cap-intravisor-lkl-0x80000000"]
+  variables:
+    APPS: "docker/"
+    CVM_MAX_SIZE: "0x80000000"
+    DSUBDIRS: "ggml/"
+  extends: .RISCV64-musl-lkl-runtime-template
+
+
+RISCV64-musl-lkl-hello:
+  variables:
+    YAML: "musl-lkl-hello"
+    DISK: "disk_hello.img"
+  extends: .RISCV64-musl-lkl-template
+
+RISCV64-musl-lkl-python-hello:
+  variables:
+    YAML: "musl-lkl-python-hello"
+    DISK: "disk_python.img"
+  extends: .RISCV64-musl-lkl-template
+
+RISCV64-musl-lkl-python-libhello:
+  variables:
+    YAML: "musl-lkl-python-libhello"
+    DISK: "disk_python.img"
+  extends: .RISCV64-musl-lkl-template
+
+
+RISCV64-musl-lkl-sqlite:
+  variables:
+    YAML: "musl-lkl-sqlite"
+    DISK: "disk_sqlite.img"
+  extends: .RISCV64-musl-lkl-template
+
+RISCV64-musl-lkl-darknet:
+  variables:
+    YAML: "musl-lkl-darknet"
+    DISK: "disk_darknet.img"
+  extends: .RISCV64-musl-lkl-template
+
+
+RISCV64-musl-lkl-darknet-python:
+  variables:
+    YAML: "musl-lkl-darknet-python"
+    DISK: "disk_darknet_python.img"
+  extends: .RISCV64-musl-lkl-template
+
+
+RISCV64-musl-lkl-cap_file:
+  variables:
+    YAML: "musl-lkl-cap_file"
+    DISK: "disk_cap_file.img"
+  extends: .RISCV64-musl-lkl-template
+
+
+RISCV64-musl-lkl-cap_stream:
+  variables:
+    YAML: "musl-lkl-cap_stream-single"
+    DISK: "disk_cap_stream.img"
+  extends: .RISCV64-musl-lkl-template
+
+RISCV64-musl-lkl-docker-hello:
+  variables:
+    YAML: "musl-lkl-docker-hello"
+    DISK: "disk_docker_hello.img"
+  extends: .RISCV64-musl-lkl-template
+
+RISCV64-musl-lkl-docker-ggml:
+  needs: ["RISCV64-musl-lkl-runtime-0x80000000"]
+  variables:
+    YAML: "musl-lkl-docker-ggml"
+    DISK: "disk_docker_ggml.img"
+    CVM_MAX_SIZE: "0x80000000"
+  extends: .RISCV64-musl-lkl-template
+
+RISCV64-musl-lkl-docker-redis:
+  variables:
+    YAML: "musl-lkl-docker-redis"
+    DISK: "disk_docker_redis.img"
+  extends: .RISCV64-musl-lkl-template
+
+#broken
+#RISCV64-musl-lkl-docker-pandas:
+#  variables:
+#    YAML: "musl-lkl-docker-pandas"
+#    DISK: "disk_docker_pandas.img"
+#  extends: .RISCV64-musl-lkl-template
+

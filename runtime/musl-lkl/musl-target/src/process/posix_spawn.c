@@ -165,6 +165,7 @@ int posix_spawn(pid_t *restrict res, const char *restrict path,
 	const posix_spawnattr_t *restrict attr,
 	char *const argv[restrict], char *const envp[restrict])
 {
+	lkl_printf("%s\n",__func__);while(1);
 	pid_t pid;
 	char stack[1024+PATH_MAX];
 	int ec=0, cs;

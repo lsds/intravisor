@@ -37,7 +37,6 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 
-
 #ifdef __linux__
 #include <linux/if.h>
 #include <linux/if_tun.h>
@@ -45,7 +44,9 @@
 #include <sys/cpuset.h>
 #endif
 
-
+#if CONFIG_OPENSSL
+#include <openssl/sha.h>
+#endif
 
 #include <errno.h>
 
@@ -88,11 +89,9 @@
 #define AT_HWCAP2	26
 #define AT_EXECFN	31
 
-
 #define LKL_DEV_BLK_STATUS_OK		0
 #define LKL_DEV_BLK_STATUS_IOERR	1
 #define LKL_DEV_BLK_STATUS_UNSUP	2
-
 
 //////////////////
 #define	CHERI_CAP_PRINT(cap) do {					\
@@ -107,7 +106,6 @@
       (uintmax_t)cheri_getoffset(cap));				\
 } while (0)
 
-
 //#include <xxhash.h>
 
 //////////////////
@@ -120,7 +118,6 @@ struct int_lkl_disk {
 	};
 	struct lkl_dev_blk_ops *ops;
 };
-
 
 /**
  * struct lkl_dev_blk_ops - block device host operations
@@ -140,7 +137,7 @@ struct lkl_dev_blk_ops {
 	 * @disk - the disk the request is issued to;
 	 * @req - a request described by &struct lkl_blk_req
 	 */
-	int (*request)(unsigned long cof2mon, struct int_lkl_disk disk, struct lkl_blk_req *req);
+	int (*request)(unsigned long cof2mon, struct int_lkl_disk disk, struct lkl_blk_req * req);
 };
 
 #endif
@@ -148,20 +145,17 @@ struct lkl_dev_blk_ops {
 #define AUX_CNT 32
 #define DYN_CNT 32
 
-
-
-
 #define MAX_CVMS	200
 #if 0
 #define MAX_THREADS	23
-#define STACK_SIZE (0x200000) //2M
+#define STACK_SIZE (0x200000)	//2M
 #else
 #if 0
 #define MAX_THREADS	31
-#define STACK_SIZE (0x100000) //1M
+#define STACK_SIZE (0x100000)	//1M
 #else
 #define MAX_THREADS	63
-#define STACK_SIZE (0x80000) //512K
+#define STACK_SIZE (0x80000)	//512K
 #endif
 #endif
 
@@ -171,12 +165,12 @@ struct c_thread {
 	char *cb_in;
 	char *cb_out;
 	void *stack;
-	void *arg;
+	void *__capability arg;
 	unsigned long stack_size;
 	int id;
 
-	void * __capability c_tp;
-	void * __capability m_tp;
+	void *__capability c_tp;
+	void *__capability m_tp;
 
 	int argc;
 	char **argv;
@@ -197,20 +191,18 @@ struct cs_lock {
 	char armed;
 };
 
-
 struct box_caps_s {
 	size_t sealcap_size;
-	void * __capability sealcap;
+	void *__capability sealcap;
 
-	void * __capability sealed_codecap;
-	void * __capability sealed_datacap;
-	void * __capability dcap;
-	void * __capability sealed_codecapt;
-	void * __capability sealed_codecapt2;
-	void * __capability sealed_datacapt;
-	void * __capability sealed_ret_from_mon;
+	void *__capability sealed_codecap;
+	void *__capability sealed_datacap;
+	void *__capability dcap;
+	void *__capability sealed_codecapt;
+	void *__capability sealed_codecapt2;
+	void *__capability sealed_datacapt;
+	void *__capability sealed_ret_from_mon;
 };
-
 
 struct rela_dyn_s {
 	unsigned long dest;
@@ -226,14 +218,12 @@ struct cap_relocs_s {
 	unsigned long perms;
 };
 
-
-
 struct s_box {
 //
-	void *base;			//we map binary here
-	void *top;			//end of binary
-	unsigned long box_size;		//base + box_size + stack = top
-	void *stack;			//beginning of stacks
+	void *base;		//we map binary here
+	void *top;		//end of binary
+	unsigned long box_size;	//base + box_size + stack = top
+	void *stack;		//beginning of stacks
 	unsigned long stack_size;	//stack size
 	void *heap;
 	unsigned long heap_size;
@@ -255,12 +245,13 @@ struct s_box {
 	unsigned long ret_from_mon;
 //  I/O
 	struct int_lkl_disk lkl_disk;
-	char disk_image[100];		//path to the disk
+	char disk_image[100];	//path to the disk
 // OUTPUT
 	int fd;
-//	
+//      
 	char pure;
 	char clean_room;
+	char libvirt;
 	char use_scl;
 	struct cap_relocs_s *cr;
 	void *cap_relocs;
@@ -275,29 +266,32 @@ struct s_box {
 	struct s_box *inner;
 	struct s_box *outer;
 	unsigned long cid;
-};
 
+#ifdef CONFIG_OPENSSL
+	SHA256_CTX context;
+	unsigned char hash[SHA256_DIGEST_LENGTH];
+#endif
+};
 
 struct cmp_s {
-	void *base;				/* base addr */
-	unsigned long size;		/* size */
+	void *base;		/* base addr */
+	unsigned long size;	/* size */
 	unsigned long begin;	/* cmp_begin */
-	unsigned long end;		/* cmp_end  */
+	unsigned long end;	/* cmp_end  */
 };
 
-extern struct s_box	cvms[MAX_CVMS];
+extern struct s_box cvms[MAX_CVMS];
 
 extern struct lkl_host_operations lkl_host_ops;
 extern struct lkl_dev_blk_ops lkl_dev_blk_ops;
 extern struct lkl_dev_net_ops fd_net_ops;
-
 
 //default config
 extern int timers;
 extern int debug_calls;
 //
 
-void *my_memcpy(void  *dest, void *src, size_t n);
+void *my_memcpy(void *dest, void *src, size_t n);
 #ifndef SIM
 void *capcpy(void *dest, void *__capability src, size_t n);
 #else
@@ -319,9 +313,9 @@ void st_cap(void *loc, void *__capability);
 int create_console(int);
 
 #ifndef SIM
-void * __capability codecap_create(void *sandbox_base, void *sandbox_end, int cr);
-void * __capability pure_codecap_create(void *sandbox_base, void *sandbox_end, int cr);
-void * __capability datacap_create(void *sandbox_base, void *sandbox_end, int cr);
+void *__capability codecap_create(void *sandbox_base, void *sandbox_end, int cr);
+void *__capability pure_codecap_create(void *sandbox_base, void *sandbox_end, int cr);
+void *__capability datacap_create(void *sandbox_base, void *sandbox_end, int cr);
 #endif
 
 struct parser_state *run_yaml_scenario(char *yaml_cfg);
@@ -333,126 +327,129 @@ typedef struct node_s node;
 typedef struct queue_s queue;
 
 struct header_s {
-    struct node_s *next;			///< pointer to the next
-    struct node_s *prev;			///< pointer to the prev
+	struct node_s *next;	///< pointer to the next
+	struct node_s *prev;	///< pointer to the prev
 };
 
 struct node_s {
-    struct header_s header;
-    void *payload;
-    int id; //actually only payload should be used
+	struct header_s header;
+	void *payload;
+	int id;			//actually only payload should be used
 };
 
 struct queue_s {
-    node	*top;
-    node	*bottom;
-    bool lock;
+	node *top;
+	node *bottom;
+	bool lock;
 };
 
-static __inline__ void queue_init(queue *q) {
-    q->top = NULL;
-    q->bottom = NULL;
-    q->lock = 0;
+static __inline__ void queue_init(queue * q) {
+	q->top = NULL;
+	q->bottom = NULL;
+	q->lock = 0;
 }
 
 static __inline__ void spin_lock(bool *l) {
-  while (__atomic_test_and_set(l, __ATOMIC_ACQUIRE));
+	while(__atomic_test_and_set(l, __ATOMIC_ACQUIRE)) ;
 }
 
 static __inline__ void spin_unlock(bool *l) {
-  __atomic_clear(l, __ATOMIC_RELEASE);
+	__atomic_clear(l, __ATOMIC_RELEASE);
 }
 
+static __inline__ void push_back(queue * q, node * new_node) {
+	new_node->header.prev = NULL;
+	new_node->header.next = NULL;
 
-static __inline__ void push_back(queue *q, node *new_node) {
-    new_node->header.prev = NULL;
-    new_node->header.next = NULL;
+	spin_lock(&q->lock);
 
-    spin_lock(&q->lock);
+	if(q->bottom == NULL) {
+		q->bottom = new_node;
+		q->top = new_node;
+	} else {
+		q->bottom->header.prev = new_node;
+		new_node->header.next = q->bottom;
+		q->bottom = new_node;
+	}
 
-    if(q->bottom == NULL) {
-	q->bottom = new_node;
-	q->top = new_node;
-    } else {
-	q->bottom->header.prev = new_node;
-	new_node->header.next = q->bottom;
-	q->bottom = new_node;
-    }
-
-    spin_unlock(&q->lock);
-}
-
-static __inline__ void push_front(queue *q, node *new_node) {
-    new_node->header.prev = NULL;
-    new_node->header.next = NULL;
-
-    spin_lock(&q->lock);
-
-    if(q->top == NULL) {
-	q->top = new_node;
-	q->bottom = new_node;
-    } else {
-	q->top->header.next = new_node;
-	new_node->header.prev = q->top;
-	q->top = new_node;
-    }
-
-    spin_unlock(&q->lock);
-}
-
-static __inline__ node *pop_front(queue *q) {
-
-    node *node;
-
-    spin_lock(&q->lock);
-
-    if(q->top == NULL) {
 	spin_unlock(&q->lock);
-	return NULL;
-    }
-
-    node = q->top;
-    if(node->header.prev)
-	node->header.prev->header.next = NULL;
-
-    q->top = node->header.prev;
-
-    if(q->top == NULL)
-	q->bottom = NULL;
-
-    spin_unlock(&q->lock);
-
-    node->header.prev = NULL;
-    node->header.next = NULL;
-
-    return node;
 }
 
-static __inline__ node *pop_back(queue *q) {
-    if(q->bottom == NULL)
-	return NULL;
+static __inline__ void push_front(queue * q, node * new_node) {
+	new_node->header.prev = NULL;
+	new_node->header.next = NULL;
 
-    node *node;
+	spin_lock(&q->lock);
 
-    spin_lock(&q->lock);
+	if(q->top == NULL) {
+		q->top = new_node;
+		q->bottom = new_node;
+	} else {
+		q->top->header.next = new_node;
+		new_node->header.prev = q->top;
+		q->top = new_node;
+	}
 
-    node = q->bottom;
-    if(node->header.next)
-	node->header.next->header.prev = NULL;
-    q->bottom = node->header.next;
-
-    if(q->bottom == NULL)
-	q->top = NULL;
-
-    spin_unlock(&q->lock);
-
-    node->header.prev = NULL;
-    node->header.next = NULL;
-
-    return node;
+	spin_unlock(&q->lock);
 }
 
+static __inline__ node *pop_front(queue * q) {
+
+	node *node;
+
+	spin_lock(&q->lock);
+
+	if(q->top == NULL) {
+		spin_unlock(&q->lock);
+		return NULL;
+	}
+
+	node = q->top;
+	if(node->header.prev)
+		node->header.prev->header.next = NULL;
+
+	q->top = node->header.prev;
+
+	if(q->top == NULL)
+		q->bottom = NULL;
+
+	spin_unlock(&q->lock);
+
+	node->header.prev = NULL;
+	node->header.next = NULL;
+
+	return node;
+}
+
+static __inline__ node *pop_back(queue * q) {
+	if(q->bottom == NULL)
+		return NULL;
+
+	node *node;
+
+	spin_lock(&q->lock);
+
+	node = q->bottom;
+	if(node->header.next)
+		node->header.next->header.prev = NULL;
+	q->bottom = node->header.next;
+
+	if(q->bottom == NULL)
+		q->top = NULL;
+
+	spin_unlock(&q->lock);
+
+	node->header.prev = NULL;
+	node->header.next = NULL;
+
+	return node;
+}
 
 // random 
 long get_file_size(char *path);
 long copy_file_into_cvm(char *path, long *where, long size);
+
+int parse_and_spawn_yaml(char *yaml_cfg, char libvirt);
+void __capability *mmap_cvm_code(unsigned long, size_t len, int prot, int flags, int fd, off_t offset);
+void __capability *mmap_cvm_data(unsigned long, size_t len, int prot, int flags, int fd, off_t offset);
+int intravisor_pthread_create(pthread_t * thread, const pthread_attr_t * attr, void *(*start_routine)(void *), void *arg);

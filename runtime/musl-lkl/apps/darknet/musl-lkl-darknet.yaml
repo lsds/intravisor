@@ -1,0 +1,12 @@
+---
+cVMs:
+- name: darknet
+  disk: disk_darknet.img
+  runtime: libmusl-lkl.so
+  args: /ld.so darknet classify cfg/alexnet.cfg alexnet.weights data/dog.jpg
+  callback_out: monitor
+  isolation:
+  - base:  0x400000000
+    size:  0x040000000
+    begin: 0x400000000
+    end:   0x440000000

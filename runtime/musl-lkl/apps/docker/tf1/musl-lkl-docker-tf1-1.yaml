@@ -1,0 +1,11 @@
+---
+cVMs:
+- name: hello
+  disk: disk_docker_tf1.img
+  runtime: libmusl-lkl.so
+  args: "/ld.so /usr/bin/python3 /app/benchmark/helloworld.py"
+  isolation:
+  - base:  0x400000000
+    size:  0x040000000
+    begin: 0x400000000
+    end:   0x440000000

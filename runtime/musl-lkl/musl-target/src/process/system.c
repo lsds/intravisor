@@ -10,6 +10,7 @@ extern char **__environ;
 
 int system(const char *cmd)
 {
+	lkl_printf("%s\n",__func__);while(1);
 	pid_t pid;
 	sigset_t old, reset;
 	struct sigaction sa = { .sa_handler = SIG_IGN }, oldint, oldquit;

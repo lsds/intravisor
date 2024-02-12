@@ -1,6 +1,5 @@
-typedef	long			__int64_t;
-typedef	unsigned long		__uint64_t;
-
+typedef long __int64_t;
+typedef unsigned long __uint64_t;
 
 /*-
  * Copyright (c) 2018-2019 Hongyan Xia
@@ -449,7 +448,6 @@ DEFAULT_UNMAP_THRESHOLD	default: MAX_SIZE_T / PAGESIZE
 #define MAX_RELEASE_CHECK_RATE 4095
 //#define MALLOC_UTRACE
 
-
 #if 0
 #define LACKS_UNISTD_H
 #define LACKS_SYS_PARAM_H
@@ -459,7 +457,6 @@ DEFAULT_UNMAP_THRESHOLD	default: MAX_SIZE_T / PAGESIZE
 #define LACKS_SYS_TYPES_H
 #define LACKS_ERRNO_H
 #define LACKS_TIME_H
-
 
 #define HAVE_MMAP 0
 #define MALLOC_FAILURE_ACTION
@@ -487,7 +484,6 @@ DEFAULT_UNMAP_THRESHOLD	default: MAX_SIZE_T / PAGESIZE
 #endif
 
 #define SAFE_FREEBUF
-
 
 /////////////////////
 
@@ -563,23 +559,22 @@ DEFAULT_UNMAP_THRESHOLD	default: MAX_SIZE_T / PAGESIZE
 #ifndef MALLOC_ALIGNMENT
 #define MALLOC_ALIGNMENT ((size_t)32U)
 #endif
-#endif  /* DARWIN */
-
+#endif /* DARWIN */
 
 #ifndef LACKS_SYS_TYPES_H
-#include <sys/types.h>  /* For size_t */
-#endif  /* LACKS_SYS_TYPES_H */
-#include <stddef.h>	/* For ptrdiff_t */
+#include <sys/types.h>		/* For size_t */
+#endif /* LACKS_SYS_TYPES_H */
+#include <stddef.h>		/* For ptrdiff_t */
 
 /* The maximum possible size_t value has all bits set */
 #define MAX_SIZE_T           (~(size_t)0)
 
-#ifndef USE_LOCKS /* ensure true if spin or recursive locks set */
+#ifndef USE_LOCKS		/* ensure true if spin or recursive locks set */
 #define USE_LOCKS  ((defined(USE_SPIN_LOCKS) && USE_SPIN_LOCKS != 0) || \
                     (defined(USE_RECURSIVE_LOCKS) && USE_RECURSIVE_LOCKS != 0))
 #endif /* USE_LOCKS */
 
-#if USE_LOCKS /* Spin locks for gcc >= 4.1, older gcc on x86 */
+#if USE_LOCKS			/* Spin locks for gcc >= 4.1, older gcc on x86 */
 #if (defined(__GNUC__) &&                                              \
       ((__GNUC__ > 4 || (__GNUC__ == 4 && __GNUC_MINOR__ >= 1)) ||      \
        defined(__i386__) || defined(__x86_64__)))
@@ -597,45 +592,45 @@ DEFAULT_UNMAP_THRESHOLD	default: MAX_SIZE_T / PAGESIZE
 #define MALLOC_ALIGNMENT_DEFAULT ((size_t)(2 * sizeof(void *)))
 #define MALLOC_ALIGNMENT \
     ((size_t)(MALLOC_ALIGNMENT_DEFAULT >= 32 ? MALLOC_ALIGNMENT_DEFAULT : 32))
-#endif  /* MALLOC_ALIGNMENT */
+#endif /* MALLOC_ALIGNMENT */
 #ifndef ABORT
 #define ABORT  abort()
-#endif  /* ABORT */
+#endif /* ABORT */
 #ifndef ABORT_ON_ASSERT_FAILURE
 #define ABORT_ON_ASSERT_FAILURE 1
-#endif  /* ABORT_ON_ASSERT_FAILURE */
+#endif /* ABORT_ON_ASSERT_FAILURE */
 
 #ifndef INSECURE
 #define INSECURE 0
-#endif  /* INSECURE */
+#endif /* INSECURE */
 #ifndef MALLOC_INSPECT_ALL
 #define MALLOC_INSPECT_ALL 0
-#endif  /* MALLOC_INSPECT_ALL */
+#endif /* MALLOC_INSPECT_ALL */
 #ifndef HAVE_MMAP
 #define HAVE_MMAP 1
-#endif  /* HAVE_MMAP */
+#endif /* HAVE_MMAP */
 #ifndef MMAP_CLEARS
 #define MMAP_CLEARS 1
-#endif  /* MMAP_CLEARS */
+#endif /* MMAP_CLEARS */
 #ifndef MALLOC_FAILURE_ACTION
 #define MALLOC_FAILURE_ACTION  errno = ENOMEM;
-#endif  /* MALLOC_FAILURE_ACTION */
+#endif /* MALLOC_FAILURE_ACTION */
 #ifndef DEFAULT_GRANULARITY
 #define DEFAULT_GRANULARITY ((size_t)64U * (size_t)1024U)
-#endif  /* DEFAULT_GRANULARITY */
+#endif /* DEFAULT_GRANULARITY */
 
 #ifndef DEFAULT_TRIM_THRESHOLD
 #define DEFAULT_TRIM_THRESHOLD ((size_t)2U * (size_t)1024U * (size_t)1024U)
-#endif  /* DEFAULT_TRIM_THRESHOLD */
+#endif /* DEFAULT_TRIM_THRESHOLD */
 #ifndef __CHERI_PURE_CAPABILITY__
 #ifndef DEFAULT_MMAP_THRESHOLD
 #if HAVE_MMAP
 #define DEFAULT_MMAP_THRESHOLD ((size_t)256U * (size_t)1024U)
-#else   /* HAVE_MMAP */
+#else /* HAVE_MMAP */
 #define DEFAULT_MMAP_THRESHOLD MAX_SIZE_T
-#endif  /* HAVE_MMAP */
-#endif  /* DEFAULT_MMAP_THRESHOLD */
-#else	/* __CHERI_PURE_CAPABILITY__ */
+#endif /* HAVE_MMAP */
+#endif /* DEFAULT_MMAP_THRESHOLD */
+#else /* __CHERI_PURE_CAPABILITY__ */
 #undef DEFAULT_MMAP_THRESHOLD
 /*
  * We need a containing structure for all allocations so we can locate
@@ -643,7 +638,7 @@ DEFAULT_UNMAP_THRESHOLD	default: MAX_SIZE_T / PAGESIZE
  * capability.
  */
 #define DEFAULT_MMAP_THRESHOLD MAX_SIZE_T
-#endif	/* __CHERI_PURE_CAPABILITY__ */
+#endif /* __CHERI_PURE_CAPABILITY__ */
 #ifndef MAX_RELEASE_CHECK_RATE
 #if HAVE_MMAP
 #define MAX_RELEASE_CHECK_RATE 4095
@@ -653,19 +648,19 @@ DEFAULT_UNMAP_THRESHOLD	default: MAX_SIZE_T / PAGESIZE
 #endif /* MAX_RELEASE_CHECK_RATE */
 #ifndef USE_BUILTIN_FFS
 #define USE_BUILTIN_FFS 0
-#endif  /* USE_BUILTIN_FFS */
+#endif /* USE_BUILTIN_FFS */
 #ifndef USE_DEV_RANDOM
 #define USE_DEV_RANDOM 0
-#endif  /* USE_DEV_RANDOM */
+#endif /* USE_DEV_RANDOM */
 #ifndef NO_MALLINFO
 #define NO_MALLINFO 0
-#endif  /* NO_MALLINFO */
+#endif /* NO_MALLINFO */
 #ifndef MALLINFO_FIELD_TYPE
 #define MALLINFO_FIELD_TYPE size_t
-#endif  /* MALLINFO_FIELD_TYPE */
+#endif /* MALLINFO_FIELD_TYPE */
 #ifndef NO_MALLOC_STATS
 #define NO_MALLOC_STATS 0
-#endif  /* NO_MALLOC_STATS */
+#endif /* NO_MALLOC_STATS */
 #ifndef NO_SEGMENT_TRAVERSAL
 #define NO_SEGMENT_TRAVERSAL 0
 #endif /* NO_SEGMENT_TRAVERSAL */
@@ -720,16 +715,16 @@ DEFAULT_UNMAP_THRESHOLD	default: MAX_SIZE_T / PAGESIZE
 #define _STRUCT_MALLINFO
 #define STRUCT_MALLINFO_DECLARED 1
 struct mallinfo {
-  MALLINFO_FIELD_TYPE arena;    /* non-mmapped space allocated from system */
-  MALLINFO_FIELD_TYPE ordblks;  /* number of free chunks */
-  MALLINFO_FIELD_TYPE smblks;   /* always 0 */
-  MALLINFO_FIELD_TYPE hblks;    /* always 0 */
-  MALLINFO_FIELD_TYPE hblkhd;   /* space in mmapped regions */
-  MALLINFO_FIELD_TYPE usmblks;  /* maximum total allocated space */
-  MALLINFO_FIELD_TYPE fsmblks;  /* always 0 */
-  MALLINFO_FIELD_TYPE uordblks; /* total allocated space */
-  MALLINFO_FIELD_TYPE fordblks; /* total free space */
-  MALLINFO_FIELD_TYPE keepcost; /* releasable (via malloc_trim) space */
+	MALLINFO_FIELD_TYPE arena;	/* non-mmapped space allocated from system */
+	MALLINFO_FIELD_TYPE ordblks;	/* number of free chunks */
+	MALLINFO_FIELD_TYPE smblks;	/* always 0 */
+	MALLINFO_FIELD_TYPE hblks;	/* always 0 */
+	MALLINFO_FIELD_TYPE hblkhd;	/* space in mmapped regions */
+	MALLINFO_FIELD_TYPE usmblks;	/* maximum total allocated space */
+	MALLINFO_FIELD_TYPE fsmblks;	/* always 0 */
+	MALLINFO_FIELD_TYPE uordblks;	/* total allocated space */
+	MALLINFO_FIELD_TYPE fordblks;	/* total free space */
+	MALLINFO_FIELD_TYPE keepcost;	/* releasable (via malloc_trim) space */
 };
 #endif /* STRUCT_MALLINFO_DECLARED */
 #endif /* HAVE_USR_INCLUDE_MALLOC_H */
@@ -741,26 +736,26 @@ struct mallinfo {
 */
 
 #ifndef FORCEINLINE
-  #if defined(__GNUC__)
+#if defined(__GNUC__)
 #define FORCEINLINE __inline __attribute__ ((always_inline))
-  #endif
+#endif
 #endif
 #ifndef NOINLINE
-  #if defined(__GNUC__)
-    #define NOINLINE __attribute__ ((noinline))
-  #else
-    #define NOINLINE
-  #endif
+#if defined(__GNUC__)
+#define NOINLINE __attribute__ ((noinline))
+#else
+#define NOINLINE
+#endif
 #endif
 
 #ifdef __cplusplus
 extern "C" {
 #ifndef FORCEINLINE
- #define FORCEINLINE inline
+#define FORCEINLINE inline
 #endif
-#endif /* __cplusplus */
+#endif				/* __cplusplus */
 #ifndef FORCEINLINE
- #define FORCEINLINE
+#define FORCEINLINE
 #endif
 
 /* ------------------- Declarations of public routines ------------------- */
@@ -784,7 +779,7 @@ extern "C" {
 #define dlmalloc_set_footprint_limit malloc_set_footprint_limit
 #define dlmalloc_inspect_all   malloc_inspect_all
 #define dlmalloc_revoke        malloc_revoke
-#endif /* USE_DL_PREFIX */
+#endif				/* USE_DL_PREFIX */
 
 /*
   malloc(size_t n)
@@ -800,7 +795,7 @@ extern "C" {
   maximum supported value of n differs across systems, but is in all
   cases less than the maximum representable value of a size_t.
 */
-DLMALLOC_EXPORT void* dlmalloc(size_t);
+	DLMALLOC_EXPORT void *dlmalloc(size_t);
 
 /*
   free(void* p)
@@ -809,14 +804,14 @@ DLMALLOC_EXPORT void* dlmalloc(size_t);
   It has no effect if p is null. If p was not malloced or already
   freed, free(p) will by default cause the current program to abort.
 */
-DLMALLOC_EXPORT void  dlfree(void*);
+	DLMALLOC_EXPORT void dlfree(void *);
 
 /*
   calloc(size_t n_elements, size_t element_size);
   Returns a pointer to n_elements * element_size bytes, with all locations
   set to zero.
 */
-DLMALLOC_EXPORT void* dlcalloc(size_t, size_t);
+	DLMALLOC_EXPORT void *dlcalloc(size_t, size_t);
 
 /*
   realloc(void* p, size_t n)
@@ -840,7 +835,7 @@ DLMALLOC_EXPORT void* dlcalloc(size_t, size_t);
   The old unix realloc convention of allowing the last-free'd chunk
   to be used as an argument to realloc is not supported.
 */
-DLMALLOC_EXPORT void* dlrealloc(void*, size_t);
+	DLMALLOC_EXPORT void *dlrealloc(void *, size_t);
 
 /*
   int posix_memalign(void** pp, size_t alignment, size_t n);
@@ -850,13 +845,13 @@ DLMALLOC_EXPORT void* dlrealloc(void*, size_t);
   returns EINVAL if the alignment is not a power of two (3) fails and
   returns ENOMEM if memory cannot be allocated.
 */
-DLMALLOC_EXPORT int dlposix_memalign(void**, size_t, size_t);
+	DLMALLOC_EXPORT int dlposix_memalign(void **, size_t, size_t);
 
 /*
   void *aligned_alloc(size_t alignment, size_t size);
   C11 interface to allocate aligned memory.
 */
-DLMALLOC_EXPORT void *dlaligned_alloc(size_t, size_t);
+	DLMALLOC_EXPORT void *dlaligned_alloc(size_t, size_t);
 
 /*
   mallopt(int parameter_number, int parameter_value)
@@ -880,7 +875,7 @@ DLMALLOC_EXPORT void *dlaligned_alloc(size_t, size_t);
   M_GRANULARITY        -2     page size   any power of 2 >= page size
   M_MMAP_THRESHOLD     -3      256*1024   any   (or 0 if no MMAP support)
 */
-DLMALLOC_EXPORT int dlmallopt(int, int);
+	DLMALLOC_EXPORT int dlmallopt(int, int);
 
 /*
   malloc_footprint();
@@ -891,7 +886,7 @@ DLMALLOC_EXPORT int dlmallopt(int, int);
   Even if locks are otherwise defined, this function does not use them,
   so results might not be up to date.
 */
-DLMALLOC_EXPORT size_t dlmalloc_footprint(void);
+	DLMALLOC_EXPORT size_t dlmalloc_footprint(void);
 
 /*
   malloc_max_footprint();
@@ -904,7 +899,7 @@ DLMALLOC_EXPORT size_t dlmalloc_footprint(void);
   otherwise defined, this function does not use them, so results might
   not be up to date.
 */
-DLMALLOC_EXPORT size_t dlmalloc_max_footprint(void);
+	DLMALLOC_EXPORT size_t dlmalloc_max_footprint(void);
 
 /*
   malloc_footprint_limit();
@@ -915,7 +910,7 @@ DLMALLOC_EXPORT size_t dlmalloc_max_footprint(void);
   guarantee that this number of bytes can actually be obtained from
   the system.
 */
-DLMALLOC_EXPORT size_t dlmalloc_footprint_limit();
+	DLMALLOC_EXPORT size_t dlmalloc_footprint_limit();
 
 /*
   malloc_set_footprint_limit();
@@ -929,7 +924,7 @@ DLMALLOC_EXPORT size_t dlmalloc_footprint_limit();
   additional system memory will fail. However, invocation cannot
   retroactively deallocate existing used memory.
 */
-DLMALLOC_EXPORT size_t dlmalloc_set_footprint_limit(size_t bytes);
+	DLMALLOC_EXPORT size_t dlmalloc_set_footprint_limit(size_t bytes);
 
 #if MALLOC_INSPECT_ALL
 /*
@@ -960,10 +955,9 @@ DLMALLOC_EXPORT size_t dlmalloc_set_footprint_limit(size_t bytes);
 
   malloc_inspect_all is compiled only if MALLOC_INSPECT_ALL is defined.
 */
-DLMALLOC_EXPORT void dlmalloc_inspect_all(void(*handler)(void*, void *, size_t, void*),
-                           void* arg);
+	DLMALLOC_EXPORT void dlmalloc_inspect_all(void (*handler)(void *, void *, size_t, void *), void *arg);
 
-#endif /* MALLOC_INSPECT_ALL */
+#endif				/* MALLOC_INSPECT_ALL */
 
 #if !NO_MALLINFO
 /*
@@ -988,8 +982,8 @@ DLMALLOC_EXPORT void dlmalloc_inspect_all(void(*handler)(void*, void *, size_t, 
   be kept as longs, the reported values may wrap around zero and
   thus be inaccurate.
 */
-DLMALLOC_EXPORT struct mallinfo dlmallinfo(void);
-#endif /* NO_MALLINFO */
+	DLMALLOC_EXPORT struct mallinfo dlmallinfo(void);
+#endif				/* NO_MALLINFO */
 
 /*
   malloc_trim(size_t pad);
@@ -1012,7 +1006,7 @@ DLMALLOC_EXPORT struct mallinfo dlmallinfo(void);
 
   Malloc_trim returns 1 if it actually released any memory, else 0.
 */
-DLMALLOC_EXPORT int  dlmalloc_trim(size_t);
+	DLMALLOC_EXPORT int dlmalloc_trim(size_t);
 
 /*
   malloc_stats();
@@ -1033,7 +1027,7 @@ DLMALLOC_EXPORT int  dlmalloc_trim(size_t);
   malloc_stats prints only the most commonly interesting statistics.
   More information can be obtained by calling mallinfo.
 */
-DLMALLOC_EXPORT void  dlmalloc_stats(void);
+	DLMALLOC_EXPORT void dlmalloc_stats(void);
 
 /*
   malloc_underlying_allocation(void* p);
@@ -1048,7 +1042,7 @@ DLMALLOC_EXPORT void  dlmalloc_stats(void);
   capability's base does not correspond to the original
   allocation's.
 */
-DLMALLOC_EXPORT void *dlmalloc_underlying_allocation(void*);
+	DLMALLOC_EXPORT void *dlmalloc_underlying_allocation(void *);
 
 /*
   malloc_usable_size(void* p);
@@ -1067,10 +1061,10 @@ DLMALLOC_EXPORT void *dlmalloc_underlying_allocation(void*);
   In purecap CHERI, the returned value is the minimum of the number of bytes
   underlying the allocated chunk and the length of the passed-in capability.
 */
-DLMALLOC_EXPORT size_t dlmalloc_usable_size(void*);
+	DLMALLOC_EXPORT size_t dlmalloc_usable_size(void *);
 
-DLMALLOC_EXPORT void  dlmalloc_revoke(void);
+	DLMALLOC_EXPORT void dlmalloc_revoke(void);
 
 #ifdef __cplusplus
-}  /* end of extern "C" */
-#endif /* __cplusplus */
+}				/* end of extern "C" */
+#endif				/* __cplusplus */

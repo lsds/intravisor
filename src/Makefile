@@ -1,13 +1,13 @@
 #todo: track changes in headers
-#include ../config_arm.mak
-#include ../config_riscv.mak
 include ../cfg.mak
 
 CFLAGS	:= -I load_elf/ -I lkl_wrap -I libyaml/include -Ilibyaml/src -DHAVE_CONFIG_H -Ilibyaml/ -Iarch/$(TARGET_ARCH)/include -DTARGET_ARCH="$(TARGET_ARCH)" -D$(TARGET_ARCH) -DCVM_MAX_SIZE=$(CONFIG_CVM_MAX_SIZE)
+LDFLAGS = -lrt -lpthread -lm
 
 #CFLAGS += -DEVAL
 #CFLAGS += -DEXTRA_PAYLOAD="(100*1024*1024)"
 CFLAGS += -DEXTRA_PAYLOAD="(0)"
+
 
 ifdef CONFIG_ORC
 CFLAGS += -DSCO
@@ -17,6 +17,11 @@ ifdef CONFIG_LKL
 CFILES	+= lkl_wrap/iomem.c lkl_wrap/jmp_buf.c lkl_wrap/posix-host.c lkl_wrap/virtio_net_fd.c
 CFLAGS	+= -I lkl_wrap/include -DLKL
 endif
+
+ifdef CONFIG_UNDERVISOR
+CFLAGS	+= -DUNDERVISOR
+endif
+
 
 ifdef CONFIG_MODE_SIM
 CFLAGS	+= -DMODE_SIM -DSIM
@@ -56,6 +61,11 @@ CFLAGS += -Ilibvirt/src/rpc
 CFLAGS += -DLIBVIRT -DHOST_NAME_MAX=1024 -Dabs_topbuilddir=\"/\" -Dabs_topsrcdir=\"/\"
 endif
 
+ifdef CONFIG_OPENSSL
+CFLAGS += -DCONFIG_OPENSSL
+LDFLAGS += -lssl -lcrypto
+endif
+
 SRC  := $(CFILES) $(SRC_MAIN) $(SRC_LOADER) $(SRC_YAML) $(SRC_LIBVIRT)
 
 OBJ := $(SRC:%.c=$(OBJDIR)/%.o)
@@ -75,7 +85,7 @@ $(OBJDIR)/$(TARGET_ARCH)/asm.o: arch/$(TARGET_ARCH)/asm.S
 	$(AS_MON) $(AS_MON_FLAGS) $(CFLAGS) -c -o $(OBJDIR)/$(TARGET_ARCH)/asm.o arch/$(TARGET_ARCH)/asm.S
 
 intravisor: $(OBJ) $(OBJDIR)/$(TARGET_ARCH)/asm.o
-	$(CC_MON) $(CC_MON_FLAGS) -lrt -lpthread -o $@ -fPIE -fPIC $(OBJ) $(OBJDIR)/$(TARGET_ARCH)/asm.o -Wl,-error-limit=0 -lm
+	$(CC_MON) $(CC_MON_FLAGS) $(LDFLAGS) -o $@ -fPIE -fPIC $(OBJ) $(OBJDIR)/$(TARGET_ARCH)/asm.o -Wl,-error-limit=0
 
 clean:
 	rm -rf ./*.o ./*.so ./*.ll ./1.txt $(OBJDIR) intravisor

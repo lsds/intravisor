@@ -7,7 +7,7 @@ static unsigned long _memory_start, mem_size;
 
 void *empty_zero_page;
 
-//#define K_SIZE (*1024*1024LL)
+//#define K_SIZE (900*1024*1024LL)
 //static char k_heap[K_SIZE]  __attribute__ ((aligned (4096)));
 
 

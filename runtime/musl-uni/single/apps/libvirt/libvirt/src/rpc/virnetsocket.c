@@ -364,10 +364,8 @@ int virNetSocketNewListenTCP(const char *nodename,
             virReportSystemError(errno, "%s", _("Unable to create socket"));
             goto error;
         }
-printf("%s %d\n", __FILE__,__LINE__);
         if (virSetSockReuseAddr(fd, true) < 0)
             goto error;
-printf("%s %d\n", __FILE__,__LINE__);
 #if 0
 #ifdef IPV6_V6ONLY
         if (runp->ai_family == PF_INET6) {
@@ -391,18 +389,12 @@ printf("%s %d\n", __FILE__,__LINE__);
 #if 0
         if (bind(fd, runp->ai_addr, runp->ai_addrlen) < 0) {
 #else
-printf("%s %d\n", __FILE__,__LINE__);
 	struct sockaddr_in serverAddress;
-printf("%s %d\n", __FILE__,__LINE__);
 	serverAddress.sin_family = AF_INET;
-printf("%s %d\n", __FILE__,__LINE__);
 	serverAddress.sin_addr.s_addr = INADDR_ANY;
-printf("%s %d\n", __FILE__,__LINE__);
 	serverAddress.sin_port = htons(16509);
-printf("%s %d\n", __FILE__,__LINE__);
         if (bind(fd, (struct sockaddr *)&serverAddress, sizeof(serverAddress)) < 0) {
 #endif
-printf("%s %d\n", __FILE__,__LINE__);
             if (errno != EADDRINUSE && errno != EADDRNOTAVAIL) {
                 virReportSystemError(errno, "%s", _("Unable to bind to port"));
                 goto error;
@@ -412,21 +404,16 @@ printf("%s %d\n", __FILE__,__LINE__);
             runp = runp->ai_next;
             continue;
         }
-printf("%s %d\n", __FILE__,__LINE__);
         addr.len = sizeof(addr.data);
         if (getsockname(fd, &addr.data.sa, &addr.len) < 0) {
             virReportSystemError(errno, "%s", _("Unable to get local socket name"));
 //            goto error;
         }
-printf("%s %d\n", __FILE__,__LINE__);
 //        VIR_DEBUG("%p f=%d f=%d", &addr, runp->ai_family, addr.data.sa.sa_family);
-printf("%s %d\n", __FILE__,__LINE__);
         if (VIR_EXPAND_N(socks, nsocks, 1) < 0)
             goto error;
-printf("%s %d\n", __FILE__,__LINE__);
         if (!(socks[nsocks-1] = virNetSocketNew(&addr, NULL, false, fd, -1, 0)))
             goto error;
-printf("%s %d\n", __FILE__,__LINE__);
         runp = runp->ai_next;
         fd = -1;
 //    }
@@ -2235,21 +2222,14 @@ int virNetSocketAddIOCallback(virNetSocketPtr sock,
 void virNetSocketUpdateIOCallback(virNetSocketPtr sock,
                                   int events)
 {
-printf("%s %d\n", __FILE__, __LINE__);
     virObjectLock(sock);
-printf("%s %d\n", __FILE__, __LINE__);
     if (sock->watch < 0) {
-printf("%s %d\n", __FILE__, __LINE__);
         VIR_DEBUG("Watch not registered on socket %p", sock);
-printf("%s %d\n", __FILE__, __LINE__);
         virObjectUnlock(sock);
         return;
     }
-printf("%s %d\n", __FILE__, __LINE__);
     virEventUpdateHandle(sock->watch, events);
-printf("%s %d\n", __FILE__, __LINE__);
     virObjectUnlock(sock);
-printf("%s %d\n", __FILE__, __LINE__);
 }
 
 void virNetSocketRemoveIOCallback(virNetSocketPtr sock)

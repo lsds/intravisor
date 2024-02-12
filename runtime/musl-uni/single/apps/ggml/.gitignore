@@ -1,0 +1,4 @@
+rootfs/*.bin
+*.cpio
+*.so
+obj

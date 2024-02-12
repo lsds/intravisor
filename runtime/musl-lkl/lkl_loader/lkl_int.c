@@ -39,7 +39,6 @@ int wrap_print(char *ptr, int size) {
 
 }
 
-
 unsigned long wrap_sem_alloc(int count) {
 	DEBUG_HOSTCALL();
 	return (unsigned long) c_out_3(3, count, 0, 0);
@@ -870,43 +869,37 @@ ssize_t wrap_writev(int fd, const struct iovec *iov, int count) {
 ////////
 
 wrap_cpuinfo_get(char *buffer, unsigned int buffer_len) {
-    int len;
-    unsigned int total_len = 0;
-    unsigned int current_core = 0;
-    unsigned int num_cores = 1;
+	int len;
+	unsigned int total_len = 0;
+	unsigned int current_core = 0;
+	unsigned int num_cores = 1;
 
-    for (current_core = 0; current_core < num_cores; current_core++) {
+	for(current_core = 0; current_core < num_cores; current_core++) {
 
-        len = snprintf(buffer, buffer_len,
-	"processor	: %d\n"
-	"BogoMIPS	: 100.00\n"
-	"Features	: fp asimd evtstrm aes pmull sha1 sha2 crc32 atomics fphp asimdhp cpuid asimdrdm lrcpc dcpop asimddp ssbs\n"
-	"CPU implementer	: 0x3f\n"
-	"CPU architecture: 8\n"
-	"CPU variant	: 0x0\n"
-	"CPU part	: 0x412\n"
-	"CPU revision	: 0\n"
-	"\n",
-            current_core);
+		len = snprintf(buffer, buffer_len,
+			       "processor	: %d\n"
+			       "BogoMIPS	: 100.00\n"
+			       "Features	: fp asimd evtstrm aes pmull sha1 sha2 crc32 atomics fphp asimdhp cpuid asimdrdm lrcpc dcpop asimddp ssbs\n"
+			       "CPU implementer	: 0x3f\n" "CPU architecture: 8\n" "CPU variant	: 0x0\n" "CPU part	: 0x412\n" "CPU revision	: 0\n" "\n", current_core);
 
-        if (len < 0) {
-            // This can only happen if there is some sort of output error, which
-            // shouldn't happen for snprintf().
-            return 0;
-        }
+		if(len < 0) {
+			// This can only happen if there is some sort of output error, which
+			// shouldn't happen for snprintf().
+			return 0;
+		}
 
-        if (len >= buffer_len) {
-            buffer = NULL;
-            buffer_len = 0;
-        } else {
-            buffer += len;
-            buffer_len -= len;
-        }
+		if(len >= buffer_len) {
+			buffer = NULL;
+			buffer_len = 0;
+		} else {
+			buffer += len;
+			buffer_len -= len;
+		}
 
-        total_len += len;
-    }
+		total_len += len;
+	}
 
-    return total_len;
+	return total_len;
 }
 
 /* 
@@ -1008,8 +1001,8 @@ void init_internal_lkl() {
 	tmp->virtio_devices = lkl_host_ops.virtio_devices;
 	tmp->gettid = lkl_host_ops.gettid;
 //// 6.0.1
-//	tmp->memcpy = lkl_host_ops.memcpy;
-//	tmp->memset = lkl_host_ops.memset;
+//      tmp->memcpy = lkl_host_ops.memcpy;
+//      tmp->memset = lkl_host_ops.memset;
 /////
 
 //// 6.0.1
@@ -1017,10 +1010,8 @@ void init_internal_lkl() {
 	tmp->cpuinfo_get = lkl_host_ops.cpuinfo_get = wrap_cpuinfo_get;
 /////
 
-
 	extern unsigned long cvm_heap_begin;
 	extern unsigned long cvm_heap_size;
-
 
 	lkl_printf("STARTING LKL, lkl_io_in = %p, disk_io = %p, heap (%lx, +%lx)\n", &lkl_io_in, &disk_io_in, cvm_heap_begin, cvm_heap_size);
 	lkl_start_kernel((struct lkl_host_operations *) &lkl_io_in, "");

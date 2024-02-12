@@ -25,8 +25,8 @@ choice SELECT_ARCH_MODE
     config MODE_HYB
 	bool "hybrid-cap"
 
-    config MODE_SIM
-	bool "simulation"
+#    config MODE_SIM
+#	bool "simulation"
 
     endchoice
 
@@ -60,18 +60,22 @@ config LIBVIRT
 	bool "Libvirt support in Intravisor"
        def_bool n
 
+config UNDERVISOR
+	bool "Intravisor is Undervisor"
+       def_bool n
+
+config OPENSSL
+	bool "Host has openssl"
+       def_bool y
+
 config LKL
 	bool "LKL support in Intravisor"
+	depends on MODE_HYB
        def_bool n
 
 
 menu	"LKL Config"
 	depends on LKL
-
-config LKL_HEAP_SIZE_MB
-	int "Heap size in MB"
-	default	200
-
 
 endmenu
 

@@ -1,10 +1,13 @@
 MAKEFILE := $(shell git rev-parse --show-toplevel)/cfg.mak
 include $(MAKEFILE)
 
+LIBOS_PATH := ../..
+
+
 
 CFLAGS=-fPIC -fPIE -pie -g -O2  -nostdinc \
 	$(TARGET_FLAGS_LINUX) $(SYSROOT_FLAGS_PURE) -B$(CROSS_COMPILE) $(ARCH_PURE) \
-	 -I ../../musl-host/include  \
+	 -I $(LIBOS_PATH)/musl-host/include  \
 	
 
 DEPS = 
@@ -25,11 +28,11 @@ $(OBJDIR)/%.o: %.c $(DEPS) $(PASS1) $(PASS2)
 
 
 libhello_world.so: $(OBJ)
-	$(CC_CHERI_PURE) $(CC_CHERI_PURE_FLAGS) $(CFLAGS) -o $@ -nostdlib -Wl,-eouter_c -fPIE -fPIC $(OBJ) $(LD_FLAGS) ../../libmusl-uni.a
+	$(CC_CHERI_PURE) $(CC_CHERI_PURE_FLAGS) $(CFLAGS) -o $@ -nostdlib -Wl,-eouter_c -fPIE -fPIC $(OBJ) $(LD_FLAGS) $(LIBOS_PATH)/libmusl-uni.a
 
 clean:
 	rm -rf ./*.o ./*.so ./*.ll ./1.txt $(OBJDIR)
 
 install:
 	sudo mkdir -p ${INSTALL_PATH}
-	sudo cp ./*.yaml ./*.so ${INSTALL_PATH}
+	sudo cp ./*.yaml ./*.so ./*.ci ${INSTALL_PATH}

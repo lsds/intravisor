@@ -355,7 +355,7 @@ static long long rule_to_secs(const int *rule, int year)
  * enables a caller to efficiently adjust for the case where an explicit
  * DST specification mismatches what would be in effect at the time. */
 
-void secs_to_zone(long long t, int local, int *isdst, long *offset, long *oppoff, const char **zonename)
+void __secs_to_zone(long long t, int local, int *isdst, long *offset, long *oppoff, const char **zonename)
 {
 	LOCK(lock);
 

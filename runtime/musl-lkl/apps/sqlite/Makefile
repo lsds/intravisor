@@ -21,7 +21,7 @@ clean:
 
 install:
 	sudo mkdir -p ${INSTALL_PATH}
-	sudo cp ./*.yaml ./*.img ${INSTALL_PATH}
+	sudo cp ./*.yaml ./*.img ./*.ci ${INSTALL_PATH}
 
 
 $(PROG): $(PROG_C) sqlite3.c

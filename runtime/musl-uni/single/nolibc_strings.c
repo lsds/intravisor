@@ -26,13 +26,10 @@
 #define HIGHS (ONES * (UCHAR_MAX/2+1))
 #define HASZERO(x) ((x)-ONES & ~(x) & HIGHS)
 
-
-
-
 void *my_calloc(size_t nmemb, size_t size);
 void *my_malloc(size_t size);
-       void my_free(void *ptr);
-       void *my_realloc(void *ptr, size_t size);
+void my_free(void *ptr);
+void *my_realloc(void *ptr, size_t size);
 
 void *calloc(size_t nmemb, size_t size) {
 	return my_calloc(nmemb, size);
@@ -50,17 +47,17 @@ void *realloc(void *ptr, size_t size) {
 	return my_realloc(ptr, size);
 }
 
-typedef	__intcap_t word;	/* "word" used for optimal copy speed */
+typedef __intcap_t word;	/* "word" used for optimal copy speed */
 #define	wsize	sizeof(word)
 #define	wmask	(wsize - 1)
 #define __CAP	__capability
 
-void * memcpy(void * __CAP dst0, const void *  __CAP src0, size_t length) {
-	char * __CAP dst = dst0;
-	const char * __CAP src = src0;
+void *memcpy(void *__CAP dst0, const void *__CAP src0, size_t length) {
+	char *__CAP dst = dst0;
+	const char *__CAP src = src0;
 	size_t t;
 
-	if (length == 0 || dst == src)		/* nothing to do */
+	if(length == 0 || dst == src)	/* nothing to do */
 		goto done;
 
 	/*
@@ -69,17 +66,17 @@ void * memcpy(void * __CAP dst0, const void *  __CAP src0, size_t length) {
 #define	TLOOP(s) if (t) TLOOP1(s)
 #define	TLOOP1(s) do { s; } while (--t)
 
-	if (dst < src) {
+	if(dst < src) {
 		/*
 		 * Copy forward.
 		 */
-		t = (__cheri_addr size_t)src;	/* only need low bits */
-		if ((t | (__cheri_addr size_t)dst) & wmask) {
+		t = (__cheri_addr size_t) src;	/* only need low bits */
+		if((t | (__cheri_addr size_t) dst) & wmask) {
 			/*
 			 * Try to align operands.  This cannot be done
 			 * unless the low bits match.
 			 */
-			if ((t ^ (__cheri_addr size_t)dst) & wmask || length < wsize)
+			if((t ^ (__cheri_addr size_t) dst) & wmask || length < wsize)
 				t = length;
 			else
 				t = wsize - (t & wmask);
@@ -90,9 +87,8 @@ void * memcpy(void * __CAP dst0, const void *  __CAP src0, size_t length) {
 		 * Copy whole words, then mop up any trailing bytes.
 		 */
 		t = length / wsize;
-		TLOOP(*(word * __CAP)(void * __CAP)dst =
-		    *(const word * __CAP)(const void * __CAP)src;
-		    src += wsize; dst += wsize);
+		TLOOP(*(word * __CAP) (void *__CAP) dst = *(const word * __CAP) (const void *__CAP) src; src += wsize;
+		      dst += wsize);
 		t = length & wmask;
 		TLOOP(*dst++ = *src++);
 	} else {
@@ -103,9 +99,9 @@ void * memcpy(void * __CAP dst0, const void *  __CAP src0, size_t length) {
 		 */
 		src += length;
 		dst += length;
-		t = (__cheri_addr size_t)src;
-		if ((t | (__cheri_addr size_t)dst) & wmask) {
-			if ((t ^ (__cheri_addr size_t)dst) & wmask || length <= wsize)
+		t = (__cheri_addr size_t) src;
+		if((t | (__cheri_addr size_t) dst) & wmask) {
+			if((t ^ (__cheri_addr size_t) dst) & wmask || length <= wsize)
 				t = length;
 			else
 				t &= wmask;
@@ -113,22 +109,21 @@ void * memcpy(void * __CAP dst0, const void *  __CAP src0, size_t length) {
 			TLOOP1(*--dst = *--src);
 		}
 		t = length / wsize;
-		TLOOP(src -= wsize; dst -= wsize;
-		    *(word * __CAP)(void * __CAP)dst =
-		    *(const word * __CAP)(const void * __CAP)src);
+		TLOOP(src -= wsize;
+		      dst -= wsize; *(word * __CAP) (void *__CAP) dst = *(const word * __CAP) (const void *__CAP) src);
 		t = length & wmask;
 		TLOOP(*--dst = *--src);
 	}
-done:
+      done:
 	return (dst0);
 }
 
-void * memmove(void * __CAP dst0, const void *  __CAP src0, size_t length) {
-	char * __CAP dst = dst0;
-	const char * __CAP src = src0;
+void *memmove(void *__CAP dst0, const void *__CAP src0, size_t length) {
+	char *__CAP dst = dst0;
+	const char *__CAP src = src0;
 	size_t t;
 
-	if (length == 0 || dst == src)		/* nothing to do */
+	if(length == 0 || dst == src)	/* nothing to do */
 		goto done;
 
 	/*
@@ -137,17 +132,17 @@ void * memmove(void * __CAP dst0, const void *  __CAP src0, size_t length) {
 #define	TLOOP(s) if (t) TLOOP1(s)
 #define	TLOOP1(s) do { s; } while (--t)
 
-	if (dst < src) {
+	if(dst < src) {
 		/*
 		 * Copy forward.
 		 */
-		t = (__cheri_addr size_t)src;	/* only need low bits */
-		if ((t | (__cheri_addr size_t)dst) & wmask) {
+		t = (__cheri_addr size_t) src;	/* only need low bits */
+		if((t | (__cheri_addr size_t) dst) & wmask) {
 			/*
 			 * Try to align operands.  This cannot be done
 			 * unless the low bits match.
 			 */
-			if ((t ^ (__cheri_addr size_t)dst) & wmask || length < wsize)
+			if((t ^ (__cheri_addr size_t) dst) & wmask || length < wsize)
 				t = length;
 			else
 				t = wsize - (t & wmask);
@@ -158,9 +153,8 @@ void * memmove(void * __CAP dst0, const void *  __CAP src0, size_t length) {
 		 * Copy whole words, then mop up any trailing bytes.
 		 */
 		t = length / wsize;
-		TLOOP(*(word * __CAP)(void * __CAP)dst =
-		    *(const word * __CAP)(const void * __CAP)src;
-		    src += wsize; dst += wsize);
+		TLOOP(*(word * __CAP) (void *__CAP) dst = *(const word * __CAP) (const void *__CAP) src; src += wsize;
+		      dst += wsize);
 		t = length & wmask;
 		TLOOP(*dst++ = *src++);
 	} else {
@@ -171,9 +165,9 @@ void * memmove(void * __CAP dst0, const void *  __CAP src0, size_t length) {
 		 */
 		src += length;
 		dst += length;
-		t = (__cheri_addr size_t)src;
-		if ((t | (__cheri_addr size_t)dst) & wmask) {
-			if ((t ^ (__cheri_addr size_t)dst) & wmask || length <= wsize)
+		t = (__cheri_addr size_t) src;
+		if((t | (__cheri_addr size_t) dst) & wmask) {
+			if((t ^ (__cheri_addr size_t) dst) & wmask || length <= wsize)
 				t = length;
 			else
 				t &= wmask;
@@ -181,13 +175,11 @@ void * memmove(void * __CAP dst0, const void *  __CAP src0, size_t length) {
 			TLOOP1(*--dst = *--src);
 		}
 		t = length / wsize;
-		TLOOP(src -= wsize; dst -= wsize;
-		    *(word * __CAP)(void * __CAP)dst =
-		    *(const word * __CAP)(const void * __CAP)src);
+		TLOOP(src -= wsize;
+		      dst -= wsize; *(word * __CAP) (void *__CAP) dst = *(const word * __CAP) (const void *__CAP) src);
 		t = length & wmask;
 		TLOOP(*--dst = *--src);
 	}
-done:
+      done:
 	return (dst0);
 }
-

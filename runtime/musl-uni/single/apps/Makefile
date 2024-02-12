@@ -1,5 +1,10 @@
 # List of subdirectories to traverse
-SUBDIRS := $(wildcard */)
+ALL_SUBDIRS := $(wildcard */)
+
+#ALL_SUBDIRS := hello_world/ 
+
+EXCLUDE_SUBDIR := intravisor/
+SUBDIRS := $(filter-out $(EXCLUDE_SUBDIR), $(ALL_SUBDIRS))
 
 .PHONY: all clean install
 

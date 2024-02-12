@@ -47,7 +47,7 @@ lkl ${LIBLKL} ${LKL_BUILD}/include: ${HOST_MUSL_CC} | ${LKL_BUILD}
 #	cp -Rv src/lkl/override/defconfig ${LKL}/arch/lkl/defconfig
 #	cp -Rv src/lkl/override/include/uapi/asm-generic/stat.h ${LKL}/include/uapi/asm-generic/stat.h
 #	# Set bootmem size (default in LKL is 64MB)
-	sed -i 's/\#define K_SIZE .*/\#define K_SIZE (${CONFIG_LKL_HEAP_SIZE_MB}*1024*1024LL)/g' lkl/arch/lkl/mm/bootmem.c
+#	sed -i 's/\#define K_SIZE .*/\#define K_SIZE (${CONFIG_LKL_HEAP_SIZE_MB}*1024*1024LL)/g' lkl/arch/lkl/mm/bootmem.c
 ifdef CONFIG_ARCH_ARM
 	cp lkl/arch/arm64/include/uapi/asm/fcntl.h lkl/arch/lkl/include/uapi/asm/fcntl.h 
 endif

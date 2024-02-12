@@ -1,3 +1,5 @@
 export REALGCC=riscv64-linux-gnu-gcc
 export LKL_MUSL_HOST=riscv64-linux-gnu
 export LKL_MUSL_BUILD=riscv64
+export LKL_MUSL_DOCKER_PLAT="--platform=linux/riscv64"
+#export HOST="-H sifive.local"

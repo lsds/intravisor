@@ -1,0 +1,11 @@
+---
+cVMs:
+- name: hello
+  disk: disk_docker_tf1.img
+  runtime: libmusl-lkl.so
+  args: "/ld.so /usr/bin/python3 /tf-benchmarks/scripts/tf_cnn_benchmarks/tf_cnn_benchmarks.py  --model lenet --data_format NHWC --device cpu --data_dir /tf-benchmarks/scripts/tf_cnn_benchmarks/test_data/fake_tf_record_data/ --data_name imagenet"
+  isolation:
+  - base:  0x400000000
+    size:  0x080000000
+    begin: 0x400000000
+    end:   0x480000000

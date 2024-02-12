@@ -235,13 +235,16 @@ st_cap:
 .global cinv2_sp
 .type cinv2_sp,%function
 cinv2_sp:
-//cinv2 anyway doesn't work
+		mov	csp, CA4
 
 
 .global cinv2
 .type cinv2,%function
 cinv2:
-    BRK 0
+
+		msr		ddc, CA3
+		blrs c29, CA1, CA2
+
 
 .global ret_from_cinv2
 .type ret_from_cinv2,%function

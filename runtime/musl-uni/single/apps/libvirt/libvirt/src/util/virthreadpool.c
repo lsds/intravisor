@@ -226,40 +226,39 @@ virThreadPoolNewFull(size_t minWorkers,
                      void *opaque)
 {
     virThreadPoolPtr pool;
-printf("%s %d\n", __FILE__, __LINE__);
+
     if (minWorkers > maxWorkers)
         minWorkers = maxWorkers;
-printf("%s %d\n", __FILE__, __LINE__);
+
     if (VIR_ALLOC(pool) < 0)
         return NULL;
-printf("%s %d\n", __FILE__, __LINE__);
+
     pool->jobList.tail = pool->jobList.head = NULL;
 
     pool->jobFunc = func;
     pool->jobFuncName = funcName;
     pool->jobOpaque = opaque;
-printf("%s %d\n", __FILE__, __LINE__);
+
     if (virMutexInit(&pool->mutex) < 0)
         goto error;
-printf("%s %d\n", __FILE__, __LINE__);
+
     if (virCondInit(&pool->cond) < 0)
         goto error;
-printf("%s %d\n", __FILE__, __LINE__);
+
     if (virCondInit(&pool->quit_cond) < 0)
         goto error;
-printf("%s %d\n", __FILE__, __LINE__);
+
     pool->minWorkers = minWorkers;
     pool->maxWorkers = maxWorkers;
     pool->maxPrioWorkers = prioWorkers;
-printf("%s %d\n", __FILE__, __LINE__);
+
     if (virThreadPoolExpand(pool, minWorkers, false) < 0)
         goto error;
-printf("%s %d\n", __FILE__, __LINE__);
+
     if (prioWorkers) {
-printf("%s %d\n", __FILE__, __LINE__);
         if (virCondInit(&pool->prioCond) < 0)
             goto error;
-printf("%s %d\n", __FILE__, __LINE__);
+
         if (virThreadPoolExpand(pool, prioWorkers, true) < 0)
             goto error;
     }

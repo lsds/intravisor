@@ -361,7 +361,7 @@ lkl_printf("new = %p\n", new);
 
 	ret = __syscall(220, flags, ts, &new->tid, TP_ADJ(new), &__thread_list_lock);
 	if(ret == 0) {
-#ifdef __riscv64__
+#ifdef __riscv
 		__asm__ __volatile__ ("ld a2, 0(a1); ld a0, 8(a1); ld tp, 16(a1); jalr a2; ebreak;");
 #endif
 #ifdef __aarch64__

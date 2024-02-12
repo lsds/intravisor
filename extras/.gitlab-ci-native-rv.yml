@@ -1,0 +1,148 @@
+RISCV64-native-hyb:
+  stage: build_intravisor
+  artifacts:
+      paths:
+      - /builds/gitlab/cloudcap/intravisor/.config
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+      # when: always # is a default value
+    - when: manual
+  # allow_failure: false # is a default value
+  script:
+    - git config --global --add safe.directory /builds/gitlab/cloudcap/intravisor
+    - echo "Hello, $GITLAB_USER_LOGIN!"
+    - sudo rm -rf /opt/share/RISCV64-native-hyb
+    - sudo mkdir -p /opt/share/RISCV64-native-hyb
+    - echo > /tmp/int.cfg
+    - echo "CONFIG_ARCH_RV=y" >> /tmp/int.cfg
+    - echo "CONFIG_BIT_64=y" >> /tmp/int.cfg
+    - echo "CONFIG_MODE_HYB=y" >> /tmp/int.cfg
+    - echo "CONFIG_OS_CHERIBSD=y" >> /tmp/int.cfg
+    - echo "CONFIG_OPENSSL=y" >> /tmp/int.cfg
+    - echo "CONFIG_CHERI_SDK=\"\$\{HOME\}/cheri/output/sdk\"" >> /tmp/int.cfg
+    - echo "CONFIG_CVM_MAX_SIZE=0x40000000" >> /tmp/int.cfg
+    - kconfig-conf --defconfig=/tmp/int.cfg  Kconfig
+    - cat .config
+    - make -C src -j$(ncpus)
+    - sudo cp src/intravisor /opt/share/RISCV64-native-hyb/
+
+
+RISCV64-native-pure:
+  stage: build_intravisor
+  artifacts:
+      paths:
+      - /builds/gitlab/cloudcap/intravisor/.config
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+      # when: always # is a default value
+    - when: manual
+  # allow_failure: false # is a default value
+  script:
+    - git config --global --add safe.directory /builds/gitlab/cloudcap/intravisor
+    - echo "Hello, $GITLAB_USER_LOGIN!"
+    - sudo rm -rf /opt/share/RISCV64-native-pure
+    - sudo mkdir -p /opt/share/RISCV64-native-pure
+    - echo > /tmp/int.cfg
+    - echo "CONFIG_ARCH_RV=y" >> /tmp/int.cfg
+    - echo "CONFIG_BIT_64=y" >> /tmp/int.cfg
+    - echo "CONFIG_MODE_PURE=y" >> /tmp/int.cfg
+    - echo "CONFIG_OS_CHERIBSD=y" >> /tmp/int.cfg
+    - echo "CONFIG_OPENSSL=y" >> /tmp/int.cfg
+    - echo "CONFIG_CHERI_SDK=\"\$\{HOME\}/cheri/output/sdk\"" >> /tmp/int.cfg
+    - echo "CONFIG_CVM_MAX_SIZE=0x40000000" >> /tmp/int.cfg
+    - kconfig-conf --defconfig=/tmp/int.cfg  Kconfig
+    - cat .config
+    - make -C src -j$(ncpus)
+    - sudo cp src/intravisor /opt/share/RISCV64-native-pure/
+
+
+
+############################################# 
+
+RISCV64-native-two_pure-runtime:
+  stage: build_runtime
+  needs: ["RISCV64-native-pure"]
+  artifacts:
+    when: always
+    paths:
+#      - extras/default.xml
+#      - extras/default.txt
+    reports:
+#      junit: extras/default.xml
+  script:
+    - git config --global --add safe.directory /builds/gitlab/cloudcap/intravisor
+    - make -C runtime/native/two-pure/
+    - make -C runtime/native/two-pure/ install INSTALL_PATH=/opt/share/RISCV64-native-pure/
+
+RISCV64-native-hello-runtime:
+  stage: build_runtime
+  needs: ["RISCV64-native-hyb"]
+  artifacts:
+    when: always
+    paths:
+#      - extras/default.xml
+#      - extras/default.txt
+    reports:
+#      junit: extras/default.xml
+  script:
+    - git config --global --add safe.directory /builds/gitlab/cloudcap/intravisor
+    - make -C runtime/native/hello_world/
+    - make -C runtime/native/hello_world/ install INSTALL_PATH=/opt/share/RISCV64-native-hyb/
+
+######################
+
+RISCV64-native-hello-run:
+  stage: run_app
+  needs: ["RISCV64-native-hello-runtime"]
+  allow_failure: false
+  artifacts:
+    when: always
+    paths:
+      - extras/default.xml
+      - extras/default.txt
+    reports:
+      junit: extras/default.xml
+  timeout: 1h
+  script:
+    - bash
+    - mkdir -p ~/cheri/extra-files/etc/rc.d/
+    - cp extras/int ~/cheri/extra-files/etc/rc.d/
+    - mkdir -p ~/cheri/extra-files/intravisor
+#
+    - sudo cp /opt/share/RISCV64-native-hyb/intravisor ~/cheri/extra-files/intravisor/
+    - sudo cp /opt/share/RISCV64-native-hyb/native-hello.yaml ~/cheri/extra-files/intravisor/cvm.yaml
+    - sudo cp /opt/share/RISCV64-native-hyb/libnative-hello.so ~cheri/cheri/extra-files/intravisor/
+    - sudo cat /opt/share/RISCV64-native-hyb/native-hello.ci > extras/input_keys_musl-uni.txt
+#
+    - ~/cheribuild/cheribuild.py disk-image-riscv64-hybrid --enable-hybrid-targets
+    - cd extras && bash spawn.bash riscv64 300 default.txt input_keys_musl-uni.txt default.xml && cat default.xml | grep -q "failure message" && exit 1 || exit 0
+
+
+RISCV64-native-two_pure-run:
+  stage: run_app
+  needs: ["RISCV64-native-two_pure-runtime"]
+  allow_failure: false
+  artifacts:
+    when: always
+    paths:
+      - extras/default.xml
+      - extras/default.txt
+    reports:
+      junit: extras/default.xml
+  timeout: 1h
+  script:
+    - bash
+    - mkdir -p ~/cheri/extra-files/etc/rc.d/
+    - cp extras/int ~/cheri/extra-files/etc/rc.d/
+    - mkdir -p ~/cheri/extra-files/intravisor
+#
+    - sudo cp /opt/share/RISCV64-native-pure/intravisor ~/cheri/extra-files/intravisor/
+    - sudo cp /opt/share/RISCV64-native-pure/native-two-pure.yaml ~/cheri/extra-files/intravisor/cvm.yaml
+    - sudo cp /opt/share/RISCV64-native-pure/libfirst.so ~cheri/cheri/extra-files/intravisor/
+    - sudo cp /opt/share/RISCV64-native-pure/libsecond.so ~cheri/cheri/extra-files/intravisor/
+    - sudo cat /opt/share/RISCV64-native-pure/native-two-pure.ci > extras/input_keys_musl-uni.txt
+#
+    - ~/cheribuild/cheribuild.py disk-image-riscv64-hybrid --enable-hybrid-targets
+    - cd extras && bash spawn.bash riscv64 300 default.txt input_keys_musl-uni.txt default.xml && cat default.xml | grep -q "failure message" && exit 1 || exit 0
+
+

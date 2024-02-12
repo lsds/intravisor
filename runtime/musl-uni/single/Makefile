@@ -20,7 +20,7 @@ endif
 
 DEPS = 
 OBJDIR = obj
-SRC = main.c tramps.c hostcalls.c nolibc_printf2.c nolibc_float.c nolibc_printf.c nolibc_file.c  nolibc_strings.c nolibc_time.c nolibc_unsorted.c nolibc_regex.c dlmalloc_nonreuse.c cpio.c nolibc_network.c
+SRC = main.c tramps.c hostcalls.c nolibc_printf2.c nolibc_printf.c nolibc_file.c  nolibc_strings.c nolibc_time.c nolibc_unsorted.c dlmalloc_nonreuse.c cpio.c nolibc_network.c nolibc_pthread.c
 SRC += arch/${TARGET_ARCH}/nolibc_math.c 
 SRC += $(wildcard musl-host/src/ctype/*.c)
 SRC += $(wildcard musl-host/src/locale/*.c)
@@ -40,6 +40,7 @@ SRC += $(wildcard musl-host/src/misc/*.c)
 SRC += $(wildcard musl-host/src/regex/*.c)
 SRC += $(wildcard musl-host/src/conf/*.c)
 SRC += $(wildcard musl-host/src/network/*.c)
+SRC += $(wildcard musl-host/src/unistd/*.c)
 SRC += unikraft/vfscore/main.c unikraft/vfscore/fd.c unikraft/vfscore/rootfs.c unikraft/vfscore/task.c unikraft/vfscore/vnode.c  unikraft/vfscore/dentry.c unikraft/vfscore/file.c unikraft/vfscore/subr_uio.c unikraft/vfscore/fops.c unikraft/vfscore/lookup.c unikraft/vfscore/mount.c unikraft/vfscore/syscalls.c
 SRC += unikraft/ramfs/ramfs_vnops.c unikraft/ramfs/ramfs_vfsops.c 
 SRC += unikraft/devfs/devfs_vnops.c unikraft/devfs/device.c unikraft/devfs/null.c
@@ -71,7 +72,12 @@ $(OBJDIR)/tramps.o: arch/$(TARGET_ARCH)/tramps.S
 
 libmusl-uni.a: $(OBJ)
 #	$(CC_CHERI_PURE) $(CC_CHERI_PURE_FLAGS) $(CFLAGS) -o $@ -nostdlib -Wl,-eouter_c -fPIE -fPIC $(OBJ) $(LD_FLAGS)
-	ar rcs $@ $(OBJ) arch/${TARGET_ARCH}/libcompiler_rt/*
+	$(AR) rcs $@ $(OBJ) arch/${TARGET_ARCH}/libcompiler_rt/*
+
+install:
+	sudo mkdir -p ${INSTALL_PATH}/musl-host/
+	sudo cp -r ./musl-host/include ${INSTALL_PATH}/musl-host/
+	sudo cp ./libmusl-uni.a ${INSTALL_PATH}/
 
 clean:
 	rm -rf ./*.o ./*.so ./*.ll ./1.txt $(OBJDIR) ./*.a

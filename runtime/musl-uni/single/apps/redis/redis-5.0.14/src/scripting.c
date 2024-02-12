@@ -1775,15 +1775,24 @@ int ldbRemoveChild(pid_t pid) {
     return 0;
 }
 
+int static ldb_once = 1;
+
 /* Return the number of children we still did not receive termination
  * acknowledge via wait() in the parent process. */
 int ldbPendingChildren(void) {
+    if(ldb_once) {
+	    printf("WARNING: %s is disabled, report once\n",__func__);
+	    ldb_once = 0;
+    }
     return 0; //FIXME
     return listLength(ldb.children);
 }
 
 /* Kill all the forked sessions. */
 void ldbKillForkedSessions(void) {
+    printf("WARNING: %s is disabled\n",__func__);
+    return; //FIXME
+
     listIter li;
     listNode *ln;
 

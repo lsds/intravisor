@@ -8,29 +8,29 @@ extern "C" {
 #include <lkl/asm/host_ops.h>
 #include <lkl.h>
 
-extern struct lkl_host_operations lkl_host_ops;
+	extern struct lkl_host_operations lkl_host_ops;
 
 /**
  * lkl_printf - print a message via the host print operation
  *
  * @fmt: printf like format string
  */
-int lkl_printf(const char *fmt, ...);
+	int lkl_printf(const char *fmt, ...);
 
-extern char lkl_virtio_devs[4096];
+	extern char lkl_virtio_devs[4096];
 #define LKL_HOST_CONFIG_POSIX
 #ifdef LKL_HOST_CONFIG_POSIX
 #include <sys/uio.h>
 #else
 #ifndef SIM
-struct iovec {
-	void *iov_base;
-	size_t iov_len;
-};
+	struct iovec {
+		void *iov_base;
+		size_t iov_len;
+	};
 #endif
 #endif
 
-extern struct lkl_dev_blk_ops lkl_dev_blk_ops;
+	extern struct lkl_dev_blk_ops lkl_dev_blk_ops;
 
 /**
  * struct lkl_blk_req - block device request
@@ -41,28 +41,27 @@ extern struct lkl_dev_blk_ops lkl_dev_blk_ops;
  * @buf: an array of buffers to be used for read / write requests
  * @count: the number of buffers
  */
-struct lkl_blk_req {
+	struct lkl_blk_req {
 #define LKL_DEV_BLK_TYPE_READ		0
 #define LKL_DEV_BLK_TYPE_WRITE		1
 #define LKL_DEV_BLK_TYPE_FLUSH		4
 #define LKL_DEV_BLK_TYPE_FLUSH_OUT	5
-	unsigned int type;
-	unsigned int prio;
-	unsigned long long sector;
-	struct iovec *buf;
-	int count;
-};
+		unsigned int type;
+		unsigned int prio;
+		unsigned long long sector;
+		struct iovec *buf;
+		int count;
+	};
 
 #define LKL_DEV_BLK_STATUS_OK		0
 #define LKL_DEV_BLK_STATUS_IOERR	1
 #define LKL_DEV_BLK_STATUS_UNSUP	2
 
-
 /**
  * struct lkl_dev_blk_ops - block device host operations
  */
 #if 1
-struct lkl_dev_blk_ops {
+	struct lkl_dev_blk_ops {
 	/**
 	 * @get_capacity: returns the disk capacity in bytes
 	 *
@@ -70,27 +69,27 @@ struct lkl_dev_blk_ops {
 	 * @res - pointer to receive the capacity, in bytes;
 	 * @returns - 0 in case of success, negative value in case of error
 	 */
-	int (*get_capacity)(struct lkl_disk disk, unsigned long long *res);
+		int (*get_capacity)(struct lkl_disk disk, unsigned long long *res);
 	/**
 	 * @request: issue a block request
 	 *
 	 * @disk - the disk the request is issued to;
 	 * @req - a request described by &struct lkl_blk_req
 	 */
-	int (*request)(struct lkl_disk disk, struct lkl_blk_req *req);
-};
+		int (*request)(struct lkl_disk disk, struct lkl_blk_req * req);
+	};
 #endif
 
-struct lkl_netdev {
-	struct lkl_dev_net_ops *ops;
-	int id;
-	unsigned char has_vnet_hdr: 1;
-};
+	struct lkl_netdev {
+		struct lkl_dev_net_ops *ops;
+		int id;
+		unsigned char has_vnet_hdr:1;
+	};
 
 /**
  * struct lkl_dev_net_ops - network device host operations
  */
-struct lkl_dev_net_ops {
+	struct lkl_dev_net_ops {
 	/**
 	 * @tx: writes a L2 packet into the net device
 	 *
@@ -102,7 +101,7 @@ struct lkl_dev_net_ops {
 	 *
 	 * @returns number of bytes transmitted
 	 */
-	int (*tx)(struct lkl_netdev *nd, struct iovec *iov, int cnt);
+		int (*tx)(struct lkl_netdev * nd, struct iovec * iov, int cnt);
 
 	/**
 	 * @rx: reads a packet from the net device.
@@ -118,7 +117,7 @@ struct lkl_dev_net_ops {
 	 *
 	 * @returns number of bytes read for success or < 0 if error
 	 */
-	int (*rx)(struct lkl_netdev *nd, struct iovec *iov, int cnt);
+		int (*rx)(struct lkl_netdev * nd, struct iovec * iov, int cnt);
 
 #define LKL_DEV_NET_POLL_RX		1
 #define LKL_DEV_NET_POLL_TX		2
@@ -138,14 +137,14 @@ struct lkl_dev_net_ops {
 	 * @returns - LKL_DEV_NET_POLL_RX, LKL_DEV_NET_POLL_TX,
 	 * LKL_DEV_NET_POLL_HUP or a negative value for errors
 	 */
-	int (*poll)(struct lkl_netdev *nd);
+		int (*poll)(struct lkl_netdev * nd);
 
 	/**
 	 * @poll_hup: make poll wakeup and return LKL_DEV_NET_POLL_HUP
 	 *
 	 * @nd - pointer to the network device
 	 */
-	void (*poll_hup)(struct lkl_netdev *nd);
+		void (*poll_hup)(struct lkl_netdev * nd);
 
 	/**
 	 * @free: frees a network device
@@ -155,11 +154,10 @@ struct lkl_dev_net_ops {
 	 *
 	 * @nd - pointer to the network device
 	 */
-	void (*free)(struct lkl_netdev *nd);
-};
+		void (*free)(struct lkl_netdev * nd);
+	};
 
 #ifdef __cplusplus
 }
 #endif
-
 #endif

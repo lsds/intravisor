@@ -1814,22 +1814,17 @@ int virConnectOpenEnsureACL(virConnectPtr conn)
 {
     virAccessManagerPtr mgr;
     int rv;
-printf("%s %d\n", __FILE__, __LINE__);
+
     if (!(mgr = virAccessManagerGetDefault())) {
-printf("%s %d\n", __FILE__, __LINE__);
         return -1;
     }
-printf("%s %d\n", __FILE__, __LINE__);
     if ((rv = virAccessManagerCheckConnect(mgr, conn->driver->name, VIR_ACCESS_PERM_CONNECT_GETATTR)) <= 0) {
-printf("%s %d\n", __FILE__, __LINE__);
         virObjectUnref(mgr);
         if (rv == 0) {
-printf("%s %d\n", __FILE__, __LINE__);
             virReportError(VIR_ERR_ACCESS_DENIED, NULL);
         }
         return -1;
     }
-printf("%s %d\n", __FILE__, __LINE__);
     virObjectUnref(mgr);
     return 0;
 }

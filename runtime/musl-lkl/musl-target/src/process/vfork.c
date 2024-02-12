@@ -5,6 +5,7 @@
 
 pid_t vfork(void)
 {
+	lkl_printf("%s\n",__func__);while(1);
 	/* vfork syscall cannot be made from C code */
 #ifdef SYS_fork
 	return syscall(SYS_fork);

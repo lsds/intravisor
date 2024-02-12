@@ -1681,8 +1681,6 @@ static void print_report(int is_last_report, int64_t timer_start, int64_t cur_ti
     } else {
         av_bprintf(&buf, " speed=%4.3gx", speed);
         av_bprintf(&buf_script, "speed=%4.3gx\n", speed);
-	if(speed < 1.0)
-		exit(1);
     }
 
     if (print_stats || is_last_report) {

@@ -11,7 +11,7 @@
 
 #include "loader.h"
 
-unsigned long cvm_heap_begin  = 0xaabba;
+unsigned long cvm_heap_begin = 0xaabba;
 unsigned long cvm_heap_size = 0xcaca;
 
 static int lkl_mount_blockdev(const char *dev_str, const char *mnt_point, const char *fs_type, int flags, const char *data) {
@@ -214,8 +214,8 @@ void tree(char *basePath, const int root) {
 	int i;
 	char path[1000];
 	struct dirent *dp;
-//	printf("MUSL: %x %x %x\n", O_RDONLY, O_DIRECTORY, O_CLOEXEC);
-//	printf("LKL: %x %x %x\n", LKL_O_RDONLY, LKL_O_DIRECTORY, LKL_O_CLOEXEC);
+//      printf("MUSL: %x %x %x\n", O_RDONLY, O_DIRECTORY, O_CLOEXEC);
+//      printf("LKL: %x %x %x\n", LKL_O_RDONLY, LKL_O_DIRECTORY, LKL_O_CLOEXEC);
 	DIR *dir = opendir(basePath);
 
 	if(!dir)
@@ -245,65 +245,63 @@ void tree(char *basePath, const int root) {
 
 #include <linux/random.h>
 
-static void init_random()
-{
-    struct rand_pool_info* pool_info = 0;
-    FILE* f;
-    int fd = 0;
+static void init_random() {
+	struct rand_pool_info *pool_info = 0;
+	FILE *f;
+	int fd = 0;
 
-    lkl_printf("Adding entropy to entropy pool\n");
+	lkl_printf("Adding entropy to entropy pool\n");
 
-    char buf[8] = {0};
-    f = fopen("/proc/sys/kernel/random/poolsize", "r");
-    if (!f)
-        goto err;
-    if (fgets(buf, 8, f) == NULL)
-        goto err;
-    // /proc/sys/kernel/random/poolsize for kernel 2.6+ contains pool size in
-    // bits, divide by 8 for number of bytes.
-    int poolsize = atoi(buf) / 8;
+	char buf[8] = { 0 };
+	f = fopen("/proc/sys/kernel/random/poolsize", "r");
+	if(!f)
+		goto err;
+	if(fgets(buf, 8, f) == NULL)
+		goto err;
+	// /proc/sys/kernel/random/poolsize for kernel 2.6+ contains pool size in
+	// bits, divide by 8 for number of bytes.
+	int poolsize = atoi(buf) / 8;
 
-    // To be on the safe side, add entropy equivalent to the pool size.
-    pool_info = (struct rand_pool_info*)malloc(sizeof(pool_info) + poolsize);
-    if (!pool_info)
-        goto err;
+	// To be on the safe side, add entropy equivalent to the pool size.
+	pool_info = (struct rand_pool_info *) malloc(sizeof(pool_info) + poolsize);
+	if(!pool_info)
+		goto err;
 
-    pool_info->entropy_count = poolsize * 8;
-    pool_info->buf_size = poolsize;
+	pool_info->entropy_count = poolsize * 8;
+	pool_info->buf_size = poolsize;
 
-    uint64_t* entropy_buf = (uint64_t*)pool_info->buf;
-    uint64_t *ttt = (uint64_t *) &lkl_call;
-    for (int i = 0; i < poolsize / 8; i++)
-    {
+	uint64_t *entropy_buf = (uint64_t *) pool_info->buf;
+	uint64_t *ttt = (uint64_t *) & lkl_call;
+	for(int i = 0; i < poolsize / 8; i++) {
 #if 0
-        // TODO Use intrinsics
-        if (!_rdrand64_step(&entropy_buf[i]))
-           goto err;
+		// TODO Use intrinsics
+		if(!_rdrand64_step(&entropy_buf[i]))
+			goto err;
 #else
 //        register uint64_t rd;
 //        __asm__ volatile("rdrand %0;" : "=r"(rd));
 //        entropy_buf[i] = rd;
-	entropy_buf[i]=ttt[i];
+		entropy_buf[i] = ttt[i];
 #endif
-    }
+	}
 
-    fd = open("/dev/random", O_RDONLY);
-    // Define ioctl() rather than including <sys/ioctl.h> to work around
-    // duplicate definitions of the _IO* family of macros.
+	fd = open("/dev/random", O_RDONLY);
+	// Define ioctl() rather than including <sys/ioctl.h> to work around
+	// duplicate definitions of the _IO* family of macros.
 //    extern int ioctl (int, int, ...);
-    if (ioctl(fd, RNDADDENTROPY, pool_info) == -1)
-        goto err;
+	if(ioctl(fd, RNDADDENTROPY, pool_info) == -1)
+		goto err;
 
-    goto out;
-err:
-    lkl_printf("Failed to add entropy to entropy pool.\n");
-out:
-    if (f)
-        fclose(f);
-    if (fd)
-        close(fd);
-    if (pool_info)
-        free(pool_info);
+	goto out;
+      err:
+	lkl_printf("Failed to add entropy to entropy pool.\n");
+      out:
+	if(f)
+		fclose(f);
+	if(fd)
+		close(fd);
+	if(pool_info)
+		free(pool_info);
 }
 
 void *mount_thread(void *arg) {
@@ -370,17 +368,17 @@ void *mount_thread(void *arg) {
 #if 1
 //        lkl_opendir("/", &err);
 
-		err = lkl_sys_open("/dev/null", O_RDWR, 0);
-		printf("pad Descriptor Table: %d (%s)\n", err);
-//		perror("null");
+	err = lkl_sys_open("/dev/null", O_RDWR, 0);
+	printf("pad Descriptor Table: %d (%s)\n", err);
+//              perror("null");
 
-		err = lkl_sys_open("/dev/null", O_RDWR, 0);
-		printf("pad Descriptor Table: %d (%s)\n", err);
-//		perror("null");
+	err = lkl_sys_open("/dev/null", O_RDWR, 0);
+	printf("pad Descriptor Table: %d (%s)\n", err);
+//              perror("null");
 
-		err = lkl_sys_open("/dev/null", O_RDWR, 0);
-		printf("pad Descriptor Table: %d (%s)\n", err);
-//		perror("null");
+	err = lkl_sys_open("/dev/null", O_RDWR, 0);
+	printf("pad Descriptor Table: %d (%s)\n", err);
+//              perror("null");
 #endif
 
 //checks 
@@ -403,8 +401,6 @@ void *mount_thread(void *arg) {
 		closedir(pDir);
 
 	tree("/cap", 1);
-
-
 
 	int rs = symlink("/proc/self/fd/0", "/dev/stdin");
 	if(rs != 0) {

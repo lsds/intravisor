@@ -1,6 +1,6 @@
 #include "monitor.h"
 
-#define CF_NAME_LEN		10
+#define CF_NAME_LEN		20
 #define MAX_CF_FILES	10
 
 struct cap_files_store_s {
@@ -9,6 +9,8 @@ struct cap_files_store_s {
 	char name[CF_NAME_LEN];
 	int size;
 };
+
+#define CF_DEBUG
 
 static struct cap_files_store_s cap_files[MAX_CF_FILES];
 static pthread_mutex_t cf_store_lock;

@@ -82,7 +82,7 @@ cinv:
 .global cinv2_sp
 .type cinv2_sp,%function
 cinv2_sp:
-	mv sp, a4
+	cmove	csp, ca4
 
 .global cinv2
 .type cinv2,%function

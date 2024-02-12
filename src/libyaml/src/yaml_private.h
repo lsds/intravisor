@@ -12,31 +12,26 @@
  * Memory management.
  */
 
-YAML_DECLARE(void *)
-yaml_malloc(size_t size);
+YAML_DECLARE(void *) yaml_malloc(size_t size);
 
-YAML_DECLARE(void *)
-yaml_realloc(void *ptr, size_t size);
+YAML_DECLARE(void *) yaml_realloc(void *ptr, size_t size);
 
-YAML_DECLARE(void)
-yaml_free(void *ptr);
+YAML_DECLARE(void) yaml_free(void *ptr);
 
 YAML_DECLARE(yaml_char_t *)
-yaml_strdup(const yaml_char_t *);
+    yaml_strdup(const yaml_char_t *);
 
 /*
  * Reader: Ensure that the buffer contains at least `length` characters.
  */
 
-YAML_DECLARE(int)
-yaml_parser_update_buffer(yaml_parser_t *parser, size_t length);
+YAML_DECLARE(int) yaml_parser_update_buffer(yaml_parser_t * parser, size_t length);
 
 /*
  * Scanner: Ensure that the token stack contains at least one token ready.
  */
 
-YAML_DECLARE(int)
-yaml_parser_fetch_more_tokens(yaml_parser_t *parser);
+YAML_DECLARE(int) yaml_parser_fetch_more_tokens(yaml_parser_t * parser);
 
 /*
  * The size of the input raw buffer.
@@ -76,7 +71,6 @@ yaml_parser_fetch_more_tokens(yaml_parser_t *parser);
 
 #define MAX_FILE_SIZE (~(size_t)0 / 2)
 
-
 /*
  * The size of other stacks and queues.
  */
@@ -106,19 +100,14 @@ yaml_parser_fetch_more_tokens(yaml_parser_t *parser);
  */
 
 typedef struct {
-    yaml_char_t *start;
-    yaml_char_t *end;
-    yaml_char_t *pointer;
+	yaml_char_t *start;
+	yaml_char_t *end;
+	yaml_char_t *pointer;
 } yaml_string_t;
 
-YAML_DECLARE(int)
-yaml_string_extend(yaml_char_t **start,
-        yaml_char_t **pointer, yaml_char_t **end);
+YAML_DECLARE(int) yaml_string_extend(yaml_char_t ** start, yaml_char_t ** pointer, yaml_char_t ** end);
 
-YAML_DECLARE(int)
-yaml_string_join(
-        yaml_char_t **a_start, yaml_char_t **a_pointer, yaml_char_t **a_end,
-        yaml_char_t **b_start, yaml_char_t **b_pointer, yaml_char_t **b_end);
+YAML_DECLARE(int) yaml_string_join(yaml_char_t ** a_start, yaml_char_t ** a_pointer, yaml_char_t ** a_end, yaml_char_t ** b_start, yaml_char_t ** b_pointer, yaml_char_t ** b_end);
 
 #define NULL_STRING { NULL, NULL, NULL }
 
@@ -293,7 +282,7 @@ yaml_string_join(
 #define IS_BOM_AT(string,offset)                                                \
      (CHECK_AT((string),'\xEF',(offset))                                        \
       && CHECK_AT((string),'\xBB',(offset)+1)                                   \
-      && CHECK_AT((string),'\xBF',(offset)+2))  /* BOM (#xFEFF) */
+      && CHECK_AT((string),'\xBF',(offset)+2))	/* BOM (#xFEFF) */
 
 #define IS_BOM(string)  IS_BOM_AT(string,0)
 
@@ -336,7 +325,7 @@ yaml_string_join(
          && CHECK_AT((string),'\xA8',(offset)+2))   /* LS (#x2028) */           \
      || (CHECK_AT((string),'\xE2',(offset))                                     \
          && CHECK_AT((string),'\x80',(offset)+1)                                \
-         && CHECK_AT((string),'\xA9',(offset)+2)))  /* PS (#x2029) */
+         && CHECK_AT((string),'\xA9',(offset)+2)))	/* PS (#x2029) */
 
 #define IS_BREAK(string)    IS_BREAK_AT((string),0)
 
@@ -414,11 +403,9 @@ yaml_string_join(
  * Stack and queue management.
  */
 
-YAML_DECLARE(int)
-yaml_stack_extend(void **start, void **top, void **end);
+YAML_DECLARE(int) yaml_stack_extend(void **start, void **top, void **end);
 
-YAML_DECLARE(int)
-yaml_queue_extend(void **start, void **head, void **tail, void **end);
+YAML_DECLARE(int) yaml_queue_extend(void **start, void **head, void **tail, void **end);
 
 #define STACK_INIT(context,stack,type)                                     \
   (((stack).start = (type)yaml_malloc(INITIAL_STACK_SIZE*sizeof(*(stack).start))) ? \
@@ -661,12 +648,12 @@ yaml_queue_extend(void **start, void **head, void **tail, void **end);
 /* Strict C compiler warning helpers */
 
 #if defined(__clang__) || defined(__GNUC__)
-#  define HASATTRIBUTE_UNUSED
+#define HASATTRIBUTE_UNUSED
 #endif
 #ifdef HASATTRIBUTE_UNUSED
-#  define __attribute__unused__             __attribute__((__unused__))
+#define __attribute__unused__             __attribute__((__unused__))
 #else
-#  define __attribute__unused__
+#define __attribute__unused__
 #endif
 
 /* Shim arguments are arguments that must be included in your function,
@@ -675,9 +662,9 @@ yaml_queue_extend(void **start, void **head, void **tail, void **end);
 
 /* UNUSED_PARAM() marks a shim argument in the body to silence compiler warnings */
 #ifdef __clang__
-#  define UNUSED_PARAM(a) (void)(a);
+#define UNUSED_PARAM(a) (void)(a);
 #else
-#  define UNUSED_PARAM(a) /*@-noeffect*/if (0) (void)(a)/*@=noeffect*/;
+#define UNUSED_PARAM(a) /*@-noeffect*/if (0) (void)(a)/*@=noeffect*/;
 #endif
 
 #define YAML_MALLOC_STATIC(type) (type*)yaml_malloc(sizeof(type))
