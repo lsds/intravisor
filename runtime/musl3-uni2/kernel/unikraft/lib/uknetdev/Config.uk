@@ -1,0 +1,58 @@
+menuconfig LIBUKNETDEV
+	bool "uknetdev: Network driver interface"
+	default n
+	select LIBNOLIBC if !HAVE_LIBC
+	select LIBUKDEBUG
+	select LIBUKALLOC
+	imply LIBUKLIBPARAM
+
+if LIBUKNETDEV
+config LIBUKNETDEV_MAXNBQUEUES
+	int "Maximum number of receive-transmit queue pairs"
+	default 1
+	help
+		Upper limit for supported number of transmit and receive
+		queues with the uknetdev API. Please note that drivers
+		have their own limits (use API getters to figure out
+		device capabilities). As example, one driver may support
+		only a single receive-transmit queue pair although
+		uknetdev would support 16.
+
+config LIBUKNETDEV_DISPATCHERTHREADS
+	bool "Dispatcher threads for event callbacks"
+	select LIBUKSCHED
+	select LIBUKLOCK
+	select LIBUKLOCK_SEMAPHORE
+	default n
+	help
+		Event callbacks are dispatched in a bottom half
+		thread context instead of the device interrupt context.
+		When this option is enabled a dispatcher thread is
+		allocated for each configured receive queue.
+		libuksched is required for this option.
+
+config LIBUKNETDEV_EINFO_LIBPARAM
+	bool "Netdev einfo with kernel parameters"
+	select LIBUKLIBPARAM
+	select LIBUKARGPARSE
+	help
+		Extended information field are used to pass IPv4 addresses
+		and network settings to network stacks. This option enables to
+		overwrite the values that are provided by underlying drivers
+		with the `netdev.ip` kernel parameter.
+
+config LIBUKNETDEV_EINFO_LIBPARAM_MAXCOUNT
+	int "Maximum number of configurable netdevs"
+	depends on LIBUKNETDEV_EINFO_LIBPARAM
+	range 1 512
+	default 4
+	help
+		This number defines an upper limit of netdev devices that can
+		be configured via the kernel command line.
+
+config LIBUKNETDEV_STATS
+	bool "Collect network statistics"
+	default n
+	help
+		Collect per-interface and global statistics.
+endif

@@ -1,0 +1,32 @@
+menuconfig LIBUKTEST
+	bool "uktest: Unikraft Test Suite"
+	default n
+	select LIBNOLIBC if !HAVE_LIBC
+	select LIBUKDEBUG
+	select LIBUKDEBUG_PRINTK
+
+if LIBUKTEST
+
+config LIBUKTEST_ALL
+	bool "Enable all tests across all libraries"
+	select LIBUKTEST_TEST_MYSELF
+	default y
+
+config LIBUKTEST_FAILFAST
+	bool "Crash on first test failure"
+	default n
+
+config LIBUKTEST_LOG_TESTS
+	bool "Output results of tests as they occur"
+	default y
+
+config LIBUKTEST_LOG_STATS
+	bool "Log test statistics"
+	default y
+	select LIBUKDEBUG_PRINTK_INFO
+
+config LIBUKTEST_TEST_MYSELF
+	bool "Run self-test to check sanity"
+	default n
+
+endif # LIBUKTEST

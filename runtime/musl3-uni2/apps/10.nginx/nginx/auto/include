@@ -1,0 +1,59 @@
+
+# Copyright (C) Igor Sysoev
+# Copyright (C) Nginx, Inc.
+
+
+echo $ngx_n "checking for $ngx_include ...$ngx_c"
+
+cat << END >> $NGX_AUTOCONF_ERR
+
+----------------------------------------
+checking for $ngx_include
+
+END
+
+
+ngx_found=no
+
+cat << END > $NGX_AUTOTEST.c
+
+$NGX_INCLUDE_SYS_PARAM_H
+#include <$ngx_include>
+
+int main(void) {
+    return 0;
+}
+
+END
+
+
+# Don't build an executable but only and object file as we're only testing the include
+ngx_test="$CC $CC_TEST_FLAGS $CC_AUX_FLAGS $ngx_feature_inc_path -c -o $NGX_AUTOTEST $NGX_AUTOTEST.c"
+rm -f "$NGX_AUTOTEST"
+eval "$ngx_test >> $NGX_AUTOCONF_ERR 2>&1"
+
+if [ -f $NGX_AUTOTEST ]; then
+
+    ngx_found=yes
+
+    echo " found"
+
+    ngx_name=`echo $ngx_include \
+              | tr abcdefghijklmnopqrstuvwxyz/. ABCDEFGHIJKLMNOPQRSTUVWXYZ__`
+
+
+    have=NGX_HAVE_$ngx_name . auto/have_headers
+
+    eval "NGX_INCLUDE_$ngx_name='#include <$ngx_include>'"
+
+else
+    echo " not found"
+
+    echo "----------"    >> $NGX_AUTOCONF_ERR
+    cat $NGX_AUTOTEST.c  >> $NGX_AUTOCONF_ERR
+    echo "----------"    >> $NGX_AUTOCONF_ERR
+    echo $ngx_test       >> $NGX_AUTOCONF_ERR
+    echo "----------"    >> $NGX_AUTOCONF_ERR
+fi
+
+rm -f $NGX_AUTOTEST*

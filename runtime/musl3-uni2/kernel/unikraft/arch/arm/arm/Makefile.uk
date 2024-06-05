@@ -1,0 +1,89 @@
+ARCHFLAGS     += -D__ARM_32__
+ARCHFLAGS     += -marm
+ISR_ARCHFLAGS += -D__ARM_32__
+ISR_ARCHFLAGS += -marm
+
+CINCLUDES   += -I$(CONFIG_UK_BASE)/arch/arm/arm/include
+ASINCLUDES  += -I$(CONFIG_UK_BASE)/arch/arm/arm/include
+CXXINCLUDES += -I$(CONFIG_UK_BASE)/arch/arm/arm/include
+
+# Disable FPU for trap/exception/interrupt handlers
+ISR_ARCHFLAGS += -mfpu=none
+
+# Set GCC flags for MARCH_ARM32_GENERICV7.
+ifeq ($(CONFIG_MARCH_ARM32_GENERICV7),y)
+ifeq ($(call have_clang),y)
+$(error Generic Cortex A7 CPU model only supported with GCC)
+endif
+ARCHFLAGS     += -march=armv7-a -mtune=generic-armv7-a
+ISR_ARCHFLAGS += -march=armv7-a -mtune=generic-armv7-a
+endif
+
+# Set flags for MARCH_ARM32_CORTEXA5.
+ifeq ($(CONFIG_MARCH_ARM32_CORTEXA5),y)
+ARCHFLAGS     += -mcpu=cortex-a5 -mtune=cortex-a5
+ISR_ARCHFLAGS += -mcpu=cortex-a5 -mtune=cortex-a5
+endif
+
+# Set flags for MARCH_ARM32_CORTEXA7.
+ifeq ($(CONFIG_MARCH_ARM32_CORTEXA7),y)
+ARCHFLAGS     += -mcpu=cortex-a7 -mtune=cortex-a7
+ISR_ARCHFLAGS += -mcpu=cortex-a7 -mtune=cortex-a7
+endif
+
+# Set flags for MARCH_ARM32_CORTEXA8.
+ifeq ($(CONFIG_MARCH_ARM32_CORTEXA8),y)
+ARCHFLAGS     += -mcpu=cortex-a8 -mtune=cortex-a8
+ISR_ARCHFLAGS += -mcpu=cortex-a8 -mtune=cortex-a8
+endif
+
+# Set flags for MARCH_ARM32_CORTEXA9.
+ifeq ($(CONFIG_MARCH_ARM32_CORTEXA9),y)
+ARCHFLAGS     += -mcpu=cortex-a9 -mtune=cortex-a9
+ISR_ARCHFLAGS += -mcpu=cortex-a9 -mtune=cortex-a9
+endif
+
+# Set flags for MARCH_ARM32_CORTEXA12.
+ifeq ($(CONFIG_MARCH_ARM32_CORTEXA12),y)
+ARCHFLAGS     += -mcpu=cortex-a12 -mtune=cortex-a12
+ISR_ARCHFLAGS += -mcpu=cortex-a12 -mtune=cortex-a12
+endif
+
+# Set flags for MARCH_ARM32_CORTEXA15.
+ifeq ($(CONFIG_MARCH_ARM32_CORTEXA15),y)
+ARCHFLAGS     += -mcpu=cortex-a15 -mtune=cortex-a15
+ISR_ARCHFLAGS += -mcpu=cortex-a15 -mtune=cortex-a15
+endif
+
+# Set flags for MARCH_ARM32_CORTEXA17.
+ifeq ($(CONFIG_MARCH_ARM32_CORTEXA17),y)
+ARCHFLAGS     += -mcpu=cortex-a17 -mtune=cortex-a17
+ISR_ARCHFLAGS += -mcpu=cortex-a17 -mtune=cortex-a17
+endif
+
+# Set flags for MARCH_ARM32_CORTEXA32.
+ifeq ($(CONFIG_MARCH_ARM32_CORTEXA32),y)
+ARCHFLAGS     += -mcpu=cortex-a32 -mtune=cortex-a32
+ISR_ARCHFLAGS += -mcpu=cortex-a32 -mtune=cortex-a32
+endif
+
+# Set flags for MARCH_ARM32_CORTEXA35.
+ifeq ($(CONFIG_MARCH_ARM32_CORTEXA35),y)
+ARCHFLAGS     += -mcpu=cortex-a35 -mtune=cortex-a35
+ISR_ARCHFLAGS += -mcpu=cortex-a35 -mtune=cortex-a35
+endif
+
+# Set GCC flags for MARCH_ARM32_A20NEON.
+ifeq ($(CONFIG_MARCH_ARM32_A20NEON),y)
+ifeq ($(call have_clang),y)
+$(error Cortex AllWinner A20 CPU model only supported with GCC)
+endif
+ARCHFLAGS     += -mcpu=cortex-a7 -mtune=cortex-a7 -mfpu=vfpv4-d16 -mfpu=neon-vfpv4 -funsafe-math-optimizations
+ISR_ARCHFLAGS += -mcpu=cortex-a7 -mtune=cortex-a7 -funsafe-math-optimizations
+endif
+
+$(eval $(call addlib,libarmmath))
+LIBARMMATH_SRCS-$(CONFIG_ARCH_ARM_32) += $(CONFIG_UK_BASE)/arch/arm/arm/divsi3.S
+LIBARMMATH_SRCS-$(CONFIG_ARCH_ARM_32) += $(CONFIG_UK_BASE)/arch/arm/arm/ldivmod.S
+LIBARMMATH_SRCS-$(CONFIG_ARCH_ARM_32) += $(CONFIG_UK_BASE)/arch/arm/arm/ldivmod_helper.c
+LIBARMMATH_SRCS-$(CONFIG_ARCH_ARM_32) += $(CONFIG_UK_BASE)/arch/arm/arm/qdivrem.c

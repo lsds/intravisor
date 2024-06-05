@@ -1,0 +1,237 @@
+#
+# For a description of the syntax of this configuration file,
+# see https://www.kernel.org/doc/Documentation/kbuild/Config.in-language.txt.
+#
+mainmenu "Unikraft/$(UK_FULLVERSION) Configuration"
+
+config UK_FULLVERSION
+	string
+	default "$(UK_FULLVERSION)"
+
+config UK_CODENAME
+	string
+	default "$(UK_CODENAME)"
+
+config UK_ARCH
+	string
+	default "x86_64" if ARCH_X86_64
+	default "arm64"  if ARCH_ARM_64
+	default "arm"	if ARCH_ARM_32
+	default "$(UK_ARCH)"
+
+config HOST_ARCH
+	string
+	default "$(HOST_ARCH)"
+
+config NO_APP
+	def_bool $(shell,test $(UK_BASE) = $(UK_APP) && echo y || echo n)
+
+config UK_BASE
+	string
+	default "$(UK_BASE)"
+config UK_APP
+	string
+	default "$(UK_APP)"
+config UK_DEFNAME
+	string
+	default "$(UK_NAME)"
+
+menu "Architecture Selection"
+	source "$(UK_BASE)/arch/Config.uk"
+endmenu
+
+menu "Platform Configuration"
+	source "$(shell,$(UK_BASE)/support/build/config-submenu.sh -q -o '$(KCONFIG_DIR)/plats.uk' -r '$(KCONFIG_PLAT_BASE)' -l '$(KCONFIG_PLAT_BASE)' -c '$(KCONFIG_EPLAT_DIRS)' -e '$(KCONFIG_EXCLUDEDIRS)')"
+endmenu
+
+menu "Device Drivers"
+	source "$(shell,$(UK_BASE)/support/build/config-submenu.sh -q -o '$(KCONFIG_DIR)/drivers.uk' -r '$(KCONFIG_DRIV_BASE)' -l '$(KCONFIG_DRIV_BASE)' -e '$(KCONFIG_EXCLUDEDIRS)')"
+endmenu
+
+menu "Library Configuration"
+	source "$(shell,$(UK_BASE)/support/build/config-submenu.sh -q -o '$(KCONFIG_DIR)/libs.uk' -r '$(KCONFIG_LIB_BASE)' -l '$(KCONFIG_LIB_BASE)' -c '$(KCONFIG_ELIB_DIRS)' -e '$(KCONFIG_EXCLUDEDIRS)')"
+endmenu
+
+if !NO_APP
+	source "$(shell,$(UK_BASE)/support/build/config-submenu.sh -q -o '$(KCONFIG_DIR)/app.uk' -t "Application Options" -l '$(KCONFIG_EAPP_DIR)' -e '$(KCONFIG_EXCLUDEDIRS)')"
+endif
+
+menu "Build Options"
+choice
+	prompt "Optimization level"
+	default OPTIMIZE_PERF
+	help
+	  Set the optimization level for gcc
+
+config OPTIMIZE_NONE
+	bool "No optimizations"
+	help
+		Do not optimize, use -O0.
+
+config OPTIMIZE_PERF
+	bool "Optimize for performance"
+	help
+		Optimize code for performance,
+
+config OPTIMIZE_SIZE
+	bool "Optimize for size"
+	help
+		Optimize code for size.
+endchoice
+
+comment "Hint: Specify a CPU type to get most benefits from performance optimization"
+	depends on OPTIMIZE_PERF && (MARCH_X86_64_GENERIC || MARCH_ARM64_GENERIC)
+
+config OPTIMIZE_NOOMITFP
+	bool "Keep stack frame pointers"
+	default y
+	help
+		Reserves one CPU register for using it as stack frame pointer.
+		Functions are instrumented to save, set up, and restore frame
+		pointers. This option simplifies doing stack walks for
+		debugging for instance.
+
+config OPTIMIZE_DEADELIM
+	bool "Drop unused functions and data"
+	default n
+	help
+		Drop unused functions and data. They will not be copied
+		into the final binary. This might save further space but linking time
+		will increase.
+
+comment "Hint: Enable dropping of unused code to further reduce target image size"
+	depends on OPTIMIZE_SIZE && !OPTIMIZE_DEADELIM
+
+config OPTIMIZE_LTO
+	bool "LTO - Link time optimizations (EXPERIMENTAL)"
+	default n
+	help
+		Enables GCC to do code optimizations during linking. This option
+		will increase overall building time but creates more efficient
+		Unikraft binaries.
+
+config OPTIMIZE_PIE
+	bool "Static-PIE - Position-independent binary"
+	select LIBUKRELOC
+	default n
+	help
+		Creates a position independent binary. Such a Unikernel binary does
+		not have to be placed at a fixed location in the virtual address
+		space by a loader. Some loaders even assume that kernel entrance is
+		relocatable (e.g., EFI).
+
+choice
+	prompt "Debug information level"
+	default DEBUG_SYMBOLS_LVL3
+	help
+		Set the level of available debugging information.
+
+config DEBUG_SYMBOLS_LVL0
+	bool "Level 0 (-g0), None"
+	help
+		No debugging information. This option is not recommended.
+		Building time is reduced.
+
+config DEBUG_SYMBOLS_LVL1
+	bool "Level 1 (-g1)"
+	help
+		Minimal debugging information, enough
+		for making backtraces in parts of the program that
+		you don't plan to debug. This includes descriptions
+		of functions and external variables, but no information
+		about local variables and no line numbers.
+
+config DEBUG_SYMBOLS_LVL2
+	bool "Level 2 (-g2)"
+	help
+		gcc's default setting
+
+config DEBUG_SYMBOLS_LVL3
+	bool "Level 3 (-g3)"
+	help
+		Level 3 includes extra information, such as all the
+		macro definitions present in the program. Some debuggers
+		support macro expansion.
+endchoice
+
+comment "Hint: Keep frame pointers to ease debugging"
+	depends on !OPTIMIZE_NOOMITFP && !DEBUG_SYMBOLS_LVL0
+
+config OPTIMIZE_WARNISERROR
+	bool "Treat warnings as errors"
+	default n
+	help
+		When this option is enabled, the build system stops
+		compilation when a compiler warning is displayed.
+
+config OPTIMIZE_SYMFILE
+	bool "Create a symbols file"
+	default n
+	help
+		Create a separate file with all symbol locations
+
+config OPTIMIZE_COMPRESS
+	bool "Compress images"
+	help
+		Create compressed images. Please note that not all platforms
+		support compressing.
+
+config RECORD_BUILDTIME
+	bool "Keep track of Building time"
+	default n
+	help
+		Record time (and resources) used by each build step
+
+if RECORD_BUILDTIME
+	choice
+		prompt "Tool for recording"
+	        default RECORD_BUILDTIME_TIME
+		help
+			Select which tool is used for recording the build steps
+
+	config RECORD_BUILDTIME_TIME
+	bool "time"
+	help
+		Use time command to record process statistics during building
+
+	config RECORD_BUILDTIME_LIFTOFF
+	bool "liftoff"
+	help
+		Use liftoff to record process statistics during building.
+		Get it from https://github.com/unikraft/liftoff and add
+		it to your command-line environment
+
+	endchoice
+endif
+
+config CROSS_COMPILE
+	string "Custom cross-compiler tool prefix (optional)"
+	help
+		Same as running 'make CROSS_COMPILE=prefix-' but stored for
+		default make runs in this build directory.  You don't
+		need to set this unless you want the configured build
+		directory to select the cross-compiler automatically.
+
+
+config LLVM_TARGET_ARCH
+	string "Custom cross-compiler LLVM target (optional)"
+	help
+		Same as running 'make LLVM_TARGET_ARCH=target' but stored for
+		default make runs in this build directory.  You don't
+		need to set this unless you want the configured build
+		directory to select the cross-compiler automatically.
+		This is used for LLVM based compilers such as clang or rustc.
+#config PARALLEL_JOBS
+#	int "Number of jobs to run simultaneously (0 for auto)"
+#	default "0"
+#	help
+#	  Number of jobs to run simultaneously.  If 0, determine
+#	  automatically according to number of CPUs on the host
+#	  system.
+endmenu
+
+config UK_NAME
+	string "Image name"
+	default UK_DEFNAME
+	help
+	  Name to be used for final image

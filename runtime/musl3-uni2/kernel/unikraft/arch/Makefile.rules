@@ -1,0 +1,37 @@
+_UKARCH_TLS_HAVE_TCB=
+
+# Make sure that the reserved space for a TCB is set only once.
+# A second call of this function will make compiling stop.
+# Usage:
+#  $(eval $(call ukarch_tls_tcb_reserve,<tcb_size_in_bytes>))
+define ukarch_tls_tcb_reserve =
+$(if $(strip $(_UKARCH_TLS_HAVE_TCB)),
+		$(error ukarch_tls_tcb_reserve: Multiple reservations for a TCB requested. Only a single configuration is possible),
+		$(eval LIBCONTEXT_CFLAGS-y+=-DTCB_SIZE=$(1)) \
+		$(eval CFLAGS-y+=-DCONFIG_UKARCH_TLS_HAVE_TCB=1) \
+		$(eval CXXFLAGS-y+=-DCONFIG_UKARCH_TLS_HAVE_TCB=1) \
+		$(eval _UKARCH_TLS_HAVE_TCB:=1))
+endef
+
+# Indicate that no block of bytes is reserved at the end of the TCB
+# Usage:
+#  $(eval $(call aarch64_no_reserved_tcb_overlap))
+define aarch64_no_reserved_tcb_overlap =
+	$(eval LIBCONTEXT_CFLAGS-y+=-DCONFIG_AARCH64_NO_TCB_OVERLAP=1)
+endef
+
+# Converts an architecture string to the corresponding name of a configuration
+# variable
+# WARNING: This function might need to get modified as sson as we introduce
+#          another (external) architecture. This is is only necessary if the
+#          following assumption will note be valid:
+#          This function intents that for any future architecture the
+#          configuration name of matches with its name string, like we we have
+#          with x86: For example, the architecture string is called "x86_64" and
+#          its configuration name just contains this string in capital letters:
+#          `CONFIG_ARCH_X86_64`
+# Usage:
+#  $(call ukarch_str2cfg,"<architecture name>")
+define ukarch_str2cfg =
+$(addprefix CONFIG_ARCH_,$(call uc,$(subst arm,ARM_32,$(subst arm64,ARM_64,$(1)))))
+endef

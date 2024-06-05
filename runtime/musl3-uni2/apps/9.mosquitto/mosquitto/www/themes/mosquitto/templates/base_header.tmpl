@@ -1,0 +1,120 @@
+## -*- coding: utf-8 -*-
+<%namespace name="base" file="base_helper.tmpl" import="*"/>
+
+<%def name="html_header()">
+    <header id="header">
+        ${html_translation_header()}
+        ${html_navigation_links()}
+        %if search_form:
+            <div class="searchform" role="search">
+                ${search_form}
+            </div>
+        %endif
+        ${html_site_title()}
+    </header>
+    ${template_hooks['page_header']()}
+</%def>
+
+<%def name="html_site_title()">
+  % if (post and post.title):
+    <section class="hero">
+      <div class="hero-body is-paddingless">
+      <div class="container has-text-centered">
+    % if title == blog_title:
+        <h1 class="title">Eclipse Mosquitto™</h1>
+        <h2 class="subtitle">An open source MQTT broker</h2>
+    % elif post and post.title:
+        <h1 class="title" itemprop="headline name">${post.title()|h}</h1>
+    % endif
+      </div>
+    </div>
+    <hr>
+  </section>
+  % endif
+</%def>
+
+<%def name="html_navigation_links()">
+  <script>
+document.addEventListener('DOMContentLoaded', function () {
+
+  // Get all "navbar-burger" elements
+  var $navbarBurgers = Array.prototype.slice.call(document.querySelectorAll('.navbar-burger'), 0);
+
+  // Check if there are any navbar burgers
+  if ($navbarBurgers.length > 0) {
+
+    // Add a click event on each of them
+    $navbarBurgers.forEach(function ($el) {
+      $el.addEventListener('click', function () {
+
+        // Get the target from the "data-target" attribute
+        var target = $el.dataset.target;
+        var $target = document.getElementById(target);
+
+        // Toggle the class on both the "navbar-burger" and the "navbar-menu"
+        $el.classList.toggle('is-active');
+        $target.classList.toggle('is-active');
+
+      });
+    });
+  }
+
+});</script>
+  <div class="container">
+    <nav class="navbar" role="navigation" aria-label="main navigation">
+      <div class="navbar-brand">
+        <a class="navbar-item" href="https://mosquitto.org/">
+          <img src="/images/mosquitto-text-side-28.png" alt="Mosquitto: An Open Source MQTT Server" width="139" height="28">
+        </a>
+        <a class="navbar-item" href="https://eclipse.org/">
+          <img src="/images/eclipse_logo_colour.png" alt="The Eclipse Foundation">
+        </a>
+        <button class="button navbar-burger" data-target="navMenu">
+          <span></span>
+          <span></span>
+          <span></span>
+        </button>
+      </div>
+      <div class="navbar-menu" id="navMenu">
+        <div class="navbar-end">
+
+    %for url, text in navigation_links[lang]:
+        % if isinstance(url, tuple):
+      <div class="navbar-item has-dropdown is-hoverable">
+        <a class="navbar-link">${text}</a>
+        <div class="navbar-dropdown">
+            %for suburl, text in url:
+                % if rel_link(permalink, suburl) == "#":
+                    <a class="navbar-item" href="${permalink}">${text}</a>
+                %else:
+                     <a class="navbar-item" href="${suburl}">${text}</a>
+                %endif
+            %endfor
+        </div>
+      </div>
+        % else:
+            % if rel_link(permalink, url) == "#":
+                <a class="navbar-item" href="${permalink}">${text}</a>
+            %else:
+                <a class="navbar-item" href="${url}">${text}</a>
+            %endif
+        % endif
+    %endfor
+    ${template_hooks['menu']()}
+    ${template_hooks['menu_alt']()}
+
+        </div>
+      </div>
+       </nav>
+    <hr style="margin-top: 0rem">
+  </div>
+</%def>
+
+<%def name="html_translation_header()">
+    %if len(translations) > 1:
+        <div id="toptranslations">
+            <h2>${messages("Languages:")}</h2>
+            ${base.html_translations()}
+        </div>
+    %endif
+</%def>

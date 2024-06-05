@@ -1,0 +1,11 @@
+#!/bin/sh
+V=$(git rev-parse --short HEAD 2> /dev/null)
+D=$(git ls-files -m 2> /dev/null)
+if [ "z$V" != "z" ]; then
+	if [ "z$D" != "z" ]; then
+		echo "~$V-custom"
+	else
+		echo "~$V"
+	fi
+fi
+exit 0

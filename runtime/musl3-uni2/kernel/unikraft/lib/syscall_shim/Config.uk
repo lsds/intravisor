@@ -1,0 +1,99 @@
+menuconfig LIBSYSCALL_SHIM
+	bool "syscall-shim: Syscall shim layer"
+	default n
+	select LIBUKSTREAMBUF
+
+if LIBSYSCALL_SHIM
+	# Hidden configuration option that can be set by libc's in order to
+	# switch off the generation of libc-style wrapper symbols
+	config LIBSYSCALL_SHIM_NOWRAPPER
+	bool
+	default n
+
+	config LIBSYSCALL_SHIM_LIBCSTUBS
+	depends on !LIBSYSCALL_SHIM_NOWRAPPER
+	bool "Provide libc-style stubs"
+	default n
+	help
+		Automatically generate libc-style stubs for unavailable
+		system calls. The aim is to provide all libc-style system
+		call symbols although just a subset of the full API may be
+		implemtented. The symbols are defined as `weak`.
+		Please note that depending on the used compiler and optimization
+		options, this functionality may sometimes cause linking failures
+		because of double definitions of symbols. This is the case when
+		another library is providing some libc-style system calls
+		without registering them to libsyscall_shim.
+
+	config LIBSYSCALL_SHIM_HANDLER
+		bool "Binary system call handler (Linux ABI)"
+		default n
+		depends on (ARCH_X86_64 || ARCH_ARM_64)
+		select HAVE_SYSCALL
+		help
+			Enables a system call handler for binary system call
+			requests (e.g., sysenter/sysexit). The handler maps
+			register values accordingly to the Linux ABI standard
+			(see: man syscalls[2]).
+
+	config LIBSYSCALL_SHIM_HANDLER_ULTLS
+		bool "Support userland TLS"
+		default n
+		depends on LIBSYSCALL_SHIM_HANDLER
+		select LIBUKSCHED
+		help
+			Saves the current TLS pointer before handling a system
+			call and restores it afterwards. This enables the use
+			of different TLS pointers of userland code.
+
+	menu "Debugging"
+		config LIBSYSCALL_SHIM_DEBUG_SYSCALLS
+			bool "Debug message for system calls"
+			default n
+			help
+				Emits a debug message as soon as a registered system call is
+				called.
+
+		config LIBSYSCALL_SHIM_DEBUG_HANDLER
+		depends on LIBSYSCALL_SHIM_HANDLER
+			bool "Debug message for binary system calls"
+			default n
+			help
+				Emits a debug message as soon as a binary system call request
+				is handled.
+
+		menuconfig LIBSYSCALL_SHIM_STRACE
+		depends on LIBSYSCALL_SHIM_HANDLER
+			bool "'strace'-like messages for binary system calls"
+			default n
+			help
+				Emits a `strace`-like message as soon as a binary system call request
+				was finished handling. The result/return code of the system call is
+				printed as well.
+		if LIBSYSCALL_SHIM_STRACE
+			config LIBSYSCALL_SHIM_STRACE_ANSI_COLOR
+			bool "Use ANSI-colored syntax highlighting"
+			default n
+			default y if LIBUKDEBUG_ANSI_COLOR
+
+			config LIBSYSCALL_SHIM_STRACE_PRINT_TYPE
+			bool "Print type name"
+			default y
+		endif
+
+		config LIBSYSCALL_SHIM_DEBUG
+			bool "Enable all debug messages"
+			select LIBSYSCALL_SHIM_DEBUG_SYSCALLS
+			select LIBSYSCALL_SHIM_DEBUG_HANDLER if LIBSYSCALL_SHIM_HANDLER
+			default n
+			help
+				Enable all debug messages of the syscall_shim library.
+
+		config LIBSYSCALL_SHIM_LEGACY_VERBOSE
+			bool "Build warning for unmapped legacy syscalls"
+			default y
+			help
+				Generates a warning during the build process for each legacy syscall
+				that is not mapped to a syscall number.
+	endmenu
+endif

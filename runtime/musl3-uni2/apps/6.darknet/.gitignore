@@ -1,0 +1,10 @@
+rootfs/alexnet.weights
+darknet/alexnet.weights
+*/*.weights
+root.cpio
+*.so
+obj
+1.txt
+app*
+rootfs/app1
+*.cpio

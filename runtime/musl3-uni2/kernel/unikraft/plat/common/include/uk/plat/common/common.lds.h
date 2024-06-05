@@ -1,0 +1,198 @@
+/* SPDX-License-Identifier: BSD-3-Clause */
+/*
+ * Copyright (c) 2019, NEC Laboratories Europe GmbH, NEC Corporation,
+ *                     University Politehnica of Bucharest.
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ * 3. Neither the name of the author nor the names of any co-contributors
+ *    may be used to endorse or promote products derived from this software
+ *    without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+ * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ * SUCH DAMAGE.
+ */
+
+#ifndef __UK_COMMON_LDS_H
+#define __UK_COMMON_LDS_H
+
+#include <uk/arch/limits.h> /* for __PAGE_SIZE */
+
+#ifdef UK_USE_SECTION_SEGMENTS
+#define UK_SEGMENT_TLS :tls
+#define UK_SEGMENT_TLS_LOAD :tls_load
+#define UK_SEGMENT_DATA :data
+#else
+#define UK_SEGMENT_TLS
+#define UK_SEGMENT_TLS_LOAD
+#define UK_SEGMENT_DATA
+#endif
+
+/** Executable */
+#define PHDRS_PF_X 0x1
+/** Writeable */
+#define PHDRS_PF_W 0x2
+/** Readable */
+#define PHDRS_PF_R 0x4
+
+#define PHDRS_PF_RX (PHDRS_PF_R | PHDRS_PF_X)
+#define PHDRS_PF_RW (PHDRS_PF_R | PHDRS_PF_W)
+
+/* DWARF debug sections.  Symbols in the DWARF debugging sections are
+ * relative to the beginning of the section so we begin them at 0.
+ */
+#define DEBUG_SYMBOLS							\
+	/* DWARF 1 */							\
+	.debug          0 : { *(.debug) }				\
+	.line           0 : { *(.line) }				\
+	/* GNU DWARF 1 extensions */					\
+	.debug_srcinfo  0 : { *(.debug_srcinfo) }			\
+	.debug_sfnames  0 : { *(.debug_sfnames) }			\
+	/* DWARF 1.1 and DWARF 2 */					\
+	.debug_aranges  0 : { *(.debug_aranges) }			\
+	.debug_pubnames 0 : { *(.debug_pubnames) }			\
+	/* DWARF 2 */							\
+	.debug_info     0 : { *(.debug_info .gnu.linkonce.wi.*) }	\
+	.debug_abbrev   0 : { *(.debug_abbrev) }			\
+	.debug_line     0 : { *(.debug_line .debug_line.* .debug_line_end ) } \
+	.debug_frame    0 : { *(.debug_frame) }				\
+	.debug_str      0 : { *(.debug_str) }				\
+	.debug_loc      0 : { *(.debug_loc) }				\
+	.debug_macinfo  0 : { *(.debug_macinfo) }			\
+	/* SGI/MIPS DWARF 2 extensions */				\
+	.debug_weaknames 0 : { *(.debug_weaknames) }			\
+	.debug_funcnames 0 : { *(.debug_funcnames) }			\
+	.debug_typenames 0 : { *(.debug_typenames) }			\
+	.debug_varnames  0 : { *(.debug_varnames) }			\
+	/* DWARF 3 */							\
+	.debug_pubtypes 0 : { *(.debug_pubtypes) }			\
+	.debug_ranges   0 : { *(.debug_ranges) }			\
+	/* DWARF Extension.  */						\
+	.debug_macro    0 : { *(.debug_macro) }				\
+	.gnu.attributes 0 : { KEEP (*(.gnu.attributes)) }
+
+#define EXCEPTION_SECTIONS						\
+	. = ALIGN(__PAGE_SIZE);						\
+	__eh_frame_start = .;						\
+	.eh_frame :							\
+	{								\
+		KEEP(*(.eh_frame))					\
+		KEEP(*(.eh_frame.*))					\
+	}								\
+	__eh_frame_end = .;						\
+									\
+	__eh_frame_hdr_start = .;					\
+	.eh_frame_hdr :							\
+	{								\
+		KEEP(*(.eh_frame_hdr))					\
+		KEEP(*(.eh_frame_hdr.*))				\
+	}								\
+	__eh_frame_hdr_end = .;						\
+	__gcc_except_table_start = .;					\
+	.gcc_except_table :						\
+	{								\
+		*(.gcc_except_table)					\
+		*(.gcc_except_table.*)					\
+	}								\
+	__gcc_except_table_end = .;
+
+#define CTORTAB_SECTION							\
+	. = ALIGN(__PAGE_SIZE);						\
+	uk_ctortab_start = .;						\
+	.uk_ctortab :							\
+	{								\
+		KEEP(*(SORT_BY_NAME(.uk_ctortab[0-9])))			\
+	}								\
+	uk_ctortab_end = .;
+
+#define INITTAB_SECTION							\
+	uk_inittab_start = .;						\
+	.uk_inittab :							\
+	{								\
+		KEEP(*(SORT_BY_NAME(.uk_inittab[1-6][0-9])))		\
+	}								\
+	uk_inittab_end = .;
+
+#define EVENTTAB_SECTION						\
+	. = ALIGN(0x8);							\
+	.uk_eventtab :							\
+	{								\
+		KEEP(*(SORT_BY_NAME(.uk_event_*)))			\
+	}
+
+#define TLS_SECTIONS							\
+	. = ALIGN(__PAGE_SIZE);						\
+	_tls_start = .;							\
+	.tdata :							\
+	{								\
+		*(.tdata)						\
+		*(.tdata.*)						\
+		*(.gnu.linkonce.td.*)					\
+	} UK_SEGMENT_TLS UK_SEGMENT_TLS_LOAD				\
+	_etdata = .;							\
+	.tbss :								\
+	{								\
+		*(.tbss)						\
+		*(.tbss.*)						\
+		*(.gnu.linkonce.tb.*)					\
+		*(.tcommon)						\
+	}								\
+	/*								\
+	 * NOTE: Because the .tbss section is zero-sized in the final	\
+	 *       ELF image, just setting _tls_end to the end of it	\
+	 *       does not give us the the size of the memory area once	\
+	 *       loaded, so we use SIZEOF to have it point to the end.	\
+	 *       _tls_end is only used to compute the .tbss size.	\
+	 */								\
+	_tls_end = . + SIZEOF(.tbss);
+
+#define DATA_SECTIONS							\
+	/* Read-write data (initialized) */				\
+	. = ALIGN(__PAGE_SIZE);						\
+	_data = .;							\
+	.data :								\
+	{								\
+		*(.data)						\
+		*(.data.*)						\
+	} UK_SEGMENT_DATA						\
+	_edata = .;							\
+									\
+	/*								\
+	 * NOTE: linker will insert any extra sections here,		\
+	 * just before .bss						\
+	 */								\
+									\
+	/* Read-write data (uninitialized) */				\
+	. = ALIGN(__PAGE_SIZE);						\
+	__bss_start = .;						\
+	.bss :								\
+	{								\
+		*(.bss)							\
+		*(.bss.*)						\
+		*(COMMON)						\
+		. = ALIGN(__PAGE_SIZE);					\
+	}
+
+#define DISCARDS							\
+	/DISCARD/ :							\
+	{								\
+		*(.note.gnu.build-id)					\
+	}
+
+#endif /* __UK_COMMON_LDS_H */

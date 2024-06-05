@@ -1,0 +1,18 @@
+menuconfig LIBUKSCHED
+	bool "uksched: Abstraction for schedulers"
+	default n
+	select LIBNOLIBC if !HAVE_LIBC
+	select LIBUKDEBUG
+	select LIBUKALLOC
+	select HAVE_SCHED
+
+if LIBUKSCHED
+	# Invisible symbol to enable TCB initialization
+	config LIBUKSCHED_TCB_INIT
+		bool
+		default n
+
+	config LIBUKSCHED_DEBUG
+		bool "Enable debug messages"
+		default n
+endif

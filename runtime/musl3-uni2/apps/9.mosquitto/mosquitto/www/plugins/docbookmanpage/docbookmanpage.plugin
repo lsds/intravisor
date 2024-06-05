@@ -1,0 +1,12 @@
+[Core]
+Name = docbookmanpage
+Module = docbookmanpage
+
+[Nikola]
+PluginCategory = PageCompiler
+
+[Documentation]
+Author = Roger Light (asciidoc code by Roberto Alsina)
+Version = 0.4
+Website = https://github.com/ralight/nikola-docbook-manpage
+Description = Compile Docbook manpages into html, based on asciidoc plugin.

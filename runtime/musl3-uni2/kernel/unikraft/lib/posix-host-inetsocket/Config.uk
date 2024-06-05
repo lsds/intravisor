@@ -1,0 +1,3 @@
+menuconfig LIBPOSIX_HOST_INET_SOCKET
+	bool "posix-wrapsocket: Support for host AF_INET sockets"
+	select LIBPOSIX_SOCKET

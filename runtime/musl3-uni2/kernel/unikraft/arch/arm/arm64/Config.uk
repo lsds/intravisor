@@ -1,0 +1,236 @@
+choice
+	prompt "Target Processor"
+	default MCPU_ARM64_NONE
+	help
+		Compile and optimize the code for selected target processor.
+		This automatically enables/disables architecture extensions
+		and applies compiler optimizations for the target processor.
+
+	config MCPU_ARM64_NONE
+		bool "None"
+		help
+			Do not compile for a specific CPU. This allows choosing
+			individual architecture extensions or features.
+
+	config MCPU_ARM64_NATIVE
+		bool "Auto-detect host CPU"
+		help
+			Compile and optimize for the host CPU. Please note that this
+			option will fail in case of cross-compilation.
+
+	config MCPU_ARM64_GENERIC
+		bool "Generic Armv8 CPU"
+		help
+			Compile for Generic Armv8 compatible CPUs.
+
+	config MCPU_ARM64_CORTEX_A34
+		bool "Cortex-A34"
+		help
+			Compile and optimize for Cortex-A34 CPUs.
+
+	config MCPU_ARM64_CORTEX_A35
+		bool "Cortex-A35"
+		help
+			Compile and optimize for Cortex-A35 CPUs.
+
+	config MCPU_ARM64_CORTEX_A53
+		bool "Cortex-A53"
+		help
+			Compile and optimize for Cortex-A53 CPUs.
+
+	config MCPU_ARM64_CORTEX_A55
+		bool "Cortex-A55"
+		help
+			Compile and optimize for Cortex-A55 CPUs.
+
+	config MCPU_ARM64_CORTEX_A57
+		bool "Cortex-A57"
+		help
+			Compile and optimize for Cortex-A57 CPUs.
+
+	config MCPU_ARM64_CORTEX_A57_A53
+		bool "Cortex-A57 / Cortex-A53 big.LITTLE"
+		help
+			Compile and optimize for Cortex-A57 / Cortex-A53
+			big.LITTLE CPUs.
+
+	config MCPU_ARM64_CORTEX_A65
+		bool "Cortex-A65"
+		help
+			Compile and optimize for Cortex-A65 CPUs.
+
+	config MCPU_ARM64_CORTEX_A65AE
+		bool "Cortex-A65AE"
+		help
+			Compile and optimize for Cortex-A65AE CPUs.
+
+	config MCPU_ARM64_CORTEX_A72
+		bool "Cortex-A72"
+		help
+			Compile and optimize for Cortex-A72 CPUs.
+
+	config MCPU_ARM64_CORTEX_A72_A53
+		bool "Cortex-A72 / Cortex-A53 big.LITTLE"
+		help
+			Compile and optimize for Cortex-A72 / Cortex-A53
+			big.LITTLE CPUs.
+
+	config MCPU_ARM64_CORTEX_A73
+		bool "Cortex-A73"
+		help
+			Compile and optimize for Cortex-A73 CPUs.
+
+	config MCPU_ARM64_CORTEX_A73_A35
+		bool "Cortex-A73 / Cortex-A35 big.LITTLE"
+		help
+			Compile and optimize for Cortex-A73 / Cortex-A35
+			big.LITTLE CPUs.
+
+	config MCPU_ARM64_CORTEX_A73_A53
+		bool "Cortex-A73 / Cortex-A53 big.LITTLE"
+		help
+			Compile and optimize for Cortex-A73 / Cortex-A53
+			big.LITTLE CPUs.
+
+	config MCPU_ARM64_CORTEX_A75
+		bool "Cortex-A75"
+		help
+			Compile and optimize for Cortex-A75 CPUs.
+
+	config MCPU_ARM64_CORTEX_A76
+		bool "Cortex-A76"
+		help
+			Compile and optimize for Cortex-A76 CPUs.
+
+	config MCPU_ARM64_CORTEX_A76AE
+		bool "Cortex-A76AE"
+		help
+			Compile and optimize for Cortex-A76AE CPUs.
+
+	config MCPU_ARM64_CORTEX_A75_A55
+		bool "Cortex-A75 / Cortex-A55 DynamIQ"
+		help
+			Compile and optimize for Cortex-A75 / Cortex-A55 DynamIQ
+			big.LITTLE CPUs.
+
+	config MCPU_ARM64_CORTEX_A76_A55
+		bool "Cortex-A76 / Cortex-A55 DynamIQ"
+		help
+			Compile and optimize for Cortex-A76 / Cortex-A55 DynamIQ
+			big.LITTLE CPUs.
+
+	config MCPU_ARM64_CORTEX_A77
+		bool "Cortex-A77"
+		help
+			Compile and optimize for Cortex-A77 CPUs.
+
+	config MCPU_ARM64_NEOVERSE_E1
+		bool "Neoverse E1"
+		help
+			Compile and optimize for Neoverse E1 CPUs.
+
+	config MCPU_ARM64_NEOVERSE_N1
+		bool "Neoverse N1"
+		help
+			Compile and optimize for Neoverse N1 CPUs.
+
+	config MCPU_ARM64_NEOVERSE_N2
+		bool "Neoverse N2"
+		help
+			Compile and optimize for Neoverse N2 CPUs.
+
+	config MCPU_ARM64_NEOVERSE_V1
+		bool "Neoverse V1"
+		help
+			Compile and optimize for Neoverse V1 CPUs.
+endchoice
+
+menu "Armv8-A Extensions"
+	depends on MCPU_ARM64_NONE
+
+config ARM64_FEAT_PAUTH
+	bool "Armv8.3 Pointer Authentication"
+	select ARM64_FEAT_RNG
+	help
+	  Enable signing and authentication of pointers. This
+	  provides protections against classes of attacks that
+	  rely on memory corruption, such as stack smashing and
+	  ROP.
+
+	config ARM64_FEAT_BTI
+	bool "Armv8.5 Branch Target Identification"
+	help
+		BTI protects against JOP-like attacks by placing and
+		verifying landing pads on branch targets.
+
+menuconfig ARM64_FEAT_MTE
+	bool "Armv8.5 Memory Tagging Extensions"
+	select ARM64_FEAT_RNG
+	select HAVE_MEMTAG
+	select PAGING
+	help
+	  Protects against memory safety violations by restricting
+	  access to tagged memory regions.
+
+if ARM64_FEAT_MTE
+choice ARM64_FEAT_MTE_TCF
+	prompt "Tag Check Fault Reporting"
+	default ARM64_FEAT_MTE_TCF_ASYNC
+
+config ARM64_FEAT_MTE_TCF_SYNC
+	bool "Synchronous"
+	help
+	  This option causes TCFs to trigger a Data Abort.
+	  Choose this option for high precision, at the
+	  cost of less performance.
+
+config ARM64_FEAT_MTE_TCF_ASYNC
+	bool "Asynchronous"
+	help
+	  This option causes TCFs to be accumulated and
+	  reported asynchronously.
+	  Choose this option for high performance at
+	  the cost of reduced precision.
+
+config ARM64_FEAT_MTE_TCF_ASYMMETRIC
+	bool "Asymmetric"
+	help
+	  This option causes synchronous TCF reporting on
+	  reads and asynchronous TCF reporting on writes.
+
+endchoice
+endif
+
+config ARM64_FEAT_RNG
+	bool "Armv8.5 Random Number Generator"
+	select HAVE_RANDOM
+	help
+	  This enables the hardware RNG functionality provided by the
+	  processor. The architecture specifies that this is implemented
+	  by a Deterministic Random Bit Generator (DRBG) that is seeded
+	  from a TRNG.
+endmenu
+
+config ARM64_ERRATUM_858921
+	bool "Workaround for Cortex-A73 erratum 858921"
+	default y
+	help
+	  This option enables a workaround for Cortex-A73 (r0p0 - r0p2),
+	  whose counter may return a wrong value when the counter crosses
+	  a 32-bit boundary. The newer Cortex-A73 are not affected.
+
+config ARM64_ERRATUM_835769
+	bool "Workaround for Cortex-A53 erratum 835769"
+	default y
+	help
+	  This option enables a workaround for Cortex-A53. This erratum
+	  workaraound is made at compile time by passing the corresponding
+	  flag to GCC.
+
+config ARM64_ERRATUM_843419
+	bool "Workaround for Cortex-A53 erratum 843419"
+	default y
+	help
+	  This option enables a workaround for Cortex-A53. This erratum
+	  workaround is made at link time by passing the corresponding
+	  flag to GCC.

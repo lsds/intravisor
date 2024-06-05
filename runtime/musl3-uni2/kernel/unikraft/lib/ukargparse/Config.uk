@@ -1,0 +1,13 @@
+menuconfig LIBUKARGPARSE
+	bool "ukargparse: Simple argument parser"
+	default n
+	select LIBUKDEBUG
+
+if LIBUKARGPARSE
+
+config LIBUKARGPARSE_TEST
+	bool "Enable unit tests"
+	default n
+	select LIBUKTEST
+
+endif

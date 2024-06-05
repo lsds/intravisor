@@ -1,0 +1,118 @@
+.title {
+	color: #363636;
+	font-size: 2rem;
+	font-weight: 300;
+	line-height: 1.125;
+}
+
+finalfooter {
+	display: block;
+}
+
+.finalfooter {
+	background-color: black;
+	color: whitesmoke;
+	padding: 1rem 1.5rem 1rem;
+	margin-top: 1rem;
+}
+
+div.footerlink a {
+	color: whitesmoke;
+	cursor: pointer;
+	text-decoration: none;
+	-webkit-transition: none 86ms ease-out;
+	transition: none 86ms ease-out;
+	padding-right: 1.5rem;
+}
+
+div.footerlink a:hover {
+	color: gray;
+}
+
+.footer {
+	background-color: whitesmoke;
+	padding: 2rem 1.5rem 1rem;
+}
+
+.column-justify {
+	text-align: justify;
+}
+
+.column-justify h1 {
+	text-align: center;
+}
+
+img.center {
+	display: block;
+	margin-left: auto;
+	margin-right: auto;
+}
+
+/* Blog */
+h1.p-name,
+.authorpage h1,
+.tagpage h1 /* Tag page */{
+	font-size: 36px;
+	margin-top: 20px;
+	margin-bottom: 10px;
+}
+
+.e-content.entry-content h2 {
+	font-size: 150%;
+}
+
+div.e-content {
+	margin-top: 14px;
+}
+
+div.e-content.entry-content p,
+div.e-content.entry-content div p,
+div.e-content.entry-content div
+{
+	margin-bottom: 10px;
+}
+
+div.e-content.entry-content ul {
+	padding-left: 40px;
+	margin-bottom: 10px;
+}
+div.e-content.entry-content ul li {
+	list-style-type: disc;
+}
+
+div.e-content.entry-content div blockquote {
+	background-color: whitesmoke;
+	padding: 1.5rem;
+	margin: 0.5rem;
+}
+
+.pager::before,
+.pager::after {
+	clear: both;
+	display: table;
+	content: " ";
+}
+.pager .previous a {
+	float: left;
+}
+.pager .next a {
+	float: right;
+}
+.pager li {
+	display: inline;
+}
+.pager li a {
+	display: inline-block;
+	padding: 5px 14px;
+	border: 1px solid #ddd;
+	border-radius: 15px;
+}
+
+.dateline {
+	margin-top: -1rem;
+}
+
+/* Tag Page */
+.listdate {
+	margin-right: 3rem;
+}

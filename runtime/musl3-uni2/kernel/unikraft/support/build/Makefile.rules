@@ -1,0 +1,1062 @@
+# Makefile for Unikraft
+#
+# Copyright (C) 2016-2017 by NEC Europe Ltd. <simon.kuenzer@neclab.eu>
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 2 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+# General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write to the Free Software
+# Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
+#
+
+################################################################################
+#
+# Common rules
+#
+################################################################################
+
+# lower case
+lc = $(subst A,a,$(subst B,b,$(subst C,c,$(subst D,d,$(subst E,e,$(subst F,f,$(subst G,g,$(subst H,h,$(subst I,i,$(subst J,j,$(subst K,k,$(subst L,l,$(subst M,m,$(subst N,n,$(subst O,o,$(subst P,p,$(subst Q,q,$(subst R,r,$(subst S,s,$(subst T,t,$(subst U,u,$(subst V,v,$(subst W,w,$(subst X,x,$(subst Y,y,$(subst Z,z,$(1)))))))))))))))))))))))))))
+
+# upper case
+uc = $(subst a,A,$(subst b,B,$(subst c,C,$(subst d,D,$(subst e,E,$(subst f,F,$(subst g,G,$(subst h,H,$(subst i,I,$(subst j,J,$(subst k,K,$(subst l,L,$(subst m,M,$(subst n,N,$(subst o,O,$(subst p,P,$(subst q,Q,$(subst r,R,$(subst s,S,$(subst t,T,$(subst u,U,$(subst v,V,$(subst w,W,$(subst x,X,$(subst y,Y,$(subst z,Z,$(1)))))))))))))))))))))))))))
+
+# test if GCC is set as a compiler
+define have_gcc =
+$(if $(filter GCC,$(CC_NAME)),y,n)
+endef
+
+# test if CLANG is set as a compiler
+define have_clang =
+$(if $(filter Clang,$(CC_NAME)),y,n)
+endef
+
+# test whether CC version is greater than or equal to the minimum requirement
+# cc_version_ge $cc_major,$cc_minor
+define cc_version_ge =
+$(shell if [ $(CC_VER_MAJOR) -gt $(1) ] || ([ $(CC_VER_MAJOR) -eq $(1) ] && [ $(CC_VER_MINOR) -ge $(2) ]) ; then printf 'y' ; fi)
+endef
+# test whether CC version is less than the supplied version
+# cc_version_lt $cc_major,$cc_minor
+define cc_version_lt =
+$(shell if [ $(CC_VER_MAJOR) -lt $(1) ] || ([ $(CC_VER_MAJOR) -eq $(1) ] && [ $(CC_VER_MINOR) -lt $(2) ]) ; then printf 'y' ; fi)
+endef
+
+define gcc_version_ge =
+$(shell if [ $(call have_gcc) = y ] ; then printf "$(call cc_version_ge,$(1),$(2))" ; fi)
+endef
+define gcc_version_lt =
+$(shell if [ $(call have_gcc) = y ] ; then printf "$(call cc_version_lt,$(1),$(2))" ; fi)
+endef
+
+define clang_version_ge =
+$(shell if [ $(call have_clang) = y ] ; then printf "$(call cc_version_ge,$(1),$(2))" ; fi)
+endef
+define clang_version_lt =
+$(shell if [ $(call have_clang) = y ] ; then printf "$(call cc_version_gt,$(1),$(2))" ; fi)
+endef
+
+# print error and stop build when GCC version doesn't meet the minimum requirement
+# error_if_gcc_version_lt $gcc_major,$gcc_minor.
+define error_if_gcc_version_lt =
+$(if $(call gcc_version_ge,$(1),$(2)),,\
+     $(error Require GCC version >= $(1).$(2) found $(CC_VER_MAJOR).$(CC_VER_MINOR)))
+endef
+# error_if_clang_version_lt $clang_major,$clang_minor.
+define error_if_clang_version_lt =
+$(if $(call clang_version_ge,$(1),$(2)),,\
+     $(error Require Clang version >= $(1).$(2) found $(CC_VER_MAJOR).$(CC_VER_MINOR)))
+endef
+
+# Roughly measure lines of code in a built (debug) ELF
+# measure_loc $path
+define measure_loc =
+$(shell $(OBJDUMP) -dl "$(1)" | grep '^/' | grep -v '^/[/*]' | $(SED) -e 's/ [(]discriminator .*[)]//g' | sort -u | wc -l)
+endef
+
+################################################################################
+#
+# Paths and Filenames
+#
+################################################################################
+
+# Returns the fully-qualified path for a subfolder under the build output
+# directory
+sub_build_dir = $(addprefix $(BUILD_DIR)/,$(if $($(call uc,$(1))__BUILDTREE),\
+	$(notdir $(1))/build,$(notdir $(1))))
+
+# Creates a subfolder under the build output directory
+# mk_sub_build_dir $1:subfoldername
+define mk_sub_build_dir =
+$(eval _d := $(call sub_build_dir,$(1)))\
+$(if $(shell $(MKDIR) -p "$(_d)" && cd "$(_d)" >/dev/null && pwd),,\
+     $(error could not create directory "$(_d)"))
+endef
+
+# Returns the file extension
+fileext = $(subst .,,$(suffix $(1)))
+
+# converts a list of library names to paths pointing to their corresponding object library file
+# libname2olib $1:libname
+libname2olib = $(addprefix $(BUILD_DIR)/,$(addsuffix .o,$(1)))
+
+libname2preolib = $(addprefix $(BUILD_DIR)/,$(addsuffix .ld.o,$(1)))
+
+# check if $1 is a prefix of $2; expands to $2 if true
+isprefix = $(findstring $(1)$(subst $(1),,$(2)),$(2))
+
+# convert a full path to a source file into a relative path
+# result is relative to $(libname)_SRC, if defined and a prefix of $source
+# otherwise it is the filename of $source
+# srcrelpath $libname,$source
+define srcrelpath =
+$(eval _libsrc := $(if $($(call uc,$(1))__BUILDTREE),$($(call uc,$(1))_SRC)))\
+$(if $(and $(_libsrc),$(call isprefix,$(_libsrc),$(2))),\
+	$(2:$(_libsrc)/%=%),$(notdir $(2)))
+endef
+
+# convert a full path to a build target into a path relative to
+# the build dir of $libname if it is prefix of $target
+# otherwise return the filename of $target
+# targrelpath $libname,$target
+define targrelpath =
+$(eval _libbuild := $(if $($(call uc,$(1))__BUILDTREE),\
+	$(call sub_build_dir,$(1))))\
+$(if $(and $(_libbuild),$(call isprefix,$(_libbuild),$(2))),\
+	$(2:$(_libbuild)/%=%),$(notdir $(2)))
+endef
+
+# converts a list of sources to paths pointing to their corresponding destination files
+# src2dst $1:libname,$2:source(s),$3:destsuffix,$4:variant(optional),$5:subbuild(optional)
+define src2dst =
+$(if $(5),\
+$(if $(4),\
+$(addprefix $(call sub_libbuild_dir,$(1),$(5))/,$(addsuffix .$(4)$(3),$(basename $(call srcrelpath,$(1),$(2))))),\
+$(addprefix $(call sub_libbuild_dir,$(1),$(5))/,$(addsuffix $(3),$(basename $(call srcrelpath,$(1),$(2)))))\
+),\
+$(if $(4),\
+$(addprefix $(call sub_build_dir,$(strip $(1)))/,$(addsuffix .$(4)$(3),$(basename $(call srcrelpath,$(1),$(2))))),\
+$(addprefix $(call sub_build_dir,$(strip $(1)))/,$(addsuffix $(3),$(basename $(call srcrelpath,$(1),$(2)))))\
+))
+endef
+
+# converts a list of sources to paths pointing to their corresponding object file
+# src2obj $1:libname,$2:source(s),$3:variant(optional),$4:subbuild(optional)
+define src2obj =
+$(call src2dst,$(1),$(2),.o,$(3),$(4))
+endef
+
+# converts a list of output file (object files or linker scripts) paths
+# to paths pointing to their corresponding dependency file
+# out2dep $1:objects
+out2dep = $(patsubst %.o,%.d,$(patsubst %.lds,%.lds.d,$(1)))
+
+# converts a list of sources (.S, .c, .cc, .cpp) to paths pointing to their corresponding dependency file
+# src2dep $1:libname,$2:source(s),$3:variant(optional),$4:subbuild(optional)
+src2dep = $(call out2dep,$(call src2obj,$(1),$(2),$(3),$(4)))
+
+# converts paths of linker script sources (*.lds.S) to paths of corresponding
+# processed linker scripts (*.lds) within the library's build directory
+# src2lds $1:libname,$2:ldS(s),$3:variant(optional),$4:subbuild(optional)
+define src2lds =
+$(if $(4),\
+$(if $(3),\
+$(addprefix $(call sub_libbuild_dir,$(1),$(4))/,$(addsuffix .$(3).lds,$(basename $(basename $(call srcrelpath,$(1),$(2)))))),\
+$(addprefix $(call sub_libbuild_dir,$(1),$(4))/,$(addsuffix .lds,$(basename $(basename $(call srcrelpath,$(1),$(2))))))\
+),\
+$(if $(3),\
+$(addprefix $(call sub_build_dir,$(1))/,$(addsuffix .$(3).lds,$(basename $(basename $(call srcrelpath,$(1),$(2)))))),\
+$(addprefix $(call sub_build_dir,$(1))/,$(addsuffix .lds,$(basename $(basename $(call srcrelpath,$(1),$(2))))))\
+))
+endef
+
+# converts paths device tree source file to the device tree binary blob
+# dts2dtb $1:libname,$2:dts,$subbuild(optional)
+define dts2dtb =
+$(if $(3),\
+$(addprefix $(call sub_libbuild_dir,$(1),$(3))/,$(addsuffix .dtb,$(basename $(call srcrelpath,$(1),$(2))))),
+$(addprefix $(call sub_build_dir,$(1))/,$(addsuffix .dtb,$(basename $(call srcrelpath,$(1),$(2)))))
+)
+endef
+
+################################################################################
+#
+# Variable name prefixes
+#
+################################################################################
+
+# vprefix_lib $1:libname,$2:varname(s)
+vprefix_lib = $(addprefix $(call uc,$(1))_,$(2))
+
+# vprefix_src $1:libname,$2:source,$3:variant,$4:varname(s)
+#  file-local variable: LIBNAME_FILENAME_[VARIANT_]VARNAME
+#
+#  Note: We need to `strip` the result because the multiline `if` statement
+#        causes whitespaces. Because the output is directly used to to refer to a
+#        variable, this is especially important here.
+define vprefix_src =
+$(strip $(if $(3),\
+$(call vprefix_lib,$(1),$(addprefix $(call uc,$(basename $(notdir $(2))))_$(call uc,$(3))_,$(4))),\
+$(call vprefix_lib,$(1),$(addprefix $(call uc,$(basename $(notdir $(2))))_,$(4)))\
+))
+endef
+
+# vprefix_glb $1:variant,$2:varname(s)
+#  prefixes global variables for reserved variants:
+#  '|isr' -> 'ISR_'  # reserved variant for code that can be called within
+#                    # interrupt service routines (e.g., uses only generic regs)
+#  '|.*'  -> ''
+#  ''     -> ''
+vprefix_glb = $(if $(filter isr,$(1)),$(addprefix ISR_,$(2)),$(2))
+
+################################################################################
+#
+# Registration
+#
+###############################################################################
+
+# Include a sub-makefile
+# verbose_include $1:path
+define verbose_include =
+$(call verbose_info,Including $(1)...)
+include $(1)
+endef
+
+# Try to include a sub-makefile
+# (does not fail if it does not exist)
+# verbose_include_try $1:path
+define verbose_include_try =
+$(call verbose_info,Trying to include $(1)...)
+-include $(1)
+endef
+
+# Import a library
+# For internally use only (Unikraft main makefile and internal libs Makefike.uk)
+# import_lib $1:path
+define do_import_lib =
+IMPORT_BASE := $(1)
+$(call verbose_include,$(1)/Makefile.uk)
+undefine IMPORT_BASE
+endef
+
+define import_lib =
+$(eval IMPORT_IS_FILTERED:=n)
+$(foreach ITR,$(IMPORT_EXCLUDEDIRS),$(if $(filter $(ITR),$(1)),$(eval IMPORT_IS_EXCLUDED:=y),))
+$(if $(filter $(IMPORT_IS_EXCLUDED),y),$(call verbose_info,Skip including $(1): Excluded from build (E)),$(call do_import_lib,$(1)))
+$(eval undefine IMPORT_IS_EXCLUDED)
+endef
+
+# import_linker $plat_name
+define import_linker =
+$(call verbose_include,$(UK_PLAT_$(call uc,$(1))_LINKER))
+endef
+
+# Register a platform to the build system
+# addplat $1:platname
+define addplat =
+UK_PLATS += $(1)
+$(eval UK_PLAT_$(call uc,$(1))_BASE    := $(IMPORT_BASE))
+$(eval UK_PLAT_$(call uc,$(1))_LINKER  := $(IMPORT_BASE)/Linker.uk)
+$(eval UK_PLAT_$(call uc,$(1))_DEF_LDS :=)
+endef
+
+# addplat_s $1:platname,$2:switch
+define addplat_s =
+$(if $(filter y,$(2)),$(call addplat,$(1)),)
+endef
+
+
+# Register libraries to build system
+# addlib $1:libname
+define addlib =
+$(call mk_sub_build_dir,$(1))
+UK_LIBS += $(1)
+$(eval $(call uc,$(1))_BASE    := $(IMPORT_BASE))
+$(eval $(call uc,$(1))_BUILD   := $(call sub_build_dir,$(1)))
+$(eval $(call uc,$(1))_EXPORTS += $(wildcard $(IMPORT_BASE)/exportsyms.uk))
+$(eval $(call uc,$(1))_LOCALS  += $(wildcard $(IMPORT_BASE)/localsyms.uk))
+endef
+
+# addlib_tree $1:libname
+define addlib_tree =
+$(eval $(call uc,$(1))__BUILDTREE := y)
+$(call addlib,$(1))
+endef
+
+# addlib_s $1:libname,$2:switch
+define addlib_s =
+ifeq ($(2),y)
+$(call addlib,$(1))
+endif
+endef
+
+# addlib_tree_s $1:libname,$2:switch
+define addlib_tree_s =
+ifeq ($(2),y)
+$(call addlib_tree,$(1))
+endif
+endef
+
+# addplatlib $1:platname,$2:libname
+define addplatlib =
+$(call mk_sub_build_dir,$(2))
+$(eval $(call uc,$(2))_PLATS   += $(call uc,$(1)))
+$(eval $(call uc,$(1))_LIBS    += $(2))
+$(eval $(call uc,$(2))_BASE    := $(IMPORT_BASE))
+$(eval $(call uc,$(2))_BUILD   := $(call sub_build_dir,$(2)))
+$(eval $(call uc,$(2))_EXPORTS += $(wildcard $(IMPORT_BASE)/exportsyms.uk))
+$(eval $(call uc,$(2))_LOCALS  += $(wildcard $(IMPORT_BASE)/localsyms.uk))
+endef
+
+# addplatlib_s $1:platname,$2:libname,$3:switch
+define addplatlib_s =
+$(if $(filter y,$(3)),$(call addplatlib,$(1),$(2)),)
+endef
+
+sub_libbuild_dir = $(call sub_build_dir,$(1))/$(strip $(2))
+
+# creates a sub build directory for a library
+# mk_sub_libbuild_dir $1:libname,$2:subdir
+define mk_sub_libbuild_dir =
+$(eval _d := $(call sub_libbuild_dir,$(1),$(2)))\
+$(if $(shell $(MKDIR) -p "$(_d)" && cd "$(_d)" >/dev/null && pwd),,\
+     $(error could not create directory "$(_d)"))
+endef
+
+################################################################################
+#
+# Command calling
+#
+################################################################################
+
+# verbose_cmd $quietlabel,$quiettext,$command
+# verbose_cmd_inner is a version of verbose_command for use inside foreach
+# loops inside evals and similar
+ifneq ($(BUILD_VERBOSE),0)
+verbose_cmd = $(3)
+verbose_cmd_inner = printf '%s\n' '$(3)' && $(3)
+else
+verbose_cmd = @printf '  %-7s %s\n' '$(1)'  '$(2)' && $(3)
+verbose_cmd_inner = printf '  %-7s %s\n' '$(1)'  '$(2)' && $(3)
+endif
+
+# Writes to a file during deferred expansion
+#
+# write_file_deferred $1:filepath,$2:content
+write_file_deferred = $(if $(UK_DEFERRED_EXPANSION),\
+	$(shell $(MKDIR) -p $(dir $(1)))$(file > $(1),$(2)),\
+	$$(shell $(MKDIR) -p $(dir $(1)))$$(file > $(1),$(2)))
+
+# Calls a command that creates an object
+#
+# build_cmd $1:quietlabel,$2:libname(optional),$3:target,$4:command
+ifeq ($(CONFIG_RECORD_BUILDTIME_TIME),y)
+define build_cmd =
+$(call write_file_deferred,$(addsuffix .cmd,$(3)),$(strip $(4)))\
+$(call verbose_cmd,$(1),$(if $(2),$(2)':' ,)$(strip $(call targrelpath,$(2),$(3))),$(TIME) $(TIMEFLAGS) -o $(addsuffix .time,$(3)) $(SHELL) $(addsuffix .cmd,$(3)))
+endef
+else
+ifeq ($(CONFIG_RECORD_BUILDTIME_LIFTOFF),y)
+define build_cmd =
+$(call write_file_deferred,$(addsuffix .cmd,$(3)),$(strip $(4)))\
+$(call verbose_cmd,$(1),$(if $(2),$(2)':' ,)$(strip $(call targrelpath,$(2),$(3))),$(LIFTOFF) $(LITFOFFFLAGS) -o $(addsuffix .liftoff,$(3)) -- $(SHELL) $(addsuffix .cmd,$(3)))
+endef
+else
+define build_cmd =
+$(call write_file_deferred,$(addsuffix .cmd,$(3)),$(strip $(4)))\
+$(call verbose_cmd,$(1),$(if $(2),$(2)':' ,)$(strip $(call targrelpath,$(2),$(3))), $(SHELL) $(addsuffix .cmd,$(3)))
+endef
+endif
+endif
+
+# Like build_cmd but also executes Kbuild's fixdep on a temporary
+# created dependency file. Within the GCC command (passed with
+# $command) `$(call debflags,$target)` should be used to let the
+# compiler create this temporary dependency file.
+#
+# build_cmd_fixdep $1:quietlabel,$2:libname(optional),$3:target,$4:command
+tmp_depfile = $(dir $1).$(notdir $1).d
+depflags = -Wp$(comma)-MD$(comma)$(call tmp_depfile,$(1))
+define build_cmd_fixdep =
+	$(call build_cmd,$1,$2,$3,$4)
+	$Q $(UK_FIXDEP) $(call tmp_depfile,$3) $3 '$(SHELL) $(addsuffix .cmd,$(3))' \
+		> $(call out2dep,$3) && \
+		$(RM) $(call tmp_depfile,$3)
+endef
+
+# Returns a list of files to be cleaned when build_cmd was used
+#
+# build_clean $1:target
+build_clean = $(1) $(addsuffix .cmd,$(1))
+ifeq ($(CONFIG_RECORD_BUILDTIME_TIME),y)
+build_clean += $(addsuffix .time,$(1))
+endif
+ifeq ($(CONFIG_RECORD_BUILDTIME_LIFTOFF),y)
+build_clean += $(addsuffix .liftoff,$(1))
+endif
+
+# Helper that generates a command for validating a checksum for
+# a given file. The command returns 1 on a checksum mismatch.
+#
+# chksum_cmd $1:algorithm(MD5,SHA1,SHA256,SHA512),$2:libname,$3:sourcefile,$4:chksum
+define chksum_cmd =
+$(call verbose_cmd,$(1),$(2)':' $(notdir $(3)), \
+  if ! [[ "`$($(1)SUM) - < "$(3)"`" =~ ^$(call qstrip,$(4))[[:space:]] ]]; then echo "$(3): $(1) checksum validation failed" 1>&2; exit 1; fi )
+endef
+
+#################################################
+#
+# Archives
+#
+#################################################
+
+# archive extraction helpers (internal only)
+# extracts an archive to LIBRARY_BUILD/origin
+# On success, creates LIBRARY_BUILD/.origin file
+#
+# _extractorigin_* $1:libname,$2:archive_fname,$3:extra_deps(optional)
+define _extracttoorigin_tgz =
+$(BUILD_DIR)/$(1)/.origin: $(2) $(3)
+	$(call verbose_cmd,UNTAR,$(1)':' $(notdir $(2)), \
+	  $(TAR) -xzf $(2) \
+	         -C $(BUILD_DIR)/$(1)/origin && \
+	  $(TOUCH) $(BUILD_DIR)/$(1)/.origin)
+endef
+
+define _extracttoorigin_tgz_xz =
+$(BUILD_DIR)/$(1)/.origin: $(2) $(3)
+	$(call verbose_cmd,UNTAR,$(1)':' $(notdir $(2)), \
+	  $(TAR) -xJf $(2) \
+	         -C $(BUILD_DIR)/$(1)/origin && \
+	  $(TOUCH) $(BUILD_DIR)/$(1)/.origin)
+endef
+
+define _extracttoorigin_tgz_bz2 =
+$(BUILD_DIR)/$(1)/.origin: $(2) $(3)
+	$(call verbose_cmd,UNTAR,$(1)':' $(notdir $(2)), \
+	  $(TAR) -xjf $(2) \
+	         -C $(BUILD_DIR)/$(1)/origin && \
+	  $(TOUCH) $(BUILD_DIR)/$(1)/.origin)
+endef
+
+define _extracttoorigin_zip =
+$(BUILD_DIR)/$(1)/.origin: $(2) $(3)
+	$(call verbose_cmd,UNZIP,$(1)':' $(notdir $(2)), \
+	  $(UNZIP) -d $(BUILD_DIR)/$(1)/origin \
+		   $(2) && \
+	  $(TOUCH) $(BUILD_DIR)/$(1)/.origin)
+endef
+
+# patch an extracted source tree with patches from a directory.
+# Takes all files from $patchdir, sorts them, and applies each
+# of these patches to the source tree in $source_target_dir
+#
+# patch $1:libname,$2:patchdir,$3:source_target_dir(optional)
+define patch =
+$(BUILD_DIR)/$(1)/.patched: $(BUILD_DIR)/$(1)/.origin
+	@$(foreach P,$(sort $(wildcard $(2)/*)), \
+	  $(call verbose_cmd_inner,PATCH,$(1)':' $(notdir $(P)), \
+	  $(PATCH) -sd $(BUILD_DIR)/$(1)/origin/$(3)/ -p1 < $(P)) &&)\
+	$(TOUCH) $(BUILD_DIR)/$(1)/.patched
+UK_FETCH-y += $(BUILD_DIR)/$(1)/.patched
+endef
+
+# extracts an archive to LIBRARY_BUILD/origin
+# the third argument is optional and should be a path to a directory
+# containing patch files that should be applied to the extracted archive
+# unarchive automatically registers the extraction and patch steps to
+# Unikraft's fetch target
+# A variable called LIB[LIBNAME]_ORIGIN is initialized with
+# the path to the extracted files
+#
+# unarchive $1:libname,$2:archive_fname,$3:extra_deps(optional)
+define unarchive =
+$(if $(filter %.tar.gz %.tgz,$(2)),$(call _extracttoorigin_tgz,$(1),$(2),$(3)),\
+$(if $(filter %.tar.xz %.txz,$(2)),$(call _extracttoorigin_tgz_xz,$(1),$(2),$(3)),\
+$(if $(filter %.tar.bz2 %.tbz2,$(2)),$(call _extracttoorigin_tgz_bz2,$(1),$(2),$(3)),\
+$(if $(filter %.zip,$(2)),$(call          _extracttoorigin_zip,$(1),$(2),$(3)),\
+$(error $(2): missing extraction rule for archive type)\
+))))
+UK_FETCH-y += $(BUILD_DIR)/$(1)/.origin \
+$(eval $(call vprefix_lib,$(1),ORIGIN) = $(BUILD_DIR)/$(1)/origin)
+$(shell $(MKDIR) -p $(BUILD_DIR)/$(1)/origin)
+
+.PRECIOUS: $(BUILD_DIR)/$(1)/origin
+
+$(BUILD_DIR)/$(1)/origin/%: $(BUILD_DIR)/$(1)/.origin
+	@:
+endef
+
+# Internal helper to compute and compare a checksum of a downloaded file
+# (see: fetch(as)[2])
+# This command picks up the checksum for comparison from the library-local
+# variable LIBNAME_ORIGIN_[MD5|SHA1|...]. It generates a rule that tests
+# only given and supported checksums.
+# NOTE: The variable containing the checksum need to be defined
+# before calling `fetch`, `fetch2`, `fetchas`, or `fetchas2`.
+#
+# _chksum_origin $1:libname,$2:file,$3:status_ok
+define _chksum_origin =
+$(3): $(2)
+	$(if $(filter $(call vprefix_lib,$(1),ORIGIN_SHA1),$(.VARIABLES)), \
+		$(call chksum_cmd,SHA1,$(1),$(2),$($(call vprefix_lib,$(1),ORIGIN_SHA1))) \
+	)
+	$(if $(filter $(call vprefix_lib,$(1),ORIGIN_SHA256),$(.VARIABLES)), \
+		$(call chksum_cmd,SHA256,$(1),$(2),$($(call vprefix_lib,$(1),ORIGIN_SHA256))) \
+	)
+	$(if $(filter $(call vprefix_lib,$(1),ORIGIN_SHA512),$(.VARIABLES)), \
+		$(call chksum_cmd,SHA512,$(1),$(2),$($(call vprefix_lib,$(1),ORIGIN_SHA512))) \
+	)
+	$(if $(filter $(call vprefix_lib,$(1),ORIGIN_MD5),$(.VARIABLES)), \
+		$(call chksum_cmd,MD5,$(1),$(2),$($(call vprefix_lib,$(1),ORIGIN_MD5))) \
+	)
+	@$(TOUCH) $(3)
+endef
+
+# Downloads an archive from remote and invokes unarchive. The target filename
+# (without path!) is specified
+# fetchas $1:libname,$2:url,$3:target_fname(no_path!)
+define fetchas =
+$(BUILD_DIR)/$(1)/$(3):
+	$(call verbose_cmd,WGET,$(1)':' $(2), \
+	 $(WGET) -q --show-progress --progress=bar -O $(BUILD_DIR)/$(1)/$(3) $(2) || \
+	 $(RM) $(BUILD_DIR)/$(1)/$(3))
+
+$(call _chksum_origin,$(1),$(BUILD_DIR)/$(1)/$(3),$(BUILD_DIR)/$(1)/.chksum)
+$(call unarchive,$(1),$(BUILD_DIR)/$(1)/$(3),$(BUILD_DIR)/$(1)/.chksum)
+
+UK_FETCH-y += $(BUILD_DIR)/$(1)/.chksum
+endef
+
+# fetchas2 works like fetchas but supports a secondary URL
+# fetchas2 $1:libname,$2:url,$3:url2,$4:target_fname(no_path!)
+define fetchas2 =
+$(BUILD_DIR)/$(1)/$(4):
+	$(call verbose_cmd,WGET,$(1)':' $(2) [retry-with: $(3)], \
+	 $(WGET) -q --show-progress --progress=bar -O $(BUILD_DIR)/$(1)/$(4) $(2) || \
+	 $(WGET) -q --show-progress --progress=bar -O $(BUILD_DIR)/$(1)/$(4) $(3) || \
+	 $(RM) $(BUILD_DIR)/$(1)/$(4))
+
+$(call _chksum_origin,$(1),$(BUILD_DIR)/$(1)/$(4),$(BUILD_DIR)/$(1)/.chksum)
+$(call unarchive,$(1),$(BUILD_DIR)/$(1)/$(4),$(BUILD_DIR)/$(1)/.chksum)
+
+UK_FETCH-y += $(BUILD_DIR)/$(1)/.chksum
+endef
+
+# Downloads an archive from remote and invokes unarchive
+# fetch $1:libname,$2:url
+define fetch =
+$(call fetchas,$(1),$(2),$(notdir $(2)))
+endef
+
+# fetch2 works like fetch but supports a secondary URL
+# fetch2 $1:libname,$2:url,$3:url2
+define fetch2 =
+$(call fetchas2,$(1),$(2),$(3),$(notdir $(2)))
+endef
+
+# Clones a git repo
+# NOTE: This command can not clone a specific commit from a
+# specific branch of a repo
+# clone $1:libname,$2:giturl,$3:branch/tag
+define clone =
+$(BUILD_DIR)/$(1)/.origin:
+	$(call verbose_cmd,GIT,$(1),$(RM) -r $(BUILD_DIR)/$(1)/origin && \
+	$(GIT) clone --recurse-submodules -q --progress --depth 1 --branch $(3) --no-tags $(2) $(BUILD_DIR)/$(1)/origin/ && \
+	$(TOUCH) $(BUILD_DIR)/$(1)/.origin)
+UK_FETCH-y += $(BUILD_DIR)/$(1)/.origin \
+$(eval $(call vprefix_lib,$(1),ORIGIN) = $(BUILD_DIR)/$(1)/origin)
+
+.PRECIOUS: $(BUILD_DIR)/$(1)/origin
+
+$(BUILD_DIR)/$(1)/origin/%: $(BUILD_DIR)/$(1)/.origin
+	@:
+
+endef
+
+
+#################################################
+#
+# Buildrules for objects
+#
+#################################################
+# Generates a build rule for an object of a library
+# Adds library-specific (AS/C/CXX)FLAGS to the build
+#
+# buildrule_* $1:libname,$2:source,$3:variant,$4:target,$5:extraflags
+
+define buildrule_S_ =
+$(4): $(2)
+	$(call build_cmd_fixdep,AS,$(1),$(4),\
+		$(AS)  $$(COMPFLAGS) $$(COMPFLAGS-y) \
+		       $$($(call vprefix_lib,$(1),COMPFLAGS)) $$($(call vprefix_lib,$(1),COMPFLAGS-y)) \
+		       $$(ASINCLUDES) $$(ASINCLUDES-y) \
+		       $$($(call vprefix_lib,$(1),ASINCLUDES)) $$($(call vprefix_lib,$(1),ASINCLUDES-y)) \
+		       $$($(call vprefix_src,$(1),$(2),$(3),INCLUDES)) $$($(call vprefix_src,$(1),$(2),$(3),INCLUDES-y)) \
+		       $$($(call vprefix_glb,$(3),ARCHFLAGS)) $$($(call vprefix_glb,$(3),ARCHFLAGS-y)) \
+		       $$(ASFLAGS) $$(ASFLAGS-y) $$(ASFLAGS_EXTRA) \
+		       $$($(call vprefix_lib,$(1),ASFLAGS)) $$($(call vprefix_lib,$(1),ASFLAGS-y)) \
+		       $$($(call vprefix_src,$(1),$(2),$(3),FLAGS)) $$($(call vprefix_src,$(1),$(2),$(3),FLAGS-y)) \
+		       $(5) \
+		       $$(DBGFLAGS) $$(DBGFLAGS-y) \
+		       -D__LIBNAME__=$(1) -D__BASENAME__=$(notdir $(2)) $(if $(3),-D__VARIANT__=$(3)) \
+		       -c $(2) -o $(4) $(call depflags,$(4))
+	)
+
+UK_SRCS-y += $(2)
+UK_DEPS-y += $(call out2dep,$(4))
+UK_OBJS-y += $(4)
+$(eval $(call vprefix_lib,$(1),OBJS-y) += $(4))
+$(eval $(call vprefix_lib,$(1),CLEAN-y) += $(call build_clean,$(4)) $(call out2dep,$(4)))
+endef
+
+buildrule_sx = $(call buildrule_S_,$(1),$(2),$(3),$(4))
+
+define buildrule_s =
+$(4): $(2)
+	$(call build_cmd,AS,$(1),$(4),\
+		$(AS)  $$(COMPFLAGS) $$(COMPFLAGS-y) \
+		       $$($(call vprefix_lib,$(1),COMPFLAGS)) $$($(call vprefix_lib,$(1),COMPFLAGS-y)) \
+		       $$(ASINCLUDES) $$(ASINCLUDES-y) \
+		       $$($(call vprefix_lib,$(1),ASINCLUDES)) $$($(call vprefix_lib,$(1),ASINCLUDES-y)) \
+		       $$($(call vprefix_src,$(1),$(2),$(3),INCLUDES)) $$($(call vprefix_src,$(1),$(2),$(3),INCLUDES-y)) \
+		       $$($(call vprefix_glb,$(3),ARCHFLAGS)) $$($(call vprefix_glb,$(3),ARCHFLAGS-y)) \
+		       $$(ASFLAGS) $$(ASFLAGS-y) $$(ASFLAGS_EXTRA) \
+		       $$($(call vprefix_lib,$(1),ASFLAGS)) $$($(call vprefix_lib,$(1),ASFLAGS-y)) \
+		       $$($(call vprefix_src,$(1),$(2),$(3),FLAGS)) $$($(call vprefix_src,$(1),$(2),$(3),FLAGS-y)) \
+		       $(5) \
+		       $$(DBGFLAGS) $$(DBGFLAGS-y) \
+		       -D__LIBNAME__=$(1) -D__BASENAME__=$(notdir $(2)) $(if $(3),-D__VARIANT__=$(3)) \
+		       -c $(2) -o $(4)
+	)
+
+UK_SRCS-y += $(2)
+UK_DEPS-y += $(call out2dep,$(4))
+UK_OBJS-y += $(4)
+$(eval $(call vprefix_lib,$(1),OBJS-y) += $(4))
+$(eval $(call vprefix_lib,$(1),CLEAN-y) += $(call build_clean,$(4)) $(call out2dep,$(4)))
+endef
+
+define buildrule_c =
+$(4): $(2)
+	$(call build_cmd_fixdep,CC,$(1),$(4),\
+		$(CC)  $$(COMPFLAGS) $$(COMPFLAGS-y) \
+		       $$($(call vprefix_lib,$(1),COMPFLAGS)) $$($(call vprefix_lib,$(1),COMPFLAGS-y)) \
+		       $$($(call vprefix_src,$(1),$(2),$(3),INCLUDES)) $$($(call vprefix_src,$(1),$(2),$(3),INCLUDES-y)) \
+		       $$($(call vprefix_lib,$(1),CINCLUDES)) $$($(call vprefix_lib,$(1),CINCLUDES-y)) \
+		       $$(CINCLUDES) $$(CINCLUDES-y) \
+		       $$($(call vprefix_glb,$(3),ARCHFLAGS)) $$($(call vprefix_glb,$(3),ARCHFLAGS-y)) \
+		       $$(CFLAGS) $$(CFLAGS-y) $$(CFLAGS_EXTRA) \
+		       $$($(call vprefix_lib,$(1),CFLAGS)) $$($(call vprefix_lib,$(1),CFLAGS-y)) \
+		       $$($(call vprefix_src,$(1),$(2),$(3),FLAGS)) $$($(call vprefix_src,$(1),$(2),$(3),FLAGS-y)) \
+		       $(5) \
+		       $$(DBGFLAGS) $$(DBGFLAGS-y) \
+		       -D__LIBNAME__=$(1) -D__BASENAME__=$(notdir $(2)) $(if $(3),-D__VARIANT__=$(3)) \
+		       -c $(2) -o $(4) $(call depflags,$(4))
+)
+
+UK_SRCS-y += $(2)
+UK_DEPS-y += $(call out2dep,$(4))
+UK_OBJS-y += $(4)
+$(eval $(call vprefix_lib,$(1),OBJS-y) += $(4))
+$(eval $(call vprefix_lib,$(1),CLEAN-y) += $(call build_clean,$(4)) $(call out2dep,$(4)))
+endef
+
+define buildrule_cxx =
+$(4): $(2)
+	$(call build_cmd_fixdep,CXX,$(1),$(4),\
+		$(CXX) $$(COMPFLAGS) $$(COMPFLAGS-y) \
+		       $$($(call vprefix_lib,$(1),COMPFLAGS)) $$($(call vprefix_lib,$(1),COMPFLAGS-y)) \
+		       $$($(call vprefix_src,$(1),$(2),$(3),INCLUDES)) $$($(call vprefix_src,$(1),$(2),$(3),INCLUDES-y)) \
+		       $$($(call vprefix_lib,$(1),CXXINCLUDES)) $$($(call vprefix_lib,$(1),CXXINCLUDES-y)) \
+		       $$(CXXINCLUDES) $$(CXXINCLUDES-y) \
+		       $$($(call vprefix_glb,$(3),ARCHFLAGS)) $$($(call vprefix_glb,$(3),ARCHFLAGS-y)) \
+		       $$(CXXFLAGS) $$(CXXFLAGS-y) $$(CXXFLAGS_EXTRA) \
+		       $$($(call vprefix_lib,$(1),CXXFLAGS)) $$($(call vprefix_lib,$(1),CXXFLAGS-y)) \
+		       $$($(call vprefix_src,$(1),$(2),$(3),FLAGS)) $$($(call vprefix_src,$(1),$(2),$(3),FLAGS-y)) \
+		       $(5) \
+		       $$(DBGFLAGS) $$(DBGFLAGS-y) \
+		       -D__LIBNAME__=$(1) -D__BASENAME__=$(notdir $(2)) $(if $(3),-D__VARIANT__=$(3)) \
+		       -c $(2) -o $(4) $(call depflags,$(4))
+	)
+
+UK_SRCS-y += $(2)
+UK_DEPS-y += $(call out2dep,$(4))
+UK_OBJS-y += $(4)
+$(eval $(call vprefix_lib,$(1),OBJS-y) += $(4))
+$(eval $(call vprefix_lib,$(1),CLEAN-y) += $(call build_clean,$(4)) $(call out2dep,$(4)))
+endef
+
+# Aliases for C++ sources
+buildrule_cp  = $(call buildrule_cxx,$(1),$(2),$(3),$(4))
+buildrule_cc  = $(call buildrule_cxx,$(1),$(2),$(3),$(4))
+buildrule_cpp = $(call buildrule_cxx,$(1),$(2),$(3),$(4))
+buildrule_CPP = $(call buildrule_cxx,$(1),$(2),$(3),$(4))
+buildrule_C   = $(call buildrule_cxx,$(1),$(2),$(3),$(4))
+buildrule_c$(plus)$(plus) = $(call buildrule_cxx,$(1),$(2),$(3),$(4))
+
+# NOTE: We are not using most of the flags such as COMPFLAGS due to incompatibilities between rustc and GCC.
+define buildrule_rs =
+$(4): $(2)
+	$(call build_cmd,RUSTC,$(1),$(4),\
+		$(RUSTC) $$(RUSTCFLAGS) $$(RUSTCFLAGS-y) $$(RUSTCFLAGS_EXTRA) \
+			$$($(call vprefix_lib,$(1),RUSTCFLAGS)) $$($(call vprefix_lib,$(1),RUSTCFLAGS-y)) \
+			$$($(call vprefix_src,$(1),$(2),$(3),FLAGS)) $$($(call vprefix_src,$(1),$(2),$(3),FLAGS-y)) \
+			--cfg '__LIBNAME__="$(1)"' --cfg '__BASENAME__="$(notdir $(2))"' $(if $(3),--cfg '__VARIANT__="$(3)"') \
+			$(2) -o $(4)
+	)
+
+UK_SRCS-y += $(2)
+UK_DEPS-y += $(call out2dep,$(4))
+UK_OBJS-y += $(4)
+$(eval $(call vprefix_lib,$(1),OBJS-y) += $(4))
+$(eval $(call vprefix_lib,$(1),CLEAN-y) += $(call build_clean,$(4)) $(call out2dep,$(4)))
+endef
+
+define add_lds_to_plat =
+$(eval $(call uc,$(2))_LD_SCRIPT-y += $(1))
+endef
+
+define add_lds_to_lib =
+$(eval EXTRA_LD_SCRIPT-y += $(1))
+endef
+
+define buildrule_S_lds =
+$(4): $(2)
+	$(call build_cmd_fixdep,LDS,$(1),$(4),\
+		$(AS)  -E -P -x assembler-with-cpp $$(COMPFLAGS) $$(COMPFLAGS-y) \
+		       $$(ASINCLUDES) $$(ASINCLUDES-y) \
+		       $$($(call vprefix_lib,$(1),ASINCLUDES)) $$($(call vprefix_lib,$(1),ASINCLUDES-y)) \
+		       $$($(call vprefix_src,$(1),$(2),$(3),INCLUDES)) $$($(call vprefix_src,$(1),$(2),$(3),INCLUDES-y)) \
+		       $$(ARCHFLAGS) $$(ARCHFLAGS-y) \
+		       $$(ASFLAGS) $$(ASFLAGS-y) $$(ASFLAGS_EXTRA) \
+		       $$($(call vprefix_lib,$(1),ASFLAGS)) $$($(call vprefix_lib,$(1),ASFLAGS-y)) \
+		       $$($(call vprefix_src,$(1),$(2),$(3),FLAGS)) $$($(call vprefix_src,$(1),$(2),$(3),FLAGS-y)) \
+		       -D__LIBNAME__=$(1) -D__BASENAME__=$(notdir $(2)) $(if $(3),-D__VARIANT__=$(3)) \
+		       $(5) \
+		       $(2) -o $(4) $(call depflags,$(4))
+	)
+
+UK_SRCS-y += $(2)
+UK_LDS-y += $(4)
+UK_DEPS-y += $(call out2dep,$(4))
+$(eval $(call vprefix_lib,$(1),LDS-y) += $(4))
+$(eval $(call vprefix_lib,$(1),CLEAN-y) += $(call build_clean,$(4)) $(call out2dep,$(4)))
+
+$(if $(strip $($(call uc,$(1))_PLATS)),\
+	$(foreach p,$($(call uc,$(1))_PLATS),\
+		$(if $(filter $(UK_PLAT_$(p)_DEF_LDS),$(2)),\
+			$(eval UK_PLAT_$(p)_DEF_LDS := $(4)),\
+			$(call add_lds_to_plat,$(4),$(p)))),\
+		$(call add_lds_to_lib,$(4))\
+)
+endef
+
+# buildrule for *.S files: differentiate between *.lds.S, *.S
+define buildrule_S =
+$(if $(filter %.lds.S,$(2)),$(call buildrule_S_lds,$(1),$(2),$(3),$(4),$(5)),\
+$(call buildrule_S_,$(1),$(2),$(3),$(4),$(5))
+)
+endef
+
+## Add the linker file to the common variable used for linker script
+define buildrule_ld  =
+$(2): | preprocess
+
+$(eval $(call vprefix_lib,$(1),LDS-y) += $(2))
+
+$(if $(strip $($(call uc,$(1))_PLATS)),\
+	$(foreach p,$($(call uc,$(1))_PLATS),\
+		$(if $(filter $(UK_PLAT_$(p)_DEF_LDS),$(2)),\
+			$(eval UK_PLAT_$(p)_DEF_LDS := $(2)),\
+			$(call add_lds_to_plat,$(2),$(p)))),\
+		$(call add_lds_to_lib,$(2))\
+ )
+endef
+
+define buildrule_dts =
+$(4): $(2)
+	$(call build_cmd,DTC,$(1),$(4),\
+	       $(DTC) -I dts -O dtb -o $$(@) $$(<)\
+	)
+
+UK_SRCS-y += $(2)
+$(eval $(call vprefix_lib,$(1),DTB-y) += $(4))
+$(eval $(call vprefix_lib,$(1),CLEAN-y) += $(call build_clean,$(4)))
+endef
+
+# terminating build rule
+# Only make sure that the file is registered to the preprocess stage
+define buildrule_noop_ =
+UK_PREPROCESS-y += $(2)
+endef
+
+# Aliases for pre-processed files (e.g., *.in)
+buildrule_in   = $(call buildrule_noop_,$(1),$(2))
+buildrule_uk   = $(call buildrule_noop_,$(1),$(2))
+
+# Aliases for C headers
+buildrule_h   = $(call buildrule_noop_,$(1),$(2))
+
+# Aliases for C++ headers
+buildrule_hp  = $(call buildrule_noop_,$(1),$(2))
+buildrule_hh  = $(call buildrule_noop_,$(1),$(2))
+buildrule_hpp = $(call buildrule_noop_,$(1),$(2))
+buildrule_HPP = $(call buildrule_noop_,$(1),$(2))
+buildrule_H   = $(call buildrule_noop_,$(1),$(2))
+
+# wrapper for buildrule_*,
+# selects appropriate buildrule depending on file extension,
+# if there is no such buildrule available, we throw an error.
+#
+# buildrule $1:libname,$2:source,$3:target,$4:extraflags(optional)
+buildrule_ = $(error $(1): Failed to derive source type from $(2))
+
+define buildrule =
+$(if $(filter buildrule_$(call fileext,$(strip $(2))),$(.VARIABLES)),,\
+$(error buildrule_$(call fileext,$(strip $(2))) is not defined: Failed to install rule for $(2)))
+
+$(call buildrule_$(call fileext,$(strip $(2))),$(strip $(1)),$(strip $(2)),$(strip $(3)),$(strip $(4)),$(strip $(5)))
+
+# Default buildrule_* dependencies
+# FIXME: We add $(KCONFIG_AUTOHEADER) in order to forcefully retrigger compiling
+#        whenever there is a config change. This is a workaround until we can
+#        handle changes that affect the compile command lines properly.
+$(4): $(call qstrip,$($(call vprefix_src,$(1),$(2),$(3),CDEPS)) \
+      $($(call vprefix_src,$(1),$(2),$(3),CDEPS-y))) $(KCONFIG_AUTOHEADER) \
+      | preprocess
+endef
+
+#################################################
+#
+# Pre-process rules
+#
+#################################################
+# Generates a pre-process rule for a source file of a library
+# Adds library-specific (M4)FLAGS to the rule
+#
+# preprule_* $1:libname,$2:source,$3:preptarget,$4:extraflags(optional)
+
+define preprule_m4 =
+$(3): $(2) | prepare
+	$(call build_cmd,M4,$(1),$(3),\
+		$(M4)  $$(M4INCLUDES) $$(M4INCLUDES-y) \
+		       $$($(call vprefix_lib,$(1),M4INCLUDES)) $$($(call vprefix_lib,$(1),M4INCLUDES-y)) \
+		       $$($(call vprefix_src,$(1),$(2),,M4INCLUDES)) $$($(call vprefix_src,$(1),$(2),,M4INCLUDES-y)) \
+		       $$(M4FLAGS) $$(M4FLAGS-y) $$(M4FLAGS_EXTRA) \
+		       $$($(call vprefix_lib,$(1),M4FLAGS)) $$($(call vprefix_lib,$(1),M4FLAGS-y)) \
+		       $$($(call vprefix_src,$(1),$(2),,M4FLAGS)) $$($(call vprefix_src,$(1),$(2),,M4FLAGS-y)) \
+		       $(4) \
+		       $(2) > $(3)
+	)
+
+UK_SRCS-y += $(2)
+UK_PREPROCESS-y += $(3)
+$(eval $(call vprefix_lib,$(1),CLEAN-y) += $(call build_clean,$(3)))
+endef
+
+# Pre-processing rule for awk progs
+# NOTES:
+#  $source is the awk progfile and AWKINCLUDES specify the input files to
+#  process. There are no global scopes for AWKINCLUDES and AWKFLAGS available
+#  because it would not be meaningful.
+define preprule_awk =
+$(3): $(2) \
+      $$($(call vprefix_lib,$(1),AWKINCLUDES)) $$($(call vprefix_lib,$(1),AWKINCLUDES-y)) \
+      $$($(call vprefix_src,$(1),$(2),,AWKINCLUDES)) $$($(call vprefix_src,$(1),$(2),,AWKINCLUDES-y)) \
+      | prepare
+	$(call build_cmd,AWK,$(1),$(3),\
+		$(AWK) -f $(2) \
+		       $$($(call vprefix_lib,$(1),AWKFLAGS)) $$($(call vprefix_lib,$(1),AWKFLAGS-y)) \
+		       $$($(call vprefix_src,$(1),$(2),,AWKFLAGS)) $$($(call vprefix_src,$(1),$(2),,AWKFLAGS-y)) \
+		       $(4) \
+		       $$($(call vprefix_lib,$(1),AWKINCLUDES)) $$($(call vprefix_lib,$(1),AWKINCLUDES-y)) \
+		       $$($(call vprefix_src,$(1),$(2),,AWKINCLUDES)) $$($(call vprefix_src,$(1),$(2),,AWKINCLUDES-y)) \
+		       > $(3)
+	)
+
+UK_SRCS-y += $(2)
+UK_PREPROCESS-y += $(3)
+$(eval $(call vprefix_lib,$(1),CLEAN-y) += $(call build_clean,$(3)))
+endef
+
+# wrapper for preprule_*,
+# selects appropriate pre-process rule depending on file extension
+# if there is no such pre-process rule available, we throw an error.
+#
+# preprule $1:libname,$2:source,$3:preptarget,$4:extraflags(optional)
+define preprule =
+$(if $(filter preprule_$(call fileext,$(strip $(2))),$(.VARIABLES)),,\
+$(error preprule_$(call fileext,$(strip $(2))) is not defined: Failed to install rule for $(2)))
+
+$(call preprule_$(call fileext,$(strip $(2))),$(strip $(1)),$(strip $(2)),$(strip $(3)),$(strip $(4)),$(strip $(5)))
+
+# Default preprule dependencies
+# FIXME: We add $(KCONFIG_AUTOHEADER) in order to forcefully retrigger compiling
+#        whenever there is a config change. This is a workaround until we can
+#        handle changes that affect the compile command lines properly.
+$(strip $(3)): $(strip $(2)) $(KCONFIG_AUTOHEADER)
+endef
+
+
+#################################################
+#
+# Buildrules for libraries
+#
+#################################################
+# Generates a build rule with the full path of the library
+# Generates a phony rule pointing to the full path of the library
+# Appends each library source to the global sources list (UK_SRCS-y)
+# Appends each librarie's final full path to (UK_LINK-y) -- this variable is used for linking the image
+
+# Calls the buildrule wrapper with translated source and target filename
+# Additional flags & includes defined in the scope for the source file
+# (and variant) scope are appended
+# Please note that global and library-wide flags & includes are added by the
+# particular buildrule because this depends on the source type
+#
+# buildrule_libobj $1:libname,$2:source,$3:variant(optional)
+define buildrule_libobj =
+$(eval subbuild=$($(call vprefix_src,$(1),$(2),$(3),SUBBUILD)))
+$(eval $(if $(subbuild),\
+$(call verbose_info,Creating: $(call sub_libbuild_dir,$(1),$(subbuild)))\
+$(call mk_sub_libbuild_dir,$(1),$(subbuild)))\
+)
+
+$(if $(filter %.lds.S,$(2)),\
+		$(eval target=$(call src2lds,$(1),$(2),$(subbuild))),\
+	$(if $(filter %.dts,$(2)),\
+		$(eval target=$(call dts2dtb,$(1),$(2),$(subbuild))),\
+		$(eval target=$(call src2obj,$(1),$(2),$(3),$(subbuild)))))
+$(call verbose_info,Installing rule: $(2) -> $(target))
+$(eval $(call buildrule,$(1),$(2),$(3),$(target),))
+endef
+
+# Calls the pre-process rule wrapper with translated source and target filename
+# Additional pre-processing flags & includes defined in the scope for the source
+# file (and variant) scope are appended. A corresponding buildrule is also
+# installed for the processed file.
+# Please note that global and library-wide pre-process flags & includes are
+# added by the particular preprule because this depends on the source type
+#
+# preprule_libobj $1:libname,$2:source,$3:preptargetsuffix,$4:variant(optional)
+define preprule_libobj =
+$(eval subbuild=$($(call vprefix_src,$(1),$(2),$(4),SUBBUILD)))
+$(eval preptarget=$(call src2dst,$(1),$(2),$(3),$(4),$(subbuild)))
+
+$(call verbose_info,Installing prepare rule: $(2) -> $(preptarget))
+$(eval $(call preprule,$(1),$(2),$(preptarget),\
+	$($(call vprefix_src,$(1),$(2),$(4),PREPINCLUDES))\
+	$($(call vprefix_src,$(1),$(2),$(4),PREPINCLUDES-y))\
+	$($(call vprefix_src,$(1),$(2),$(4),PREPFLAGS))\
+	$($(call vprefix_src,$(1),$(2),$(4),PREPFLAGS-y))\
+))
+
+$(eval $(call buildrule_libobj,$(1),$(preptarget),$(4)))
+endef
+
+# Parses a pre-process definition (chains are not supported yet)
+# for a single source word (see docs)
+# buildrule_libobj_preproc $1:libname,$2:source_definition,$3:variant(optional)
+define buildrule_libobj_preproc =
+$(if $(wordlist 2,$(words $(subst >, ,$(2))),$(subst >, ,$(2))),\
+  $(eval $(call preprule_libobj,$(1),$(word 1,$(subst >, ,$(2))),$(word 2,$(subst >, ,$(2))),$(3))),\
+ $(eval $(call buildrule_libobj,$(1),$(2),$(3)))\
+)
+endef
+
+# Parses a multitarget definition for a single source word
+# (see docs) and iterates over all variants
+# It calls buildrule_libobj_preproc for each variant
+#
+# buildrule_libobj_multitarget $1:libname,$2:source_definition
+define buildrule_libobj_multitarget =
+$(if $(wordlist 2,$(words $(subst |, ,$(2))),$(subst |, ,$(2))),\
+ $(foreach V,$(wordlist 2,$(words $(subst |, ,$(2))),$(subst |, ,$(2))),\
+  $(eval $(call buildrule_libobj_preproc,$(1),$(word 1,$(subst |, ,$(2))),$(V)))\
+ ),\
+ $(eval $(call buildrule_libobj_preproc,$(1),$(2),))\
+)
+endef
+
+# buildrule_olib $1:libname
+define buildrule_olib =
+$(call libname2preolib,$(1)): $$($(call vprefix_lib,$(1),OBJS)) \
+			      $$($(call vprefix_lib,$(1),OBJS-y)) \
+			      $$(EACHOLIB_OBJS) \
+			      $$(EACHOLIB_OBJS-y) \
+			      $$($(call vprefix_lib,$(1),ALIBS)) \
+			      $$($(call vprefix_lib,$(1),ALIBS-y)) \
+			      $$(EACHOLIB_ALIBS) \
+			      $$(EACHOLIB_ALIBS-y) \
+			      $$($(call vprefix_lib,$(1),LDS)) \
+			      $$($(call vprefix_lib,$(1),LDS-y)) \
+			      $$($(call vprefix_lib,$(1),DTB)) \
+			      $$($(call vprefix_lib,$(1),DTB-y)) \
+			      $$($(call vprefix_lib,$(1),LDEPS)) \
+			      $$($(call vprefix_lib,$(1),LDEPS-y))
+	$(call build_cmd,LD,,$(call libname2preolib,$(1)),\
+		$(LD) $$(LIBLDFLAGS) $$(LIBLDFLAGS-y) \
+		      $$($(call vprefix_lib,$(1),LDFLAGS)) \
+		      $$($(call vprefix_lib,$(1),LDFLAGS-y)) \
+		      $$($(call vprefix_lib,$(1),OBJS)) \
+		      $$($(call vprefix_lib,$(1),OBJS-y)) \
+		      $$(EACHOLIB_OBJS) \
+		      $$(EACHOLIB_OBJS-y) \
+		      -Wl$(comma)--start-group \
+		      $$($(call vprefix_lib,$(1),ALIBS)) \
+		      $$($(call vprefix_lib,$(1),ALIBS-y)) \
+		      $$(EACHOLIB_ALIBS) \
+		      $$(EACHOLIB_ALIBS-y) \
+		      -Wl$(comma)--end-group \
+		      -o $(call libname2preolib,$(1)))
+
+$(call libname2olib,$(1)): $(call libname2preolib,$(1)) \
+			   $$($(call vprefix_lib,$(1),EXPORTS)) $$($(call vprefix_lib,$(1),EXPORTS-y)) \
+			   $$($(call vprefix_lib,$(1),LOCALS)) $$($(call vprefix_lib,$(1),LOCALS-y)) \
+			   $$(EACHOLIB_LOCALS) $$(EACHOLIB_LOCALS-y)
+	$(call build_cmd,OBJCOPY,,$(call libname2olib,$(1)),\
+		$(OBJCOPY) $$(addprefix --keep-global-symbols=,$$($(call vprefix_lib,$(1),EXPORTS)) $$($(call vprefix_lib,$(1),EXPORTS-y))) \
+			   $$(addprefix --localize-symbols=,$$($(call vprefix_lib,$(1),LOCALS)) $$($(call vprefix_lib,$(1),LOCALS-y))) \
+			   $$(addprefix --localize-symbols=,$$(EACHOLIB_LOCALS) $$(EACHOLIB_LOCALS-y)) \
+		           $$(OBJCFLAGS) $$(OBJCFLAGS-y) \
+		           $$($(call vprefix_lib,$(1),OBJCFLAGS)) $$($(call vprefix_lib,$(1),OBJCFLAGS-y)) \
+			   $(call libname2preolib,$(1)) $(call libname2olib,$(1)))
+
+$(eval $(call vprefix_lib,$(1),CLEAN-y) += $(call build_clean,$(call libname2preolib,$(1))))
+$(eval $(call vprefix_lib,$(1),CLEAN-y) += $(call build_clean,$(call libname2olib,$(1))))
+
+$(1): $(call libname2olib,$(1))
+
+.PHONY: $(1)
+endef
+
+
+#################################################
+#
+# Cleanrules for libraries
+#
+#################################################
+# Generates a phony clean rule for a given library
+
+# cleanrule_lib $libname
+define cleanrule_lib =
+clean-$(1):
+	$(file >$(BUILD_DIR)/$(1)/uk_clean_list) \
+            $(foreach O,$($(call vprefix_lib,$(1),CLEAN-y)),\
+                $(file >>$(BUILD_DIR)/$(1)/uk_clean_list,$O)) \
+            $(foreach O,$($(call vprefix_lib,$(1),CLEAN)),\
+                $(file >>$(BUILD_DIR)/$(1)/uk_clean_list,$O))
+	$(call verbose_cmd,CLEAN,$(1),\
+            $(XARGS) $(RM) <$(BUILD_DIR)/$(1)/uk_clean_list)
+
+.PHONY: clean-$(1)
+endef

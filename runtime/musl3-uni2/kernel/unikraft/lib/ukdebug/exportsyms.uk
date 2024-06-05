@@ -1,0 +1,15 @@
+_uk_vprintd
+_uk_printd
+_uk_vprintk
+_uk_printk
+uk_hexdumpsn
+uk_hexdumpf
+uk_hexdumpd
+_uk_hexdumpd
+_uk_hexdumpk
+_uk_asmdumpd
+_uk_asmndumpd
+_uk_asmdumpk
+_uk_asmndumpk
+uk_trace_buffer_free
+uk_trace_buffer_writep

@@ -1,0 +1,136 @@
+# asprintf
+asprintf
+vasprintf
+
+# getopt
+opterr
+optind
+optopt
+optreset
+optarg
+getopt
+getopt_long
+getopt_long_only
+
+# malloc
+malloc
+calloc
+realloc
+posix_memalign
+memalign
+free
+
+# sscanf
+vsscanf
+sscanf
+scanf
+fscanf
+
+# stdio
+stdin
+stdout
+stderr
+vsnprintf
+vsprintf
+snprintf
+sprintf
+vfprintf
+fprintf
+vprintf
+printf
+fflush
+fputc
+putchar
+fputs
+puts
+
+# file
+clearerr
+feof
+ferror
+fseek
+fopen
+fclose
+fdopen
+fread
+fwrite
+
+# stdlib
+abort
+exit
+strtol
+strtoul
+strtoll
+strtoull
+atoi
+atol
+qsort
+
+# string
+memcpy
+bcopy
+bzero
+bcmp
+memset
+memchr
+memrchr
+memmove
+memcmp
+strnlen
+strlen
+strncpy
+strcat
+strcasecmp
+strcpy
+strchr
+strrchr
+strchrnul
+strncmp
+strcmp
+strcspn
+strspn
+strtok
+strtok_r
+strsep
+strndup
+strdup
+strlcpy
+strlcat
+strerror_r
+strerror
+strncat
+
+# strstr
+strstr
+
+# strsignal
+strsignal
+
+#psignal
+psignal
+
+# ctype
+_nolibc_ctype
+
+# errno
+errno
+__errno_location
+
+# network
+htons
+ntohs
+htonl
+ntohl
+h_errno
+
+# syslog
+openlog
+closelog
+syslog
+vsyslog
+
+# random
+random
+srandom
+initstate
+setstate

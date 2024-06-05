@@ -1,0 +1,180 @@
+/* DocBook Man Page */
+
+.refentry {
+}
+
+.refsynopsisdiv h3 {
+	font-size: 1.5rem;
+	font-weight: 350;
+	line-height: 1.125;
+	margin-top: 1rem;
+	margin-bottom: 0.5rem;
+}
+
+.refnamediv h3 {
+	font-size: 1.5rem;
+	font-weight: 350;
+	line-height: 1.125;
+}
+
+.refnamediv p {
+
+}
+
+.refsect1 {
+}
+
+.refsect1 h3 {
+	margin-top: 1rem;
+	margin-bottom: 0.5rem;
+	font-weight: 350;
+	font-size: 1.5rem;
+}
+
+.refsect1 p {
+	margin-top: 1rem;
+}
+
+.refsect2 {
+}
+
+.refsect2 h4 {
+	font-size: 1.25rem;
+	line-height: 1.5;
+	margin-top: 1rem;
+	margin-bottom: 1rem;
+}
+
+.note h4 {
+	font-size: 1.25rem;
+	line-height: 1.5;
+	margin-top: 1rem;
+	margin-bottom: 0;
+}
+
+.note {
+	margin-top: 1rem;
+}
+
+.funcsynopsis {
+}
+
+.funcprototype-table {
+}
+
+.funcdef {
+	color: #d73a49;
+}
+
+.funcprototype-table tr td {
+	font-size: 12px;
+	color: #d73a49;
+	background-color: whitesmoke;
+	font-family: monospace;
+}
+
+.fsfunc {
+	font-size: 12px;
+	color: #6f42c1;
+	font-weight: normal;
+}
+
+.pdparam {
+	font-size: 12px;
+	color: black;
+}
+
+.email {
+	color: black;
+	background-color: inherit;
+}
+
+.command {
+	color: black;
+}
+
+.uri,
+.literal {
+	background-color: inherit;
+	color: inherit;
+}
+
+.filename {
+	color: inherit;
+}
+
+.option {
+	font-family: monospace;
+	color: inherit;
+}
+
+.listitem {
+	margin: 1rem 0 1rem 2rem;
+}
+
+dl.variablelist dt {
+	margin-top: 1rem;
+}
+
+dl.variablelist dd {
+	margin-left: 1rem;
+}
+
+
+.term {
+	background-color: whitesmoke;
+	font-size: 0.875rem;
+	padding: 0.25em 0.5em 0.25em 0;
+}
+
+.term .option,
+dd p .code,
+.cmdsynopsis,
+.cmdsynopsis p .command,
+.cmdsynopsis p .option,
+.replaceable code {
+	font-family: monospace;
+	background-color: whitesmoke;
+	color: black;
+	font-size: 0.875rem;
+}
+
+.cmdsynopsis {
+	padding-top: 0.25rem;
+	padding-bottom: 0.25rem;
+	text-indent: -2rem;
+	padding-left: 2rem;
+}
+
+.informaltable {
+	padding: 0.5rem;
+}
+
+.informaltable thead tr th,
+.informaltable tbody tr td{
+	padding: 0.5rem;
+}
+
+.itemizedlist .listitem p {
+	display: inline-block;
+	padding: 0.25rem;
+	background-color: whitesmoke;
+	font-family: monospace;
+	font-size: 0.875rem;
+	list-style-type: none;
+	margin-top: 0;
+	margin-bottom: 0.5rem;
+}
+
+.itemizedlist .listitem,
+li.listitem {
+	margin-top: 0;
+	margin-bottom: 0;
+	list-style-type: none;
+}
+
+div.itemizedlist,
+ul.itemizedlist {
+	margin-top: 0;
+	margin-bottom: 1rem;
+}

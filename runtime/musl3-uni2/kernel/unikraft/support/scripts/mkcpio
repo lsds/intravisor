@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+OSENV=$(uname)
+CPIOTOOL=
+if [ "$OSENV" = "Linux" ]; then
+	CPIOTOOL="$(which bsdcpio)"
+else
+	CPIOTOOL="$(which cpio)"
+fi
+
+usage()
+{
+	echo "$0 [options] [output.cpio] [CPIO root path]" 1>&2
+	echo "-h	display this help screen" 1>&2
+	echo "-q	suppress non-critical output" 1>&2
+	exit 1
+}
+
+# Process extra options
+CPIOFLAGS=()
+while getopts ":hq" option; do
+	case $option in
+	h)
+		usage
+		;;
+	q)
+		OPT_QUIET=true
+		;;
+	?)
+		usage
+		;;
+	esac
+done
+
+if [ "$OPT_QUIET" = true ]; then
+	CPIOFLAGS+=("--quiet")
+else
+	CPIOFLAGS+=("-v")
+fi
+
+shift $((OPTIND - 1))
+
+# Process primary arguments
+[ -z "$1" ] || [ -z "$2" ] && usage
+if [ -e "$1" ] && [ ! -f "$1" ]; then
+	echo "Output '$1' does already exist and is not a file" 1>&2
+	usage
+fi
+if [ ! -d "$2" ]; then
+	echo "'$2' is not a directory" 1>&2
+	usage
+fi
+
+OUT_BASE="$(readlink -f "$(dirname "$1")")"
+OUT_FILE="$(basename "$1")"
+
+if [ ! -d "${OUT_BASE}" ]; then
+	echo "Target directory for '$1' does not exist" 1>&2
+	usage
+fi
+if [ -z "${CPIOTOOL}" ]; then
+	echo "Could not find 'bsdcpio'" 1>&2
+	exit 1
+fi
+
+# Generate CPIO file
+cd "$2" || exit 2
+find . -depth \( ! -iname ".gitkeep" \) -print |
+	tac |
+	"${CPIOTOOL}" "${CPIOFLAGS[@]}" -o --format newc > "${OUT_BASE}/${OUT_FILE}"
+exit $?

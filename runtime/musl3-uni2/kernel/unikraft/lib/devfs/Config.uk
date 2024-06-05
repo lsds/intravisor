@@ -1,0 +1,32 @@
+menuconfig LIBDEVFS
+	bool "devfs: devfs file system"
+	default n
+	depends on LIBVFSCORE
+
+if LIBDEVFS
+	config LIBDEVFS_AUTOMOUNT
+	bool "Mount /dev during boot"
+	default n
+
+	# hidden
+	config LIBDEVFS_DEV_NULL_ZERO
+		bool
+		default n
+
+	config LIBDEVFS_DEV_NULL
+		bool "Register null device"
+		default y if LIBDEVFS_AUTOMOUNT
+		select LIBDEVFS_DEV_NULL_ZERO
+		default n
+
+	config LIBDEVFS_DEV_ZERO
+		bool "Register zero device"
+		default y if LIBDEVFS_AUTOMOUNT
+		select LIBDEVFS_DEV_NULL_ZERO
+		default n
+
+	config LIBDEVFS_DEV_STDOUT
+		bool "Register stdout device"
+		default y if LIBDEVFS_AUTOMOUNT
+		default n
+endif

@@ -1,0 +1,2762 @@
+[
+    {
+        "app": "${build}/argvbounds-${kind}.exe",
+        "name": "argv_bounds_no_args",
+        "xrc": [32],
+        "skip": ["morello", "fvp"]
+    },
+    {
+        "app": "${build}/argvbounds-${kind}.exe",
+        "name": "argv_bounds_one_arg",
+        "args": ["test"],
+        "xrc": [48],
+        "skip": ["morello", "fvp"]
+    },
+    {
+        "app": "${build}/argvbounds-${kind}.exe",
+        "name": "argv_bounds_two_args",
+        "args": ["morello", "test"],
+        "xrc": [64],
+        "skip": ["morello", "fvp"]
+    },
+    {
+        "app": "${build}/strerror_r-${kind}.exe",
+        "name": "strerror_r",
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/strerror-${kind}.exe",
+        "name": "strerror",
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/bsearch-${kind}.exe",
+        "args": ["0"],
+        "name": "bsearch-basic",
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/bsearch-${kind}.exe",
+        "args": ["1"],
+        "name": "bsearch-duplicate",
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/bsearch-${kind}.exe",
+        "args": ["2"],
+        "name": "bsearch-not-found",
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/memccpy-${kind}.exe",
+        "name": "memccpy-c",
+        "args": ["0"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/memccpy-${kind}.exe",
+        "name": "memccpy-n",
+        "args": ["1"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/memccpy-${kind}.exe",
+        "name": "memccpy-whole-string",
+        "args": ["2"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/memchr-${kind}.exe",
+        "name": "memchr-found",
+        "args": ["0"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/memchr-${kind}.exe",
+        "name": "memchr-not-found",
+        "args": ["1"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/memchr-${kind}.exe",
+        "name": "memchr-not-within-n",
+        "args": ["2"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/stpcpy-${kind}.exe",
+        "name": "stpcpy",
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/stpncpy-${kind}.exe",
+        "name": "stpncpy",
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/strlen-${kind}.exe",
+        "name": "strlen-basic",
+        "args": ["0"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/strlen-${kind}.exe",
+        "name": "strlen-empty",
+        "args": ["1"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/strlen-${kind}.exe",
+        "name": "strlen-many",
+        "args": ["2"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/strcasestr-${kind}.exe",
+        "name": "strcasestr-found",
+        "xrc": [0],
+        "args": ["0"],
+        "skip": []
+    },
+    {
+        "app": "${build}/strcasestr-${kind}.exe",
+        "name": "strcasestr-not-found",
+        "xrc": [0],
+        "args": ["1"],
+        "skip": []
+    },
+    {
+        "app": "${build}/strcasestr-${kind}.exe",
+        "name": "strcasestr-empty-haystack",
+        "xrc": [0],
+        "args": ["2"],
+        "skip": []
+    },
+    {
+        "app": "${build}/mempcpy-${kind}.exe",
+        "name": "mempcpy",
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/memrchr-${kind}.exe",
+        "name": "memrchr-found",
+        "args": ["0"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/memrchr-${kind}.exe",
+        "name": "memrchr-not-found",
+        "args": ["1"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/memrchr-${kind}.exe",
+        "name": "memrchr-not-within-n",
+        "args": ["2"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/strcasecmp-${kind}.exe",
+        "name": "strcasecmp",
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/strcat-${kind}.exe",
+        "name": "strcat",
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/memmove-${kind}.exe",
+        "name": "memmove-high-to-low",
+        "args": ["0"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/memmove-${kind}.exe",
+        "name": "memmove-low-to-high",
+        "args": ["1"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/strchr-${kind}.exe",
+        "name": "strchr-found",
+        "args": ["0"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/strchr-${kind}.exe",
+        "name": "strchr-not-found",
+        "args": ["1"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/strchrnul-${kind}.exe",
+        "name": "strchrnul-found",
+        "args": ["0"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/strchrnul-${kind}.exe",
+        "name": "strchrnul-not-found",
+        "args": ["1"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/strlcpy-${kind}.exe",
+        "name": "strlcpy",
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/strcmp-${kind}.exe",
+        "name": "strcmp",
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/strcpy-${kind}.exe",
+        "name": "strcpy",
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/strcspn-${kind}.exe",
+        "name": "strcspn-empty",
+        "args": ["0"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/strcspn-${kind}.exe",
+        "name": "strcspn-found",
+        "args": ["1"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/strcspn-${kind}.exe",
+        "name": "strcspn-not-found",
+        "args": ["2"],
+        "skip": []
+    },
+    {
+        "app": "${build}/strlcat-${kind}.exe",
+        "name": "strlcat-shorter-than-n",
+        "args": ["0"],
+        "skip": []
+    },
+    {
+        "app": "${build}/strlcat-${kind}.exe",
+        "name": "strlcat-longer-than-n",
+        "args": ["1"],
+        "skip": []
+    },
+    {
+        "app": "${build}/strncasecmp-${kind}.exe",
+        "name": "strncasecmp",
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/strncat-${kind}.exe",
+        "name": "strncat",
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/strncmp-${kind}.exe",
+        "name": "strncmp",
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/strncpy-${kind}.exe",
+        "name": "strncpy",
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/strnlen-${kind}.exe",
+        "name": "strnlen-basic",
+        "args": ["0"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/strnlen-${kind}.exe",
+        "name": "strnlen-empty",
+        "args": ["1"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/strnlen-${kind}.exe",
+        "name": "strnlen-many",
+        "args": ["2"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/strpbrk-${kind}.exe",
+        "name": "strpbrk-not-found",
+        "args": ["0"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/strpbrk-${kind}.exe",
+        "name": "strpbrk-found",
+        "args": ["1"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/strrchr-${kind}.exe",
+        "name": "strrchr-found",
+        "args": ["0"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/strrchr-${kind}.exe",
+        "name": "strrchr-not-found",
+        "args": ["1"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/swab-${kind}.exe",
+        "name": "swab",
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/strsignal-${kind}.exe",
+        "name": "strsignal",
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/strsep-${kind}.exe",
+        "name": "strsep",
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/wcslen-${kind}.exe",
+        "name": "wcslen-basic",
+        "args": ["0"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/wcslen-${kind}.exe",
+        "name": "wcslen-empty",
+        "args": ["1"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/wcslen-${kind}.exe",
+        "name": "wcslen-many",
+        "args": ["2"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/wmemset-${kind}.exe",
+        "name": "wmemset",
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/wcscpy-${kind}.exe",
+        "name": "wcscpy",
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/wcscmp-${kind}.exe",
+        "name": "wcscmp",
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/wcsncasecmp-${kind}.exe",
+        "name": "wcsncasecmp",
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/wmemcpy-${kind}.exe",
+        "name": "wmemcpy",
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/wmemmove-${kind}.exe",
+        "name": "wmemmove-high-to-low",
+        "args": ["0"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/wmemmove-${kind}.exe",
+        "name": "wmemmove-low-to-high",
+        "args": ["1"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/wcscasecmp-${kind}.exe",
+        "name": "wcscasecmp",
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/wcscspn-${kind}.exe",
+        "name": "wcscspn-empty",
+        "args": ["0"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/wcscspn-${kind}.exe",
+        "name": "wcscspn-found",
+        "args": ["1"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/wcscspn-${kind}.exe",
+        "name": "wcscspn-not-found",
+        "args": ["2"],
+        "skip": []
+    },
+    {
+        "app": "${build}/wmemcmp-${kind}.exe",
+        "name": "wmemcmp",
+        "skip": []
+    },
+    {
+        "app": "${build}/wcsncat-${kind}.exe",
+        "name": "wcsncat",
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/wcsspn-${kind}.exe",
+        "name": "wcsspn-empty",
+        "args": ["0"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/wcsspn-${kind}.exe",
+        "name": "wcsspn-found",
+        "args": ["1"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/wcsspn-${kind}.exe",
+        "name": "wcsspn-not-found",
+        "args": ["2"],
+        "skip": []
+    },
+    {
+        "app": "${build}/wcsnlen-${kind}.exe",
+        "name": "wcsnlen-basic",
+        "args": ["0"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/wcsnlen-${kind}.exe",
+        "name": "wcsnlen-empty",
+        "args": ["1"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/wcsnlen-${kind}.exe",
+        "name": "wcsnlen-many",
+        "args": ["2"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/wcschr-${kind}.exe",
+        "name": "wcschr-found",
+        "args": ["0"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/wcschr-${kind}.exe",
+        "name": "wcschr-not-found",
+        "args": ["1"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/wcspbrk-${kind}.exe",
+        "name": "wcspbrk-not-found",
+        "args": ["0"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/wcspbrk-${kind}.exe",
+        "name": "wcspbrk-found",
+        "args": ["1"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/wmemchr-${kind}.exe",
+        "name": "wmemchr-found",
+        "args": ["0"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/wmemchr-${kind}.exe",
+        "name": "wmemchr-not-found",
+        "args": ["1"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/wmemchr-${kind}.exe",
+        "name": "wmemchr-not-within-n",
+        "args": ["2"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/wcpcpy-${kind}.exe",
+        "name": "wcpcpy",
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/wcpncpy-${kind}.exe",
+        "name": "wcpncpy",
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/wcsrchr-${kind}.exe",
+        "name": "wcsrchr-found",
+        "args": ["0"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/wcsrchr-${kind}.exe",
+        "name": "wcsrchr-not-found",
+        "args": ["1"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/wcsncmp-${kind}.exe",
+        "name": "wcsncmp",
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/wcsncpy-${kind}.exe",
+        "name": "wcsncpy",
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/wcscat-${kind}.exe",
+        "name": "wcscat",
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/wcsstr-${kind}.exe",
+        "name": "wcsstr",
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/wcstok-${kind}.exe",
+        "name": "wcstok",
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/strtok-${kind}.exe",
+        "name": "strtok",
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/strtok_r-${kind}.exe",
+        "name": "strtok_r",
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/assert-${kind}.exe",
+        "name": "assert",
+        "xrc": [134, -6],
+        "skip": []
+    },
+    {
+        "app": "${build}/assert_noop-${kind}.exe",
+        "name": "assert_noop",
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/gettimeofday-${kind}.exe",
+        "name": "gettimeofday",
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/clock_getres-${kind}.exe",
+        "name": "clock_getres",
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/timer-${kind}.exe",
+        "name": "timer_funcs",
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/timegm-${kind}.exe",
+        "name": "timegm",
+        "xrc": [0],
+        "skip": [],
+        "stdout": ["0"]
+    },
+    {
+        "app": "${build}/clock_getcpuclockid-${kind}.exe",
+        "name": "clock_getcpuclockid",
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/nanosleep-${kind}.exe",
+        "name": "nanosleep",
+        "args": ["0"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/nanosleep-${kind}.exe",
+        "name": "clock_nanosleep",
+        "args": ["1"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app":  "${build}/strxfrm-${kind}.exe",
+        "name": "strxfrm-get-length",
+        "args": ["0"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app":  "${build}/strxfrm-${kind}.exe",
+        "name": "strxfrm-convert",
+        "args": ["1"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app":  "${build}/strcoll-${kind}.exe",
+        "name": "strcoll",
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app":  "${build}/localeconv-${kind}.exe",
+        "name": "localeconv-check-validity",
+        "args": ["0"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app":  "${build}/localeconv-${kind}.exe",
+        "name": "localeconv-read-char",
+        "args": ["1"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app":  "${build}/localeconv-${kind}.exe",
+        "name": "localeconv-write-char",
+        "args": ["2"],
+        "xrc": [139, -11],
+        "skip": []
+    },
+    {
+        "app":  "${build}/localeconv-${kind}.exe",
+        "name": "localeconv-read-string",
+        "args": ["3"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app":  "${build}/localeconv-${kind}.exe",
+        "name": "localeconv-write-string",
+        "args": ["4"],
+        "xrc": [139, -11],
+        "skip": []
+    },
+    {
+        "app":  "${build}/mbrtowc-${kind}.exe",
+        "name": "mbrtowc",
+        "args": ["0"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app":  "${build}/mbrtowc-${kind}.exe",
+        "name": "c16towc",
+        "args": ["1"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app":  "${build}/mbrtowc-${kind}.exe",
+        "name": "mbsnrtowcs",
+        "args": ["2"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app":  "${build}/mbrtowc-${kind}.exe",
+        "name": "mbsrtowcs-c",
+        "env": { "LC_ALL": "C" },
+        "args": ["3"],
+        "xrc": [0]
+    },
+    {
+        "app":  "${build}/mbrtowc-${kind}.exe",
+        "name": "mbsrtowcs-c-utf8",
+        "env": { "LC_ALL": "C.UTF-8" },
+        "args": ["3"],
+        "xrc": [0]
+    },
+    {
+        "app": "${build}/stdout-${kind}.exe",
+        "name": "stdout",
+        "xrc": [0],
+        "skip": [],
+        "stdout" : ["Hello stdout"]
+    },
+    {
+        "app": "${build}/stderr-${kind}.exe",
+        "name": "stderr",
+        "xrc": [0],
+        "skip": [],
+        "stderr" : ["Hello stderr"]
+    },
+    {
+        "app": "${build}/echo-${kind}.exe",
+        "name": "stdin_echo",
+        "xrc": [0],
+        "skip": [],
+        "stdin": "Hello stdin",
+        "stdout" : ["Hello stdin"]
+    },
+    {
+        "app": "${build}/getenv-${kind}.exe",
+        "name": "getenv",
+        "xrc": [0],
+        "skip": [],
+        "env": {"HELLO": "world"},
+        "stdout": ["world", "6"]
+    },
+    {
+        "app": "${build}/secure_getenv-${kind}.exe",
+        "name": "secure_getenv",
+        "xrc": [0],
+        "skip": [],
+        "env": {"HELLO": "world"},
+        "stdout": ["world", "6"]
+    },
+    {
+        "app": "${build}/nl_langinfo-${kind}.exe",
+        "name": "nl_langinfo",
+        "xrc": [0],
+        "skip": [],
+        "stdout": ["ASCII", "6", "%m/%d/%y", "9"]
+    },
+    {
+        "app": "${build}/localtime-${kind}.exe",
+        "name": "localtime",
+        "xrc": [0],
+        "skip": [],
+        "stdout": ["0"]
+    },
+    {
+        "app": "${build}/gmtime-${kind}.exe",
+        "name": "gmtime",
+        "xrc": [0],
+        "skip": [],
+        "stdout": ["0"]
+    },
+    {
+        "app": "${build}/asctime-${kind}.exe",
+        "name": "asctime",
+        "xrc": [0],
+        "skip": [],
+        "stdout": ["[A-Z][a-z]{2} [A-Z][a-z]{2} [ \\d]\\d \\d{2}:\\d{2}:\\d{2} \\d{4}", "26"]
+    },
+    {
+        "app": "${build}/strftime-${kind}.exe",
+        "name": "strftime",
+        "xrc": [0],
+        "skip": [],
+        "stdout": ["\\d{2}:\\d{2}, 40"]
+    },
+    {
+        "app":  "${build}/rand-${kind}.exe",
+        "name": "prng-seeds",
+        "args": ["0"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app":  "${build}/rand-${kind}.exe",
+        "name": "prng-rand",
+        "args": ["1"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app":  "${build}/rand-${kind}.exe",
+        "name": "prng-drand48-erand48",
+        "args": ["2"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app":  "${build}/rand-${kind}.exe",
+        "name": "prng-lrand48-nrand48",
+        "args": ["3"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app":  "${build}/rand-${kind}.exe",
+        "name": "prng-mrand48-jrand48",
+        "args": ["4"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/open-${kind}.exe",
+        "name": "open",
+        "args": ["0"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/open-${kind}.exe",
+        "name": "openat",
+        "args": ["1"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/open-${kind}.exe",
+        "name": "creat",
+        "args": ["2"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/fcntl-${kind}.exe",
+        "name": "fcntl-flock",
+        "args": ["0"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/fcntl-${kind}.exe",
+        "name": "fcntl-fd",
+        "args": ["1"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/fcntl-${kind}.exe",
+        "name": "fcntl-fl",
+        "args": ["2"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/fcntl-${kind}.exe",
+        "name": "fcntl-own",
+        "xrc": [0],
+        "args": ["3"],
+        "skip": []
+    },
+    {
+        "app": "${build}/fscanf-${kind}.exe",
+        "name": "fscanf-int",
+        "args": ["0"],
+        "xrc": [0],
+        "skip": [],
+        "stdin": "25 -63 101 3d"
+    },
+    {
+        "app": "${build}/fscanf-${kind}.exe",
+        "name": "fscanf-exact-word",
+        "args": ["1"],
+        "xrc": [0],
+        "skip": [],
+        "stdin": "match-63"
+    },
+    {
+        "app": "${build}/fscanf-${kind}.exe",
+        "name": "fscanf-float",
+        "args": ["2"],
+        "xrc": [0],
+        "skip": [],
+        "stdin": "-2.365 6.805646e+39"
+    },
+    {
+        "app": "${build}/fscanf-${kind}.exe",
+        "name": "fscanf-char",
+        "args": ["3"],
+        "xrc": [0],
+        "skip": [],
+        "stdin": "match"
+    },
+    {
+        "app": "${build}/fscanf-${kind}.exe",
+        "name": "fscanf-string",
+        "args": ["4"],
+        "xrc": [0],
+        "skip": [],
+        "stdin": "match those words exactly"
+    },
+    {
+        "app": "${build}/fscanf-${kind}.exe",
+        "name": "fscanf-set",
+        "args": ["5"],
+        "xrc": [0],
+        "skip": [],
+        "stdin": "startend"
+    },
+    {
+        "app": "${build}/fscanf-${kind}.exe",
+        "name": "fscanf-discard",
+        "args": ["6"],
+        "xrc": [0],
+        "skip": [],
+        "stdin": "25 -63"
+    },
+    {
+        "app": "${build}/fscanf-${kind}.exe",
+        "name": "fscanf-positional",
+        "args": ["7"],
+        "xrc": [0],
+        "skip": [],
+        "stdin": "25 -63"
+    },
+    {
+        "app": "${build}/fscanf-${kind}.exe",
+        "name": "fscanf-capabilities",
+        "args": ["8"],
+        "xrc": [0],
+        "skip": [],
+        "stdin": "F0E32F0E32F0E32A"
+    },
+    {
+        "app": "${build}/fscanf-${kind}.exe",
+        "name": "fscanf-alloc",
+        "args": ["9"],
+        "xrc": [0],
+        "skip": [],
+        "stdin": "match"
+    },
+    {
+        "app":  "${build}/sscanf-${kind}.exe",
+        "name": "sscanf",
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/syscall-${kind}.exe",
+        "name": "syscall-write",
+        "args": ["0"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/syscall-${kind}.exe",
+        "name": "syscall-getcpu",
+        "args": ["1"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/syscall-${kind}.exe",
+        "name": "syscall-mmap",
+        "args": ["2"],
+        "xrc": [0],
+        "skip": ["mie"]
+    },
+    {
+        "app": "${build}/mmap-${kind}.exe",
+        "name": "mmap",
+        "args": ["0"],
+        "xrc": [0],
+        "skip": ["purecap"]
+    },
+    {
+        "app": "${build}/mmap-${kind}.exe",
+        "name": "mmap-offset",
+        "args": ["1"],
+        "xrc": [0],
+        "skip": ["purecap"]
+    },
+    {
+        "app": "${build}/mmap-${kind}.exe",
+        "name": "mmap-tags-with-munmap",
+        "args": ["2"],
+        "xrc": [0]
+    },
+    {
+        "app": "${build}/mmap-${kind}.exe",
+        "name": "mmap-tags-without-munmap",
+        "args": ["3"],
+        "xrc": [0]
+    },
+    {
+        "app": "${build}/temp-${kind}.exe",
+        "name": "temp-mktemp",
+        "args": ["0"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/temp-${kind}.exe",
+        "name": "temp-mkstemp",
+        "args": ["1"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/temp-${kind}.exe",
+        "name": "temp-mkostemp",
+        "args": ["2"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/temp-${kind}.exe",
+        "name": "temp-mkstemps",
+        "args": ["3"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/temp-${kind}.exe",
+        "name": "temp-mkostemps",
+        "args": ["4"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/temp-${kind}.exe",
+        "name": "temp-mkdtemp",
+        "args": ["5"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/temp-${kind}.exe",
+        "name": "temp-tmpfile",
+        "args": ["6"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/temp-${kind}.exe",
+        "name": "temp-tempname",
+        "args": ["7"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/stat-${kind}.exe",
+        "name": "stat",
+        "args": ["0"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/stat-${kind}.exe",
+        "name": "mkfifo",
+        "args": ["1"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/stat-${kind}.exe",
+        "name": "umask",
+        "args": ["2"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/stat-${kind}.exe",
+        "name": "utimensat-futimensat",
+        "args": ["3"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/stat-${kind}.exe",
+        "name": "chmod",
+        "args": ["4"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/stat-${kind}.exe",
+        "name": "statvfs",
+        "args": ["5"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/getauxptr-${kind}.exe",
+        "name": "getauxptr",
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/getauxptrcheri-${kind}.exe",
+        "name": "at-cheri-auxv",
+        "xrc": [0],
+        "skip": ["morello", "fvp"]
+    },
+    {
+        "app": "${build}/mainargv-${kind}.exe",
+        "name": "mainargv",
+        "args": ["1", "12", "123", "1234", "12345", "123456", "1234567", "12345678", "123456789", "1234567890", "12345678901234567890"],
+        "xrc": [0],
+        "skip": ["morello", "fvp"]
+    },
+    {
+        "app": "${build}/mainenvp-${kind}.exe",
+        "name": "mainenvp",
+        "args": ["one", "2", "three"],
+        "env": {
+            "HELLO": "world",
+            "MORELLO": "cheri"
+        },
+        "xrc": [0],
+        "skip": ["morello", "fvp"]
+    },
+    {
+        "app": "${build}/sprintf-${kind}.exe",
+        "args": ["0"],
+        "name": "sprintf",
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/sprintf-${kind}.exe",
+        "args": ["1"],
+        "name": "vsprintf",
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/sprintf-${kind}.exe",
+        "args": ["2"],
+        "name": "asprintf",
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/dprintf-${kind}.exe",
+        "name": "dprintf",
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/malloc-${kind}.exe",
+        "name": "malloc_basic",
+        "args": ["0"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/malloc-${kind}.exe",
+        "name": "malloc_free",
+        "args": ["1"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/malloc-${kind}.exe",
+        "name": "malloc_free_re_malloc",
+        "args": ["2"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/malloc-${kind}.exe",
+        "name": "malloc_no_overlap",
+        "args": ["3"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/malloc-${kind}.exe",
+        "name": "malloc_double_free",
+        "args": ["5"],
+        "xrc": [139, -11],
+        "skip": []
+    },
+    {
+        "app": "${build}/malloc-${kind}.exe",
+        "name": "malloc_enomem",
+        "args": ["6"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/pthread-${kind}.exe",
+        "name": "pthread-basic",
+        "args": ["0"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/pthread-${kind}.exe",
+        "name": "pthread-setstack",
+        "args": ["1"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/pthread_cancel-${kind}.exe",
+        "name": "pthread-cancel-async-no-cp",
+        "args": ["1"],
+        "xrc": [0],
+        "skip": [],
+        "ignore": ["fvp"]
+    },
+    {
+        "app": "${build}/pthread_cancel-${kind}.exe",
+        "name": "pthread-cancel-async-in-cp",
+        "args": ["2"],
+        "xrc": [0],
+        "skip": [],
+        "ignore": ["fvp"]
+    },
+    {
+        "app": "${build}/pthread_cancel-${kind}.exe",
+        "name": "pthread-cancel-deferred-no-cp",
+        "args": ["3"],
+        "xrc": [0],
+        "skip": ["mie"],
+        "ignore": ["fvp"],
+        "timeout": 30
+    },
+    {
+        "app": "${build}/pthread_cancel-${kind}.exe",
+        "name": "pthread-cancel-deferred-in-cp",
+        "args": ["4"],
+        "xrc": [0],
+        "skip": ["mie"],
+        "ignore": ["fvp"],
+        "timeout": 30
+    },
+    {
+        "app": "${build}/pthread_cancel-${kind}.exe",
+        "name": "pthread-cancel-async-disabled",
+        "args": ["5"],
+        "xrc": [0],
+        "skip": ["flaky"],
+        "ignore": ["fvp"]
+    },
+    {
+        "app": "${build}/pthread_cancel-${kind}.exe",
+        "name": "pthread-cancel-deferred-disabled",
+        "args": ["6"],
+        "xrc": [0],
+        "skip": ["flaky"],
+        "ignore": ["fvp"]
+    },
+    {
+        "app": "${build}/pthread_cancel-${kind}.exe",
+        "name": "pthread-cancel-async-masked",
+        "args": ["7"],
+        "xrc": [0],
+        "skip": [],
+        "ignore": ["fvp"]
+    },
+    {
+        "app": "${build}/pthread_cancel-${kind}.exe",
+        "name": "pthread-cancel-deferred-masked",
+        "args": ["8"],
+        "xrc": [0],
+        "skip": ["flaky"],
+        "ignore": ["fvp"],
+        "timeout": 30
+    },
+    {
+        "app": "${build}/pthread_cancel-${kind}.exe",
+        "name": "pthread-cancel-deferred-in-cp-custom",
+        "args": ["9"],
+        "xrc": [0],
+        "skip": ["mie"],
+        "ignore": ["fvp"],
+        "timeout": 30
+    },
+    {
+        "app": "${build}/pthread_cleanup-${kind}.exe",
+        "name": "pthread-cleanup",
+        "xrc": [0],
+        "skip": ["mie"],
+        "ignore": ["fvp"],
+        "timeout": 30
+    },
+    {
+        "app": "${build}/printf_plain_text-${kind}.exe",
+        "name": "printf_plain_text",
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/memcpy-${kind}.exe",
+        "name": "memcpy_small_cpy",
+        "args": ["0"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/memcpy-${kind}.exe",
+        "name": "memcpy_medium_cpy",
+        "args": ["1"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/memcpy-${kind}.exe",
+        "name": "memcpy_large_cpy",
+        "args": ["2"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/memcpy-${kind}.exe",
+        "name": "memcpy_nested_capabilities",
+        "args": ["3"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/mremap-${kind}.exe",
+        "name": "mremap-shrink",
+        "args": ["0"],
+        "xrc": [0],
+        "skip": ["purecap"]
+    },
+    {
+        "app": "${build}/mremap-${kind}.exe",
+        "name": "mremap-extend",
+        "args": ["1"],
+        "xrc": [0],
+        "skip": ["purecap"]
+    },
+    {
+        "app": "${build}/mremap-${kind}.exe",
+        "name": "mremap-move-fixed",
+        "args": ["2"],
+        "xrc": [0],
+        "skip": ["purecap"]
+    },
+    {
+        "app": "${build}/mremap-${kind}.exe",
+        "name": "mremap-move-dontunmap",
+        "args": ["3"],
+        "xrc": [0],
+        "skip": ["mie"]
+    },
+    {
+        "app": "${build}/mremap-${kind}.exe",
+        "name": "mremap-should-segfault",
+        "args": ["4"],
+        "xrc": [139, -11],
+        "skip": ["purecap"]
+    },
+    {
+        "app": "${build}/shm_open-${kind}.exe",
+        "name": "shm_open_unlink",
+        "args": ["this should be uppercase"],
+        "stdout": [
+            "THIS SHOULD BE UPPERCASE"
+        ],
+        "xrc": [0],
+        "skip": ["flaky"]
+    },
+    {
+        "app": "${build}/printcap-${kind}.exe",
+        "name": "printcap-null",
+        "args": ["0"],
+        "stdout": [
+            "0x0",
+            "0x0"
+        ],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/printcap-${kind}.exe",
+        "name": "printcap-csp",
+        "args": ["1"],
+        "stdout": [
+            "0x[0-9a-f]+\\s\\[[rwxRWE]{1,6},0x[0-9a-f]+\\-0x[0-9a-f]+\\]",
+            "0x[0-9a-f]+\\s\\[[rwxRWE]{1,6},0x[0-9a-f]+\\-0x[0-9a-f]+\\]"
+        ],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "comment": "This prints capmax with tag = 0",
+        "app": "${build}/printcap-${kind}.exe",
+        "name": "printcap-max",
+        "args": ["2"],
+        "stdout": [
+            "0x0 [rwxRWE,0x0-0xffffffffffffffff] (invalid)",
+            "0x0 [rwxRWE,0x0-0xffffffffffffffff] (invalid)"
+        ],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/printcap-${kind}.exe",
+        "name": "printcap-sealed",
+        "args": ["3"],
+        "stdout": [
+            "0x[0-9a-f]+\\s\\[[rwxRWE]{1,6},0x[0-9a-f]+\\-0x[0-9a-f]+\\]\\s\\(sealed\\)",
+            "0x[0-9a-f]+\\s\\[[rwxRWE]{1,6},0x[0-9a-f]+\\-0x[0-9a-f]+\\]\\s\\(sealed\\)"
+        ],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/printcap-${kind}.exe",
+        "name": "printcap-sentry",
+        "args": ["4"],
+        "stdout": [
+            "0x[0-9a-f]+\\s\\[[rwxRWE]{1,6},0x[0-9a-f]+\\-0x[0-9a-f]+\\]\\s\\(sentry\\)",
+            "0x[0-9a-f]+\\s\\[[rwxRWE]{1,6},0x[0-9a-f]+\\-0x[0-9a-f]+\\]\\s\\(sentry\\)"
+        ],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/printcap-${kind}.exe",
+        "name": "printcap-sealed-invalid",
+        "args": ["5"],
+        "stdout": [
+            "0x[0-9a-f]+\\s\\[[rwxRWE]{1,6},0x[0-9a-f]+\\-0x[0-9a-f]+\\]\\s\\(invalid,sealed\\)",
+            "0x[0-9a-f]+\\s\\[[rwxRWE]{1,6},0x[0-9a-f]+\\-0x[0-9a-f]+\\]\\s\\(invalid,sealed\\)"
+        ],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/printcap-${kind}.exe",
+        "name": "printcap-null-derived",
+        "args": ["6"],
+        "stdout": [
+            "^0x[0-9a-f]+$",
+            "^0x[0-9a-f]+$"
+        ],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/memcpy2-${kind}.exe",
+        "args": ["0"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/memcpy2-${kind}.exe",
+        "args": ["1"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/memcpy2-${kind}.exe",
+        "args": ["2"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/memcpy2-${kind}.exe",
+        "args": ["3"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/memcpy2-${kind}.exe",
+        "args": ["4"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/memcpy2-${kind}.exe",
+        "args": ["5"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/memcpy2-${kind}.exe",
+        "args": ["6"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/memcpy2-${kind}.exe",
+        "args": ["7"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/memcpy2-${kind}.exe",
+        "args": ["8"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/memcpy2-${kind}.exe",
+        "args": ["9"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/memcpy2-${kind}.exe",
+        "args": ["a"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/memcpy2-${kind}.exe",
+        "args": ["b"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/memcpy2-${kind}.exe",
+        "args": ["c"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/memcpy2-${kind}.exe",
+        "args": ["d"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/memcpy2-${kind}.exe",
+        "args": ["e"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/memcpy2-${kind}.exe",
+        "args": ["f"],
+        "xrc": [0],
+        "skip": []
+    },{
+        "app": "${build}/setenv-${kind}.exe",
+        "name": "setenv",
+        "xrc": [0],
+        "skip": [],
+        "env": {"HELLO": "world"}
+    },
+    {
+        "app": "${build}/unsetenv-${kind}.exe",
+        "name": "unsetenv",
+        "xrc": [0],
+        "skip": [],
+        "env": {"HELLO": "world"}
+    },
+    {
+        "app": "${build}/clearenv-${kind}.exe",
+        "name": "clearenv",
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/realloc-${kind}.exe",
+        "name": "realloc-no-move",
+        "args": ["0"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/realloc-${kind}.exe",
+        "name": "realloc-increase",
+        "args": ["1"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/realloc-${kind}.exe",
+        "name": "realloc-decrease",
+        "args": ["2"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/realloc-${kind}.exe",
+        "name": "realloc-change-regime",
+        "args": ["3"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/realloc-${kind}.exe",
+        "name": "realloc-align-increase",
+        "args": ["4"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/realloc-${kind}.exe",
+        "name": "realloc-high-mmap-count",
+        "args": ["5"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/realloc-${kind}.exe",
+        "name": "realloc-half-page-offset",
+        "args": ["6"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/calloc-${kind}.exe",
+        "name": "calloc",
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/aligned_alloc-${kind}.exe",
+        "name": "aligned_alloc",
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/newlocale-${kind}.exe",
+        "name": "newlocale",
+        "stdout": [
+            "123456.789",
+            "123456.789"
+        ],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/valloc-${kind}.exe",
+        "name": "valloc",
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/reallocarray-${kind}.exe",
+        "name": "reallocarray",
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/pty-${kind}.exe",
+        "name": "pty",
+        "xrc": [0],
+        "skip": ["fvp"]
+    },
+    {
+        "app": "${build}/stdio_misc-${kind}.exe",
+        "name": "perror",
+        "args": ["0"],
+        "xrc": [0],
+        "skip": [],
+        "stderr": [
+            "Error: No such file or directory"
+        ]
+    },
+    {
+        "app": "${build}/stdio_misc-${kind}.exe",
+        "name": "ctermid",
+        "args": ["1"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/stdio_misc-${kind}.exe",
+        "name": "fopencookie",
+        "args": ["2"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/stdio_misc-${kind}.exe",
+        "name": "setvbuf",
+        "args": ["3"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/stdio_misc-${kind}.exe",
+        "name": "setvbuf-stdout-full",
+        "args": ["4"],
+        "xrc": [0],
+        "skip": [],
+        "stdout": ["abcdef"]
+    },
+    {
+        "app": "${build}/stdio_misc-${kind}.exe",
+        "name": "setvbuf-stdout-line",
+        "args": ["5"],
+        "xrc": [0],
+        "skip": [],
+        "stdout": ["abcdef"]
+    },
+    {
+        "app": "${build}/stdio_misc-${kind}.exe",
+        "name": "getdelim",
+        "args": ["6"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/stdio_misc-${kind}.exe",
+        "name": "freopen-fgetpos",
+        "args": ["7"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/stdio_misc-${kind}.exe",
+        "name": "fmemopen_memstream",
+        "args": ["8"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/stdlib_misc-${kind}.exe",
+        "name": "setkey_encrypt",
+        "args": ["0"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/stdlib_misc-${kind}.exe",
+        "name": "realpath",
+        "args": ["1"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/stdlib_misc-${kind}.exe",
+        "name": "system",
+        "args": ["2"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/float_convert-${kind}.exe",
+        "name": "atof",
+        "args": ["0"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/float_convert-${kind}.exe",
+        "name": "evct_fcvt_gcvt",
+        "args": ["1"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/malloc_bounds-${kind}.exe",
+        "name": "malloc_bounds_small",
+        "args": ["0"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/malloc_bounds-${kind}.exe",
+        "name": "malloc_bounds_large",
+        "args": ["1"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/malloc_bounds-${kind}.exe",
+        "name": "aligned_malloc_bounds_small",
+        "args": ["2"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/malloc_bounds-${kind}.exe",
+        "name": "aligned_malloc_bounds_large",
+        "args": ["3"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/malloc_bounds-${kind}.exe",
+        "name": "realloc_bounds_small",
+        "args": ["4"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/malloc_bounds-${kind}.exe",
+        "name": "realloc_bounds_large",
+        "args": ["5"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/malloc_bounds-${kind}.exe",
+        "name": "realloc_bounds_change_regime",
+        "args": ["6"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/malloc_regression-${kind}.exe",
+        "name": "malloc_regression_map_key_not_reset",
+        "args": ["0"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/strdup-${kind}.exe",
+        "name": "strdup_strndup",
+        "args": ["0"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/strdup-${kind}.exe",
+        "name": "wcsdup",
+        "args": ["1"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/dirent-${kind}.exe",
+        "name": "scandir",
+        "args": ["0"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/dirent-${kind}.exe",
+        "name": "opendir-closedir",
+        "args": ["1"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/dirent-${kind}.exe",
+        "name": "fdopendir-dirfd",
+        "args": ["2"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/dirent-${kind}.exe",
+        "name": "readdir-readdir_r",
+        "args": ["3"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/dirent-${kind}.exe",
+        "name": "rewinddir-seekdir-telldir",
+        "args": ["4"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/malloc_regression-${kind}.exe",
+        "name": "malloc_regression_corrupt_nested_group",
+        "args": ["1"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/regex-${kind}.exe",
+        "name": "fnmatch",
+        "args": ["0"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/regex-${kind}.exe",
+        "name": "glob",
+        "args": ["1"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/regex-${kind}.exe",
+        "name": "regcomp",
+        "args": ["2"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/select-${kind}.exe",
+        "name": "poll",
+        "args": ["0"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/select-${kind}.exe",
+        "name": "select",
+        "args": ["1"],
+        "stdin": "asdf",
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/select-${kind}.exe",
+        "name": "pselect",
+        "args": ["2"],
+        "stdin": "jkl;",
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/malloc_stress-${kind}.exe",
+        "name": "malloc_stress_test_large_allocation",
+        "args": ["0"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/malloc_stress-${kind}.exe",
+        "name": "malloc_stress_test_many_allocations",
+        "args": ["1"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/malloc_stress-${kind}.exe",
+        "name": "malloc_stress_test_all_sizeclasses",
+        "args": ["2"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/checksealed-${kind}.exe",
+        "name": "check-sealed-funcs",
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/ftw-${kind}.exe",
+        "args": ["0"],
+        "name": "test_ftw",
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/legacy-${kind}.exe",
+        "args": ["0"],
+        "name": "test_cuserid",
+        "xrc": [0],
+        "skip": ["flaky"]
+    },
+    {
+        "app": "${build}/legacy-${kind}.exe",
+        "args": ["1"],
+        "name": "test_getusershell",
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/locale-${kind}.exe",
+        "args": ["0"],
+        "name": "test_bind_textdomain_codeset",
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/locale-${kind}.exe",
+        "args": ["1"],
+        "name": "test_textdomain",
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/misc-${kind}.exe",
+        "args": ["0"],
+        "name": "test_a64l",
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/misc-${kind}.exe",
+        "args": ["1"],
+        "name": "test_basename",
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/misc-${kind}.exe",
+        "args": ["2"],
+        "name": "test_dirname",
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/misc-${kind}.exe",
+        "args": ["3"],
+        "name": "test_getcwd",
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/misc-${kind}.exe",
+        "args": ["5"],
+        "name": "test_get_current_dir_name",
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/group-${kind}.exe",
+        "args": ["0"],
+        "name": "test_groupentry",
+        "xrc": [0],
+        "skip": ["fvp"]
+    },
+    {
+        "app": "${build}/passwd-${kind}.exe",
+        "args": ["0"],
+        "name": "test_fgetpwent",
+        "xrc": [0],
+        "skip": ["fvp"]
+    },
+    {
+        "app": "${build}/getserv-${kind}.exe",
+        "args": ["0"],
+        "name": "test_getservbyname",
+        "xrc": [0],
+        "skip": ["flaky"],
+        "comment": "may fail in GitLab CI"
+    },
+    {
+        "app": "${build}/getserv-${kind}.exe",
+        "args": ["1"],
+        "name": "test_getservbyport",
+        "xrc": [0],
+        "skip": ["flaky"],
+        "comment": "may fail in GitLab CI"
+    },
+    {
+        "app": "${build}/if_nameindex-${kind}.exe",
+        "name": "if_nameindex",
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/ns_funcs-${kind}.exe",
+        "args": ["0"],
+        "name": "ns_putget",
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/ns_funcs-${kind}.exe",
+        "args": ["1"],
+        "name": "ns_parse",
+        "xrc": [0],
+        "skip": ["fvp", "mie"]
+    },
+    {
+        "app": "${build}/openpty-${kind}.exe",
+        "args": [],
+        "name": "openpty",
+        "xrc": [0],
+        "skip": ["fvp"]
+    },
+    {
+        "app": "${build}/forkpty-${kind}.exe",
+        "args": [],
+        "name": "forkpty",
+        "xrc": [0],
+	"skip": ["fvp"],
+	"timeout": 30
+    },
+    {
+        "app": "${build}/sockatmark-${kind}.exe",
+        "name": "sockatmark",
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/passwd-${kind}.exe",
+        "args": ["1"],
+        "name": "test_getgrouplist",
+        "xrc": [0],
+        "skip": ["flaky"],
+        "comment": "this test may fail due to system restrictions"
+    },
+    {
+        "app": "${build}/search-${kind}.exe",
+        "args": ["0"],
+        "name": "lsearch",
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/search-${kind}.exe",
+        "args": ["1"],
+        "name": "tsearch",
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/time-${kind}.exe",
+        "args": ["0"],
+        "name": "test_ctime",
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/time-${kind}.exe",
+        "args": ["1"],
+        "name": "test_ctime_r",
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/time-${kind}.exe",
+        "args": ["2"],
+        "name": "test_getdate_error",
+        "xrc": [1],
+        "skip": []
+    },
+    {
+        "app": "${build}/time-${kind}.exe",
+        "args": ["2"],
+        "name": "test_getdate_valid",
+        "xrc": [0],
+        "skip": [],
+        "env": {
+            "DATEMSK": "resources/musl-test-getdate-valid"
+        }
+    },
+    {
+        "app": "${build}/unistd-${kind}.exe",
+        "args": ["0"],
+        "name": "test_getlogin",
+        "xrc": [0],
+        "skip": [],
+        "env": {
+            "LOGNAME": "morello"
+        }
+    },
+    {
+        "app": "${build}/unistd-${kind}.exe",
+        "args": ["1"],
+        "name": "test_getlogin_r",
+        "xrc": [0],
+        "skip": [],
+        "env": {
+            "LOGNAME": "morello"
+        }
+    },
+    {
+        "app": "${build}/unistd-${kind}.exe",
+        "args": ["2"],
+        "name": "test_ttyname",
+        "xrc": [0],
+        "skip": ["flaky"]
+    },
+    {
+        "app": "${build}/getw-${kind}.exe",
+        "name": "getw_eof",
+        "args": ["0"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/getw-${kind}.exe",
+        "name": "getw_not_eof",
+        "args": ["1"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/putw-${kind}.exe",
+        "name": "putw_read_only",
+        "args": ["0"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/putw-${kind}.exe",
+        "name": "putw_write_only",
+        "args": ["1"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/fgetln-${kind}.exe",
+        "name": "fgetln_with_newline",
+        "args": ["0"],
+        "xrc": [0],
+        "skip": [],
+        "stdin": "test\n"
+    },
+    {
+        "app": "${build}/fgetln-${kind}.exe",
+        "name": "fgetln_with_eof",
+        "args": ["1"],
+        "xrc": [0],
+        "skip": [],
+        "stdin": "test"
+    },
+    {
+        "app": "${build}/fgetln-${kind}.exe",
+        "name": "fgetln_at_eof",
+        "args": ["2"],
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/signal-${kind}.exe",
+        "name": "signal",
+        "xrc": [0],
+        "comment": "This test should pass on a real Morello system",
+        "skip": ["mie"]
+    },
+    {
+        "app": "${build}/exit-${kind}.exe",
+        "name": "exit",
+        "args": ["0"],
+        "xrc": [1],
+        "skip": [],
+        "stdout": ["exit() called"]
+    },
+    {
+        "app": "${build}/exit-${kind}.exe",
+        "name": "quick_exit",
+        "args": ["1"],
+        "xrc": [1],
+        "skip": [],
+        "stdout": ["quick_exit() called"]
+    },
+    {
+        "app": "${build}/exit-${kind}.exe",
+        "name": "abort",
+        "args": ["2"],
+        "xrc": [134, -6],
+        "skip": []
+    },
+    {
+        "app": "${build}/ctor_dtor-${kind}.exe",
+        "name": "ctor_dtor",
+        "xrc": [0],
+        "skip": [],
+        "stdout": ["ctor call dtor call"],
+        "stderr": ["ctor call2 dtor call2"]
+    },
+    {
+        "app": "${build}/libintl-${kind}.exe",
+        "name": "bindtextdomain",
+        "args": ["0"],
+        "xrc": [0],
+        "skip": [],
+        "stdout": ["musl"]
+    },
+    {
+        "app": "${build}/malloc_donate-${kind}.exe",
+        "name": "malloc_donate",
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/shared-lib-${kind}.exe",
+        "name": "shared_third_party_library",
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/multiple-lib-${kind}.exe",
+        "name": "multiple_third_party_libraries",
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/symbol-lib-${kind}.exe",
+        "name": "symbol_third_party_library",
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/dependency-lib-${kind}.exe",
+        "name": "third_party_library_dependency_library",
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/symbol-multi-lib-${kind}.exe",
+        "name": "multiple_symbol_third_party_library",
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/errno-${kind}.exe",
+        "name": "errno",
+        "args": ["0"],
+        "xrc": [0],
+        "skip": [],
+        "stdout": ["Bad memory reservation"]
+    },
+    {
+        "app": "${build}/pointer-lib-${kind}.exe",
+        "name": "pointer_third_party_library",
+        "xrc": [0]
+    },
+    {
+        "app": "${build}/variadic-lib-${kind}.exe",
+        "name": "variadic_argument_third_party_library",
+        "xrc": [0]
+    },
+    {
+        "app": "${build}/getusershell-${kind}.exe",
+        "name": "getusershell_return_value",
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/textdomain-${kind}.exe",
+        "name": "textdomain_return_value",
+        "xrc": [0],
+        "skip": []
+    },
+    {
+        "app": "${build}/posix_spawn-${kind}.exe",
+        "name": "posix_spawn_file_path",
+        "args": ["2"],
+        "xrc": [0],
+        "timeout": 30,
+        "skip": ["flaky"]
+    },
+    {
+        "app": "${build}/dlopen-${kind}.exe",
+        "name": "dlopen",
+        "xrc": [0],
+        "skip": [],
+        "ignore": ["static"]
+    },
+    {
+        "app": "${build}/signal_functions-${kind}.exe",
+        "name": "signal_functions",
+        "xrc": [0],
+        "skip": ["mie"]
+    },
+    {
+        "app": "${build}/syscall_struct_sizes-${kind}.exe",
+        "name": "syscall_struct_sizes",
+        "stdout": [
+            "struct sigevent = 64",
+            "siginfo_t = 128",
+            "struct signalfd_siginfo = 128",
+            "struct timex = 208"
+        ],
+        "xrc": [0],
+        "comment": "Sizes should correspond to AArch64"
+    },
+    {
+        "app": "${build}/malloc-multiple-sizes-${kind}.exe",
+        "name": "malloc_multiple_sizes",
+        "xrc": [0],
+        "skip": [],
+        "ignore": ["fvp", "mie"]
+    },
+    {
+        "app":  "${build}/wcsrtombs-${kind}.exe",
+        "name": "wcsrtombs_get_size",
+        "args": ["0"],
+        "xrc": [0]
+    },
+    {
+        "app":  "${build}/wcsrtombs-${kind}.exe",
+        "name": "wcsrtombs_convert",
+        "args": ["1"],
+        "xrc": [0]
+    },
+    {
+        "app": "${build}/fwscanf-${kind}.exe",
+        "name": "fwscanf_int",
+        "xrc": [0]
+    },
+    {
+        "app": "${build}/swscanf-${kind}.exe",
+        "name": "swscanf_ascii",
+        "args": ["0"],
+        "xrc": [0]
+    },
+    {
+        "app": "${build}/swscanf-${kind}.exe",
+        "name": "swscanf_utf8",
+        "args": ["1"],
+        "xrc": [0]
+    },
+    {
+        "app": "${build}/mblen-${kind}.exe",
+        "name": "mblen",
+        "xrc": [0]
+    },
+    {
+        "app": "${build}/mbtowc-${kind}.exe",
+        "name": "mbtowc",
+        "xrc": [0]
+    },
+    {
+        "app": "${build}/wctomb-${kind}.exe",
+        "name": "wctomb",
+        "xrc": [0]
+    },
+    {
+        "app": "${build}/prctl-${kind}.exe",
+        "name": "prctl",
+        "xrc": [0]
+    },
+    {
+        "app": "${build}/aio-${kind}.exe",
+        "name": "aio",
+        "xrc": [0],
+        "stdout": ["Hello World"],
+        "skip": ["mie"],
+        "timeout": 30
+    },
+    {
+        "app": "${build}/gethost-${kind}.exe",
+        "name": "gethost",
+        "xrc": [0],
+        "stdout": ["localhost", "localhost"],
+        "skip": ["fvp"]
+    },
+    {
+        "app": "${build}/getprot-${kind}.exe",
+        "name": "getprot",
+        "xrc": [0],
+        "stdout": ["0", "ip", "icmp"]
+    },
+    {
+        "app": "${build}/ifname-${kind}.exe",
+        "name": "ifnameindex",
+        "xrc": [0]
+    },
+    {
+        "app": "${build}/addrinfo-${kind}.exe",
+        "name": "addrinfo",
+        "xrc": [0],
+        "skip": ["fvp"]
+    },
+    {
+        "app": "${build}/clientserver-${kind}.exe",
+        "name": "clientserver",
+        "xrc": [0],
+        "stdout": ["Message sent to client: Morello", "Message received from server: Morello"],
+        "timeout": 100,
+        "skip": ["flaky"]
+    },
+    {
+        "app": "${build}/thread_bounds-${kind}.exe",
+        "name": "thread_tsd_bounds",
+        "xrc": [0],
+        "args": ["0"],
+        "stdout": ["Thread Running"]
+    },
+    {
+        "app": "${build}/thread_bounds-${kind}.exe",
+        "name": "thread_csp_bounds",
+        "xrc": [0],
+        "args": ["1"],
+        "stdout": ["Thread Running"]
+    },
+    {
+        "app": "${build}/strfcap-${kind}.exe",
+        "name": "strfcap_ordinary_chars",
+        "xrc": [0],
+        "args": ["0"]
+    },
+    {
+        "app": "${build}/strfcap-${kind}.exe",
+        "name": "strfcap_padding_and_width",
+        "xrc": [0],
+        "args": ["1"]
+    },
+    {
+        "app": "${build}/strfcap-${kind}.exe",
+        "name": "strfcap_maxsize",
+        "xrc": [0],
+        "args": ["2"]
+    },
+    {
+        "app": "${build}/strfcap-${kind}.exe",
+        "name": "strfcap_NULL_terminated",
+        "xrc": [0],
+        "args": ["3"]
+    },
+    {
+        "app": "${build}/strfcap-${kind}.exe",
+        "name": "strfcap_large_format",
+        "xrc": [0],
+        "args": ["4"]
+    },
+    {
+        "app": "${build}/strfcap-${kind}.exe",
+        "name": "strfcap_specifier_a",
+        "xrc": [0],
+        "args": ["a"]
+    },
+    {
+        "app": "${build}/strfcap-${kind}.exe",
+        "name": "strfcap_specifier_A",
+        "xrc": [0],
+        "args": ["A"]
+    },
+    {
+        "app": "${build}/strfcap-${kind}.exe",
+        "name": "strfcap_specifier_b",
+        "xrc": [0],
+        "args": ["b"]
+    },
+    {
+        "app": "${build}/strfcap-${kind}.exe",
+        "name": "strfcap_specifier_B",
+        "xrc": [0],
+        "args": ["B"]
+    },
+    {
+        "app": "${build}/strfcap-${kind}.exe",
+        "name": "strfcap_specifier_C",
+        "xrc": [0],
+        "args": ["C"]
+    },
+    {
+        "app": "${build}/strfcap-${kind}.exe",
+        "name": "strfcap_specifier_l",
+        "xrc": [0],
+        "args": ["l"]
+    },
+    {
+        "app": "${build}/strfcap-${kind}.exe",
+        "name": "strfcap_specifier_o",
+        "xrc": [0],
+        "args": ["o"]
+    },
+    {
+        "app": "${build}/strfcap-${kind}.exe",
+        "name": "strfcap_specifier_p",
+        "xrc": [0],
+        "args": ["p"]
+    },
+    {
+        "app": "${build}/strfcap-${kind}.exe",
+        "name": "strfcap_specifier_P",
+        "xrc": [0],
+        "args": ["P"]
+    },
+    {
+        "app": "${build}/strfcap-${kind}.exe",
+        "name": "strfcap_specifier_s",
+        "xrc": [0],
+        "args": ["s"]
+    },
+    {
+        "app": "${build}/strfcap-${kind}.exe",
+        "name": "strfcap_specifier_S",
+        "xrc": [0],
+        "args": ["S"]
+    },
+    {
+        "app": "${build}/strfcap-${kind}.exe",
+        "name": "strfcap_specifier_t",
+        "xrc": [0],
+        "args": ["t"]
+    },
+    {
+        "app": "${build}/strfcap-${kind}.exe",
+        "name": "strfcap_specifier_T",
+        "xrc": [0],
+        "args": ["T"]
+    },
+    {
+        "app": "${build}/strfcap-${kind}.exe",
+        "name": "strfcap_specifier_v",
+        "xrc": [0],
+        "args": ["v"]
+    },
+    {
+        "app": "${build}/strfcap-${kind}.exe",
+        "name": "strfcap_specifier_percent",
+        "xrc": [0],
+        "args": ["%"]
+    },
+    {
+        "app": "${build}/cmpt-blrs-${kind}.exe",
+        "name": "cmpt-blrs",
+        "xrc": [0]
+    },
+    {
+        "app": "${build}/timer-sigev-${kind}.exe",
+        "name": "timer-sigev",
+        "xrc": [0],
+        "stdout": ["Signal Function Invoked."],
+        "skip": ["mie"]
+    },
+    {
+        "app": "${build}/cmpt-${kind}.exe",
+        "name": "cmpt",
+        "xrc": [0]
+    },
+    {
+        "app": "${build}/wchar_fileio-${kind}.exe",
+        "name": "wchar_file",
+        "args": ["0"],
+        "xrc": [0]
+    },
+    {
+        "app": "${build}/wchar_fileio-${kind}.exe",
+        "name": "wchar_std",
+        "args": ["1"],
+        "stdin": "ç",
+        "xrc": [0]
+    },
+    {
+        "app": "${build}/wchar_fileio-${kind}.exe",
+        "name": "wstr_file",
+        "args": ["2"],
+        "xrc": [0]
+    },
+    {
+        "app": "${build}/cmpt-xor-${kind}.exe",
+        "name": "cmpt-xor",
+        "xrc": [0],
+        "stdin": "1"
+    },
+    {
+        "app": "${build}/printcap_extended-${kind}.exe",
+        "name": "printcap-extended-csp",
+        "args": ["0"],
+        "xrc": [0],
+        "stdout": ["0x[0-9a-f]+\\s\\[[rwxRWEMLSusICV123]*,0x[0-9a-f]+-0x[0-9a-f]+\\]"]
+    },
+    {
+        "app": "${build}/printcap_extended-${kind}.exe",
+        "name": "printcap-extended-pcc",
+        "args": ["1"],
+        "xrc": [0],
+        "stdout": ["0x[0-9a-f]+\\s\\[[rwxRWEMLSusICV123]*,0x[0-9a-f]+-0x[0-9a-f]+\\]"]
+    },
+    {
+        "app": "${build}/printcap_extended-${kind}.exe",
+        "name": "printcap-extended-local",
+        "args": ["2"],
+        "xrc": [0],
+        "stdout": ["0x[0-9a-f]+\\s\\[[rwxRWEMLSusICV123]*,0x[0-9a-f]+-0x[0-9a-f]+\\]\\s\\(local\\)"]
+    },
+    {
+        "app": "${build}/printcap_extended-${kind}.exe",
+        "name": "printcap-extended-sentry",
+        "args": ["3"],
+        "xrc": [0],
+        "stdout": ["0x[0-9a-f]+\\s\\[[rwxRWEMLSusICV123]*,0x[0-9a-f]+-0x[0-9a-f]+\\]\\s\\(sentry\\)",
+                   "0x[0-9a-f]+\\s\\[[rwxRWEMLSusICV123]*,0x[0-9a-f]+-0x[0-9a-f]+\\]\\s\\(invalid,sentry\\)",
+                   "0x[0-9a-f]+\\s\\[[rwxRWEMLSusICV123]*,0x[0-9a-f]+-0x[0-9a-f]+\\]\\s\\(local,invalid,sentry\\)"]
+    },
+    {
+        "app": "${build}/printcap_extended-${kind}.exe",
+        "name": "printcap-extended-auxv",
+        "args": ["4"],
+        "xrc": [0],
+        "stdout": ["0x[0-9a-f]+\\s\\[[rwxRWEMLSusICV123]*,0x[0-9a-f]+-0x[0-9a-f]+\\]",
+                   "0x[0-9a-f]+\\s\\[[rwxRWEMLSusICV123]*,0x[0-9a-f]+-0x[0-9a-f]+\\]"]
+    },
+    {
+        "app": "${build}/printcap_extended-${kind}.exe",
+        "name": "printcap-extended-null",
+        "args": ["5"],
+        "xrc": [0],
+        "stdout": ["0x0", "0x0"]
+    },
+    {
+        "app": "${build}/stt_tls_symboltest-${kind}.exe",
+        "name": "stt_tls_symboltest",
+        "xrc": [0],
+        "stdout": ["44"]
+    },
+    {
+        "app": "${build}/tls_get_addr-${kind}.exe",
+        "name": "tls_get_addr_bounds",
+        "xrc": [0]
+    },
+    {
+        "app": "${build}/test_dl_iterate_phdr-${kind}.exe",
+        "name": "dl_iterate_phdr",
+        "xrc": [0]
+    }
+]

@@ -1,0 +1,48 @@
+menuconfig LIBUKLOCK
+	bool "uklock: Multi-task synchronization primitives"
+	select LIBUKDEBUG
+	default n
+
+if LIBUKLOCK
+	choice
+		prompt "Spinlock algorithm"
+		default LIBUKLOCK_SPINLOCK
+		depends on ARCH_ARM_64
+
+		config LIBUKLOCK_SPINLOCK
+			bool "Spinlocks"
+
+		config LIBUKLOCK_TICKETLOCK
+			bool "Ticketlocks"
+	endchoice
+
+	config LIBUKLOCK_SEMAPHORE
+		bool "Semaphores"
+		select LIBUKSCHED
+		default y
+		help
+			Enable semaphore based synchornization
+
+	config LIBUKLOCK_MUTEX
+		bool "Mutexes"
+		select LIBUKSCHED
+		default y
+		help
+			Enable mutex based synchornization
+
+	config LIBUKLOCK_MUTEX_METRICS
+		bool "Metrics for mutex objects"
+		default n
+		depends on LIBUKLOCK_MUTEX
+		help
+			Metrics related to mutex objects: current amount of (un)locked
+			objects, as well as number of successful/failed locking attempts
+			since startup.
+
+	config LIBUKLOCK_RWLOCK
+		bool "Reader-Writer lock"
+		select LIBUKSCHED
+		default y
+		help
+			Enable reader-writer based synchronization
+endif

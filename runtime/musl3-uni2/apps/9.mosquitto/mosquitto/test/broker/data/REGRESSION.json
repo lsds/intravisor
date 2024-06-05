@@ -1,0 +1,18 @@
+[
+	{
+		"group": "REGRESSIONS",
+		"tests": [
+			{ "name": "subscribe-unsubscribe-crash part 1", "ver":4, "expect_disconnect":false, "msgs": [
+				{"type":"send", "payload":"82 26 1234 0009 64 72 61 73 68 2F 31 2F 23 00 0009 65 72 61 73 68 2F 32 2F 23 00 0009 63 72 61 73 68 2F 33 2F 23 00"},
+				{"type":"recv", "payload":"90 05 1234 00 00 00"},
+				{"type":"send", "payload":"A2 0D 1234 0009 64 72 61 73 68 2F 31 2F 23"},
+				{"type":"recv", "payload":"B0 02 1234"}
+			], "comment": "Must be used with part 2 immediately after",
+			"comment2": "Requires WITH_ASAN=yes"},
+			{ "name": "subscribe-unsubscribe-crash part 2", "ver":4, "expect_disconnect":false, "msgs": [
+				{"type":"send", "payload":"82 0E 1234 0009 63 72 61 73 68 2F 33 2F 23 00"},
+				{"type":"recv", "payload":"90 03 1234 00"}
+			], "comment": "https://github.com/eclipse/mosquitto/issues/2885"}
+		]
+	}
+]

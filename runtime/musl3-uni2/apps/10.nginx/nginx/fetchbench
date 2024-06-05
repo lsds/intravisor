@@ -1,0 +1,23 @@
+#!/bin/sh -e
+
+if [ $# -ne 3 -a $# -ne 4 ]; then
+	echo "usage: fetchbench url number-of-processes fetches-per-process"
+	exit 1
+fi
+
+URL="${1}"
+NPROC="${2}"
+NFETCH="${3}"
+
+if [ $# -eq 4 ]; then
+	for p in `/usr/bin/jot ${NPROC}`; do
+		(
+		for f in `/usr/bin/jot ${NFETCH}`; do echo "${URL}"; done | /usr/bin/xargs /usr/bin/fetch -qo /dev/null
+		) &
+	done
+	wait
+	echo -n "${0}: $((${NFETCH} * ${NPROC})) requests for ${URL}, spread among ${NPROC} parallel processes, in "
+else
+	( /usr/bin/time -h "${0}" "${URL}" "${NPROC}" "${NFETCH}" measure-please ) 2>&1 | sed -E 's/	//;s/	+/, /g'
+fi
+

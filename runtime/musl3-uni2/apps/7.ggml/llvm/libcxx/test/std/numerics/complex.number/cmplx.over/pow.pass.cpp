@@ -1,0 +1,120 @@
+//===----------------------------------------------------------------------===//
+//
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+
+// <complex>
+
+// template<Arithmetic T, Arithmetic U>
+//   complex<promote<T, U>::type>
+//   pow(const T& x, const complex<U>& y);
+
+// template<Arithmetic T, Arithmetic U>
+//   complex<promote<T, U>::type>
+//   pow(const complex<T>& x, const U& y);
+
+// template<Arithmetic T, Arithmetic U>
+//   complex<promote<T, U>::type>
+//   pow(const complex<T>& x, const complex<U>& y);
+
+#include <complex>
+#include <type_traits>
+#include <cassert>
+
+#include "test_macros.h"
+#include "../cases.h"
+
+template <class T>
+double
+promote(T, typename std::enable_if<std::is_integral<T>::value>::type* = 0);
+
+float promote(float);
+double promote(double);
+#ifndef _LIBCPP_HAS_NEWLIB
+long double promote(long double);
+#endif // ! _LIBCPP_HAS_NEWLIB
+
+template <class T, class U>
+void
+test(T x, const std::complex<U>& y)
+{
+    typedef decltype(promote(x)+promote(real(y))) V;
+    static_assert((std::is_same<decltype(std::pow(x, y)), std::complex<V> >::value), "");
+    assert(std::pow(x, y) == pow(std::complex<V>(x, 0), std::complex<V>(y)));
+}
+
+template <class T, class U>
+void
+test(const std::complex<T>& x, U y)
+{
+    typedef decltype(promote(real(x))+promote(y)) V;
+    static_assert((std::is_same<decltype(std::pow(x, y)), std::complex<V> >::value), "");
+    assert(std::pow(x, y) == pow(std::complex<V>(x), std::complex<V>(y, 0)));
+}
+
+template <class T, class U>
+void
+test(const std::complex<T>& x, const std::complex<U>& y)
+{
+    typedef decltype(promote(real(x))+promote(real(y))) V;
+    static_assert((std::is_same<decltype(std::pow(x, y)), std::complex<V> >::value), "");
+    assert(std::pow(x, y) == pow(std::complex<V>(x), std::complex<V>(y)));
+}
+
+template <class T, class U>
+void
+test(typename std::enable_if<std::is_integral<T>::value>::type* = 0, typename std::enable_if<!std::is_integral<U>::value>::type* = 0)
+{
+    test(T(3), std::complex<U>(4, 5));
+    test(std::complex<U>(3, 4), T(5));
+}
+
+template <class T, class U>
+void
+test(typename std::enable_if<!std::is_integral<T>::value>::type* = 0, typename std::enable_if<!std::is_integral<U>::value>::type* = 0)
+{
+    test(T(3), std::complex<U>(4, 5));
+    test(std::complex<T>(3, 4), U(5));
+    test(std::complex<T>(3, 4), std::complex<U>(5, 6));
+}
+
+int main(int, char**)
+{
+    test<int, float>();
+    test<int, double>();
+#ifndef _LIBCPP_HAS_NEWLIB
+    test<int, long double>();
+#endif // ! _LIBCPP_HAS_NEWLIB
+
+    test<unsigned, float>();
+    test<unsigned, double>();
+#ifndef _LIBCPP_HAS_NEWLIB
+    test<unsigned, long double>();
+#endif // ! _LIBCPP_HAS_NEWLIB
+
+    test<long long, float>();
+    test<long long, double>();
+#ifndef _LIBCPP_HAS_NEWLIB
+    test<long long, long double>();
+#endif // ! _LIBCPP_HAS_NEWLIB
+
+    test<float, double>();
+#ifndef _LIBCPP_HAS_NEWLIB
+    test<float, long double>();
+#endif // ! _LIBCPP_HAS_NEWLIB
+
+    test<double, float>();
+#ifndef _LIBCPP_HAS_NEWLIB
+    test<double, long double>();
+#endif // ! _LIBCPP_HAS_NEWLIB
+
+#ifndef _LIBCPP_HAS_NEWLIB
+    test<long double, float>();
+    test<long double, double>();
+#endif // ! _LIBCPP_HAS_NEWLIB
+
+  return 0;
+}

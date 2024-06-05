@@ -1,0 +1,4 @@
+config LIBUKOFW
+	bool "ukofw: Device tree helper functions"
+	depends on HAVE_FDT
+	select LIBFDT
