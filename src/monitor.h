@@ -35,6 +35,7 @@
 #include <sys/ioctl.h>
 #include <net/if.h>
 #include <sys/socket.h>
+#include <netinet/in.h>
 #include <sys/un.h>
 
 #ifdef __linux__
@@ -453,3 +454,12 @@ int parse_and_spawn_yaml(char *yaml_cfg, char libvirt);
 void __capability *mmap_cvm_code(unsigned long, size_t len, int prot, int flags, int fd, off_t offset);
 void __capability *mmap_cvm_data(unsigned long, size_t len, int prot, int flags, int fd, off_t offset);
 int intravisor_pthread_create(pthread_t * thread, const pthread_attr_t * attr, void *(*start_routine)(void *), void *arg);
+
+struct sockaddr_in_musl {
+	sa_family_t sin_family;
+	in_port_t sin_port;
+	struct in_addr sin_addr;
+	uint8_t sin_zero[8];
+};
+
+int my_futex(int *uaddr, int futex_op, int val, const struct timespec *timeout, int *uaddr2, int val3);

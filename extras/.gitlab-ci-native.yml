@@ -4,6 +4,7 @@ AArch64-native-two_pure:
   stage: build_runtime
   needs: ["AArch64-pure_cap-intravisor"]
   artifacts:
+    expire_in: 1 day
     when: always
     paths:
 #      - extras/default.xml
@@ -19,6 +20,7 @@ RISCV64-native-two_pure:
   stage: build_runtime
   needs: ["RISCV64-pure_cap-intravisor"]
   artifacts:
+    expire_in: 1 day
     when: always
     paths:
 #      - extras/default.xml
@@ -34,6 +36,7 @@ AArch64-native-hello-runtime:
   stage: build_runtime
   needs: ["AArch64-hyb_cap-intravisor-lkl"]
   artifacts:
+    expire_in: 1 day
     when: always
     paths:
 #      - extras/default.xml
@@ -50,6 +53,7 @@ AArch64-native-hello-run:
   needs: ["AArch64-native-hello-runtime"]
   allow_failure: false
   artifacts:
+    expire_in: 1 day
     when: always
     paths:
       - extras/default.xml
@@ -76,6 +80,7 @@ RISCV64-native-hello:
   stage: build_runtime
   needs: ["RISCV64-hyb_cap-intravisor-lkl"]
   artifacts:
+    expire_in: 1 day
     when: always
     paths:
 #      - extras/default.xml

@@ -286,7 +286,7 @@ struct thread_bootstrap_arg {
 	void *arg;
 };
 
-unsigned long create_carrie_thread(struct c_thread *ct, void *f, void *__capability arg) {
+unsigned long create_carrie_thread(struct c_thread *ct, void *f, void *__capability arg, int *tid_val) {
 //    printf("%s %p\n", __func__, arg);
       again:
 	pthread_mutex_lock(&ct->sbox->ct_lock);
@@ -355,8 +355,18 @@ unsigned long create_carrie_thread(struct c_thread *ct, void *f, void *__capabil
 		printf("ret = %d\n", ret);
 		while(1) ;
 	}
-
+//	printf("tid = %lx\n", ct[tmp].tid);
+	if(tid_val)
+		*tid_val = tmp;
 	return (long) ct[tmp].tid;
+}
+
+							
+int create_thread_ng(struct c_thread *ct, int a0, __intcap_t *a1, int *tid, void *tp, void *__thread_list_lock) {
+	int ret;
+	create_carrie_thread(ct, a1[0], a1[1], &ret);
+	*tid = ret | 0x550000;
+	return *tid;
 }
 
 #if LKL
@@ -371,7 +381,7 @@ void *timer_f = NULL;
 struct s_box *timer_sbox;
 
 void create_timer_thread(void *arg) {
-	create_carrie_thread(timer_sbox->threads, timer_f, arg);
+	create_carrie_thread(timer_sbox->threads, timer_f, arg, 0);
 }
 
 long create_carrie_timer(struct s_box *sbox, void *f, void *arg) {
@@ -385,12 +395,80 @@ long create_carrie_timer(struct s_box *sbox, void *f, void *arg) {
 
 //the most of the calls are related to MUSL-LKL. They should be separated from basic calls. Ideally, moved into the runtime/musllkl directory and loaded as shared library.
 
+#ifdef UNDERVISOR
+void *__capability under_tp;
+
+__intcap_t hostcall_light(long a0, long a1, long a2, long a3, long a4, long a5, long a6, long a7) {
+	long t5 = (long) getT5();
+	__intcap_t ret;
+
+	void *__capability ctp = getTP();
+	cmv_ctp(under_tp);
+
+	switch (t5) {
+	case 1:
+		ret = wrap_write(0, a0, a1);
+		break;
+	case 13:
+		exit(0);
+		break;
+	case 30:
+		ret = mmap_cvm_code(a0, a1, a2, a3, a4, a6);
+		break;
+	case 31:
+		ret = intravisor_pthread_create(a0, a1, a2, a3);
+		break;
+	case 32:
+		ret = pthread_join(a0, a1);
+		break;
+	case 33:
+		ret = pthread_attr_init(a0);
+		break;
+	case 34:
+		ret = pthread_attr_setstack(a0, a1, a2);
+		break;
+	case 35:
+		if(ret = sysctlbyname("security.cheri.sealcap", a0, a1, NULL, 0) < 0) {
+			printf("sysctlbyname(security.cheri.sealcap)\n");
+			while(1) ;
+		}
+		break;
+	case 36:
+		ret = mmap_cvm_data(a0, a1, a2, a3, a4, a6);
+		break;
+	case 800:
+		ret = gettimeofday(a0, a1);
+		break;
+	case 900:
+		ret = get_file_size(a0);
+		break;
+	case 901:
+		ret = copy_file_into_cvm(a0, a1, a2);
+		break;
+
+	default:
+		printf("Undervisor: unknown t5 %d\n", (int) t5);
+		while(1) ;
+	}
+
+	cmv_ctp(ctp);
+	return ret;
+}
+#endif
+
 __intcap_t hostcall(long a0, long a1, long a2, long a3, long a4, long a5, long a6, long a7) {
+#ifdef UNDERVISOR
+	return hostcall_light(a0, a1, a2, a3, a4, a5, a6, a7);
+#endif
+
 	long t5 = (long) getT5();
 	struct c_thread *ct = get_cur_thread();
 	ct->c_tp = getTP();
-
 	char *xx;
+	struct sockaddr_in sa_out;
+	struct sockaddr_in_musl *sa_in;
+	socklen_t addrlen = sizeof(struct sockaddr_in);
+	int tmp;
 
 	cmv_ctp(ct->m_tp);
 
@@ -400,7 +478,7 @@ __intcap_t hostcall(long a0, long a1, long a2, long a3, long a4, long a5, long a
 #endif
 	__intcap_t ret = 0;
 //      struct lkl_disk *disk;
-
+	errno = 0;
 	switch (t5) {
 	case 1:
 		wrap_write(ct->sbox->fd, (void *) comp_to_mon(a0, ct->sbox), a1);
@@ -433,7 +511,7 @@ __intcap_t hostcall(long a0, long a1, long a2, long a3, long a4, long a5, long a
 		lkl_host_ops.mutex_unlock(a0);
 		break;
 	case 11:
-		ret = create_carrie_thread(ct->sbox->threads, a0, a1);
+		ret = create_carrie_thread(ct->sbox->threads, a0, a1, 0);
 		break;
 	case 12:
 		lkl_host_ops.thread_detach();
@@ -544,9 +622,39 @@ __intcap_t hostcall(long a0, long a1, long a2, long a3, long a4, long a5, long a
 	case 29:
 		ret = prepare_parse_run_yaml(ct->sbox, comp_to_mon(a0, ct->sbox), a1);
 		break;
+#ifdef UNDERVISOR
+	case 30:
+		ret = mmap_cvm_code(a0, a1, a2, a3, a4, a6);
+		break;
+
+//todo: needs revision, many things are not used
+		//we check nothing here but should 
+	case 31:
+		ret = intravisor_pthread_create(a0, a1, a2, a3);
+		break;
+	case 32:
+		ret = pthread_join(a0, a1);
+		break;
+	case 33:
+		ret = pthread_attr_init(a0);
+		break;
+	case 34:
+		ret = pthread_attr_setstack(a0, a1, a2);
+		break;
+//
+	case 35:
+		if(ret = sysctlbyname("security.cheri.sealcap", a0, a1, NULL, 0) < 0) {
+			printf("sysctlbyname(security.cheri.sealcap)\n");
+			while(1) ;
+		}
+		break;
+	case 36:
+		ret = mmap_cvm_data(a0, a1, a2, a3, a4, a6);
+		break;
+#endif
 //pure-cap threading, separated from LKL but duplicats some parts 
 	case 40:
-		ret = create_carrie_thread(ct->sbox->threads, a0, (__cheri_tocap void *__capability) (void *) a1);
+		ret = create_carrie_thread(ct->sbox->threads, a0, (__cheri_tocap void *__capability) (void *) a1, 0);
 		break;
 	case 41:
 		ret = pthread_join(a0, a1);
@@ -614,47 +722,72 @@ __intcap_t hostcall(long a0, long a1, long a2, long a3, long a4, long a5, long a
 #define USE_HOST_NET
 #ifdef USE_HOST_NET
 	case 500:
-		ret = (int) socket(a0, a1, a2);
-//                      printf("ret = %d, a0 = %d a1 = %d a2 = %d\n", ret, a0, a1, a2);perror("socket");
+		ret = (long) socket((int)a0, (int)a1, (int)a2);
+		if(ret < 0) 
+			perror("socket");
+
 		break;
 	case 501:
-		ret = (int) setsockopt(a0, a1, a2, comp_to_mon(a3, ct->sbox), a4);
-//                      printf("ret = %d, a0 = %d a1 = %d a2 = %d %d %d \n", ret, a0, a1, a2, a3, a4);perror("setcodk");
+		ret = (int) setsockopt(a0, SOL_SOCKET, a2, comp_to_mon(a3, ct->sbox), a4);
+		if(ret < 0) 
+			perror("setsockopt");
 		break;
 	case 502:
 		ret = (int) ioctl(a0, a1, a2);
-//                      printf("ret = %d %d %d %ld %ld\n", ret, a0, a1, a2, FIONBIO);
-//                      perror("ioctl");
+		if(ret < 0) 
+			perror("ioctl");
 		break;
+#if 0
 	case 503:
 		ret = (int) accept4((int) a0, (struct sockaddr *) comp_to_mon(a1, ct->sbox), comp_to_mon(a2, ct->sbox), (int) a3);
+		if(ret < 0) 
+			perror("accept4");
 		break;
+#endif
 	case 504:
 		ret = (int) listen(a0, a1);
+		if(ret < 0) 
+			perror("listen");
 		break;
 	case 505:
 		ret = (int) accept((int) a0, (struct sockaddr *) comp_to_mon(a1, ct->sbox), comp_to_mon(a2, ct->sbox));
+		if(ret < 0) 
+			perror("accept");
 		break;
 	case 506:
-		ret = (int) bind(a0, (struct sockaddr *) comp_to_mon(a1, ct->sbox), a2);
+//why not move this into libos?
+		sa_in = (struct sockaddr_in_musl *) comp_to_mon(a1, ct->sbox);
+		sa_out.sin_family = sa_in->sin_family;
+		sa_out.sin_addr.s_addr = sa_in->sin_addr.s_addr;
+		sa_out.sin_port = sa_in->sin_port;
+		ret = (int) bind((int)a0, (struct sockaddr *)&sa_out, sizeof(sa_out));
+		if(ret < 0) 
+			perror("bind");
 		break;
 	case 507:
 		ret = write((int) a0, (void *) a1, (size_t) a2);
+		if(ret < 0) perror("write");
 		break;
 	case 508:
 		ret = read((int) a0, (void *) a1, (size_t) a2);
+		if(ret < 0) perror("read");
 		break;
 	case 509:
 		ret = send((int) a0, comp_to_mon(a1, ct->sbox), (size_t) a2, (int) a3);
+		if(ret < 0) 
+			perror("send");
 		break;
 	case 510:
 		ret = recv((int) a0, comp_to_mon(a1, ct->sbox), (size_t) a2, (int) a3);
+		if(ret < 0) perror("recv");
 		break;
 	case 511:
 		ret = (int) close((int) a0);
+		if(ret < 0) perror("close");
 		break;
 	case 512:
 		ret = (int) socketpair((int) a0, (int) a1, (int) a2, a3);
+		if(ret < 0) perror("socketpair");
 		break;
 #if 0
 //#ifdef __linux__
@@ -679,32 +812,52 @@ __intcap_t hostcall(long a0, long a1, long a2, long a3, long a4, long a5, long a
 #else
 	case 513:
 		ret = poll(comp_to_mon(a0, ct->sbox), a1, a2);
+		if(ret < 0) perror("poll");
 		break;
 	case 514:
 		ret = select(a0, comp_to_mon(a1, ct->sbox), comp_to_mon(a2, ct->sbox), comp_to_mon(a3, ct->sbox), comp_to_mon(a4, ct->sbox));
+		if(ret < 0) perror("select");
 		break;
 #endif
 	case 519:
 		ret = recvfrom((int) a0, (void *restrict) a1, (size_t) a2, (int) a3, (struct sockaddr * restrict) a4, (socklen_t * restrict) a5);
+		if(ret < 0) perror("recvfrom");
 		break;
 	case 520:
 		ret = writev((int) a0, (const struct iovec *) a1, (int) a2);
+		if(ret < 0) perror("writev");
 		break;
 #endif
 	case 530:
 		ret = getaddrinfo(comp_to_mon(a0, ct->sbox), comp_to_mon(a1, ct->sbox), comp_to_mon(a2, ct->sbox), comp_to_mon(a3, ct->sbox));
-//                      ret = getaddrinfo(a1, a2, a3, a4);
+		if(ret < 0) perror("getaddrinfo");
 		break;
 	case 531:
 #ifndef x86_sim
-		ret = getpeername(a0, comp_to_mon(a1, ct->sbox), comp_to_mon(a2, ct->sbox));
+
+//why not move this into libos?
+		ret = getpeername((int) a0, (struct sockaddr *)&sa_out, &addrlen);
+		if(ret < 0) {
+			perror("getpeername");
+			break;
+		}
+
+		sa_in = (struct sockaddr_in_musl *) comp_to_mon(a1, ct->sbox);
+		sa_in->sin_family = sa_out.sin_family;
+		sa_in->sin_addr.s_addr = sa_out.sin_addr.s_addr;
+		sa_in->sin_port = sa_out.sin_port;
 #endif
 		break;
 	case 532:
 #ifndef x86_sim
 		ret = connect(a0, comp_to_mon(a1, ct->sbox), a2);
+		if(ret < 0) perror("connect");
 #endif
 		break;
+	case 533: //fcntl for network, another one should be removed
+		ret = fcntl(a0, a1, a2);
+		break;
+//
 	case 700:
 		ret = host_get_my_inner(ct->sbox, comp_to_mon(a0, ct->sbox));
 		break;
@@ -777,11 +930,26 @@ __intcap_t hostcall(long a0, long a1, long a2, long a3, long a4, long a5, long a
 	case 901:
 		ret = copy_file_into_cvm(comp_to_mon(a0, ct->sbox), comp_to_mon(a1, ct->sbox), a2);
 		break;
+
+/*
+	case 1000:
+		ret = my_futex(comp_to_mon(a0,ct->sbox), a1, a2, comp_to_mon(a3,ct->sbox), comp_to_mon(a4,ct->sbox), a5);
+		break;
+*/
+
+	case 1001:
+		ret = create_thread_ng(ct->sbox->threads, a0, a1, a2, a3, a4);
+		break;
+
+	case 1002:
+		ret = ct->id | 0x550000;
+		break;
 /// GD
 	default:
 		printf("Intravisor: unknown t5 %d\n", (int) t5);
 		while(1) ;
 	}
+
 #if 0
 //      if(t5 != 1 && debug_calls)
 	if((tid == 2 && t5 != 1) && debug_calls)

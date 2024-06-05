@@ -85,7 +85,7 @@ $(OBJDIR)/$(TARGET_ARCH)/asm.o: arch/$(TARGET_ARCH)/asm.S
 	$(AS_MON) $(AS_MON_FLAGS) $(CFLAGS) -c -o $(OBJDIR)/$(TARGET_ARCH)/asm.o arch/$(TARGET_ARCH)/asm.S
 
 intravisor: $(OBJ) $(OBJDIR)/$(TARGET_ARCH)/asm.o
-	$(CC_MON) $(CC_MON_FLAGS) $(LDFLAGS) -o $@ -fPIE -fPIC $(OBJ) $(OBJDIR)/$(TARGET_ARCH)/asm.o -Wl,-error-limit=0
+	$(CC_MON) $(CC_MON_FLAGS) $(LDFLAGS) -o $@ -fPIE -fPIC $(OBJ) $(OBJDIR)/$(TARGET_ARCH)/asm.o
 
 clean:
 	rm -rf ./*.o ./*.so ./*.ll ./1.txt $(OBJDIR) intravisor

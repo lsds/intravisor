@@ -202,7 +202,7 @@ void load_elf(char *file_to_map, void *base_addr, encl_map_info * result) {
 	if(strcmp(file_to_map, "libu_ffmpeg.so") == 0)
 		extra = 0;
 #endif
-
+	extra += pdr->p_vaddr;
 	result->extra_load = extra;
 	load_segments_size += extra;
 
@@ -214,7 +214,8 @@ void load_elf(char *file_to_map, void *base_addr, encl_map_info * result) {
 		printf("cannot allocate %lx to %p, die\n", ROUNDUP(load_segments_size, 0x1000), base_addr);
 		perror("mmap");
 		while(1) ;
-	}
+	} else
+		printf("mmap: %lx, +%lx, ret= %lx\n", base_addr, ROUNDUP(load_segments_size, 0x1000), full);
 
 	memset(full, 0, ROUNDUP(load_segments_size, 0x1000));
 

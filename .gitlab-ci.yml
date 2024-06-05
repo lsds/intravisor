@@ -1,5 +1,5 @@
 image: 
-  name: intravisor/cheri-sdk:2309
+  name: intravisor/cheri-sdk:2405
   entrypoint: ['bash', '-c', 'exec su cheri -c bash']
 
 stages:
@@ -9,10 +9,11 @@ stages:
 - run_app
 
 include:
- - 'extras/.gitlab-ci-pure-arm.yml'
- - 'extras/.gitlab-ci-pure-rv.yml'
- - 'extras/.gitlab-ci-lkl-arm.yml'
- - 'extras/.gitlab-ci-lkl-rv.yml'
- - 'extras/.gitlab-ci-orc-arm.yml'
- - 'extras/.gitlab-ci-native-arm.yml'
- - 'extras/.gitlab-ci-native-rv.yml'
+ - 'extras/.gitlab-ci-pure-arm2.yml'
+# - 'extras/.gitlab-ci-pure-arm.yml'
+# - 'extras/.gitlab-ci-pure-rv.yml'
+# - 'extras/.gitlab-ci-lkl-arm.yml'
+# - 'extras/.gitlab-ci-lkl-rv.yml'
+# - 'extras/.gitlab-ci-orc-arm.yml'
+# - 'extras/.gitlab-ci-native-arm.yml'
+# - 'extras/.gitlab-ci-native-rv.yml'

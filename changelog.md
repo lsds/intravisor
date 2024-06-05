@@ -1,3 +1,8 @@
+# 0.3.1 new musl-uni
+* New Arm-only musl3-uni2 runtime 
+* Full fledged musl, latest unikraft
+* Separation between LibOS and App/Libc
+
 # 0.3.0 threads and apps
 * Minimalistic pthreads in musl-uni
 * Working threads in musl-lkl

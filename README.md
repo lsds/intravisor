@@ -1,4 +1,4 @@
-# Intravisor  0.3.0
+# Intravisor  0.3.1
 
 Intravisor is the type-3 hypervisor that utilises hardware memory capabilities as the foundation for virtualisation.
 It hosts capability-based virtual machines called CAP-VMs (or cVMs for short).
@@ -44,7 +44,7 @@ The latter requires to use a special LLVM pass during the compiling of capabilit
 
 You can download pre-build VMWare image with Morello and RISCV64 SDK: `https://disk.yandex.com/d/Kr6eHel7fE3oow`. Login:  capvm/capvm
 
-You can use [dockerfile](extras/cheribuild-docker/) to build your own SDK or use ready-to-use container (`docker push intravisor/cheri-sdk:2309`).
+You can use [dockerfile](extras/cheribuild-docker/) to build your own SDK or use ready-to-use container (`docker push intravisor/cheri-sdk:2405`).
 
 [Manual build](build.md)
 
@@ -85,6 +85,9 @@ make -C runtime/native/two-pure/first/
 make -C runtime/native/two-pure/second/
 cp runtime/native/two-pure/first/libfirst.so runtime/native/two-pure/second/libsecond.so runtime/native/two-pure/first/two-pure.yaml ~/cheri/output/intravisor/
 ```
+
+For new Arm-only musl-uni runtime, please follow this [instruction](runtime/musl3-uni2)
+
 
 ## Run in QEMU/Morello
 

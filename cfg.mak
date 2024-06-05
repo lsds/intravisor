@@ -24,7 +24,7 @@ endif
 
 DEBUG_FLAGS=-g
 LINKER_FLAGS=-fuse-ld=lld -mno-relax
-DIAG_FLAGS=-Wall
+DIAG_FLAGS=-Wall -Wno-int-conversion -Wno-implicit-function-declaration -Wno-implicit-int
 ifdef CONFIG_MODE_PURE
 DIAG_FLAGS +=-Wcheri
 endif
@@ -134,10 +134,10 @@ CC_LKL_FLAGS = $(DEBUG_FLAGS) $(TARGET_FLAGS_LINUX) $(SYSROOT_FLAGS_HYBRID) $(AR
 AS_LKL_FLAGS = $(DEBUG_FLAGS) $(TARGET_FLAGS_LINUX) $(SYSROOT_FLAGS_HYBRID) $(ARCH_HYBRID) $(DIAG_FLAGS) $(LINKER_FLAGS)
 
 CC_CHERI_PURE = $(CHERI_SDK)/bin/clang
-CC_CHERI_PURE_FLAGS = $(TARGET_FLAGS_LINUX) -fPIE -mno-relax $(ARCH_PURE)
+CC_CHERI_PURE_FLAGS = $(TARGET_FLAGS_LINUX) -fPIE -mno-relax $(ARCH_PURE) -fno-builtin $(DIAG_FLAGS)
 
 CPP_CHERI_PURE = $(CHERI_SDK)/bin/clang++
-CPP_CHERI_PURE_FLAGS = $(TARGET_FLAGS_LINUX) -fPIE -mno-relax $(ARCH_PURE) -std=c++11
+CPP_CHERI_PURE_FLAGS = $(TARGET_FLAGS_LINUX) -fPIE -mno-relax $(ARCH_PURE) -std=c++11 -fno-builtin $(DIAG_FLAGS)
 
 
 #musl-lkl

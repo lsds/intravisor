@@ -597,14 +597,11 @@ int build_cvm(int cid, struct cmp_s *comp, char *libos, char *disk, int argc, ch
 
 ////////////////////
 	struct c_thread *ct = cvms[cid].threads;
-
 	for(int i = 0; i < MAX_THREADS; i++) {
 		ct[i].id = -1;
 		ct[i].sbox = &cvms[cid];
 	}
-
 	extern void hostcall_asm();
-
 	ct[0].id = 0;
 	ct[0].func = encl_map.entry_point;
 	ct[0].cb_in = cb_in;
@@ -613,17 +610,14 @@ int build_cvm(int cid, struct cmp_s *comp, char *libos, char *disk, int argc, ch
 	ct[0].stack = (void *) ((unsigned long) cvms[cid].top - STACK_SIZE);
 	ct[0].arg = NULL;
 	ct[0].sbox = &cvms[cid];
-
 	ct[0].argc = argc;
 	ct[0].argv = argv;
-
 	ret = pthread_attr_init(&ct[0].tattr);
 	if(ret != 0) {
 		perror("attr init");
 		printf("ret = %d\n", ret);
 		while(1) ;
 	}
-
 	ret = pthread_attr_setstack(&ct[0].tattr, ct[0].stack, STACK_SIZE);
 	if(ret != 0) {
 		perror("pthread attr setstack");
@@ -648,9 +642,7 @@ int build_cvm(int cid, struct cmp_s *comp, char *libos, char *disk, int argc, ch
 /*** gen caps ***/
 
 //do we really need to save the sealcap?
-
 	ct[0].sbox->box_caps.sealcap_size = sizeof(ct[0].sbox->box_caps.sealcap);
-
 #if __FreeBSD__
 	if(sysctlbyname("security.cheri.sealcap", &ct[0].sbox->box_caps.sealcap, &ct[0].sbox->box_caps.sealcap_size, NULL, 0) < 0) {
 		printf("sysctlbyname(security.cheri.sealcap)\n");
@@ -659,21 +651,16 @@ int build_cvm(int cid, struct cmp_s *comp, char *libos, char *disk, int argc, ch
 #else
 	printf("sysctlbyname security.cheri.sealcap is not implemented in your OS\n");
 #endif
-
 	void *__capability ccap;
 	if(cvms[cid].pure)
 		ccap = pure_codecap_create((void *) ct[0].sbox->cmp_begin, (void *) ct[0].sbox->cmp_end, cvms[cid].clean_room);
 	else
 		ccap = codecap_create((void *) ct[0].sbox->cmp_begin, (void *) ct[0].sbox->cmp_end, cvms[cid].clean_room);
-
 	void *__capability dcap = datacap_create((void *) ct[0].sbox->cmp_begin, (void *) ct[0].sbox->cmp_end, cvms[cid].clean_room);
 	ct[0].sbox->box_caps.dcap = dcap;
-
 	ccap = cheri_setaddress(ccap, (unsigned long) (ct[0].func) + (unsigned long) (ct[0].sbox->base));
-
 	ct[0].sbox->box_caps.sealed_datacap = cheri_seal(dcap, ct[0].sbox->box_caps.sealcap);
 	ct[0].sbox->box_caps.sealed_codecap = cheri_seal(ccap, ct[0].sbox->box_caps.sealcap);
-
 	//probe capabilitites for syscall/hostcall. 
 	extern host_syscall_handler_prb(char *name, void *, void *, void *);
 	if(cb_out == NULL) {

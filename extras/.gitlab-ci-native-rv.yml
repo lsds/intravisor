@@ -1,6 +1,7 @@
 RISCV64-native-hyb:
   stage: build_intravisor
   artifacts:
+      expire_in: 1 day
       paths:
       - /builds/gitlab/cloudcap/intravisor/.config
   rules:
@@ -30,6 +31,7 @@ RISCV64-native-hyb:
 RISCV64-native-pure:
   stage: build_intravisor
   artifacts:
+      expire_in: 1 day
       paths:
       - /builds/gitlab/cloudcap/intravisor/.config
   rules:
@@ -63,6 +65,7 @@ RISCV64-native-two_pure-runtime:
   stage: build_runtime
   needs: ["RISCV64-native-pure"]
   artifacts:
+    expire_in: 1 day
     when: always
     paths:
 #      - extras/default.xml
@@ -78,6 +81,7 @@ RISCV64-native-hello-runtime:
   stage: build_runtime
   needs: ["RISCV64-native-hyb"]
   artifacts:
+    expire_in: 1 day
     when: always
     paths:
 #      - extras/default.xml
@@ -96,6 +100,7 @@ RISCV64-native-hello-run:
   needs: ["RISCV64-native-hello-runtime"]
   allow_failure: false
   artifacts:
+    expire_in: 1 day
     when: always
     paths:
       - extras/default.xml
@@ -123,6 +128,7 @@ RISCV64-native-two_pure-run:
   needs: ["RISCV64-native-two_pure-runtime"]
   allow_failure: false
   artifacts:
+    expire_in: 1 day
     when: always
     paths:
       - extras/default.xml

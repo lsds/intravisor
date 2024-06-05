@@ -1,7 +1,7 @@
 #include "monitor.h"
 
 struct c_tread *get_cur_thread() {
-#if (defined riscv) || (defined riscv_hyb) || (defined arm_hyb)
+#if (defined riscv) || (defined riscv_hyb) || (defined arm_hyb) || 1
 	int cid = (long) getSP() / CVM_MAX_SIZE;
 #else
 	unsigned long *tp = (__cheri_fromcap unsigned long *) getTP();
@@ -296,3 +296,4 @@ void __capability *mmap_cvm_data(unsigned long addr, size_t len, int prot, int f
 int intravisor_pthread_create(pthread_t * thread, const pthread_attr_t * attr, void *(*start_routine)(void *), void *arg) {
 
 }
+

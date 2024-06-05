@@ -3,6 +3,7 @@
 .AArch64-hyb_cap-intravisor-lkl-template:
   stage: build_intravisor
   artifacts:
+      expire_in: 1 day
       paths:
       - /builds/gitlab/cloudcap/intravisor/.config
   rules:
@@ -35,6 +36,7 @@
   stage: build_runtime
   needs: ["AArch64-hyb_cap-intravisor-lkl"]
   artifacts:
+    expire_in: 1 day
     when: always
     paths:
     reports:
@@ -52,6 +54,7 @@
   needs: ["AArch64-musl-lkl-runtime"]
   allow_failure: false
   artifacts:
+    expire_in: 1 day
     when: always
     paths:
       - extras/default.xml
@@ -71,6 +74,7 @@
     - sudo cp -r /opt/share/AArch64-musl-lkl$CVM_MAX_SIZE/$DISK ~/cheri/extra-files/intravisor/
 #
     - ~/cheribuild/cheribuild.py disk-image-morello-hybrid --enable-hybrid-targets
+    - sudo cp ~/cheri/output/cheribsd-morello-hybrid.img /opt/share/AArch64-musl-lkl$CVM_MAX_SIZE/$YAML-cheribsd.img
     - cd extras && bash spawn.bash morello 300 default.txt input_keys_musl-lkl.txt  default.xml && cat default.xml | grep -q "failure message" && exit 1 || exit 0
 
 #######################################

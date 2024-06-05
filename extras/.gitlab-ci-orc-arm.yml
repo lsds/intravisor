@@ -5,6 +5,7 @@
 AArch64-pure_cap-intravisor-ORC:
   stage: build_intravisor
   artifacts:
+      expire_in: 1 day
       paths:
       - /builds/gitlab/cloudcap/intravisor/.config
   rules:
@@ -35,6 +36,7 @@ AArch64-native-ORC-hello:
   stage: build_runtime
   needs: ["AArch64-pure_cap-intravisor-ORC"]
   artifacts:
+    expire_in: 1 day
     when: always
     paths:
 #      - extras/default.xml
@@ -51,6 +53,7 @@ AArch64-musl-uni-sqlite-x5:
   stage: build_runtime
   needs: ["AArch64-pure_cap-intravisor-ORC"]
   artifacts:
+    expire_in: 1 day
     when: always
     paths:
 #      - extras/default.xml

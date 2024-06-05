@@ -3,6 +3,7 @@
 AArch64-pure_cap-intravisor:
   stage: build_intravisor
   artifacts:
+      expire_in: 1 day
       paths:
       - /builds/gitlab/cloudcap/intravisor/.config
   rules:
@@ -33,6 +34,7 @@ AArch64-musl-uni-runtime:
   stage: build_runtime
   needs: ["AArch64-pure_cap-intravisor"]
   artifacts:
+    expire_in: 1 day
     when: always
     paths:
 #      - extras/default.xml
@@ -50,6 +52,7 @@ AArch64-musl-uni-runtime:
   needs: ["AArch64-musl-uni-runtime"]
   allow_failure: false
   artifacts:
+    expire_in: 1 day
     when: always
     paths:
       - extras/default.xml
@@ -70,6 +73,7 @@ AArch64-musl-uni-runtime:
     - if [ -n "$CPIO" ]; then echo $CPIO; sudo cp /opt/share/AArch64-musl-uni/$CPIO ~cheri/cheri/extra-files/intravisor/; fi
 #
     - ~/cheribuild/cheribuild.py disk-image-morello-hybrid --enable-hybrid-targets
+    - sudo cp ~/cheri/output/cheribsd-morello-hybrid.img /opt/share/AArch64-musl-uni/$YAML-cheribsd.img
     - cd extras && bash spawn.bash morello 300 default.txt input_keys_musl-uni.txt default.xml && cat default.xml | grep -q "failure message" && exit 1 || exit 0
 
 

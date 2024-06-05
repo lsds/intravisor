@@ -1,0 +1,145 @@
+#############################################  musl3-uni2 Aarch64
+
+AArch64-pure_cap-intravisor:
+  stage: build_intravisor
+  artifacts:
+      expire_in: 1 day
+      paths:
+      - /builds/gitlab/cloudcap/intravisor/.config
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+      # when: always # is a default value
+    - when: manual
+  # allow_failure: false # is a default value
+  script:
+    - git config --global --add safe.directory /builds/gitlab/cloudcap/intravisor
+    - echo "Hello, $GITLAB_USER_LOGIN!"
+    - sudo rm -rf /opt/share/AArch64-musl3-uni2
+    - sudo mkdir -p /opt/share/AArch64-musl3-uni2
+    - echo > /tmp/int.cfg
+    - echo "CONFIG_ARCH_ARM=y" >> /tmp/int.cfg
+    - echo "CONFIG_BIT_64=y" >> /tmp/int.cfg
+    - echo "CONFIG_MODE_PURE=y" >> /tmp/int.cfg
+    - echo "CONFIG_KERNEL_CONFIGURED_DDC_RELATIVE=y" >> /tmp/int.cfg
+    - echo "CONFIG_OS_CHERIBSD=y" >> /tmp/int.cfg
+    - echo "CONFIG_OPENSSL=y" >> /tmp/int.cfg
+    - echo "CONFIG_CHERI_SDK=\"\$\{HOME\}/cheri/output/morello-sdk\"" >> /tmp/int.cfg
+    - echo "CONFIG_CVM_MAX_SIZE=0x40000000" >> /tmp/int.cfg
+    - kconfig-conf --defconfig=/tmp/int.cfg  Kconfig
+    - cat .config
+    - make -C src -j 8
+    - sudo cp src/intravisor /opt/share/AArch64-musl3-uni2/
+
+AArch64-musl3-uni2-runtime:
+  stage: build_runtime
+  needs: ["AArch64-pure_cap-intravisor"]
+  artifacts:
+    expire_in: 1 day
+    when: always
+    paths:
+#      - extras/default.xml
+#      - extras/default.txt
+    reports:
+#      junit: extras/default.xml
+  script:
+    - git config --global --add safe.directory /builds/gitlab/cloudcap/intravisor
+    - make -C runtime/musl3-uni2/libc
+    - make -C runtime/musl3-uni2/kernel
+    - make -C runtime/musl3-uni2/kernel/apps/os
+    - make -C runtime/musl3-uni2/apps/ -j 8
+    - make -C runtime/musl3-uni2/libc/ install INSTALL_PATH=/opt/share/AArch64-musl3-uni2
+    - make -C runtime/musl3-uni2/kernel/apps/os install INSTALL_PATH=/opt/share/AArch64-musl3-uni2
+    - make -C runtime/musl3-uni2/apps/ install INSTALL_PATH=/opt/share/AArch64-musl3-uni2
+
+
+.AArch64-musl3-uni2-template:
+  stage: run_app
+  needs: ["AArch64-musl3-uni2-runtime"]
+  allow_failure: false
+  artifacts:
+    expire_in: 1 day
+    when: always
+    paths:
+      - extras/default.xml
+      - extras/default.txt
+    reports:
+      junit: extras/default.xml
+  timeout: 2h
+  script:
+    - bash
+    - mkdir -p ~/cheri/extra-files/etc/rc.d/
+    - cp extras/int ~/cheri/extra-files/etc/rc.d/
+    - mkdir -p ~/cheri/extra-files/intravisor
+#
+    - sudo cp /opt/share/AArch64-musl3-uni2/intravisor ~/cheri/extra-files/intravisor/
+    - sudo cp /opt/share/AArch64-musl3-uni2/root.cpio_$YAML ~cheri/cheri/extra-files/intravisor/root.cpio
+    - sudo cp /opt/share/AArch64-musl3-uni2/libos.so ~cheri/cheri/extra-files/intravisor/
+    - sudo cp /opt/share/AArch64-musl3-uni2/libldso.so ~cheri/cheri/extra-files/intravisor/
+    - sudo cp /opt/share/AArch64-musl3-uni2/$YAML.yaml ~/cheri/extra-files/intravisor/cvm.yaml
+    - if [ -e "/opt/share/AArch64-musl3-uni2/$YAML.ci" ]; then sudo cat /opt/share/AArch64-musl3-uni2/$YAML.ci >> extras/input_keys_musl-uni.txt; fi
+#
+    - ~/cheribuild/cheribuild.py disk-image-morello-hybrid --enable-hybrid-targets
+    - sudo cp ~/cheri/output/cheribsd-morello-hybrid.img /opt/share/AArch64-musl3-uni2/$YAML-cheribsd.img
+    - cd extras && bash spawn.bash morello 300 default.txt input_keys_musl-uni.txt default.xml && cat default.xml | grep -q "failure message" && exit 1 || exit 0
+
+
+AArch64-musl3-uni2-hello:
+  variables:
+    YAML: "musl-uni-hello"
+  extends: .AArch64-musl3-uni2-template
+
+AArch64-musl3-uni2-sqlite:
+  variables:
+    YAML: "musl-uni-sqlite"
+  extends: .AArch64-musl3-uni2-template
+
+AArch64-musl3-uni2-polybench-c:
+  variables:
+    YAML: "musl-uni-polybench-c"
+  extends: .AArch64-musl3-uni2-template
+
+AArch64-musl3-uni2-redis:
+  variables:
+    YAML: "musl-uni-redis"
+  extends: .AArch64-musl3-uni2-template
+
+AArch64-musl3-uni2-ffmpeg:
+  variables:
+    YAML: "musl-uni-ffmpeg"
+  extends: .AArch64-musl3-uni2-template
+
+AArch64-musl3-uni2-pthread_key:
+  variables:
+    YAML: "musl-uni-pthread_key"
+  extends: .AArch64-musl3-uni2-template
+
+AArch64-musl3-uni2-python:
+  variables:
+    YAML: "musl-uni-python"
+  extends: .AArch64-musl3-uni2-template
+
+AArch64-musl3-uni2-darknet:
+  variables:
+    YAML: "musl-uni-darknet"
+  extends: .AArch64-musl3-uni2-template
+
+AArch64-musl3-uni2-ggml:
+  variables:
+    YAML: "musl-uni-ggml"
+  extends: .AArch64-musl3-uni2-template
+
+AArch64-musl3-uni2-pthread:
+  variables:
+    YAML: "musl-uni-pthread"
+  extends: .AArch64-musl3-uni2-template
+
+AArch64-musl3-uni2-libhello:
+  variables:
+    YAML: "musl-uni-libhello"
+  extends: .AArch64-musl3-uni2-template
+
+AArch64-musl3-uni2-libsodium:
+  variables:
+    YAML: "musl-uni-libsodium"
+  extends: .AArch64-musl3-uni2-template
+
